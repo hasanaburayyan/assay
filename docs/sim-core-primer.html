@@ -1,0 +1,855 @@
+<title>r2ts Sim Core Primer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: r2ts house style (shared with the Genre Playbook). One reading column, sticky chapter nav, code and diagrams in bordered panels, a live canvas demo mid-page. */
+:root {
+  --bg: #EDF0F3;
+  --surface: #FFFFFF;
+  --code: #F5F7F9;
+  --ink: #131922;
+  --muted: #586374;
+  --line: #D3D9E1;
+  --faint: #E4E9EF;
+  --accent: #C9650A;
+  --sim: #2F6FD6;
+  --ren: #8A3FD1;
+  --good: #2E9460; --bad: #CF342C;
+  --f-display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E1218; --surface: #161C25; --code: #10151C; --ink: #E7EBF1; --muted: #9BA6B5; --line: #2A3342; --faint: #1E2631;
+    --accent: #F59A3C; --sim: #5B95F0; --ren: #B07CF0; --good: #4CC07D; --bad: #F0605A;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E1218; --surface: #161C25; --code: #10151C; --ink: #E7EBF1; --muted: #9BA6B5; --line: #2A3342; --faint: #1E2631;
+  --accent: #F59A3C; --sim: #5B95F0; --ren: #B07CF0; --good: #4CC07D; --bad: #F0605A;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 16px; line-height: 1.65; }
+.wrap { max-width: 980px; margin: 0 auto; padding-inline: 20px; padding-block: 0 80px; }
+a { color: inherit; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; line-height: 1.02; margin: 0; }
+h2 { font-size: clamp(2rem, 4.5vw, 2.7rem); font-weight: 800; text-transform: uppercase; }
+h3 { font-size: 1.3rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; }
+p { margin: 0; max-width: 68ch; }
+code { font-family: var(--f-mono); font-size: 0.88em; background: var(--faint); padding: 1px 5px; }
+.label { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+.sim-c { color: var(--sim); } .ren-c { color: var(--ren); }
+
+nav.toc { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+nav.toc .inner { max-width: 980px; margin: 0 auto; padding-inline: 20px; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+nav.toc a { font-family: var(--f-mono); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.07em; text-decoration: none; color: var(--muted); padding: 12px 10px; white-space: nowrap; border-bottom: 2px solid transparent; }
+nav.toc a:hover { color: var(--ink); border-bottom-color: var(--accent); }
+nav.toc .brand { color: var(--ink); font-weight: 500; padding-left: 0; }
+
+header.hero { padding-block: 56px 20px; display: grid; gap: 20px; }
+header.hero h1 { font-size: clamp(2.8rem, 8.5vw, 5.4rem); font-weight: 900; text-transform: uppercase; line-height: 0.92; }
+header.hero h1 em { font-style: normal; color: var(--accent); }
+.lede { font-size: 1.12rem; max-width: 64ch; }
+.path { display: flex; flex-wrap: wrap; gap: 8px; }
+.path a { font-size: 0.84rem; text-decoration: none; border: 1px solid var(--line); background: var(--surface); padding: 6px 12px; }
+.path a:hover { border-color: var(--accent); }
+
+section { padding-block: 52px 4px; display: grid; gap: 18px; scroll-margin-top: 48px; }
+section > .head { display: grid; gap: 10px; }
+.prose { display: grid; gap: 14px; }
+.panel { background: var(--surface); border: 1px solid var(--line); padding: 22px; display: grid; gap: 14px; min-width: 0; }
+.panel .ptitle { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline; }
+.note { font-size: 0.82rem; color: var(--muted); max-width: 80ch; }
+.scroll { overflow-x: auto; }
+.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+
+pre { margin: 0; background: var(--code); border: 1px solid var(--line); padding: 14px 16px; overflow-x: auto; font-family: var(--f-mono); font-size: 0.8rem; line-height: 1.6; color: var(--ink); tab-size: 4; }
+pre code { background: none; padding: 0; font-size: inherit; }
+pre .c { color: var(--muted); font-style: italic; }
+pre .k { color: var(--sim); }
+pre .s { color: var(--accent); }
+.codehead { display: flex; justify-content: space-between; gap: 10px; font-family: var(--f-mono); font-size: 0.72rem; color: var(--muted); margin-bottom: -10px; }
+
+.owns { display: grid; gap: 8px; font-size: 0.9rem; }
+.owns ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.owns.sim { border-top: 3px solid var(--sim); } .owns.ren { border-top: 3px solid var(--ren); }
+
+.rules { display: grid; gap: 0; }
+.rule { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.rule:last-child { border-bottom: 0; }
+.rule .n { font-family: var(--f-display); font-weight: 900; font-size: 1.5rem; color: var(--accent); line-height: 1.1; }
+.rule b { display: block; }
+.rule p { font-size: 0.9rem; color: var(--muted); }
+
+.pipe { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 0.84rem; }
+.pipe span.step { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--sim); padding: 6px 10px; }
+.pipe span.step.out { border-left-color: var(--ren); }
+.pipe i { font-style: normal; color: var(--muted); font-family: var(--f-mono); }
+
+svg text { font-family: var(--f-mono); font-size: 11px; fill: var(--muted); }
+svg .t-ink { fill: var(--ink); font-family: var(--f-body); font-size: 13px; font-weight: 600; }
+svg .t-sm { fill: var(--muted); font-size: 10.5px; }
+
+/* demo */
+.demo { display: grid; gap: 14px; }
+.demo canvas { width: 100%; max-width: 100%; aspect-ratio: 760 / 250; display: block; background: var(--surface); border: 1px solid var(--line); }
+.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px 18px; align-items: end; }
+.ctl { display: grid; gap: 6px; font-size: 0.84rem; }
+.ctl .label { display: flex; justify-content: space-between; }
+.ctl input[type="range"] { width: 100%; accent-color: var(--accent); }
+.seg { display: inline-flex; border: 1px solid var(--line); }
+.seg button, .btn { font: 500 0.82rem var(--f-body); background: var(--surface); color: var(--ink); border: 0; padding: 8px 12px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+.btn { border: 1px solid var(--line); }
+.btn:hover, .seg button:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+.check { display: flex; gap: 8px; align-items: center; font-size: 0.86rem; cursor: pointer; }
+.check input { accent-color: var(--accent); width: 16px; height: 16px; }
+.btnrow { display: flex; flex-wrap: wrap; gap: 8px; }
+.readout { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); }
+.readout div { background: var(--surface); padding: 8px 12px; display: grid; gap: 2px; }
+.readout b { font-family: var(--f-mono); font-weight: 500; font-size: 0.95rem; font-variant-numeric: tabular-nums; }
+.result { font-size: 0.88rem; padding: 10px 14px; border: 1px solid var(--line); background: var(--code); min-height: 44px; }
+.result.ok { border-color: var(--good); } .result.bad { border-color: var(--bad); }
+.result b.ok { color: var(--good); } .result b.bad { color: var(--bad); }
+.tryit { display: grid; gap: 6px; font-size: 0.9rem; }
+.tryit ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+
+.deep { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.topic { background: var(--surface); border: 1px solid var(--line); padding: 16px 18px; display: grid; gap: 8px; align-content: start; font-size: 0.9rem; }
+.topic .when { font-family: var(--f-mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 7px; border: 1px solid currentColor; justify-self: start; }
+.when.now { color: var(--good); } .when.soon { color: var(--sim); } .when.later { color: var(--muted); }
+.topic p { color: var(--muted); }
+.topic .yours { color: var(--ink); }
+.topic .yours b { color: var(--accent); font-weight: 600; }
+.topic .search { font-family: var(--f-mono); font-size: 0.74rem; color: var(--muted); }
+
+ul.reading { margin: 0; padding-left: 20px; display: grid; gap: 8px; font-size: 0.9rem; }
+ul.reading span { color: var(--muted); }
+footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 0.8rem; color: var(--muted); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+
+@media (max-width: 720px) {
+  .two, .deep { grid-template-columns: minmax(0, 1fr); }
+  .panel { padding: 16px; }
+}
+</style>
+
+<nav class="toc" aria-label="Chapters">
+  <div class="inner">
+    <a class="brand" href="#top">r2ts / sim</a>
+    <a href="#split">The split</a>
+    <a href="#state">State</a>
+    <a href="#commands">Commands</a>
+    <a href="#tick">The tick</a>
+    <a href="#time">Time</a>
+    <a href="#demo">Live demo</a>
+    <a href="#determinism">Determinism</a>
+    <a href="#godot">Godot wiring</a>
+    <a href="#payoff">Payoff</a>
+    <a href="#deeper">Go deeper</a>
+  </div>
+</nav>
+
+<div class="wrap" id="top">
+
+<header class="hero">
+  <div class="label">r2ts engineering primer · Simulation core</div>
+  <h1>The simulation doesn't know <em>it's being watched.</em></h1>
+  <p class="lede">An automation game is a simulation with a window bolted on. This primer shows how to build that simulation as its own program: plain data, a fixed clock, commands in, snapshots out. The renderer, whether Godot, Unity or a test harness, just watches. Every example uses a tiny factory with a custom-claw inserter, so the ideas map straight onto our game.</p>
+  <div class="path">
+    <a href="#split">Start at the beginning</a>
+    <a href="#demo">Jump to the live demo</a>
+    <a href="#deeper">Skip to deeper topics</a>
+  </div>
+</header>
+
+<section id="split">
+  <div class="head">
+    <div class="label">Chapter 1</div>
+    <h2>Two programs, one direction</h2>
+  </div>
+  <div class="prose">
+    <p>Split the game into two parts with a hard wall between them. The <b class="sim-c">simulation</b> owns the truth: where every item is, what every machine is doing, how much ore is left. The <b class="ren-c">renderer</b> owns everything the player sees and hears. Data flows one way. The renderer reads the simulation, and the simulation never reads, calls or imports the renderer.</p>
+    <p>The only way to change the simulation is to send it a <b>command</b>. Player clicks, drone AI and network messages all become commands. The simulation then advances in fixed steps called <b>ticks</b>.</p>
+  </div>
+  <div class="panel">
+    <div class="ptitle"><h3>The architecture</h3><span class="label">arrows = data flow</span></div>
+    <div class="scroll">
+      <svg viewBox="0 0 800 330" width="100%" style="min-width: 640px" role="img" aria-label="Architecture diagram: inputs become commands, which enter the simulation core; the core emits snapshots and events to the renderer; tests and servers also drive the core">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill: var(--muted)"/></marker>
+        </defs>
+        <!-- inputs -->
+        <rect x="10" y="40" width="150" height="46" style="fill: var(--surface); stroke: var(--line)"/>
+        <text x="85" y="61" text-anchor="middle" class="t-ink">Player input</text>
+        <text x="85" y="77" text-anchor="middle" class="t-sm">clicks, hotkeys</text>
+        <rect x="10" y="100" width="150" height="46" style="fill: var(--surface); stroke: var(--line)"/>
+        <text x="85" y="121" text-anchor="middle" class="t-ink">Drone / AI planner</text>
+        <text x="85" y="137" text-anchor="middle" class="t-sm">blueprint jobs</text>
+        <rect x="10" y="160" width="150" height="46" style="fill: var(--surface); stroke: var(--line)"/>
+        <text x="85" y="181" text-anchor="middle" class="t-ink">Network peers</text>
+        <text x="85" y="197" text-anchor="middle" class="t-sm">other players' commands</text>
+        <!-- command queue -->
+        <rect x="200" y="90" width="120" height="66" style="fill: var(--faint); stroke: var(--line)"/>
+        <text x="260" y="116" text-anchor="middle" class="t-ink">Command queue</text>
+        <text x="260" y="134" text-anchor="middle" class="t-sm">stamped with a tick</text>
+        <line x1="160" y1="63" x2="198" y2="108" stroke-width="1.5" marker-end="url(#ar)" style="stroke: var(--muted)"/>
+        <line x1="160" y1="123" x2="198" y2="123" stroke-width="1.5" marker-end="url(#ar)" style="stroke: var(--muted)"/>
+        <line x1="160" y1="183" x2="198" y2="138" stroke-width="1.5" marker-end="url(#ar)" style="stroke: var(--muted)"/>
+        <!-- sim core -->
+        <rect x="358" y="24" width="200" height="200" stroke-width="2" stroke-dasharray="6 4" style="fill: none; stroke: var(--sim)"/>
+        <text x="458" y="18" text-anchor="middle" style="fill: var(--sim); font-size: 10.5px; letter-spacing: .08em">SIMULATION CORE · NO ENGINE IMPORTS</text>
+        <rect x="378" y="44" width="160" height="50" style="fill: var(--surface); stroke: var(--sim)"/>
+        <text x="458" y="66" text-anchor="middle" class="t-ink">State</text>
+        <text x="458" y="82" text-anchor="middle" class="t-sm">plain data, seeded RNG</text>
+        <rect x="378" y="108" width="160" height="50" style="fill: var(--surface); stroke: var(--sim)"/>
+        <text x="458" y="130" text-anchor="middle" class="t-ink">Systems</text>
+        <text x="458" y="146" text-anchor="middle" class="t-sm">belts, inserters, machines</text>
+        <rect x="378" y="172" width="160" height="38" style="fill: var(--sim)"/>
+        <text x="458" y="196" text-anchor="middle" style="fill: var(--surface); font-family: var(--f-mono); font-size: 13px; font-weight: 500">step(state, cmds)</text>
+        <line x1="320" y1="123" x2="376" y2="185" stroke-width="1.5" marker-end="url(#ar)" style="stroke: var(--muted)"/>
+        <!-- outputs -->
+        <rect x="598" y="54" width="130" height="58" style="fill: var(--faint); stroke: var(--line)"/>
+        <text x="663" y="78" text-anchor="middle" class="t-ink">Snapshot</text>
+        <text x="663" y="96" text-anchor="middle" class="t-sm">read-only view</text>
+        <rect x="598" y="134" width="130" height="58" style="fill: var(--faint); stroke: var(--line)"/>
+        <text x="663" y="158" text-anchor="middle" class="t-ink">Events</text>
+        <text x="663" y="176" text-anchor="middle" class="t-sm">"gear crafted"</text>
+        <line x1="558" y1="90" x2="596" y2="84" stroke-width="1.5" marker-end="url(#ar)" style="stroke: var(--muted)"/>
+        <line x1="558" y1="160" x2="596" y2="162" stroke-width="1.5" marker-end="url(#ar)" style="stroke: var(--muted)"/>
+        <!-- renderer -->
+        <rect x="620" y="232" width="170" height="62" stroke-width="1.5" style="fill: var(--surface); stroke: var(--ren)"/>
+        <text x="705" y="257" text-anchor="middle" class="t-ink">Renderer (Godot)</text>
+        <text x="705" y="275" text-anchor="middle" class="t-sm">sprites, sound, particles</text>
+        <line x1="760" y1="112" x2="760" y2="230" stroke-width="1.5" marker-end="url(#ar)" style="stroke: var(--ren)"/>
+        <line x1="728" y1="163" x2="760" y2="163" stroke-width="1.5" style="stroke: var(--ren)"/>
+        <line x1="728" y1="83" x2="760" y2="83" stroke-width="1.5" style="stroke: var(--ren)"/>
+        <!-- headless -->
+        <rect x="358" y="262" width="200" height="54" style="fill: var(--surface); stroke: var(--line)"/>
+        <text x="458" y="284" text-anchor="middle" class="t-ink">Headless runners</text>
+        <text x="458" y="302" text-anchor="middle" class="t-sm">tests · benchmarks · server · replays</text>
+        <line x1="458" y1="262" x2="458" y2="226" stroke-width="1.5" marker-end="url(#ar)" style="stroke: var(--muted)"/>
+        <!-- forbidden -->
+        <line x1="618" y1="252" x2="560" y2="215" stroke-width="1.5" stroke-dasharray="4 4" style="stroke: var(--bad)"/>
+        <text x="548" y="248" text-anchor="end" style="fill: var(--bad); font-size: 10.5px">renderer never writes state</text>
+      </svg>
+    </div>
+  </div>
+  <div class="two">
+    <div class="panel owns sim"><span class="label sim-c">Simulation owns</span>
+      <ul>
+        <li>Every entity's real position and status</li>
+        <li>Recipes, machine designs, ore stats</li>
+        <li>The tick counter and the seeded random generator</li>
+        <li>Rules: what can connect, what's blocked, what breaks</li>
+        <li>Nothing about pixels, frames or seconds</li>
+      </ul></div>
+    <div class="panel owns ren"><span class="label ren-c">Renderer owns</span>
+      <ul>
+        <li>Sprites, meshes, camera, zoom, UI panels</li>
+        <li>Smooth motion between ticks (interpolation)</li>
+        <li>Animations, particles, sound effects</li>
+        <li>Turning mouse clicks into commands</li>
+        <li>Anything cosmetic: skins, screen shake, tooltips</li>
+      </ul></div>
+  </div>
+  <p class="note">A quick test for any new code: "If we deleted Godot tomorrow, would this still need to exist?" If yes, it belongs in the simulation. If no, it belongs in the renderer.</p>
+</section>
+
+<section id="state">
+  <div class="head">
+    <div class="label">Chapter 2</div>
+    <h2>State is just data</h2>
+  </div>
+  <div class="prose">
+    <p>The whole world should be a pile of plain structs: numbers, arrays and IDs. No sprite references, no engine nodes, no callbacks. If you can serialize it to a file and load it back, you have a save system, a replay starting point and a network snapshot almost for free.</p>
+    <p>Entities refer to each other by <b>ID</b>, not pointer. IDs survive saving, loading and sending over a network. Pointers don't.</p>
+  </div>
+  <div class="codehead"><span>sim/src/state.rs</span><span>Rust · C# looks nearly identical</span></div>
+<pre><code><span class="c">// The entire world. No engine types anywhere in this crate.</span>
+<span class="k">pub struct</span> World {
+    <span class="k">pub</span> tick: u64,
+    <span class="k">pub</span> rng: Rng,                    <span class="c">// seeded, and part of the state</span>
+    <span class="k">pub</span> belts: Vec&lt;Belt&gt;,
+    <span class="k">pub</span> inserters: Vec&lt;Inserter&gt;,
+    <span class="k">pub</span> machines: Vec&lt;Machine&gt;,
+    <span class="k">pub</span> designs: Vec&lt;InserterDesign&gt;,  <span class="c">// player-made designs live here too</span>
+}
+
+<span class="k">pub struct</span> Inserter {
+    <span class="k">pub</span> id: EntityId,
+    <span class="k">pub</span> design: DesignId,             <span class="c">// which custom design it was built from</span>
+    <span class="k">pub</span> from: EntityId,               <span class="c">// IDs, not pointers</span>
+    <span class="k">pub</span> to: EntityId,
+    <span class="k">pub</span> phase: Phase,                  <span class="c">// Idle, Swinging, Returning</span>
+    <span class="k">pub</span> timer: u16,                    <span class="c">// ticks left in this phase</span>
+    <span class="k">pub</span> hand: ArrayVec&lt;Item, 4&gt;,
+}</code></pre>
+  <div class="prose">
+    <p>Your custom-inserter idea fits this cleanly. A <b>design</b> is data the player creates. The simulation derives an inserter's stats from its design, and the design also produces the recipe the factory must fulfil to build one.</p>
+  </div>
+<pre><code><span class="k">pub struct</span> InserterDesign {
+    <span class="k">pub</span> claws: u8,           <span class="c">// 1 claw vs 2 claws</span>
+    <span class="k">pub</span> arm_length: u8,
+    <span class="k">pub</span> filter: bool,
+}
+
+<span class="k">impl</span> InserterDesign {
+    <span class="c">// Stats come from the parts, so design choices are real trade-offs.</span>
+    <span class="k">pub fn</span> swing_ticks(&amp;self) -&gt; u16 { 10 + 3 * self.arm_length <span class="k">as</span> u16 + 2 * self.claws <span class="k">as</span> u16 }
+    <span class="k">pub fn</span> power_draw(&amp;self)  -&gt; u32 { 40 * self.claws <span class="k">as</span> u32 + <span class="k">if</span> self.filter { 25 } <span class="k">else</span> { 0 } }
+    <span class="k">pub fn</span> recipe(&amp;self) -&gt; Recipe {  <span class="c">// what the factory must produce to build one</span>
+        Recipe::new()
+            .input(Item::Claw, self.claws <span class="k">as</span> u32)
+            .input(Item::ArmSegment, self.arm_length <span class="k">as</span> u32)
+            .input_if(self.filter, Item::Sensor, 1)
+    }
+}</code></pre>
+</section>
+
+<section id="commands">
+  <div class="head">
+    <div class="label">Chapter 3</div>
+    <h2>Commands are the only way in</h2>
+  </div>
+  <div class="prose">
+    <p>The renderer never changes state directly. When the player drags out a building, the UI creates a <code>Command</code>, stamps it with the tick it should apply on, and queues it. The simulation applies it at the start of that tick.</p>
+    <p>This one rule gives you four features. Save the command list and you have a <b>replay</b>. Send it to other players and you have <b>multiplayer</b>. Feed a scripted list into a test and you have <b>automated tests</b>. And your drones and AI planners use the exact same commands as the player, so there's only one code path to debug.</p>
+  </div>
+<pre><code><span class="k">pub enum</span> Command {
+    PlaceMachine   { design: DesignId, at: TilePos, rotation: Dir },
+    SetDesign      { inserter: EntityId, design: DesignId },
+    QueueBlueprint { blueprint: BlueprintId, origin: TilePos },  <span class="c">// drones build it over time</span>
+    Deconstruct    { area: TileRect },
+}
+
+<span class="k">pub struct</span> Input { <span class="k">pub</span> tick: u64, <span class="k">pub</span> player: PlayerId, <span class="k">pub</span> cmd: Command }</code></pre>
+  <p class="note">Validate commands inside the simulation, not the UI. The UI can grey out a button, but the simulation decides whether "place machine here" is legal. That matters in multiplayer, where the UI on another machine might be out of date.</p>
+</section>
+
+<section id="tick">
+  <div class="head">
+    <div class="label">Chapter 4</div>
+    <h2>The tick: one step of the world</h2>
+  </div>
+  <div class="prose">
+    <p>A tick is one discrete step. Each tick runs the same systems in the same fixed order. The order is part of the rules. If inserters run before belts, an item can arrive and get grabbed in the same tick. Swap them and it takes an extra tick. Either is fine, as long as it never changes.</p>
+  </div>
+  <div class="pipe" aria-label="Tick pipeline">
+    <span class="step">Apply commands</span><i>→</i><span class="step">Mines</span><i>→</i><span class="step">Belts</span><i>→</i><span class="step">Inserters</span><i>→</i><span class="step">Machines</span><i>→</i><span class="step">Drones</span><i>→</i><span class="step out">Emit events</span><i>→</i><span class="step">tick += 1</span>
+  </div>
+<pre><code><span class="k">pub fn</span> step(world: &amp;<span class="k">mut</span> World, inputs: &amp;[Input], events: &amp;<span class="k">mut</span> Vec&lt;Event&gt;) {
+    <span class="k">for</span> input <span class="k">in</span> inputs { commands::apply(world, input); }
+
+    mines::update(world);
+    belts::update(world);
+    inserters::update(world, events);
+    machines::update(world, events);   <span class="c">// pushes Event::Crafted { machine, item }</span>
+    drones::update(world);
+
+    world.tick += 1;
+}</code></pre>
+  <div class="prose">
+    <p>Notice what's missing: no <code>delta_time</code>. The simulation counts in ticks, not seconds. A machine doesn't take "0.5 seconds" to craft, it takes 30 ticks. That keeps the math exact and makes every run repeatable.</p>
+    <p><b>Events</b> are the simulation's way of saying "something happened" without knowing who cares. The renderer turns <code>Crafted</code> into a sound and a puff of steam. The stats panel counts them. The simulation doesn't know either exists.</p>
+  </div>
+</section>
+
+<section id="time">
+  <div class="head">
+    <div class="label">Chapter 5</div>
+    <h2>Fixed ticks, smooth frames</h2>
+  </div>
+  <div class="prose">
+    <p>Screens refresh at 60, 120 or 144 Hz, and frame times wobble. The simulation shouldn't care. The standard fix is the <b>accumulator loop</b>. Each frame, add the real elapsed time to a bucket. While the bucket holds at least one tick's worth, run a tick. Whatever is left over tells the renderer how far it is between the last tick and the next one.</p>
+  </div>
+  <div class="panel">
+    <div class="ptitle"><h3>Frames vs. ticks</h3><span class="label">ticks at 20/s · frames uneven</span></div>
+    <div class="scroll">
+      <svg viewBox="0 0 800 190" width="100%" style="min-width: 600px" role="img" aria-label="Timeline showing evenly spaced simulation ticks and unevenly spaced render frames, with interpolation between ticks">
+        <text x="10" y="54" class="t-ink" style="fill: var(--sim)">Sim ticks</text>
+        <text x="10" y="134" class="t-ink" style="fill: var(--ren)">Frames</text>
+        <line x1="110" y1="50" x2="780" y2="50" style="stroke: var(--line)"/>
+        <line x1="110" y1="130" x2="780" y2="130" style="stroke: var(--line)"/>
+        <g id="ticks-g"></g>
+        <g id="frames-g"></g>
+        <rect x="378" y="150" width="200" height="30" style="fill: var(--faint)"/>
+        <text x="478" y="170" text-anchor="middle" style="fill: var(--ink)">draw at α = 0.6 between T3 and T4</text>
+      </svg>
+    </div>
+    <p class="note">Each frame draws the world blended between the two most recent ticks, weighted by α (alpha). The player sees smooth motion even if the simulation only ticks 20 times a second. Some frames run zero ticks and some run two. That's expected.</p>
+  </div>
+<pre><code><span class="k">const</span> TICK: f64 = 1.0 / 60.0;   <span class="c">// one tick = 1/60 s of game time</span>
+<span class="k">let mut</span> acc = 0.0;
+
+<span class="k">loop</span> {
+    acc += frame_time().min(0.25);     <span class="c">// clamp so a stall can't trigger 1,000 catch-up ticks</span>
+    <span class="k">while</span> acc &gt;= TICK {
+        prev = snapshot(&amp;world);          <span class="c">// keep the old view for blending</span>
+        step(&amp;<span class="k">mut</span> world, queue.take(world.tick), &amp;<span class="k">mut</span> events);
+        acc -= TICK;
+    }
+    <span class="k">let</span> alpha = acc / TICK;              <span class="c">// 0.0 .. 1.0</span>
+    render(&amp;prev, &amp;snapshot(&amp;world), alpha);
+}</code></pre>
+  <p class="note">That clamp guards against the "spiral of death": a slow frame causes more catch-up ticks, which makes the next frame slower. Cap it, and if the factory truly can't keep up, the game slows down instead of freezing.</p>
+</section>
+
+<section id="demo">
+  <div class="head">
+    <div class="label">Chapter 6 · Live</div>
+    <h2>Try it: a one-line factory</h2>
+    <p>This is a real sim/renderer split running in your browser. The simulation is a pure function, <code>step(state, commands)</code>, with no drawing code. The canvas is a separate renderer that reads snapshots. Ore flows from the mine along the belt, an inserter moves it into an assembler (2 ore → 1 gear), and a second inserter moves gears to a chest.</p>
+  </div>
+  <div class="panel demo">
+    <canvas id="cv" width="760" height="250" aria-label="Animated factory: mine, belt, inserter, assembler, inserter, chest"></canvas>
+    <div class="readout" aria-live="off">
+      <div><span class="label">Tick</span><b id="r-tick">0</b></div>
+      <div><span class="label">Frames drawn</span><b id="r-frames">0</b></div>
+      <div><span class="label">Alpha</span><b id="r-alpha">0.00</b></div>
+      <div><span class="label">Gears made</span><b id="r-made">0</b></div>
+      <div><span class="label">Gears / 1k ticks</span><b id="r-rate">–</b></div>
+      <div><span class="label">State hash</span><b id="r-hash">–</b></div>
+    </div>
+    <div class="controls">
+      <div class="ctl"><span class="label"><span>Sim speed</span><span id="tps-out">15 ticks/s</span></span><input id="tps" type="range" min="1" max="60" step="1" value="15" aria-label="Ticks per second"></div>
+      <div class="ctl"><span class="label">Inserter A design</span>
+        <div class="seg" role="group" aria-label="Inserter A claws"><button id="claw1" type="button" aria-pressed="true">1 claw</button><button id="claw2" type="button" aria-pressed="false">2 claws</button></div></div>
+      <div class="ctl"><span class="label">Renderer</span><label class="check" for="interp"><input id="interp" type="checkbox" checked> Interpolate between ticks</label></div>
+      <div class="ctl"><span class="label">Clock</span><div class="btnrow"><button class="btn" id="pause" type="button">Pause</button><button class="btn" id="stepbtn" type="button">Step 1 tick</button><button class="btn" id="reset" type="button">Reset</button></div></div>
+    </div>
+    <div class="ctl"><span class="label">Headless and determinism</span>
+      <div class="btnrow">
+        <button class="btn primary" id="bench" type="button">Run 100,000 ticks headless</button>
+        <button class="btn" id="verify" type="button">Replay from tick 0 and compare</button>
+        <label class="check" for="broken"><input id="broken" type="checkbox"> Inject a bug: use Math.random() in the mine</label>
+      </div>
+    </div>
+    <div class="result" id="result">Results from the headless run and the replay check appear here.</div>
+    <div class="tryit">
+      <span class="label">Things to try</span>
+      <ol>
+        <li>Drag the speed down to 2 ticks/s and turn interpolation off. Motion becomes jumpy, because the renderer only draws tick positions. Turn it back on: same simulation, smooth picture.</li>
+        <li>Click <b>Run 100,000 ticks headless</b> with 1 claw, then again with 2 claws. The simulation runs about 28 minutes of game time in milliseconds, with nothing drawn. That's how you'd test designs.</li>
+        <li>Note that 2 claws does <em>not</em> double output. The assembler becomes the bottleneck. Balancing that tension is the heart of your inserter-design idea.</li>
+        <li>Change claws a few times, then click <b>Replay</b>. A fresh world re-runs the command log from tick 0 and lands on the identical hash. Now tick the bug box and replay again.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section id="determinism">
+  <div class="head">
+    <div class="label">Chapter 7</div>
+    <h2>Determinism: same inputs, same world</h2>
+  </div>
+  <div class="prose">
+    <p>A simulation is <b>deterministic</b> if the same starting state plus the same commands always produce exactly the same result, down to the last bit. It sounds academic. It's what makes replays, lockstep multiplayer, bug reproduction and regression tests possible. Factorio's multiplayer relies on it: every player runs the full simulation and only commands go over the network.</p>
+    <p>Determinism is easy to keep from day one and very painful to add later. Six rules cover most of it:</p>
+  </div>
+  <div class="panel rules">
+    <div class="rule"><span class="n">1</span><div><b>All randomness comes from a seeded generator stored in the state.</b><p>Never call a global random function. The generator's internal state is saved, loaded and hashed like everything else. The demo's bug checkbox breaks exactly this rule.</p></div></div>
+    <div class="rule"><span class="n">2</span><div><b>Never read the clock inside the simulation.</b><p>No <code>Instant::now()</code>, no <code>DateTime.Now</code>, no frame delta. The tick counter is the only clock.</p></div></div>
+    <div class="rule"><span class="n">3</span><div><b>Iterate in a stable order.</b><p>Rust's <code>HashMap</code> iteration order is randomized per process by default. Use <code>Vec</code>, sorted IDs, or an ordered map for anything the rules loop over.</p></div></div>
+    <div class="rule"><span class="n">4</span><div><b>Be careful with floating point.</b><p>Basic float math repeats reliably on one build, but results can drift across platforms and compilers, especially with functions like <code>sin</code> and <code>pow</code>. Use integers or fixed-point for anything that affects game rules: positions on belts, recipe timers, ore quality.</p></div></div>
+    <div class="rule"><span class="n">5</span><div><b>Threads may only split independent work, and results merge in a fixed order.</b><p>Two planets can simulate on two threads. Two threads racing to take the same item is a desync.</p></div></div>
+    <div class="rule"><span class="n">6</span><div><b>Hash the state and check it.</b><p>Hash the world every N ticks. In tests, compare against a recorded replay. In multiplayer, compare between peers. When hashes differ, you know the exact tick things went wrong.</p></div></div>
+  </div>
+</section>
+
+<section id="godot">
+  <div class="head">
+    <div class="label">Chapter 8</div>
+    <h2>Wiring it into Godot</h2>
+  </div>
+  <div class="prose">
+    <p>The simulation is a normal library with its own tests. Godot loads it through GDExtension (for Rust, via the godot-rust bindings; for C#, as a regular project reference). One small bridge node owns the <code>World</code>, ticks it, and hands snapshots to the view nodes.</p>
+  </div>
+  <div class="two">
+    <div style="display: grid; gap: 14px; min-width: 0">
+      <div class="codehead"><span>Repo layout</span><span></span></div>
+<pre><code>r2ts-game/
+├─ sim/               <span class="c"># the game's rules. No Godot.</span>
+│  ├─ src/state.rs
+│  ├─ src/step.rs
+│  ├─ src/systems/    <span class="c"># belts, inserters, machines…</span>
+│  └─ tests/          <span class="c"># run with cargo test</span>
+├─ sim-bench/         <span class="c"># headless perf runs</span>
+├─ sim-godot/         <span class="c"># thin GDExtension wrapper</span>
+└─ godot/             <span class="c"># scenes, sprites, UI, audio</span>
+   └─ SimHost.gd</code></pre>
+    </div>
+    <div style="display: grid; gap: 14px; min-width: 0">
+      <div class="codehead"><span>godot/SimHost.gd</span><span>the only bridge</span></div>
+<pre><code><span class="k">extends</span> Node
+
+<span class="k">var</span> sim := Sim.new()   <span class="c"># class exported by sim-godot</span>
+<span class="k">var</span> queue := []
+
+<span class="c"># Godot calls this at a fixed rate (60/s by default).</span>
+<span class="k">func</span> _physics_process(_dt):
+    sim.step(queue)
+    queue.clear()
+
+<span class="c"># Called every rendered frame.</span>
+<span class="k">func</span> _process(_dt):
+    <span class="k">var</span> a := Engine.get_physics_interpolation_fraction()
+    $FactoryView.draw_from(sim.prev(), sim.curr(), a)
+
+<span class="k">func</span> place_machine(design, tile):
+    queue.append({<span class="s">"type"</span>: <span class="s">"place"</span>, <span class="s">"design"</span>: design, <span class="s">"at"</span>: tile})</code></pre>
+    </div>
+  </div>
+  <p class="note">Godot's <code>_physics_process</code> gives you a fixed-rate tick for free, and <code>Engine.get_physics_interpolation_fraction()</code> is the α from Chapter 5. Keep Godot's own physics engine out of the simulation: belts and inserters are your rules, not rigid bodies. For thousands of items, draw with <code>MultiMeshInstance2D</code> instead of one node per item.</p>
+</section>
+
+<section id="payoff">
+  <div class="head">
+    <div class="label">Chapter 9</div>
+    <h2>What the split buys you</h2>
+  </div>
+  <div class="prose">
+    <p>This is the reason to do it. The test below builds a factory from a blueprint, runs a game-minute in a few milliseconds, and checks a design claim. No window, no engine, and it runs in CI on every commit.</p>
+  </div>
+<pre><code><span class="k">#[test]</span>
+<span class="k">fn</span> two_claw_inserter_beats_one_claw() {
+    <span class="k">let</span> one = throughput(<span class="s">"tests/line.bp"</span>, InserterDesign { claws: 1, ..base() });
+    <span class="k">let</span> two = throughput(<span class="s">"tests/line.bp"</span>, InserterDesign { claws: 2, ..base() });
+    assert!(two &gt; one);
+    assert!(two &lt; one * 2, <span class="s">"2 claws should help, not double: the assembler should bottleneck"</span>);
+}
+
+<span class="k">fn</span> throughput(bp: &amp;str, design: InserterDesign) -&gt; u32 {
+    <span class="k">let mut</span> w = World::from_blueprint(bp, design, 42);  <span class="c">// 42 = seed</span>
+    run(&amp;<span class="k">mut</span> w, 60 * 60);          <span class="c">// one game-minute, headless</span>
+    w.stats.crafted(Item::Gear)
+}</code></pre>
+  <div class="two">
+    <div class="panel"><h3>Balance tests</h3><p class="note">Assert that no design dominates. Run every claw, arm and filter combination overnight and flag any that's strictly better than the rest.</p></div>
+    <div class="panel"><h3>Performance budget</h3><p class="note">Benchmark a 100k-entity megabase in CI. If a change makes a tick slower than your budget (for example 8 ms), the build fails.</p></div>
+    <div class="panel"><h3>Bug reports as replays</h3><p class="note">Players attach a save plus the command log. You replay it tick-for-tick on your machine and step to the exact moment it broke.</p></div>
+    <div class="panel"><h3>Server and co-op later</h3><p class="note">The same library runs as a headless dedicated server, or in lockstep on every player's machine. No rewrite needed.</p></div>
+  </div>
+</section>
+
+<section id="deeper">
+  <div class="head">
+    <div class="label">Chapter 10</div>
+    <h2>Deeper topics</h2>
+    <p>Where to go next, roughly in the order you'll need them. Each card says why it matters for the game we discussed: custom machines, procedural ores, multiple planets, and drone-built megaprojects.</p>
+  </div>
+  <div class="deep">
+    <div class="topic"><span class="when now">Prototype</span><h3>Data-oriented design</h3><p>Store entities in tightly packed arrays grouped by type ("struct of arrays") so the CPU streams through them. Objects scattered in memory with virtual calls get slow fast.</p><p class="yours"><b>For us:</b> a factory game is millions of tiny updates per second. Layout decides whether a megabase runs at 60 ticks/s or 12.</p><p class="search">Search: Mike Acton "Data-Oriented Design and C++" · ECS · bevy_ecs · flecs</p></div>
+    <div class="topic"><span class="when now">Prototype</span><h3>Sleeping entities</h3><p>Most machines are waiting most of the time: output full, input empty. Put them to sleep and wake them only when something they depend on changes. Only active entities cost CPU.</p><p class="yours"><b>For us:</b> a big base might be 90% idle machines on any given tick.</p><p class="search">Search: Factorio Friday Facts on active entities · event-driven wakeups</p></div>
+    <div class="topic"><span class="when soon">Vertical slice</span><h3>Belt and transport optimization</h3><p>Don't move every item every tick. Treat a straight run of belt as one segment and store the gaps between items. Moving the whole segment then means updating one number.</p><p class="yours"><b>For us:</b> belts usually hold the most entities in the game.</p><p class="search">Search: Factorio Friday Facts belt optimization · transport lines</p></div>
+    <div class="topic"><span class="when soon">Vertical slice</span><h3>Procedural generation from seeds</h3><p>Make ore deposits a pure function of <code>(world_seed, planet_id, chunk_x, chunk_y)</code>. Then you never store the untouched world, only the chunks players changed.</p><p class="yours"><b>For us:</b> "ore gets better the deeper you go" becomes a formula of distance plus seeded noise, identical on every machine.</p><p class="search">Search: coherent noise · simplex/OpenSimplex · hash-based noise · chunked worlds</p></div>
+    <div class="topic"><span class="when soon">Vertical slice</span><h3>Save files and versioning</h3><p>Serialize the world to a compact binary format with a version number. Write migrations so old saves load in new builds. Early access players will expect saves to survive updates.</p><p class="yours"><b>For us:</b> player-made machine designs are save data too. Changing part stats needs a migration story.</p><p class="search">Search: serde + bincode/postcard · schema evolution · save migrations</p></div>
+    <div class="topic"><span class="when soon">Vertical slice</span><h3>Fixed-point math</h3><p>Represent fractional values as scaled integers (for example 1 unit = 1/256 tile). You get exact, platform-independent results and no float drift.</p><p class="yours"><b>For us:</b> belt positions, crafting progress and ore purity percentages.</p><p class="search">Search: fixed-point arithmetic · the fixed crate (Rust)</p></div>
+    <div class="topic"><span class="when later">Early access</span><h3>Simulation level of detail</h3><p>Distant, unobserved areas don't need item-by-item simulation. Once a sub-factory is stable, model it as rates ("12 gears per minute, consuming 24 ore") and step it cheaply. Switch back to full detail when a player arrives or something changes.</p><p class="yours"><b>For us:</b> essential for multiple planets. You can't fully tick ten planets at 60/s.</p><p class="search">Search: simulation LOD · statistical simulation · rate-based production</p></div>
+    <div class="topic"><span class="when later">Early access</span><h3>Drone job planning</h3><p>A blueprint becomes a queue of jobs (fetch item, fly, place). Drones claim jobs, planners order them by dependency, and pathfinding runs per chunk. Keep all of it deterministic: same jobs, same drones, same assignments.</p><p class="yours"><b>For us:</b> this is your "macro" layer. Its rules live in the simulation; the plan UI lives in the renderer.</p><p class="search">Search: job systems · flow fields · hierarchical pathfinding (HPA*) · task allocation</p></div>
+    <div class="topic"><span class="when later">Early access</span><h3>Parallel simulation</h3><p>Split work into regions that don't touch (planets, or chunks with buffers between them). Run them on separate threads, then merge the results in a fixed order to stay deterministic.</p><p class="yours"><b>For us:</b> planets are a natural boundary. Interplanetary shipments can move between them at fixed sync points.</p><p class="search">Search: deterministic parallelism · rayon · double-buffered state</p></div>
+    <div class="topic"><span class="when later">If we do co-op</span><h3>Lockstep multiplayer</h3><p>Every player runs the full simulation. Only commands go over the network, scheduled a few ticks ahead to hide latency. Bandwidth stays tiny even with a huge factory. Joining mid-game means transferring a save.</p><p class="yours"><b>For us:</b> the reason determinism has to be there from day one.</p><p class="search">Search: "1500 Archers on a 28.8" · deterministic lockstep · Factorio multiplayer</p></div>
+    <div class="topic"><span class="when later">If we do co-op</span><h3>Desync hunting</h3><p>When two peers' hashes disagree, dump both states, diff them, and bisect ticks to find the first divergence. Build the tooling early. It's miserable to build during a crisis.</p><p class="yours"><b>For us:</b> a debug overlay that shows the hash per subsystem (belts, machines, drones) points straight at the culprit.</p><p class="search">Search: desync debugging · per-system state hashing</p></div>
+    <div class="topic"><span class="when later">Post-launch</span><h3>Modding boundary</h3><p>Expose a scripting API (for example Lua) that can add recipes, parts and entities, and issue commands, but runs inside the tick in a deterministic sandbox.</p><p class="yours"><b>For us:</b> custom parts are a natural mod surface. Factorio's Lua API is the reference design.</p><p class="search">Search: mlua · Factorio modding API · sandboxed scripting</p></div>
+  </div>
+</section>
+
+<section id="reading">
+  <div class="head">
+    <div class="label">Reading list</div>
+    <h2>Start with these</h2>
+  </div>
+  <ul class="reading">
+    <li><a href="https://gafferongames.com/post/fix_your_timestep/">Glenn Fiedler, "Fix Your Timestep!"</a> <span>The classic article on the accumulator loop and interpolation from Chapter 5.</span></li>
+    <li><a href="https://gameprogrammingpatterns.com/game-loop.html">Robert Nystrom, Game Programming Patterns: Game Loop</a> <span>Free online book. Also read the Command and Update Method chapters.</span></li>
+    <li><a href="https://gameprogrammingpatterns.com/command.html">Game Programming Patterns: Command</a> <span>Why commands make undo, replay and AI easier.</span></li>
+    <li><a href="https://www.factorio.com/blog/">Factorio Friday Facts</a> <span>A decade of devlog posts on belts, inserters, sleeping entities, multiplayer and determinism, from the game you're competing with.</span></li>
+    <li><a href="https://www.gamedeveloper.com/programming/1500-archers-on-a-28-8-network-programming-in-age-of-empires-and-beyond">"1500 Archers on a 28.8"</a> <span>How Age of Empires ran lockstep multiplayer over dial-up. Still the clearest introduction.</span></li>
+    <li><span>Mike Acton, "Data-Oriented Design and C++" (CppCon 2014 talk)</span> <span>The talk that changed how game engineers think about memory layout.</span></li>
+  </ul>
+  <footer><span>r2ts · Engineering primer</span><span>Companion to the Genre Playbook</span></footer>
+</section>
+
+</div>
+
+<script>
+(function () {
+  /* ---------- timeline diagram ---------- */
+  var NS = "http://www.w3.org/2000/svg";
+  function sv(tag, attrs, parent, text) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; parent.appendChild(e); return e; }
+  var tg = document.getElementById("ticks-g"), fg = document.getElementById("frames-g");
+  for (var i = 0; i < 8; i++) {
+    var x = 130 + i * 90;
+    sv("line", { x1: x, x2: x, y1: 38, y2: 62, style: "stroke: var(--sim); stroke-width: 2" }, tg);
+    sv("text", { x: x, y: 80, "text-anchor": "middle", style: "fill: var(--sim)" }, tg, "T" + i);
+  }
+  [130, 168, 222, 247, 305, 372, 395, 430, 478, 540, 561, 620, 680, 705, 760].forEach(function (x) {
+    sv("line", { x1: x, x2: x, y1: 120, y2: 140, style: "stroke: var(--ren); stroke-width: 1.5" }, fg);
+  });
+  sv("line", { x1: 454, x2: 454, y1: 62, y2: 118, style: "stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 3 3" }, fg);
+  sv("circle", { cx: 454, cy: 130, r: 5, style: "fill: var(--accent)" }, fg);
+  sv("text", { x: 454, y: 104, "text-anchor": "middle", style: "fill: var(--accent)" }, fg, "α = 0.6");
+
+  /* ---------- the simulation: pure data + step(). No drawing here. ---------- */
+  var END = 40, GAP = 4, SWING_A = 12, SWING_B = 10, CAP = 6, CRAFT = 30, OUTCAP = 4, SEED = 20260929;
+  var BROKEN = false;
+
+  function init(seed) {
+    return {
+      tick: 0, rng: seed >>> 0, nextId: 1,
+      mine: { timer: 0 },
+      belt: [],                                   // [{id, pos}] front item first
+      insA: { claws: 1, phase: "idle", timer: 0, hand: [] },
+      machine: { input: 0, crafting: false, progress: 0, output: 0 },
+      insB: { phase: "idle", timer: 0, hand: 0 },
+      chest: 0, made: 0
+    };
+  }
+  function rand(s) {
+    if (BROKEN) return Math.floor(Math.random() * 4294967296);
+    var x = s.rng; x ^= x << 13; x ^= x >>> 17; x ^= x << 5; s.rng = x >>> 0; return s.rng;
+  }
+  function step(s, cmds, events) {
+    for (var c = 0; c < cmds.length; c++) if (cmds[c].type === "setClaws") s.insA.claws = cmds[c].claws;
+    // mine
+    if (s.mine.timer > 0) s.mine.timer--;
+    if (s.mine.timer === 0) {
+      var last = s.belt[s.belt.length - 1];
+      if (!last || last.pos >= GAP) { s.belt.push({ id: s.nextId++, pos: 0 }); s.mine.timer = 6 + rand(s) % 5; }
+    }
+    // belt
+    for (var i = 0; i < s.belt.length; i++) {
+      var limit = i === 0 ? END : s.belt[i - 1].pos - GAP;
+      if (s.belt[i].pos < limit) s.belt[i].pos++;
+    }
+    // inserter A: belt -> assembler
+    var A = s.insA, M = s.machine;
+    if (A.phase === "idle") {
+      if (s.belt[0] && s.belt[0].pos === END) {
+        A.hand = [s.belt.shift().id];
+        if (A.claws === 2 && s.belt[0] && s.belt[0].pos >= END - GAP) A.hand.push(s.belt.shift().id);
+        A.phase = "to"; A.timer = SWING_A;
+      }
+    } else if (A.phase === "to") {
+      if (A.timer > 0) A.timer--;
+      else if (M.input + A.hand.length <= CAP) { M.input += A.hand.length; A.hand = []; A.phase = "back"; A.timer = SWING_A; }
+    } else {
+      if (A.timer > 0) A.timer--;
+      if (A.timer === 0) A.phase = "idle";
+    }
+    // assembler: 2 ore -> 1 gear
+    if (!M.crafting && M.input >= 2) { M.input -= 2; M.crafting = true; M.progress = 0; }
+    if (M.crafting) {
+      if (M.progress < CRAFT) M.progress++;
+      if (M.progress >= CRAFT && M.output < OUTCAP) { M.output++; M.crafting = false; M.progress = 0; s.made++; events.push({ type: "gear", tick: s.tick }); }
+    }
+    // inserter B: assembler -> chest
+    var B = s.insB;
+    if (B.phase === "idle") { if (M.output > 0) { M.output--; B.hand = 1; B.phase = "to"; B.timer = SWING_B; } }
+    else if (B.phase === "to") { if (B.timer > 0) B.timer--; else { s.chest += B.hand; B.hand = 0; B.phase = "back"; B.timer = SWING_B; } }
+    else { if (B.timer > 0) B.timer--; if (B.timer === 0) B.phase = "idle"; }
+    s.tick++;
+  }
+  function hash(s) {
+    var str = JSON.stringify(s), h = 0x811c9dc5;
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return (h >>> 0).toString(16).padStart(8, "0");
+  }
+  function armT(ins, swing) {
+    if (ins.phase === "idle") return 0;
+    if (ins.phase === "to") return 1 - ins.timer / swing;
+    return ins.timer / swing;
+  }
+  /* Snapshot: the read-only view the renderer gets. */
+  function view(s) {
+    var items = {};
+    s.belt.forEach(function (it) { items[it.id] = it.pos; });
+    return {
+      tick: s.tick, items: items, aT: armT(s.insA, SWING_A), bT: armT(s.insB, SWING_B),
+      aHand: s.insA.hand.length, aClaws: s.insA.claws, bHand: s.insB.hand,
+      input: s.machine.input, crafting: s.machine.crafting, progress: s.machine.progress / CRAFT, output: s.machine.output, chest: s.chest
+    };
+  }
+
+  /* ---------- host: owns the clock, the command log, and the renderer ---------- */
+  var state, log, prevV, currV, gearTicks, frames = 0, paused = false, lastHash = "";
+  var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function reset() {
+    state = init(SEED); log = []; gearTicks = []; prevV = currV = view(state); lastHash = hash(state);
+  }
+  function cmdsFor(t) { return log.filter(function (c) { return c.tick === t; }); }
+  function tickOnce() {
+    var ev = [];
+    prevV = currV;
+    step(state, cmdsFor(state.tick), ev);
+    currV = view(state);
+    ev.forEach(function (e) { if (e.type === "gear") gearTicks.push(e.tick); });
+    if (gearTicks.length > 200) gearTicks = gearTicks.slice(-200);
+    lastHash = hash(state);
+  }
+  reset();
+  paused = reduced;
+
+  /* ---------- renderer: canvas, reads snapshots only ---------- */
+  var cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+  var W = 760, H = 250;
+  function fit() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  fit(); window.addEventListener("resize", fit);
+  function tokens() {
+    var cs = getComputedStyle(document.documentElement);
+    var g = function (n) { return cs.getPropertyValue(n).trim(); };
+    return { surface: g("--surface"), ink: g("--ink"), muted: g("--muted"), line: g("--line"), faint: g("--faint"), ore: g("--accent"), gear: g("--ren"), sim: g("--sim"), good: g("--good") };
+  }
+  var BX = 86, BY = 125, UNIT = 9;
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function box(x, y, w, h, fill, stroke) { ctx.fillStyle = fill; ctx.fillRect(x, y, w, h); ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1); }
+  function label(text, x, y, col) { ctx.fillStyle = col; ctx.font = "500 10.5px 'IBM Plex Mono', monospace"; ctx.textAlign = "center"; ctx.fillText(text, x, y); }
+  function ore(x, y, r, col) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
+  function gear(x, y, r, col, bg) {
+    ctx.fillStyle = col; ctx.beginPath();
+    for (var k = 0; k < 16; k++) { var ang = k / 16 * Math.PI * 2, rr = k % 2 ? r : r * 0.72; ctx.lineTo(x + Math.cos(ang) * rr, y + Math.sin(ang) * rr); }
+    ctx.closePath(); ctx.fill(); ore(x, y, r * 0.3, bg);
+  }
+  function arm(px, py, len, t, claws, handN, handKind, c) {
+    var ang = Math.PI - t * Math.PI, tx = px + Math.cos(ang) * len, ty = py - Math.sin(ang) * len;
+    ctx.fillStyle = c.muted; ctx.fillRect(px - 9, py + 14, 18, 10);
+    ctx.strokeStyle = c.ink; ctx.lineWidth = 4; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(px, py + 14); ctx.lineTo(px, py); ctx.lineTo(tx, ty); ctx.stroke();
+    ctx.lineWidth = 2;
+    for (var k = 0; k < claws; k++) {
+      var off = claws === 2 ? (k ? 5 : -5) : 0;
+      ctx.beginPath(); ctx.moveTo(tx - 4 + off, ty + 6); ctx.lineTo(tx + off, ty + 12); ctx.lineTo(tx + 4 + off, ty + 6); ctx.stroke();
+    }
+    for (var j = 0; j < handN; j++) {
+      var hx = tx + (handN === 2 ? (j ? 5 : -5) : 0), hy = ty + 10;
+      if (handKind === "ore") ore(hx, hy, 7, c.ore); else gear(hx, hy, 9, c.gear, c.surface);
+    }
+  }
+  function render(p, c, a) {
+    var t = tokens();
+    ctx.fillStyle = t.surface; ctx.fillRect(0, 0, W, H);
+    // mine
+    box(16, 95, 60, 60, t.faint, t.line);
+    ctx.fillStyle = t.muted; ctx.beginPath(); ctx.moveTo(30, 140); ctx.lineTo(46, 112); ctx.lineTo(62, 140); ctx.closePath(); ctx.fill();
+    label("MINE", 46, 178, t.muted);
+    // belt with moving chevrons (interpolated)
+    var bl = BX - 14, br = BX + END * UNIT + 14;
+    box(bl, BY - 17, br - bl, 34, t.faint, t.line);
+    var tt = lerp(p.tick, c.tick, a), off = (tt * UNIT) % 18;
+    ctx.save(); ctx.beginPath(); ctx.rect(bl + 1, BY - 16, br - bl - 2, 32); ctx.clip();
+    ctx.strokeStyle = t.line; ctx.lineWidth = 2;
+    for (var x = bl - 18 + off; x < br; x += 18) { ctx.beginPath(); ctx.moveTo(x, BY - 8); ctx.lineTo(x + 6, BY); ctx.lineTo(x, BY + 8); ctx.stroke(); }
+    ctx.restore();
+    label("BELT", (bl + br) / 2, 178, t.muted);
+    // items on belt
+    for (var id in c.items) {
+      var to = c.items[id], from = p.items[id] != null ? p.items[id] : to;
+      ore(BX + lerp(from, to, a) * UNIT, BY, 11, t.ore);
+    }
+    // assembler
+    box(528, 85, 80, 80, t.faint, t.line);
+    for (var k = 0; k < 6; k++) { ctx.fillStyle = k < c.input ? t.ore : t.line; ctx.fillRect(536 + k * 11, 93, 8, 8); }
+    var prog = c.crafting ? (p.crafting ? lerp(p.progress, c.progress, a) : c.progress) : 0;
+    ctx.fillStyle = t.line; ctx.fillRect(536, 150, 64, 6); ctx.fillStyle = t.sim; ctx.fillRect(536, 150, 64 * prog, 6);
+    for (var o = 0; o < c.output; o++) gear(545 + o * 15, 128, 6, t.gear, t.faint);
+    label("ASSEMBLER", 568, 178, t.muted);
+    label("2 ore → 1 gear", 568, 192, t.muted);
+    // chest
+    box(678, 95, 64, 60, t.faint, t.line);
+    ctx.fillStyle = t.ink; ctx.font = "600 18px 'IBM Plex Mono', monospace"; ctx.textAlign = "center"; ctx.fillText(String(c.chest), 710, 132);
+    label("CHEST", 710, 178, t.muted);
+    // inserters
+    arm(492, BY, 38, lerp(p.aT, c.aT, a), c.aClaws, c.aHand, "ore", t);
+    label("INSERTER A · " + c.aClaws + (c.aClaws === 1 ? " CLAW" : " CLAWS"), 492, 178, t.ink);
+    arm(642, BY, 30, lerp(p.bT, c.bT, a), 1, c.bHand, "gear", t);
+    label("B", 642, 178, t.muted);
+    // footer text
+    ctx.fillStyle = t.muted; ctx.font = "10.5px 'IBM Plex Mono', monospace"; ctx.textAlign = "left";
+    ctx.fillText("renderer: drew tick " + p.tick + " → " + c.tick + " at α " + a.toFixed(2), 16, 232);
+  }
+
+  /* ---------- loop ---------- */
+  var tpsEl = document.getElementById("tps"), interpEl = document.getElementById("interp");
+  var acc = 0, last = performance.now(), alpha = 1;
+  var R = {
+    tick: document.getElementById("r-tick"), frames: document.getElementById("r-frames"), alpha: document.getElementById("r-alpha"),
+    made: document.getElementById("r-made"), rate: document.getElementById("r-rate"), hash: document.getElementById("r-hash")
+  };
+  function readout() {
+    R.tick.textContent = state.tick.toLocaleString("en-US");
+    R.frames.textContent = frames.toLocaleString("en-US");
+    R.alpha.textContent = alpha.toFixed(2);
+    R.made.textContent = state.made.toLocaleString("en-US");
+    if (state.tick >= 1000) {
+      var from = state.tick - 1000, n = 0;
+      for (var i = 0; i < gearTicks.length; i++) if (gearTicks[i] >= from) n++;
+      R.rate.textContent = String(n);
+    } else R.rate.textContent = "after 1k";
+    R.hash.textContent = lastHash;
+  }
+  function frame(now) {
+    var dt = Math.min((now - last) / 1000, 0.25); last = now;
+    var tps = +tpsEl.value;
+    if (!paused) {
+      acc += dt; var stepT = 1 / tps, n = 0;
+      while (acc >= stepT && n < 240) { tickOnce(); acc -= stepT; n++; }
+      alpha = interpEl.checked ? Math.min(acc / stepT, 1) : 1;
+    } else alpha = 1;
+    render(prevV, currV, alpha);
+    frames++;
+    readout();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  /* ---------- controls ---------- */
+  var pauseBtn = document.getElementById("pause");
+  function syncPause() { pauseBtn.textContent = paused ? "Play" : "Pause"; }
+  syncPause();
+  tpsEl.addEventListener("input", function () { document.getElementById("tps-out").textContent = tpsEl.value + " ticks/s"; });
+  pauseBtn.addEventListener("click", function () { paused = !paused; acc = 0; syncPause(); });
+  document.getElementById("stepbtn").addEventListener("click", function () { paused = true; syncPause(); tickOnce(); });
+  document.getElementById("reset").addEventListener("click", function () { reset(); acc = 0; setClawsUI(1); msg("World reset to tick 0 with seed " + SEED + ".", ""); });
+  function setClawsUI(n) {
+    document.getElementById("claw1").setAttribute("aria-pressed", n === 1 ? "true" : "false");
+    document.getElementById("claw2").setAttribute("aria-pressed", n === 2 ? "true" : "false");
+  }
+  [1, 2].forEach(function (n) {
+    document.getElementById("claw" + n).addEventListener("click", function () {
+      log.push({ tick: state.tick, type: "setClaws", claws: n });   // a command, not a direct write
+      setClawsUI(n);
+      msg("Queued command <b>setClaws(" + n + ")</b> for tick " + state.tick.toLocaleString("en-US") + ". Command log now has " + log.length + " entr" + (log.length === 1 ? "y" : "ies") + ".", "");
+    });
+  });
+  document.getElementById("broken").addEventListener("change", function (e) { BROKEN = e.target.checked; });
+  var resEl = document.getElementById("result");
+  function msg(html, cls) { resEl.className = "result" + (cls ? " " + cls : ""); resEl.innerHTML = html; }
+
+  document.getElementById("bench").addEventListener("click", function () {
+    var clone = JSON.parse(JSON.stringify(state)), ev = [], t0 = performance.now();
+    for (var i = 0; i < 100000; i++) { ev.length = 0; step(clone, [], ev); }
+    var ms = performance.now() - t0, gears = clone.made - state.made;
+    msg("Ran <b>100,000 ticks</b> (about 28 game-minutes at 60 ticks/s) in <b>" + ms.toFixed(1) + " ms</b> with nothing drawn. " +
+      "With " + clone.insA.claws + " claw" + (clone.insA.claws === 1 ? "" : "s") + " the line made <b>" + gears.toLocaleString("en-US") + " gears</b>, about <b>" + (gears / 100).toFixed(1) + " per 1,000 ticks</b>. The live world was not touched.", "ok");
+  });
+  document.getElementById("verify").addEventListener("click", function () {
+    var t0 = performance.now(), w = init(SEED), ev = [];
+    for (var t = 0; t < state.tick; t++) { ev.length = 0; step(w, cmdsFor(t), ev); }
+    var h = hash(w), ok = h === hash(state), ms = performance.now() - t0;
+    msg(ok
+      ? "<b class='ok'>Match.</b> Replayed " + state.tick.toLocaleString("en-US") + " ticks and " + log.length + " command" + (log.length === 1 ? "" : "s") + " from a fresh world in " + ms.toFixed(1) + " ms. Both hashes are <b>" + h + "</b>."
+      : "<b class='bad'>Desync.</b> Replay hash <b>" + h + "</b> differs from live hash <b>" + hash(state) + "</b>. Something outside the state (like Math.random) changed the result. In multiplayer, the players' worlds would now disagree.",
+      ok ? "ok" : "bad");
+  });
+})();
+</script>

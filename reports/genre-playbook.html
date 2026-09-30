@@ -1,0 +1,797 @@
+<title>r2ts Genre Playbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one reading column (max 1040px), sticky section nav, charts in bordered "panels" like a game stat sheet; fit tiers use loot-rarity colors. */
+:root {
+  --bg: #EDF0F3;
+  --surface: #FFFFFF;
+  --ink: #131922;
+  --muted: #586374;
+  --line: #D3D9E1;
+  --faint: #E4E9EF;
+  --bar: #4B6584;
+  --accent: #C9650A;
+  --t-s: #D2700C; --t-a: #8A3FD1; --t-b: #2F6FD6; --t-c: #2E9460; --t-d: #7A8594; --t-f: #CF342C;
+  --good: #2E9460; --warn: #C9650A; --bad: #CF342C;
+  --f-display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E1218; --surface: #161C25; --ink: #E7EBF1; --muted: #9BA6B5; --line: #2A3342; --faint: #1E2631;
+    --bar: #7F9CC4; --accent: #F59A3C;
+    --t-s: #F59A3C; --t-a: #B07CF0; --t-b: #5B95F0; --t-c: #4CC07D; --t-d: #8C97A6; --t-f: #F0605A;
+    --good: #4CC07D; --warn: #F59A3C; --bad: #F0605A;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E1218; --surface: #161C25; --ink: #E7EBF1; --muted: #9BA6B5; --line: #2A3342; --faint: #1E2631;
+  --bar: #7F9CC4; --accent: #F59A3C;
+  --t-s: #F59A3C; --t-a: #B07CF0; --t-b: #5B95F0; --t-c: #4CC07D; --t-d: #8C97A6; --t-f: #F0605A;
+  --good: #4CC07D; --warn: #F59A3C; --bad: #F0605A;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 16px; line-height: 1.6; }
+.wrap { max-width: 1040px; margin: 0 auto; padding-inline: 20px; padding-block: 0 80px; }
+a { color: inherit; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; line-height: 1.02; margin: 0; letter-spacing: 0.005em; }
+h2 { font-size: clamp(2rem, 4.5vw, 2.8rem); font-weight: 800; text-transform: uppercase; }
+h3 { font-size: 1.35rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; }
+p { margin: 0; max-width: 68ch; }
+.mono { font-family: var(--f-mono); }
+.label { font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+.num { font-variant-numeric: tabular-nums; }
+
+/* nav */
+nav.toc { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+nav.toc .inner { max-width: 1040px; margin: 0 auto; padding-inline: 20px; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+nav.toc a { font-family: var(--f-mono); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.07em; text-decoration: none; color: var(--muted); padding: 12px 10px; white-space: nowrap; border-bottom: 2px solid transparent; }
+nav.toc a:hover { color: var(--ink); border-bottom-color: var(--accent); }
+nav.toc .brand { color: var(--ink); font-weight: 500; padding-left: 0; }
+
+/* hero */
+header.hero { padding-block: 56px 36px; display: grid; gap: 22px; }
+header.hero h1 { font-size: clamp(3rem, 9vw, 6rem); font-weight: 900; text-transform: uppercase; line-height: 0.9; }
+header.hero h1 em { font-style: normal; color: var(--accent); }
+.lede { font-size: 1.12rem; color: var(--ink); max-width: 64ch; }
+.verdicts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 8px; }
+.verdict { background: var(--surface); border: 1px solid var(--line); padding: 16px 18px; display: grid; gap: 6px; align-content: start; }
+.verdict .tag { font-family: var(--f-mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.09em; font-weight: 500; }
+.verdict b { font-family: var(--f-display); font-size: 1.45rem; text-transform: uppercase; line-height: 1.05; font-weight: 800; }
+.verdict p { font-size: 0.9rem; color: var(--muted); }
+.verdict.go .tag { color: var(--good); } .verdict.maybe .tag { color: var(--warn); } .verdict.no .tag { color: var(--bad); }
+.verdict.go { border-top: 3px solid var(--good); } .verdict.maybe { border-top: 3px solid var(--warn); } .verdict.no { border-top: 3px solid var(--bad); }
+
+/* sections */
+section { padding-block: 56px 8px; display: grid; gap: 20px; scroll-margin-top: 48px; }
+section > .head { display: grid; gap: 10px; }
+section > .head p { color: var(--muted); font-size: 1.02rem; }
+.panel { background: var(--surface); border: 1px solid var(--line); padding: 22px; display: grid; gap: 16px; min-width: 0; }
+.panel .ptitle { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline; }
+.note { font-size: 0.8rem; color: var(--muted); max-width: 80ch; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.scroll { overflow-x: auto; }
+
+/* tier list */
+.tiers { display: grid; gap: 4px; }
+.tier { display: grid; grid-template-columns: 64px 1fr; min-height: 58px; background: var(--faint); }
+.tier .rank { display: grid; place-items: center; font-family: var(--f-display); font-weight: 900; font-size: 2rem; color: #fff; background: var(--tc); }
+.tier .items { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px; align-items: center; }
+.chip { font-size: 0.86rem; padding: 5px 10px; background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--tc); line-height: 1.3; }
+.chip small { color: var(--muted); font-family: var(--f-mono); font-size: 0.7rem; margin-left: 6px; }
+.tier .why { flex-basis: 100%; font-size: 0.8rem; color: var(--muted); }
+.ts { --tc: var(--t-s); } .ta { --tc: var(--t-a); } .tb { --tc: var(--t-b); } .tc { --tc: var(--t-c); } .td { --tc: var(--t-d); } .tf { --tc: var(--t-f); }
+
+/* stat strip */
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.stat { border-left: 2px solid var(--accent); padding: 2px 0 2px 14px; display: grid; gap: 2px; }
+.stat b { font-family: var(--f-display); font-size: 2.3rem; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 0.84rem; color: var(--muted); }
+
+/* waffle */
+.waffle { display: grid; grid-template-columns: repeat(20, 1fr); gap: 3px; max-width: 520px; }
+.waffle i { aspect-ratio: 1; display: block; background: var(--c); border-radius: 1px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 0.84rem; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { width: 12px; height: 12px; display: inline-block; background: var(--c); border-radius: 1px; }
+
+/* bar rows */
+.bars { display: grid; gap: 5px; }
+.brow { display: grid; grid-template-columns: minmax(120px, 190px) 1fr 74px; gap: 10px; align-items: center; font-size: 0.86rem; }
+.brow .name { text-align: right; line-height: 1.2; }
+.brow .track { position: relative; height: 18px; }
+.brow .fill { position: absolute; inset: 0 auto 0 0; background: var(--bar); }
+.brow.hl .fill { background: var(--accent); }
+.brow.hl .name { font-weight: 600; }
+.brow.ref .name, .brow.ref .val { font-weight: 600; }
+.brow.ref .fill { background: var(--muted); }
+.brow .val { font-family: var(--f-mono); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.brow .ghost { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); opacity: 0.55; }
+.refline { position: absolute; top: -4px; bottom: -4px; border-left: 1.5px dashed var(--muted); }
+.bars .axisrow .track { height: 14px; }
+
+/* svg text */
+svg text { font-family: var(--f-mono); fill: var(--muted); font-size: 11px; }
+svg .lbl { fill: var(--ink); font-family: var(--f-body); font-size: 12.5px; font-weight: 500; }
+svg .zone { font-family: var(--f-mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+svg .grid { stroke: var(--line); stroke-width: 1; }
+svg .axis { stroke: var(--muted); stroke-width: 1; }
+
+/* matrix table */
+table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { font-family: var(--f-mono); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 500; }
+td.pips { white-space: nowrap; }
+.pip { display: inline-block; width: 9px; height: 9px; margin-right: 2px; background: var(--faint); border: 1px solid var(--line); }
+.pip.on { background: var(--ink); border-color: var(--ink); }
+.pip.half { background: linear-gradient(90deg, var(--ink) 50%, var(--faint) 50%); border-color: var(--ink); }
+.tierbadge { display: inline-grid; place-items: center; width: 26px; height: 26px; font-family: var(--f-display); font-weight: 900; font-size: 1.05rem; color: #fff; background: var(--tc); }
+
+/* timeline */
+.graves { display: grid; gap: 0; }
+.grave { display: grid; grid-template-columns: 90px minmax(0, 1fr) 118px; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--line); align-items: start; }
+.grave:last-child { border-bottom: 0; }
+.grave .yr { font-family: var(--f-mono); font-size: 0.82rem; color: var(--muted); padding-top: 2px; }
+.grave b { font-weight: 600; }
+.grave .who { color: var(--muted); font-size: 0.84rem; }
+.grave .what { font-size: 0.88rem; }
+.pill { justify-self: end; font-family: var(--f-mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; border: 1px solid currentColor; white-space: nowrap; }
+.pill.dead { color: var(--bad); } .pill.maint { color: var(--warn); } .pill.alive { color: var(--good); }
+
+.mmo { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.mmo .panel { padding: 16px; gap: 8px; }
+.mmo ul { margin: 0; padding-left: 18px; font-size: 0.88rem; display: grid; gap: 6px; }
+
+/* team dot plot */
+.dots { display: grid; gap: 0; min-width: 640px; }
+.drow { display: grid; grid-template-columns: 170px 1fr 230px; gap: 12px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--faint); font-size: 0.86rem; }
+.drow .g { line-height: 1.2; }
+.drow .g small { display: block; color: var(--muted); font-size: 0.74rem; }
+.drow .trk { position: relative; height: 20px; }
+.drow .trk::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; border-top: 1px solid var(--line); }
+.drow .dot { position: absolute; top: 50%; width: 13px; height: 13px; border-radius: 50%; transform: translate(-50%, -50%); background: var(--c); border: 2px solid var(--surface); box-sizing: content-box; }
+.drow .out { font-size: 0.8rem; color: var(--muted); line-height: 1.3; }
+.drow.axis { border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.drow.axis .trk::before { display: none; }
+.drow.axis .tick { position: absolute; transform: translateX(-50%); font-family: var(--f-mono); font-size: 0.7rem; color: var(--muted); top: 2px; }
+.drow.sep { grid-template-columns: 1fr; padding-top: 16px; border-bottom: 0; }
+
+/* scoped alternatives */
+.alts { display: grid; gap: 10px; }
+.alt { display: grid; grid-template-columns: minmax(0, 0.8fr) 28px minmax(0, 1.3fr) minmax(0, 1fr); gap: 14px; align-items: start; background: var(--surface); border: 1px solid var(--line); padding: 14px 16px; }
+.alt .from { font-size: 0.9rem; }
+.alt .from .label { display: block; margin-bottom: 2px; }
+.alt .arrow { font-family: var(--f-display); font-size: 1.6rem; color: var(--accent); line-height: 1; text-align: center; }
+.alt .to b { display: block; font-weight: 600; }
+.alt .to span { font-size: 0.84rem; color: var(--muted); }
+.alt .proof { font-size: 0.82rem; color: var(--muted); border-left: 1px solid var(--line); padding-left: 12px; }
+.alt.best { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.alt.best .to b::after { content: "Best fit"; margin-left: 8px; font-family: var(--f-mono); font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent); padding: 1px 6px; vertical-align: 2px; }
+
+/* roadmap */
+.road { min-width: 640px; display: grid; gap: 10px; }
+.road .months, .lane .track { position: relative; margin-left: 130px; }
+.road .months { height: 18px; }
+.road .months span { position: absolute; transform: translateX(-50%); font-family: var(--f-mono); font-size: 0.7rem; color: var(--muted); }
+.lane { position: relative; }
+.lane .lname { position: absolute; left: 0; top: 0; width: 120px; font-family: var(--f-mono); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); line-height: 1.3; }
+.lane .track { display: grid; gap: 6px; }
+.lane .rowt { position: relative; height: 30px; background: var(--faint); }
+.seg { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; padding: 0 8px; font-size: 0.76rem; white-space: nowrap; overflow: hidden; color: var(--ink); background: color-mix(in srgb, var(--c) 22%, var(--surface)); border-left: 3px solid var(--c); }
+.ms { position: absolute; top: -4px; bottom: -4px; width: 0; border-left: 2px solid var(--accent); }
+.ms span { position: absolute; top: -18px; left: 4px; font-family: var(--f-mono); font-size: 0.68rem; color: var(--accent); white-space: nowrap; }
+
+/* calculator */
+.calc { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.fields label { display: grid; gap: 4px; font-size: 0.8rem; color: var(--muted); }
+.fields input { font: 500 1rem var(--f-mono); padding: 8px 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); width: 100%; border-radius: 0; }
+.out { display: grid; gap: 10px; align-content: start; }
+.out .row { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 6px; font-size: 0.9rem; }
+.out .row b { font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-weight: 500; }
+.out .big { font-family: var(--f-display); font-size: 2.4rem; font-weight: 800; line-height: 1; }
+.out .verdictline { font-size: 0.9rem; }
+
+/* art cards */
+.cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.card { background: var(--surface); border: 1px solid var(--line); padding: 16px; display: grid; gap: 6px; align-content: start; font-size: 0.88rem; }
+.card h3 { font-size: 1.1rem; }
+.card p { color: var(--muted); }
+
+ol.sources { margin: 0; padding-left: 22px; font-size: 0.84rem; color: var(--muted); columns: 2; column-gap: 32px; }
+ol.sources li { margin-bottom: 6px; break-inside: avoid; }
+footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 0.8rem; color: var(--muted); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+
+@media (max-width: 760px) {
+  .verdicts, .grid2, .mmo, .cards, .calc { grid-template-columns: minmax(0, 1fr); }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .brow { grid-template-columns: 110px 1fr 58px; gap: 8px; font-size: 0.8rem; }
+  .alt { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .alt .arrow { text-align: left; transform: rotate(90deg); width: 20px; }
+  .alt .proof { border-left: 0; padding-left: 0; }
+  .grave { grid-template-columns: 60px minmax(0, 1fr); }
+  .grave .pill { grid-column: 2; justify-self: start; }
+  ol.sources { columns: 1; }
+  .panel { padding: 16px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .brow .fill { transition: width 0.5s ease; }
+}
+</style>
+
+<nav class="toc" aria-label="Sections">
+  <div class="inner">
+    <a class="brand" href="#top">r2ts / 001</a>
+    <a href="#tiers">Tier list</a>
+    <a href="#market">Market</a>
+    <a href="#genres">Genres</a>
+    <a href="#difficulty">Difficulty</a>
+    <a href="#moba-mmo">MOBA &amp; MMO</a>
+    <a href="#teams">Team size</a>
+    <a href="#plan">Plan</a>
+    <a href="#art">Art &amp; tech</a>
+    <a href="#sources">Sources</a>
+  </div>
+</nav>
+
+<div class="wrap" id="top">
+
+<header class="hero">
+  <div class="label">r2ts research · No. 001 · Genre profitability vs. difficulty · September 2026</div>
+  <h1>Build systems,<br><em>not servers.</em></h1>
+  <p class="lede">Which genre should a studio of 2–5 strong engineers with no dedicated artist bet on first? We compared Steam revenue data, hit rates, development difficulty and about 30 case studies. The answer is automation and colony sims, where engineering is the moat and simple art is accepted. MOBAs and MMOs are the worst fit on every axis, but the parts you like about them can live on in scoped forms.</p>
+  <div class="verdicts">
+    <div class="verdict go"><span class="tag">Build first</span><b>Automation or colony sim</b><p>Premium, $15–20, single-player first. Deckbuilder or roguelite is the runner-up.</p></div>
+    <div class="verdict maybe"><span class="tag">Optional side bets</span><b>Jam-scale co-op games</b><p>1–4 month "friendslop" prototypes on relay networking. Cheap lottery tickets.</p></div>
+    <div class="verdict no"><span class="tag">Not as a first game</span><b>MOBA or MMO</b><p>They fail on player population and live-ops, not on code. Keep the fantasy, change the format.</p></div>
+  </div>
+</header>
+
+<section id="tiers">
+  <div class="head">
+    <div class="label">01 · The answer</div>
+    <h2>Genre tier list for r2ts</h2>
+    <p>Ranked by revenue potential relative to what it costs <em>this</em> team to build: strong engineers, weak art, no live-ops staff. Tiers are our synthesis of the data in the sections below.</p>
+  </div>
+  <div class="tiers">
+    <div class="tier ts"><div class="rank">S</div><div class="items">
+      <span class="chip">Automation / factory<small>Factorio · shapez · Mindustry</small></span>
+      <span class="chip">Colony / management sim<small>RimWorld · Schedule I</small></span>
+      <span class="why">Hard engineering, abstract art accepted, $17–44k median, above-average hit rates.</span>
+    </div></div>
+    <div class="tier ta"><div class="rank">A</div><div class="items">
+      <span class="chip">Roguelike deckbuilder<small>Balatro</small></span>
+      <span class="chip">Roguelike / roguelite<small>Dome Keeper</small></span>
+      <span class="chip">Survivors-like<small>Vampire Survivors · Brotato</small></span>
+      <span class="chip">Co-op party ("friendslop")<small>PEAK · R.E.P.O.</small></span>
+      <span class="why">Solo-dev hits with cheap art. Survivors-likes are saturating; co-op hits fade in 3–9 months.</span>
+    </div></div>
+    <div class="tier tb"><div class="rank">B</div><div class="items">
+      <span class="chip">Tactics / 4X-lite</span>
+      <span class="chip">City builder</span>
+      <span class="chip">Survival-crafting<small>Valheim</small></span>
+      <span class="chip">Incremental / idle</span>
+      <span class="why">Good money but either content-heavy (survival, city) or crowded and cheap (idle).</span>
+    </div></div>
+    <div class="tier tc"><div class="rank">C</div><div class="items">
+      <span class="chip">Puzzle</span>
+      <span class="chip">2D platformer</span>
+      <span class="why">Easy to build, very low medians and hit rates (0.2–0.4%).</span>
+    </div></div>
+    <div class="tier td"><div class="rank">D</div><div class="items">
+      <span class="chip">Fighting</span>
+      <span class="chip">PvP extraction shooter</span>
+      <span class="why">Art-heavy, rollback netcode or anti-cheat, needs a live player base.</span>
+    </div></div>
+    <div class="tier tf"><div class="rank">F</div><div class="items">
+      <span class="chip">MOBA</span>
+      <span class="chip">MMO</span>
+      <span class="why">No small-team success found. Funded teams of 40–123 failed on population and content treadmill.</span>
+    </div></div>
+  </div>
+</section>
+
+<section id="market">
+  <div class="head">
+    <div class="label">02 · The baseline</div>
+    <h2>Most Steam games make almost nothing</h2>
+    <p>The market grew to $17.7B on Steam in 2025, but hits take nearly all of it. The top 1% of games earn 84.5% of revenue. Genre is the biggest lever a new studio controls.</p>
+  </div>
+  <div class="stats">
+    <div class="stat"><b>$249</b><span>median gross for a 2025 Steam release</span></div>
+    <div class="stat"><b>1 in 33</b><span>2025 releases reached 1,000 reviews (~$150k gross)</span></div>
+    <div class="stat"><b>~25.8k</b><span>Steam releases projected for 2026, up from ~14k in 2023</span></div>
+    <div class="stat"><b>35–57%</b><span>of gross reaches the developer after Valve, VAT, refunds</span></div>
+  </div>
+  <div class="grid2">
+    <div class="panel">
+      <div class="ptitle"><h3>Where 2025 releases landed</h3><span class="label">200 squares = all releases</span></div>
+      <div class="waffle" id="waffle" role="img" aria-label="Waffle chart: 40% under $100, 26% $100 to $1k, 26% $1k to $100k, 6.5% $100k to $1M, 1.5% over $1M"></div>
+      <div class="legend" id="waffle-legend"></div>
+      <p class="note">First-year gross estimates (Gamalytic data via game-developers.org). The 3% that clear ~$150k gross is the realistic "we survived" line for a salaried team.</p>
+    </div>
+    <div class="panel">
+      <div class="ptitle"><h3>More games, same hit rate</h3><span class="label">Steam releases per year</span></div>
+      <div class="scroll"><svg id="volume" viewBox="0 0 440 290" width="100%" role="img" aria-label="Bar chart of Steam releases per year with hit rates"></svg></div>
+      <p class="note">Hit rate = share reaching 1,000+ reviews (How To Market A Game / VG Insights). 2026 volume is a projection (16,115 by Aug 20); the 1.6% for Q1 2026 is an early snapshot that will rise.</p>
+    </div>
+  </div>
+</section>
+
+<section id="genres">
+  <div class="head">
+    <div class="label">03 · Revenue by genre</div>
+    <h2>Strategy and sims earn 5–40× more than action</h2>
+    <p>Median revenue by genre varies by more than an order of magnitude, and the ranking has been stable for years. Strategy, sim and survival tags sell more copies <em>and</em> earn 2–3× more per copy than horror, action, puzzle and platformer tags.</p>
+  </div>
+  <div class="panel">
+    <div class="ptitle"><h3>Lifetime median gross by Steam tag</h3><span class="label">Immutable · Sept 2026 · all games per tag</span></div>
+    <div class="bars" id="medians"></div>
+    <p class="note">Dashed line: median across all 107 tags ($4,837). Highlighted bars are the tags closest to the recommended S-tier genres. GameDiscoverCo's net-revenue series ranks them the same way: Colony Sim $44k, Roguelike Deckbuilder $38k, 4X $35k, City Builder $22k. No dataset breaks out automation, survivors-likes, MOBA or MMO as separate tags.</p>
+  </div>
+  <div class="panel">
+    <div class="ptitle"><h3>Hit rate by genre, 2025</h3><span class="label">share of releases reaching 1,000+ reviews</span></div>
+    <div class="bars" id="hits"></div>
+    <div class="legend"><span><i style="--c: var(--bar)"></i>2025</span><span><i style="--c: var(--ink); width: 3px; opacity: .55"></i>2024 value, where published</span></div>
+    <p class="note">Survival-craft's 21% is partly selection: only well-funded teams attempt it. Farming dropped from 20.8% to 8.3% in one year as supply caught up. 2024-only figures: Puzzle 0.36%, Point &amp; Click 0.13%. Job Simulator (34.7%) is omitted as a less reliable second-hand figure.</p>
+  </div>
+</section>
+
+<section id="difficulty">
+  <div class="head">
+    <div class="label">04 · Cost to build</div>
+    <h2>Your moat is the bottom-right corner</h2>
+    <p>Automation and colony sims are the only genres that combine hard engineering with low art dependency. For art-led teams that difficulty is a barrier. For r2ts it is an advantage.</p>
+  </div>
+  <div class="panel">
+    <div class="ptitle"><h3>Engineering complexity vs. art dependency</h3><span class="label">bubble size = live-ops / server burden</span></div>
+    <div class="scroll"><svg id="scatter" viewBox="0 0 700 470" width="100%" style="min-width: 560px" role="img" aria-label="Scatter plot of genres by engineering complexity and art dependency"></svg></div>
+    <div class="legend" id="scatter-legend"></div>
+    <p class="note">Scores (1–5) are analyst judgments built from shipped-game evidence, not an external dataset. Art dependency = 6 − tolerance for minimal, pixel, procedural or asset-store art. Points with tied scores are nudged apart slightly.</p>
+  </div>
+  <div class="panel">
+    <div class="ptitle"><h3>Full difficulty matrix</h3><span class="label">5 = hardest · art tolerance 5 = most forgiving</span></div>
+    <div class="scroll"><table id="matrix">
+      <thead><tr><th>Tier</th><th>Genre</th><th>Engineering</th><th>Art / content</th><th>Live-ops</th><th>Art tolerance</th><th>Market signal</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </div>
+</section>
+
+<section id="moba-mmo">
+  <div class="head">
+    <div class="label">05 · The genres you asked about</div>
+    <h2>Every funded MOBA since 2014 has died</h2>
+    <p>No 2–5 person team has shipped a successful traditional MOBA in the period studied. The failures are not about code or art. They are about <strong>player liquidity</strong>: a team PvP game needs enough strangers online in every region and skill band to fill fair matches fast. When the count drops, queues lengthen, matches get worse, and more players leave. Even 3v3 "MOBA-lite" formats died this way.</p>
+  </div>
+  <div class="panel">
+    <div class="ptitle"><h3>The MOBA challenger graveyard</h3><span class="label">2014 – 2026</span></div>
+    <div class="graves" id="graves"></div>
+    <p class="note">Meanwhile the incumbents keep growing. Honor of Kings grossed about $1.6B on mobile in 2025, roughly 10× Mobile Legends.</p>
+  </div>
+  <div class="head">
+    <h2>MMOs: demand is real, small teams still stall</h2>
+    <p>The durable winners are old and low-fidelity, so art is not the barrier. The barrier is the content treadmill, community load and runway. Small-team MMOs follow a spike-then-collapse curve.</p>
+  </div>
+  <div class="mmo">
+    <div class="panel"><span class="label" style="color: var(--good)">Proof of demand</span>
+      <ul>
+        <li>Old School RuneScape hit a record ~240.7k concurrent players in Aug 2025.</li>
+        <li>Tibia (1997) made €14.5M profit on €24.5M in 2023, with ~100 staff.</li>
+        <li>Albion Online booked 389 MSEK in 2025, after ~5 years to launch and 100+ staff.</li>
+      </ul></div>
+    <div class="panel"><span class="label" style="color: var(--bad)">Big launches, 2024–26</span>
+      <ul>
+        <li>New World delisted; servers close Jan 2027.</li>
+        <li>Throne and Liberty lost ~95% of its Steam players.</li>
+        <li>Ashes of Creation's studio (123 staff) closed ~7 weeks into early access.</li>
+        <li>Pax Dei cut from ~60 to 43 staff.</li>
+      </ul></div>
+    <div class="panel"><span class="label" style="color: var(--warn)">Small teams</span>
+      <ul>
+        <li>Brighter Shores (RuneScape co-creator): ~20k → ~250 players, −97% in a year.</li>
+        <li>Dreadmyst (solo): 6k+ players, pulled from Steam in ~7 weeks.</li>
+        <li>Project Gorgon (2–3 people): ran out of money in 2023; 1.0 after 8 years, ~$2.2M lifetime (est.).</li>
+        <li><b>Exception:</b> Legends of IdleOn (solo) dropped real-time combat and the shared world. It is an idle game with MMO social features.</li>
+      </ul></div>
+  </div>
+</section>
+
+<section id="teams">
+  <div class="head">
+    <div class="label">06 · Case studies</div>
+    <h2>Team size doesn't predict the outcome. Format does.</h2>
+    <p>Solo developers sit at both ends of the outcome range, and teams of 40–123 sit at the bottom. The split is whether the game is fun with ten players online, or none, versus needing thousands of strangers at once.</p>
+  </div>
+  <div class="panel">
+    <div class="ptitle"><h3>Team size at launch vs. outcome</h3><span class="label">log scale · people</span></div>
+    <div class="scroll"><div class="dots" id="dots"></div></div>
+    <div class="legend"><span><i style="--c: var(--good); border-radius: 50%"></i>Hit</span><span><i style="--c: var(--warn); border-radius: 50%"></i>Survived / mixed</span><span><i style="--c: var(--bad); border-radius: 50%"></i>Failed or shut down</span></div>
+    <p class="note">Sales marked "est." are third-party estimates that often differ by 2×. The list samples games people wrote about, so it over-represents hits. Most "overnight" hits were not the first game: Lethal Company was its developer's ~20th, and the Dome Keeper team had shipped 14 jam games.</p>
+  </div>
+</section>
+
+<section id="plan">
+  <div class="head">
+    <div class="label">07 · Recommendation</div>
+    <h2>Keep the MOBA/MMO fantasy, change the format</h2>
+    <p>Each thing you like about MOBAs and MMOs has a scoped format that drops the population, live-ops and art burden. If the game finds an audience, leaderboards, trading or small-shard servers can come later, after demand is proven. That is the reverse of the order every failed challenger followed.</p>
+  </div>
+  <div class="alts" id="alts"></div>
+
+  <div class="panel">
+    <div class="ptitle"><h3>A suggested two-track roadmap</h3><span class="label">months from kickoff · illustrative</span></div>
+    <div class="scroll"><div class="road" id="road"></div></div>
+    <p class="note">The flagship follows the wishlist funnel: Steam page 6–12 months before launch, a demo well before Next Fest, and at least 7–10k wishlists at launch. Demos released months before Next Fest earn about 2.5× the median gain (806 wishlists). Dome Keeper went from ~1k wishlists before its demo to 189k at launch.</p>
+  </div>
+
+  <div class="panel">
+    <div class="ptitle"><h3>Break-even check</h3><span class="label">edit the inputs</span></div>
+    <div class="calc">
+      <div class="fields">
+        <label for="c-team">Engineers<input id="c-team" type="number" min="1" max="20" step="1" value="3"></label>
+        <label for="c-cost">Monthly cost per person ($)<input id="c-cost" type="number" min="0" step="500" value="7000"></label>
+        <label for="c-months">Months to launch<input id="c-months" type="number" min="1" max="72" step="1" value="24"></label>
+        <label for="c-price">Price ($)<input id="c-price" type="number" min="0.99" step="1" value="14.99"></label>
+        <label for="c-net">Net share of gross (%)<input id="c-net" type="number" min="10" max="100" step="1" value="50"></label>
+        <label for="c-other">Other costs: art, capsule, tools ($)<input id="c-other" type="number" min="0" step="1000" value="15000"></label>
+      </div>
+      <div class="out" aria-live="polite">
+        <div class="row"><span>Total budget</span><b id="o-budget">–</b></div>
+        <div class="row"><span>Net per copy</span><b id="o-net">–</b></div>
+        <div class="row"><span>Copies to break even</span><b id="o-copies">–</b></div>
+        <div><span class="label">Gross revenue needed</span><div class="big num" id="o-gross">–</div></div>
+        <p class="verdictline" id="o-verdict"></p>
+      </div>
+    </div>
+    <p class="note">Net share defaults to 50%, the middle of the 35–57% range after Valve's cut, VAT, refunds and regional pricing. Set monthly cost to what you would actually pay yourselves. For comparison, the lifetime median Colony Sim sold 2,280 copies and the median 4X game 3,900.</p>
+  </div>
+</section>
+
+<section id="art">
+  <div class="head">
+    <div class="label">08 · Art &amp; tech</div>
+    <h2>Weak art is solvable. Pick the style on purpose.</h2>
+    <p>Many hits shipped cheap or deliberately lo-fi art. The one art spend you can't skip is the Steam capsule image, which drives clicks and creator coverage more than trailers or ads.</p>
+  </div>
+  <div class="cards">
+    <div class="card"><h3>Cheap art that works</h3><p>Vampire Survivors reached early access on about £1,100 of assets, mostly a bought sprite pack. Kenney offers 30,000+ free CC0 assets. Freelance animated pixel sprites run about $20–70 per character. Lethal Company's "retro jank" look was a deliberate texturing trick.</p></div>
+    <div class="card"><h3>Pay for the capsule</h3><p>Chris Zukowski advises spending on capsule art before trailers, ads, conventions or PR. In one case a capsule redesign took a YouTuber's video from 74k to 176k views.</p></div>
+    <div class="card"><h3>AI art is a risk</h3><p>Steam requires disclosure of player-facing AI content (rules revised Jan 2026). AI used only for code and tools is exempt. In a late-2025 survey, 85% of players viewed generative AI in games negatively, and several 2025 indies were review-bombed over it.</p></div>
+    <div class="card"><h3>Networking cost</h3><p>Co-op on relay is nearly free: Photon is free to 100 concurrent players, $125/mo at 500 and $500/mo at 2,000. Epic Online Services gives lobbies, voice and anti-cheat free. Dedicated PvP servers at 1,000 players across 6 regions run about $2,000–4,600/mo before anti-cheat and balance work.</p></div>
+    <div class="card"><h3>Hosting vendors can vanish</h3><p>Hathora shut down its game-server business in May 2026 after an AI company bought it. Stormgate had to rush out an offline mode. Player-hosted or relay designs avoid this risk.</p></div>
+    <div class="card"><h3>Engine</h3><p>Unity shipped 51% of 2024 Steam releases and most 3D co-op hits (asset store plus Photon). Godot is 5% overall but 11% among newer indies and suits 2D systems games like Brotato. Bevy is still pre-1.0, a poor bet for a first commercial game.</p></div>
+  </div>
+</section>
+
+<section id="sources">
+  <div class="head">
+    <div class="label">09 · Sources &amp; caveats</div>
+    <h2>Where the numbers come from</h2>
+    <p>All Steam revenue figures are third-party estimates, not Valve data. Per-game estimates often differ by 2×. Difficulty scores and tiers are analyst judgment. The full written report with inline citations is in the repo at <span class="mono">reports/Game genre profitability for indies.md</span>.</p>
+  </div>
+  <ol class="sources">
+    <li><a href="https://www.immutable.com/insights/steam-genre-revenue-benchmarks">Immutable, Steam genre revenue benchmarks (2026)</a></li>
+    <li><a href="https://newsletter.gamediscover.co/p/which-genre-should-your-next-pc-game">GameDiscoverCo, Which genre should your next PC game be?</a></li>
+    <li><a href="https://howtomarketagame.com/2026/01/27/what-the-hell-happened-in-2025/">How To Market A Game, What happened in 2025</a></li>
+    <li><a href="https://howtomarketagame.com/2025/01/15/what-the-hell-happened-in-2024/">How To Market A Game, What happened in 2024</a></li>
+    <li><a href="https://howtomarketagame.com/2026/05/14/2026-q1-games/">How To Market A Game, Q1 2026 games</a></li>
+    <li><a href="https://howtomarketagame.com/2026/07/30/is-friendslop-saturated/">How To Market A Game, Is friendslop saturated?</a></li>
+    <li><a href="https://game-developers.org/2025-steam-game-revenue-distribution">game-developers.org, 2025 Steam revenue distribution</a></li>
+    <li><a href="https://www.gamesradar.com/games/behold-the-whole-history-of-steams-economy-in-one-picture-the-top-1-percent-of-games-earn-84-5-percent-of-estimated-revenue-and-most-games-barely-make-anything/">GamesRadar+, Top 1% earn 84.5% of revenue</a></li>
+    <li><a href="https://www.photonengine.com/fusion/pricing">Photon Fusion pricing</a></li>
+    <li><a href="https://gameye.com/cost-comparison/">Gameye, dedicated server cost comparison</a></li>
+    <li><a href="https://www.kitguru.net/gaming/joao-silva/theorycraft-games-shutting-down-supervive-just-five-months-after-1-0-launch/">KitGuru, Supervive shutting down</a></li>
+    <li><a href="https://techraptor.net/gaming/news/omega-strikers-will-cease-content-development-8-months-after-release-as-studio-moves-on">TechRaptor, Omega Strikers ends content</a></li>
+    <li><a href="https://www.mmobomb.com/from-launch-to-life-support-brighter-shores-lost-97-of-players">MMOBomb, Brighter Shores lost 97% of players</a></li>
+    <li><a href="https://gameinformer.com/2026/02/02/report-ashes-of-creation-developer-intrepid-studios-shuts-down-weeks-after-the-mmos">Game Informer, Intrepid Studios shuts down</a></li>
+    <li><a href="https://www.gamedeveloper.com/production/how-co-op-climbing-hit-peak-achieved-2-million-sales-for-less-than-200-000-">Game Developer, How PEAK sold on a sub-$200k budget</a></li>
+    <li><a href="https://howtomarketagame.com/2022/10/17/how-dome-keeper-achieved-a-million-dollar-launch/">How To Market A Game, Dome Keeper's million-dollar launch</a></li>
+    <li><a href="https://www.pcgamer.com/software/ai/steam-updates-ai-disclosure-form-to-specify-that-its-focused-on-ai-generated-content-that-is-consumed-by-players-not-efficiency-tools-used-behind-the-scenes/">PC Gamer, Steam AI disclosure update</a></li>
+    <li><a href="https://newsletter.gamediscover.co/p/hows-pc-game-engine-usage-changing">GameDiscoverCo, PC engine usage</a></li>
+  </ol>
+  <footer><span>r2ts · Research 001</span><span>Compiled September 29, 2026</span></footer>
+</section>
+
+</div>
+
+<script>
+(function () {
+  var SVGNS = "http://www.w3.org/2000/svg";
+  function s(tag, attrs, parent, text) {
+    var e = document.createElementNS(SVGNS, tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    if (text != null) e.textContent = text;
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function h(tag, cls, parent, html) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (html != null) e.innerHTML = html;
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  var money = function (n) { return "$" + Math.round(n).toLocaleString("en-US"); };
+
+  /* 1. Waffle: 200 cells */
+  var buckets = [
+    { n: 80, label: "Under $100 · 40%", c: "var(--t-d)" },
+    { n: 52, label: "$100 – $1k · 26%", c: "color-mix(in srgb, var(--t-d) 55%, var(--surface))" },
+    { n: 52, label: "$1k – $100k · 26%", c: "var(--t-b)" },
+    { n: 13, label: "$100k – $1M · 6.5%", c: "var(--t-a)" },
+    { n: 3, label: "Over $1M · 1.5%", c: "var(--t-s)" }
+  ];
+  var waffle = document.getElementById("waffle"), wl = document.getElementById("waffle-legend");
+  buckets.forEach(function (b) {
+    for (var i = 0; i < b.n; i++) { var c = h("i", "", waffle); c.style.setProperty("--c", b.c); }
+    var sp = h("span", "", wl, "<i></i>" + b.label); sp.querySelector("i").style.setProperty("--c", b.c);
+  });
+
+  /* 2. Release volume */
+  var vol = document.getElementById("volume");
+  var yrs = [
+    { y: "2023", v: 14000, hr: "2.56%" }, { y: "2024", v: 18234, hr: "2.44%" },
+    { y: "2025", v: 20282, hr: "2.99%" }, { y: "2026", v: 25799, hr: "1.6%*", proj: true }
+  ];
+  var VX = 50, VW = 370, VT = 20, VB = 220, vmax = 30000;
+  var vy = function (v) { return VB - (v / vmax) * (VB - VT); };
+  [0, 10000, 20000, 30000].forEach(function (t) {
+    s("line", { x1: VX, x2: VX + VW, y1: vy(t), y2: vy(t), class: "grid" }, vol);
+    s("text", { x: VX - 8, y: vy(t) + 4, "text-anchor": "end" }, vol, t === 0 ? "0" : (t / 1000) + "k");
+  });
+  var defs = s("defs", {}, vol);
+  var pat = s("pattern", { id: "hatch", width: 6, height: 6, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, defs);
+  s("rect", { width: 6, height: 6, fill: "var(--faint)" }, pat);
+  s("line", { x1: 0, y1: 0, x2: 0, y2: 6, stroke: "var(--bar)", "stroke-width": 3 }, pat);
+  var bw = 56, step = VW / yrs.length;
+  yrs.forEach(function (d, i) {
+    var cx = VX + step * i + step / 2;
+    s("rect", { x: cx - bw / 2, y: vy(d.v), width: bw, height: VB - vy(d.v), fill: d.proj ? "url(#hatch)" : "var(--bar)", stroke: d.proj ? "var(--bar)" : "none" }, vol);
+    s("text", { x: cx, y: vy(d.v) - 6, "text-anchor": "middle", style: "fill: var(--ink)" }, vol, d.v.toLocaleString("en-US"));
+    s("text", { x: cx, y: VB + 18, "text-anchor": "middle", style: "fill: var(--ink); font-weight: 500" }, vol, d.y + (d.proj ? " proj." : ""));
+    s("text", { x: cx, y: VB + 40, "text-anchor": "middle", style: "fill: var(--accent); font-weight: 500" }, vol, d.hr);
+  });
+  s("text", { x: VX - 8, y: VB + 40, "text-anchor": "end" }, vol, "hit rate");
+
+  /* 3. Median gross by tag */
+  var medians = [
+    ["Open World Survival Craft", 102000], ["4X", 50000, 1], ["JRPG", 21000], ["Colony Sim", 17300, 1],
+    ["RTS", 16700], ["Grand Strategy", 14700, 1], ["Dating Sim", 14400], ["Visual Novel", 10300], ["RPG", 9770],
+    ["Farming Sim", 8690], ["Souls-like", 8460], ["Adventure", 6520], ["Strategy", 4040, 1], ["Idler", 2870],
+    ["Horror", 2590], ["Action", 2530], ["Puzzle", 2390], ["Survival Horror", 2050], ["Match 3", 1830], ["2D Platformer", 1040]
+  ];
+  var medEl = document.getElementById("medians"), mmax = 105000;
+  medians.forEach(function (d) {
+    var r = h("div", "brow" + (d[2] ? " hl" : ""), medEl);
+    h("div", "name", r, d[0]);
+    var t = h("div", "track", r);
+    h("div", "fill", t).style.width = (d[1] / mmax * 100) + "%";
+    h("div", "refline", t).style.left = (4837 / mmax * 100) + "%";
+    h("div", "val", r, d[1] >= 10000 ? "$" + (d[1] / 1000).toFixed(d[1] % 1000 ? 1 : 0).replace(".0", "") + "k" : money(d[1]));
+  });
+
+  /* 4. Hit rates */
+  var hits = [
+    ["Open World Survival Craft", 20.8, 24.5], ["Farming Sim", 8.3, 20.8], ["City Builder", 6.4], ["Roguelike Deckbuilder", 5.1, 6.7, 1],
+    ["Simulation", 4.1, 3.8, 1], ["Metroidvania", 4.0], ["Management", 3.4, 5.4, 1], ["Horror", 3.2, 1.8],
+    ["All Steam", 2.99, 2.44, 0, 1], ["Idle / Incremental", 2.79, 3.1], ["Tower Defense", 2.6], ["RPG", 2.4, 1.5],
+    ["Puzzle / 3D Platformer", 1.5], ["Adult", 1.1, 1.3], ["2D Platformer", 0.18, 0.25]
+  ];
+  var hitEl = document.getElementById("hits"), hmax = 26;
+  hits.forEach(function (d) {
+    var r = h("div", "brow" + (d[3] ? " hl" : "") + (d[4] ? " ref" : ""), hitEl);
+    h("div", "name", r, d[0]);
+    var t = h("div", "track", r);
+    h("div", "fill", t).style.width = (d[1] / hmax * 100) + "%";
+    if (d[2] != null) { var g = h("div", "ghost", t); g.style.left = (d[2] / hmax * 100) + "%"; g.title = "2024: " + d[2] + "%"; }
+    h("div", "val", r, d[1] + "%");
+  });
+
+  /* 5. Scatter */
+  var tierColor = { S: "var(--t-s)", A: "var(--t-a)", B: "var(--t-b)", C: "var(--t-c)", D: "var(--t-d)", F: "var(--t-f)" };
+  var genres = [
+    // name, eng, art/content, liveops, tolerance, tier, market, plot x, plot y, label dx, dy, anchor
+    ["Incremental / idle", 1.5, 1, 1, 5, "B", "$2,870 · 2.8%", 1.5, 1, -12, 4, "end"],
+    ["Puzzle", 2, 1.5, 1, 5, "C", "$2,390 · 0.36% ('24)", 1.88, 1, 0, 26, "middle"],
+    ["Survivors-like", 2, 2, 1, 5, "A", "Many 1M+ solo hits", 2.12, 1, 0, -14, "middle"],
+    ["Roguelike / roguelite", 3, 2.5, 1, 4.5, "A", "Dome Keeper $1M+ week one", 3, 1.5, 12, 4, "start"],
+    ["Roguelike deckbuilder", 2.5, 3, 1, 4, "A", "$38k net · 5.1%", 2.5, 2, -12, 4, "end"],
+    ["Colony / management sim", 4, 2.5, 1, 5, "S", "$17.3k gross / $44k net · 3.4%", 3.88, 1, -12, 22, "end"],
+    ["Tactics / 4X-lite", 3.5, 3, 1, 4, "B", "4X $50k gross", 3.5, 2, 12, 4, "start"],
+    ["Automation / factory", 4, 2.5, 1.5, 5, "S", "shapez 2: 700k+ EA sales", 4.12, 1, 14, 4, "start"],
+    ["City builder", 3.5, 3.5, 1, 3, "B", "$22k net · 6.4%", 3.5, 3, -12, 4, "end"],
+    ["Co-op party", 3, 3, 2, 4, "A", "Hit-driven · fades in 3–9 mo", 3, 2, 0, -16, "middle"],
+    ["Survival-crafting", 4, 4, 2.5, 3, "B", "$102k · 20.8%", 4, 3, 16, 4, "start"],
+    ["Fighting", 5, 5, 3.5, 1.5, "D", "No tag data", 4.5, 4.5, -18, 4, "end"],
+    ["PvP extraction", 5, 4.5, 5, 2, "D", "No tag data", 4.84, 4, -20, 4, "end"],
+    ["MMO", 5, 5, 5, 2, "F", "No small-team success", 5.16, 4, 0, 32, "middle"],
+    ["MOBA", 5, 5, 5, 1, "F", "No small-team success", 5, 5, -22, 4, "end"]
+  ];
+  var sc = document.getElementById("scatter");
+  var PL = 70, PR = 670, PT = 20, PB = 410;
+  var sx = function (v) { return PL + (v - 0.5) / 5 * (PR - PL); };
+  var sy = function (v) { return PB - (v - 0.5) / 5 * (PB - PT); };
+  // zones
+  s("rect", { x: sx(3.25), y: sy(2.25), width: sx(5.5) - sx(3.25), height: sy(0.5) - sy(2.25), fill: "var(--t-s)", "fill-opacity": 0.1 }, sc);
+  s("text", { x: sx(5.45), y: sy(2.25) + 16, "text-anchor": "end", class: "zone", style: "fill: var(--t-s)" }, sc, "Engineering moat, low art");
+  s("rect", { x: sx(4.25), y: sy(5.5), width: sx(5.5) - sx(4.25), height: sy(3.75) - sy(5.5), fill: "var(--t-f)", "fill-opacity": 0.08 }, sc);
+  s("text", { x: sx(4.3), y: sy(5.5) + 16, "text-anchor": "start", class: "zone", style: "fill: var(--t-f)" }, sc, "Danger zone");
+  [1, 2, 3, 4, 5].forEach(function (t) {
+    s("line", { x1: sx(t), x2: sx(t), y1: PT, y2: PB, class: "grid" }, sc);
+    s("line", { x1: PL, x2: PR, y1: sy(t), y2: sy(t), class: "grid" }, sc);
+    s("text", { x: sx(t), y: PB + 18, "text-anchor": "middle" }, sc, t);
+    s("text", { x: PL - 10, y: sy(t) + 4, "text-anchor": "end" }, sc, t);
+  });
+  s("line", { x1: PL, x2: PR, y1: PB, y2: PB, class: "axis" }, sc);
+  s("line", { x1: PL, x2: PL, y1: PT, y2: PB, class: "axis" }, sc);
+  s("text", { x: (PL + PR) / 2, y: PB + 44, "text-anchor": "middle", style: "fill: var(--ink)" }, sc, "Engineering complexity →");
+  s("text", { x: 18, y: (PT + PB) / 2, "text-anchor": "middle", transform: "rotate(-90 18 " + (PT + PB) / 2 + ")", style: "fill: var(--ink)" }, sc, "Art dependency →");
+  genres.slice().sort(function (a, b) { return b[3] - a[3]; }).forEach(function (g) {
+    var cx = sx(g[7]), cy = sy(g[8]);
+    var c = s("circle", { cx: cx, cy: cy, r: 5 + g[3] * 2.4, fill: tierColor[g[5]], "fill-opacity": 0.78, stroke: "var(--surface)", "stroke-width": 1.5 }, sc);
+    s("title", {}, c, g[0] + " — tier " + g[5] + " · " + g[6]);
+  });
+  genres.forEach(function (g) {
+    s("text", { x: sx(g[7]) + g[9], y: sy(g[8]) + g[10], "text-anchor": g[11], class: "lbl" }, sc, g[0]);
+  });
+  var sl = document.getElementById("scatter-legend");
+  ["S", "A", "B", "C", "D", "F"].forEach(function (t) {
+    var sp = h("span", "", sl, "<i></i>Tier " + t); var i = sp.querySelector("i"); i.style.setProperty("--c", tierColor[t]); i.style.borderRadius = "50%";
+  });
+
+  /* 6. Matrix table */
+  function pips(v) {
+    var out = "";
+    for (var i = 1; i <= 5; i++) out += '<span class="pip' + (v >= i ? " on" : v >= i - 0.5 ? " half" : "") + '"></span>';
+    return out;
+  }
+  var order = "SABCDF";
+  var tb = document.querySelector("#matrix tbody");
+  genres.slice().sort(function (a, b) { return order.indexOf(a[5]) - order.indexOf(b[5]) || a[1] + a[2] + a[3] - (b[1] + b[2] + b[3]); }).forEach(function (g) {
+    var tr = h("tr", "", tb);
+    tr.innerHTML = '<td><span class="tierbadge t' + g[5].toLowerCase() + '">' + g[5] + '</span></td><td>' + g[0] + '</td>' +
+      '<td class="pips" aria-label="' + g[1] + ' of 5">' + pips(g[1]) + '</td><td class="pips" aria-label="' + g[2] + ' of 5">' + pips(g[2]) + '</td>' +
+      '<td class="pips" aria-label="' + g[3] + ' of 5">' + pips(g[3]) + '</td><td class="pips" aria-label="' + g[4] + ' of 5">' + pips(g[4]) + '</td>' +
+      '<td class="num" style="font-size:.8rem;color:var(--muted)">' + g[6] + '</td>';
+  });
+
+  /* 7. MOBA graveyard */
+  var graves = [
+    ["2014", "Dawngate", "EA / Waystone", "Cancelled in beta.", "dead", "Cancelled"],
+    ["2018", "Paragon", "Epic", "Dropped by Epic. Netmarble's Overprime revival shut in April 2024.", "dead", "Shut down"],
+    ["2018", "Gigantic", "Motiga / Perfect World", "Servers shut. A 2024 relaunch was hit by server failures.", "dead", "Shut down"],
+    ["—", "Master X Master", "NCSoft", "Launched 2017, later shut down.", "dead", "Shut down"],
+    ["—", "Battlerite", "Stunlock", "Content ended. Retention was \"the biggest challenge\".", "maint", "No content"],
+    ["—", "Heroes of the Storm", "Blizzard", "Moved to permanent maintenance mode.", "maint", "Maintenance"],
+    ["2024", "Omega Strikers", "Odyssey · 40 devs · $19M Series A", "Content ended 8 months after launch; ~50% layoffs.", "dead", "Content ended"],
+    ["2024–25", "Smite 2", "Hi-Rez", "~2k peak players; ~70 layoffs and other games halted to focus on it.", "maint", "Struggling"],
+    ["2026", "Supervive", "Theorycraft · ex-Riot/Bungie", "47.9k test peak, ~100 players by late 2025. Shut Feb 2026, 5 months after 1.0.", "dead", "Shut down"],
+    ["2024–", "Deadlock", "Valve", "The only newcomer with traction: 171k peak, ~64k mid-2026. It has Valve's distribution.", "alive", "Alive"]
+  ];
+  var gv = document.getElementById("graves");
+  graves.forEach(function (g) {
+    h("div", "grave", gv, '<span class="yr">' + g[0] + '</span><div><b>' + g[1] + '</b> <span class="who">· ' + g[2] + '</span><div class="what">' + g[3] + '</div></div><span class="pill ' + g[4] + '">' + g[5] + '</span>');
+  });
+
+  /* 8. Team size dot plot */
+  var teams = [
+    ["sep", "Works alone or with a few friends"],
+    ["Schedule I", "Co-op management sim", 1, "good", "~8.9M units, ~$151M (est.)"],
+    ["Lethal Company", "Co-op horror", 1, "good", "~10M units, ~$114M (est.)"],
+    ["Brotato", "Survivors-like", 1, "good", "10M+ units"],
+    ["Buckshot Roulette", "~2 months of dev", 1, "good", "8M+ units at $2.99"],
+    ["Vampire Survivors", "Survivors-like", 1, "good", "~6.5M units (est.)"],
+    ["Balatro", "Roguelike deckbuilder", 1, "good", "5M+ units"],
+    ["Megabonk", "3D survivors-like", 1, "good", "1M in 2 weeks"],
+    ["Animal Well", "Art-heavy · ~7 yrs", 1, "warn", "~650k units"],
+    ["Dome Keeper", "Mining roguelite", 2, "good", "$1M+ launch week"],
+    ["Super Auto Pets", "Async-PvP auto-battler", 2, "good", "1M+ installs"],
+    ["Silksong", "Art-heavy sequel · ~7 yrs", 3, "good", "7M+ in 3 months"],
+    ["Valheim", "Player-hosted co-op", 5, "good", "12M+ units"],
+    ["Against the Storm", "Roguelite city builder", 6, "good", "2M units"],
+    ["PEAK", "~4 weeks · <$200k", 7, "good", "10M+ units"],
+    ["R.E.P.O.", "Co-op horror · team ~6–10", 8, "good", "~18.4M units (est.)"],
+    ["sep", "Needs a population of strangers online"],
+    ["Dreadmyst", "MMO", 1, "bad", "Pulled in ~7 weeks"],
+    ["Project Gorgon", "MMO · 8 yrs in EA", 3, "warn", "~$2.2M lifetime; ran out of money"],
+    ["Omega Strikers", "MOBA-lite PvP", 40, "bad", "Content ended after 8 months"],
+    ["Pax Dei", "MMO · cut to 43", 60, "bad", "~1.2k players at snapshot"],
+    ["Albion Online", "MMO · ~5 yrs to launch", 110, "warn", "389 MSEK in 2025, after a decade"],
+    ["Ashes of Creation", "MMO · pre-sold", 123, "bad", "Studio closed ~7 weeks into EA"]
+  ];
+  var dots = document.getElementById("dots");
+  var lx = function (n) { return (Math.log(n) / Math.log(150)) * 94 + 3; };
+  var ax = h("div", "drow axis", dots, "<span></span>");
+  var at = h("div", "trk", ax);
+  [1, 2, 5, 10, 20, 50, 100].forEach(function (t) { var k = h("span", "tick", at, t); k.style.left = lx(t) + "%"; });
+  h("span", "out", ax, "Outcome");
+  var cmap = { good: "var(--good)", warn: "var(--warn)", bad: "var(--bad)" };
+  teams.forEach(function (d) {
+    if (d[0] === "sep") { h("div", "drow sep", dots, '<span class="label">' + d[1] + '</span>'); return; }
+    var r = h("div", "drow", dots);
+    h("div", "g", r, d[0] + "<small>" + d[1] + "</small>");
+    var t = h("div", "trk", r);
+    var dt = h("span", "dot", t); dt.style.left = lx(d[2]) + "%"; dt.style.setProperty("--c", cmap[d[3]]); dt.title = d[2] + (d[2] === 1 ? " person" : " people");
+    h("div", "out", r, "<b style='color:var(--ink);font-weight:500'>" + d[2] + "</b> · " + d[4]);
+  });
+
+  /* 9. Scoped alternatives */
+  var alts = [
+    ["MOBA", "Hero kits, item builds, drafting", "Co-op PvE hero-draft roguelite", "1–4 players pick MOBA-style heroes and push lanes against AI waves, on relay networking.", "Removes matchmaking, anti-cheat and servers. Survivors-likes produced repeated 1M+ solo hits; relay co-op is free to 100 players.", 1],
+    ["MOBA", "Competitive depth, ranked play", "Async-PvP auto-battler", "Fight stored snapshots of other players' builds. Nobody has to be online at the same time.", "Super Auto Pets: 2 developers, 1M+ installs.", 0],
+    ["MOBA", "Real-time PvP (if non-negotiable)", "1v1 or 2v2 with bot backfill", "One region first, premium price instead of free-to-play.", "Inference from the failure pattern. No small-team proof exists.", 0],
+    ["MMO", "Persistent progression, skilling, economy", "Idle / incremental MMO", "Leaderboards, trading and async guilds without real-time combat.", "Legends of IdleOn (solo, 1M+ installs per app). Melvor Idle ~$6.7M gross (est.).", 0],
+    ["MMO", "A shared world with friends", "Player-hosted co-op world", "1–10 players per world. Players run the servers.", "Valheim: 5 people, 12M+ copies.", 0],
+    ["MMO", "Loot, gear and risk", "PvE extraction", "Raid, loot, and lose it all on death, against AI instead of players.", "Escape from Duckov: 3M copies in ~3 weeks.", 0],
+    ["MMO", "A living world", "Colony / automation sim with persistent world", "The world feels alive through simulation depth, not headcount. Optional co-op.", "RimWorld, Factorio and Mindustry all started with 1–3 people.", 1]
+  ];
+  var ae = document.getElementById("alts");
+  alts.forEach(function (a) {
+    h("div", "alt" + (a[5] ? " best" : ""), ae,
+      '<div class="from"><span class="label">' + a[0] + ' appeal</span>' + a[1] + '</div>' +
+      '<div class="arrow" aria-hidden="true">→</div>' +
+      '<div class="to"><b>' + a[2] + '</b><span>' + a[3] + '</span></div>' +
+      '<div class="proof">' + a[4] + '</div>');
+  });
+
+  /* 10. Roadmap */
+  var road = document.getElementById("road"), M = 24;
+  var pct = function (m) { return (m / M * 100) + "%"; };
+  var mo = h("div", "months", road);
+  [0, 3, 6, 9, 12, 15, 18, 21, 24].forEach(function (m) { var sp = h("span", "", mo, "M" + m); sp.style.left = pct(m); });
+  function lane(name, rows) {
+    var l = h("div", "lane", road);
+    h("div", "lname", l, name);
+    var tr = h("div", "track", l);
+    rows.forEach(function (row) {
+      var rt = h("div", "rowt", tr);
+      row.forEach(function (sg) {
+        if (sg.ms != null) { var m = h("div", "ms", rt, "<span>" + sg.label + "</span>"); m.style.left = pct(sg.ms); return; }
+        var e = h("div", "seg", rt, sg.label);
+        e.style.left = pct(sg.a); e.style.width = pct(sg.b - sg.a); e.style.setProperty("--c", sg.c);
+        e.title = sg.label + " (M" + sg.a + "–M" + sg.b + ")";
+      });
+    });
+  }
+  lane("Flagship<br>systems game", [
+    [{ a: 0, b: 3, label: "Prototype · lock genre", c: "var(--t-b)" }, { a: 3, b: 7, label: "Vertical slice · capsule art", c: "var(--t-a)" }, { a: 7, b: 13, label: "Demo · build wishlists", c: "var(--t-s)" }, { a: 13, b: 22, label: "Content, polish, playtests", c: "var(--t-b)" }, { a: 22, b: 24, label: "Launch", c: "var(--t-c)" }],
+    [{ ms: 6, label: "Steam page live" }, { ms: 13, label: "Next Fest" }, { ms: 22, label: "7–10k+ wishlists" }]
+  ]);
+  lane("Side bets<br>(optional)", [
+    [{ a: 1, b: 3, label: "Co-op jam #1", c: "var(--t-c)" }, { a: 15, b: 17, label: "Co-op jam #2", c: "var(--t-c)" }]
+  ]);
+
+  /* 11. Calculator */
+  var ids = ["team", "cost", "months", "price", "net", "other"];
+  function num(id) { var v = parseFloat(document.getElementById("c-" + id).value); return isFinite(v) ? v : 0; }
+  function calc() {
+    var budget = num("team") * num("cost") * num("months") + num("other");
+    var netShare = Math.max(num("net"), 1) / 100;
+    var perCopy = num("price") * netShare;
+    var copies = perCopy > 0 ? budget / perCopy : 0;
+    var gross = budget / netShare;
+    document.getElementById("o-budget").textContent = money(budget);
+    document.getElementById("o-net").textContent = "$" + perCopy.toFixed(2);
+    document.getElementById("o-copies").textContent = Math.ceil(copies).toLocaleString("en-US");
+    document.getElementById("o-gross").textContent = money(gross);
+    var where;
+    if (gross >= 1000000) where = "That is a top ~1.5% result: only about 300 games released in 2025 grossed over $1M.";
+    else if (gross >= 150000) where = "That is roughly the top 3% of 2025 releases, above the ~$150k \"hit\" line.";
+    else if (gross >= 100000) where = "That is roughly the top 8% of 2025 releases.";
+    else if (gross >= 1000) where = "About a third of 2025 releases grossed more than $1k; the median genre-tag game made $4.8k lifetime.";
+    else where = "Almost any shipped game clears this.";
+    var mult = gross / 150000;
+    document.getElementById("o-verdict").textContent = (gross >= 150000 ? "You need about " + mult.toFixed(1) + "× the ~$150k hit line. " : "") + where;
+  }
+  ids.forEach(function (id) { document.getElementById("c-" + id).addEventListener("input", calc); });
+  calc();
+})();
+</script>

@@ -1,0 +1,60 @@
+#!/usr/bin/env -S uv run --quiet --with pillow python
+"""Compose a fake game view from the packed sheets, to check that the assets
+fit together the way the client will draw them. Writes
+assets/sprites/mock_scene.png (2x authoring size on top, 1x game size below).
+
+Usage: art/mock_scene.py
+"""
+import json, os, random
+from PIL import Image
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SPR = os.path.join(ROOT, "assets", "sprites")
+T = 64
+W, H = 14, 9
+random.seed(3)
+
+man = json.load(open(os.path.join(SPR, "manifest.json")))
+sheets = {k: Image.open(os.path.join(SPR, v["sheet"])).convert("RGBA") for k, v in man.items()}
+
+
+def frame(asset, row, f=0):
+    m = man[asset]; fw, fh = m["frame_px"]
+    y = [r["name"] for r in m["rows"]].index(row)
+    return sheets[asset].crop((f * fw, y * fh, (f + 1) * fw, (y + 1) * fh))
+
+
+def blit(img, asset, row, tx, ty, f=0):
+    """Draw a sprite with its footprint's top-left tile at (tx, ty)."""
+    ax, ay = man[asset]["anchor_px"]
+    img.alpha_composite(frame(asset, row, f), (tx * T - ax, ty * T - ay))
+
+
+img = Image.new("RGBA", (W * T, H * T))
+# ground
+for y in range(H):
+    for x in range(W):
+        blit(img, "ground", f"v{random.randrange(4)}", x, y)
+# two deposits, drawn the way the client will: a tile is "edge" if any
+# 4-neighbour is outside the circle
+deposits = [("iron", 4, 4, 3, 4), ("copper", 11, 5, 2, 2), ("coal", 10, 1, 1, 1)]
+for kind, cx, cy, r, tier in deposits:
+    inside = lambda x, y: (x - cx) ** 2 + (y - cy) ** 2 <= r * r
+    for y in range(H):
+        for x in range(W):
+            if not inside(x, y): continue
+            edge = not all(inside(x + dx, y + dy) for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))
+            row = f"{kind}_t{tier}_edge" if edge else f"{kind}_t{tier}_full_v{random.randrange(2)}"
+            blit(img, "ore", row, x, y)
+blit(img, "ore", "stone_depleted_full", 1, 7); blit(img, "ore", "stone_depleted_edge", 2, 7)
+# entities, sorted by their bottom edge so nearer things draw on top
+ents = [("spawn", "pad", 6, 1, 0), ("drill", "work", 3, 3, 2), ("drill", "idle", 10, 4, 0),
+        ("player", "walk_SE", 8, 5, 3), ("player", "idle_S", 5, 7, 0)]
+for asset, row, x, y, f in sorted(ents, key=lambda e: e[3] + man[e[0]]["tiles"][1]):
+    blit(img, asset, row, x, y, f)
+
+out = Image.new("RGBA", (W * T, H * T + H * T // 2 + 8), (30, 32, 30, 255))
+out.alpha_composite(img, (0, 0))
+out.alpha_composite(img.resize((W * T // 2, H * T // 2), Image.LANCZOS), (0, H * T + 8))
+out.save(os.path.join(SPR, "mock_scene.png"))
+print("wrote assets/sprites/mock_scene.png")

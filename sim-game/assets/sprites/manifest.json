@@ -1,0 +1,473 @@
+{
+ "ground": {
+  "name": "ground",
+  "tiles": [
+   1,
+   1
+  ],
+  "frame_px": [
+   64,
+   64
+  ],
+  "anchor_px": [
+   0,
+   0
+  ],
+  "rows": [
+   {
+    "name": "v0",
+    "frames": 1
+   },
+   {
+    "name": "v1",
+    "frames": 1
+   },
+   {
+    "name": "v2",
+    "frames": 1
+   },
+   {
+    "name": "v3",
+    "frames": 1
+   }
+  ],
+  "animations": {},
+  "sheet": "ground.png",
+  "columns": 1
+ },
+ "ore": {
+  "name": "ore",
+  "tiles": [
+   1,
+   1
+  ],
+  "frame_px": [
+   64,
+   64
+  ],
+  "anchor_px": [
+   0,
+   0
+  ],
+  "rows": [
+   {
+    "name": "iron_t1_full_v0",
+    "frames": 1
+   },
+   {
+    "name": "iron_t1_full_v1",
+    "frames": 1
+   },
+   {
+    "name": "iron_t1_edge",
+    "frames": 1
+   },
+   {
+    "name": "iron_t2_full_v0",
+    "frames": 1
+   },
+   {
+    "name": "iron_t2_full_v1",
+    "frames": 1
+   },
+   {
+    "name": "iron_t2_edge",
+    "frames": 1
+   },
+   {
+    "name": "iron_t3_full_v0",
+    "frames": 1
+   },
+   {
+    "name": "iron_t3_full_v1",
+    "frames": 1
+   },
+   {
+    "name": "iron_t3_edge",
+    "frames": 1
+   },
+   {
+    "name": "iron_t4_full_v0",
+    "frames": 1
+   },
+   {
+    "name": "iron_t4_full_v1",
+    "frames": 1
+   },
+   {
+    "name": "iron_t4_edge",
+    "frames": 1
+   },
+   {
+    "name": "iron_depleted_full",
+    "frames": 1
+   },
+   {
+    "name": "iron_depleted_edge",
+    "frames": 1
+   },
+   {
+    "name": "copper_t1_full_v0",
+    "frames": 1
+   },
+   {
+    "name": "copper_t1_full_v1",
+    "frames": 1
+   },
+   {
+    "name": "copper_t1_edge",
+    "frames": 1
+   },
+   {
+    "name": "copper_t2_full_v0",
+    "frames": 1
+   },
+   {
+    "name": "copper_t2_full_v1",
+    "frames": 1
+   },
+   {
+    "name": "copper_t2_edge",
+    "frames": 1
+   },
+   {
+    "name": "copper_t3_full_v0",
+    "frames": 1
+   },
+   {
+    "name": "copper_t3_full_v1",
+    "frames": 1
+   },
+   {
+    "name": "copper_t3_edge",
+    "frames": 1
+   },
+   {
+    "name": "copper_t4_full_v0",
+    "frames": 1
+   },
+   {
+    "name": "copper_t4_full_v1",
+    "frames": 1
+   },
+   {
+    "name": "copper_t4_edge",
+    "frames": 1
+   },
+   {
+    "name": "copper_depleted_full",
+    "frames": 1
+   },
+   {
+    "name": "copper_depleted_edge",
+    "frames": 1
+   },
+   {
+    "name": "coal_t1_full_v0",
+    "frames": 1
+   },
+   {
+    "name": "coal_t1_full_v1",
+    "frames": 1
+   },
+   {
+    "name": "coal_t1_edge",
+    "frames": 1
+   },
+   {
+    "name": "coal_t2_full_v0",
+    "frames": 1
+   },
+   {
+    "name": "coal_t2_full_v1",
+    "frames": 1
+   },
+   {
+    "name": "coal_t2_edge",
+    "frames": 1
+   },
+   {
+    "name": "coal_t3_full_v0",
+    "frames": 1
+   },
+   {
+    "name": "coal_t3_full_v1",
+    "frames": 1
+   },
+   {
+    "name": "coal_t3_edge",
+    "frames": 1
+   },
+   {
+    "name": "coal_t4_full_v0",
+    "frames": 1
+   },
+   {
+    "name": "coal_t4_full_v1",
+    "frames": 1
+   },
+   {
+    "name": "coal_t4_edge",
+    "frames": 1
+   },
+   {
+    "name": "coal_depleted_full",
+    "frames": 1
+   },
+   {
+    "name": "coal_depleted_edge",
+    "frames": 1
+   },
+   {
+    "name": "stone_t1_full_v0",
+    "frames": 1
+   },
+   {
+    "name": "stone_t1_full_v1",
+    "frames": 1
+   },
+   {
+    "name": "stone_t1_edge",
+    "frames": 1
+   },
+   {
+    "name": "stone_t2_full_v0",
+    "frames": 1
+   },
+   {
+    "name": "stone_t2_full_v1",
+    "frames": 1
+   },
+   {
+    "name": "stone_t2_edge",
+    "frames": 1
+   },
+   {
+    "name": "stone_t3_full_v0",
+    "frames": 1
+   },
+   {
+    "name": "stone_t3_full_v1",
+    "frames": 1
+   },
+   {
+    "name": "stone_t3_edge",
+    "frames": 1
+   },
+   {
+    "name": "stone_t4_full_v0",
+    "frames": 1
+   },
+   {
+    "name": "stone_t4_full_v1",
+    "frames": 1
+   },
+   {
+    "name": "stone_t4_edge",
+    "frames": 1
+   },
+   {
+    "name": "stone_depleted_full",
+    "frames": 1
+   },
+   {
+    "name": "stone_depleted_edge",
+    "frames": 1
+   }
+  ],
+  "animations": {},
+  "sheet": "ore.png",
+  "columns": 1
+ },
+ "items": {
+  "name": "items",
+  "tiles": [
+   1,
+   1
+  ],
+  "frame_px": [
+   64,
+   96
+  ],
+  "anchor_px": [
+   0,
+   32
+  ],
+  "rows": [
+   {
+    "name": "iron",
+    "frames": 1
+   },
+   {
+    "name": "copper",
+    "frames": 1
+   },
+   {
+    "name": "coal",
+    "frames": 1
+   },
+   {
+    "name": "stone",
+    "frames": 1
+   }
+  ],
+  "animations": {},
+  "sheet": "items.png",
+  "columns": 1
+ },
+ "drill": {
+  "name": "drill",
+  "tiles": [
+   2,
+   2
+  ],
+  "frame_px": [
+   128,
+   192
+  ],
+  "anchor_px": [
+   0,
+   64
+  ],
+  "rows": [
+   {
+    "name": "idle",
+    "frames": 1
+   },
+   {
+    "name": "work",
+    "frames": 8
+   }
+  ],
+  "animations": {
+   "work": {
+    "frames": 8,
+    "fps": 12
+   }
+  },
+  "sheet": "drill.png",
+  "columns": 8
+ },
+ "spawn": {
+  "name": "spawn",
+  "tiles": [
+   3,
+   3
+  ],
+  "frame_px": [
+   192,
+   208
+  ],
+  "anchor_px": [
+   0,
+   16
+  ],
+  "rows": [
+   {
+    "name": "pad",
+    "frames": 4
+   }
+  ],
+  "animations": {
+   "blink": {
+    "frames": 4,
+    "fps": 4
+   }
+  },
+  "sheet": "spawn.png",
+  "columns": 4
+ },
+ "player": {
+  "name": "player",
+  "tiles": [
+   1,
+   1
+  ],
+  "frame_px": [
+   64,
+   128
+  ],
+  "anchor_px": [
+   0,
+   64
+  ],
+  "rows": [
+   {
+    "name": "idle_S",
+    "frames": 4
+   },
+   {
+    "name": "walk_S",
+    "frames": 8
+   },
+   {
+    "name": "idle_SE",
+    "frames": 4
+   },
+   {
+    "name": "walk_SE",
+    "frames": 8
+   },
+   {
+    "name": "idle_E",
+    "frames": 4
+   },
+   {
+    "name": "walk_E",
+    "frames": 8
+   },
+   {
+    "name": "idle_NE",
+    "frames": 4
+   },
+   {
+    "name": "walk_NE",
+    "frames": 8
+   },
+   {
+    "name": "idle_N",
+    "frames": 4
+   },
+   {
+    "name": "walk_N",
+    "frames": 8
+   },
+   {
+    "name": "idle_NW",
+    "frames": 4
+   },
+   {
+    "name": "walk_NW",
+    "frames": 8
+   },
+   {
+    "name": "idle_W",
+    "frames": 4
+   },
+   {
+    "name": "walk_W",
+    "frames": 8
+   },
+   {
+    "name": "idle_SW",
+    "frames": 4
+   },
+   {
+    "name": "walk_SW",
+    "frames": 8
+   }
+  ],
+  "animations": {
+   "idle": {
+    "frames": 4,
+    "fps": 4
+   },
+   "walk": {
+    "frames": 8,
+    "fps": 12
+   }
+  },
+  "sheet": "player.png",
+  "columns": 8
+ }
+}

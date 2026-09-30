@@ -1,0 +1,10 @@
+[package]
+name = "sim-relay"
+version = "0.1.0"
+edition = "2024"
+description = "Headless r2ts host: owns the clock, orders inputs, runs the sim."
+
+[dependencies]
+serde_json = "1.0.151"
+sim = { path = "../sim" }
+sim-net = { path = "../sim-net" }

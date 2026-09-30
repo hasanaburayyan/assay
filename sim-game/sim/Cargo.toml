@@ -1,0 +1,11 @@
+[package]
+name = "sim"
+version = "0.1.0"
+edition = "2024"
+description = "r2ts simulation core: game rules only, no engine code."
+
+# Keep this crate engine-free, with only pure-data dependencies. Anything that
+# draws, plays sound, or reads the clock belongs in the renderer, not here.
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"

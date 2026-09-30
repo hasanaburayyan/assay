@@ -1,0 +1,11 @@
+[package]
+name = "sim-cli"
+version = "0.1.0"
+edition = "2024"
+description = "Interactive terminal host for the r2ts sim."
+
+[dependencies]
+ratatui = "0.30.2"
+rustyline = "18.0.1"
+sim = { path = "../sim" }
+sim-net = { version = "0.1.0", path = "../sim-net" }

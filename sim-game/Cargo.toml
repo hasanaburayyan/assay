@@ -1,0 +1,3 @@
+[workspace]
+members = ["sim", "sim-cli", "sim-net", "sim-relay"]
+resolver = "3"
