@@ -17,6 +17,7 @@ pub mod inventory;
 pub mod item;
 pub mod ore;
 pub mod player;
+pub mod recipe;
 pub mod rng;
 pub mod save;
 pub mod step;
@@ -29,7 +30,8 @@ pub use command::{Event, Input, PlayerCommand, RejectReason, StopReason, SystemC
 pub use inventory::Inventory;
 pub use item::{Item, ItemStack};
 pub use ore::{OreDeposit, OreKind};
-pub use player::{Mining, Player};
+pub use player::{Crafting, Mining, Player};
+pub use recipe::{RECIPES, Recipe, RecipeId, Station};
 pub use rng::Rng;
 pub use save::{OLDEST_SAVE_VERSION, SAVE_VERSION, SaveError};
 pub use step::step;

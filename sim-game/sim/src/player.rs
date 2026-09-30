@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::inventory::Inventory;
+use crate::recipe::RecipeId;
 use crate::types::{DepositId, PlayerId, TilePos};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -24,6 +25,19 @@ pub struct Player {
     /// deposit; walking off it or `Stop` ends it.
     #[serde(default)]
     pub mining: Option<Mining>,
+    /// Hand crafting in progress. Continues while walking or mining; `Stop`
+    /// cancels it and refunds the unit being worked on.
+    #[serde(default)]
+    pub crafting: Option<Crafting>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Crafting {
+    pub recipe: RecipeId,
+    /// Ticks spent on the current unit. Its inputs are already consumed.
+    pub progress: u32,
+    /// Units still to make, counting the current one.
+    pub remaining: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -42,6 +56,7 @@ impl Player {
             target: None,
             inventory: Inventory::default(),
             mining: None,
+            crafting: None,
         }
     }
 }

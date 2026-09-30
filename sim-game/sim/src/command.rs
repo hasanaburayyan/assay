@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::item::Item;
 use crate::ore::OreKind;
+use crate::recipe::RecipeId;
 use crate::types::{DepositId, PlayerId, TilePos};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -25,9 +26,12 @@ pub enum PlayerCommand {
     /// one unit at a time (see `tuning::HAND_MINE_TICKS`) for as long as you
     /// stay on the deposit.
     Mine,
+    /// Hand-craft `count` batches of a recipe from your inventory. Inputs
+    /// are taken as each batch starts; you keep walking or mining meanwhile.
+    Craft { recipe: RecipeId, count: u32 },
     /// Start walking toward `target`, one tile per tick.
     MoveTo { target: TilePos },
-    /// Stop walking and stop mining.
+    /// Stop walking, mining and crafting (the current batch is refunded).
     Stop,
 }
 
@@ -79,6 +83,26 @@ pub enum Event {
     DepositDepleted {
         deposit: DepositId,
     },
+    CraftStarted {
+        player: PlayerId,
+        recipe: RecipeId,
+        count: u32,
+    },
+    /// One batch finished and its output is in the player's inventory.
+    ItemCrafted {
+        player: PlayerId,
+        recipe: RecipeId,
+        item: Item,
+        count: u32,
+        /// Batches still queued after this one.
+        remaining: u32,
+    },
+    /// Crafting ended before every batch was made.
+    CraftingStopped {
+        player: PlayerId,
+        recipe: RecipeId,
+        reason: StopReason,
+    },
     MoveStarted {
         player: PlayerId,
         from: TilePos,
@@ -108,6 +132,8 @@ pub enum StopReason {
     LeftDeposit,
     /// There is nothing left to mine.
     Depleted,
+    /// The next batch needs an item the player no longer has.
+    OutOfInputs,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -117,4 +143,10 @@ pub enum RejectReason {
     DepositDepleted,
     UnknownPlayer,
     OutOfBounds,
+    /// Counts must be at least 1.
+    ZeroCount,
+    /// This recipe needs a machine.
+    NotHandCraftable,
+    /// The player lacks enough of this item.
+    MissingItems(Item),
 }

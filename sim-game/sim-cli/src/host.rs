@@ -40,7 +40,8 @@ Time (single-player; online, the host runs the clock)
 Player
   goto <x> <y>                walk to a tile, one tile per tick
   move <dir> [n]              walk n tiles (default 1); dir: n s e w ne nw se sw
-  stop                        stop walking and mining
+  craft <item> [n]            hand-craft n (default 1), e.g. craft smelter
+  stop                        stop walking, mining and crafting
   mine                        mine the deposit you stand on, by hand, until you
                               stop or walk off it
   where                       your position
@@ -50,6 +51,7 @@ Look
   map                         draw the map (P marks players)
   players                     everyone in this world
   deposits                    list every deposit
+  recipes                     what can be made, from what
   at <x> <y>                  what's on a tile
   events [n]                  the last n events (default 20)
   status                      tick, clock or connection, hash, save file
@@ -432,8 +434,12 @@ impl Host {
                         .mining
                         .map(|m| format!(", mining deposit {}", m.deposit.0))
                         .unwrap_or_default();
+                    let crafting = p
+                        .crafting
+                        .map(|c| format!(", crafting {} ({} to go)", c.recipe.name(), c.remaining))
+                        .unwrap_or_default();
                     out!(
-                        "  {} · {}{you} at ({}, {}){walking}{mining} · carrying {}",
+                        "  {} · {}{you} at ({}, {}){walking}{mining}{crafting} · carrying {}",
                         p.id.0,
                         p.name,
                         p.pos.x,
@@ -443,6 +449,7 @@ impl Host {
                 }
             }
             "deposits" | "ls" => out!("{}", debug::deposit_table(&s.world)),
+            "recipes" => out!("{}", debug::recipe_table()),
             "at" => at(s, args)?,
             "where" => where_am_i(s)?,
             "inv" | "inventory" => {
@@ -485,6 +492,15 @@ impl Host {
             }
             "stop" => submit(s, paused, PlayerCommand::Stop)?,
             "mine" => submit(s, paused, PlayerCommand::Mine)?,
+            "craft" => {
+                let usage =
+                    "Usage: craft <item> [count], e.g. craft smelter. `recipes` lists them.";
+                let name = args.get(1).ok_or(format!("Missing item.\n{usage}"))?;
+                let recipe = sim::RecipeId::parse(name)
+                    .ok_or(format!("No recipe makes `{name}`.\n{usage}"))?;
+                let count: u32 = optional_arg(args, 2, "count", 1)?;
+                submit(s, paused, PlayerCommand::Craft { recipe, count })?;
+            }
             other => {
                 return Err(format!(
                     "Unknown command `{other}`. Type `help` to see commands."
@@ -768,6 +784,7 @@ fn who(world: &World, me: PlayerId, player: PlayerId) -> String {
 fn describe_command(cmd: &PlayerCommand) -> String {
     match cmd {
         PlayerCommand::Mine => "mine".into(),
+        PlayerCommand::Craft { recipe, count } => format!("craft {} {count}", recipe.name()),
         PlayerCommand::MoveTo { target } => format!("goto {} {}", target.x, target.y),
         PlayerCommand::Stop => "stop".into(),
     }
@@ -817,6 +834,7 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
                 sim::StopReason::Stopped => "stopped",
                 sim::StopReason::LeftDeposit => "walked off it",
                 sim::StopReason::Depleted => "mined it out",
+                sim::StopReason::OutOfInputs => "ran out",
             };
             format!(
                 "{} stopped mining deposit {}: {why}",
@@ -825,6 +843,47 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
             )
         }
         Event::DepositDepleted { deposit } => format!("deposit {} is now depleted", deposit.0),
+        Event::CraftStarted {
+            player,
+            recipe,
+            count,
+        } => format!(
+            "{} started crafting {count} {} ({} ticks each)",
+            who(player),
+            recipe.name(),
+            recipe.recipe().ticks
+        ),
+        Event::ItemCrafted {
+            player,
+            item,
+            count,
+            remaining,
+            ..
+        } => {
+            let carrying = world
+                .player(*player)
+                .map_or(0, |p| p.inventory.count(*item));
+            let more = match remaining {
+                0 => String::new(),
+                n => format!(", {n} more to go"),
+            };
+            format!(
+                "{} crafted {count} {} (carrying {carrying}{more})",
+                who(player),
+                item.name()
+            )
+        }
+        Event::CraftingStopped {
+            player,
+            recipe,
+            reason,
+        } => {
+            let why = match reason {
+                sim::StopReason::OutOfInputs => "ran out of inputs",
+                _ => "cancelled, inputs refunded",
+            };
+            format!("{} stopped crafting {}: {why}", who(player), recipe.name())
+        }
         Event::MoveStarted { player, from, to } => format!(
             "{} started walking from ({}, {}) to ({}, {})",
             who(player),
@@ -850,6 +909,16 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
                 }
                 RejectReason::DepositDepleted => "that deposit is already depleted".to_string(),
                 RejectReason::UnknownPlayer => "no such player".to_string(),
+                RejectReason::ZeroCount => "the count must be at least 1".to_string(),
+                RejectReason::NotHandCraftable => {
+                    "that needs a machine; `recipes` shows where each is made".to_string()
+                }
+                RejectReason::MissingItems(item) => {
+                    let have = world
+                        .player(*player)
+                        .map_or(0, |p| p.inventory.count(*item));
+                    format!("not enough {} (you have {have})", item.name())
+                }
                 RejectReason::OutOfBounds => match command {
                     PlayerCommand::MoveTo { target } => off_map(world, *target),
                     _ => "that's off the map".to_string(),

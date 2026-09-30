@@ -387,6 +387,7 @@ fn spawn_listener(listener: TcpListener, events: Sender<NetEvent>) {
 fn describe(command: &PlayerCommand) -> String {
     match command {
         PlayerCommand::Mine => "mine".into(),
+        PlayerCommand::Craft { recipe, count } => format!("craft {} {count}", recipe.name()),
         PlayerCommand::MoveTo { target } => format!("goto {} {}", target.x, target.y),
         PlayerCommand::Stop => "stop".into(),
     }

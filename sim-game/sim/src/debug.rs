@@ -3,6 +3,7 @@
 
 use std::fmt::Write;
 
+use crate::recipe::{RECIPES, Station};
 use crate::types::TilePos;
 use crate::world::World;
 
@@ -63,6 +64,29 @@ pub fn deposit_table(world: &World) -> String {
             "{:>4}  {:<7} {:>10}  {:>6}  {:>6}  {:>6}",
             d.id.0, kind, center, d.radius, d.amount, d.purity
         );
+    }
+    out
+}
+
+/// Table of every recipe.
+pub fn recipe_table() -> String {
+    let mut out = format!(
+        "{:<13} {:<24} {:>5}  {}\n",
+        "makes", "from", "ticks", "where"
+    );
+    for r in &RECIPES {
+        let inputs = r
+            .inputs
+            .iter()
+            .map(|(item, n)| format!("{n} {}", item.name()))
+            .collect::<Vec<_>>()
+            .join(" + ");
+        let makes = format!("{} {}", r.output.1, r.output.0.name());
+        let station = match r.station {
+            Station::Hand => "by hand (craft)",
+            Station::Smelter => "in a smelter",
+        };
+        let _ = writeln!(out, "{makes:<13} {inputs:<24} {:>5}  {station}", r.ticks);
     }
     out
 }

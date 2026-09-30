@@ -1,7 +1,9 @@
 //! Advancing the world one tick.
 
 use crate::command::{Event, Input, PlayerCommand, RejectReason, StopReason, SystemCommand};
-use crate::player::{Mining, Player};
+use crate::inventory::Inventory;
+use crate::player::{Crafting, Mining, Player};
+use crate::recipe::Recipe;
 use crate::tuning::HAND_MINE_TICKS;
 use crate::types::PlayerId;
 use crate::world::World;
@@ -22,6 +24,7 @@ pub fn step(world: &mut World, inputs: &[Input], events: &mut Vec<Event>) {
     // machines, drones.
     move_players(world, events);
     mine_by_hand(world, events);
+    craft_by_hand(world, events);
 
     world.tick += 1;
 }
@@ -86,6 +89,38 @@ fn apply_player(
                 kind,
             });
         }
+        PlayerCommand::Craft { recipe, count } => {
+            if count == 0 {
+                return reject(RejectReason::ZeroCount, events);
+            }
+            if !recipe.is_hand_craftable() {
+                return reject(RejectReason::NotHandCraftable, events);
+            }
+            let p = world.player_mut(player).expect("checked above");
+            if let Some(c) = p.crafting {
+                // Finish what's in progress first; refund it like Stop does.
+                refund(&mut p.inventory, c.recipe.recipe());
+                events.push(Event::CraftingStopped {
+                    player,
+                    recipe: c.recipe,
+                    reason: StopReason::Stopped,
+                });
+            }
+            p.crafting = None;
+            if let Err(missing) = consume(&mut p.inventory, recipe.recipe()) {
+                return reject(RejectReason::MissingItems(missing), events);
+            }
+            p.crafting = Some(Crafting {
+                recipe,
+                progress: 0,
+                remaining: count,
+            });
+            events.push(Event::CraftStarted {
+                player,
+                recipe,
+                count,
+            });
+        }
         PlayerCommand::MoveTo { target } => {
             if !world.in_bounds(target) {
                 return reject(RejectReason::OutOfBounds, events);
@@ -111,6 +146,14 @@ fn apply_player(
                 events.push(Event::MiningStopped {
                     player,
                     deposit: m.deposit,
+                    reason: StopReason::Stopped,
+                });
+            }
+            if let Some(c) = p.crafting.take() {
+                refund(&mut p.inventory, c.recipe.recipe());
+                events.push(Event::CraftingStopped {
+                    player,
+                    recipe: c.recipe,
                     reason: StopReason::Stopped,
                 });
             }
@@ -183,6 +226,67 @@ fn mine_by_hand(world: &mut World, events: &mut Vec<Event>) {
             });
         } else {
             world.players[i].mining = Some(Mining { progress: 0, ..m });
+        }
+    }
+}
+
+/// Take one batch of inputs, or take nothing and say what's missing.
+fn consume(inv: &mut Inventory, recipe: &Recipe) -> Result<(), crate::item::Item> {
+    if let Some(&(item, _)) = recipe.inputs.iter().find(|(i, n)| !inv.has(*i, *n)) {
+        return Err(item);
+    }
+    for &(item, n) in recipe.inputs {
+        let ok = inv.remove(item, n);
+        debug_assert!(ok, "checked above");
+    }
+    Ok(())
+}
+
+/// Give back one batch of inputs (a cancelled craft).
+fn refund(inv: &mut Inventory, recipe: &Recipe) {
+    for &(item, n) in recipe.inputs {
+        inv.add(item, n);
+    }
+}
+
+/// Hand-crafting system: each crafting player advances their current batch;
+/// when it completes, the output lands in their inventory and the next
+/// batch starts if they still have the inputs.
+fn craft_by_hand(world: &mut World, events: &mut Vec<Event>) {
+    for p in &mut world.players {
+        let Some(c) = p.crafting else { continue };
+        let recipe: &Recipe = c.recipe.recipe();
+        let progress = c.progress + 1;
+        if progress < recipe.ticks {
+            p.crafting = Some(Crafting { progress, ..c });
+            continue;
+        }
+
+        let (item, count) = recipe.output;
+        p.inventory.add(item, count);
+        let remaining = c.remaining - 1;
+        events.push(Event::ItemCrafted {
+            player: p.id,
+            recipe: c.recipe,
+            item,
+            count,
+            remaining,
+        });
+        if remaining == 0 {
+            p.crafting = None;
+        } else if consume(&mut p.inventory, recipe).is_ok() {
+            p.crafting = Some(Crafting {
+                progress: 0,
+                remaining,
+                ..c
+            });
+        } else {
+            p.crafting = None;
+            events.push(Event::CraftingStopped {
+                player: p.id,
+                recipe: c.recipe,
+                reason: StopReason::OutOfInputs,
+            });
         }
     }
 }

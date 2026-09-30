@@ -1,7 +1,9 @@
 //! Multiplayer depends on every peer computing the exact same world from the
 //! same inputs. These tests hammer that property with random input streams.
 
-use sim::{Input, PlayerCommand, PlayerId, Rng, SystemCommand, TilePos, World, WorldConfig, step};
+use sim::{
+    Input, PlayerCommand, PlayerId, RecipeId, Rng, SystemCommand, TilePos, World, WorldConfig, step,
+};
 
 fn new_world() -> World {
     World::new(WorldConfig {
@@ -22,9 +24,13 @@ fn random_inputs(rng: &mut Rng, world: &World) -> Vec<Input> {
     }
     for _ in 0..rng.range(0, 4) {
         let player = PlayerId(rng.range(0, world.players.len() as u32 + 1));
-        let command = match rng.range(0, 3) {
+        let command = match rng.range(0, 5) {
             0 => PlayerCommand::Mine,
-            1 => PlayerCommand::MoveTo {
+            1 => PlayerCommand::Craft {
+                recipe: RecipeId::ALL[rng.range(0, RecipeId::ALL.len() as u32) as usize],
+                count: rng.range(0, 4),
+            },
+            2 | 3 => PlayerCommand::MoveTo {
                 target: TilePos::new(
                     rng.range(0, world.width() as u32 + 4) as i32 - 2,
                     rng.range(0, world.height() as u32 + 4) as i32 - 2,
@@ -96,7 +102,7 @@ fn golden_hash_is_stable_across_machines() {
     }
     assert_eq!(
         format!("{:016x}", world.state_hash()),
-        "323d2fe20d915817",
+        "ac76c4b91cb4dc37",
         "world hash changed; see the comment on this test"
     );
 }
