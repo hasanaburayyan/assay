@@ -13,8 +13,9 @@ purer ore deeper into space, build with friends.
 ## Quick start
 
 ```bash
-make relay                    # host world 42 on port 7777
-make join NAME=ada            # connect to localhost (add HOST=ip:7777 for another machine)
+make relay                    # host world 42 on port 7777; prints the address to share
+make join NAME=ada            # connect to a relay on this machine
+make join NAME=ada HOST=192.168.1.48   # connect to a relay on another machine
 make play                     # single-player inspector
 make test
 ```
