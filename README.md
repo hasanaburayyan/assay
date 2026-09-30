@@ -13,9 +13,15 @@ purer ore deeper into space, build with friends.
 ## Quick start
 
 ```bash
-cd sim-game
-cargo test
-cargo run -p sim-cli          # single-player inspector
-cargo run -p sim-relay        # host a world
+make relay                    # host world 42 on port 7777
+make join NAME=ada            # connect to localhost (add HOST=ip:7777 for another machine)
+make play                     # single-player inspector
+make test
+```
+
+Without make, from `sim-game/`:
+
+```bash
+cargo run -p sim-relay
 cargo run -p sim-cli -- --connect localhost:7777 --name <name>
 ```
