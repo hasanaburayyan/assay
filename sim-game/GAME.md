@@ -10,8 +10,9 @@ code today), or **Open** (not decided; don't treat as final).
 A factory-automation game where **you design your own machines**. Instead of
 picking from a fixed list of inserters and assemblers, players build machines
 from parts (a two-claw inserter moves twice as much but costs more to build and
-draws more power). Better ore found deeper in space unlocks better parts,
-which unlock better designs, which means rebuilding the factory. Played solo
+draws more power). Every world has its own generated minerals; purer, better
+refined ore unlocks better parts, which unlock better designs, which means
+rebuilding the factory. Played solo
 or in co-op, eventually inside a shared online galaxy.
 
 Comparable games: Factorio, Dyson Sphere Program, shapez, Mindustry. The
@@ -23,9 +24,11 @@ difference is the machine designer.
    parts: claws, arm segments, filters, and more later. A design's parts set
    its stats (speed, reach, power draw) *and* its build recipe, so every
    design choice is a trade-off the factory has to pay for.
-2. **Procedural ore that improves with distance (Decided, partly Built).** Ore
-   deposits have a purity from 1 to 100. The further from spawn (and later,
-   the deeper into space), the purer the ore. Purer ore makes better parts.
+2. **Generated minerals with purity (Decided, see `docs/adr/0001`).** Each
+   world generates its own mineral species with a property sheet. Deposits
+   have a purity from 1 to 100 that rounds into a grade; purer ore makes
+   better parts and can be refined. The earlier rule that purity rises with
+   distance from spawn was withdrawn on 2026-09-30; purity's source is Open.
 3. **Multiple planets (Decided, later).** Each planet has its own generated
    deposits. Travel outward to find better ore.
 4. **Macro planning with drones (Decided, later).** Players lay out large
