@@ -60,12 +60,17 @@ Whatever it is, it must never run out for good. If a player can spend all of
 rung 0 on the wrong things, the world is soft-locked. It should be either
 renewable or plentiful enough that this can't happen in practice.
 
+**Rung 0 must include a fuel that can be lit by hand:** a mineral whose
+ignition temperature is below the hand spark temperature (see Reactivity in
+`properties.md`). Without it the first furnace can never be lit. It is the
+generated replacement for coal, and the same never-run-out rule applies.
+
 ## Generation guarantee
 
 World generation has to prove the ladder is climbable, not just hope it is.
 Proposed approach:
 
-1. Place rung 0 near spawn.
+1. Place rung 0 near spawn, including a hand-lit fuel.
 2. Generate candidate minerals and deposits for the starting zone.
 3. **Run a reachability check.** Start with the capabilities rung 0 gives.
    Repeatedly add every mineral whose extract and process requirements are

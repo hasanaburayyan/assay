@@ -57,8 +57,9 @@ decided.
   do (load capacity, throughput, weight) are material × units.
 - **Check at design time wherever possible.** A design's shape doesn't change
   while it runs, so structural and heat checks happen once, when the design
-  is saved. Only three rules run per tick.
-- **Energy is free.** Burners and drills need no fuel or power.
+  is saved. Only four rules run per tick.
+- **Energy comes only from fuel.** Furnaces burn fuel (see Reactivity);
+  drills and arms need no energy. There is no power grid.
 - **Carried items weigh nothing.**
 - **Fixed machines only.** No vehicles.
 - **Load doesn't pass between machines.** A machine's weight is checked
@@ -72,6 +73,7 @@ decided.
 | Tile | One grid cell | Footprint, reach, distance |
 | Tile capacity | 8 units | The miniaturization budget per tile. Never upgrades; parts shrink instead |
 | Step factor | 0.8 | How far each upgrade reaches (see §6) |
+| Hand spark temperature | Low, e.g. 15 | The hottest fire a player can start by hand. Any fuel that ignites below it can be lit with no machine |
 
 ## 2. Material properties (generated per mineral)
 
@@ -81,11 +83,31 @@ decided.
 | **Strength** | No; load capacity = strength × units | Bending, snapping | Bases, arms |
 | **Hardness** | No | Can't cut, wears down | Drill heads, claws; also how hard the ore is to mine |
 | **Heat tolerance** | No | Softening, melting | Burners, chambers, anything near heat; also how hot the ore must get to process |
+| **Reactivity** | No; burn time = reactivity × fuel consumed | Reactive parts ignite near heat | Fuel for burners |
 | *Toughness* (Open) | No | Shattering | Arrives with wear and durability |
 | *Conductivity* (Open) | No | Power loss; heat leaking | Arrives with power. One number for heat and electricity |
 
 Stiffness is folded into strength; players won't feel the difference on a
 tile grid.
+
+**Reactivity** is how much energy a mineral releases when it's consumed as
+fuel. It replaces a named fuel like coal: whichever mineral burns well is
+the fuel. In the slice it means combustion only; the broader chemical sense
+(corroding or reacting with neighbours) is Open. From it:
+
+- **Burn temperature** = reactivity. A bigger pile doesn't burn hotter.
+- **Burn time** = reactivity × fuel consumed.
+- **Ignition temperature** = step factor × heat tolerance (calculated, not a
+  new property). Easily melted, reactive minerals light easily. A
+  high-energy mineral that's also heat tolerant needs a hot furnace just to
+  start, so better fuels need a hotter fire to light: the same climb as
+  processing (§6).
+- **Burn it or build with it?** A mineral that is both reactive and strong
+  is a real choice.
+
+Other names for the same ideas: the design note
+`docs/design-notes/2026-09-30-generated-minerals.md` (on the `initial-loop`
+branch) calls heat tolerance "melt point" and reactivity "energy value".
 
 **Generation (proposal):** each mineral is a blend of families, and purity
 (from `GAME.md`) scales the whole blend. Families are only the ingredients
@@ -135,7 +157,8 @@ its shape (the tiles it occupies).
 | Leverage | Each tile's weight × its distance to the nearest base tile, summed. Must be ≤ total load capacity | Design |
 | Reach | Distance from the base to the furthest tile | Design |
 | Tile fill | Units in each tile must be ≤ tile capacity | Design |
-| Max temperature | Lowest heat tolerance among its hot parts | Design |
+| Max temperature | Lowest heat tolerance among its hot parts. The furnace can never run hotter than its own walls survive | Design |
+| Running temperature | The lower of max temperature and its current fuel's burn temperature | Run |
 | Heat safety | Every component sharing a tile with a hot part must tolerate the max temperature | Design |
 | Throughput | Drill: head units. Furnace: burner units. Arm: claws per swing | Run |
 | Build cost | Units of each material, totalled | Build |
@@ -166,8 +189,9 @@ Ore in the ground is cracked and impure, so:
 - **Mining:** a drill head can mine ore up to its hardness ÷ step factor.
   At 0.8, a head of 40 mines ore up to 50.
 - **Processing:** working temperature = step factor × the ore's heat
-  tolerance. A furnace with max temperature 50 processes ore up to heat
-  tolerance 62.
+  tolerance. A furnace running at 50 processes ore up to heat tolerance 62.
+  Running that hot takes both walls that survive 50 and a fuel that burns
+  at 50, so processing is gated twice by one rule.
 
 Every upgrade opens a band about 25% above where you are. The step factor is
 the single number that sets how fast the ladder climbs.
@@ -181,11 +205,13 @@ means building a slightly better furnace first.
 | # | When | If | Then | Reach | Checked |
 |---|---|---|---|---|---|
 | 1 | Drill head on a deposit | Head hardness ≥ step × ore hardness | Mines at head units per cycle | Contact | Run |
-| 2 | Ore in a furnace | Max temperature ≥ step × ore heat tolerance | Becomes processed material | Same tile | Run |
+| 2 | Ore in a furnace | Running temperature ≥ step × ore heat tolerance | Becomes processed material | Same tile | Run |
 | 3 | Claw moves an item | Claw hardness ≥ the item's hardness tier | Moves one item per claw | Contact | Run |
 | 4 | Load on the structure | Leverage > load capacity | Design invalid; overloaded tiles highlighted | Machine | Design |
 | 5 | Components in a tile | More units than tile capacity | Design invalid | Same tile | Design |
 | 6 | Hot part shares a tile | A component there has heat tolerance < max temperature | Design invalid | Same tile | Design |
+| 7 | Fuel in a burner | The burner is at or above the fuel's ignition temperature (or the hand spark is, for a cold start) | Fuel is consumed; the furnace runs at its running temperature for reactivity × fuel consumed ticks | Same tile | Run |
+| 8 | Reactive component in a hot tile | Max temperature ≥ its ignition temperature | Design invalid | Same tile | Design |
 
 Reach levels: **same tile** (components sharing a tile), **contact**
 (touching), **area** (within a radius; unused in the slice), **network**
@@ -196,15 +222,17 @@ material, but may be one rule too many for the slice.
 
 ## Sanity check against the ladder
 
-With four numbers per mineral, the ladder in `starting-zone.md` can still be
-gated by a different one each rung: hardness for mining, heat tolerance for
-processing, and strength and density through which designs you can build.
+With five numbers per mineral, the ladder in `starting-zone.md` can still be
+gated by a different one each rung: hardness for mining, heat tolerance and
+reactivity for processing (walls and fuel), and strength and density through
+which designs you can build.
 
 ## Left out of the slice (Open)
 
 - Toughness and wear
 - Conductivity and power
-- Fuel
+- Reactivity in the broader chemical sense (corrosion, reacting with
+  neighbours or storage)
 - Heat spreading beyond a single tile
 - Ground bearing (whether heavy machines need firm ground)
 - Vehicles, and weight slowing them down
