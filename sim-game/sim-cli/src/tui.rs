@@ -106,6 +106,10 @@ impl RateMeter {
 
 struct Ui {
     console: VecDeque<String>,
+    /// Lines scrolled up from the newest. 0 follows new output.
+    console_scroll: usize,
+    /// Where the console was drawn last frame, for the mouse wheel.
+    console_area: Rect,
     /// The command line. Always active: typed characters land here.
     input: String,
     hover: Option<TilePos>,
@@ -122,6 +126,16 @@ impl Ui {
             self.console.pop_front();
         }
         self.console.push_back(line.into());
+        // Keep the same lines in view when scrolled up while new ones arrive.
+        if self.console_scroll > 0 {
+            self.console_scroll += 1;
+        }
+    }
+
+    fn scroll_console(&mut self, delta: i32) {
+        let max = self.console.len().saturating_sub(1);
+        self.console_scroll =
+            (self.console_scroll as i64 + i64::from(delta)).clamp(0, max as i64) as usize;
     }
 
     fn take_output(&mut self) {
@@ -160,6 +174,8 @@ fn main_loop(
 ) -> std::io::Result<()> {
     let mut ui = Ui {
         console: VecDeque::new(),
+        console_scroll: 0,
+        console_area: Rect::default(),
         input: String::new(),
         hover: None,
         map_area: Rect::default(),
@@ -218,6 +234,21 @@ fn handle(ev: Event, h: &mut Host, ui: &mut Ui) -> Flow {
                 }
                 KeyCode::Esc => {
                     ui.input.clear();
+                    ui.console_scroll = 0;
+                    Ok(())
+                }
+                KeyCode::PageUp => {
+                    let page = i32::from(ui.console_area.height.saturating_sub(2)).max(1);
+                    ui.scroll_console(page);
+                    Ok(())
+                }
+                KeyCode::PageDown => {
+                    let page = i32::from(ui.console_area.height.saturating_sub(2)).max(1);
+                    ui.scroll_console(-page);
+                    Ok(())
+                }
+                KeyCode::End => {
+                    ui.console_scroll = 0;
                     Ok(())
                 }
                 KeyCode::Backspace => {
@@ -254,6 +285,8 @@ fn handle(ev: Event, h: &mut Host, ui: &mut Ui) -> Flow {
         }
         Event::Mouse(m) => match m.kind {
             MouseEventKind::Moved => ui.hover = ui.tile_at(m.column, m.row),
+            MouseEventKind::ScrollUp => ui.scroll_console(3),
+            MouseEventKind::ScrollDown => ui.scroll_console(-3),
             MouseEventKind::Down(MouseButton::Left) => {
                 if let Some(target) = ui.tile_at(m.column, m.row)
                     && let Err(msg) = h.act(PlayerCommand::MoveTo { target })
@@ -289,7 +322,7 @@ fn step(h: &mut Host, dx: i32, dy: i32) -> Result<(), String> {
 fn draw(f: &mut Frame, h: &Host, ui: &mut Ui) {
     let [top, console, bar] = Layout::vertical([
         Constraint::Min(12),
-        Constraint::Length(9),
+        Constraint::Length(12),
         Constraint::Length(1),
     ])
     .areas(f.area());
@@ -612,12 +645,27 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
     );
 }
 
-fn draw_console(f: &mut Frame, area: Rect, ui: &Ui) {
+fn draw_console(f: &mut Frame, area: Rect, ui: &mut Ui) {
+    ui.console_area = area;
     let visible = usize::from(area.height.saturating_sub(2));
+    let total = ui.console.len();
+    // Never scroll past the top; clamp in case the window shrank.
+    ui.console_scroll = ui.console_scroll.min(total.saturating_sub(visible));
+    let end = total - ui.console_scroll;
+    let start = end.saturating_sub(visible);
+    let title = if ui.console_scroll > 0 {
+        format!(
+            "Events & console · {} newer below · End to follow",
+            ui.console_scroll
+        )
+    } else {
+        "Events & console · wheel or PgUp/PgDn to scroll".to_string()
+    };
     let lines: Vec<Line> = ui
         .console
         .iter()
-        .skip(ui.console.len().saturating_sub(visible))
+        .skip(start)
+        .take(end - start)
         .map(|l| {
             let style = if l.contains("rejected") || l.contains("WARNING") || l.contains("DESYNC") {
                 Style::default().fg(palette::WARN)
@@ -629,7 +677,7 @@ fn draw_console(f: &mut Frame, area: Rect, ui: &Ui) {
             Line::from(l.as_str()).style(style)
         })
         .collect();
-    f.render_widget(Paragraph::new(lines).block(panel("Events & console")), area);
+    f.render_widget(Paragraph::new(lines).block(panel(&title)), area);
 }
 
 fn draw_bar(f: &mut Frame, area: Rect, ui: &Ui) {
@@ -638,7 +686,7 @@ fn draw_bar(f: &mut Frame, area: Rect, ui: &Ui) {
         Span::raw(ui.input.as_str()),
         Span::styled("█", Style::default().fg(palette::ACCENT)),
         Span::styled(
-            "   Enter runs · arrows/click walk · Esc clears · F1 keys · Ctrl-C quits",
+            "   Enter runs · arrows/click walk · wheel/PgUp scroll events · F1 keys · Ctrl-C quits",
             Style::default().fg(palette::DIM),
         ),
     ]);
