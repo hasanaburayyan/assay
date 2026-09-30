@@ -44,7 +44,7 @@ any graphics. See "Adding a feature" in `sim-game/CLAUDE.md`.
 | `sim-game/` | The game: a Rust workspace (see below) plus the art pipeline |
 | `sim-game/GAME.md` | Pitch, pillars, what's built, planned entities, art direction. Sections are marked Decided / Built / Open |
 | `sim-game/CLAUDE.md` | Code and art rules for agents working in `sim-game` |
-| `sim-game/design/` | Design proposals, marked Decided / Open like `GAME.md`. `starting-zone.md`: the guaranteed mineral ladder around spawn |
+| `sim-game/design/` | Design proposals, marked Decided / Open like `GAME.md`. `starting-zone.md`: the guaranteed mineral ladder around spawn. `properties.md`: the material/part/machine properties and rules; every material is procedurally generated, so nothing may name a specific material |
 | `sim-game/packaging/` | README files that ship inside the downloadable bundles |
 | `docs/sim-core-primer.html` | Teaching page on the sim/renderer split. Published artifact copy exists too |
 | `reports/` | Genre/market research: `Game genre profitability for indies.md` (cited report) and `genre-playbook.html` (visual version) |

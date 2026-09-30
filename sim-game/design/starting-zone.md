@@ -10,8 +10,7 @@ These are the premises the rest of the document builds on.
 
 - **Minerals are procedurally generated.** There is no fixed list; the set of
   possible minerals is effectively unbounded. Each mineral is a set of quality
-  values (working set: hardness, heat tolerance, density; the final list is
-  Open).
+  values; the proposed list is in `properties.md`.
 - **Qualities decide what it takes to use a mineral**, in three steps:
   1. **Extract:** mining it needs a tool that can beat its hardness.
   2. **Process:** refining it needs a machine that can take the heat it
