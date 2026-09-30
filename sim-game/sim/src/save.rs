@@ -14,6 +14,10 @@
 //! - v2: players
 //! - v3: player names
 //! - v4: player inventories (loads from v3 with empty inventories)
+//! - v5: inventories are item stacks, not four ore counters
+//! - v6: players may be mining (loads from v5 as not mining)
+//! - v7: players may be crafting (loads from v6 as not crafting)
+//! - v8: buildings (loads from v7 with none)
 
 use std::path::Path;
 use std::{fmt, fs, io};
@@ -25,7 +29,7 @@ use crate::types::PlayerId;
 use crate::world::World;
 
 /// Current save format version.
-pub const SAVE_VERSION: u32 = 4;
+pub const SAVE_VERSION: u32 = 8;
 
 /// Oldest version `from_json` can still load and migrate forward.
 pub const OLDEST_SAVE_VERSION: u32 = 1;
@@ -98,7 +102,9 @@ impl World {
         if !(OLDEST_SAVE_VERSION..=SAVE_VERSION).contains(&version) {
             return Err(SaveError::UnsupportedVersion { found: version });
         }
-        let SaveIn { mut world } = serde_json::from_str(json)?;
+        let mut value: serde_json::Value = serde_json::from_str(json)?;
+        migrate_json(&mut value, version);
+        let SaveIn { mut world } = serde_json::from_value(value)?;
         migrate(&mut world, version);
         Ok(world)
     }
@@ -115,6 +121,36 @@ impl World {
 
     pub fn load_json(path: impl AsRef<Path>) -> Result<World, SaveError> {
         World::from_json(&fs::read_to_string(path)?)
+    }
+}
+
+/// Reshape old JSON whose layout no longer deserializes into today's types.
+/// Runs before parsing; `migrate` handles what can be fixed afterwards.
+fn migrate_json(value: &mut serde_json::Value, from_version: u32) {
+    if from_version < 5 {
+        // v4 inventories were `{iron, copper, coal, stone}` counters.
+        let players = value
+            .get_mut("world")
+            .and_then(|w| w.get_mut("players"))
+            .and_then(|p| p.as_array_mut());
+        for player in players.into_iter().flatten() {
+            let Some(inv) = player.get("inventory").and_then(|i| i.as_object()) else {
+                continue;
+            };
+            let mut stacks = Vec::new();
+            for (field, item) in [
+                ("iron", "IronOre"),
+                ("copper", "CopperOre"),
+                ("coal", "Coal"),
+                ("stone", "Stone"),
+            ] {
+                let count = inv.get(field).and_then(|c| c.as_u64()).unwrap_or(0);
+                if count > 0 {
+                    stacks.push(serde_json::json!({ "item": item, "count": count }));
+                }
+            }
+            player["inventory"] = serde_json::json!({ "stacks": stacks });
+        }
     }
 }
 

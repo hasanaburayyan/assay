@@ -15,17 +15,37 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::building::BuildingId;
+use crate::item::Item;
 use crate::ore::OreKind;
+use crate::recipe::RecipeId;
 use crate::types::{DepositId, PlayerId, TilePos};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PlayerCommand {
-    /// Take up to `amount` ore from a deposit. Stand-in until mining drills
-    /// exist as entities.
-    Extract { deposit: DepositId, amount: u32 },
+    /// Start mining the deposit you are standing on, by hand. Ore arrives
+    /// one unit at a time (see `tuning::HAND_MINE_TICKS`) for as long as you
+    /// stay on the deposit.
+    Mine,
+    /// Hand-craft `count` batches of a recipe from your inventory. Inputs
+    /// are taken as each batch starts; you keep walking or mining meanwhile.
+    Craft { recipe: RecipeId, count: u32 },
+    /// Put a building item from your inventory on the map, with its
+    /// top-left tile at `pos`. You must be within `tuning::REACH` of it.
+    Place { item: Item, pos: TilePos },
+    /// Move items from your inventory into a building's slots.
+    Insert {
+        building: BuildingId,
+        item: Item,
+        count: u32,
+    },
+    /// Take everything from a building's output slot.
+    Take { building: BuildingId },
+    /// Remove a building, getting it and its contents back.
+    Pickup { building: BuildingId },
     /// Start walking toward `target`, one tile per tick.
     MoveTo { target: TilePos },
-    /// Stop walking.
+    /// Stop walking, mining and crafting (the current batch is refunded).
     Stop,
 }
 
@@ -57,14 +77,75 @@ pub enum Event {
         player: PlayerId,
         name: String,
     },
-    OreExtracted {
+    MiningStarted {
         player: PlayerId,
         deposit: DepositId,
         kind: OreKind,
+    },
+    /// One unit of ore went into the player's inventory.
+    OreMined {
+        player: PlayerId,
+        deposit: DepositId,
+        item: Item,
         amount: u32,
+    },
+    MiningStopped {
+        player: PlayerId,
+        deposit: DepositId,
+        reason: StopReason,
     },
     DepositDepleted {
         deposit: DepositId,
+    },
+    CraftStarted {
+        player: PlayerId,
+        recipe: RecipeId,
+        count: u32,
+    },
+    /// One batch finished and its output is in the player's inventory.
+    ItemCrafted {
+        player: PlayerId,
+        recipe: RecipeId,
+        item: Item,
+        count: u32,
+        /// Batches still queued after this one.
+        remaining: u32,
+    },
+    /// Crafting ended before every batch was made.
+    CraftingStopped {
+        player: PlayerId,
+        recipe: RecipeId,
+        reason: StopReason,
+    },
+    BuildingPlaced {
+        player: PlayerId,
+        building: BuildingId,
+        item: Item,
+        pos: TilePos,
+    },
+    ItemsInserted {
+        player: PlayerId,
+        building: BuildingId,
+        item: Item,
+        count: u32,
+    },
+    ItemsTaken {
+        player: PlayerId,
+        building: BuildingId,
+        item: Item,
+        count: u32,
+    },
+    BuildingRemoved {
+        player: PlayerId,
+        building: BuildingId,
+        item: Item,
+        pos: TilePos,
+    },
+    /// A smelter finished a plate; it is waiting in the output slot.
+    ItemSmelted {
+        building: BuildingId,
+        item: Item,
+        count: u32,
     },
     MoveStarted {
         player: PlayerId,
@@ -86,10 +167,42 @@ pub enum Event {
     },
 }
 
+/// Why an activity that was running on its own came to an end.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum StopReason {
+    /// The player asked for it.
+    Stopped,
+    /// The player walked off the deposit.
+    LeftDeposit,
+    /// There is nothing left to mine.
+    Depleted,
+    /// The next batch needs an item the player no longer has.
+    OutOfInputs,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RejectReason {
-    UnknownDeposit,
+    /// `Mine` needs you to stand on a deposit.
+    NotOnDeposit,
     DepositDepleted,
     UnknownPlayer,
     OutOfBounds,
+    /// Counts must be at least 1.
+    ZeroCount,
+    /// This recipe needs a machine.
+    NotHandCraftable,
+    /// The player lacks enough of this item.
+    MissingItems(Item),
+    UnknownBuilding,
+    /// Farther than `tuning::REACH` tiles away.
+    OutOfReach,
+    /// Another building is in the way.
+    TileOccupied,
+    /// This item is not a building.
+    NotPlaceable,
+    /// The building has no slot that takes this item.
+    WrongItem,
+    /// The slot is full, or holds something else.
+    SlotFull,
+    NothingToTake,
 }

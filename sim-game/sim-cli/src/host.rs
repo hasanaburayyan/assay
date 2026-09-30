@@ -40,8 +40,14 @@ Time (single-player; online, the host runs the clock)
 Player
   goto <x> <y>                walk to a tile, one tile per tick
   move <dir> [n]              walk n tiles (default 1); dir: n s e w ne nw se sw
-  stop                        stop walking
-  mine [amount]               take ore from the deposit you stand on (default 10)
+  craft <item> [n]            hand-craft n (default 1), e.g. craft smelter
+  stop                        stop walking, mining and crafting
+  place <item> [x y]          put a building down (default: just east of you)
+  insert <id> <item> [n]      put items into a building, e.g. insert 0 coal 5
+  take <id>                   empty a building's output into your inventory
+  pickup <id>                 take a building and its contents back
+  mine                        mine the deposit you stand on, by hand, until you
+                              stop or walk off it
   where                       your position
   inv                         what you're carrying
 
@@ -49,12 +55,11 @@ Look
   map                         draw the map (P marks players)
   players                     everyone in this world
   deposits                    list every deposit
+  recipes                     what can be made, from what
+  buildings                   every placed building and what it's doing
   at <x> <y>                  what's on a tile
   events [n]                  the last n events (default 20)
   status                      tick, clock or connection, hash, save file
-
-Act
-  extract <id> <amount>       take ore from a deposit
 
   help                        show this
   quit                        exit (single-player saves first; Ctrl-D works too)
@@ -430,8 +435,16 @@ impl Host {
                         .target
                         .map(|t| format!(", walking to ({}, {})", t.x, t.y))
                         .unwrap_or_default();
+                    let mining = p
+                        .mining
+                        .map(|m| format!(", mining deposit {}", m.deposit.0))
+                        .unwrap_or_default();
+                    let crafting = p
+                        .crafting
+                        .map(|c| format!(", crafting {} ({} to go)", c.recipe.name(), c.remaining))
+                        .unwrap_or_default();
                     out!(
-                        "  {} · {}{you} at ({}, {}){walking} · carrying {}",
+                        "  {} · {}{you} at ({}, {}){walking}{mining}{crafting} · carrying {}",
                         p.id.0,
                         p.name,
                         p.pos.x,
@@ -441,6 +454,8 @@ impl Host {
                 }
             }
             "deposits" | "ls" => out!("{}", debug::deposit_table(&s.world)),
+            "recipes" => out!("{}", debug::recipe_table()),
+            "buildings" => out!("{}", debug::building_table(&s.world)),
             "at" => at(s, args)?,
             "where" => where_am_i(s)?,
             "inv" | "inventory" => {
@@ -450,25 +465,13 @@ impl Host {
             "events" | "log" => {
                 let n: usize = optional_arg(args, 1, "count", 20)?;
                 if self.log.is_empty() {
-                    out!("No events yet. Try `goto 10 10` or `extract 0 50`.");
+                    out!("No events yet. Try `goto 10 10`, or walk onto a deposit and `mine`.");
                 }
                 for line in self.log.iter().skip(self.log.len().saturating_sub(n)) {
                     out!("  {line}");
                 }
             }
             "status" => status(s, paused, self.tps),
-            "extract" => {
-                let usage = "Usage: extract <deposit id> <amount>, e.g. extract 0 50";
-                let id: u32 =
-                    parse_arg(args, 1, "deposit id").map_err(|e| format!("{e}\n{usage}"))?;
-                let amount: u32 =
-                    parse_arg(args, 2, "amount").map_err(|e| format!("{e}\n{usage}"))?;
-                if amount == 0 {
-                    return Err("Amount must be at least 1.".into());
-                }
-                let deposit = sim::DepositId(id);
-                submit(s, paused, PlayerCommand::Extract { deposit, amount })?;
-            }
             "goto" => {
                 let usage = "Usage: goto <x> <y>, e.g. goto 10 10";
                 let x: i32 = parse_arg(args, 1, "x").map_err(|e| format!("{e}\n{usage}"))?;
@@ -494,18 +497,57 @@ impl Host {
                 submit(s, paused, PlayerCommand::MoveTo { target })?;
             }
             "stop" => submit(s, paused, PlayerCommand::Stop)?,
-            "mine" => {
-                let amount: u32 = optional_arg(args, 1, "amount", 10)?;
-                if amount == 0 {
-                    return Err("Amount must be at least 1.".into());
-                }
-                let pos = s.me()?.pos;
-                let deposit = s
-                    .world
-                    .deposit_at(pos)
-                    .ok_or("You're not standing on a deposit. Walk onto one first.")?
-                    .id;
-                submit(s, paused, PlayerCommand::Extract { deposit, amount })?;
+            "mine" => submit(s, paused, PlayerCommand::Mine)?,
+            "place" => {
+                let usage = "Usage: place <item> [x y], e.g. place smelter (goes just east of you)";
+                let name = args.get(1).ok_or(format!("Missing item.\n{usage}"))?;
+                let item =
+                    sim::Item::parse(name).ok_or(format!("`{name}` is not an item.\n{usage}"))?;
+                let me = s.me()?.pos;
+                let x: i32 = optional_arg(args, 2, "x", me.x + 1)?;
+                let y: i32 = optional_arg(args, 3, "y", me.y)?;
+                let pos = TilePos::new(x, y);
+                submit(s, paused, PlayerCommand::Place { item, pos })?;
+            }
+            "insert" | "put" => {
+                let usage = "Usage: insert <building id> <item> [count], e.g. insert 0 coal 5";
+                let id: u32 =
+                    parse_arg(args, 1, "building id").map_err(|e| format!("{e}\n{usage}"))?;
+                let name = args.get(2).ok_or(format!("Missing item.\n{usage}"))?;
+                let item =
+                    sim::Item::parse(name).ok_or(format!("`{name}` is not an item.\n{usage}"))?;
+                let count: u32 = optional_arg(args, 3, "count", 1)?;
+                let building = sim::BuildingId(id);
+                submit(
+                    s,
+                    paused,
+                    PlayerCommand::Insert {
+                        building,
+                        item,
+                        count,
+                    },
+                )?;
+            }
+            "take" => {
+                let id: u32 = parse_arg(args, 1, "building id")
+                    .map_err(|e| format!("{e}\nUsage: take <building id>, e.g. take 0"))?;
+                let building = sim::BuildingId(id);
+                submit(s, paused, PlayerCommand::Take { building })?;
+            }
+            "pickup" => {
+                let id: u32 = parse_arg(args, 1, "building id")
+                    .map_err(|e| format!("{e}\nUsage: pickup <building id>, e.g. pickup 0"))?;
+                let building = sim::BuildingId(id);
+                submit(s, paused, PlayerCommand::Pickup { building })?;
+            }
+            "craft" => {
+                let usage =
+                    "Usage: craft <item> [count], e.g. craft smelter. `recipes` lists them.";
+                let name = args.get(1).ok_or(format!("Missing item.\n{usage}"))?;
+                let recipe = sim::RecipeId::parse(name)
+                    .ok_or(format!("No recipe makes `{name}`.\n{usage}"))?;
+                let count: u32 = optional_arg(args, 2, "count", 1)?;
+                submit(s, paused, PlayerCommand::Craft { recipe, count })?;
             }
             other => {
                 return Err(format!(
@@ -644,6 +686,16 @@ fn at(s: &Session, args: &[&str]) -> Result<(), String> {
         "chunk ({}, {}), {distance} chunks from spawn",
         chunk.x, chunk.y
     );
+    if let Some(b) = s.world.building_at(pos) {
+        out!(
+            "({x}, {y}): {} {} at ({}, {}) · {}",
+            b.kind.name(),
+            b.id.0,
+            b.pos.x,
+            b.pos.y,
+            debug::building_status(b)
+        );
+    }
     match s.world.deposit_at(pos) {
         Some(d) => out!(
             "({x}, {y}): deposit {} · {:?} · {} left · purity {} · {place}",
@@ -673,8 +725,13 @@ fn where_am_i(s: &Session) -> Result<(), String> {
         None => out!("You are standing at ({x}, {y})."),
     }
     if let Some(d) = s.world.deposit_at(me.pos) {
+        let mining = if me.mining.is_some() {
+            " You're mining it."
+        } else {
+            " `mine` to start mining it."
+        };
         out!(
-            "You're on deposit {} ({:?}, {} left).",
+            "You're on deposit {} ({:?}, {} left).{mining}",
             d.id.0,
             d.kind,
             d.amount
@@ -737,13 +794,12 @@ fn status(s: &Session, paused: bool, tps: u32) {
 }
 
 pub fn describe_inventory(inv: &sim::Inventory) -> String {
-    if inv.total() == 0 {
+    if inv.is_empty() {
         return "nothing".into();
     }
-    sim::OreKind::ALL
+    inv.stacks()
         .iter()
-        .filter(|&&k| inv.get(k) > 0)
-        .map(|&k| format!("{} {k:?}", inv.get(k)))
+        .map(|s| format!("{} {}", s.count, s.item.name()))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -785,7 +841,16 @@ fn who(world: &World, me: PlayerId, player: PlayerId) -> String {
 
 fn describe_command(cmd: &PlayerCommand) -> String {
     match cmd {
-        PlayerCommand::Extract { deposit, amount } => format!("extract {} {amount}", deposit.0),
+        PlayerCommand::Mine => "mine".into(),
+        PlayerCommand::Craft { recipe, count } => format!("craft {} {count}", recipe.name()),
+        PlayerCommand::Place { item, pos } => format!("place {} {} {}", item.name(), pos.x, pos.y),
+        PlayerCommand::Insert {
+            building,
+            item,
+            count,
+        } => format!("insert {} {} {count}", building.0, item.name()),
+        PlayerCommand::Take { building } => format!("take {}", building.0),
+        PlayerCommand::Pickup { building } => format!("pickup {}", building.0),
         PlayerCommand::MoveTo { target } => format!("goto {} {}", target.x, target.y),
         PlayerCommand::Stop => "stop".into(),
     }
@@ -798,20 +863,93 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
             format!("you joined as {name}")
         }
         Event::PlayerJoined { name, .. } => format!("{name} joined"),
-        Event::OreExtracted {
+        Event::MiningStarted {
             player,
             deposit,
             kind,
+        } => format!(
+            "{} started mining {kind:?} at deposit {}",
+            who(player),
+            deposit.0
+        ),
+        Event::OreMined {
+            player,
+            deposit,
+            item,
             amount,
         } => {
-            let left = world.deposit(*deposit).map_or(0, |d| d.amount);
+            let (left, carrying) = (
+                world.deposit(*deposit).map_or(0, |d| d.amount),
+                world
+                    .player(*player)
+                    .map_or(0, |p| p.inventory.count(*item)),
+            );
             format!(
-                "{} extracted {amount} {kind:?} from deposit {} ({left} left)",
+                "{} mined {amount} {} (carrying {carrying}, {left} left in deposit {})",
+                who(player),
+                item.name(),
+                deposit.0
+            )
+        }
+        Event::MiningStopped {
+            player,
+            deposit,
+            reason,
+        } => {
+            let why = match reason {
+                sim::StopReason::Stopped => "stopped",
+                sim::StopReason::LeftDeposit => "walked off it",
+                sim::StopReason::Depleted => "mined it out",
+                sim::StopReason::OutOfInputs => "ran out",
+            };
+            format!(
+                "{} stopped mining deposit {}: {why}",
                 who(player),
                 deposit.0
             )
         }
         Event::DepositDepleted { deposit } => format!("deposit {} is now depleted", deposit.0),
+        Event::CraftStarted {
+            player,
+            recipe,
+            count,
+        } => format!(
+            "{} started crafting {count} {} ({} ticks each)",
+            who(player),
+            recipe.name(),
+            recipe.recipe().ticks
+        ),
+        Event::ItemCrafted {
+            player,
+            item,
+            count,
+            remaining,
+            ..
+        } => {
+            let carrying = world
+                .player(*player)
+                .map_or(0, |p| p.inventory.count(*item));
+            let more = match remaining {
+                0 => String::new(),
+                n => format!(", {n} more to go"),
+            };
+            format!(
+                "{} crafted {count} {} (carrying {carrying}{more})",
+                who(player),
+                item.name()
+            )
+        }
+        Event::CraftingStopped {
+            player,
+            recipe,
+            reason,
+        } => {
+            let why = match reason {
+                sim::StopReason::OutOfInputs => "ran out of inputs",
+                _ => "cancelled, inputs refunded",
+            };
+            format!("{} stopped crafting {}: {why}", who(player), recipe.name())
+        }
         Event::MoveStarted { player, from, to } => format!(
             "{} started walking from ({}, {}) to ({}, {})",
             who(player),
@@ -826,19 +964,116 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
         Event::PlayerStopped { player, pos } => {
             format!("{} stopped at ({}, {})", who(player), pos.x, pos.y)
         }
+        Event::BuildingPlaced {
+            player,
+            building,
+            item,
+            pos,
+        } => format!(
+            "{} placed {} {} at ({}, {}); `insert {} coal 5` and ore to run it",
+            who(player),
+            item.name(),
+            building.0,
+            pos.x,
+            pos.y,
+            building.0
+        ),
+        Event::ItemsInserted {
+            player,
+            building,
+            item,
+            count,
+        } => format!(
+            "{} put {count} {} into building {}",
+            who(player),
+            item.name(),
+            building.0
+        ),
+        Event::ItemsTaken {
+            player,
+            building,
+            item,
+            count,
+        } => format!(
+            "{} took {count} {} from building {}",
+            who(player),
+            item.name(),
+            building.0
+        ),
+        Event::BuildingRemoved {
+            player,
+            building,
+            item,
+            pos,
+        } => format!(
+            "{} picked up {} {} from ({}, {})",
+            who(player),
+            item.name(),
+            building.0,
+            pos.x,
+            pos.y
+        ),
+        Event::ItemSmelted {
+            building,
+            item,
+            count,
+        } => {
+            let waiting = world
+                .building(*building)
+                .map(|b| {
+                    let sim::BuildingKind::Smelter(s) = &b.kind;
+                    s.output.map_or(0, |o| o.count)
+                })
+                .unwrap_or(0);
+            format!(
+                "building {} smelted {count} {} ({waiting} waiting; `take {}`)",
+                building.0,
+                item.name(),
+                building.0
+            )
+        }
         Event::CommandRejected {
             player,
             command,
             reason,
         } => {
             let why = match reason {
-                RejectReason::UnknownDeposit => "no deposit with that id".to_string(),
+                RejectReason::NotOnDeposit => {
+                    "you're not standing on a deposit; walk onto one first".to_string()
+                }
                 RejectReason::DepositDepleted => "that deposit is already depleted".to_string(),
                 RejectReason::UnknownPlayer => "no such player".to_string(),
+                RejectReason::ZeroCount => "the count must be at least 1".to_string(),
+                RejectReason::NotHandCraftable => {
+                    "that needs a machine; `recipes` shows where each is made".to_string()
+                }
+                RejectReason::MissingItems(item) => {
+                    let have = world
+                        .player(*player)
+                        .map_or(0, |p| p.inventory.count(*item));
+                    format!("not enough {} (you have {have})", item.name())
+                }
                 RejectReason::OutOfBounds => match command {
                     PlayerCommand::MoveTo { target } => off_map(world, *target),
                     _ => "that's off the map".to_string(),
                 },
+                RejectReason::UnknownBuilding => {
+                    "no building with that id; `buildings` lists them".to_string()
+                }
+                RejectReason::OutOfReach => format!(
+                    "too far away; get within {} tiles of it",
+                    sim::tuning::REACH
+                ),
+                RejectReason::TileOccupied => "another building is in the way".to_string(),
+                RejectReason::NotPlaceable => "that item is not a building".to_string(),
+                RejectReason::WrongItem => {
+                    "a smelter only takes coal and ore it can smelt".to_string()
+                }
+                RejectReason::SlotFull => {
+                    "that slot is full or holds a different item; `buildings` shows what's inside"
+                        .to_string()
+                }
+                RejectReason::NothingToTake => "its output slot is empty".to_string(),
             };
             let whose = if *player == me {
                 String::new()

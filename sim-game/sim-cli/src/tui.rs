@@ -21,15 +21,16 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
-use sim::{Input, OreKind, Player, PlayerCommand, PlayerId, SystemCommand, TilePos, World};
+use sim::{Input, OreKind, Player, PlayerCommand, PlayerId, SystemCommand, TilePos, World, debug};
 
-use crate::host::{Flow, Host};
+use crate::host::{Flow, Host, describe_inventory};
 use crate::output;
 
 const CONSOLE_LINES: usize = 300;
 const HELP_TEXT: &str = "\
 Type a command and press Enter. Everything from the prompt works:
-  goto 10 10 · move ne 5 · mine 10 · stop · players · inv · deposits
+  goto 10 10 · move ne 5 · mine · craft smelter · place smelter · stop
+  insert 0 coal 5 · take 0 · pickup 0 · inv · recipes · buildings
   new 42 · load 42 · save · pause · resume · speed 20 · help · quit
 
 Walk        arrow keys (hold to keep walking), or click a tile
@@ -43,6 +44,7 @@ mod palette {
     pub const SPAWN: Color = Color::Indexed(58);
     pub const TARGET: Color = Color::Indexed(28);
     pub const HOVER: Color = Color::Indexed(250);
+    pub const BUILDING: Color = Color::Indexed(172);
     pub const ME: Color = Color::Indexed(231);
     pub const OTHERS: [Color; 5] = [
         Color::Indexed(201),
@@ -357,9 +359,10 @@ fn draw_map(f: &mut Frame, area: Rect, h: &Host, ui: &mut Ui) {
         .and_then(|id| world.player(id))
         .map_or(world.spawn_tile(), |p| p.pos);
     let block = panel(&format!(
-        "Map {}x{} · {} spawn · {} you · {} others · ore: {} Fe {} Cu {} C {} St",
+        "Map {}x{} · {} spawn · {} you · {} others · {} smelter · ore: {} Fe {} Cu {} C {} St",
         world.width(),
         world.height(),
+        "▀",
         "▀",
         "▀",
         "▀",
@@ -399,6 +402,9 @@ fn draw_map(f: &mut Frame, area: Rect, h: &Host, ui: &mut Ui) {
         if my_target == Some(pos) {
             return palette::TARGET;
         }
+        if world.building_at(pos).is_some() {
+            return palette::BUILDING;
+        }
         if let Some(d) = world.deposit_at(pos) {
             return ore_color(d.kind, d.is_depleted());
         }
@@ -425,6 +431,7 @@ fn draw_map(f: &mut Frame, area: Rect, h: &Host, ui: &mut Ui) {
         palette::SPAWN,
         palette::ME,
         palette::OTHERS[0],
+        palette::BUILDING,
         ore_color(OreKind::Iron, false),
         ore_color(OreKind::Copper, false),
         ore_color(OreKind::Coal, false),
@@ -453,11 +460,21 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
     };
     let me = h.me_id();
     let n = world.players.len() as u16;
-    let [w_area, p_area, inv_area, tile_area, dep_area, in_area] = Layout::vertical([
+    let b = world.buildings.len() as u16;
+    let [
+        w_area,
+        p_area,
+        inv_area,
+        tile_area,
+        bld_area,
+        dep_area,
+        in_area,
+    ] = Layout::vertical([
         Constraint::Length(8),
         Constraint::Length((n + 2).clamp(3, 8)), // borders + one row per player
-        Constraint::Length((n + 3).clamp(4, 9)), // borders + header + one row per player
-        Constraint::Length(5),
+        Constraint::Length((n + 2).clamp(3, 8)), // borders + one row per player
+        Constraint::Length(6),
+        Constraint::Length((b + 2).clamp(3, 8)), // borders + one row per building
         Constraint::Min(4),
         Constraint::Length(7),
     ])
@@ -491,10 +508,18 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
                 .target
                 .map(|t| format!(" → ({},{})", t.x, t.y))
                 .unwrap_or_default();
+            let mining = p
+                .mining
+                .map(|m| format!(" ⛏ dep {}", m.deposit.0))
+                .unwrap_or_default();
+            let crafting = p
+                .crafting
+                .map(|c| format!(" ⚒ {} ×{}", c.recipe.name(), c.remaining))
+                .unwrap_or_default();
             Line::from(vec![
                 Span::styled("█ ", Style::default().fg(player_color(p.id, me))),
                 Span::raw(format!(
-                    "{} {}{} ({},{}){walking}",
+                    "{} {}{} ({},{}){walking}{mining}{crafting}",
                     p.id.0,
                     p.name,
                     if Some(p.id) == me { "*" } else { "" },
@@ -509,25 +534,21 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
         p_area,
     );
 
-    // Inventory table
-    let mut lines = vec![
-        Line::from(format!(
-            "{:<10} {:>6} {:>6} {:>6} {:>6}",
-            "", "iron", "copper", "coal", "stone"
-        ))
-        .style(Style::default().fg(palette::DIM)),
-    ];
-    for p in &world.players {
-        let i = &p.inventory;
-        lines.push(Line::from(format!(
-            "{:<10} {:>6} {:>6} {:>6} {:>6}",
-            truncate(&p.name, 10),
-            i.iron,
-            i.copper,
-            i.coal,
-            i.stone
-        )));
-    }
+    // Inventory: one line per player
+    let width = usize::from(inv_area.width.saturating_sub(14));
+    let lines: Vec<Line> = world
+        .players
+        .iter()
+        .map(|p| {
+            Line::from(vec![
+                Span::styled(
+                    format!("{:<10} ", truncate(&p.name, 10)),
+                    Style::default().fg(palette::DIM),
+                ),
+                Span::raw(truncate(&describe_inventory(&p.inventory), width)),
+            ])
+        })
+        .collect();
     f.render_widget(Paragraph::new(lines).block(panel("Inventory")), inv_area);
 
     // Tile under the mouse, or under you
@@ -550,6 +571,16 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
                 chunk.y,
                 chunk.distance(world.spawn)
             ))];
+            if let Some(b) = world.building_at(t) {
+                lines.push(Line::from(format!(
+                    "{} {} at ({},{})",
+                    b.kind.name(),
+                    b.id.0,
+                    b.pos.x,
+                    b.pos.y
+                )));
+                lines.push(Line::from(debug::building_status(b)));
+            }
             match world.deposit_at(t) {
                 Some(d) => {
                     lines.push(Line::from(format!(
@@ -579,6 +610,37 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
         },
     );
     f.render_widget(Paragraph::new(lines).block(panel(label)), tile_area);
+
+    // Buildings
+    let width = usize::from(bld_area.width.saturating_sub(4));
+    let lines: Vec<Line> = if world.buildings.is_empty() {
+        vec![
+            Line::from("none · craft smelter, then place smelter")
+                .style(Style::default().fg(palette::DIM)),
+        ]
+    } else {
+        world
+            .buildings
+            .iter()
+            .map(|b| {
+                Line::from(vec![
+                    Span::styled("█", Style::default().fg(palette::BUILDING)),
+                    Span::raw(truncate(
+                        &format!(
+                            "{:>2} {} ({},{}) {}",
+                            b.id.0,
+                            b.kind.name(),
+                            b.pos.x,
+                            b.pos.y,
+                            debug::building_status(b)
+                        ),
+                        width,
+                    )),
+                ])
+            })
+            .collect()
+    };
+    f.render_widget(Paragraph::new(lines).block(panel("Buildings")), bld_area);
 
     // Deposits, nearest first
     let from = me
@@ -743,9 +805,20 @@ fn describe_input(input: &Input, world: &World) -> String {
                 .player(*player)
                 .map_or_else(|| format!("p{}", player.0), |p: &Player| p.name.clone());
             let what = match command {
-                PlayerCommand::Extract { deposit, amount } => {
-                    format!("extract {} {amount}", deposit.0)
+                PlayerCommand::Mine => "mine".into(),
+                PlayerCommand::Craft { recipe, count } => {
+                    format!("craft {} {count}", recipe.name())
                 }
+                PlayerCommand::Place { item, pos } => {
+                    format!("place {} {},{}", item.name(), pos.x, pos.y)
+                }
+                PlayerCommand::Insert {
+                    building,
+                    item,
+                    count,
+                } => format!("insert {} {} {count}", building.0, item.name()),
+                PlayerCommand::Take { building } => format!("take {}", building.0),
+                PlayerCommand::Pickup { building } => format!("pickup {}", building.0),
                 PlayerCommand::MoveTo { target } => format!("goto {},{}", target.x, target.y),
                 PlayerCommand::Stop => "stop".into(),
             };

@@ -138,85 +138,6 @@ fn world_with_player(seed: u64) -> (World, PlayerId) {
     (world, PlayerId(0))
 }
 
-fn extract(deposit: DepositId, amount: u32) -> PlayerCommand {
-    PlayerCommand::Extract { deposit, amount }
-}
-
-#[test]
-fn extract_takes_ore_and_reports_it() {
-    let (mut world, me) = world_with_player(9);
-    let id = world.deposits[0].id;
-    let before = world.deposits[0].amount;
-    let mut events = Vec::new();
-
-    step(
-        &mut world,
-        &[Input::player(me, extract(id, 10))],
-        &mut events,
-    );
-
-    assert_eq!(world.deposit(id).unwrap().amount, before - 10);
-    let kind = world.deposits[0].kind;
-    assert_eq!(world.player(me).unwrap().inventory.get(kind), 10);
-    assert_eq!(world.player(me).unwrap().inventory.total(), 10);
-    assert_eq!(
-        events,
-        vec![Event::OreExtracted {
-            player: me,
-            deposit: id,
-            kind: world.deposits[0].kind,
-            amount: 10
-        }]
-    );
-}
-
-#[test]
-fn over_extracting_depletes_then_rejects() {
-    let (mut world, me) = world_with_player(9);
-    let id = world.deposits[0].id;
-    let all = world.deposits[0].amount;
-    let mut events = Vec::new();
-
-    step(
-        &mut world,
-        &[Input::player(me, extract(id, all + 500))],
-        &mut events,
-    );
-    assert!(world.deposit(id).unwrap().is_depleted());
-    assert!(events.contains(&Event::DepositDepleted { deposit: id }));
-
-    events.clear();
-    step(
-        &mut world,
-        &[Input::player(me, extract(id, 1))],
-        &mut events,
-    );
-    assert_eq!(
-        events,
-        vec![Event::CommandRejected {
-            player: me,
-            command: extract(id, 1),
-            reason: RejectReason::DepositDepleted
-        }]
-    );
-}
-
-#[test]
-fn unknown_deposit_is_rejected() {
-    let (mut world, me) = world_with_player(9);
-    let bad = extract(DepositId(u32::MAX), 1);
-    let mut events = Vec::new();
-    step(&mut world, &[Input::player(me, bad.clone())], &mut events);
-    assert_eq!(
-        events,
-        vec![Event::CommandRejected {
-            player: me,
-            command: bad,
-            reason: RejectReason::UnknownDeposit
-        }]
-    );
-}
-
 #[test]
 fn commands_from_unknown_players_are_rejected() {
     let (mut world, _) = world_with_player(9);
@@ -224,7 +145,7 @@ fn commands_from_unknown_players_are_rejected() {
     let mut events = Vec::new();
     step(
         &mut world,
-        &[Input::player(PlayerId(5), extract(DepositId(0), 10))],
+        &[Input::player(PlayerId(5), PlayerCommand::Mine)],
         &mut events,
     );
     assert_eq!(world.deposits, before.deposits);
@@ -243,7 +164,13 @@ fn replaying_an_input_log_reproduces_the_world() {
     let log: Vec<(u64, Input)> = (1..200)
         .filter(|t| t % 7 == 0)
         .map(|t| {
-            let cmd = extract(DepositId((t % 5) as u32), 37);
+            let cmd = if t % 3 == 0 {
+                PlayerCommand::Mine
+            } else {
+                PlayerCommand::MoveTo {
+                    target: TilePos::new((t % 90) as i32, (t % 60) as i32),
+                }
+            };
             (t, Input::player(PlayerId(0), cmd))
         })
         .collect();

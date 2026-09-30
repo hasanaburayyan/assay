@@ -49,6 +49,8 @@ any graphics. See "Adding a feature" in `sim-game/CLAUDE.md`.
 | `docs/sim-core-primer.html` | Teaching page on the sim/renderer split. Published artifact copy exists too |
 | `reports/` | Genre/market research: `Game genre profitability for indies.md` (cited report) and `genre-playbook.html` (visual version) |
 | `research_notes/` | Raw notes the report was built from |
+| `docs/design-notes/` | Decisions from spoken design sessions (`make talk`). Read the ones relevant to a feature before building it |
+| `tools/voice/design_chat.py` | The voice loop: mic → ElevenLabs Scribe → `claude -p` → ElevenLabs speech. Design conversations only; it writes a note on "wrap it up" |
 | `Makefile` | `make relay`, `make join HOST=… NAME=…`, `make play`, `make test`, `make ip` |
 | `.github/workflows/build.yml` | CI: fmt, clippy, tests; Mac + Windows bundles; releases on `v*` tags |
 
@@ -66,13 +68,17 @@ why determinism rules are non-negotiable.
 ### Crates (`sim-game/`)
 
 - **`sim`**: `World` (tick, seed, seeded `Rng`, chunks, `deposits`,
-  `players`), `worldgen` (one deposit per 16×16 chunk, pure function of seed
-  + chunk position; purity/amount grow with distance from spawn),
-  `command.rs` (`PlayerCommand`: Extract/MoveTo/Stop; `SystemCommand`:
-  AddPlayer; `Input` wraps them), `step.rs` (apply inputs, then systems:
-  currently only player movement, one tile per tick incl. diagonals),
-  `save.rs` (JSON saves with a version and migrations), `hash.rs` (FNV-1a
-  state hash), `debug.rs` (ASCII map/table), `inventory.rs`.
+  `players`, `buildings`), `worldgen` (one deposit per 16×16 chunk, pure
+  function of seed + chunk position; purity/amount grow with distance from
+  spawn), `command.rs` (`PlayerCommand`: Mine/Craft/Place/Insert/Take/
+  Pickup/MoveTo/Stop; `SystemCommand`: AddPlayer; `Input` wraps them),
+  `step.rs` (apply inputs, then systems in fixed order: movement, hand
+  mining, hand crafting, smelters), `item.rs` (`Item`, `ItemStack`),
+  `inventory.rs` (sorted stacks), `recipe.rs` (fixed table, hand or
+  smelter), `building.rs` (`Building`, `BuildingKind::Smelter`),
+  `tuning.rs` (every rate and cap), `save.rs` (JSON saves with a version and
+  migrations), `hash.rs` (FNV-1a state hash), `debug.rs` (ASCII map and
+  tables).
 - **`sim-net`**: wire protocol. `ClientMsg` (Hello/Submit/Hash), `ServerMsg`
   (Welcome/Refused/Tick/Desync), `TickBundle`, length-prefixed JSON framing,
   `PROTOCOL_VERSION`, `saves_dir()`.
@@ -83,9 +89,11 @@ why determinism rules are non-negotiable.
   name); a Steam ticket verifier goes in the same trait later.
 - **`sim-cli`**: `host.rs` (session, command handlers, local clock/queue or
   online link), `tui.rs` (ratatui inspector: half-block map, world/players/
-  inventory/tile/deposits/inputs panels, scrollable console, always-active
-  command line), `net.rs` (join handshake, sender/receiver threads),
-  `output.rs` (print vs capture). `--plain` gives the old rustyline prompt.
+  inventory/tile/buildings/deposits/inputs panels, scrollable console,
+  always-active command line), `net.rs` (join handshake, sender/receiver
+  threads), `output.rs` (print vs capture). `--plain` gives the old
+  rustyline prompt. `tests/first_plate.rs` plays a fresh world to the first
+  gear through the plain prompt; it is the reference play-through.
 
 ### Numbers that matter
 
@@ -93,9 +101,14 @@ why determinism rules are non-negotiable.
   of the middle chunk.
 - Ore kinds: Iron, Copper, Coal, Stone. Deposits: radius 2–4, ≤1 per chunk,
   never overlap, purity 1–100.
-- Save format `SAVE_VERSION = 4` (v1 world, v2 players, v3 names, v4
-  inventories). Older saves migrate on load.
-- `PROTOCOL_VERSION = 2`. Bump it whenever `World` or a message changes
+- Items: iron-ore, copper-ore, coal, stone, iron-plate, copper-plate,
+  iron-gear, smelter. Recipes and every rate/cap: `sim/src/recipe.rs` and
+  `sim/src/tuning.rs` (hand mining 1 ore/4 ticks; smelter = 5 stone; plate
+  = 1 ore, 20 ticks; coal burns 80 ticks; reach 3 tiles; smelter is 2×2).
+- Save format `SAVE_VERSION = 8` (v1 world, v2 players, v3 names, v4
+  inventories, v5 item stacks, v6 mining, v7 crafting, v8 buildings). Older
+  saves migrate on load; v4→v5 reshapes JSON before parsing.
+- `PROTOCOL_VERSION = 3`. Bump it whenever `World` or a message changes
   shape; the relay refuses mismatched clients.
 - Golden determinism hash lives in `sim/tests/determinism.rs`. It changes
   whenever rules change; update it only for intentional changes and say so
@@ -153,16 +166,18 @@ why determinism rules are non-negotiable.
 
 ## Current state and next steps (as of 2026-09-30)
 
-Built: world gen, players walking, extraction into inventories, JSON saves
-with migrations, relay + client lockstep co-op verified across Mac and
-Windows, the terminal inspector, CI bundles, the art pipeline with first
-sprites (ground, ore, player, spawn, drill, items).
+Built: world gen, players walking, JSON saves with migrations, relay +
+client lockstep co-op verified across Mac and Windows, the terminal
+inspector, CI bundles, the art pipeline with first sprites (ground, ore,
+player, spawn, drill, items), and the first gameplay loop: hand mining,
+item stacks, hand crafting from a recipe table, and the smelter as the first
+building that works on its own (see "The first loop" in `GAME.md`).
 
-Not built yet, roughly in order: mining drills as entities (first system that
-works between commands), belts, inserters (the modular design system),
-assemblers, items on belts, the Godot client, reconnect without restart,
-client-side movement prediction, time-based autosave, binary saves,
-graceful relay shutdown, Steam auth, galaxy layer.
+Not built yet, roughly in order: ore purity and hardness on items and
+recipes (next), mining drills as entities, belts, inserters (the modular
+design system), assemblers, items on belts, the Godot client, reconnect
+without restart, client-side movement prediction, time-based autosave,
+binary saves, graceful relay shutdown, Steam auth, galaxy layer.
 
 Known rough edges: the relay loses up to 2 s on Ctrl-C; a dropped client
 must restart to rejoin; your own moves wait for the host (~1 tick).
