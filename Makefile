@@ -10,6 +10,7 @@
 #   make ip                    print this machine's address to give players
 #   make play                  single-player inspector
 #   make test                  run the test suite
+#   make talk                  spoken design conversation (make talk-text to type)
 #
 # Over the internet, HOST is the host's Tailscale address (100.x.y.z) or
 # their public IP with TCP 7777 forwarded.
@@ -18,7 +19,7 @@ NAME ?= $(USER)
 HOST ?= localhost:7777
 SEED ?= 42
 
-.PHONY: relay fresh join play plain test ip
+.PHONY: relay fresh join play plain test ip talk talk-text
 
 relay:
 	cd sim-game && cargo run -p sim-relay -- $(SEED)
@@ -40,3 +41,9 @@ test:
 
 ip:
 	@ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | cut -d' ' -f1 || echo "Could not find a network address; start the relay and read it there."
+
+talk:
+	tools/voice/design_chat.py
+
+talk-text:
+	tools/voice/design_chat.py --text
