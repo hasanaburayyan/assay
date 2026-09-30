@@ -76,7 +76,7 @@ fn apply_player(
                 .player_mut(player)
                 .expect("checked above")
                 .inventory
-                .add(kind, taken);
+                .add(kind.into(), taken);
             events.push(Event::OreExtracted {
                 player,
                 deposit,

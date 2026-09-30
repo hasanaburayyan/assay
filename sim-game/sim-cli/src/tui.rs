@@ -23,7 +23,7 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
 use sim::{Input, OreKind, Player, PlayerCommand, PlayerId, SystemCommand, TilePos, World};
 
-use crate::host::{Flow, Host};
+use crate::host::{Flow, Host, describe_inventory};
 use crate::output;
 
 const CONSOLE_LINES: usize = 300;
@@ -456,7 +456,7 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
     let [w_area, p_area, inv_area, tile_area, dep_area, in_area] = Layout::vertical([
         Constraint::Length(8),
         Constraint::Length((n + 2).clamp(3, 8)), // borders + one row per player
-        Constraint::Length((n + 3).clamp(4, 9)), // borders + header + one row per player
+        Constraint::Length((n + 2).clamp(3, 8)), // borders + one row per player
         Constraint::Length(5),
         Constraint::Min(4),
         Constraint::Length(7),
@@ -509,25 +509,21 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
         p_area,
     );
 
-    // Inventory table
-    let mut lines = vec![
-        Line::from(format!(
-            "{:<10} {:>6} {:>6} {:>6} {:>6}",
-            "", "iron", "copper", "coal", "stone"
-        ))
-        .style(Style::default().fg(palette::DIM)),
-    ];
-    for p in &world.players {
-        let i = &p.inventory;
-        lines.push(Line::from(format!(
-            "{:<10} {:>6} {:>6} {:>6} {:>6}",
-            truncate(&p.name, 10),
-            i.iron,
-            i.copper,
-            i.coal,
-            i.stone
-        )));
-    }
+    // Inventory: one line per player
+    let width = usize::from(inv_area.width.saturating_sub(14));
+    let lines: Vec<Line> = world
+        .players
+        .iter()
+        .map(|p| {
+            Line::from(vec![
+                Span::styled(
+                    format!("{:<10} ", truncate(&p.name, 10)),
+                    Style::default().fg(palette::DIM),
+                ),
+                Span::raw(truncate(&describe_inventory(&p.inventory), width)),
+            ])
+        })
+        .collect();
     f.render_widget(Paragraph::new(lines).block(panel("Inventory")), inv_area);
 
     // Tile under the mouse, or under you

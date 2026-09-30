@@ -157,7 +157,7 @@ fn extract_takes_ore_and_reports_it() {
 
     assert_eq!(world.deposit(id).unwrap().amount, before - 10);
     let kind = world.deposits[0].kind;
-    assert_eq!(world.player(me).unwrap().inventory.get(kind), 10);
+    assert_eq!(world.player(me).unwrap().inventory.count(kind.into()), 10);
     assert_eq!(world.player(me).unwrap().inventory.total(), 10);
     assert_eq!(
         events,

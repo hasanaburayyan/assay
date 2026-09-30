@@ -14,6 +14,7 @@ pub mod command;
 pub mod debug;
 pub mod hash;
 pub mod inventory;
+pub mod item;
 pub mod ore;
 pub mod player;
 pub mod rng;
@@ -25,6 +26,7 @@ pub mod worldgen;
 
 pub use command::{Event, Input, PlayerCommand, RejectReason, SystemCommand};
 pub use inventory::Inventory;
+pub use item::{Item, ItemStack};
 pub use ore::{OreDeposit, OreKind};
 pub use player::Player;
 pub use rng::Rng;

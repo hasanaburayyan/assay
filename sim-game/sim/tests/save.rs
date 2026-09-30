@@ -1,5 +1,5 @@
 use sim::{
-    DepositId, Input, PlayerCommand, PlayerId, SAVE_VERSION, SaveError, SystemCommand, World,
+    DepositId, Input, Item, PlayerCommand, PlayerId, SAVE_VERSION, SaveError, SystemCommand, World,
     WorldConfig, step,
 };
 
@@ -99,4 +99,24 @@ fn save_and_load_from_disk() {
     std::fs::remove_dir_all(&dir).unwrap();
 
     assert_eq!(loaded, original);
+}
+
+#[test]
+fn version_4_saves_migrate_ore_counters_to_stacks() {
+    let mut w = world(42);
+    let mut json: serde_json::Value = serde_json::from_str(&w.to_json().unwrap()).unwrap();
+    json["version"] = 4.into();
+    json["world"]["players"][0]["inventory"] =
+        serde_json::json!({ "iron": 12, "copper": 0, "coal": 3, "stone": 0 });
+
+    let loaded = World::from_json(&json.to_string()).unwrap();
+    let inv = &loaded.players[0].inventory;
+    assert_eq!(inv.count(Item::IronOre), 12);
+    assert_eq!(inv.count(Item::Coal), 3);
+    assert_eq!(inv.stacks().len(), 2);
+
+    // The migrated world must save and reload as today's format.
+    w.players[0].inventory.add(Item::IronOre, 12);
+    w.players[0].inventory.add(Item::Coal, 3);
+    assert_eq!(loaded, w);
 }

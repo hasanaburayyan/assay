@@ -737,13 +737,12 @@ fn status(s: &Session, paused: bool, tps: u32) {
 }
 
 pub fn describe_inventory(inv: &sim::Inventory) -> String {
-    if inv.total() == 0 {
+    if inv.is_empty() {
         return "nothing".into();
     }
-    sim::OreKind::ALL
+    inv.stacks()
         .iter()
-        .filter(|&&k| inv.get(k) > 0)
-        .map(|&k| format!("{} {k:?}", inv.get(k)))
+        .map(|s| format!("{} {}", s.count, s.item.name()))
         .collect::<Vec<_>>()
         .join(", ")
 }
