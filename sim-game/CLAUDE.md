@@ -33,6 +33,31 @@ game design and art direction. This file is the code and art rulebook.
 - Validate commands inside `step`, never in the CLI or relay: every peer runs
   the same validation, which is what makes cheating self-defeating.
 
+## Adding a feature (the order matters)
+
+1. **Rules first, in `sim`.** New state goes on `World` (plain data, `Hash`
+   + `Serialize`). New player actions are `PlayerCommand` variants; host-only
+   actions are `SystemCommand` variants. Behaviour that runs on its own each
+   tick is a system called from `step()` in a fixed position. Report what
+   happened with `Event`s. Bump `SAVE_VERSION` + add a migration;
+   `PROTOCOL_VERSION` too.
+2. **Tests before any UI.** Unit-test the rule, then run `cargo test` and
+   update the golden hash if the change is intentional. If the feature has
+   randomness, it must come from `world.rng`, and the determinism tests must
+   still pass.
+3. **Make it playable in text.** Add a command in `sim-cli/src/host.rs`
+   (`help` text too) and describe its events in `describe_event`. If it adds
+   state worth watching, add or extend an inspector panel in `tui.rs`, which
+   only reads `World`. Check it in `--plain` mode as well.
+4. **Multiplayer for free.** Because everything goes through `step()`, the
+   relay needs no change unless a message shape changed. Verify with two
+   clients if the feature touches commands.
+5. **Graphics last**, and only as a renderer that reads the same `World`.
+
+Never: read the clock or random numbers outside `world.rng` inside `sim`;
+mutate `World` from a host except through `step()`; make a command that only
+works from the inspector or a future graphical client.
+
 ## Rules for `sim-net` and hosts
 
 - Bump `PROTOCOL_VERSION` whenever `World`, a command, an event or a message

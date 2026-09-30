@@ -18,6 +18,25 @@ The name "Assay" (the test that measures ore purity) was chosen on
 2026-09-30 after checking Steam; nothing else on Steam uses it. Trademark and
 domain checks are still to do. The repo folder may still be called `r2ts`.
 
+## Two principles that never bend
+
+1. **The simulation is separate from any renderer.** The `sim` crate is
+   plain data plus `step()`. It never imports, calls, or knows about a
+   renderer, a network, a file, a clock or an engine. Renderers only read
+   from it (snapshots and events) and only change it by submitting commands.
+   If deleting Godot tomorrow would break a piece of code, that code is in
+   the wrong place: rules go in `sim`, everything else is a host.
+2. **The game is always playable without a renderer.** Every feature must be
+   fully usable headless: through `sim-cli` commands (inspector and `--plain`),
+   the relay, and automated tests. Text-mode play is not a stopgap until
+   graphics arrive; it is the reference client and the test harness for
+   everything that follows. No feature is "done" if it only works with
+   graphics.
+
+Every feature, in this order: sim rules and tests → a `sim-cli` command (and
+inspector panel if it's state worth seeing) → determinism check → only then
+any graphics. See "Adding a feature" in `sim-game/CLAUDE.md`.
+
 ## Repo map
 
 | Path | What |
