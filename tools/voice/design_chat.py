@@ -26,6 +26,7 @@ import datetime as dt
 import json
 import os
 import queue
+import random
 import re
 import subprocess
 import sys
@@ -42,6 +43,12 @@ NOTES_DIR = REPO / "docs" / "design-notes"
 TRANSCRIPTS_DIR = NOTES_DIR / "transcripts"
 
 DEFAULT_VOICE = "SAz9YHcvj6GT2YYXdXww"  # "River": relaxed, neutral
+CUE_DIR = Path(__file__).resolve().parent / ".cues"  # cached clips, git-ignored
+
+# Short clips played while Claude works, so silence never means "dead".
+ACK_CUES = ["Mm-hm.", "Okay.", "Right.", "Hmm, let me think about that.", "Got it, one sec."]
+WAIT_CUES = ["Hmm...", "Still thinking.", "Bear with me a moment.", "Okay, so..."]
+WAIT_CUE_EVERY = 7.0  # seconds between "still here" cues
 TTS_MODEL = "eleven_flash_v2_5"  # fastest; eleven_multilingual_v2 for quality
 STT_MODEL = "scribe_v1"
 SAMPLE_RATE = 16_000
@@ -54,7 +61,9 @@ well enough to write it down, not to build anything.
 Rules for every reply:
 - Speak, don't write: one to three short sentences of plain conversational
   English. No lists, headings, markdown, code, file paths, or symbols. Numbers
-  and units as words where natural.
+  and units as words where natural. Sound like a person thinking out loud:
+  now and then open with a natural lead-in such as "Okay, so", "Hmm, right",
+  or "Yeah, that makes sense", and vary it.
 - Ask at most one question per reply, and only when it moves the design
   forward. Prefer sharp questions about trade-offs, edge cases, and what the
   player actually does, over vague ones.
@@ -208,6 +217,45 @@ class Speaker:
         self.thread = threading.Thread(target=pump, daemon=True)
         self.thread.start()
 
+    def play_file(self, path: Path) -> None:
+        """Play a cached clip (non-blocking)."""
+        if not self.enabled:
+            return
+        self.stop()
+        self.proc = subprocess.Popen(
+            ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(path)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
+    def cue(self, phrases: list[str]) -> None:
+        clip = self.cue_clip(random.choice(phrases))
+        if clip:
+            self.play_file(clip)
+
+    def cue_clip(self, phrase: str) -> Path | None:
+        """The cached mp3 for a cue phrase, generating it on first use."""
+        if not self.enabled:
+            return None
+        safe = re.sub(r"[^a-z0-9]+", "-", phrase.lower()).strip("-")
+        path = CUE_DIR / self.voice / f"{safe}.mp3"
+        if path.exists():
+            return path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        r = requests.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{self.voice}?output_format=mp3_44100_128",
+            headers={"xi-api-key": self.key, "Content-Type": "application/json"},
+            json={"text": phrase, "model_id": TTS_MODEL},
+            timeout=60,
+        )
+        if r.status_code != 200:
+            return None
+        path.write_bytes(r.content)
+        return path
+
+    def warm_cues(self) -> None:
+        for phrase in ACK_CUES + WAIT_CUES:
+            self.cue_clip(phrase)
+
     def wait(self) -> None:
         if self.thread:
             self.thread.join()
@@ -294,12 +342,45 @@ def main() -> None:
 
     brain = ClaudeCode(args.model)
     speaker = Speaker(key, args.voice, enabled=not args.mute)
+    if speaker.enabled:
+        print("  (preparing voice cues...)", end="", flush=True)
+        speaker.warm_cues()
+        print(" ready")
+
+    def with_cues(work, label: str, ack: bool = True):
+        """Run `work()` in the background; play cues and a spinner meanwhile."""
+        result: dict = {}
+
+        def run():
+            result["value"] = work()
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        if ack:
+            speaker.cue(ACK_CUES)
+        started = last_cue = time.time()
+        spinner = "|/-\\"
+        tty = sys.stdout.isatty()
+        i = 0
+        while t.is_alive():
+            t.join(0.15)
+            i += 1
+            if tty:
+                print(f"\r  {label} {spinner[i % 4]} ", end="", flush=True)
+            now = time.time()
+            if now - last_cue > WAIT_CUE_EVERY and now - started > 3:
+                speaker.cue(WAIT_CUES)
+                last_cue = now
+        if tty:
+            print("\r" + " " * (len(label) + 6) + "\r", end="", flush=True)
+        speaker.stop()
+        return result.get("value")
 
     print("Assay design chat. Enter to talk, type to send text, 'q' to quit.")
     print("Say \"wrap it up\" when you're done and Claude writes the design note.\n")
 
     opener = GREETING_PROMPT if not args.topic else f"The founder wants to talk about: {args.topic}. Open with one sharp question about it."
-    reply = brain.ask(opener)
+    reply = with_cues(lambda: brain.ask(opener), "thinking", ack=False)
     print(f"Claude: {reply}\n")
     log("Claude", reply)
     speaker.say(for_speech(reply))
@@ -310,6 +391,7 @@ def main() -> None:
             speaker.stop()  # barge-in: anything you do cuts Claude off
             if typed.lower() in {"q", "quit", "exit"}:
                 break
+            spoke = False
             if typed:
                 said = typed
             elif args.text:
@@ -318,14 +400,15 @@ def main() -> None:
                 wav = record_until_enter()
                 if not wav:
                     continue
-                print("  transcribing...")
-                said = transcribe(key, wav)
+                spoke = True
+                said = with_cues(lambda: transcribe(key, wav), "listening")
                 if not said:
                     print("  (heard nothing)")
                     continue
                 print(f"You: {said}")
             log("You", said)
-            reply = brain.ask(said)
+            # Spoken turns already got an acknowledgement while transcribing.
+            reply = with_cues(lambda: brain.ask(said), "thinking", ack=not spoke)
             print(f"\nClaude: {reply}\n")
             log("Claude", reply)
             speaker.say(for_speech(reply))

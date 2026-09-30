@@ -3,3 +3,4 @@ __pycache__/
 .idea/
 .vscode/
 docs/design-notes/transcripts/
+tools/voice/.cues/
