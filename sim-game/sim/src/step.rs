@@ -1,7 +1,8 @@
 //! Advancing the world one tick.
 
-use crate::command::{Event, Input, PlayerCommand, RejectReason, SystemCommand};
-use crate::player::Player;
+use crate::command::{Event, Input, PlayerCommand, RejectReason, StopReason, SystemCommand};
+use crate::player::{Mining, Player};
+use crate::tuning::HAND_MINE_TICKS;
 use crate::types::PlayerId;
 use crate::world::World;
 
@@ -20,6 +21,7 @@ pub fn step(world: &mut World, inputs: &[Input], events: &mut Vec<Event>) {
     // Systems run here in a fixed order. Later: drills, belts, inserters,
     // machines, drones.
     move_players(world, events);
+    mine_by_hand(world, events);
 
     world.tick += 1;
 }
@@ -61,31 +63,28 @@ fn apply_player(
     }
 
     match *command {
-        PlayerCommand::Extract { deposit, amount } => {
-            let Some(d) = world.deposit_mut(deposit) else {
-                return reject(RejectReason::UnknownDeposit, events);
+        PlayerCommand::Mine => {
+            let pos = world.player(player).expect("checked above").pos;
+            let Some(d) = world.deposit_at(pos) else {
+                return reject(RejectReason::NotOnDeposit, events);
             };
             if d.is_depleted() {
                 return reject(RejectReason::DepositDepleted, events);
             }
-
-            let taken = amount.min(d.amount);
-            d.amount -= taken;
-            let (kind, depleted) = (d.kind, d.is_depleted());
-            world
-                .player_mut(player)
-                .expect("checked above")
-                .inventory
-                .add(kind.into(), taken);
-            events.push(Event::OreExtracted {
+            let (deposit, kind) = (d.id, d.kind);
+            let p = world.player_mut(player).expect("checked above");
+            if p.mining.is_some_and(|m| m.deposit == deposit) {
+                return; // already at it
+            }
+            p.mining = Some(Mining {
+                deposit,
+                progress: 0,
+            });
+            events.push(Event::MiningStarted {
                 player,
                 deposit,
                 kind,
-                amount: taken,
             });
-            if depleted {
-                events.push(Event::DepositDepleted { deposit });
-            }
         }
         PlayerCommand::MoveTo { target } => {
             if !world.in_bounds(target) {
@@ -108,6 +107,13 @@ fn apply_player(
             if p.target.take().is_some() {
                 events.push(Event::PlayerStopped { player, pos: p.pos });
             }
+            if let Some(m) = p.mining.take() {
+                events.push(Event::MiningStopped {
+                    player,
+                    deposit: m.deposit,
+                    reason: StopReason::Stopped,
+                });
+            }
         }
     }
 }
@@ -124,6 +130,59 @@ fn move_players(world: &mut World, events: &mut Vec<Event>) {
                 player: p.id,
                 pos: target,
             });
+        }
+    }
+}
+
+/// Hand-mining system: every player standing on the deposit they are mining
+/// makes progress, and takes one unit of ore each `HAND_MINE_TICKS`.
+fn mine_by_hand(world: &mut World, events: &mut Vec<Event>) {
+    for i in 0..world.players.len() {
+        let Some(m) = world.players[i].mining else {
+            continue;
+        };
+        let player = world.players[i].id;
+        let pos = world.players[i].pos;
+        let deposit = world
+            .deposit(m.deposit)
+            .expect("mining refers to an existing deposit");
+        if !deposit.contains(pos) {
+            world.players[i].mining = None;
+            events.push(Event::MiningStopped {
+                player,
+                deposit: m.deposit,
+                reason: StopReason::LeftDeposit,
+            });
+            continue;
+        }
+
+        let progress = m.progress + 1;
+        if progress < HAND_MINE_TICKS {
+            world.players[i].mining = Some(Mining { progress, ..m });
+            continue;
+        }
+
+        let d = world.deposit_mut(m.deposit).expect("checked above");
+        d.amount -= 1;
+        let item = d.kind.into();
+        let depleted = d.is_depleted();
+        world.players[i].inventory.add(item, 1);
+        events.push(Event::OreMined {
+            player,
+            deposit: m.deposit,
+            item,
+            amount: 1,
+        });
+        if depleted {
+            world.players[i].mining = None;
+            events.push(Event::DepositDepleted { deposit: m.deposit });
+            events.push(Event::MiningStopped {
+                player,
+                deposit: m.deposit,
+                reason: StopReason::Depleted,
+            });
+        } else {
+            world.players[i].mining = Some(Mining { progress: 0, ..m });
         }
     }
 }

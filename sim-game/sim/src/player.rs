@@ -1,9 +1,10 @@
-//! Players: an entity with a name and a position that walks toward a target.
+//! Players: an entity with a name and a position that walks toward a target,
+//! carries items, and can mine by hand.
 
 use serde::{Deserialize, Serialize};
 
 use crate::inventory::Inventory;
-use crate::types::{PlayerId, TilePos};
+use crate::types::{DepositId, PlayerId, TilePos};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Player {
@@ -16,9 +17,20 @@ pub struct Player {
     /// Where the player is walking to. The movement system moves them one
     /// tile per tick, diagonals included, until they arrive.
     pub target: Option<TilePos>,
-    /// Ore carried. Saves from before v4 load with an empty inventory.
+    /// Items carried. Saves from before v4 load with an empty inventory.
     #[serde(default)]
     pub inventory: Inventory,
+    /// Hand mining in progress. Continues while the player stays on the
+    /// deposit; walking off it or `Stop` ends it.
+    #[serde(default)]
+    pub mining: Option<Mining>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Mining {
+    pub deposit: DepositId,
+    /// Ticks spent on the current unit of ore.
+    pub progress: u32,
 }
 
 impl Player {
@@ -29,6 +41,7 @@ impl Player {
             pos,
             target: None,
             inventory: Inventory::default(),
+            mining: None,
         }
     }
 }

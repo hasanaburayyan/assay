@@ -29,7 +29,7 @@ use crate::output;
 const CONSOLE_LINES: usize = 300;
 const HELP_TEXT: &str = "\
 Type a command and press Enter. Everything from the prompt works:
-  goto 10 10 · move ne 5 · mine 10 · stop · players · inv · deposits
+  goto 10 10 · move ne 5 · mine · stop · players · inv · deposits
   new 42 · load 42 · save · pause · resume · speed 20 · help · quit
 
 Walk        arrow keys (hold to keep walking), or click a tile
@@ -491,10 +491,14 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
                 .target
                 .map(|t| format!(" → ({},{})", t.x, t.y))
                 .unwrap_or_default();
+            let mining = p
+                .mining
+                .map(|m| format!(" ⛏ dep {}", m.deposit.0))
+                .unwrap_or_default();
             Line::from(vec![
                 Span::styled("█ ", Style::default().fg(player_color(p.id, me))),
                 Span::raw(format!(
-                    "{} {}{} ({},{}){walking}",
+                    "{} {}{} ({},{}){walking}{mining}",
                     p.id.0,
                     p.name,
                     if Some(p.id) == me { "*" } else { "" },
@@ -739,9 +743,7 @@ fn describe_input(input: &Input, world: &World) -> String {
                 .player(*player)
                 .map_or_else(|| format!("p{}", player.0), |p: &Player| p.name.clone());
             let what = match command {
-                PlayerCommand::Extract { deposit, amount } => {
-                    format!("extract {} {amount}", deposit.0)
-                }
+                PlayerCommand::Mine => "mine".into(),
                 PlayerCommand::MoveTo { target } => format!("goto {},{}", target.x, target.y),
                 PlayerCommand::Stop => "stop".into(),
             };

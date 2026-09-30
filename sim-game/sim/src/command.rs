@@ -15,17 +15,19 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::item::Item;
 use crate::ore::OreKind;
 use crate::types::{DepositId, PlayerId, TilePos};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PlayerCommand {
-    /// Take up to `amount` ore from a deposit. Stand-in until mining drills
-    /// exist as entities.
-    Extract { deposit: DepositId, amount: u32 },
+    /// Start mining the deposit you are standing on, by hand. Ore arrives
+    /// one unit at a time (see `tuning::HAND_MINE_TICKS`) for as long as you
+    /// stay on the deposit.
+    Mine,
     /// Start walking toward `target`, one tile per tick.
     MoveTo { target: TilePos },
-    /// Stop walking.
+    /// Stop walking and stop mining.
     Stop,
 }
 
@@ -57,11 +59,22 @@ pub enum Event {
         player: PlayerId,
         name: String,
     },
-    OreExtracted {
+    MiningStarted {
         player: PlayerId,
         deposit: DepositId,
         kind: OreKind,
+    },
+    /// One unit of ore went into the player's inventory.
+    OreMined {
+        player: PlayerId,
+        deposit: DepositId,
+        item: Item,
         amount: u32,
+    },
+    MiningStopped {
+        player: PlayerId,
+        deposit: DepositId,
+        reason: StopReason,
     },
     DepositDepleted {
         deposit: DepositId,
@@ -86,9 +99,21 @@ pub enum Event {
     },
 }
 
+/// Why an activity that was running on its own came to an end.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum StopReason {
+    /// The player asked for it.
+    Stopped,
+    /// The player walked off the deposit.
+    LeftDeposit,
+    /// There is nothing left to mine.
+    Depleted,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RejectReason {
-    UnknownDeposit,
+    /// `Mine` needs you to stand on a deposit.
+    NotOnDeposit,
     DepositDepleted,
     UnknownPlayer,
     OutOfBounds,

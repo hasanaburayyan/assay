@@ -40,8 +40,9 @@ Time (single-player; online, the host runs the clock)
 Player
   goto <x> <y>                walk to a tile, one tile per tick
   move <dir> [n]              walk n tiles (default 1); dir: n s e w ne nw se sw
-  stop                        stop walking
-  mine [amount]               take ore from the deposit you stand on (default 10)
+  stop                        stop walking and mining
+  mine                        mine the deposit you stand on, by hand, until you
+                              stop or walk off it
   where                       your position
   inv                         what you're carrying
 
@@ -52,9 +53,6 @@ Look
   at <x> <y>                  what's on a tile
   events [n]                  the last n events (default 20)
   status                      tick, clock or connection, hash, save file
-
-Act
-  extract <id> <amount>       take ore from a deposit
 
   help                        show this
   quit                        exit (single-player saves first; Ctrl-D works too)
@@ -430,8 +428,12 @@ impl Host {
                         .target
                         .map(|t| format!(", walking to ({}, {})", t.x, t.y))
                         .unwrap_or_default();
+                    let mining = p
+                        .mining
+                        .map(|m| format!(", mining deposit {}", m.deposit.0))
+                        .unwrap_or_default();
                     out!(
-                        "  {} · {}{you} at ({}, {}){walking} · carrying {}",
+                        "  {} · {}{you} at ({}, {}){walking}{mining} · carrying {}",
                         p.id.0,
                         p.name,
                         p.pos.x,
@@ -450,25 +452,13 @@ impl Host {
             "events" | "log" => {
                 let n: usize = optional_arg(args, 1, "count", 20)?;
                 if self.log.is_empty() {
-                    out!("No events yet. Try `goto 10 10` or `extract 0 50`.");
+                    out!("No events yet. Try `goto 10 10`, or walk onto a deposit and `mine`.");
                 }
                 for line in self.log.iter().skip(self.log.len().saturating_sub(n)) {
                     out!("  {line}");
                 }
             }
             "status" => status(s, paused, self.tps),
-            "extract" => {
-                let usage = "Usage: extract <deposit id> <amount>, e.g. extract 0 50";
-                let id: u32 =
-                    parse_arg(args, 1, "deposit id").map_err(|e| format!("{e}\n{usage}"))?;
-                let amount: u32 =
-                    parse_arg(args, 2, "amount").map_err(|e| format!("{e}\n{usage}"))?;
-                if amount == 0 {
-                    return Err("Amount must be at least 1.".into());
-                }
-                let deposit = sim::DepositId(id);
-                submit(s, paused, PlayerCommand::Extract { deposit, amount })?;
-            }
             "goto" => {
                 let usage = "Usage: goto <x> <y>, e.g. goto 10 10";
                 let x: i32 = parse_arg(args, 1, "x").map_err(|e| format!("{e}\n{usage}"))?;
@@ -494,19 +484,7 @@ impl Host {
                 submit(s, paused, PlayerCommand::MoveTo { target })?;
             }
             "stop" => submit(s, paused, PlayerCommand::Stop)?,
-            "mine" => {
-                let amount: u32 = optional_arg(args, 1, "amount", 10)?;
-                if amount == 0 {
-                    return Err("Amount must be at least 1.".into());
-                }
-                let pos = s.me()?.pos;
-                let deposit = s
-                    .world
-                    .deposit_at(pos)
-                    .ok_or("You're not standing on a deposit. Walk onto one first.")?
-                    .id;
-                submit(s, paused, PlayerCommand::Extract { deposit, amount })?;
-            }
+            "mine" => submit(s, paused, PlayerCommand::Mine)?,
             other => {
                 return Err(format!(
                     "Unknown command `{other}`. Type `help` to see commands."
@@ -673,8 +651,13 @@ fn where_am_i(s: &Session) -> Result<(), String> {
         None => out!("You are standing at ({x}, {y})."),
     }
     if let Some(d) = s.world.deposit_at(me.pos) {
+        let mining = if me.mining.is_some() {
+            " You're mining it."
+        } else {
+            " `mine` to start mining it."
+        };
         out!(
-            "You're on deposit {} ({:?}, {} left).",
+            "You're on deposit {} ({:?}, {} left).{mining}",
             d.id.0,
             d.kind,
             d.amount
@@ -784,7 +767,7 @@ fn who(world: &World, me: PlayerId, player: PlayerId) -> String {
 
 fn describe_command(cmd: &PlayerCommand) -> String {
     match cmd {
-        PlayerCommand::Extract { deposit, amount } => format!("extract {} {amount}", deposit.0),
+        PlayerCommand::Mine => "mine".into(),
         PlayerCommand::MoveTo { target } => format!("goto {} {}", target.x, target.y),
         PlayerCommand::Stop => "stop".into(),
     }
@@ -797,15 +780,46 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
             format!("you joined as {name}")
         }
         Event::PlayerJoined { name, .. } => format!("{name} joined"),
-        Event::OreExtracted {
+        Event::MiningStarted {
             player,
             deposit,
             kind,
+        } => format!(
+            "{} started mining {kind:?} at deposit {}",
+            who(player),
+            deposit.0
+        ),
+        Event::OreMined {
+            player,
+            deposit,
+            item,
             amount,
         } => {
-            let left = world.deposit(*deposit).map_or(0, |d| d.amount);
+            let (left, carrying) = (
+                world.deposit(*deposit).map_or(0, |d| d.amount),
+                world
+                    .player(*player)
+                    .map_or(0, |p| p.inventory.count(*item)),
+            );
             format!(
-                "{} extracted {amount} {kind:?} from deposit {} ({left} left)",
+                "{} mined {amount} {} (carrying {carrying}, {left} left in deposit {})",
+                who(player),
+                item.name(),
+                deposit.0
+            )
+        }
+        Event::MiningStopped {
+            player,
+            deposit,
+            reason,
+        } => {
+            let why = match reason {
+                sim::StopReason::Stopped => "stopped",
+                sim::StopReason::LeftDeposit => "walked off it",
+                sim::StopReason::Depleted => "mined it out",
+            };
+            format!(
+                "{} stopped mining deposit {}: {why}",
                 who(player),
                 deposit.0
             )
@@ -831,7 +845,9 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
             reason,
         } => {
             let why = match reason {
-                RejectReason::UnknownDeposit => "no deposit with that id".to_string(),
+                RejectReason::NotOnDeposit => {
+                    "you're not standing on a deposit; walk onto one first".to_string()
+                }
                 RejectReason::DepositDepleted => "that deposit is already depleted".to_string(),
                 RejectReason::UnknownPlayer => "no such player".to_string(),
                 RejectReason::OutOfBounds => match command {

@@ -15,6 +15,7 @@
 //! - v3: player names
 //! - v4: player inventories (loads from v3 with empty inventories)
 //! - v5: inventories are item stacks, not four ore counters
+//! - v6: players may be mining (loads from v5 as not mining)
 
 use std::path::Path;
 use std::{fmt, fs, io};
@@ -26,7 +27,7 @@ use crate::types::PlayerId;
 use crate::world::World;
 
 /// Current save format version.
-pub const SAVE_VERSION: u32 = 5;
+pub const SAVE_VERSION: u32 = 6;
 
 /// Oldest version `from_json` can still load and migrate forward.
 pub const OLDEST_SAVE_VERSION: u32 = 1;

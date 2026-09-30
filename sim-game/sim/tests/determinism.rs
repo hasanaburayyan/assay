@@ -1,10 +1,7 @@
 //! Multiplayer depends on every peer computing the exact same world from the
 //! same inputs. These tests hammer that property with random input streams.
 
-use sim::{
-    DepositId, Input, PlayerCommand, PlayerId, Rng, SystemCommand, TilePos, World, WorldConfig,
-    step,
-};
+use sim::{Input, PlayerCommand, PlayerId, Rng, SystemCommand, TilePos, World, WorldConfig, step};
 
 fn new_world() -> World {
     World::new(WorldConfig {
@@ -26,10 +23,7 @@ fn random_inputs(rng: &mut Rng, world: &World) -> Vec<Input> {
     for _ in 0..rng.range(0, 4) {
         let player = PlayerId(rng.range(0, world.players.len() as u32 + 1));
         let command = match rng.range(0, 3) {
-            0 => PlayerCommand::Extract {
-                deposit: DepositId(rng.range(0, world.deposits.len() as u32 + 2)),
-                amount: rng.range(1, 300),
-            },
+            0 => PlayerCommand::Mine,
             1 => PlayerCommand::MoveTo {
                 target: TilePos::new(
                     rng.range(0, world.width() as u32 + 4) as i32 - 2,
@@ -102,7 +96,7 @@ fn golden_hash_is_stable_across_machines() {
     }
     assert_eq!(
         format!("{:016x}", world.state_hash()),
-        "fa1e9b075fbef483",
+        "323d2fe20d915817",
         "world hash changed; see the comment on this test"
     );
 }
