@@ -1,5 +1,6 @@
 //! The world: every piece of simulation state lives in here.
 
+use crate::building::{Building, BuildingId};
 use crate::hash::fnv64;
 use crate::ore::OreDeposit;
 use crate::player::Player;
@@ -50,6 +51,13 @@ pub struct World {
     /// same tick.
     #[serde(default)]
     pub players: Vec<Player>,
+    /// Placed buildings, in placement order. Look up by `BuildingId`, not
+    /// index: picking one up removes it from the list.
+    #[serde(default)]
+    pub buildings: Vec<Building>,
+    /// The next `BuildingId` to hand out.
+    #[serde(default)]
+    pub next_building_id: u32,
 }
 
 impl World {
@@ -78,6 +86,8 @@ impl World {
             spawn,
             deposits,
             players: Vec::new(),
+            buildings: Vec::new(),
+            next_building_id: 0,
         }
     }
 
@@ -115,6 +125,19 @@ impl World {
 
     pub fn player_mut(&mut self, id: PlayerId) -> Option<&mut Player> {
         self.players.get_mut(id.0 as usize)
+    }
+
+    pub fn building(&self, id: BuildingId) -> Option<&Building> {
+        self.buildings.iter().find(|b| b.id == id)
+    }
+
+    pub fn building_mut(&mut self, id: BuildingId) -> Option<&mut Building> {
+        self.buildings.iter_mut().find(|b| b.id == id)
+    }
+
+    /// The building covering `pos`, if any.
+    pub fn building_at(&self, pos: TilePos) -> Option<&Building> {
+        self.buildings.iter().find(|b| b.covers(pos))
     }
 
     /// The deposit covering `pos`, if any.

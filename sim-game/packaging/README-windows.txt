@@ -47,12 +47,12 @@ autosaves into a "saves" folder next to sim-relay.exe.
 The inspector
 -------------
 sim-cli opens a live view: the map (you are white, other players are
-colored, ore patches are colored by kind), players, every player's
-inventory, the tile under your mouse, nearest deposits, the inputs applied
-each tick, and an event console.
+colored, ore patches are colored by kind, smelters are orange), players,
+every player's inventory, the tile under your mouse, placed buildings,
+nearest deposits, the inputs applied each tick, and an event console.
 
 Just type commands and press Enter, the same ones as before:
-  goto 30 20 · move ne 5 · mine 10 · stop · players · inv · deposits · help
+  goto 30 20 · move ne 5 · mine · craft smelter · place smelter · help
 Arrow keys walk (hold to keep going). Click a tile to walk there.
 Esc clears the line. F1 shows keys. Type quit (or Ctrl-C) to leave.
 
@@ -67,7 +67,12 @@ Things to try
   goto 30 20               walk somewhere; everyone sees you move
   move ne 5                walk 5 tiles north-east
   deposits                 list ore deposits
-  extract 0 50             take 50 ore from deposit 0
+  mine                     stand on a deposit first; ore arrives while you stay
+  craft smelter            5 stone makes a smelter (recipes lists everything)
+  place smelter            put it down just east of you
+  insert 0 coal 5          fuel it, then insert 0 iron-ore 10 to smelt plates
+  take 0                   collect the plates; craft gear turns 2 into a gear
+  buildings                what every building holds and whether it's running
   events                   recent events
   quit                     leave (the host keeps running)
 

@@ -10,6 +10,7 @@
 //! - iterate in a stable order (`Vec`, not `HashMap`)
 //! - integers for anything that affects the rules
 
+pub mod building;
 pub mod command;
 pub mod debug;
 pub mod hash;
@@ -26,6 +27,7 @@ pub mod types;
 pub mod world;
 pub mod worldgen;
 
+pub use building::{Building, BuildingId, BuildingKind, Smelter};
 pub use command::{Event, Input, PlayerCommand, RejectReason, StopReason, SystemCommand};
 pub use inventory::Inventory;
 pub use item::{Item, ItemStack};

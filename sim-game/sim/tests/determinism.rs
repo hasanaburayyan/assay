@@ -2,7 +2,8 @@
 //! same inputs. These tests hammer that property with random input streams.
 
 use sim::{
-    Input, PlayerCommand, PlayerId, RecipeId, Rng, SystemCommand, TilePos, World, WorldConfig, step,
+    BuildingId, Input, Item, PlayerCommand, PlayerId, RecipeId, Rng, SystemCommand, TilePos, World,
+    WorldConfig, step,
 };
 
 fn new_world() -> World {
@@ -15,7 +16,9 @@ fn new_world() -> World {
 
 /// A random mix of joins and player commands, including invalid ones
 /// (unknown players, unknown deposits, off-map targets) so rejections are
-/// exercised too.
+/// exercised too. It is nudged toward the real loop (walk to deposits, mine,
+/// craft a smelter once there is stone, place and feed it) so buildings and
+/// smelting happen from inputs alone, without any test-only shortcuts.
 fn random_inputs(rng: &mut Rng, world: &World) -> Vec<Input> {
     let mut inputs = Vec::new();
     if world.players.len() < 8 && rng.range(0, 100) < 2 {
@@ -24,13 +27,77 @@ fn random_inputs(rng: &mut Rng, world: &World) -> Vec<Input> {
     }
     for _ in 0..rng.range(0, 4) {
         let player = PlayerId(rng.range(0, world.players.len() as u32 + 1));
-        let command = match rng.range(0, 5) {
-            0 => PlayerCommand::Mine,
-            1 => PlayerCommand::Craft {
-                recipe: RecipeId::ALL[rng.range(0, RecipeId::ALL.len() as u32) as usize],
+        let p = world.player(player);
+        let inv = p.map(|p| &p.inventory);
+        let has = |item, n| inv.is_some_and(|i| i.has(item, n));
+        let near = p.map_or(world.spawn_tile(), |p| p.pos);
+        let random_item = |rng: &mut Rng| Item::ALL[rng.range(0, Item::ALL.len() as u32) as usize];
+        let random_building = |rng: &mut Rng| BuildingId(rng.range(0, world.next_building_id + 2));
+        let command = match rng.range(0, 12) {
+            0 | 1 => PlayerCommand::Mine,
+            2 => PlayerCommand::Craft {
+                recipe: if has(Item::Stone, 5) && rng.range(0, 4) > 0 {
+                    RecipeId::Smelter
+                } else {
+                    RecipeId::ALL[rng.range(0, RecipeId::ALL.len() as u32) as usize]
+                },
                 count: rng.range(0, 4),
             },
-            2 | 3 => PlayerCommand::MoveTo {
+            3 => PlayerCommand::Place {
+                item: if has(Item::Smelter, 1) && rng.range(0, 4) > 0 {
+                    Item::Smelter
+                } else {
+                    random_item(rng)
+                },
+                pos: TilePos::new(
+                    near.x + rng.range(0, 7) as i32 - 3,
+                    near.y + rng.range(0, 7) as i32 - 3,
+                ),
+            },
+            4 => {
+                // Mostly feed the nearest smelter with fuel or ore in hand.
+                let nearest = world
+                    .buildings
+                    .iter()
+                    .min_by_key(|b| b.distance_from(near))
+                    .map(|b| b.id);
+                let item = match rng.range(0, 4) {
+                    0 if has(Item::Coal, 1) => Item::Coal,
+                    1 if has(Item::IronOre, 1) => Item::IronOre,
+                    2 if has(Item::CopperOre, 1) => Item::CopperOre,
+                    _ => random_item(rng),
+                };
+                PlayerCommand::Insert {
+                    building: nearest
+                        .filter(|_| rng.range(0, 4) > 0)
+                        .unwrap_or_else(|| random_building(rng)),
+                    item,
+                    count: rng.range(0, 5),
+                }
+            }
+            5 => PlayerCommand::Take {
+                building: random_building(rng),
+            },
+            6 => PlayerCommand::Pickup {
+                building: random_building(rng),
+            },
+            7 | 8 => {
+                // Head for a deposit, so mining actually happens: stone
+                // first until there is enough for a smelter.
+                let wanted: Vec<&sim::OreDeposit> = world
+                    .deposits
+                    .iter()
+                    .filter(|d| !d.is_depleted())
+                    .filter(|d| has(Item::Stone, 5) || d.kind == sim::OreKind::Stone)
+                    .collect();
+                let target = if wanted.is_empty() {
+                    world.spawn_tile()
+                } else {
+                    wanted[rng.range(0, wanted.len() as u32) as usize].center
+                };
+                PlayerCommand::MoveTo { target }
+            }
+            9 | 10 => PlayerCommand::MoveTo {
                 target: TilePos::new(
                     rng.range(0, world.width() as u32 + 4) as i32 - 2,
                     rng.range(0, world.height() as u32 + 4) as i32 - 2,
@@ -59,6 +126,15 @@ fn peers_given_the_same_inputs_stay_identical() {
     }
     assert_eq!(ea, eb);
     assert!(a.players.len() > 1, "script should have added players");
+    assert!(
+        a.next_building_id > 0,
+        "script should have placed at least one building"
+    );
+    assert!(
+        ea.iter()
+            .any(|e| matches!(e, sim::Event::ItemSmelted { .. })),
+        "script should have smelted something"
+    );
 }
 
 /// A peer that joins late gets a save and must then keep up exactly.
@@ -102,7 +178,7 @@ fn golden_hash_is_stable_across_machines() {
     }
     assert_eq!(
         format!("{:016x}", world.state_hash()),
-        "ac76c4b91cb4dc37",
+        "2e35a4df8eff940c",
         "world hash changed; see the comment on this test"
     );
 }

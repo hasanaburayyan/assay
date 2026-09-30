@@ -15,6 +15,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::building::BuildingId;
 use crate::item::Item;
 use crate::ore::OreKind;
 use crate::recipe::RecipeId;
@@ -29,6 +30,19 @@ pub enum PlayerCommand {
     /// Hand-craft `count` batches of a recipe from your inventory. Inputs
     /// are taken as each batch starts; you keep walking or mining meanwhile.
     Craft { recipe: RecipeId, count: u32 },
+    /// Put a building item from your inventory on the map, with its
+    /// top-left tile at `pos`. You must be within `tuning::REACH` of it.
+    Place { item: Item, pos: TilePos },
+    /// Move items from your inventory into a building's slots.
+    Insert {
+        building: BuildingId,
+        item: Item,
+        count: u32,
+    },
+    /// Take everything from a building's output slot.
+    Take { building: BuildingId },
+    /// Remove a building, getting it and its contents back.
+    Pickup { building: BuildingId },
     /// Start walking toward `target`, one tile per tick.
     MoveTo { target: TilePos },
     /// Stop walking, mining and crafting (the current batch is refunded).
@@ -103,6 +117,36 @@ pub enum Event {
         recipe: RecipeId,
         reason: StopReason,
     },
+    BuildingPlaced {
+        player: PlayerId,
+        building: BuildingId,
+        item: Item,
+        pos: TilePos,
+    },
+    ItemsInserted {
+        player: PlayerId,
+        building: BuildingId,
+        item: Item,
+        count: u32,
+    },
+    ItemsTaken {
+        player: PlayerId,
+        building: BuildingId,
+        item: Item,
+        count: u32,
+    },
+    BuildingRemoved {
+        player: PlayerId,
+        building: BuildingId,
+        item: Item,
+        pos: TilePos,
+    },
+    /// A smelter finished a plate; it is waiting in the output slot.
+    ItemSmelted {
+        building: BuildingId,
+        item: Item,
+        count: u32,
+    },
     MoveStarted {
         player: PlayerId,
         from: TilePos,
@@ -149,4 +193,16 @@ pub enum RejectReason {
     NotHandCraftable,
     /// The player lacks enough of this item.
     MissingItems(Item),
+    UnknownBuilding,
+    /// Farther than `tuning::REACH` tiles away.
+    OutOfReach,
+    /// Another building is in the way.
+    TileOccupied,
+    /// This item is not a building.
+    NotPlaceable,
+    /// The building has no slot that takes this item.
+    WrongItem,
+    /// The slot is full, or holds something else.
+    SlotFull,
+    NothingToTake,
 }

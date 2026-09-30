@@ -1,6 +1,7 @@
-# r2ts automation game: design and art brief
+# Assay: design and art brief
 
-Working title: none yet. This file describes the game for anyone contributing
+Assay is the game's name (an assay is the test that measures ore purity;
+chosen 2026-09-30). This file describes the game for anyone contributing
 to it, including art. Sections are marked **Decided**, **Built** (exists in
 code today), or **Open** (not decided; don't treat as final).
 
@@ -49,9 +50,41 @@ client yet; a Godot client is planned.
 - **Ore kinds:** Iron, Copper, Coal, Stone.
 - **Players:** named characters on the tile grid. They walk one tile per tick
   in 8 directions (diagonals included). Several players can share a world.
+- **Items and inventories:** players carry stacks of items: the four ores,
+  iron and copper plates, iron gears, and smelters waiting to be placed.
+- **Hand mining:** stand on a deposit and `mine`; one ore arrives every few
+  ticks until you stop, walk off, or the deposit runs out.
+- **Hand crafting:** a fixed recipe table. Batches take their inputs up
+  front and finish over ticks while you keep walking or mining.
+- **Smelter:** the first building. Crafted from stone, placed on a 2×2
+  footprint within reach, fed ore and coal by hand, and it smelts plates on
+  its own until its output slot fills or its fuel runs out.
 
-Gameplay today is only walking around and extracting ore by command. Machines,
-belts, drills, items and inventories are next.
+Gameplay today is the first loop described below. Belts, inserters and
+drills are next.
+
+## The first loop (Decided 2026-09-30, Built)
+
+Mine stone by hand, craft a smelter, place it, feed it ore and coal, take
+plates out, craft gears. The smelter is the first thing that works while the
+player is elsewhere, and its stalls (full output, no fuel) are what belts and
+inserters will fix. All numbers live in `sim/src/tuning.rs` and
+`sim/src/recipe.rs`; they are starting points, not final.
+
+| Rule | Value |
+|---|---|
+| Hand mining | 1 ore per 4 ticks, standing on the deposit |
+| Smelter recipe | 5 stone, 20 ticks by hand |
+| Iron gear recipe | 2 iron plate, 5 ticks by hand |
+| Smelting | 1 ore → 1 plate, 20 ticks, in a smelter only |
+| Coal | 1 coal burns for 80 ticks of smelting (burns only while working) |
+| Smelter slots | input 50 ore of one kind, fuel 50 coal, output 50 plates |
+| Reach | 3 tiles (diagonals count as 1) to place, fill, empty or pick up |
+
+Deliberately left out of this pass: ore purity and hardness on items and
+recipes (**next up**; inventories are stacks so a tier field is a save
+migration, not a rewrite), craft queues, power, and any machine beyond the
+smelter.
 
 ## Planned entities (Decided in concept, not built)
 
@@ -59,12 +92,13 @@ These need art eventually. Rough order they'll be built:
 
 | Entity | Notes for art |
 |---|---|
+| Smelter (**Built** in sim) | 2×2. Burns coal, ore in, plates out. Needs an idle, working, and stalled look |
 | Mining drill | Sits on a deposit and extracts ore over time |
 | Conveyor belt | Straight, corner and junction pieces; items ride on it |
 | Inserter | **Modular**: base + arm segments + 1 to 4 claws + optional filter. The number of claws and arm length must be visible at a glance |
 | Assembler | Turns inputs into outputs (e.g. ore into gears) |
 | Chest | Storage |
-| Items | Ore of each kind, plus crafted parts (gears, claws, arm segments, sensors) |
+| Items | Ore of each kind (**Built**), plates and gears (**Built** in sim), then claws, arm segments, sensors |
 | Drones | Fly over the factory carrying items to build blueprints |
 | Planets | Seen from a galaxy or system map |
 
