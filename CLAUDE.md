@@ -72,8 +72,8 @@ why determinism rules are non-negotiable.
 
 - **`sim`**: `World` (tick, seed, seeded `Rng`, chunks, `deposits`,
   `players`, `buildings`), `worldgen` (one deposit per 16×16 chunk, pure
-  function of seed + chunk position; today purity/amount still grow with
-  distance from spawn, which ADR 0001 says to remove), `command.rs` (`PlayerCommand`: Mine/Craft/Place/Insert/Take/
+  function of seed + chunk position; amount grows with distance from spawn,
+  purity is a plain seeded roll per ADR 0001), `command.rs` (`PlayerCommand`: Mine/Craft/Place/Insert/Take/
   Pickup/MoveTo/Stop; `SystemCommand`: AddPlayer; `Input` wraps them),
   `step.rs` (apply inputs, then systems in fixed order: movement, hand
   mining, hand crafting, smelters), `item.rs` (`Item`, `ItemStack`),

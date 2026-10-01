@@ -19,8 +19,9 @@ const DEPOSIT_CHANCE: u32 = 55;
 /// Generate the ore deposit for one chunk, if it has one.
 ///
 /// A deposit always fits entirely inside its own chunk, so deposits never
-/// overlap. Purity and size grow with distance from `spawn`: the further out
-/// you build, the better the ore.
+/// overlap. Size grows with distance from `spawn`. Purity is a plain seeded
+/// roll with no spatial trend: the "purer further out" rule was withdrawn
+/// (ADR 0001) until purity's source is decided.
 pub fn deposit_in_chunk(
     seed: u64,
     chunk: ChunkPos,
@@ -48,7 +49,7 @@ pub fn deposit_in_chunk(
     );
 
     let distance = chunk.distance(spawn) as u32;
-    let purity = (15 + distance * 8 + rng.range(0, 15)).min(100) as u8;
+    let purity = rng.range(1, 101) as u8;
     let amount = 400 + distance * 150 + rng.range(0, 600);
 
     Some(OreDeposit {

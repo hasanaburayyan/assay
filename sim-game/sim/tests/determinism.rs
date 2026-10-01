@@ -178,7 +178,7 @@ fn golden_hash_is_stable_across_machines() {
     }
     assert_eq!(
         format!("{:016x}", world.state_hash()),
-        "2e35a4df8eff940c",
+        "9d0e359cc2cc17b7",
         "world hash changed; see the comment on this test"
     );
 }
