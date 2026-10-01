@@ -37,3 +37,4 @@ re-reading transcripts or relitigating in chat.
 |---|---|---|
 | [0001](0001-generated-minerals-with-grades.md) | Accepted | Generated mineral species with purity grades |
 | [0002](0002-purity-from-world-core-quality.md) | Proposed | Deposit purity comes from a world core quality plus a seeded spread |
+| [0003](0003-machines-are-a-bag-of-parts.md) | Proposed | Machines are a bag of parts over one catalogue table |
