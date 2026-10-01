@@ -183,6 +183,13 @@ why determinism rules are non-negotiable.
   `assay-windows.zip` (static CRT) on every push to `main`; download from
   the run's Artifacts (login needed) or push a `v*` tag for a public
   GitHub Release.
+- Each zip holds `sim-cli`, `sim-relay` **and the Godot client**
+  (`Assay.app` / `Assay.exe`), exported by the version of Godot pinned in
+  `GODOT_VERSION` in the workflow, from `client/export_presets.cfg`. The
+  editor and its export templates are anonymous downloads from the public
+  godotengine/godot releases: no account, nothing bought. Every exported
+  build runs `--headless -- --selfcheck <file>` before it is zipped, because
+  an export can succeed and still ship a pack that will not load.
 - Mac and Windows testers must use bundles from the same run.
 - Testers on other networks reach the relay through Tailscale or a
   forwarded TCP 7777. The relay prints the LAN address on start.

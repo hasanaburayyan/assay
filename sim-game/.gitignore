@@ -2,3 +2,13 @@
 /saves
 /dist
 /art/out
+# Where CI assembles the Mac and Windows zips. Running those steps by hand
+# leaves a 170 MB app bundle here; it is not something to commit.
+/bundle
+# Godot editor and export templates, if you run the CI export steps locally.
+/godot
+/templates
+/godot.zip
+/templates.tpz
+/templates.zip
+/suite.log

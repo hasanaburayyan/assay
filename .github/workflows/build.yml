@@ -1,5 +1,12 @@
 # Tests every push and PR, and builds downloadable Mac + Windows bundles.
 #
+# Each bundle holds BOTH halves of the game: the terminal client and the relay
+# (`sim-cli`, `sim-relay`) and the Godot client (`Assay.app` / `Assay.exe`).
+# One download, one run, same commit -- a tester cannot pair a client with a
+# relay from a different build, which is the mistake the split used to invite.
+# The relay is shipped beside the client, not inside it: a host starts the
+# relay and everyone else types that address into the client's own host field.
+#
 # Where to get a bundle:
 # - Any run: Actions tab → the run → "Artifacts" at the bottom (needs a
 #   GitHub login).
@@ -20,6 +27,15 @@ defaults:
   run:
     working-directory: sim-game
 
+env:
+  # Pinned: the editor that exports and the templates it exports with must be
+  # the same build, and a floating "latest" would change what ships without a
+  # commit. Both come from the public godotengine/godot releases -- an
+  # anonymous download like crates.io, no account and nothing to buy.
+  GODOT_VERSION: 4.6.1-stable
+  # The folder Godot looks templates up in. NOT the same string as the tag.
+  GODOT_TEMPLATE_DIR: 4.6.1.stable
+
 jobs:
   test:
     name: Test and lint
@@ -35,6 +51,23 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      # The client's own GDScript suite gates the bundles below. Editor only:
+      # running tests needs no export templates, which is the ~1 GB download.
+      - name: Godot (editor only)
+        run: |
+          curl -fsSL -o godot.zip \
+            "https://github.com/godotengine/godot/releases/download/$GODOT_VERSION/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          unzip -q godot.zip -d godot
+          chmod +x "godot/Godot_v${GODOT_VERSION}_linux.x86_64"
+      - name: Client suite
+        working-directory: sim-game/client
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64"
+          "$GODOT" --headless --import
+          "$GODOT" --headless --script tests/run_tests.gd | tee suite.log
+          # GODOT EXITS 0 ON A COMPILE ERROR, so the count the runner prints is
+          # the verdict and the exit code is not. Grep the file, never a pipe.
+          grep -qE '^[0-9]+ passed, 0 failed' suite.log
 
   macos:
     name: macOS bundle
@@ -63,8 +96,47 @@ jobs:
             codesign -s - --force bundle/assay-macos/$b
           done
           cp packaging/README-macos.txt bundle/assay-macos/README.txt
-          echo "Built from ${GITHUB_SHA::7} on $(date -u +%Y-%m-%d)" > bundle/assay-macos/VERSION.txt
-          cd bundle && ditto -c -k --keepParent assay-macos assay-macos.zip
+          {
+            echo "Built from ${GITHUB_SHA::7} on $(date -u +%Y-%m-%d)"
+            echo "Godot client exported with $GODOT_VERSION"
+          } > bundle/assay-macos/VERSION.txt
+      - name: Godot and export templates
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/$GODOT_VERSION"
+          curl -fsSL -o godot.zip "$base/Godot_v${GODOT_VERSION}_macos.universal.zip"
+          unzip -q godot.zip -d godot
+          curl -fsSL -o templates.tpz "$base/Godot_v${GODOT_VERSION}_export_templates.tpz"
+          unzip -q templates.tpz -d templates
+          dest="$HOME/Library/Application Support/Godot/export_templates"
+          mkdir -p "$dest"
+          mv templates/templates "$dest/$GODOT_TEMPLATE_DIR"
+      - name: Export the Godot client
+        working-directory: sim-game/client
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot.app/Contents/MacOS/Godot"
+          "$GODOT" --headless --import
+          # Godot DOES NOT CREATE THE OUTPUT FOLDER -- it fails with "Target
+          # folder does not exist or is inaccessible" (measured 2026-10-01).
+          mkdir -p ../bundle/assay-macos
+          "$GODOT" --headless --export-release macOS ../bundle/assay-macos/Assay.app
+          # Ad-hoc, same as the Rust binaries above: an unsigned universal .app
+          # will not open on an Apple Silicon Mac at all. Not notarised, so the
+          # first open is still right-click → Open.
+          codesign -s - --force --deep ../bundle/assay-macos/Assay.app
+          codesign -dv ../bundle/assay-macos/Assay.app
+      - name: The exported client runs
+        run: |
+          # AN EXPORT CAN SUCCEED AND SHIP A PACK THAT WILL NOT LOAD, and the
+          # exit code of a missing or broken binary can still be 0 (measured),
+          # so the marker file this writes LAST is the verdict.
+          rm -f selfcheck.txt
+          bundle/assay-macos/Assay.app/Contents/MacOS/Assay \
+            --headless -- --selfcheck "$PWD/selfcheck.txt"
+          cat selfcheck.txt
+          grep -qx 'CLIENT SELFCHECK OK' selfcheck.txt
+          rm selfcheck.txt
+      - name: Zip
+        run: cd bundle && ditto -c -k --keepParent assay-macos assay-macos.zip
       - uses: actions/upload-artifact@v4
         with:
           name: assay-macos
@@ -91,8 +163,54 @@ jobs:
           New-Item -ItemType Directory -Force bundle/assay-windows | Out-Null
           Copy-Item target/release/sim-cli.exe, target/release/sim-relay.exe bundle/assay-windows/
           Copy-Item packaging/README-windows.txt bundle/assay-windows/README.txt
-          "Built from $($env:GITHUB_SHA.Substring(0,7)) on $(Get-Date -Format yyyy-MM-dd -AsUTC)" | Set-Content bundle/assay-windows/VERSION.txt
-          Compress-Archive -Path bundle/assay-windows -DestinationPath bundle/assay-windows.zip
+          @(
+            "Built from $($env:GITHUB_SHA.Substring(0,7)) on $(Get-Date -Format yyyy-MM-dd -AsUTC)"
+            "Godot client exported with $($env:GODOT_VERSION)"
+          ) | Set-Content bundle/assay-windows/VERSION.txt
+      - name: Godot and export templates
+        shell: pwsh
+        run: |
+          $base = "https://github.com/godotengine/godot/releases/download/$($env:GODOT_VERSION)"
+          Invoke-WebRequest "$base/Godot_v$($env:GODOT_VERSION)_win64.exe.zip" -OutFile godot.zip
+          Expand-Archive godot.zip -DestinationPath godot
+          # Expand-Archive only takes a .zip name, and a .tpz is a zip.
+          Invoke-WebRequest "$base/Godot_v$($env:GODOT_VERSION)_export_templates.tpz" -OutFile templates.zip
+          Expand-Archive templates.zip -DestinationPath templates
+          $dest = "$($env:APPDATA)\Godot\export_templates"
+          New-Item -ItemType Directory -Force $dest | Out-Null
+          Move-Item templates/templates "$dest\$($env:GODOT_TEMPLATE_DIR)"
+      - name: Export the Godot client
+        shell: pwsh
+        working-directory: sim-game/client
+        run: |
+          $godot = "$($env:GITHUB_WORKSPACE)\sim-game\godot\Godot_v$($env:GODOT_VERSION)_win64.exe"
+          & $godot --headless --import
+          # Godot does not create the output folder (measured on macOS; same
+          # exporter). The preset embeds the pack, so this is one .exe.
+          New-Item -ItemType Directory -Force ../bundle/assay-windows | Out-Null
+          & $godot --headless --export-release "Windows Desktop" ../bundle/assay-windows/Assay.exe
+      - name: The exported client runs
+        shell: pwsh
+        run: |
+          # The only check the Windows build gets: nobody at the studio has a
+          # Windows machine, but the runner can run what it just built. The
+          # marker file is the verdict, for the reasons in selfcheck.gd.
+          $marker = "$pwd\selfcheck.txt"
+          Remove-Item $marker -ErrorAction SilentlyContinue
+          # A GUI-subsystem exe returns to the shell immediately, so -Wait.
+          $p = Start-Process -FilePath bundle/assay-windows/Assay.exe `
+            -ArgumentList '--headless', '--', '--selfcheck', $marker `
+            -Wait -PassThru -NoNewWindow
+          if (-not (Test-Path $marker)) { throw "the exported client wrote no marker" }
+          Get-Content $marker
+          if ($p.ExitCode -ne 0) { throw "the exported client exited $($p.ExitCode)" }
+          if (-not (Select-String -Path $marker -Pattern '^CLIENT SELFCHECK OK$' -Quiet)) {
+            throw "the exported client failed its self-check"
+          }
+          Remove-Item $marker
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path bundle/assay-windows -DestinationPath bundle/assay-windows.zip
       - uses: actions/upload-artifact@v4
         with:
           name: assay-windows
