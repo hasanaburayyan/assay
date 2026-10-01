@@ -1,10 +1,13 @@
 Assay multiplayer test (macOS, Apple Silicon and Intel)
 ======================================================
 
-Two programs:
+Three programs:
   sim-relay   the host. One person runs it; it owns the world and the clock.
-  sim-cli     the game client (a text-mode inspector). Everyone runs this,
-              including the host.
+  sim-cli     the text-mode client, and the one that can actually play:
+              mine, craft, place, assay. Everyone can run this.
+  Assay.app   the graphical client. Early: it joins, and it draws the world
+              it joined. It cannot move or build yet (see "The graphical
+              client" below for exactly why).
 
 Everyone must use the files from this same zip.
 
@@ -49,6 +52,30 @@ The host can use:  ./sim-cli --connect localhost:7777 --name <your name>
 
 Names: 1-20 letters, numbers, - or _. Use the same name next time to get
 your character back.
+
+
+4. Or join with the graphical client
+------------------------------------
+Double-click Assay.app. If macOS still refuses it, right-click it and pick
+Open (step 1's xattr command covers this for the whole folder).
+
+Type the relay's address in the "host" box -- the same address the relay
+printed, e.g. 192.168.1.48:7777 -- put in a name, and click join. A bare
+address uses port 7777.
+
+It then draws the world it joined: the deposits, the players, spawn. The
+status line says which tick it joined at and counts the updates arriving, so
+you can see the link is live.
+
+Nothing moves yet, and that is on purpose rather than a bug. The host sends
+out the inputs players pressed, not the world itself, so turning those into a
+newer world means running the simulation -- the Rust `sim` crate -- inside
+this client. Until that is wired in, drawing a guessed position would just be
+a second, disagreeing copy of the rules. Use sim-cli to play; use Assay.app
+to confirm it joins and draws on your machine.
+
+Worth reporting: it will not start, it will not connect to an address sim-cli
+connects to fine, or what it draws does not match what sim-cli shows.
 
 
 Playing over the internet (not on the same Wi-Fi)
@@ -110,7 +137,8 @@ What to report
 
 Known limits
 ------------
-- Text only; there are no graphics yet.
+- Playing is text only. The graphical client joins and draws, nothing more.
+- Assay.app is ad-hoc signed, not notarised, so macOS warns on first open.
 - If your connection drops, restart sim-cli to rejoin.
 - Your own moves wait for the host, so there's about a tenth of a second
   of delay.

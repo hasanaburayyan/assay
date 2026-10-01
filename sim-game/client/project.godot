@@ -29,3 +29,9 @@ limits/tcp/connect_timeout_seconds=5
 [rendering]
 
 textures/canvas_textures/default_texture_filter=0
+
+; Required to export macOS universal or arm64: Godot refuses the preset
+; outright without it ("Cannot export for universal or arm64 if ETC2 ASTC
+; texture format is disabled"). The client has no textures yet, so this costs
+; nothing today; it has to be on before the first sprite arrives anyway.
+textures/vram_compression/import_etc2_astc=true

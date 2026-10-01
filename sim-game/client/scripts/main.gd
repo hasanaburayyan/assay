@@ -22,6 +22,12 @@ var _detail := Label.new()
 
 
 func _ready() -> void:
+	# CI, not a player: prove the build it just exported works, then leave. Before any UI, because
+	# a self-check that needed the window would not run on a build server.
+	var selfcheck := AssaySelfCheck.requested_path()
+	if selfcheck != "":
+		get_tree().quit(AssaySelfCheck.run(selfcheck))
+		return
 	_client = AssayNetClient.new()
 	_client.welcomed.connect(_on_welcomed)
 	_client.refused.connect(func(reason): _say("refused: %s" % reason))
@@ -102,6 +108,12 @@ func _refresh() -> void:
 ## species here are generated, so shape-and-colour from the snapshot's own numbers is the honest
 ## picture until the art pipeline catches up.
 func _draw() -> void:
+	# A self-check run returns out of `_ready` before there is a client, and the engine still calls
+	# `_draw` once. In the editor that is a caught script error; in an EXPORTED RELEASE BUILD it
+	# segfaulted on exit (measured: exit 139 after the marker was already written). Nothing to draw
+	# without a client is also just true.
+	if _client == null:
+		return
 	var world: Dictionary = _client.joined_world
 	if world.is_empty():
 		return

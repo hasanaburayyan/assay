@@ -1,9 +1,13 @@
 Assay multiplayer test (Windows 10/11, 64-bit)
 ==============================================
 
-Two programs:
+Three programs:
   sim-relay.exe   the host. One person runs it; it owns the world and the clock.
-  sim-cli.exe     the game client (a text-mode inspector). Everyone runs this.
+  sim-cli.exe     the text-mode client, and the one that can actually play:
+                  mine, craft, place, assay. Everyone can run this.
+  Assay.exe       the graphical client. Early: it joins, and it draws the
+                  world it joined. It cannot move or build yet (see "The
+                  graphical client" below for exactly why).
 
 Everyone must use builds made at the same time (Mac and Windows zips from the
 same message). Mac and Windows players can share a world.
@@ -42,6 +46,30 @@ and you connect to the host's Tailscale address (100.x.y.z).
 If Windows Firewall asks, click Allow access. It prints the address to give
 other players. Leave the window open; Ctrl-C stops hosting. The world
 autosaves into a "saves" folder next to sim-relay.exe.
+
+
+The graphical client
+--------------------
+Double-click Assay.exe. Windows may warn that the publisher is unknown (the
+build is not code-signed): More info, then Run anyway.
+
+Type the relay's address in the "host" box -- the same address the relay
+printed, e.g. 192.168.1.48:7777 -- put in a name, and click join. A bare
+address uses port 7777.
+
+It then draws the world it joined: the deposits, the players, spawn. The
+status line says which tick it joined at and counts the updates arriving, so
+you can see the link is live.
+
+Nothing moves yet, and that is on purpose rather than a bug. The host sends
+out the inputs players pressed, not the world itself, so turning those into a
+newer world means running the simulation -- the Rust `sim` crate -- inside
+this client. Until that is wired in, drawing a guessed position would just be
+a second, disagreeing copy of the rules. Use sim-cli.exe to play; use
+Assay.exe to confirm it joins and draws on your machine.
+
+Worth reporting: it will not start, it will not connect to an address
+sim-cli.exe connects to fine, or what it draws does not match sim-cli.exe.
 
 
 The inspector
@@ -95,6 +123,7 @@ What to report
 
 Known limits
 ------------
-- Text only; there are no graphics yet.
+- Playing is text only. The graphical client joins and draws, nothing more.
+- Assay.exe is not code-signed, so Windows warns on first run.
 - If your connection drops, restart sim-cli.exe to rejoin.
 - Your own moves wait for the host, so there's a small delay.
