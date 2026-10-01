@@ -183,22 +183,42 @@ jobs:
         shell: pwsh
         working-directory: sim-game/client
         run: |
-          $godot = "$($env:GITHUB_WORKSPACE)\sim-game\godot\Godot_v$($env:GODOT_VERSION)_win64.exe"
+          # THE _console WRAPPER, NOT THE PLAIN .exe. The plain Windows editor
+          # is a GUI-subsystem binary: launched from a shell it prints its
+          # banner, detaches and returns 0 immediately, so the export never
+          # happens and nothing reports it. That is how this job first failed
+          # (run 36925261824): the export "passed" in 0.5s and the error
+          # surfaced two steps later as a missing file. The wrapper is what
+          # makes every exit code below mean something.
+          $godot = "$($env:GITHUB_WORKSPACE)\sim-game\godot\Godot_v$($env:GODOT_VERSION)_win64_console.exe"
           & $godot --headless --import
+          if ($LASTEXITCODE -ne 0) { throw "godot --import exited $LASTEXITCODE" }
           # Godot does not create the output folder (measured on macOS; same
           # exporter). The preset embeds the pack, so this is one .exe.
           New-Item -ItemType Directory -Force ../bundle/assay-windows | Out-Null
           & $godot --headless --export-release "Windows Desktop" ../bundle/assay-windows/Assay.exe
+          if ($LASTEXITCODE -ne 0) { throw "the export exited $LASTEXITCODE" }
+          # The export step proves its own output rather than leaving it to the
+          # next one.
+          if (-not (Test-Path ../bundle/assay-windows/Assay.exe)) {
+            Get-ChildItem ../bundle/assay-windows
+            throw "the export reported success but wrote no Assay.exe"
+          }
       - name: The exported client runs
         shell: pwsh
         run: |
           # The only check the Windows build gets: nobody at the studio has a
           # Windows machine, but the runner can run what it just built. The
           # marker file is the verdict, for the reasons in selfcheck.gd.
-          $marker = "$pwd\selfcheck.txt"
+          $marker = Join-Path $pwd 'selfcheck.txt'
           Remove-Item $marker -ErrorAction SilentlyContinue
-          # A GUI-subsystem exe returns to the shell immediately, so -Wait.
-          $p = Start-Process -FilePath bundle/assay-windows/Assay.exe `
+          # START-PROCESS IGNORES POWERSHELL'S CURRENT DIRECTORY: it resolves a
+          # relative path against the process's own and fails with "The system
+          # cannot find the file specified" (measured, run 36925261824). So:
+          # absolute, via Resolve-Path, which also throws if it is not there.
+          $exe = (Resolve-Path bundle/assay-windows/Assay.exe).Path
+          # The exported client is GUI-subsystem too, hence -Wait.
+          $p = Start-Process -FilePath $exe `
             -ArgumentList '--headless', '--', '--selfcheck', $marker `
             -Wait -PassThru -NoNewWindow
           if (-not (Test-Path $marker)) { throw "the exported client wrote no marker" }

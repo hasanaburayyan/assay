@@ -1,5 +1,0 @@
-# Godot regenerates all of this from the project files, and it was tracked by mistake. CI imports
-# from scratch, which is also the only honest test: a fresh clone is what a build server has.
-.godot/
-
-# Local exports go to sim-game/dist/ (already ignored there); CI exports into sim-game/bundle/.
