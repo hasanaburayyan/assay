@@ -24,38 +24,47 @@ import rig
 from rig import mat, LYING
 
 out = rig.args()
-
-r = rig.Rig(samples=64)
-r.shadow_catcher()
-gun, grey, brass, steel = mat("gun"), mat("grey"), mat("brass"), rig.steel()
-
 AXIS = 0.28     # the part rests on its widest point, the collar
+
+
+def build(g):
+    """One geometry, grade as a parameter (rig.GRADES). Nothing about the
+    SHAPE depends on `g` -- only the ink -- which is the point: a part is one
+    silhouette the player learns once, and grade is how good that part is."""
+    r = rig.Rig(samples=64)
+    r.shadow_catcher()
+    gun, grey = mat("gun"), rig.graded("grey", g)
+    steel = rig.graded("steel", g, rough=0.45, metal=0.6)
 
 # THE MOUNT, straddling the join at x=0. It is the identity of the piece:
 # a part is a thing that attaches, and the drawing says so without a caption.
-r.cyl(0.30, 0.20, (0.0, 0, AXIS), gun, bev=0.04, rot=LYING)
-r.cyl(0.235, 0.05, (0.13, 0, AXIS), grey, bev=0.015, rot=LYING)
+    r.cyl(0.30, 0.20, (0.0, 0, AXIS), gun, bev=0.04, rot=LYING)
+    r.cyl(0.235, 0.05, (0.13, 0, AXIS), grey, bev=0.015, rot=LYING)
 # The key lug, on TOP where this camera can see it. The one asymmetric
 # feature on a solid of revolution: the cheapest way to say "this seats one
 # way round", and the only detail here that survives a thumbnail as a SHAPE
 # rather than as shading.
-r.box((0.12, 0.16, 0.1), (0.0, 0, AXIS + 0.3), brass, bev=0.02)
-for sy in (-1, 1):
-    r.bolt((0.0, sy * 0.21, AXIS + 0.2))
+    r.box((0.12, 0.16, 0.1), (0.0, 0, AXIS + 0.3), rig.graded_accent("brass", g), bev=0.02)
+    for sy in (-1, 1):
+        r.bolt((0.0, sy * 0.21, AXIS + 0.2))
 
 # THE BIT, running east off the join. A cone rather than a wedge because a
 # part icon has no facing and a cone reads the same whichever way the client
 # flips it. `cone(r1, r2, ...)` puts r1 at local -z, which LYING sends WEST,
 # so the wide radius is r1; written the other way it is a funnel aimed at the
 # handle.
-r.cone(0.26, 0.03, 0.62, (0.46, 0, AXIS), steel, bev=0.005, rot=LYING)
+    r.cone(0.26, 0.03, 0.62, (0.46, 0, AXIS), steel, bev=0.005, rot=LYING)
 # Two thread rings. At 32 px these stop being threads and become BANDING --
 # dark interruptions along a light taper, which is what tells a head from a
 # plain spike at size. Two, not three: three closes up into a smear.
-r.cyl(0.225, 0.055, (0.37, 0, AXIS), gun, bev=0.008, rot=LYING)
-r.cyl(0.175, 0.055, (0.63, 0, AXIS), gun, bev=0.008, rot=LYING)
+    r.cyl(0.225, 0.055, (0.37, 0, AXIS), gun, bev=0.008, rot=LYING)
+    r.cyl(0.175, 0.055, (0.63, 0, AXIS), gun, bev=0.008, rot=LYING)
+    return r
+
 
 asset = rig.Asset("head", out, rig.PART_TILES, headroom=rig.PART_HEADROOM)
-r.frame(rig.PART_TILES[0], rig.PART_TILES[1], headroom=rig.PART_HEADROOM)
-r.render(asset.path("idle")); asset.add("idle", 1)
+for g, name in enumerate(rig.GRADES):
+    r = build(g)
+    r.frame(rig.PART_TILES[0], rig.PART_TILES[1], headroom=rig.PART_HEADROOM)
+    r.render(asset.path(name)); asset.add(name, 1)
 asset.write()

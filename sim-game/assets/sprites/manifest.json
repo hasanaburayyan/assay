@@ -331,7 +331,15 @@
   ],
   "rows": [
    {
-    "name": "idle",
+    "name": "C",
+    "frames": 1
+   },
+   {
+    "name": "B",
+    "frames": 1
+   },
+   {
+    "name": "A",
     "frames": 1
    }
   ],
@@ -355,7 +363,15 @@
   ],
   "rows": [
    {
-    "name": "idle",
+    "name": "C",
+    "frames": 1
+   },
+   {
+    "name": "B",
+    "frames": 1
+   },
+   {
+    "name": "A",
     "frames": 1
    }
   ],
@@ -379,7 +395,15 @@
   ],
   "rows": [
    {
-    "name": "idle",
+    "name": "C",
+    "frames": 1
+   },
+   {
+    "name": "B",
+    "frames": 1
+   },
+   {
+    "name": "A",
     "frames": 1
    }
   ],
@@ -403,7 +427,15 @@
   ],
   "rows": [
    {
-    "name": "idle",
+    "name": "C",
+    "frames": 1
+   },
+   {
+    "name": "B",
+    "frames": 1
+   },
+   {
+    "name": "A",
     "frames": 1
    }
   ],

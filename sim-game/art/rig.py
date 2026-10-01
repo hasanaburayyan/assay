@@ -20,6 +20,33 @@ SS = 4                # supersample factor for the raw render
 TILT = math.radians(30)
 COS = math.cos(TILT)
 
+# ---------------------------------------------------------------- shadow
+#
+# A CONTACT SHADOW, NOT A CAST ONE (Maren's ruling, ASSA-11). The bound she
+# set is the one that matters and it is not a number: AT 1x NO SHADOW MAY
+# READ AS A PART. It was failing that outright -- measured on the part set at
+# true 1x, the shadow was 1.6-2.1x as many pixels as the BODY, peaked at
+# alpha 247-249 (so, near-opaque black) and reached up to 22 px past the body
+# to the south-east, which at a 64 px sprite is most of a tile. Tiled on a
+# full screen it smeared into the sprite beside it, and a shadow that reads
+# as a second object loses to GAME.md's "readability at small size beats
+# detail" every time.
+#
+# Two knobs, because the defect has two halves:
+#   SUN_TILT      LENGTH. Shadow runs as tan(tilt) of the object's height,
+#                 so casting at 9 degrees instead of the key's 42 takes it to
+#                 a sixth (tan 0.90 -> 0.16) and tucks it under the object
+#                 instead of laying it out beside it.
+#   SHADOW_ENERGY OPACITY. The catcher's alpha is the shadow lamp's SHARE of
+#                 the light, so a weak caster among strong shadowless fills
+#                 is a grey shadow rather than a black one. Raising the fills
+#                 instead does NOT work -- measured: lifting the downward
+#                 fill 0.9 -> 2.6 moved the handle's peak alpha 249 -> 249.
+# SUN_SOFTNESS is the third: a hard edge is what made it read as geometry.
+SUN_TILT = math.radians(9)
+SUN_SOFTNESS = math.radians(30)
+SHADOW_ENERGY = 0.9
+
 # Flat, saturated palette. Few colours, high contrast. Add here, not in assets.
 PALETTE = {
     "orange": "#F08A24", "orange_dk": "#B85A12", "gun": "#2E333B", "grey": "#6F7883",
@@ -112,6 +139,47 @@ def steel():
     return mat("steel", rough=0.45, metal=0.6)
 
 
+# ------------------------------------------------------------------ grade
+#
+# THREE STEPS, C/B/A -- the sim's `Grade`, not GAME.md's four purity tiers,
+# which are about DEPOSITS. A part is kind + species + grade, and grade is
+# three, so a four-step look would invent a distinction the player can never
+# act on (Maren's ruling, ASSA-11).
+#
+# ONE GEOMETRY, GRADE AS A PARAMETER, the lever `ore.py` already uses for
+# tiers: dull toward the dark shade low, full colour high, an emissive glint
+# at the top. Three drawings of a part would be three things to keep in step,
+# and the point of a part is that it is one shape.
+#
+# SPECIES IS NOT HERE AND MUST NOT BE. A world rolls six species at seed time
+# with generated sheets, so there is nothing to bake; species is colour the
+# client applies at runtime over these neutral pieces.
+GRADES = ("C", "B", "A")
+GRADE_DULL = (0.45, 0.15, 0.0)      # mixed toward GRADE_SHADE
+GRADE_SHADE = "gun"
+GRADE_GLINT = (0.0, 0.0, 2.5)       # emission on the part's warm accent, A only
+
+
+def mix_hex(a, b, t):
+    a, b = PALETTE.get(a, a), PALETTE.get(b, b)
+    return "#" + "".join("%02x" % round(int(a[i:i + 2], 16) * (1 - t) + int(b[i:i + 2], 16) * t)
+                         for i in (1, 3, 5))
+
+
+def graded(color, g, **kw):
+    """`mat` for a part body at grade index g (0=C, 1=B, 2=A)."""
+    t = GRADE_DULL[g]
+    return mat(mix_hex(color, GRADE_SHADE, t) if t else color, **kw)
+
+
+def graded_accent(color, g, **kw):
+    """The one warm mark a part wears, which is where grade is loudest: dulled
+    at C, as drawn at B, and glinting at A. The glint is the top step's whole
+    signal at 1x -- a tone difference alone does not survive 32 px."""
+    return mat(mix_hex(color, GRADE_SHADE, GRADE_DULL[g]) if GRADE_DULL[g] else color,
+               emit=GRADE_GLINT[g], **kw)
+
+
 def lamp(color="cyan"):
     return mat(color, emit=6)
 
@@ -127,9 +195,28 @@ class Rig:
         self.env = bpy.data.collections.new("Env"); sc.collection.children.link(self.env)
         self._parent = None
 
-        sun = bpy.data.lights.new("sun", "SUN"); sun.energy = 3.2; sun.angle = math.radians(8)
+        # THE KEY NO LONGER CASTS THE SHADOW. That is the whole fix, and it is
+        # why nothing else about the lighting had to move: the key stays where
+        # it was (42 degrees, same colour, same energy), so every existing
+        # sprite keeps the modelling it was approved with, and a separate lamp
+        # owns the shadow. Tying the two together is what made the shadow
+        # un-fixable -- shortening it meant flattening the key, and lightening
+        # it meant washing out the forms.
+        key = bpy.data.lights.new("key", "SUN"); key.energy = 3.2
+        key.angle = math.radians(8); key.use_shadow = False
+        k = bpy.data.objects.new("key", key); sc.collection.objects.link(k)
+        k.rotation_euler = (math.radians(42), math.radians(-18), math.radians(-30))
+
+        # THE SHADOW LAMP: the only thing in the scene that casts. Nearly
+        # overhead so the shadow sits UNDER the object rather than beside it,
+        # soft so its edge is not read as geometry, and weak because the
+        # catcher's alpha is this lamp's SHARE of the total light -- which is
+        # the opacity knob, now independent of how the object is modelled.
+        sun = bpy.data.lights.new("sun", "SUN")
+        sun.energy = SHADOW_ENERGY; sun.angle = SUN_SOFTNESS
         s = bpy.data.objects.new("sun", sun); sc.collection.objects.link(s)
-        s.rotation_euler = (math.radians(42), math.radians(-18), math.radians(-30))
+        s.rotation_euler = (SUN_TILT, 0, math.radians(-30))
+
         # Fill light comes from shadowless lamps, not the sky: sky light would
         # make the shadow catcher record a soft AO halo that gets cut off at
         # the frame edge. The world stays black.
