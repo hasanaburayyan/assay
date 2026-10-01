@@ -36,3 +36,4 @@ re-reading transcripts or relitigating in chat.
 | ADR | Status | Title |
 |---|---|---|
 | [0001](0001-generated-minerals-with-grades.md) | Accepted | Generated mineral species with purity grades |
+| [0002](0002-purity-from-world-core-quality.md) | Proposed | Deposit purity comes from a world core quality plus a seeded spread |
