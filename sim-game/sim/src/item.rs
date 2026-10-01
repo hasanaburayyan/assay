@@ -4,7 +4,11 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::assembly::PartKind;
 use crate::mineral::{Grade, SpeciesId};
+
+/// How many item kinds are not parts.
+const PLAIN_KINDS: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum ItemKind {
@@ -15,32 +19,61 @@ pub enum ItemKind {
     Gear,
     /// A smelter built from raw ore; its walls are that species.
     Smelter,
+    /// One machine part, of the kind named here and made of this item's own
+    /// species and grade (ADR 0003 point 1). A part kind is a row in
+    /// `PART_SPECS`, so this is one variant however many parts exist.
+    Part(PartKind),
 }
 
 impl ItemKind {
-    pub const ALL: [ItemKind; 4] = [
-        ItemKind::Ore,
-        ItemKind::Refined,
-        ItemKind::Gear,
-        ItemKind::Smelter,
-    ];
+    /// Every item kind, with the part kinds taken from [`PartKind::ALL`] so
+    /// that a part added to the catalogue joins this list for free.
+    pub const ALL: [ItemKind; PLAIN_KINDS + PartKind::ALL.len()] = {
+        let mut all = [ItemKind::Ore; PLAIN_KINDS + PartKind::ALL.len()];
+        all[1] = ItemKind::Refined;
+        all[2] = ItemKind::Gear;
+        all[3] = ItemKind::Smelter;
+        let mut i = 0;
+        while i < PartKind::ALL.len() {
+            all[PLAIN_KINDS + i] = ItemKind::Part(PartKind::ALL[i]);
+            i += 1;
+        }
+        all
+    };
 
-    pub const fn name(self) -> &'static str {
+    /// What players type and read. A part is named by its catalogue row, so
+    /// a handle is a "handle" and not a "part".
+    pub fn name(self) -> &'static str {
         match self {
             ItemKind::Ore => "ore",
             ItemKind::Refined => "refined",
             ItemKind::Gear => "gear",
             ItemKind::Smelter => "smelter",
+            ItemKind::Part(kind) => kind.name(),
+        }
+    }
+
+    /// The part kind this item is, if it is a part at all.
+    pub const fn part(self) -> Option<PartKind> {
+        match self {
+            ItemKind::Part(kind) => Some(kind),
+            _ => None,
         }
     }
 
     pub fn parse(s: &str) -> Option<ItemKind> {
-        match s.to_ascii_lowercase().as_str() {
+        let s = s.to_ascii_lowercase();
+        // `part:head` as well as a bare `head`, since `code()` writes the
+        // prefix; a prefixed name is only ever a part.
+        if let Some(name) = s.strip_prefix("part:") {
+            return PartKind::parse(name).map(ItemKind::Part);
+        }
+        match s.as_str() {
             "ore" => Some(ItemKind::Ore),
             "refined" | "ref" | "ingot" | "plate" => Some(ItemKind::Refined),
             "gear" | "gears" => Some(ItemKind::Gear),
             "smelter" => Some(ItemKind::Smelter),
-            _ => None,
+            name => PartKind::parse(name).map(ItemKind::Part),
         }
     }
 }
@@ -61,15 +94,26 @@ impl Item {
         }
     }
 
-    /// Short machine-readable form, e.g. `ore#2(B)`. Hosts with a world
-    /// show species names instead (`World::item_name`).
+    /// Short machine-readable form, e.g. `ore#2(B)`, and `part:head#2(B)` for
+    /// a part. Hosts with a world show species names instead
+    /// (`World::item_name`).
     pub fn code(&self) -> String {
+        let prefix = if self.kind.part().is_some() {
+            "part:"
+        } else {
+            ""
+        };
         format!(
-            "{}#{}({})",
+            "{prefix}{}#{}({})",
             self.kind.name(),
             self.species.0,
             self.grade.letter()
         )
+    }
+
+    /// Whether this item is one machine part.
+    pub const fn is_part(&self) -> bool {
+        self.kind.part().is_some()
     }
 }
 

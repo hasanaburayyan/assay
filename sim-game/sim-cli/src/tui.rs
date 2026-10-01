@@ -896,6 +896,19 @@ fn describe_input(input: &Input, world: &World) -> String {
                 PlayerCommand::GrantRename { species, to } => {
                     format!("grant #{} p{}", species.0, to.0)
                 }
+                PlayerCommand::MakePart {
+                    kind,
+                    material,
+                    count,
+                } => format!("make {} {} {count}", kind.name(), material.code()),
+                PlayerCommand::Assemble { frame, mounted } => {
+                    format!("assemble {} +{}", frame.code(), mounted.len())
+                }
+                PlayerCommand::Equip { assembly } => format!("equip {assembly}"),
+                PlayerCommand::Unequip => "unequip".into(),
+                PlayerCommand::PlaceAssembly { assembly, pos } => {
+                    format!("plant {assembly} {},{}", pos.x, pos.y)
+                }
                 PlayerCommand::MoveTo { target } => format!("goto {},{}", target.x, target.y),
                 PlayerCommand::Stop => "stop".into(),
             };

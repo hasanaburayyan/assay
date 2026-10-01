@@ -1,10 +1,11 @@
 //! Advancing the world one tick.
 
-use crate::building::{Building, BuildingId, BuildingKind, Slot, footprint_tiles};
+use crate::assembly::{Assembly, Built, Mount, Part, spec};
+use crate::building::{Building, BuildingId, BuildingKind, Machine, Slot, footprint_tiles};
 use crate::command::{Event, Input, PlayerCommand, RejectReason, StopReason, SystemCommand};
 use crate::inventory::Inventory;
 use crate::item::{Item, ItemKind, ItemStack};
-use crate::mineral::{Property, validate_name};
+use crate::mineral::{Property, SpeciesId, validate_name};
 use crate::player::{Assaying, Crafting, Mining, Player};
 use crate::recipe::{Recipe, smelter_recipe_for};
 use crate::tuning::{
@@ -81,17 +82,24 @@ fn apply_player(
     if world.player(player).is_none() {
         return reject(RejectReason::UnknownPlayer, events);
     }
-    // Items name a species by index; never trust a client's index.
-    let species_in = match command {
+    // Items name a species by index; never trust a client's index. Every
+    // command carrying one is listed here, because the stats and recipe code
+    // downstream indexes `world.species` directly.
+    let unknown = |s: &SpeciesId| usize::from(s.0) >= world.species.len();
+    let names_unknown_species = match command {
         PlayerCommand::Craft { item, .. }
         | PlayerCommand::Place { item, .. }
-        | PlayerCommand::Insert { item, .. } => Some(item.species),
+        | PlayerCommand::Insert { item, .. }
+        | PlayerCommand::MakePart { material: item, .. } => unknown(&item.species),
         PlayerCommand::Rename { species, .. } | PlayerCommand::GrantRename { species, .. } => {
-            Some(*species)
+            unknown(species)
         }
-        _ => None,
+        PlayerCommand::Assemble { frame, mounted } => std::iter::once(frame)
+            .chain(mounted)
+            .any(|i| unknown(&i.species)),
+        _ => false,
     };
-    if species_in.is_some_and(|s| usize::from(s.0) >= world.species.len()) {
+    if names_unknown_species {
         return reject(RejectReason::UnknownSpecies, events);
     }
 
@@ -232,6 +240,11 @@ fn apply_player(
             if b.distance_from(me_pos) > REACH {
                 return reject(RejectReason::OutOfReach, events);
             }
+            // A machine has no insertable slots at all: `Slot` names the
+            // smelter's, and ore leaves a drill by `Take` (decision 9).
+            if b.kind.machine().is_some() {
+                return reject(RejectReason::NotInsertable, events);
+            }
             if !world
                 .player(player)
                 .expect("checked above")
@@ -254,7 +267,10 @@ fn apply_player(
                         return reject(RejectReason::TooHotForWalls, events);
                     }
                     let BuildingKind::Smelter(s) =
-                        &mut world.building_mut(building).expect("checked above").kind;
+                        &mut world.building_mut(building).expect("checked above").kind
+                    else {
+                        return reject(RejectReason::NotInsertable, events);
+                    };
                     (SMELTER_INPUT_CAP, &mut s.input)
                 }
                 Slot::Fuel => {
@@ -265,7 +281,10 @@ fn apply_player(
                         return reject(RejectReason::NotFuel, events);
                     }
                     let BuildingKind::Smelter(s) =
-                        &mut world.building_mut(building).expect("checked above").kind;
+                        &mut world.building_mut(building).expect("checked above").kind
+                    else {
+                        return reject(RejectReason::NotInsertable, events);
+                    };
                     (SMELTER_FUEL_CAP, &mut s.fuel)
                 }
             };
@@ -300,8 +319,13 @@ fn apply_player(
             if b.distance_from(me_pos) > REACH {
                 return reject(RejectReason::OutOfReach, events);
             }
-            let BuildingKind::Smelter(s) = &mut b.kind;
-            let Some(stack) = s.output.take() else {
+            // Ore comes out of a drill exactly as refined material comes out
+            // of a smelter (decision 9): one command, two holders.
+            let taken = match &mut b.kind {
+                BuildingKind::Smelter(s) => s.output.take(),
+                BuildingKind::Machine(m) => m.held.take(),
+            };
+            let Some(stack) = taken else {
                 return reject(RejectReason::NothingToTake, events);
             };
             world
@@ -326,10 +350,23 @@ fn apply_player(
             }
             let b = world.buildings.remove(i);
             let inv = &mut world.player_mut(player).expect("checked above").inventory;
-            inv.add(b.material, 1);
-            let BuildingKind::Smelter(s) = b.kind;
-            for stack in [s.input, s.fuel, s.output].into_iter().flatten() {
-                inv.add_stack(stack);
+            match b.kind {
+                BuildingKind::Smelter(s) => {
+                    inv.add(b.material, 1);
+                    for stack in [s.input, s.fuel, s.output].into_iter().flatten() {
+                        inv.add_stack(stack);
+                    }
+                }
+                // A machine was never an item, so it comes back as its parts.
+                // Picking one up is lossless: the mass test already passed.
+                BuildingKind::Machine(m) => {
+                    for item in m.assembly.part_items() {
+                        inv.add(item, 1);
+                    }
+                    if let Some(stack) = m.held {
+                        inv.add_stack(stack);
+                    }
+                }
             }
             events.push(Event::BuildingRemoved {
                 player,
@@ -398,6 +435,185 @@ fn apply_player(
                 species,
                 from: player,
                 to,
+            });
+        }
+        PlayerCommand::MakePart {
+            kind,
+            material,
+            count,
+        } => {
+            if count == 0 {
+                return reject(RejectReason::ZeroCount, events);
+            }
+            // A part is made of refined material and nothing else, so say so
+            // rather than quietly coercing whatever the client sent.
+            if material.kind != ItemKind::Refined {
+                return reject(RejectReason::WrongItem, events);
+            }
+            let needed = spec(kind).size.saturating_mul(count);
+            let part = Part::of(kind, material).as_item();
+            let p = world.player_mut(player).expect("checked above");
+            if !p.inventory.remove(material, needed) {
+                return reject(RejectReason::MissingItems(material), events);
+            }
+            p.inventory.add(part, count);
+            events.push(Event::PartsMade {
+                player,
+                part,
+                count,
+            });
+        }
+        PlayerCommand::Assemble { frame, mounted } => {
+            let Some(frame_part) = Part::from_item(frame) else {
+                return reject(RejectReason::NotAPart(frame), events);
+            };
+            let mut parts = Vec::with_capacity(mounted.len());
+            for item in &mounted {
+                let Some(part) = Part::from_item(*item) else {
+                    return reject(RejectReason::NotAPart(*item), events);
+                };
+                parts.push(part);
+            }
+            let assembly = Assembly::new(frame_part, parts);
+            // Slots only. **Mass is never consulted here** (decision 11): the
+            // sim does not protect a player from their own design, and a
+            // refusal now would make the frame budget invisible.
+            if let Err(e) = assembly.validate() {
+                return reject(RejectReason::BadAssembly(e), events);
+            }
+
+            // Tally first so duplicates (two hoppers of one material) are
+            // taken all-or-nothing instead of one at a time.
+            let mut needed: Vec<ItemStack> = Vec::new();
+            for item in assembly.part_items() {
+                match needed.iter_mut().find(|s| s.item == item) {
+                    Some(s) => s.count += 1,
+                    None => needed.push(ItemStack::new(item, 1)),
+                }
+            }
+            let p = world.player_mut(player).expect("checked above");
+            if let Some(s) = needed.iter().find(|s| !p.inventory.has(s.item, s.count)) {
+                return reject(RejectReason::MissingItems(s.item), events);
+            }
+            for s in &needed {
+                let taken = p.inventory.remove(s.item, s.count);
+                debug_assert!(taken);
+            }
+
+            let built = Built::new(assembly, &world.species);
+            let stats = built.assembly.stats(&world.species);
+            let p = world.player_mut(player).expect("checked above");
+            p.assemblies.push(built);
+            events.push(Event::Assembled {
+                player,
+                assembly: (p.assemblies.len() - 1) as u32,
+                stats,
+            });
+        }
+        PlayerCommand::Equip { assembly } => {
+            let me = world.player(player).expect("checked above");
+            let Some(built) = me.assemblies.get(assembly as usize) else {
+                return reject(RejectReason::NoSuchAssembly, events);
+            };
+            if built.assembly.mount() != Some(Mount::Held) {
+                return reject(RejectReason::WrongMount, events);
+            }
+            let taken = world
+                .player_mut(player)
+                .expect("checked above")
+                .assemblies
+                .remove(assembly as usize);
+            let stats = taken.assembly.stats(&world.species);
+            let p = world.player_mut(player).expect("checked above");
+            // Whatever was in hand goes back to the list, wear and all.
+            if let Some(old) = p.tool.replace(taken) {
+                p.assemblies.push(old);
+            }
+            events.push(Event::Equipped { player, stats });
+        }
+        PlayerCommand::Unequip => {
+            let p = world.player_mut(player).expect("checked above");
+            let Some(tool) = p.tool.take() else {
+                return reject(RejectReason::NothingEquipped, events);
+            };
+            p.assemblies.push(tool);
+            events.push(Event::Unequipped { player });
+        }
+        PlayerCommand::PlaceAssembly { assembly, pos } => {
+            let me = world.player(player).expect("checked above");
+            let Some(built) = me.assemblies.get(assembly as usize) else {
+                return reject(RejectReason::NoSuchAssembly, events);
+            };
+            if built.assembly.mount() != Some(Mount::Planted) {
+                return reject(RejectReason::WrongMount, events);
+            }
+            let kind = BuildingKind::Machine(Machine::new(built.assembly.clone()));
+            let material = built.assembly.frame.refined();
+
+            // Where it goes is checked before whether it survives: an illegal
+            // position is a rejection, not a broken machine.
+            let tiles: Vec<TilePos> = footprint_tiles(pos, kind.footprint()).collect();
+            if tiles.iter().any(|&t| !world.in_bounds(t)) {
+                return reject(RejectReason::OutOfBounds, events);
+            }
+            if tiles.iter().any(|&t| world.building_at(t).is_some()) {
+                return reject(RejectReason::TileOccupied, events);
+            }
+            let probe = Building {
+                id: BuildingId(0),
+                pos,
+                material,
+                kind: kind.clone(),
+            };
+            if probe.distance_from(me.pos) > REACH {
+                return reject(RejectReason::OutOfReach, events);
+            }
+
+            let taken = world
+                .player_mut(player)
+                .expect("checked above")
+                .assemblies
+                .remove(assembly as usize);
+            let stats = taken.assembly.stats(&world.species);
+
+            // Decision 11: placement is the test.
+            if stats.is_overweight() {
+                // Disjoint field borrows: the roll needs the sheets and the
+                // rng at once, and the parts go back to the player after.
+                let World {
+                    species,
+                    rng,
+                    players,
+                    ..
+                } = world;
+                let outcome = taken.assembly.break_apart(species, rng);
+                let inv = &mut players[player.0 as usize].inventory;
+                for item in &outcome.returned {
+                    inv.add(*item, 1);
+                }
+                events.push(Event::MachineBroke {
+                    player,
+                    pos: Some(pos),
+                    mass: stats.mass,
+                    budget: stats.budget,
+                    lost: outcome.lost,
+                    returned: outcome.returned,
+                });
+                return;
+            }
+
+            let id = BuildingId(world.next_building_id);
+            world.next_building_id += 1;
+            world.buildings.push(Building {
+                id,
+                pos,
+                material,
+                kind,
+            });
+            events.push(Event::MachinePlaced {
+                player,
+                building: id,
+                pos,
             });
         }
         PlayerCommand::MoveTo { target } => {
@@ -638,7 +854,9 @@ fn craft_by_hand(world: &mut World, events: &mut Vec<Event>) {
 fn run_smelters(world: &mut World, events: &mut Vec<Event>) {
     for i in 0..world.buildings.len() {
         let walls = world.max_temperature(&world.buildings[i]);
-        let BuildingKind::Smelter(s) = &world.buildings[i].kind;
+        let BuildingKind::Smelter(s) = &world.buildings[i].kind else {
+            continue;
+        };
         let Some(input) = s.input else { continue };
         let Some(recipe) = smelter_recipe_for(input.item.kind).map(|r| r.recipe()) else {
             continue;
@@ -665,7 +883,9 @@ fn run_smelters(world: &mut World, events: &mut Vec<Event>) {
             ignition <= HAND_SPARK_TEMPERATURE || ignition <= s.burn_temperature
         });
 
-        let BuildingKind::Smelter(s) = &mut world.buildings[i].kind;
+        let BuildingKind::Smelter(s) = &mut world.buildings[i].kind else {
+            continue;
+        };
         if s.burn_left == 0 {
             let (Some(temp), Some(fuel)) = (fuel_temp, s.fuel) else {
                 s.burn_temperature = 0;

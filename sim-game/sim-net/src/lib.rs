@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use sim::{Input, PlayerCommand, PlayerId, World};
 
 /// Bump whenever a message changes shape. Mismatched clients are refused.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Default port for `sim-relay` and `sim-cli --connect`.
 pub const DEFAULT_PORT: u16 = 7777;

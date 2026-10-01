@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::assembly::Assembly;
 use crate::item::{Item, ItemKind, ItemStack};
 use crate::types::TilePos;
 
@@ -25,6 +26,33 @@ pub struct Building {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BuildingKind {
     Smelter(Smelter),
+    /// A planted assembly: the drill of the demo, and whatever else a planted
+    /// frame is given. Its behaviour comes entirely from its parts' stats, so
+    /// there is one variant here however many machines exist.
+    Machine(Machine),
+}
+
+/// A placed assembly. Where the smelter has fixed slots, a machine has only
+/// what its parts give it: `Capacity` from the frame's buffer and its hoppers
+/// bounds `held`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Machine {
+    pub assembly: Assembly,
+    /// Ore mined and not yet taken. One item at a time; the machine stalls
+    /// when it reaches the `Capacity` stat (decision 9). ASSA-6 fills it.
+    pub held: Option<ItemStack>,
+    /// Work accumulated toward the next unit (ADR 0003 amendment A3).
+    pub progress: u32,
+}
+
+impl Machine {
+    pub const fn new(assembly: Assembly) -> Self {
+        Self {
+            assembly,
+            held: None,
+            progress: 0,
+        }
+    }
 }
 
 /// Which slot of a building an `Insert` aims at.
@@ -54,7 +82,8 @@ pub struct Smelter {
 }
 
 impl BuildingKind {
-    /// The building an item kind turns into when placed, if any.
+    /// The building an item kind turns into when placed, if any. A machine is
+    /// never here: it is placed from an assembly, not from an item.
     pub fn for_item(kind: ItemKind) -> Option<BuildingKind> {
         match kind {
             ItemKind::Smelter => Some(BuildingKind::Smelter(Smelter::default())),
@@ -66,12 +95,22 @@ impl BuildingKind {
     pub const fn footprint(&self) -> (i32, i32) {
         match self {
             BuildingKind::Smelter(_) => (2, 2),
+            // One tile, so a drill sits on the deposit tile it works.
+            BuildingKind::Machine(_) => (1, 1),
         }
     }
 
     pub const fn name(&self) -> &'static str {
         match self {
             BuildingKind::Smelter(_) => "smelter",
+            BuildingKind::Machine(_) => "machine",
+        }
+    }
+
+    pub const fn machine(&self) -> Option<&Machine> {
+        match self {
+            BuildingKind::Machine(m) => Some(m),
+            _ => None,
         }
     }
 }

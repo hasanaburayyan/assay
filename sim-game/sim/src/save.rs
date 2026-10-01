@@ -16,6 +16,8 @@
 //!   (never shipped: superseded on the same branch).
 //! - v10: species carry assayed/discoverer/name state; players may be
 //!   assaying.
+//! - v11: players carry built assemblies and a held tool, and a building may
+//!   be a planted machine (ADR 0003).
 
 use std::path::Path;
 use std::{fmt, fs, io};
@@ -25,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::world::World;
 
 /// Current save format version.
-pub const SAVE_VERSION: u32 = 10;
+pub const SAVE_VERSION: u32 = 11;
 
 /// Oldest version `from_json` can still load and migrate forward.
 pub const OLDEST_SAVE_VERSION: u32 = 10;
@@ -119,5 +121,12 @@ impl World {
 }
 
 /// Bring a world loaded from an older save up to the current layout.
-/// Nothing to do yet: v10 is the oldest loadable version.
+///
+/// **v10 → v11 needs no fixing up, and that is deliberate rather than
+/// forgotten.** Everything v11 added is new state nobody had in a v10 world:
+/// `Player::assemblies`, `Player::tool` and the `Machine` variant of
+/// `BuildingKind`. The player fields carry `#[serde(default)]`, so a v10 save
+/// loads with an empty built list and nothing in hand, which is exactly the
+/// world it described. The founders' v10 test world therefore keeps loading;
+/// `tests/save.rs` pins that.
 fn migrate(_world: &mut World, _from_version: u32) {}

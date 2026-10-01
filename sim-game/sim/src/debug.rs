@@ -3,7 +3,8 @@
 
 use std::fmt::Write;
 
-use crate::building::{Building, BuildingKind};
+use crate::assembly::Assembly;
+use crate::building::{Building, BuildingKind, Machine};
 use crate::item::ItemStack;
 use crate::mineral::{Grade, MineralSpecies, Property, Sheet};
 use crate::recipe::{RECIPES, Station};
@@ -199,9 +200,55 @@ fn slot(world: &World, stack: Option<ItemStack>) -> String {
     })
 }
 
+/// The parts a design is made of, as `handle(Korvite B) + head(Adaite A)`.
+pub fn parts_summary(world: &World, assembly: &Assembly) -> String {
+    assembly
+        .parts()
+        .map(|p| {
+            format!(
+                "{}({} {})",
+                p.kind.name(),
+                world.species(p.material.species).name(),
+                p.material.grade.letter()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" + ")
+}
+
+/// One line describing a planted machine.
+///
+/// **No durability here, on purpose** (Game Director's ruling on ASSA-5):
+/// the head contributes a durability pool whatever frame it sits on, but
+/// decision 12 parks drill wear, so on a planted machine that number would
+/// never move — and a number that never moves teaches a mechanic that does not
+/// exist. The catalogue row is untouched; this is a display rule.
+pub fn machine_status(world: &World, b: &Building, m: &Machine) -> String {
+    let stats = m.assembly.stats(&world.species);
+    let state = if world.deposit_at(b.pos).is_none() {
+        "idle: no deposit underneath".to_string()
+    } else if m.held.is_some_and(|h| h.count >= stats.capacity) {
+        "stalled: full".to_string()
+    } else {
+        "working".to_string()
+    };
+    format!(
+        "{} · mass {}/{} · speed {} · holding {} of {} · {state}",
+        parts_summary(world, &m.assembly),
+        stats.mass,
+        stats.budget,
+        stats.speed,
+        m.held.map_or(0, |h| h.count),
+        stats.capacity,
+    )
+}
+
 /// One line describing what a building holds and whether it is working.
 pub fn building_status(world: &World, b: &Building) -> String {
-    let BuildingKind::Smelter(s) = &b.kind;
+    let s = match &b.kind {
+        BuildingKind::Smelter(s) => s,
+        BuildingKind::Machine(m) => return machine_status(world, b, m),
+    };
     let walls = world.max_temperature(b);
     let needs = s
         .input

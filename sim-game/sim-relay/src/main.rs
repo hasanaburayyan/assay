@@ -404,6 +404,24 @@ fn describe(command: &PlayerCommand) -> String {
         PlayerCommand::Assay => "assay".into(),
         PlayerCommand::Rename { species, name } => format!("rename #{} {name}", species.0),
         PlayerCommand::GrantRename { species, to } => format!("grant #{} p{}", species.0, to.0),
+        PlayerCommand::MakePart {
+            kind,
+            material,
+            count,
+        } => format!("make {} {} {count}", kind.name(), material.code()),
+        PlayerCommand::Assemble { frame, mounted } => format!(
+            "assemble {}{}",
+            frame.code(),
+            mounted
+                .iter()
+                .map(|m| format!(" {}", m.code()))
+                .collect::<String>()
+        ),
+        PlayerCommand::Equip { assembly } => format!("equip {assembly}"),
+        PlayerCommand::Unequip => "unequip".into(),
+        PlayerCommand::PlaceAssembly { assembly, pos } => {
+            format!("plant {assembly} {} {}", pos.x, pos.y)
+        }
         PlayerCommand::MoveTo { target } => format!("goto {} {}", target.x, target.y),
         PlayerCommand::Stop => "stop".into(),
     }

@@ -2,8 +2,8 @@
 //! same inputs. These tests hammer that property with random input streams.
 
 use sim::{
-    BuildingId, Grade, Input, Item, ItemKind, ItemStack, PlayerCommand, PlayerId, RecipeId, Rng,
-    Slot, SpeciesId, SystemCommand, TilePos, World, WorldConfig, step,
+    BuildingId, Grade, Input, Item, ItemKind, ItemStack, PartKind, PlayerCommand, PlayerId,
+    RecipeId, Rng, Slot, SpeciesId, SystemCommand, TilePos, World, WorldConfig, step,
 };
 
 fn new_world() -> World {
@@ -55,7 +55,21 @@ fn random_inputs(rng: &mut Rng, world: &World) -> Vec<Input> {
             }
         };
         let random_building = |rng: &mut Rng| BuildingId(rng.range(0, world.next_building_id + 2));
-        let command = match rng.range(0, 15) {
+        let n_built = p.map_or(0, |p| p.assemblies.len() as u32);
+        let random_part = |rng: &mut Rng| -> Item {
+            let kind = PartKind::ALL[rng.range(0, PartKind::ALL.len() as u32) as usize];
+            // Mostly a part the player holds, sometimes one they do not.
+            held(ItemKind::Part(kind), rng)
+                .filter(|_| rng.range(0, 4) > 0)
+                .unwrap_or_else(|| {
+                    Item::new(
+                        ItemKind::Part(kind),
+                        SpeciesId(rng.range(0, n_species + 1) as u8),
+                        Grade::ALL[rng.range(0, 3) as usize],
+                    )
+                })
+        };
+        let command = match rng.range(0, 24) {
             0 | 1 => PlayerCommand::Mine,
             12 => PlayerCommand::Assay,
             13 => PlayerCommand::Rename {
@@ -139,6 +153,33 @@ fn random_inputs(rng: &mut Rng, world: &World) -> Vec<Input> {
                     rng.range(0, world.height() as u32 + 4) as i32 - 2,
                 ),
             },
+            // The assembly commands (ASSA-5). Deliberately fed junk as often
+            // as sense, so every rejection path is walked on both peers.
+            15 | 16 => PlayerCommand::MakePart {
+                kind: PartKind::ALL[rng.range(0, PartKind::ALL.len() as u32) as usize],
+                material: held(ItemKind::Refined, rng)
+                    .filter(|_| rng.range(0, 4) > 0)
+                    .unwrap_or_else(|| random_item(rng)),
+                count: rng.range(0, 3),
+            },
+            17..=19 => {
+                // A frame plus 0..3 mounted parts, which is sometimes a legal
+                // pick or drill and sometimes nonsense.
+                let frame = random_part(rng);
+                let mounted = (0..rng.range(0, 4)).map(|_| random_part(rng)).collect();
+                PlayerCommand::Assemble { frame, mounted }
+            }
+            20 => PlayerCommand::Equip {
+                assembly: rng.range(0, n_built + 2),
+            },
+            21 => PlayerCommand::Unequip,
+            22 => PlayerCommand::PlaceAssembly {
+                assembly: rng.range(0, n_built + 2),
+                pos: TilePos::new(
+                    near.x + rng.range(0, 7) as i32 - 3,
+                    near.y + rng.range(0, 7) as i32 - 3,
+                ),
+            },
             _ => PlayerCommand::Stop,
         };
         inputs.push(Input::player(player, command));
@@ -214,7 +255,78 @@ fn golden_hash_is_stable_across_machines() {
     }
     assert_eq!(
         format!("{:016x}", world.state_hash()),
-        "95f4ebb7d3192740",
+        "6f2062de05c2d6f7",
         "world hash changed; see the comment on this test"
     );
+}
+
+/// The assembly commands need refined material, and the random script above
+/// almost never gets a smelter running long enough to make any — so on that
+/// script every `MakePart` is rejected and none of ASSA-5's rules are reached.
+///
+/// This is the same random script against a fixture that hands every player a
+/// pile of refined material to start with. Seeding an inventory is a starting
+/// state, not a rule shortcut: every part, assembly, placement and break below
+/// still happens only through `step` and the real commands.
+#[test]
+fn peers_agree_on_the_assembly_commands() {
+    let mut script = Rng::new(31);
+    let (mut a, mut b) = (stocked_world(), stocked_world());
+    let (mut ea, mut eb) = (Vec::new(), Vec::new());
+
+    for _ in 0..8_000 {
+        let inputs = random_inputs(&mut script, &a);
+        step(&mut a, &inputs, &mut ea);
+        step(&mut b, &inputs, &mut eb);
+        assert_eq!(a.state_hash(), b.state_hash(), "desync at tick {}", a.tick);
+    }
+    assert_eq!(ea, eb);
+
+    // A green run proves agreement, not coverage: assert the script really
+    // walked each new path, or this test could pass while testing nothing.
+    let reached = |name: &str, f: &dyn Fn(&sim::Event) -> bool| {
+        let n = ea.iter().filter(|e| f(e)).count();
+        assert!(n > 0, "the script never reached {name}");
+        n
+    };
+    reached("PartsMade", &|e| matches!(e, sim::Event::PartsMade { .. }));
+    reached("Assembled", &|e| matches!(e, sim::Event::Assembled { .. }));
+    reached("Equipped", &|e| matches!(e, sim::Event::Equipped { .. }));
+    reached("MachinePlaced", &|e| {
+        matches!(e, sim::Event::MachinePlaced { .. })
+    });
+    let breaks = reached("MachineBroke", &|e| {
+        matches!(e, sim::Event::MachineBroke { .. })
+    });
+    // Every break is a roll per part off `world.rng`, so the breaks are what
+    // make this test say anything about determinism that the others do not.
+    assert!(
+        breaks > 2,
+        "only {breaks} breaks; the roll is barely exercised"
+    );
+}
+
+/// The test world, plus a stock of refined material of every species and grade
+/// in every player's inventory, so parts can actually be made.
+fn stocked_world() -> World {
+    let mut world = new_world();
+    let joins: Vec<Input> = (0..4)
+        .map(|i| {
+            Input::System(SystemCommand::AddPlayer {
+                name: format!("p{i}"),
+            })
+        })
+        .collect();
+    step(&mut world, &joins, &mut Vec::new());
+    let species: Vec<SpeciesId> = world.species.iter().map(|s| s.id).collect();
+    for player in &mut world.players {
+        for &id in &species {
+            for grade in Grade::ALL {
+                player
+                    .inventory
+                    .add(Item::new(ItemKind::Refined, id, grade), 60);
+            }
+        }
+    }
+    world
 }

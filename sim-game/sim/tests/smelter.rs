@@ -64,7 +64,9 @@ fn count(world: &World, me: PlayerId, item: Item) -> u32 {
 }
 
 fn smelter_of(world: &World, id: BuildingId) -> &sim::Smelter {
-    let BuildingKind::Smelter(s) = &world.building(id).unwrap().kind;
+    let BuildingKind::Smelter(s) = &world.building(id).unwrap().kind else {
+        panic!("building {} is not a smelter", id.0)
+    };
     s
 }
 
