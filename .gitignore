@@ -4,3 +4,7 @@ __pycache__/
 .vscode/
 docs/design-notes/transcripts/
 tools/voice/.cues/
+
+# Godot 4: editor caches and import metadata are regenerated, never committed
+.godot/
+*.import

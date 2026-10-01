@@ -7,6 +7,7 @@ use crate::mineral::{MineralSpecies, SpeciesId};
 use crate::ore::OreDeposit;
 use crate::player::Player;
 use crate::rng::{Rng, mix};
+use crate::tuning;
 use crate::types::{ChunkPos, DepositId, PlayerId, TilePos};
 use crate::worldgen;
 use serde::{Deserialize, Serialize};
@@ -77,6 +78,7 @@ impl World {
                     spawn,
                     id,
                     &species,
+                    tuning::CORE_QUALITY,
                 ) {
                     deposits.push(d);
                 }
