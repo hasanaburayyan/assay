@@ -1,7 +1,8 @@
 # Generated minerals (session in progress, 2026-09-30)
 
-Status: paused mid-conversation so Hasan could land code changes; resume from
-"Open questions" below. Not yet a final decision record.
+Status: superseded. The session resumed and its decisions are recorded in
+`2026-09-30-minerals-grade-and-refining.md` and `docs/adr/0001`. Kept for
+history.
 
 ## Summary
 

@@ -8,10 +8,12 @@ Read this first, then `sim-game/CLAUDE.md` (code rules) and `sim-game/GAME.md`
 **Assay** is a factory-automation game by r2ts, a two-to-five-person studio
 of strong engineers with no dedicated artist. The hook: players **design
 their own machines from parts** (a two-claw inserter moves twice as much but
-costs more to build and draws more power). Ore has a **purity** (1–100) that
-rises with distance from spawn and, later, depth into space. Purer ore makes
-better parts, better parts enable better designs, and the factory gets
-rebuilt. Played solo or in **co-op**, with a **shared online galaxy** planned
+costs more to build and draws more power). Every world generates its own
+mineral species with a property sheet, and ore has a **purity** (1–100) that
+rounds into a grade; where purity comes from is undecided (the old
+"rises with distance from spawn" rule was withdrawn on 2026-09-30, see
+`docs/adr/0001`). Purer ore makes better parts, better parts enable better
+designs, and the factory gets rebuilt. Played solo or in **co-op**, with a **shared online galaxy** planned
 later. Comparable games: Factorio, Dyson Sphere Program, shapez, Mindustry.
 
 The name "Assay" (the test that measures ore purity) was chosen on
@@ -49,6 +51,7 @@ any graphics. See "Adding a feature" in `sim-game/CLAUDE.md`.
 | `docs/sim-core-primer.html` | Teaching page on the sim/renderer split. Published artifact copy exists too |
 | `reports/` | Genre/market research: `Game genre profitability for indies.md` (cited report) and `genre-playbook.html` (visual version) |
 | `research_notes/` | Raw notes the report was built from |
+| `docs/adr/` | Architecture decision records: one accepted decision per file, the binding form of what the design notes and proposals settled. Read the ones touching a feature before building it; see its README for the rules |
 | `docs/design-notes/` | Decisions from spoken design sessions (`make talk`). Read the ones relevant to a feature before building it |
 | `tools/voice/design_chat.py` | The voice loop: mic → ElevenLabs Scribe → `claude -p` → ElevenLabs speech. Design conversations only; it writes a note on "wrap it up" |
 | `Makefile` | `make relay`, `make join HOST=… NAME=…`, `make play`, `make test`, `make ip` |
@@ -69,8 +72,8 @@ why determinism rules are non-negotiable.
 
 - **`sim`**: `World` (tick, seed, seeded `Rng`, chunks, `deposits`,
   `players`, `buildings`), `worldgen` (one deposit per 16×16 chunk, pure
-  function of seed + chunk position; purity/amount grow with distance from
-  spawn), `command.rs` (`PlayerCommand`: Mine/Craft/Place/Insert/Take/
+  function of seed + chunk position; today purity/amount still grow with
+  distance from spawn, which ADR 0001 says to remove), `command.rs` (`PlayerCommand`: Mine/Craft/Place/Insert/Take/
   Pickup/MoveTo/Stop; `SystemCommand`: AddPlayer; `Input` wraps them),
   `step.rs` (apply inputs, then systems in fixed order: movement, hand
   mining, hand crafting, smelters), `item.rs` (`Item`, `ItemStack`),
