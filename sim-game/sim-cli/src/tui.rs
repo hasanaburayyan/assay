@@ -32,7 +32,7 @@ const CONSOLE_LINES: usize = 300;
 const HELP_TEXT: &str = "\
 Type a command and press Enter. Everything from the prompt works:
   goto 10 10 · move ne 5 · mine · craft smelter · place smelter · stop
-  insert 0 fuel ore:kel 5 · insert 0 ore ore:dal · take 0 · inv · species
+  insert 0 fuel ore:kel 5 · take 0 · assay · rename kel Kelvite · species
   new 42 · load 42 · save · pause · resume · speed 20 · help · quit
 
 Walk        arrow keys (hold to keep walking), or click a tile
@@ -517,10 +517,14 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
                 .crafting
                 .map(|c| format!(" ⚒ {} ×{}", c.recipe.name(), c.remaining))
                 .unwrap_or_default();
+            let assaying = p
+                .assaying
+                .map(|a| format!(" 🔍 dep {}", a.deposit.0))
+                .unwrap_or_default();
             Line::from(vec![
                 Span::styled("█ ", Style::default().fg(player_color(p.id, me))),
                 Span::raw(format!(
-                    "{} {}{} ({},{}){walking}{mining}{crafting}",
+                    "{} {}{} ({},{}){walking}{mining}{crafting}{assaying}",
                     p.id.0,
                     p.name,
                     if Some(p.id) == me { "*" } else { "" },
@@ -569,22 +573,31 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
         } else {
             ""
         };
+        let _ = sh;
+        // Exact once assayed; the band's low end with a ~ until then.
+        let read = |p| {
+            if s.assayed {
+                s.sheet.get(p).to_string()
+            } else {
+                format!("~{}", sim::Sheet::band(s.sheet.get(p)).0)
+            }
+        };
         lines.push(Line::from(vec![
             Span::styled("█", Style::default().fg(ore_color(s.id, false))),
             Span::raw(format!(
                 "{:<11}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}  {mark}",
                 truncate(s.name(), 11),
-                sh.density,
-                sh.strength,
-                sh.hardness,
-                sh.heat_tolerance,
-                sh.reactivity,
-                sh.conductivity
+                read(sim::Property::Density),
+                read(sim::Property::Strength),
+                read(sim::Property::Hardness),
+                read(sim::Property::HeatTolerance),
+                read(sim::Property::Reactivity),
+                read(sim::Property::Conductivity)
             )),
         ]));
     }
     f.render_widget(
-        Paragraph::new(lines).block(panel("Species (hand = minable by hand)")),
+        Paragraph::new(lines).block(panel("Species (~ = rough until assayed)")),
         sp_area,
     );
 
@@ -876,6 +889,13 @@ fn describe_input(input: &Input, world: &World) -> String {
                 ),
                 PlayerCommand::Take { building } => format!("take {}", building.0),
                 PlayerCommand::Pickup { building } => format!("pickup {}", building.0),
+                PlayerCommand::Assay => "assay".into(),
+                PlayerCommand::Rename { species, name } => {
+                    format!("rename #{} {name}", species.0)
+                }
+                PlayerCommand::GrantRename { species, to } => {
+                    format!("grant #{} p{}", species.0, to.0)
+                }
                 PlayerCommand::MoveTo { target } => format!("goto {},{}", target.x, target.y),
                 PlayerCommand::Stop => "stop".into(),
             };

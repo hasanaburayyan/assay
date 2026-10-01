@@ -120,6 +120,7 @@ fn roll_roster(seed: u64, attempt: u64) -> Vec<MineralSpecies> {
                 player_name: None,
                 discoverer: None,
                 rename_grants: Vec::new(),
+                assayed: false,
                 sheet,
             }
         })

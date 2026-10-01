@@ -33,6 +33,16 @@ pub const YIELD_BY_GRADE: [u32; 3] = [1, 2, 3];
 /// Ticks of standing on a deposit per hand-mining cycle.
 pub const HAND_MINE_TICKS: u32 = 4;
 
+/// Ticks of standing on a deposit to assay its species: afterwards the
+/// exact sheet shows instead of rough bands.
+pub const ASSAY_TICKS: u32 = 30;
+
+/// Width of the bands a rough (unassayed) sheet reading shows, e.g. 26–50.
+pub const SHEET_BAND: u8 = 25;
+
+/// Longest name a player may give a species.
+pub const SPECIES_NAME_MAX: usize = 20;
+
 /// Hardest ore (species hardness) a player can mine with bare hands.
 /// Anything harder waits for drills.
 pub const HAND_MINE_MAX_HARDNESS: u32 = 40;

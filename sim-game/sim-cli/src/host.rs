@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
 use sim::{
-    Event, Grade, Input, Item, ItemKind, PlayerCommand, PlayerId, RejectReason, Slot,
+    Event, Grade, Input, Item, ItemKind, PlayerCommand, PlayerId, RejectReason, Slot, SpeciesId,
     SystemCommand, TilePos, World, WorldConfig, debug, step,
 };
 use sim_net::{ClientMsg, HASH_EVERY, TickBundle};
@@ -49,7 +49,11 @@ Player
                               (the ore slot also takes refined: 3 -> 1 a grade up)
   take <id>                   empty a building's output into your inventory
   pickup <id>                 take a building and its contents back
-  stop                        stop walking, mining and crafting
+  assay                       study the deposit you stand on (30 ticks): its
+                              species then shows exact numbers, not bands
+  rename <species> <name>     name a species you discovered (letters, digits, -)
+  grant <species> <player>    let another player rename it too
+  stop                        stop walking, mining, crafting and assaying
   where                       your position
   inv                         what you're carrying, with the names to type
 
@@ -450,8 +454,12 @@ impl Host {
                         .crafting
                         .map(|c| format!(", crafting {} ({} to go)", c.recipe.name(), c.remaining))
                         .unwrap_or_default();
+                    let assaying = p
+                        .assaying
+                        .map(|a| format!(", assaying deposit {}", a.deposit.0))
+                        .unwrap_or_default();
                     out!(
-                        "  {} · {}{you} at ({}, {}){walking}{mining}{crafting} · carrying {}",
+                        "  {} · {}{you} at ({}, {}){walking}{mining}{crafting}{assaying} · carrying {}",
                         p.id.0,
                         p.name,
                         p.pos.x,
@@ -514,6 +522,37 @@ impl Host {
             }
             "stop" => submit(s, paused, PlayerCommand::Stop)?,
             "mine" => submit(s, paused, PlayerCommand::Mine)?,
+            "assay" => submit(s, paused, PlayerCommand::Assay)?,
+            "rename" => {
+                let usage = "Usage: rename <species> <name>, e.g. rename kel Kelvite";
+                let species = resolve_species(s, args.get(1).copied())
+                    .map_err(|e| format!("{e}\n{usage}"))?;
+                let name = args.get(2).ok_or(format!("Missing name.\n{usage}"))?;
+                submit(
+                    s,
+                    paused,
+                    PlayerCommand::Rename {
+                        species,
+                        name: (*name).to_string(),
+                    },
+                )?;
+            }
+            "grant" => {
+                let usage = "Usage: grant <species> <player name or id>, e.g. grant kel grace";
+                let species = resolve_species(s, args.get(1).copied())
+                    .map_err(|e| format!("{e}\n{usage}"))?;
+                let who = args.get(2).ok_or(format!("Missing player.\n{usage}"))?;
+                let to = s
+                    .world
+                    .players
+                    .iter()
+                    .find(|p| p.name.eq_ignore_ascii_case(who) || who.parse() == Ok(p.id.0))
+                    .map(|p| p.id)
+                    .ok_or(format!(
+                        "No player called `{who}`. `players` lists them.\n{usage}"
+                    ))?;
+                submit(s, paused, PlayerCommand::GrantRename { species, to })?;
+            }
             "place" => {
                 let usage =
                     "Usage: place [item] [x y], e.g. place smelter, or place smelter:kel 10 12";
@@ -854,6 +893,35 @@ pub fn item_spec(world: &World, item: Item) -> String {
     )
 }
 
+/// A species by name prefix (player or generated name) or by id.
+fn resolve_species(s: &Session, text: Option<&str>) -> Result<SpeciesId, String> {
+    let text = text.ok_or("Missing species. `species` lists them.")?;
+    let lower = text.to_ascii_lowercase();
+    let hits: Vec<&sim::MineralSpecies> = s
+        .world
+        .species
+        .iter()
+        .filter(|sp| {
+            text.parse::<u8>().ok() == Some(sp.id.0)
+                || sp.name().to_ascii_lowercase().starts_with(&lower)
+                || sp.generated_name.to_ascii_lowercase().starts_with(&lower)
+        })
+        .collect();
+    match hits.as_slice() {
+        [one] => Ok(one.id),
+        [] => Err(format!(
+            "No species matches `{text}`. `species` lists them."
+        )),
+        many => Err(format!(
+            "`{text}` could be: {}",
+            many.iter()
+                .map(|sp| sp.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
 /// Find the one stack in your inventory that `spec` means. `spec` is
 /// `kind[:species[:grade]]`; the kind may be left off when the command
 /// already says which kind it needs (`want`).
@@ -972,6 +1040,15 @@ fn describe_command(cmd: &PlayerCommand, world: &World) -> String {
         ),
         PlayerCommand::Take { building } => format!("take {}", building.0),
         PlayerCommand::Pickup { building } => format!("pickup {}", building.0),
+        PlayerCommand::Assay => "assay".into(),
+        PlayerCommand::Rename { species, name } => {
+            format!("rename {} {name}", world.species(*species).name())
+        }
+        PlayerCommand::GrantRename { species, to } => format!(
+            "grant {} {}",
+            world.species(*species).name(),
+            who(world, PlayerId(u32::MAX), *to)
+        ),
         PlayerCommand::MoveTo { target } => format!("goto {} {}", target.x, target.y),
         PlayerCommand::Stop => "stop".into(),
     }
@@ -1039,6 +1116,68 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
             )
         }
         Event::DepositDepleted { deposit } => format!("deposit {} is now depleted", deposit.0),
+        Event::SpeciesDiscovered { player, species } => format!(
+            "{} discovered {}! `rename {} <name>` to name it",
+            who(player),
+            world.species(*species).name(),
+            world.species(*species).name().to_ascii_lowercase()
+        ),
+        Event::AssayStarted {
+            player,
+            deposit,
+            species,
+        } => format!(
+            "{} started assaying {} at deposit {} ({} ticks)",
+            who(player),
+            world.species(*species).name(),
+            deposit.0,
+            sim::tuning::ASSAY_TICKS
+        ),
+        Event::AssayStopped {
+            player,
+            deposit,
+            reason,
+        } => {
+            let why = match reason {
+                sim::StopReason::LeftDeposit => "walked off it",
+                _ => "stopped",
+            };
+            format!(
+                "{} stopped assaying deposit {}: {why}",
+                who(player),
+                deposit.0
+            )
+        }
+        Event::SpeciesAssayed { player, species } => {
+            let sp = world.species(*species);
+            format!(
+                "{} assayed {}: density {} · strength {} · hardness {} · heat tolerance {} · reactivity {} · conductivity {}",
+                who(player),
+                sp.name(),
+                sp.sheet.density,
+                sp.sheet.strength,
+                sp.sheet.hardness,
+                sp.sheet.heat_tolerance,
+                sp.sheet.reactivity,
+                sp.sheet.conductivity
+            )
+        }
+        Event::SpeciesRenamed {
+            player,
+            species,
+            name,
+        } => format!(
+            "{} named species {} \"{name}\" (was {})",
+            who(player),
+            species.0,
+            world.species(*species).generated_name
+        ),
+        Event::RenameGranted { species, from, to } => format!(
+            "{} let {} rename {}",
+            who(from),
+            who(to),
+            world.species(*species).name()
+        ),
         Event::CraftStarted {
             player,
             recipe,
@@ -1187,6 +1326,28 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
                     "that needs a machine; `recipes` shows where each is made".to_string()
                 }
                 RejectReason::UnknownSpecies => "no such mineral in this world".to_string(),
+                RejectReason::AlreadyAssayed => {
+                    "that species is already assayed; `species` shows its sheet".to_string()
+                }
+                RejectReason::NotDiscovered => {
+                    "nobody has mined or assayed that species yet, so nobody may name it"
+                        .to_string()
+                }
+                RejectReason::NotDiscoverer => {
+                    "only its discoverer (or someone they granted) may do that".to_string()
+                }
+                RejectReason::BadName(e) => match e {
+                    sim::NameError::Empty => "the name is empty".to_string(),
+                    sim::NameError::TooLong => format!(
+                        "names are at most {} characters",
+                        sim::tuning::SPECIES_NAME_MAX
+                    ),
+                    sim::NameError::BadCharacter => {
+                        "names use letters, digits and hyphens only".to_string()
+                    }
+                },
+                RejectReason::NoSuchPlayer => "no such player; `players` lists them".to_string(),
+                RejectReason::AlreadyGranted => "they can already rename it".to_string(),
                 RejectReason::MissingItems(item) => {
                     let have = world
                         .player(*player)

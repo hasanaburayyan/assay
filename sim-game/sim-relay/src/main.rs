@@ -401,6 +401,9 @@ fn describe(command: &PlayerCommand) -> String {
         } => format!("insert {} {slot:?} {} {count}", building.0, item.code()),
         PlayerCommand::Take { building } => format!("take {}", building.0),
         PlayerCommand::Pickup { building } => format!("pickup {}", building.0),
+        PlayerCommand::Assay => "assay".into(),
+        PlayerCommand::Rename { species, name } => format!("rename #{} {name}", species.0),
+        PlayerCommand::GrantRename { species, to } => format!("grant #{} p{}", species.0, to.0),
         PlayerCommand::MoveTo { target } => format!("goto {} {}", target.x, target.y),
         PlayerCommand::Stop => "stop".into(),
     }

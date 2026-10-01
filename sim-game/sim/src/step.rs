@@ -4,13 +4,13 @@ use crate::building::{Building, BuildingId, BuildingKind, Slot, footprint_tiles}
 use crate::command::{Event, Input, PlayerCommand, RejectReason, StopReason, SystemCommand};
 use crate::inventory::Inventory;
 use crate::item::{Item, ItemKind, ItemStack};
-use crate::mineral::Property;
-use crate::player::{Crafting, Mining, Player};
+use crate::mineral::{Property, validate_name};
+use crate::player::{Assaying, Crafting, Mining, Player};
 use crate::recipe::{Recipe, smelter_recipe_for};
 use crate::tuning::{
-    BURN_TICKS_PER_REACTIVITY, FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS, HAND_MINE_TICKS,
-    HAND_SPARK_TEMPERATURE, REACH, SMELTER_FUEL_CAP, SMELTER_INPUT_CAP, SMELTER_OUTPUT_CAP,
-    YIELD_BY_GRADE,
+    ASSAY_TICKS, BURN_TICKS_PER_REACTIVITY, FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS,
+    HAND_MINE_TICKS, HAND_SPARK_TEMPERATURE, REACH, SMELTER_FUEL_CAP, SMELTER_INPUT_CAP,
+    SMELTER_OUTPUT_CAP, YIELD_BY_GRADE,
 };
 use crate::types::{PlayerId, TilePos};
 use crate::world::World;
@@ -31,6 +31,7 @@ pub fn step(world: &mut World, inputs: &[Input], events: &mut Vec<Event>) {
     // machines, drones.
     move_players(world, events);
     mine_by_hand(world, events);
+    assay(world, events);
     craft_by_hand(world, events);
     run_smelters(world, events);
 
@@ -81,17 +82,20 @@ fn apply_player(
         return reject(RejectReason::UnknownPlayer, events);
     }
     // Items name a species by index; never trust a client's index.
-    let item_in = match *command {
+    let species_in = match command {
         PlayerCommand::Craft { item, .. }
         | PlayerCommand::Place { item, .. }
-        | PlayerCommand::Insert { item, .. } => Some(item),
+        | PlayerCommand::Insert { item, .. } => Some(item.species),
+        PlayerCommand::Rename { species, .. } | PlayerCommand::GrantRename { species, .. } => {
+            Some(*species)
+        }
         _ => None,
     };
-    if item_in.is_some_and(|i| usize::from(i.species.0) >= world.species.len()) {
+    if species_in.is_some_and(|s| usize::from(s.0) >= world.species.len()) {
         return reject(RejectReason::UnknownSpecies, events);
     }
 
-    match *command {
+    match command.clone() {
         PlayerCommand::Mine => {
             let pos = world.player(player).expect("checked above").pos;
             let Some(d) = world.deposit_at(pos) else {
@@ -334,6 +338,68 @@ fn apply_player(
                 pos: b.pos,
             });
         }
+        PlayerCommand::Assay => {
+            let pos = world.player(player).expect("checked above").pos;
+            let Some(d) = world.deposit_at(pos) else {
+                return reject(RejectReason::NotOnDeposit, events);
+            };
+            let (deposit, species) = (d.id, d.species);
+            if world.species(species).assayed {
+                return reject(RejectReason::AlreadyAssayed, events);
+            }
+            let p = world.player_mut(player).expect("checked above");
+            if p.assaying.is_some_and(|a| a.deposit == deposit) {
+                return; // already at it
+            }
+            p.assaying = Some(Assaying {
+                deposit,
+                progress: 0,
+            });
+            events.push(Event::AssayStarted {
+                player,
+                deposit,
+                species,
+            });
+        }
+        PlayerCommand::Rename { species, name } => {
+            let s = world.species(species);
+            if s.discoverer.is_none() {
+                return reject(RejectReason::NotDiscovered, events);
+            }
+            if !s.may_rename(player) {
+                return reject(RejectReason::NotDiscoverer, events);
+            }
+            if let Err(e) = validate_name(&name) {
+                return reject(RejectReason::BadName(e), events);
+            }
+            world.species_mut(species).player_name = Some(name.clone());
+            events.push(Event::SpeciesRenamed {
+                player,
+                species,
+                name,
+            });
+        }
+        PlayerCommand::GrantRename { species, to } => {
+            let s = world.species(species);
+            if s.discoverer.is_none() {
+                return reject(RejectReason::NotDiscovered, events);
+            }
+            if s.discoverer != Some(player) {
+                return reject(RejectReason::NotDiscoverer, events);
+            }
+            if world.player(to).is_none() {
+                return reject(RejectReason::NoSuchPlayer, events);
+            }
+            if s.may_rename(to) {
+                return reject(RejectReason::AlreadyGranted, events);
+            }
+            world.species_mut(species).rename_grants.push(to);
+            events.push(Event::RenameGranted {
+                species,
+                from: player,
+                to,
+            });
+        }
         PlayerCommand::MoveTo { target } => {
             if !world.in_bounds(target) {
                 return reject(RejectReason::OutOfBounds, events);
@@ -370,7 +436,29 @@ fn apply_player(
                     reason: StopReason::Stopped,
                 });
             }
+            if let Some(a) = p.assaying.take() {
+                events.push(Event::AssayStopped {
+                    player,
+                    deposit: a.deposit,
+                    reason: StopReason::Stopped,
+                });
+            }
         }
+    }
+}
+
+/// First contact: the first player to mine or assay a species becomes its
+/// discoverer and may name it.
+fn discover(
+    world: &mut World,
+    species: crate::mineral::SpeciesId,
+    player: PlayerId,
+    events: &mut Vec<Event>,
+) {
+    let s = world.species_mut(species);
+    if s.discoverer.is_none() {
+        s.discoverer = Some(player);
+        events.push(Event::SpeciesDiscovered { player, species });
     }
 }
 
@@ -442,6 +530,7 @@ fn mine_by_hand(world: &mut World, events: &mut Vec<Event>) {
             item,
             amount,
         });
+        discover(world, item.species, player, events);
         if depleted {
             world.players[i].mining = None;
             events.push(Event::DepositDepleted { deposit: m.deposit });
@@ -453,6 +542,40 @@ fn mine_by_hand(world: &mut World, events: &mut Vec<Event>) {
         } else {
             world.players[i].mining = Some(Mining { progress: 0, ..m });
         }
+    }
+}
+
+/// Assay system: a player standing on the deposit they are assaying makes
+/// progress; after `ASSAY_TICKS` the species' sheet is known exactly.
+fn assay(world: &mut World, events: &mut Vec<Event>) {
+    for i in 0..world.players.len() {
+        let Some(a) = world.players[i].assaying else {
+            continue;
+        };
+        let player = world.players[i].id;
+        let pos = world.players[i].pos;
+        let deposit = world
+            .deposit(a.deposit)
+            .expect("assaying refers to an existing deposit");
+        if !deposit.contains(pos) {
+            world.players[i].assaying = None;
+            events.push(Event::AssayStopped {
+                player,
+                deposit: a.deposit,
+                reason: StopReason::LeftDeposit,
+            });
+            continue;
+        }
+        let progress = a.progress + 1;
+        if progress < ASSAY_TICKS {
+            world.players[i].assaying = Some(Assaying { progress, ..a });
+            continue;
+        }
+        let species = deposit.species;
+        world.players[i].assaying = None;
+        world.species_mut(species).assayed = true;
+        events.push(Event::SpeciesAssayed { player, species });
+        discover(world, species, player, events);
     }
 }
 

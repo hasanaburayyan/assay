@@ -79,6 +79,8 @@ pause
 species
 goto {} {}
 tick {}
+assay
+tick 30
 mine
 tick 40
 craft smelter {mat_ore}
@@ -133,6 +135,9 @@ quit
     assert!(!stdout.contains("rejected"), "{transcript}");
     let (m, g) = (ms.name(), material.grade().letter());
     for expected in [
+        format!("you started assaying {m}"),
+        format!("you assayed {m}: density {}", ms.sheet.density),
+        format!("you discovered {m}!"),
         format!("you started mining {m}"),
         format!("you crafted 1 {m} smelter ({g})"),
         format!("you placed {m} smelter ({g}) as building 0"),

@@ -23,6 +23,15 @@ pub struct Player {
     /// Hand crafting in progress. Continues while walking or mining; `Stop`
     /// cancels it and refunds the unit being worked on.
     pub crafting: Option<Crafting>,
+    /// Assaying the deposit underfoot. Ends like mining: walking off it or
+    /// `Stop` cancels, finishing reveals the species' exact sheet.
+    pub assaying: Option<Assaying>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Assaying {
+    pub deposit: DepositId,
+    pub progress: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -53,6 +62,7 @@ impl Player {
             inventory: Inventory::default(),
             mining: None,
             crafting: None,
+            assaying: None,
         }
     }
 }

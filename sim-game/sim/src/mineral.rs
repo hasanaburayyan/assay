@@ -5,7 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::tuning::{GRADE_A_MIN_PURITY, GRADE_B_MIN_PURITY, GRADE_MULTIPLIER_PERCENT};
+use crate::tuning::{
+    GRADE_A_MIN_PURITY, GRADE_B_MIN_PURITY, GRADE_MULTIPLIER_PERCENT, SHEET_BAND, SPECIES_NAME_MAX,
+};
 use crate::types::PlayerId;
 
 /// Index into `World::species`.
@@ -72,6 +74,13 @@ impl Sheet {
             Property::Reactivity => self.reactivity,
             Property::Conductivity => self.conductivity,
         }
+    }
+
+    /// The rough band a first-contact reading shows for a value: the
+    /// `SHEET_BAND`-wide range it falls in, as (low, high) inclusive.
+    pub fn band(value: u8) -> (u8, u8) {
+        let low = (value - 1) / SHEET_BAND * SHEET_BAND + 1;
+        (low, (low + SHEET_BAND - 1).min(100))
     }
 
     /// The value an item of this species has at `grade`.
@@ -146,15 +155,48 @@ pub struct MineralSpecies {
     /// Set by the discoverer (or someone they granted); replaces the
     /// generated name everywhere.
     pub player_name: Option<String>,
-    /// The first player to mine it. Only they (and their grantees) may rename.
+    /// The first player to mine or assay it. Only they (and their
+    /// grantees) may rename.
     pub discoverer: Option<PlayerId>,
     pub rename_grants: Vec<PlayerId>,
+    /// Until a player assays a deposit of it, hosts should show the sheet
+    /// as rough bands (`Sheet::band`), not exact numbers. The sim itself
+    /// always uses the exact values.
+    pub assayed: bool,
     pub sheet: Sheet,
+}
+
+/// Why a species name was refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum NameError {
+    Empty,
+    TooLong,
+    /// Only letters, digits and hyphens.
+    BadCharacter,
+}
+
+/// Check a player-given species name.
+pub fn validate_name(name: &str) -> Result<(), NameError> {
+    if name.is_empty() {
+        return Err(NameError::Empty);
+    }
+    if name.chars().count() > SPECIES_NAME_MAX {
+        return Err(NameError::TooLong);
+    }
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(NameError::BadCharacter);
+    }
+    Ok(())
 }
 
 impl MineralSpecies {
     pub fn name(&self) -> &str {
         self.player_name.as_deref().unwrap_or(&self.generated_name)
+    }
+
+    /// Whether `player` may rename this species.
+    pub fn may_rename(&self, player: PlayerId) -> bool {
+        self.discoverer == Some(player) || self.rename_grants.contains(&player)
     }
 
     pub fn effective(&self, property: Property, grade: Grade) -> u32 {

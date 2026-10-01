@@ -3,7 +3,7 @@
 //! A save wraps the world with a format version:
 //!
 //! ```json
-//! { "version": 9, "world": { "tick": 0, "seed": 42, ... } }
+//! { "version": 10, "world": { "tick": 0, "seed": 42, ... } }
 //! ```
 //!
 //! When the layout of `World` changes, bump [`SAVE_VERSION`] and add a step
@@ -12,7 +12,10 @@
 //! History:
 //! - v1–v8: the named-ore era (iron, copper, coal, stone). Dropped in one
 //!   cut-over (ADR 0001); those saves no longer load.
-//! - v9: generated mineral species, items keyed by species and grade.
+//! - v9: generated mineral species, items keyed by species and grade
+//!   (never shipped: superseded on the same branch).
+//! - v10: species carry assayed/discoverer/name state; players may be
+//!   assaying.
 
 use std::path::Path;
 use std::{fmt, fs, io};
@@ -22,10 +25,10 @@ use serde::{Deserialize, Serialize};
 use crate::world::World;
 
 /// Current save format version.
-pub const SAVE_VERSION: u32 = 9;
+pub const SAVE_VERSION: u32 = 10;
 
 /// Oldest version `from_json` can still load and migrate forward.
-pub const OLDEST_SAVE_VERSION: u32 = 9;
+pub const OLDEST_SAVE_VERSION: u32 = 10;
 
 #[derive(Serialize)]
 struct SaveOut<'a> {
@@ -116,5 +119,5 @@ impl World {
 }
 
 /// Bring a world loaded from an older save up to the current layout.
-/// Nothing to do yet: v9 is the oldest loadable version.
+/// Nothing to do yet: v10 is the oldest loadable version.
 fn migrate(_world: &mut World, _from_version: u32) {}

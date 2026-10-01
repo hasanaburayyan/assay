@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::building::{BuildingId, Slot};
 use crate::item::Item;
-use crate::mineral::{Property, SpeciesId};
+use crate::mineral::{NameError, Property, SpeciesId};
 use crate::recipe::RecipeId;
 use crate::types::{DepositId, PlayerId, TilePos};
 
@@ -48,9 +48,18 @@ pub enum PlayerCommand {
     Take { building: BuildingId },
     /// Remove a building, getting it and its contents back.
     Pickup { building: BuildingId },
+    /// Study the deposit you are standing on for `tuning::ASSAY_TICKS`;
+    /// afterwards its species shows exact numbers instead of rough bands.
+    Assay,
+    /// Give a species a name. Only its discoverer, or someone they granted,
+    /// may. Replaces the generated name everywhere.
+    Rename { species: SpeciesId, name: String },
+    /// Let another player rename a species you discovered.
+    GrantRename { species: SpeciesId, to: PlayerId },
     /// Start walking toward `target`, one tile per tick.
     MoveTo { target: TilePos },
-    /// Stop walking, mining and crafting (the current batch is refunded).
+    /// Stop walking, mining, crafting and assaying (the current craft batch
+    /// is refunded).
     Stop,
 }
 
@@ -101,6 +110,37 @@ pub enum Event {
     },
     DepositDepleted {
         deposit: DepositId,
+    },
+    /// First contact: this player was the first to mine or assay the
+    /// species, and may now name it.
+    SpeciesDiscovered {
+        player: PlayerId,
+        species: SpeciesId,
+    },
+    AssayStarted {
+        player: PlayerId,
+        deposit: DepositId,
+        species: SpeciesId,
+    },
+    AssayStopped {
+        player: PlayerId,
+        deposit: DepositId,
+        reason: StopReason,
+    },
+    /// The species' exact sheet is now known to everyone in the world.
+    SpeciesAssayed {
+        player: PlayerId,
+        species: SpeciesId,
+    },
+    SpeciesRenamed {
+        player: PlayerId,
+        species: SpeciesId,
+        name: String,
+    },
+    RenameGranted {
+        species: SpeciesId,
+        from: PlayerId,
+        to: PlayerId,
     },
     CraftStarted {
         player: PlayerId,
@@ -189,8 +229,19 @@ pub enum StopReason {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RejectReason {
-    /// `Mine` needs you to stand on a deposit.
+    /// `Mine` and `Assay` need you to stand on a deposit.
     NotOnDeposit,
+    /// This species' sheet is already exact.
+    AlreadyAssayed,
+    /// Nobody has discovered this species yet, so nobody may name it.
+    NotDiscovered,
+    /// Only the discoverer (or a grantee, for renaming) may do this.
+    NotDiscoverer,
+    BadName(NameError),
+    /// The player to grant to does not exist.
+    NoSuchPlayer,
+    /// That player already has rename rights.
+    AlreadyGranted,
     DepositDepleted,
     /// The species is harder than `tuning::HAND_MINE_MAX_HARDNESS`.
     TooHardForHands,

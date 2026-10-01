@@ -55,8 +55,17 @@ fn random_inputs(rng: &mut Rng, world: &World) -> Vec<Input> {
             }
         };
         let random_building = |rng: &mut Rng| BuildingId(rng.range(0, world.next_building_id + 2));
-        let command = match rng.range(0, 12) {
+        let command = match rng.range(0, 15) {
             0 | 1 => PlayerCommand::Mine,
+            12 => PlayerCommand::Assay,
+            13 => PlayerCommand::Rename {
+                species: SpeciesId(rng.range(0, n_species + 1) as u8),
+                name: ["Adaite", "", "Bad name", "Kel-2"][rng.range(0, 4) as usize].into(),
+            },
+            14 => PlayerCommand::GrantRename {
+                species: SpeciesId(rng.range(0, n_species + 1) as u8),
+                to: PlayerId(rng.range(0, world.players.len() as u32 + 1)),
+            },
             2 => {
                 let recipe = RecipeId::ALL[rng.range(0, RecipeId::ALL.len() as u32) as usize];
                 let item = held(recipe.recipe().input.0, rng)
@@ -205,7 +214,7 @@ fn golden_hash_is_stable_across_machines() {
     }
     assert_eq!(
         format!("{:016x}", world.state_hash()),
-        "5daf509a524f42c1",
+        "bb0c61da64d0f008",
         "world hash changed; see the comment on this test"
     );
 }

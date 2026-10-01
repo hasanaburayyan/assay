@@ -5,7 +5,7 @@ use std::fmt::Write;
 
 use crate::building::{Building, BuildingKind};
 use crate::item::ItemStack;
-use crate::mineral::{Grade, MineralSpecies, Property};
+use crate::mineral::{Grade, MineralSpecies, Property, Sheet};
 use crate::recipe::{RECIPES, Station};
 use crate::tuning::{FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS, SMELTER_OUTPUT_CAP};
 use crate::types::TilePos;
@@ -28,10 +28,11 @@ pub fn summary(world: &World) -> String {
     )
 }
 
-/// The map letter for a species: its name's initial.
+/// The map letter for a species: its generated name's initial, which is
+/// unique per world (player names need not be).
 pub fn species_symbol(species: &MineralSpecies) -> char {
     species
-        .name()
+        .generated_name
         .chars()
         .next()
         .map_or('?', |c| c.to_ascii_uppercase())
@@ -90,16 +91,37 @@ pub fn deposit_table(world: &World) -> String {
     out
 }
 
-/// Table of every species with its full sheet, plus what the sheet means
-/// for the rules that exist today.
+/// One property as a player sees it: exact once assayed, else its band.
+pub fn reading(species: &MineralSpecies, property: Property) -> String {
+    let v = species.sheet.get(property);
+    if species.assayed {
+        v.to_string()
+    } else {
+        let (lo, hi) = Sheet::band(v);
+        format!("{lo}-{hi}")
+    }
+}
+
+/// Table of every species with its sheet as the players know it (rough
+/// bands until assayed), plus what the sheet means for the rules that
+/// exist today. Notes use the exact values: the ground knows what it is.
 pub fn species_table(world: &World) -> String {
     let mut out = format!(
-        "{:>2}  {:<12} {:>4} {:>4} {:>4} {:>4} {:>4} {:>4}  notes\n",
+        "{:>2}  {:<12} {:>6} {:>6} {:>6} {:>6} {:>6} {:>6}  notes\n",
         "id", "name", "dens", "str", "hard", "heat", "reac", "cond"
     );
     for s in &world.species {
         let sh = &s.sheet;
         let mut notes = Vec::new();
+        if !s.assayed {
+            notes.push("rough: stand on it and `assay`".to_string());
+        }
+        if let Some(d) = s.discoverer {
+            let who = world
+                .player(d)
+                .map_or(format!("player {}", d.0), |p| p.name.clone());
+            notes.push(format!("found by {who}"));
+        }
         if u32::from(sh.hardness) <= HAND_MINE_MAX_HARDNESS {
             notes.push("hand-minable".to_string());
         }
@@ -109,17 +131,18 @@ pub fn species_table(world: &World) -> String {
                 break;
             }
         }
+        let _ = sh;
         let _ = writeln!(
             out,
-            "{:>2}  {:<12} {:>4} {:>4} {:>4} {:>4} {:>4} {:>4}  {}",
+            "{:>2}  {:<12} {:>6} {:>6} {:>6} {:>6} {:>6} {:>6}  {}",
             s.id.0,
             s.name(),
-            sh.density,
-            sh.strength,
-            sh.hardness,
-            sh.heat_tolerance,
-            sh.reactivity,
-            sh.conductivity,
+            reading(s, Property::Density),
+            reading(s, Property::Strength),
+            reading(s, Property::Hardness),
+            reading(s, Property::HeatTolerance),
+            reading(s, Property::Reactivity),
+            reading(s, Property::Conductivity),
             notes.join(", ")
         );
     }
