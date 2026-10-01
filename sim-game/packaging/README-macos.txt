@@ -63,9 +63,10 @@ shares their public IP.
 The inspector
 -------------
 sim-cli opens a live view: the map (you are white, other players are
-colored, ore patches are colored by kind, smelters are orange), players,
-every player's inventory, the tile under your mouse, placed buildings,
-nearest deposits, the inputs applied each tick, and an event console.
+colored, ore patches are colored by mineral species, smelters are
+orange), players, every player's inventory, this world's minerals and
+their property sheets, the tile under your mouse, placed buildings, nearest
+deposits, the inputs applied each tick, and an event console.
 
 Just type commands and press Enter, the same ones as before:
   goto 30 20 · move ne 5 · mine · craft smelter · place smelter · help
@@ -83,11 +84,14 @@ Things to try
   goto 30 20               walk somewhere; everyone sees you move
   move ne 5                walk 5 tiles north-east
   deposits                 list ore deposits
+  species                  this world's minerals: every world rolls its own
   mine                     stand on a deposit first; ore arrives while you stay
-  craft smelter            5 stone makes a smelter (recipes lists everything)
+                           (only species with hardness 40 or less, by hand)
+  craft smelter            5 ore of any species makes a smelter
   place smelter            put it down just east of you
-  insert 0 coal 5          fuel it, then insert 0 iron-ore 10 to smelt plates
-  take 0                   collect the plates; craft gear turns 2 into a gear
+  insert 0 fuel ore:kel 5  fuel it with a reactive ore (inv shows the names)
+  insert 0 ore ore:dal 10  ore to refine; the fire must reach its heat tolerance
+  take 0                   collect the refined material; craft gear needs hardness 20
   buildings                what every building holds and whether it's running
   events                   recent events
   quit                     leave (the host keeps running)
