@@ -117,25 +117,44 @@ without being written into them.
 
 Recorded rather than edited in, so what was decided and who moved it both
 stay visible. All five came from the Game Director on ASSA-5 and ASSA-6, two
-of them reversing the CEO's earlier default with his agreement. **I checked
+of them reversing the CEO's earlier default with their agreement. **I checked
 the arithmetic in A1, A2 and A5 myself rather than taking it on faith; every
 rate below reproduces.**
 
 **A1. The part always lost in a break is the heaviest that is NOT the frame.**
 With no non-frame part, the frame is lost. This takes the one-line escape
 point 10 set aside and reverses the *which part* half of the CEO's default
-(his 19:22, accepted by the Game Director 19:43, reversed by her 20:57, agreed
-by him 20:58). Everything else in point 10 stands unchanged. The reason is
-measured, not aesthetic: mass is size × density, so at point 12's sizes the
-frame is the heaviest part of **every** demo design (pick 2d > d; drill 5d >
-d and > 2d), and mixed species only reverse it if another part's material is
-more than 2.5× denser. "Heaviest is always lost" was therefore "the frame is
-always lost" — which costs the player the budget-carrying piece on every
-failure, a punishment spiral instead of a lesson. Properties roll
+(theirs 19:22, accepted by the Game Director 19:43, reversed by them 20:57,
+agreed by the CEO 20:58). Everything else in point 10 stands unchanged.
+
+The reason is measured, not aesthetic. Mass is size × density, so at point
+12's sizes the frame is the heaviest part of **every same-species design**
+(pick 2d > d; drill 5d > d and > 2d) and of roughly three mixed-species
+pairings in four. "Heaviest is always lost" was therefore "the frame is
+usually lost" — and the frame is the budget-carrying piece, so losing it on a
+failure is a punishment spiral rather than a lesson. Properties roll
 independently and uniformly over 1–100 (`worldgen.rs`), so P(density > c ×
 strength) = 1/2c for c ≥ 1: a same-species pick breaks at **C 42% / B 31% /
 A 25%**, and a four-hopper drill at B at ~57%, which is point 12's "mass is
 what stops you stacking hoppers" holding at the rate it claimed.
+
+**Corrected 2026-10-01, by the Game Director correcting their own
+justification:** the first draft of this paragraph said "every demo design"
+and "unless another part's material is more than 2.5× denser", which were
+same-species claims wearing mixed-species clothes. Across independent
+densities a head out-weighs a held frame at **2×**, in 24.5% of pairings; a
+hopper beats a planted frame at 2.5× (19.6%) and a head beats it at 5×
+(9.5%). **A1 itself does not move, and why is worth recording:** wherever a
+non-frame part is already the heaviest, "heaviest" and "heaviest that is not
+the frame" name the same part, so A1 is a no-op there. It bites only where
+the frame is heaviest — the clear majority, and every same-species design. The
+rule stands on a correct three-quarters rather than a false whole.
+
+**A consequence, so it is not later read as a bug:** a pick has exactly two
+parts, so under A1 the head is always the part lost, at any density. That is
+intended — the head is size 1, the cheap piece. The mass *lesson* lives in
+drills, where which non-frame part is heaviest varies with density: a pick
+teaches "it broke", a drill teaches "it was too heavy".
 
 **A2. `PICK_DURABILITY_PER_STRENGTH` 10 → 60, so the pool is 120 swings**
 at a grade-B strength-50 head. `PICK_WEAR_PER_SWING` stays 20. Decision 7
