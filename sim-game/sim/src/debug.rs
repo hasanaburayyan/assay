@@ -129,12 +129,17 @@ pub fn species_table(world: &World) -> String {
 /// Table of every recipe.
 pub fn recipe_table() -> String {
     let mut out = format!(
-        "{:<12} {:<12} {:>5}  {:<16} needs\n",
-        "makes", "from", "ticks", "where"
+        "{:<8} {:<16} {:<12} {:>5}  {:<16} needs\n",
+        "name", "makes", "from", "ticks", "where"
     );
     for r in &RECIPES {
         let from = format!("{} {}", r.input.1, r.input.0.name());
-        let makes = format!("{} {}", r.output.1, r.output.0.name());
+        let makes = format!(
+            "{} {}{}",
+            r.output.1,
+            r.output.0.name(),
+            if r.raises_grade { " +1 grade" } else { "" }
+        );
         let station = match r.station {
             Station::Hand => "by hand (craft)",
             Station::Smelter => "in a smelter",
@@ -149,7 +154,8 @@ pub fn recipe_table() -> String {
         }
         let _ = writeln!(
             out,
-            "{makes:<12} {from:<12} {:>5}  {station:<16} {}",
+            "{:<8} {makes:<16} {from:<12} {:>5}  {station:<16} {}",
+            r.name,
             r.ticks,
             if needs.is_empty() {
                 "nothing".to_string()
@@ -158,7 +164,9 @@ pub fn recipe_table() -> String {
             }
         );
     }
-    out.push_str("Every recipe keeps the input's species and grade.\n");
+    out.push_str(
+        "Every recipe keeps the input's species. sort and resmelt raise its grade by one\n(C->B->A) and lose two thirds of the material; by hand: craft sort <ore> [n].\n",
+    );
     out
 }
 
@@ -176,7 +184,7 @@ pub fn building_status(world: &World, b: &Building) -> String {
         .input
         .map(|i| u32::from(world.species(i.item.species).sheet.heat_tolerance));
     let state = if s.input.is_none() {
-        "idle: no ore".to_string()
+        "idle: nothing to refine".to_string()
     } else if s.output.is_some_and(|o| o.count >= SMELTER_OUTPUT_CAP) {
         "stalled: output full".to_string()
     } else if s.burn_left == 0 && s.fuel.is_none() {

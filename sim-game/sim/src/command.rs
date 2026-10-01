@@ -208,6 +208,8 @@ pub enum RejectReason {
     WrongItem,
     /// The input's effective property is below the recipe's threshold.
     RequirementNotMet(Property, u32),
+    /// A refining recipe was given grade A, which cannot improve.
+    AlreadyBestGrade,
     UnknownBuilding,
     /// Farther than `tuning::REACH` tiles away.
     OutOfReach,

@@ -42,9 +42,11 @@ Player
   move <dir> [n]              walk n tiles (default 1); dir: n s e w ne nw se sw
   mine                        mine the deposit you stand on, by hand, until you
                               stop or walk off it (ore hardness 40 or less)
-  craft <smelter|gear> [item] [n]   hand-craft n (default 1) from an item stack
+  craft <recipe> [item] [n]   hand-craft n (default 1) from an item stack:
+                              smelter, gear, or sort (3 ore -> 1 ore a grade up)
   place [item] [x y]          put a smelter down (default: just east of you)
   insert <id> ore|fuel <item> [n]   feed a building, e.g. insert 0 fuel ore:kel 5
+                              (the ore slot also takes refined: 3 -> 1 a grade up)
   take <id>                   empty a building's output into your inventory
   pickup <id>                 take a building and its contents back
   stop                        stop walking, mining and crafting
@@ -538,8 +540,7 @@ impl Host {
                     Some(other) => return Err(format!("`{other}` is not a slot.\n{usage}")),
                     None => return Err(format!("Missing slot.\n{usage}")),
                 };
-                let want = (slot == Slot::Input).then_some(ItemKind::Ore);
-                let item = resolve_item(s, args.get(3).copied(), want)?;
+                let item = resolve_item(s, args.get(3).copied(), None)?;
                 let count: u32 = optional_arg(args, 4, "count", 1)?;
                 let building = sim::BuildingId(id);
                 submit(
@@ -566,7 +567,7 @@ impl Host {
                 submit(s, paused, PlayerCommand::Pickup { building })?;
             }
             "craft" => {
-                let usage = "Usage: craft <smelter|gear> [item] [count], e.g. craft smelter, or craft gear refined:kel 3. `recipes` lists them.";
+                let usage = "Usage: craft <smelter|gear|sort> [item] [count], e.g. craft smelter, or craft sort ore:kel:c 2. `recipes` lists them.";
                 let name = args.get(1).ok_or(format!("Missing recipe.\n{usage}"))?;
                 let recipe = sim::RecipeId::parse(name)
                     .ok_or(format!("No recipe makes `{name}`.\n{usage}"))?;
@@ -1193,6 +1194,9 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
                     format!("not enough {} (you have {have})", name(item))
                 }
                 RejectReason::WrongItem => "that's the wrong kind of item for this".to_string(),
+                RejectReason::AlreadyBestGrade => {
+                    "grade A is already the best; refining can't improve it".to_string()
+                }
                 RejectReason::RequirementNotMet(property, min) => format!(
                     "its {} is below {min} at that grade; `species` shows the sheets",
                     property.name()

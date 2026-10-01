@@ -6,7 +6,7 @@ use crate::inventory::Inventory;
 use crate::item::{Item, ItemKind, ItemStack};
 use crate::mineral::Property;
 use crate::player::{Crafting, Mining, Player};
-use crate::recipe::{Recipe, RecipeId};
+use crate::recipe::{Recipe, smelter_recipe_for};
 use crate::tuning::{
     BURN_TICKS_PER_REACTIVITY, FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS, HAND_MINE_TICKS,
     HAND_SPARK_TEMPERATURE, REACH, SMELTER_FUEL_CAP, SMELTER_INPUT_CAP, SMELTER_OUTPUT_CAP,
@@ -136,6 +136,9 @@ fn apply_player(
             if let Some((property, min)) = r.unmet_requirement(world.species(item.species), item) {
                 return reject(RejectReason::RequirementNotMet(property, min), events);
             }
+            if r.output_for(item).is_none() {
+                return reject(RejectReason::AlreadyBestGrade, events);
+            }
             let p = world.player_mut(player).expect("checked above");
             if let Some(c) = p.crafting {
                 // Finish what's in progress first; refund it like Stop does.
@@ -236,8 +239,11 @@ fn apply_player(
             let walls = world.max_temperature(b);
             let (cap, target) = match slot {
                 Slot::Input => {
-                    if item.kind != ItemKind::Ore {
+                    let Some(recipe) = smelter_recipe_for(item.kind) else {
                         return reject(RejectReason::WrongItem, events);
+                    };
+                    if recipe.recipe().output_for(item).is_none() {
+                        return reject(RejectReason::AlreadyBestGrade, events);
                     }
                     let needs = u32::from(world.species(item.species).sheet.heat_tolerance);
                     if needs > walls {
@@ -463,7 +469,9 @@ fn craft_by_hand(world: &mut World, events: &mut Vec<Event>) {
             continue;
         }
 
-        let item = recipe.output_for(c.input);
+        let item = recipe
+            .output_for(c.input)
+            .expect("validated when the craft started");
         let count = recipe.output.1;
         p.inventory.add(item, count);
         let remaining = c.remaining - 1;
@@ -505,16 +513,20 @@ fn craft_by_hand(world: &mut World, events: &mut Vec<Event>) {
 /// cold only if its heat tolerance is within the hand spark; otherwise the
 /// fire already burning must be at least that hot.
 fn run_smelters(world: &mut World, events: &mut Vec<Event>) {
-    let recipe = RecipeId::Refine.recipe();
     for i in 0..world.buildings.len() {
         let walls = world.max_temperature(&world.buildings[i]);
         let BuildingKind::Smelter(s) = &world.buildings[i].kind;
         let Some(input) = s.input else { continue };
+        let Some(recipe) = smelter_recipe_for(input.item.kind).map(|r| r.recipe()) else {
+            continue;
+        };
         if input.count < recipe.input.1 {
             continue;
         }
         let needs = u32::from(world.species(input.item.species).sheet.heat_tolerance);
-        let out_item = recipe.output_for(input.item);
+        let Some(out_item) = recipe.output_for(input.item) else {
+            continue; // grade A: nothing to improve (insert refuses it)
+        };
         let out_count = recipe.output.1;
         let out_have = match s.output {
             None => 0,

@@ -53,8 +53,10 @@ fn recipes_are_named_after_their_output_and_keep_species_and_grade() {
     assert_eq!(smelter.input, (ItemKind::Ore, 5));
     assert_eq!(
         smelter.output_for(ore(Grade::B)),
-        Item::new(ItemKind::Smelter, X, Grade::B)
+        Some(Item::new(ItemKind::Smelter, X, Grade::B))
     );
+    assert_eq!(RecipeId::parse("sort"), Some(RecipeId::Sort));
+    assert_eq!(RecipeId::parse("resmelt"), Some(RecipeId::Resmelt));
     assert!(RecipeId::Smelter.is_hand_craftable());
     assert!(!RecipeId::Refine.is_hand_craftable());
 }
@@ -267,4 +269,50 @@ fn crafting_continues_while_walking() {
         1
     );
     assert_eq!(p.pos, target);
+}
+
+#[test]
+fn sorting_ore_by_hand_raises_its_grade_at_a_loss() {
+    // Decision 6, rung one: time plus mass loss.
+    let (mut world, me) = world_with_player();
+    world
+        .player_mut(me)
+        .unwrap()
+        .inventory
+        .add(ore(Grade::C), 7);
+    let ticks = RecipeId::Sort.recipe().ticks;
+    let events = run(
+        &mut world,
+        &[Input::player(me, craft(RecipeId::Sort, ore(Grade::C), 2))],
+        ticks * 2,
+    );
+    let made = events
+        .iter()
+        .filter(|e| matches!(e, Event::ItemCrafted { item, .. } if *item == ore(Grade::B)))
+        .count();
+    assert_eq!(made, 2);
+    let inv = &world.player(me).unwrap().inventory;
+    assert_eq!(inv.count(ore(Grade::B)), 2);
+    assert_eq!(inv.count(ore(Grade::C)), 1, "6 in, 2 out");
+}
+
+#[test]
+fn grade_a_cannot_be_sorted_further() {
+    let (mut world, me) = world_with_player();
+    world
+        .player_mut(me)
+        .unwrap()
+        .inventory
+        .add(ore(Grade::A), 3);
+    let bad = craft(RecipeId::Sort, ore(Grade::A), 1);
+    let events = run(&mut world, &[Input::player(me, bad.clone())], 1);
+    assert_eq!(
+        events,
+        vec![Event::CommandRejected {
+            player: me,
+            command: bad,
+            reason: RejectReason::AlreadyBestGrade
+        }]
+    );
+    assert_eq!(world.player(me).unwrap().inventory.count(ore(Grade::A)), 3);
 }

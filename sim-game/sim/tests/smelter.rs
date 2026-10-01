@@ -486,8 +486,15 @@ fn inserting_is_validated() {
         1,
     );
 
+    let gear = Item::new(ItemKind::Gear, WALLS, Grade::A);
+    give(&mut world, me, gear, 1);
     let cases = [
-        (insert(id, Slot::Input, refined, 1), RejectReason::WrongItem),
+        (insert(id, Slot::Input, gear, 1), RejectReason::WrongItem),
+        (insert(id, Slot::Fuel, gear, 1), RejectReason::WrongItem),
+        (
+            insert(id, Slot::Input, refined, 1),
+            RejectReason::AlreadyBestGrade,
+        ),
         (
             insert(id, Slot::Fuel, ore(HOT_FUEL), 1),
             RejectReason::MissingItems(ore(HOT_FUEL)),
@@ -628,4 +635,96 @@ fn a_working_smelter_survives_save_and_load() {
     run(&mut world, &[], 100);
     assert_eq!(loaded.state_hash(), world.state_hash());
     assert!(smelter_of(&loaded, id).output.is_some());
+}
+
+#[test]
+fn resmelting_refined_material_raises_its_grade_at_a_loss() {
+    // Decision 6, rung two: heat and fuel.
+    let (mut world, me, id, _) = world_with_smelter();
+    let c = Item::new(ItemKind::Refined, WALLS, Grade::C);
+    give(&mut world, me, c, 7);
+    give(&mut world, me, ore(FUEL), 3);
+    let ticks = RecipeId::Resmelt.recipe().ticks;
+    let events = run(
+        &mut world,
+        &[
+            Input::player(me, insert(id, Slot::Input, c, 7)),
+            Input::player(me, insert(id, Slot::Fuel, ore(FUEL), 3)),
+        ],
+        ticks * 2 + 5,
+    );
+    let b = Item::new(ItemKind::Refined, WALLS, Grade::B);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, Event::ItemSmelted { item, .. } if *item == b))
+            .count(),
+        2
+    );
+    let s = smelter_of(&world, id);
+    assert_eq!(
+        s.input.map(|i| i.count),
+        Some(1),
+        "6 in, 2 out, 1 short of a batch"
+    );
+    assert_eq!(s.output.map(|o| (o.item, o.count)), Some((b, 2)));
+
+    // Grade A refined has nowhere to go.
+    let a = Item::new(ItemKind::Refined, WALLS, Grade::A);
+    give(&mut world, me, a, 3);
+    let bad = insert(id, Slot::Input, a, 3);
+    let events = run(&mut world, &[Input::player(me, bad.clone())], 1);
+    assert_eq!(
+        events,
+        vec![Event::CommandRejected {
+            player: me,
+            command: bad,
+            reason: RejectReason::AlreadyBestGrade
+        }]
+    );
+}
+
+#[test]
+fn c_grade_ore_becomes_b_grade_material_through_the_chain() {
+    // Decision 6 end to end: sort by hand, then refine. 3 C ore -> 1 B refined.
+    let (mut world, me, id, _) = world_with_smelter();
+    let c_ore = Item::new(ItemKind::Ore, WALLS, Grade::C);
+    give(&mut world, me, c_ore, 3);
+    give(&mut world, me, ore(FUEL), 1);
+    run(
+        &mut world,
+        &[Input::player(
+            me,
+            PlayerCommand::Craft {
+                recipe: RecipeId::Sort,
+                item: c_ore,
+                count: 1,
+            },
+        )],
+        RecipeId::Sort.recipe().ticks,
+    );
+    let b_ore = Item::new(ItemKind::Ore, WALLS, Grade::B);
+    assert_eq!(count(&world, me, b_ore), 1);
+    run(
+        &mut world,
+        &[
+            Input::player(me, insert(id, Slot::Input, b_ore, 1)),
+            Input::player(me, insert(id, Slot::Fuel, ore(FUEL), 1)),
+        ],
+        RecipeId::Refine.recipe().ticks,
+    );
+    run(
+        &mut world,
+        &[Input::player(me, PlayerCommand::Take { building: id })],
+        1,
+    );
+    assert_eq!(
+        count(&world, me, Item::new(ItemKind::Refined, WALLS, Grade::B)),
+        1
+    );
+    assert_eq!(
+        world.player(me).unwrap().inventory.total(),
+        1,
+        "3 units in, 1 out"
+    );
 }
