@@ -13,8 +13,30 @@ pub const SPECIES_PER_WORLD: usize = 6;
 /// (and a decision on the step factor) let hardness progress, so this is 1.
 pub const MIN_STARTER_RUNGS: usize = 1;
 
-/// Starter deposits (next to spawn) roll their purity from here up, so the
+/// The world's **core quality**: the baseline every deposit's purity is
+/// rolled around (ADR 0002, from decision 13 of the 2026-10-01 demo-loop
+/// note). Raising it shifts the whole world toward higher purity without
+/// removing variance.
+///
+/// ONE CONSTANT FOR EVERY WORLD, deliberately, until the galaxy layer
+/// assigns it per planet. `worldgen::deposit_in_chunk` takes it as an
+/// argument rather than reading it here, so that later change is a caller
+/// change and not a rewrite of the roll.
+pub const CORE_QUALITY: u32 = 50;
+
+/// How far either side of `CORE_QUALITY` a deposit's purity may roll, before
+/// clamping to 1–100. The spread is what keeps a world varied: at the
+/// default core quality this spans 5–95, so all three grades (C below 40,
+/// B 40–69, A at 70 and up) still turn up in one world.
+pub const PURITY_SPREAD: u32 = 45;
+
+/// Starter deposits (next to spawn) are floored at this purity, so the
 /// first fuel burns hot enough and the first ore is worth mining.
+///
+/// A FLOOR AND NOT A RANGE since ADR 0002: the starter ladder needs a
+/// guarantee, not a distribution, and a floor keeps the guarantee no matter
+/// where `CORE_QUALITY` is set. The ladder is judged at grade B (40), so
+/// this has room to spare.
 pub const STARTER_MIN_PURITY: u32 = 50;
 
 /// Purity at or above which a deposit is grade B / grade A. Below B is C.

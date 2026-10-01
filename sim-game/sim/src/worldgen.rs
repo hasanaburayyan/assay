@@ -12,7 +12,7 @@ use crate::ladder;
 use crate::mineral::{MineralSpecies, Sheet, SpeciesId};
 use crate::ore::OreDeposit;
 use crate::rng::{Rng, hash_coords, mix};
-use crate::tuning::{MIN_STARTER_RUNGS, SPECIES_PER_WORLD, STARTER_MIN_PURITY};
+use crate::tuning::{MIN_STARTER_RUNGS, PURITY_SPREAD, SPECIES_PER_WORLD, STARTER_MIN_PURITY};
 use crate::types::{ChunkPos, DepositId, TilePos};
 use crate::world::CHUNK_SIZE;
 
@@ -28,20 +28,48 @@ const DEPOSIT_CHANCE: u32 = 55;
 /// starter material, the second the hand-lit fuel.
 pub const STARTER_CHUNKS: [(i32, i32); 2] = [(1, 0), (0, 1)];
 
+/// One deposit's purity: `core_quality` plus a seeded spread, clamped to
+/// 1–100 (ADR 0002, decision 13 of the 2026-10-01 demo-loop note).
+///
+/// THE SPREAD IS SYMMETRIC, which is what makes `core_quality` the world's
+/// mean purity rather than merely its floor. An asymmetric `core + roll(0,
+/// spread)` would read as "plus" too, but then raising the constant would
+/// raise the floor and the mean by different amounts and the knob would be
+/// harder to reason about from one number.
+///
+/// EXACTLY ONE `rng.range` CALL, whatever the arguments. Worldgen is a pure
+/// function of `(seed, chunk)` and every peer must walk the same stream, so
+/// a branch that consumed a different number of rolls would desync two
+/// clients that disagreed only about a tuning constant.
+///
+/// Clamping does compress the spread once `core_quality` nears either end:
+/// at 95 a deposit can only be 50–100. That is intended — a rich world has
+/// no poor ore — and it is why the test asserts a *strictly rising mean*
+/// rather than a shifted distribution.
+pub fn roll_purity(rng: &mut Rng, core_quality: u32) -> u8 {
+    let offset = i64::from(rng.range(0, 2 * PURITY_SPREAD + 1)) - i64::from(PURITY_SPREAD);
+    (i64::from(core_quality) + offset).clamp(1, 100) as u8
+}
+
 /// Generate the ore deposit for one chunk, if it has one.
 ///
 /// A deposit always fits entirely inside its own chunk, so deposits never
-/// overlap. Size grows with distance from `spawn`. Purity is a plain seeded
-/// roll with no spatial trend: the "purer further out" rule was withdrawn
-/// (ADR 0001) until purity's source is decided. The two `STARTER_CHUNKS`
-/// are the exception: they always hold rung zero at a purity from
-/// `STARTER_MIN_PURITY` up.
+/// overlap. Size grows with distance from `spawn`. Purity is `core_quality`
+/// plus a seeded spread with no spatial trend: the "purer further out" rule
+/// was withdrawn (ADR 0001) and ADR 0002 answers the question it left open.
+/// The two `STARTER_CHUNKS` are the exception: they always hold rung zero,
+/// floored at `STARTER_MIN_PURITY`.
+///
+/// `core_quality` is an argument and not a read of `tuning::CORE_QUALITY`
+/// because the galaxy layer will set it per planet; until then every caller
+/// passes the one constant.
 pub fn deposit_in_chunk(
     seed: u64,
     chunk: ChunkPos,
     spawn: ChunkPos,
     id: DepositId,
     roster: &[MineralSpecies],
+    core_quality: u32,
 ) -> Option<OreDeposit> {
     let mut rng = Rng::new(hash_coords(seed, chunk.x, chunk.y, SALT_ORE));
 
@@ -67,10 +95,11 @@ pub fn deposit_in_chunk(
     );
 
     let distance = chunk.distance(spawn) as u32;
+    let rolled = roll_purity(&mut rng, core_quality);
     let purity = if starter.is_some() {
-        rng.range(STARTER_MIN_PURITY, 101) as u8
+        rolled.max(STARTER_MIN_PURITY as u8)
     } else {
-        rng.range(1, 101) as u8
+        rolled
     };
     let amount = 400 + distance * 150 + rng.range(0, 600);
 
