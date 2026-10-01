@@ -387,13 +387,18 @@ fn spawn_listener(listener: TcpListener, events: Sender<NetEvent>) {
 fn describe(command: &PlayerCommand) -> String {
     match command {
         PlayerCommand::Mine => "mine".into(),
-        PlayerCommand::Craft { recipe, count } => format!("craft {} {count}", recipe.name()),
-        PlayerCommand::Place { item, pos } => format!("place {} {} {}", item.name(), pos.x, pos.y),
-        PlayerCommand::Insert {
-            building,
+        PlayerCommand::Craft {
+            recipe,
             item,
             count,
-        } => format!("insert {} {} {count}", building.0, item.name()),
+        } => format!("craft {} {} {count}", recipe.name(), item.code()),
+        PlayerCommand::Place { item, pos } => format!("place {} {} {}", item.code(), pos.x, pos.y),
+        PlayerCommand::Insert {
+            building,
+            slot,
+            item,
+            count,
+        } => format!("insert {} {slot:?} {} {count}", building.0, item.code()),
         PlayerCommand::Take { building } => format!("take {}", building.0),
         PlayerCommand::Pickup { building } => format!("pickup {}", building.0),
         PlayerCommand::MoveTo { target } => format!("goto {} {}", target.x, target.y),

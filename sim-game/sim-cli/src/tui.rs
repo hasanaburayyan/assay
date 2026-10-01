@@ -21,7 +21,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
-use sim::{Input, OreKind, Player, PlayerCommand, PlayerId, SystemCommand, TilePos, World, debug};
+use sim::{
+    Input, Player, PlayerCommand, PlayerId, Slot, SpeciesId, SystemCommand, TilePos, World, debug,
+};
 
 use crate::host::{Flow, Host, describe_inventory};
 use crate::output;
@@ -30,7 +32,7 @@ const CONSOLE_LINES: usize = 300;
 const HELP_TEXT: &str = "\
 Type a command and press Enter. Everything from the prompt works:
   goto 10 10 · move ne 5 · mine · craft smelter · place smelter · stop
-  insert 0 coal 5 · take 0 · pickup 0 · inv · recipes · buildings
+  insert 0 fuel ore:kel 5 · insert 0 ore ore:dal · take 0 · inv · species
   new 42 · load 42 · save · pause · resume · speed 20 · help · quit
 
 Walk        arrow keys (hold to keep walking), or click a tile
@@ -58,17 +60,21 @@ mod palette {
     pub const WARN: Color = Color::Indexed(203);
 }
 
-fn ore_color(kind: OreKind, depleted: bool) -> Color {
-    Color::Indexed(match (kind, depleted) {
-        (OreKind::Iron, false) => 67,
-        (OreKind::Iron, true) => 24,
-        (OreKind::Copper, false) => 166,
-        (OreKind::Copper, true) => 94,
-        (OreKind::Coal, false) => 246,
-        (OreKind::Coal, true) => 240,
-        (OreKind::Stone, false) => 180,
-        (OreKind::Stone, true) => 101,
-    })
+/// One (live, depleted) colour pair per species index.
+const SPECIES_COLORS: [(u8, u8); 8] = [
+    (67, 24),
+    (166, 94),
+    (246, 240),
+    (180, 101),
+    (141, 54),
+    (78, 22),
+    (213, 89),
+    (221, 100),
+];
+
+fn ore_color(species: SpeciesId, depleted: bool) -> Color {
+    let (live, dead) = SPECIES_COLORS[usize::from(species.0) % SPECIES_COLORS.len()];
+    Color::Indexed(if depleted { dead } else { live })
 }
 
 fn player_color(id: PlayerId, me: Option<PlayerId>) -> Color {
@@ -359,13 +365,9 @@ fn draw_map(f: &mut Frame, area: Rect, h: &Host, ui: &mut Ui) {
         .and_then(|id| world.player(id))
         .map_or(world.spawn_tile(), |p| p.pos);
     let block = panel(&format!(
-        "Map {}x{} · {} spawn · {} you · {} others · {} smelter · ore: {} Fe {} Cu {} C {} St",
+        "Map {}x{} · {} spawn · {} you · {} others · {} smelter · ore coloured by species",
         world.width(),
         world.height(),
-        "▀",
-        "▀",
-        "▀",
-        "▀",
         "▀",
         "▀",
         "▀",
@@ -406,7 +408,7 @@ fn draw_map(f: &mut Frame, area: Rect, h: &Host, ui: &mut Ui) {
             return palette::BUILDING;
         }
         if let Some(d) = world.deposit_at(pos) {
-            return ore_color(d.kind, d.is_depleted());
+            return ore_color(d.species, d.is_depleted());
         }
         if pos == world.spawn_tile() {
             return palette::SPAWN;
@@ -432,10 +434,6 @@ fn draw_map(f: &mut Frame, area: Rect, h: &Host, ui: &mut Ui) {
         palette::ME,
         palette::OTHERS[0],
         palette::BUILDING,
-        ore_color(OreKind::Iron, false),
-        ore_color(OreKind::Copper, false),
-        ore_color(OreKind::Coal, false),
-        ore_color(OreKind::Stone, false),
     ];
     let mut found = 0;
     for x in area.x..area.x + area.width {
@@ -461,10 +459,12 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
     let me = h.me_id();
     let n = world.players.len() as u16;
     let b = world.buildings.len() as u16;
+    let sp = world.species.len() as u16;
     let [
         w_area,
         p_area,
         inv_area,
+        sp_area,
         tile_area,
         bld_area,
         dep_area,
@@ -473,10 +473,11 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
         Constraint::Length(8),
         Constraint::Length((n + 2).clamp(3, 8)), // borders + one row per player
         Constraint::Length((n + 2).clamp(3, 8)), // borders + one row per player
+        Constraint::Length((sp + 3).clamp(4, 11)), // borders + header + one row per species
         Constraint::Length(6),
         Constraint::Length((b + 2).clamp(3, 8)), // borders + one row per building
         Constraint::Min(4),
-        Constraint::Length(7),
+        Constraint::Length(5),
     ])
     .areas(area);
 
@@ -545,11 +546,47 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
                     format!("{:<10} ", truncate(&p.name, 10)),
                     Style::default().fg(palette::DIM),
                 ),
-                Span::raw(truncate(&describe_inventory(&p.inventory), width)),
+                Span::raw(truncate(&describe_inventory(world, &p.inventory), width)),
             ])
         })
         .collect();
     f.render_widget(Paragraph::new(lines).block(panel("Inventory")), inv_area);
+
+    // Species: the roster and its sheets
+    let mut lines = vec![
+        Line::from(format!(
+            " {:<11}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}  ",
+            "name", "den", "str", "hrd", "heat", "rea", "con"
+        ))
+        .style(Style::default().fg(palette::DIM)),
+    ];
+    for s in &world.species {
+        let sh = &s.sheet;
+        let mark = if sim::ladder::hand_lit_fuel(s) {
+            "fuel"
+        } else if sim::ladder::hand_minable(s) {
+            "hand"
+        } else {
+            ""
+        };
+        lines.push(Line::from(vec![
+            Span::styled("█", Style::default().fg(ore_color(s.id, false))),
+            Span::raw(format!(
+                "{:<11}{:>4}{:>4}{:>4}{:>4}{:>4}{:>4}  {mark}",
+                truncate(s.name(), 11),
+                sh.density,
+                sh.strength,
+                sh.hardness,
+                sh.heat_tolerance,
+                sh.reactivity,
+                sh.conductivity
+            )),
+        ]));
+    }
+    f.render_widget(
+        Paragraph::new(lines).block(panel("Species (hand = minable by hand)")),
+        sp_area,
+    );
 
     // Tile under the mouse, or under you
     let (label, tile) = match ui.hover {
@@ -579,18 +616,23 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
                     b.pos.x,
                     b.pos.y
                 )));
-                lines.push(Line::from(debug::building_status(b)));
+                lines.push(Line::from(debug::building_status(world, b)));
             }
             match world.deposit_at(t) {
                 Some(d) => {
                     lines.push(Line::from(format!(
-                        "deposit {} · {:?} · r{} at ({},{})",
-                        d.id.0, d.kind, d.radius, d.center.x, d.center.y
+                        "deposit {} · {} · r{} at ({},{})",
+                        d.id.0,
+                        world.species(d.species).name(),
+                        d.radius,
+                        d.center.x,
+                        d.center.y
                     )));
                     lines.push(Line::from(format!(
-                        "{} ore left · purity {}{}",
+                        "{} ore left · purity {} (grade {}){}",
                         d.amount,
                         d.purity,
+                        d.grade().letter(),
                         if d.is_depleted() { " · DEPLETED" } else { "" }
                     )));
                 }
@@ -632,7 +674,7 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
                             b.kind.name(),
                             b.pos.x,
                             b.pos.y,
-                            debug::building_status(b)
+                            debug::building_status(world, b)
                         ),
                         width,
                     )),
@@ -650,22 +692,26 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
     deps.sort_by_key(|d| (d.center.x - from.x).abs().max((d.center.y - from.y).abs()));
     let mut lines = vec![
         Line::from(format!(
-            "{:>3} {:<7} {:>9} {:>6} {:>4} {:>4}",
-            "id", "kind", "center", "left", "pur", "dist"
+            "{:>3} {:<8} {:>9} {:>6} {:>3} {:>4}",
+            "id", "species", "center", "left", "pur", "dist"
         ))
         .style(Style::default().fg(palette::DIM)),
     ];
     for d in deps {
         let dist = (d.center.x - from.x).abs().max((d.center.y - from.y).abs());
         lines.push(Line::from(vec![
-            Span::styled("█", Style::default().fg(ore_color(d.kind, d.is_depleted()))),
+            Span::styled(
+                "█",
+                Style::default().fg(ore_color(d.species, d.is_depleted())),
+            ),
             Span::raw(format!(
-                "{:>2} {:<7} {:>9} {:>6} {:>4} {:>4}",
+                "{:>2} {:<8} {:>9} {:>6} {:>2}{} {:>4}",
                 d.id.0,
-                format!("{:?}", d.kind),
+                truncate(world.species(d.species).name(), 8),
                 format!("({},{})", d.center.x, d.center.y),
                 d.amount,
                 d.purity,
+                d.grade().letter(),
                 dist
             )),
         ]));
@@ -806,17 +852,28 @@ fn describe_input(input: &Input, world: &World) -> String {
                 .map_or_else(|| format!("p{}", player.0), |p: &Player| p.name.clone());
             let what = match command {
                 PlayerCommand::Mine => "mine".into(),
-                PlayerCommand::Craft { recipe, count } => {
-                    format!("craft {} {count}", recipe.name())
-                }
+                PlayerCommand::Craft {
+                    recipe,
+                    item,
+                    count,
+                } => format!("craft {} {} {count}", recipe.name(), item.code()),
                 PlayerCommand::Place { item, pos } => {
-                    format!("place {} {},{}", item.name(), pos.x, pos.y)
+                    format!("place {} {},{}", item.code(), pos.x, pos.y)
                 }
                 PlayerCommand::Insert {
                     building,
+                    slot,
                     item,
                     count,
-                } => format!("insert {} {} {count}", building.0, item.name()),
+                } => format!(
+                    "insert {} {} {} {count}",
+                    building.0,
+                    match slot {
+                        Slot::Input => "ore",
+                        Slot::Fuel => "fuel",
+                    },
+                    item.code()
+                ),
                 PlayerCommand::Take { building } => format!("take {}", building.0),
                 PlayerCommand::Pickup { building } => format!("pickup {}", building.0),
                 PlayerCommand::MoveTo { target } => format!("goto {},{}", target.x, target.y),

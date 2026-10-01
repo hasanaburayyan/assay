@@ -150,32 +150,3 @@ fn moving_off_the_map_is_rejected() {
     );
     assert_eq!(w.player(me).unwrap().pos, w.spawn_tile());
 }
-
-#[test]
-fn version_1_saves_migrate_to_one_named_player() {
-    // Build a v1-shaped save: no "players" field.
-    let w = world();
-    let mut json: serde_json::Value = serde_json::from_str(&w.to_json().unwrap()).unwrap();
-    json["version"] = 1.into();
-    json["world"].as_object_mut().unwrap().remove("players");
-
-    let loaded = World::from_json(&json.to_string()).unwrap();
-    assert_eq!(loaded.players.len(), 1);
-    assert_eq!(loaded.players[0].pos, loaded.spawn_tile());
-    assert_eq!(loaded.players[0].name, "player 0");
-}
-
-#[test]
-fn version_2_saves_migrate_to_named_players() {
-    let mut w = world();
-    run(&mut w, &[join("ada")], 1);
-    let mut json: serde_json::Value = serde_json::from_str(&w.to_json().unwrap()).unwrap();
-    json["version"] = 2.into();
-    json["world"]["players"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("name");
-
-    let loaded = World::from_json(&json.to_string()).unwrap();
-    assert_eq!(loaded.players[0].name, "player 0");
-}

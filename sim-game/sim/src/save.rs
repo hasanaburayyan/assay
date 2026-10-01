@@ -3,36 +3,29 @@
 //! A save wraps the world with a format version:
 //!
 //! ```json
-//! { "version": 4, "world": { "tick": 0, "seed": 42, ... } }
+//! { "version": 9, "world": { "tick": 0, "seed": 42, ... } }
 //! ```
 //!
 //! When the layout of `World` changes, bump [`SAVE_VERSION`] and add a step
 //! to `migrate` so older saves still load.
 //!
 //! History:
-//! - v1: world, ore deposits
-//! - v2: players
-//! - v3: player names
-//! - v4: player inventories (loads from v3 with empty inventories)
-//! - v5: inventories are item stacks, not four ore counters
-//! - v6: players may be mining (loads from v5 as not mining)
-//! - v7: players may be crafting (loads from v6 as not crafting)
-//! - v8: buildings (loads from v7 with none)
+//! - v1–v8: the named-ore era (iron, copper, coal, stone). Dropped in one
+//!   cut-over (ADR 0001); those saves no longer load.
+//! - v9: generated mineral species, items keyed by species and grade.
 
 use std::path::Path;
 use std::{fmt, fs, io};
 
 use serde::{Deserialize, Serialize};
 
-use crate::player::Player;
-use crate::types::PlayerId;
 use crate::world::World;
 
 /// Current save format version.
-pub const SAVE_VERSION: u32 = 8;
+pub const SAVE_VERSION: u32 = 9;
 
 /// Oldest version `from_json` can still load and migrate forward.
-pub const OLDEST_SAVE_VERSION: u32 = 1;
+pub const OLDEST_SAVE_VERSION: u32 = 9;
 
 #[derive(Serialize)]
 struct SaveOut<'a> {
@@ -102,9 +95,7 @@ impl World {
         if !(OLDEST_SAVE_VERSION..=SAVE_VERSION).contains(&version) {
             return Err(SaveError::UnsupportedVersion { found: version });
         }
-        let mut value: serde_json::Value = serde_json::from_str(json)?;
-        migrate_json(&mut value, version);
-        let SaveIn { mut world } = serde_json::from_value(value)?;
+        let SaveIn { mut world } = serde_json::from_str(json)?;
         migrate(&mut world, version);
         Ok(world)
     }
@@ -124,48 +115,6 @@ impl World {
     }
 }
 
-/// Reshape old JSON whose layout no longer deserializes into today's types.
-/// Runs before parsing; `migrate` handles what can be fixed afterwards.
-fn migrate_json(value: &mut serde_json::Value, from_version: u32) {
-    if from_version < 5 {
-        // v4 inventories were `{iron, copper, coal, stone}` counters.
-        let players = value
-            .get_mut("world")
-            .and_then(|w| w.get_mut("players"))
-            .and_then(|p| p.as_array_mut());
-        for player in players.into_iter().flatten() {
-            let Some(inv) = player.get("inventory").and_then(|i| i.as_object()) else {
-                continue;
-            };
-            let mut stacks = Vec::new();
-            for (field, item) in [
-                ("iron", "IronOre"),
-                ("copper", "CopperOre"),
-                ("coal", "Coal"),
-                ("stone", "Stone"),
-            ] {
-                let count = inv.get(field).and_then(|c| c.as_u64()).unwrap_or(0);
-                if count > 0 {
-                    stacks.push(serde_json::json!({ "item": item, "count": count }));
-                }
-            }
-            player["inventory"] = serde_json::json!({ "stacks": stacks });
-        }
-    }
-}
-
 /// Bring a world loaded from an older save up to the current layout.
-fn migrate(world: &mut World, from_version: u32) {
-    if from_version < 2 && world.players.is_empty() {
-        // v1 had no players, but was always played by one. Start them at spawn.
-        world
-            .players
-            .push(Player::new(PlayerId(0), "", world.spawn_tile()));
-    }
-    if from_version < 3 {
-        // v3 added names.
-        for p in world.players.iter_mut().filter(|p| p.name.is_empty()) {
-            p.name = format!("player {}", p.id.0);
-        }
-    }
-}
+/// Nothing to do yet: v9 is the oldest loadable version.
+fn migrate(_world: &mut World, _from_version: u32) {}

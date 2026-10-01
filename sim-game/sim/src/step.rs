@@ -1,14 +1,16 @@
 //! Advancing the world one tick.
 
-use crate::building::{Building, BuildingId, BuildingKind, footprint_tiles};
+use crate::building::{Building, BuildingId, BuildingKind, Slot, footprint_tiles};
 use crate::command::{Event, Input, PlayerCommand, RejectReason, StopReason, SystemCommand};
 use crate::inventory::Inventory;
-use crate::item::{Item, ItemStack};
+use crate::item::{Item, ItemKind, ItemStack};
+use crate::mineral::Property;
 use crate::player::{Crafting, Mining, Player};
-use crate::recipe::{Recipe, smelting_recipe_for};
+use crate::recipe::{Recipe, RecipeId};
 use crate::tuning::{
-    COAL_BURN_TICKS, HAND_MINE_TICKS, REACH, SMELTER_FUEL_CAP, SMELTER_INPUT_CAP,
-    SMELTER_OUTPUT_CAP,
+    BURN_TICKS_PER_REACTIVITY, FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS, HAND_MINE_TICKS,
+    HAND_SPARK_TEMPERATURE, REACH, SMELTER_FUEL_CAP, SMELTER_INPUT_CAP, SMELTER_OUTPUT_CAP,
+    YIELD_BY_GRADE,
 };
 use crate::types::{PlayerId, TilePos};
 use crate::world::World;
@@ -50,6 +52,14 @@ fn apply_system(world: &mut World, command: &SystemCommand, events: &mut Vec<Eve
     }
 }
 
+/// Whether `item` burns well enough to be fuel, and how hot.
+fn fuel_temperature(world: &World, item: Item) -> Option<u32> {
+    let t = world
+        .species(item.species)
+        .effective(Property::Reactivity, item.grade);
+    (t >= FUEL_MIN_REACTIVITY).then_some(t)
+}
+
 /// Validate and apply one player command. Validation lives in the sim, not
 /// the UI or the relay: every peer runs it, so a modified client that sends
 /// an illegal command gets it rejected everywhere.
@@ -70,6 +80,16 @@ fn apply_player(
     if world.player(player).is_none() {
         return reject(RejectReason::UnknownPlayer, events);
     }
+    // Items name a species by index; never trust a client's index.
+    let item_in = match *command {
+        PlayerCommand::Craft { item, .. }
+        | PlayerCommand::Place { item, .. }
+        | PlayerCommand::Insert { item, .. } => Some(item),
+        _ => None,
+    };
+    if item_in.is_some_and(|i| usize::from(i.species.0) >= world.species.len()) {
+        return reject(RejectReason::UnknownSpecies, events);
+    }
 
     match *command {
         PlayerCommand::Mine => {
@@ -80,7 +100,10 @@ fn apply_player(
             if d.is_depleted() {
                 return reject(RejectReason::DepositDepleted, events);
             }
-            let (deposit, kind) = (d.id, d.kind);
+            let (deposit, species) = (d.id, d.species);
+            if u32::from(world.species(species).sheet.hardness) > HAND_MINE_MAX_HARDNESS {
+                return reject(RejectReason::TooHardForHands, events);
+            }
             let p = world.player_mut(player).expect("checked above");
             if p.mining.is_some_and(|m| m.deposit == deposit) {
                 return; // already at it
@@ -92,20 +115,31 @@ fn apply_player(
             events.push(Event::MiningStarted {
                 player,
                 deposit,
-                kind,
+                species,
             });
         }
-        PlayerCommand::Craft { recipe, count } => {
+        PlayerCommand::Craft {
+            recipe,
+            item,
+            count,
+        } => {
             if count == 0 {
                 return reject(RejectReason::ZeroCount, events);
             }
             if !recipe.is_hand_craftable() {
                 return reject(RejectReason::NotHandCraftable, events);
             }
+            let r: &Recipe = recipe.recipe();
+            if item.kind != r.input.0 {
+                return reject(RejectReason::WrongItem, events);
+            }
+            if let Some((property, min)) = r.unmet_requirement(world.species(item.species), item) {
+                return reject(RejectReason::RequirementNotMet(property, min), events);
+            }
             let p = world.player_mut(player).expect("checked above");
             if let Some(c) = p.crafting {
                 // Finish what's in progress first; refund it like Stop does.
-                refund(&mut p.inventory, c.recipe.recipe());
+                refund(&mut p.inventory, c.recipe.recipe(), c.input);
                 events.push(Event::CraftingStopped {
                     player,
                     recipe: c.recipe,
@@ -113,22 +147,24 @@ fn apply_player(
                 });
             }
             p.crafting = None;
-            if let Err(missing) = consume(&mut p.inventory, recipe.recipe()) {
-                return reject(RejectReason::MissingItems(missing), events);
+            if !consume(&mut p.inventory, r, item) {
+                return reject(RejectReason::MissingItems(item), events);
             }
             p.crafting = Some(Crafting {
                 recipe,
+                input: item,
                 progress: 0,
                 remaining: count,
             });
             events.push(Event::CraftStarted {
                 player,
                 recipe,
+                item,
                 count,
             });
         }
         PlayerCommand::Place { item, pos } => {
-            let Some(kind) = BuildingKind::from_item(item) else {
+            let Some(kind) = BuildingKind::for_item(item.kind) else {
                 return reject(RejectReason::NotPlaceable, events);
             };
             let me = world.player(player).expect("checked above");
@@ -145,6 +181,7 @@ fn apply_player(
             let probe = Building {
                 id: BuildingId(0),
                 pos,
+                material: item,
                 kind: kind.clone(),
             };
             if probe.distance_from(me.pos) > REACH {
@@ -159,7 +196,12 @@ fn apply_player(
                 .inventory
                 .remove(item, 1);
             debug_assert!(taken);
-            world.buildings.push(Building { id, pos, kind });
+            world.buildings.push(Building {
+                id,
+                pos,
+                material: item,
+                kind,
+            });
             events.push(Event::BuildingPlaced {
                 player,
                 building: id,
@@ -169,6 +211,7 @@ fn apply_player(
         }
         PlayerCommand::Insert {
             building,
+            slot,
             item,
             count,
         } => {
@@ -190,26 +233,41 @@ fn apply_player(
             {
                 return reject(RejectReason::MissingItems(item), events);
             }
-            let b = world.building_mut(building).expect("checked above");
-            let BuildingKind::Smelter(s) = &mut b.kind;
-            if item == Item::Coal {
-                if s.fuel + count > SMELTER_FUEL_CAP {
-                    return reject(RejectReason::SlotFull, events);
+            let walls = world.max_temperature(b);
+            let (cap, target) = match slot {
+                Slot::Input => {
+                    if item.kind != ItemKind::Ore {
+                        return reject(RejectReason::WrongItem, events);
+                    }
+                    let needs = u32::from(world.species(item.species).sheet.heat_tolerance);
+                    if needs > walls {
+                        return reject(RejectReason::TooHotForWalls, events);
+                    }
+                    let BuildingKind::Smelter(s) =
+                        &mut world.building_mut(building).expect("checked above").kind;
+                    (SMELTER_INPUT_CAP, &mut s.input)
                 }
-                s.fuel += count;
-            } else if smelting_recipe_for(item).is_some() {
-                let have = match s.input {
-                    None => 0,
-                    Some(stack) if stack.item == item => stack.count,
-                    Some(_) => return reject(RejectReason::SlotFull, events),
-                };
-                if have + count > SMELTER_INPUT_CAP {
-                    return reject(RejectReason::SlotFull, events);
+                Slot::Fuel => {
+                    if !matches!(item.kind, ItemKind::Ore | ItemKind::Refined) {
+                        return reject(RejectReason::WrongItem, events);
+                    }
+                    if fuel_temperature(world, item).is_none() {
+                        return reject(RejectReason::NotFuel, events);
+                    }
+                    let BuildingKind::Smelter(s) =
+                        &mut world.building_mut(building).expect("checked above").kind;
+                    (SMELTER_FUEL_CAP, &mut s.fuel)
                 }
-                s.input = Some(ItemStack::new(item, have + count));
-            } else {
-                return reject(RejectReason::WrongItem, events);
+            };
+            let have = match *target {
+                None => 0,
+                Some(stack) if stack.item == item => stack.count,
+                Some(_) => return reject(RejectReason::SlotFull, events),
+            };
+            if have + count > cap {
+                return reject(RejectReason::SlotFull, events);
             }
+            *target = Some(ItemStack::new(item, have + count));
             let taken = world
                 .player_mut(player)
                 .expect("checked above")
@@ -219,6 +277,7 @@ fn apply_player(
             events.push(Event::ItemsInserted {
                 player,
                 building,
+                slot,
                 item,
                 count,
             });
@@ -256,18 +315,16 @@ fn apply_player(
                 return reject(RejectReason::OutOfReach, events);
             }
             let b = world.buildings.remove(i);
-            let item = b.kind.item();
             let inv = &mut world.player_mut(player).expect("checked above").inventory;
-            inv.add(item, 1);
+            inv.add(b.material, 1);
             let BuildingKind::Smelter(s) = b.kind;
-            for stack in [s.input, s.output].into_iter().flatten() {
+            for stack in [s.input, s.fuel, s.output].into_iter().flatten() {
                 inv.add_stack(stack);
             }
-            inv.add(Item::Coal, s.fuel);
             events.push(Event::BuildingRemoved {
                 player,
                 building,
-                item,
+                item: b.material,
                 pos: b.pos,
             });
         }
@@ -300,7 +357,7 @@ fn apply_player(
                 });
             }
             if let Some(c) = p.crafting.take() {
-                refund(&mut p.inventory, c.recipe.recipe());
+                refund(&mut p.inventory, c.recipe.recipe(), c.input);
                 events.push(Event::CraftingStopped {
                     player,
                     recipe: c.recipe,
@@ -309,6 +366,16 @@ fn apply_player(
             }
         }
     }
+}
+
+/// Take one batch of inputs, or take nothing and return false.
+fn consume(inv: &mut Inventory, recipe: &Recipe, input: Item) -> bool {
+    inv.remove(input, recipe.input.1)
+}
+
+/// Give back one batch of inputs (a cancelled craft).
+fn refund(inv: &mut Inventory, recipe: &Recipe, input: Item) {
+    inv.add(input, recipe.input.1);
 }
 
 /// Movement system: each walking player steps one tile toward their target.
@@ -328,7 +395,8 @@ fn move_players(world: &mut World, events: &mut Vec<Event>) {
 }
 
 /// Hand-mining system: every player standing on the deposit they are mining
-/// makes progress, and takes one unit of ore each `HAND_MINE_TICKS`.
+/// makes progress; each `HAND_MINE_TICKS` the deposit loses one unit and the
+/// player gains the grade's yield.
 fn mine_by_hand(world: &mut World, events: &mut Vec<Event>) {
     for i in 0..world.players.len() {
         let Some(m) = world.players[i].mining else {
@@ -357,14 +425,16 @@ fn mine_by_hand(world: &mut World, events: &mut Vec<Event>) {
 
         let d = world.deposit_mut(m.deposit).expect("checked above");
         d.amount -= 1;
-        let item = d.kind.into();
+        let grade = d.grade();
+        let item = Item::new(ItemKind::Ore, d.species, grade);
+        let amount = YIELD_BY_GRADE[grade as usize];
         let depleted = d.is_depleted();
-        world.players[i].inventory.add(item, 1);
+        world.players[i].inventory.add(item, amount);
         events.push(Event::OreMined {
             player,
             deposit: m.deposit,
             item,
-            amount: 1,
+            amount,
         });
         if depleted {
             world.players[i].mining = None;
@@ -377,25 +447,6 @@ fn mine_by_hand(world: &mut World, events: &mut Vec<Event>) {
         } else {
             world.players[i].mining = Some(Mining { progress: 0, ..m });
         }
-    }
-}
-
-/// Take one batch of inputs, or take nothing and say what's missing.
-fn consume(inv: &mut Inventory, recipe: &Recipe) -> Result<(), crate::item::Item> {
-    if let Some(&(item, _)) = recipe.inputs.iter().find(|(i, n)| !inv.has(*i, *n)) {
-        return Err(item);
-    }
-    for &(item, n) in recipe.inputs {
-        let ok = inv.remove(item, n);
-        debug_assert!(ok, "checked above");
-    }
-    Ok(())
-}
-
-/// Give back one batch of inputs (a cancelled craft).
-fn refund(inv: &mut Inventory, recipe: &Recipe) {
-    for &(item, n) in recipe.inputs {
-        inv.add(item, n);
     }
 }
 
@@ -412,7 +463,8 @@ fn craft_by_hand(world: &mut World, events: &mut Vec<Event>) {
             continue;
         }
 
-        let (item, count) = recipe.output;
+        let item = recipe.output_for(c.input);
+        let count = recipe.output.1;
         p.inventory.add(item, count);
         let remaining = c.remaining - 1;
         events.push(Event::ItemCrafted {
@@ -424,7 +476,7 @@ fn craft_by_hand(world: &mut World, events: &mut Vec<Event>) {
         });
         if remaining == 0 {
             p.crafting = None;
-        } else if consume(&mut p.inventory, recipe).is_ok() {
+        } else if consume(&mut p.inventory, recipe, c.input) {
             p.crafting = Some(Crafting {
                 progress: 0,
                 remaining,
@@ -441,36 +493,59 @@ fn craft_by_hand(world: &mut World, events: &mut Vec<Event>) {
     }
 }
 
-/// Smelting system: every smelter with ore, fuel and room in its output
-/// slot burns coal and makes progress; each finished plate goes to the
-/// output slot. A full output slot or an empty fire stalls it silently;
-/// inspect the building to see why.
+/// Smelting system. A smelter with ore, a fire hot enough for it, and room
+/// in its output slot makes progress; each finished unit goes to the output
+/// slot. Stalls (no fuel, fuel too cool, fuel that won't light, output full)
+/// are silent here; inspect the building to see why.
+///
+/// Fire rules: the running temperature is the lower of the walls' heat
+/// tolerance and the burning fuel's effective reactivity, and must reach the
+/// ore's heat tolerance. A unit of fuel burns for reactivity ×
+/// `BURN_TICKS_PER_REACTIVITY` ticks, only while smelting. Fuel lights from
+/// cold only if its heat tolerance is within the hand spark; otherwise the
+/// fire already burning must be at least that hot.
 fn run_smelters(world: &mut World, events: &mut Vec<Event>) {
-    for b in &mut world.buildings {
-        let BuildingKind::Smelter(s) = &mut b.kind;
+    let recipe = RecipeId::Refine.recipe();
+    for i in 0..world.buildings.len() {
+        let walls = world.max_temperature(&world.buildings[i]);
+        let BuildingKind::Smelter(s) = &world.buildings[i].kind;
         let Some(input) = s.input else { continue };
-        let Some(recipe) = smelting_recipe_for(input.item).map(|r| r.recipe()) else {
-            continue;
-        };
-        let need = recipe.inputs[0].1;
-        if input.count < need {
+        if input.count < recipe.input.1 {
             continue;
         }
-        let (out_item, out_count) = recipe.output;
+        let needs = u32::from(world.species(input.item.species).sheet.heat_tolerance);
+        let out_item = recipe.output_for(input.item);
+        let out_count = recipe.output.1;
         let out_have = match s.output {
             None => 0,
             Some(o) if o.item == out_item => o.count,
-            Some(_) => continue, // holds a different plate; wait to be emptied
+            Some(_) => continue, // holds something else; wait to be emptied
         };
         if out_have + out_count > SMELTER_OUTPUT_CAP {
             continue;
         }
+        let fuel_temp = s.fuel.and_then(|f| fuel_temperature(world, f.item));
+        let fuel_lights = s.fuel.is_some_and(|f| {
+            let ignition = u32::from(world.species(f.item.species).sheet.heat_tolerance);
+            ignition <= HAND_SPARK_TEMPERATURE || ignition <= s.burn_temperature
+        });
+
+        let BuildingKind::Smelter(s) = &mut world.buildings[i].kind;
         if s.burn_left == 0 {
-            if s.fuel == 0 {
+            let (Some(temp), Some(fuel)) = (fuel_temp, s.fuel) else {
+                s.burn_temperature = 0;
+                continue;
+            };
+            if !fuel_lights {
+                s.burn_temperature = 0;
                 continue;
             }
-            s.fuel -= 1;
-            s.burn_left = COAL_BURN_TICKS;
+            s.fuel = (fuel.count > 1).then(|| ItemStack::new(fuel.item, fuel.count - 1));
+            s.burn_left = temp * BURN_TICKS_PER_REACTIVITY;
+            s.burn_temperature = temp;
+        }
+        if s.burn_temperature.min(walls) < needs {
+            continue; // the fire is lit but too cool for this ore
         }
         s.burn_left -= 1;
         s.progress += 1;
@@ -479,10 +554,11 @@ fn run_smelters(world: &mut World, events: &mut Vec<Event>) {
         }
 
         s.progress = 0;
-        s.input = (input.count > need).then(|| ItemStack::new(input.item, input.count - need));
+        s.input = (input.count > recipe.input.1)
+            .then(|| ItemStack::new(input.item, input.count - recipe.input.1));
         s.output = Some(ItemStack::new(out_item, out_have + out_count));
         events.push(Event::ItemSmelted {
-            building: b.id,
+            building: world.buildings[i].id,
             item: out_item,
             count: out_count,
         });

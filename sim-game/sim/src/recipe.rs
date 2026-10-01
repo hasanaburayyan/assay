@@ -1,17 +1,21 @@
-//! Recipes: what turns into what, how long it takes, and where it can be
-//! made. A fixed table for now; player-designed machines will add
-//! generated recipes later.
+//! Recipes: what turns into what, how long it takes, where, and which
+//! property thresholds the input must meet. Recipes never name a species
+//! (ADR 0001): they take N of a kind of item and keep its species and grade.
 
 use serde::{Deserialize, Serialize};
 
-use crate::item::Item;
+use crate::item::{Item, ItemKind};
+use crate::mineral::{MineralSpecies, Property};
+use crate::tuning::GEAR_MIN_HARDNESS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RecipeId {
+    /// 5 ore of any species → 1 smelter whose walls are that species.
     Smelter,
-    IronGear,
-    IronPlate,
-    CopperPlate,
+    /// 2 refined → 1 gear, if the material is hard enough.
+    Gear,
+    /// 1 ore → 1 refined, inside a smelter hot enough for the species.
+    Refine,
 }
 
 /// Where a recipe can be made.
@@ -26,51 +30,44 @@ pub enum Station {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Recipe {
     pub id: RecipeId,
-    pub inputs: &'static [(Item, u32)],
-    pub output: (Item, u32),
+    pub input: (ItemKind, u32),
+    pub output: (ItemKind, u32),
     /// Ticks per batch.
     pub ticks: u32,
     pub station: Station,
+    /// Effective property values the input must reach, at its grade.
+    pub requires: &'static [(Property, u32)],
 }
 
-pub const RECIPES: [Recipe; 4] = [
+pub const RECIPES: [Recipe; 3] = [
     Recipe {
         id: RecipeId::Smelter,
-        inputs: &[(Item::Stone, 5)],
-        output: (Item::Smelter, 1),
+        input: (ItemKind::Ore, 5),
+        output: (ItemKind::Smelter, 1),
         ticks: 20,
         station: Station::Hand,
+        requires: &[],
     },
     Recipe {
-        id: RecipeId::IronGear,
-        inputs: &[(Item::IronPlate, 2)],
-        output: (Item::IronGear, 1),
+        id: RecipeId::Gear,
+        input: (ItemKind::Refined, 2),
+        output: (ItemKind::Gear, 1),
         ticks: 5,
         station: Station::Hand,
+        requires: &[(Property::Hardness, GEAR_MIN_HARDNESS)],
     },
     Recipe {
-        id: RecipeId::IronPlate,
-        inputs: &[(Item::IronOre, 1)],
-        output: (Item::IronPlate, 1),
+        id: RecipeId::Refine,
+        input: (ItemKind::Ore, 1),
+        output: (ItemKind::Refined, 1),
         ticks: 20,
         station: Station::Smelter,
-    },
-    Recipe {
-        id: RecipeId::CopperPlate,
-        inputs: &[(Item::CopperOre, 1)],
-        output: (Item::CopperPlate, 1),
-        ticks: 20,
-        station: Station::Smelter,
+        requires: &[],
     },
 ];
 
 impl RecipeId {
-    pub const ALL: [RecipeId; 4] = [
-        RecipeId::Smelter,
-        RecipeId::IronGear,
-        RecipeId::IronPlate,
-        RecipeId::CopperPlate,
-    ];
+    pub const ALL: [RecipeId; 3] = [RecipeId::Smelter, RecipeId::Gear, RecipeId::Refine];
 
     pub fn recipe(self) -> &'static Recipe {
         RECIPES
@@ -85,10 +82,10 @@ impl RecipeId {
     }
 
     pub fn parse(s: &str) -> Option<RecipeId> {
-        let item = Item::parse(s)?;
+        let kind = ItemKind::parse(s)?;
         RecipeId::ALL
             .into_iter()
-            .find(|r| r.recipe().output.0 == item)
+            .find(|r| r.recipe().output.0 == kind)
     }
 
     pub fn is_hand_craftable(self) -> bool {
@@ -96,10 +93,21 @@ impl RecipeId {
     }
 }
 
-/// The smelter recipe that consumes `input`, if any.
-pub fn smelting_recipe_for(input: Item) -> Option<RecipeId> {
-    RECIPES
-        .iter()
-        .find(|r| r.station == Station::Smelter && r.inputs.iter().any(|(i, _)| *i == input))
-        .map(|r| r.id)
+impl Recipe {
+    /// The item one batch makes from `input`: same species and grade.
+    pub fn output_for(&self, input: Item) -> Item {
+        Item::new(self.output.0, input.species, input.grade)
+    }
+
+    /// The first threshold `input` fails, if any.
+    pub fn unmet_requirement(
+        &self,
+        species: &MineralSpecies,
+        input: Item,
+    ) -> Option<(Property, u32)> {
+        self.requires
+            .iter()
+            .copied()
+            .find(|&(p, min)| species.effective(p, input.grade) < min)
+    }
 }

@@ -2,8 +2,8 @@
 //! same inputs. These tests hammer that property with random input streams.
 
 use sim::{
-    BuildingId, Input, Item, PlayerCommand, PlayerId, RecipeId, Rng, SystemCommand, TilePos, World,
-    WorldConfig, step,
+    BuildingId, Grade, Input, Item, ItemKind, ItemStack, PlayerCommand, PlayerId, RecipeId, Rng,
+    Slot, SpeciesId, SystemCommand, TilePos, World, WorldConfig, step,
 };
 
 fn new_world() -> World {
@@ -25,53 +25,78 @@ fn random_inputs(rng: &mut Rng, world: &World) -> Vec<Input> {
         let name = format!("p{}", world.players.len());
         inputs.push(Input::System(SystemCommand::AddPlayer { name }));
     }
+    let n_species = world.species.len() as u32;
     for _ in 0..rng.range(0, 4) {
         let player = PlayerId(rng.range(0, world.players.len() as u32 + 1));
         let p = world.player(player);
-        let inv = p.map(|p| &p.inventory);
-        let has = |item, n| inv.is_some_and(|i| i.has(item, n));
         let near = p.map_or(world.spawn_tile(), |p| p.pos);
-        let random_item = |rng: &mut Rng| Item::ALL[rng.range(0, Item::ALL.len() as u32) as usize];
+        let stacks: &[ItemStack] = p.map_or(&[], |p| p.inventory.stacks());
+        // Mostly something the player actually holds; sometimes nonsense.
+        let random_item = |rng: &mut Rng| -> Item {
+            if !stacks.is_empty() && rng.range(0, 4) > 0 {
+                stacks[rng.range(0, stacks.len() as u32) as usize].item
+            } else {
+                Item::new(
+                    ItemKind::ALL[rng.range(0, ItemKind::ALL.len() as u32) as usize],
+                    SpeciesId(rng.range(0, n_species + 1) as u8),
+                    Grade::ALL[rng.range(0, 3) as usize],
+                )
+            }
+        };
+        // A stack of `kind` the player holds: usually the biggest one.
+        let held = |kind: ItemKind, rng: &mut Rng| -> Option<Item> {
+            let matching: Vec<&ItemStack> = stacks.iter().filter(|s| s.item.kind == kind).collect();
+            if matching.is_empty() {
+                None
+            } else if rng.range(0, 4) > 0 {
+                matching.iter().max_by_key(|s| s.count).map(|s| s.item)
+            } else {
+                Some(matching[rng.range(0, matching.len() as u32) as usize].item)
+            }
+        };
         let random_building = |rng: &mut Rng| BuildingId(rng.range(0, world.next_building_id + 2));
         let command = match rng.range(0, 12) {
             0 | 1 => PlayerCommand::Mine,
-            2 => PlayerCommand::Craft {
-                recipe: if has(Item::Stone, 5) && rng.range(0, 4) > 0 {
-                    RecipeId::Smelter
-                } else {
-                    RecipeId::ALL[rng.range(0, RecipeId::ALL.len() as u32) as usize]
-                },
-                count: rng.range(0, 4),
-            },
+            2 => {
+                let recipe = RecipeId::ALL[rng.range(0, RecipeId::ALL.len() as u32) as usize];
+                let item = held(recipe.recipe().input.0, rng)
+                    .filter(|_| rng.range(0, 4) > 0)
+                    .unwrap_or_else(|| random_item(rng));
+                PlayerCommand::Craft {
+                    recipe,
+                    item,
+                    count: rng.range(0, 4),
+                }
+            }
             3 => PlayerCommand::Place {
-                item: if has(Item::Smelter, 1) && rng.range(0, 4) > 0 {
-                    Item::Smelter
-                } else {
-                    random_item(rng)
-                },
+                item: held(ItemKind::Smelter, rng)
+                    .filter(|_| rng.range(0, 4) > 0)
+                    .unwrap_or_else(|| random_item(rng)),
                 pos: TilePos::new(
                     near.x + rng.range(0, 7) as i32 - 3,
                     near.y + rng.range(0, 7) as i32 - 3,
                 ),
             },
             4 => {
-                // Mostly feed the nearest smelter with fuel or ore in hand.
+                // Mostly feed the nearest smelter with something in hand.
                 let nearest = world
                     .buildings
                     .iter()
                     .min_by_key(|b| b.distance_from(near))
                     .map(|b| b.id);
-                let item = match rng.range(0, 4) {
-                    0 if has(Item::Coal, 1) => Item::Coal,
-                    1 if has(Item::IronOre, 1) => Item::IronOre,
-                    2 if has(Item::CopperOre, 1) => Item::CopperOre,
-                    _ => random_item(rng),
+                let slot = if rng.range(0, 2) == 0 {
+                    Slot::Input
+                } else {
+                    Slot::Fuel
                 };
                 PlayerCommand::Insert {
                     building: nearest
                         .filter(|_| rng.range(0, 4) > 0)
                         .unwrap_or_else(|| random_building(rng)),
-                    item,
+                    slot,
+                    item: held(ItemKind::Ore, rng)
+                        .filter(|_| rng.range(0, 4) > 0)
+                        .unwrap_or_else(|| random_item(rng)),
                     count: rng.range(0, 5),
                 }
             }
@@ -82,18 +107,20 @@ fn random_inputs(rng: &mut Rng, world: &World) -> Vec<Input> {
                 building: random_building(rng),
             },
             7 | 8 => {
-                // Head for a deposit, so mining actually happens: stone
-                // first until there is enough for a smelter.
-                let wanted: Vec<&sim::OreDeposit> = world
+                // Head for a live deposit soft enough to mine by hand.
+                let live: Vec<&sim::OreDeposit> = world
                     .deposits
                     .iter()
                     .filter(|d| !d.is_depleted())
-                    .filter(|d| has(Item::Stone, 5) || d.kind == sim::OreKind::Stone)
+                    .filter(|d| {
+                        u32::from(world.species(d.species).sheet.hardness)
+                            <= sim::tuning::HAND_MINE_MAX_HARDNESS
+                    })
                     .collect();
-                let target = if wanted.is_empty() {
+                let target = if live.is_empty() {
                     world.spawn_tile()
                 } else {
-                    wanted[rng.range(0, wanted.len() as u32) as usize].center
+                    live[rng.range(0, live.len() as u32) as usize].center
                 };
                 PlayerCommand::MoveTo { target }
             }
@@ -178,7 +205,7 @@ fn golden_hash_is_stable_across_machines() {
     }
     assert_eq!(
         format!("{:016x}", world.state_hash()),
-        "9d0e359cc2cc17b7",
+        "cedd05f241c75a5c",
         "world hash changed; see the comment on this test"
     );
 }

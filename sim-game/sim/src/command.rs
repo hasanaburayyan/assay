@@ -15,27 +15,32 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::building::BuildingId;
+use crate::building::{BuildingId, Slot};
 use crate::item::Item;
-use crate::ore::OreKind;
+use crate::mineral::{Property, SpeciesId};
 use crate::recipe::RecipeId;
 use crate::types::{DepositId, PlayerId, TilePos};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PlayerCommand {
     /// Start mining the deposit you are standing on, by hand. Ore arrives
-    /// one unit at a time (see `tuning::HAND_MINE_TICKS`) for as long as you
-    /// stay on the deposit.
+    /// one cycle at a time (see `tuning`) for as long as you stay on it.
     Mine,
-    /// Hand-craft `count` batches of a recipe from your inventory. Inputs
-    /// are taken as each batch starts; you keep walking or mining meanwhile.
-    Craft { recipe: RecipeId, count: u32 },
+    /// Hand-craft `count` batches of a recipe from the `item` stacks in your
+    /// inventory. Inputs are taken as each batch starts; you keep walking
+    /// or mining meanwhile.
+    Craft {
+        recipe: RecipeId,
+        item: Item,
+        count: u32,
+    },
     /// Put a building item from your inventory on the map, with its
     /// top-left tile at `pos`. You must be within `tuning::REACH` of it.
     Place { item: Item, pos: TilePos },
-    /// Move items from your inventory into a building's slots.
+    /// Move items from your inventory into one of a building's slots.
     Insert {
         building: BuildingId,
+        slot: Slot,
         item: Item,
         count: u32,
     },
@@ -80,9 +85,9 @@ pub enum Event {
     MiningStarted {
         player: PlayerId,
         deposit: DepositId,
-        kind: OreKind,
+        species: SpeciesId,
     },
-    /// One unit of ore went into the player's inventory.
+    /// One mining cycle finished; `amount` units went into the inventory.
     OreMined {
         player: PlayerId,
         deposit: DepositId,
@@ -100,6 +105,7 @@ pub enum Event {
     CraftStarted {
         player: PlayerId,
         recipe: RecipeId,
+        item: Item,
         count: u32,
     },
     /// One batch finished and its output is in the player's inventory.
@@ -126,6 +132,7 @@ pub enum Event {
     ItemsInserted {
         player: PlayerId,
         building: BuildingId,
+        slot: Slot,
         item: Item,
         count: u32,
     },
@@ -141,7 +148,7 @@ pub enum Event {
         item: Item,
         pos: TilePos,
     },
-    /// A smelter finished a plate; it is waiting in the output slot.
+    /// A smelter finished a unit; it is waiting in the output slot.
     ItemSmelted {
         building: BuildingId,
         item: Item,
@@ -185,14 +192,22 @@ pub enum RejectReason {
     /// `Mine` needs you to stand on a deposit.
     NotOnDeposit,
     DepositDepleted,
+    /// The species is harder than `tuning::HAND_MINE_MAX_HARDNESS`.
+    TooHardForHands,
     UnknownPlayer,
     OutOfBounds,
     /// Counts must be at least 1.
     ZeroCount,
     /// This recipe needs a machine.
     NotHandCraftable,
+    /// The item names a species this world does not have.
+    UnknownSpecies,
     /// The player lacks enough of this item.
     MissingItems(Item),
+    /// The item is the wrong kind for this recipe or slot.
+    WrongItem,
+    /// The input's effective property is below the recipe's threshold.
+    RequirementNotMet(Property, u32),
     UnknownBuilding,
     /// Farther than `tuning::REACH` tiles away.
     OutOfReach,
@@ -200,8 +215,10 @@ pub enum RejectReason {
     TileOccupied,
     /// This item is not a building.
     NotPlaceable,
-    /// The building has no slot that takes this item.
-    WrongItem,
+    /// The ore's heat tolerance is above what the smelter's walls survive.
+    TooHotForWalls,
+    /// Effective reactivity is below `tuning::FUEL_MIN_REACTIVITY`.
+    NotFuel,
     /// The slot is full, or holds something else.
     SlotFull,
     NothingToTake,

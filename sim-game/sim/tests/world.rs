@@ -27,16 +27,17 @@ fn different_seeds_build_different_worlds() {
 }
 
 #[test]
-fn world_has_deposits_of_every_kind() {
+fn a_big_world_has_deposits_of_every_species() {
     let world = World::new(WorldConfig {
         seed: 7,
         width_chunks: 16,
         height_chunks: 16,
     });
-    for kind in sim::OreKind::ALL {
+    for s in &world.species {
         assert!(
-            world.deposits.iter().any(|d| d.kind == kind),
-            "no {kind:?} deposits"
+            world.deposits.iter().any(|d| d.species == s.id),
+            "no deposits of {}",
+            s.name()
         );
     }
 }
@@ -117,8 +118,13 @@ fn purity_has_no_distance_trend_and_spans_the_range() {
 fn chunks_generate_the_same_in_any_order() {
     let world = World::new(config(5));
     for d in &world.deposits {
-        let regenerated =
-            sim::worldgen::deposit_in_chunk(world.seed, d.center.chunk(), world.spawn, d.id);
+        let regenerated = sim::worldgen::deposit_in_chunk(
+            world.seed,
+            d.center.chunk(),
+            world.spawn,
+            d.id,
+            &world.species,
+        );
         assert_eq!(regenerated.as_ref(), Some(d));
     }
     // A chunk outside the map can still be generated on demand.
@@ -127,6 +133,7 @@ fn chunks_generate_the_same_in_any_order() {
         ChunkPos::new(-50, 900),
         world.spawn,
         DepositId(0),
+        &world.species,
     );
 }
 
