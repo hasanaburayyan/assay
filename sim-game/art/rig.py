@@ -35,6 +35,50 @@ PALETTE = {
 }
 ORE_KINDS = ["iron", "copper", "coal", "stone"]
 
+# ---------------------------------------------------------------- parts
+#
+# PARTS LIE DOWN, AND THEY ALL MOUNT AT THE ORIGIN. Both rules are here and
+# not in an asset script because they are the two things every part piece has
+# to agree on, and agreement is what this file is for.
+#
+# 1. LIE DOWN. The camera is TILT off VERTICAL, so it mostly sees an object's
+#    TOP. A part drawn standing shows the viewer its end cap, and anything
+#    wider up the axis -- a collar over a taper -- covers the whole piece at
+#    every size. Measured on ASSA-11: a 0.30 collar over a 0.26 taper hid the
+#    entire bit, and the sprite read as a lid on a drum. Lying along X also
+#    costs nothing, because the tilt compresses Y and leaves X alone. This is
+#    why `items.py` reads: its chunks lie on the ground rather than stand on
+#    it. Use `rot=LYING` on anything whose long axis is the part's long axis.
+#
+# 2. MOUNT AT THE ORIGIN, WORK TOWARDS +X. A machine is drawn by stacking
+#    whole part sprites at the SAME frame position -- that is what "modular
+#    machines look modular" has to mean mechanically, and it only works if
+#    every piece agrees where the join is. So the join sits at x=0: a head's
+#    collar straddles it and its bit runs east; a frame (held or planted)
+#    straddles it and its body runs west. Compose by overlaying frames, never
+#    by rendering a per-machine sprite.
+#
+# Part frames are PART_TILES wide so both halves of a join fit one frame.
+# 3. ONE JOIN HEIGHT FOR EVERY PIECE. Overlaying frames only assembles a
+#    machine if the parts agree how high the join sits, so PART_AXIS is it.
+#    It is the head's collar radius, because the collar is the widest thing
+#    in the set and an assembled pick lying down rests on its head -- which
+#    is also true of a real one. A thin handle therefore floats clear of the
+#    ground when rendered ALONE, and that is correct rather than a bug: a
+#    part is drawn to be assembled, and `items.py` is where loose things on
+#    the ground are drawn.
+# 4. ONE FRAME SIZE. Overlaying only works if every part renders the same
+#    rectangle, so tiles AND headroom are fixed here for the whole set. The
+#    headroom is set by the TALLEST piece, not by each piece's own need: at
+#    0.3 the hopper's mouth was clipped flat against the top of its frame
+#    (body reaching row 0, measured) while every other part had room to
+#    spare. A per-asset headroom would have hidden that as four frames of
+#    different heights that silently refuse to compose.
+LYING = (0, math.pi / 2, 0)
+PART_TILES = (2, 1)
+PART_AXIS = 0.28
+PART_HEADROOM = 0.6
+
 
 def srgb(h):
     r, g, b = (int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
