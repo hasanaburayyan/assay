@@ -29,13 +29,22 @@ def build(g):
     r.shadow_catcher()
     gun, rubber = mat("gun"), mat("rubber")
     grey = rig.graded("grey", g)
-    steel = rig.graded("steel", g, rough=0.45, metal=0.6)
+    # THE ONE WARM MARK, and the handle has to have one. Grade showed on the
+    # other three parts and barely moved here, and the reason was not the
+    # tone lever -- that moves grey and steel by 31 and 59 luminance. It was
+    # that this part called `graded` only and never `graded_accent`, so at A
+    # it got no glint, and rig.py's own rule is that the glint is the top
+    # step's whole signal at 1x because a tone difference alone does not
+    # survive 32 px. Brass, matching head and hopper; the frame keeps orange,
+    # so grey-against-orange still tells the two frames apart.
+    brass = rig.graded_accent("brass", g)
 
     # THE FERRULE, just west of where the head's collar lands. Drawn outside
     # the collar's 0.20 of length on purpose: assembled it is the band between
     # head and shaft, and alone it is the socket that says this end takes
-    # something.
-    r.cyl(0.165, 0.14, (-0.19, 0, AXIS), steel, bev=0.02, rot=LYING)
+    # something. It is the accent because it is the one place a warm mark can
+    # sit without thickening the shaft's silhouette, which must stay a LINE.
+    r.cyl(0.165, 0.14, (-0.19, 0, AXIS), brass, bev=0.02, rot=LYING)
     r.cyl(0.175, 0.04, (-0.26, 0, AXIS), gun, bev=0.01, rot=LYING)
 
     # THE SHAFT. One straight run west. Kept to r 0.115 so the silhouette
