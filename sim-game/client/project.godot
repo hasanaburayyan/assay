@@ -1,0 +1,31 @@
+; Assay — the Godot client (ASSA-7, step 6 of the minimal demo loop).
+;
+; A LOCKSTEP PEER, NEVER A SECOND RULES ENGINE (Decision 2, and principle 1 in
+; the repo's CLAUDE.md). Everything in here reads world state and submits
+; commands; no file under `scripts/` may decide a game rule.
+;
+; Config version 5 is Godot 4.x.
+
+config_version=5
+
+[application]
+
+config/name="Assay"
+config/description="The Assay client: a lockstep peer of sim-relay."
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.6")
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[network]
+
+limits/tcp/connect_timeout_seconds=5
+
+[rendering]
+
+textures/canvas_textures/default_texture_filter=0
