@@ -20,7 +20,7 @@ SPRITES = os.path.join(ROOT, "assets", "sprites")
 BLENDER = os.environ.get("BLENDER", "/Applications/Blender.app/Contents/MacOS/Blender")
 SS = 4
 # render order = contact sheet order
-ORDER = ["ground", "ore", "items", "drill", "spawn", "player"]
+ORDER = ["ground", "ore", "items", "head", "drill", "spawn", "player"]
 
 
 def render(name):

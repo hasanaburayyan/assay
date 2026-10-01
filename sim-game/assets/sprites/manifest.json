@@ -315,6 +315,30 @@
   "sheet": "items.png",
   "columns": 1
  },
+ "head": {
+  "name": "head",
+  "tiles": [
+   1,
+   1
+  ],
+  "frame_px": [
+   64,
+   83
+  ],
+  "anchor_px": [
+   0,
+   19
+  ],
+  "rows": [
+   {
+    "name": "idle",
+    "frames": 1
+   }
+  ],
+  "animations": {},
+  "sheet": "head.png",
+  "columns": 1
+ },
  "drill": {
   "name": "drill",
   "tiles": [
