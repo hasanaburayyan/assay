@@ -96,6 +96,51 @@ pub const GEAR_MIN_HARDNESS: u32 = 20;
 /// place, fill, empty or pick up a building.
 pub const REACH: i32 = 3;
 
+// ---------------------------------------------------------------------------
+// Assemblies (ADR 0003). PROVISIONAL: nothing has been played yet. The two
+// anchors the numbers have to keep are in `sim/tests/assembly.rs`, which
+// asserts the ADR's own arithmetic, so retuning these shows up there first.
+// ---------------------------------------------------------------------------
+
+/// Each part's size: what it costs in refined material AND how much stuff it
+/// is made of for mass. One number for both, so no part is cheap and heavy.
+pub const HEAD_SIZE: u32 = 1;
+pub const HELD_FRAME_SIZE: u32 = 2;
+pub const PLANTED_FRAME_SIZE: u32 = 5;
+pub const HOPPER_SIZE: u32 = 2;
+
+/// Mass a frame carries per point of its material's effective strength, per
+/// point of its own size. A frame carries this many times its own mass when
+/// its strength equals its density.
+///
+/// Stays 3 deliberately (ASSA-5 ruling): a same-species pick breaks about
+/// 31% of the time at grade B, and breaking is the teeth behind assaying.
+pub const FRAME_BUDGET_PER_STRENGTH: u32 = 3;
+
+/// Ore a planted frame holds on its own before it stalls — the tiny internal
+/// buffer of decision 9. Hoppers add to it.
+pub const PLANTED_FRAME_BUFFER: u32 = 10;
+
+/// Ore one hopper adds. Flat from the kind: a hopper's material sets its mass
+/// and nothing else, so hopper species is one legible choice (make it light).
+pub const HOPPER_CAPACITY: u32 = 50;
+
+/// Hopper slots a planted frame offers. Generous on purpose, so that **mass**
+/// is what stops you stacking hoppers rather than a slot count.
+pub const MAX_HOPPER_SLOTS: u32 = 4;
+
+/// Durability pool per point of the head's effective strength, per point of
+/// head size. Pool = head size × effective head strength × this.
+///
+/// RAISED 10 → 60 (ADR 0003 amendment A2): at a grade-B strength-50 head that
+/// is 2400 points, so **120 swings** at `PICK_WEAR_PER_SWING`. A pick buys
+/// only time (decision 7 parks the hardness ladder), and 20 swings could not
+/// repay the 60 ticks of smelting its 3 refined cost.
+pub const PICK_DURABILITY_PER_STRENGTH: u32 = 60;
+
+/// Durability drained per swing. The one knob that retunes a pick's life.
+pub const PICK_WEAR_PER_SWING: u32 = 20;
+
 /// Most ore a smelter's input slot holds.
 pub const SMELTER_INPUT_CAP: u32 = 50;
 /// Most fuel units a smelter holds in reserve.
