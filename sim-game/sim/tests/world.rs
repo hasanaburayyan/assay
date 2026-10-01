@@ -1,5 +1,5 @@
 use sim::{
-    ChunkPos, DepositId, Event, Input, PlayerCommand, PlayerId, RejectReason, SystemCommand,
+    ChunkPos, DepositId, Event, Grade, Input, PlayerCommand, PlayerId, RejectReason, SystemCommand,
     TilePos, World, WorldConfig, step,
 };
 
@@ -84,10 +84,11 @@ fn deposit_ids_match_their_index() {
 /// spread. Still no positive trend with distance, and a world still spans a
 /// wide range of purities.
 ///
-/// The range this asserts (10 and below, 90 and above) is no longer the
-/// whole 1–100: at the default core quality the roll spans 5–95, so these
-/// bounds say "wide", not "saturated". `raising_core_quality_*` below owns
-/// the part of decision 13 that this test cannot see.
+/// The range this asserts (10 and below, 75 and above) is no longer the
+/// whole 1–100: at the default core quality the roll spans 2–82 (ASSA-13
+/// retuned that down from 5–95), so these bounds say "wide", not
+/// "saturated". `raising_core_quality_*` below owns the part of decision 13
+/// that this test cannot see.
 #[test]
 fn purity_has_no_distance_trend_and_spans_the_range() {
     let (mut near, mut far) = ((0u64, 0u64), (0u64, 0u64));
@@ -116,7 +117,7 @@ fn purity_has_no_distance_trend_and_spans_the_range() {
         "far ore ({far_avg}) is still purer on average than near ore ({near_avg})"
     );
     assert!(
-        lowest <= 10 && highest >= 90,
+        lowest <= 10 && highest >= 75,
         "purity range {lowest}..{highest}"
     );
 }
@@ -194,6 +195,114 @@ fn raising_core_quality_raises_mean_purity_without_flattening_it() {
 
         previous_mean = mean;
     }
+}
+
+/// ASSA-13: grade A has to be rare enough that the refining ladder has a
+/// job. `sort` and `resmelt` are built, tested and in the golden hash, and
+/// their only purpose is climbing to A — so if A is easy to find, walking one
+/// chunk over dominates refining and both recipes ship as dead content.
+///
+/// THIS GUARDS THE DESIGN RULE, NOT ONE NUMBER. The band holds the ruled
+/// 42/40 (A ~16%) and the named fallback 40/35 (A ~8.5%), and fails the
+/// 50/45 that shipped on ASSA-3 (A 28.6%). Retuning the two constants inside
+/// the rule is free; retuning past it has to be argued.
+///
+/// Run with `--nocapture` for the printed distribution.
+#[test]
+fn grade_a_is_rare_enough_that_refining_has_a_job() {
+    let (mut c, mut b, mut a) = (0usize, 0usize, 0usize);
+    for seed in 0..40 {
+        let purities = purities_at(seed, sim::tuning::CORE_QUALITY);
+
+        // The case is reached: a seed with no deposits would pass every
+        // share assertion below without measuring anything.
+        assert!(
+            purities.len() >= 50,
+            "seed {seed}: only {} deposits to count",
+            purities.len()
+        );
+
+        let mut seen = [0usize; 3];
+        for p in purities {
+            match Grade::from_purity(p) {
+                Grade::C => seen[0] += 1,
+                Grade::B => seen[1] += 1,
+                Grade::A => seen[2] += 1,
+            }
+        }
+        assert!(
+            seen.iter().all(|&n| n > 0),
+            "seed {seed}: a world must still hold all three grades, got C/B/A {seen:?}"
+        );
+        c += seen[0];
+        b += seen[1];
+        a += seen[2];
+    }
+
+    let total = c + b + a;
+    let share = |n: usize| 100.0 * n as f64 / total as f64;
+    assert!(
+        total > 5_000,
+        "only {total} deposits: too few to call a distribution"
+    );
+    println!(
+        "purity grades over {total} deposits at core quality {} spread {}: \
+         C {:.1}% / B {:.1}% / A {:.1}%",
+        sim::tuning::CORE_QUALITY,
+        sim::tuning::PURITY_SPREAD,
+        share(c),
+        share(b),
+        share(a)
+    );
+    assert!(
+        (5.0..=22.0).contains(&share(a)),
+        "grade A is {:.1}% of deposits: outside the 5-22% the refining ladder needs \
+         (C {:.1}% / B {:.1}%)",
+        share(a),
+        share(c),
+        share(b)
+    );
+}
+
+/// ADR 0002 points 1 and 4 claim the spread is symmetric about core quality
+/// and that the shipped constants do not reach the 1–100 clamp. Both claims
+/// were prose until now, and the clamp one is load-bearing: clamping is what
+/// would make the knob non-linear in the mean, so a tuning pair that silently
+/// clamped would quietly break the argument the ADR rests on.
+///
+/// Observed min and max must equal `CORE_QUALITY ∓ PURITY_SPREAD` exactly.
+/// That is one assertion for three properties: symmetry, no clamping, and the
+/// whole span actually being reachable. It is deterministic — fixed seeds, so
+/// it can never flake, only be true or false.
+#[test]
+fn the_purity_roll_is_symmetric_and_never_clamps() {
+    let (mut lowest, mut highest) = (u8::MAX, u8::MIN);
+    let mut counted = 0usize;
+    for seed in 0..40 {
+        // Starter chunks are floored at STARTER_MIN_PURITY, so they can only
+        // raise the minimum; every other deposit is a bare roll.
+        for p in purities_at(seed, sim::tuning::CORE_QUALITY) {
+            lowest = lowest.min(p);
+            highest = highest.max(p);
+            counted += 1;
+        }
+    }
+    assert!(counted > 5_000, "only {counted} deposits rolled");
+
+    // Signed on purpose: a spread wider than core quality must report the
+    // band it wanted (a negative floor) rather than underflow.
+    let (cq, spread) = (
+        i64::from(sim::tuning::CORE_QUALITY),
+        i64::from(sim::tuning::PURITY_SPREAD),
+    );
+    assert_eq!(
+        (i64::from(lowest), i64::from(highest)),
+        (cq - spread, cq + spread),
+        "purity spans {lowest}..{highest}, not {}..{} — the roll is clamping, or no \
+         longer symmetric about core quality {cq}",
+        cq - spread,
+        cq + spread
+    );
 }
 
 /// The starter chunks' floor is a guarantee, not a distribution (ADR 0002):

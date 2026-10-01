@@ -28,15 +28,15 @@ buy a knob nothing can yet set per planet.
    spread**, clamped to 1–100. The spread is symmetric, so core quality is
    the world's *mean* purity and not merely its floor.
 2. Core quality is **one tuning constant shared by every world**
-   (`tuning::CORE_QUALITY`, default 50) until the galaxy layer assigns it
+   (`tuning::CORE_QUALITY`, 42 — see the retune note below) until the galaxy layer assigns it
    per planet. It is **not** stored on `World`, so this ADR moves neither
    `SAVE_VERSION` nor `PROTOCOL_VERSION`.
 3. `worldgen::deposit_in_chunk` takes core quality as an **argument**, and
    every caller passes the constant. The galaxy layer's eventual per-planet
    value is then a change at the call site, not a rewrite of the roll.
-4. The spread is `tuning::PURITY_SPREAD` (default 45) either side of the
-   baseline: 5–95 at the default core quality, so all three grades still
-   occur in one world.
+4. The spread is `tuning::PURITY_SPREAD` (40 — see the retune note below)
+   either side of the baseline: 2–82 at the shipped core quality, so all
+   three grades still occur in one world.
 5. The purity roll consumes **exactly one `rng.range` call** on every path.
    Worldgen is a pure function of `(seed, chunk)` and peers must walk the
    same stream; a branch consuming a different number of rolls would desync
@@ -53,6 +53,27 @@ seed while deposits still vary (`raising_core_quality_raises_mean_purity_without
 starter deposits stay at or above the floor even at core quality 1
 (`starter_deposits_keep_their_floor_at_any_core_quality`); `deposit` rows in
 the inspector show a spread of purities and grades in any one world.
+
+## Retune, 2026-10-01 (ASSA-13): 50/45 → 42/40
+
+The shape above is unchanged — one uniform roll, symmetric, one `rng.range`
+call — and only the two values move. They shipped at 50/45, which made purity
+uniform over 5–95 and **grade A 28.6% of deposits**. `sort` and `resmelt`
+exist only to climb to grade A, so at that rate refining is dominated by
+walking one chunk over, and a built and tested ladder would ship as dead
+content. At 42/40 purity is uniform over 2–82, measured at **C 46.1% / B
+37.5% / A 16.4%** over 5,764 deposits, so a 6×4 world's ~13 deposits hold
+about two of grade A. The golden hash moves again with it:
+`20b7b4fc57975213` → `95f4ebb7d3192740`. `STARTER_MIN_PURITY` is untouched:
+point 6 makes it a floor applied after the roll, so both starter deposits
+stay grade B at any core quality.
+
+Ruled by the Game Director on ASSA-3 and filed as ASSA-13 so the hash move
+is its own commit. Two claims this ADR had only argued in prose are now
+tests: `grade_a_is_rare_enough_that_refining_has_a_job` guards the design
+rule (a 5–22% band, not one number, so the named 40/35 fallback stays legal)
+and `the_purity_roll_is_symmetric_and_never_clamps` pins the observed span to
+`CORE_QUALITY ∓ PURITY_SPREAD` exactly.
 
 ## Consequences
 

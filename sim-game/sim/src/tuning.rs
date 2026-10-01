@@ -22,13 +22,22 @@ pub const MIN_STARTER_RUNGS: usize = 1;
 /// assigns it per planet. `worldgen::deposit_in_chunk` takes it as an
 /// argument rather than reading it here, so that later change is a caller
 /// change and not a rewrite of the roll.
-pub const CORE_QUALITY: u32 = 50;
+///
+/// RETUNED 50 → 42 (ASSA-13, ruled on ASSA-3). At 50/45 grade A was 28.6% of
+/// deposits, and the only purpose of `sort` and `resmelt` is climbing to A:
+/// if A is that easy to find, refining is dominated by walking one chunk
+/// over, and a built, tested ladder ships as dead content.
+pub const CORE_QUALITY: u32 = 42;
 
 /// How far either side of `CORE_QUALITY` a deposit's purity may roll, before
-/// clamping to 1–100. The spread is what keeps a world varied: at the
-/// default core quality this spans 5–95, so all three grades (C below 40,
-/// B 40–69, A at 70 and up) still turn up in one world.
-pub const PURITY_SPREAD: u32 = 45;
+/// clamping to 1–100. The spread is what keeps a world varied.
+///
+/// With `CORE_QUALITY` 42 this spans 2–82: 81 values, no clamping, so the
+/// roll stays symmetric and uniform. Split by the grade bands (C below 40,
+/// B 40–69, A at 70 and up) that is **C 47% / B 37% / A 16%**, so a 6×4
+/// world's ~13 deposits hold about two of grade A — rare enough that sorting
+/// has a job, common enough that A is not a rumour.
+pub const PURITY_SPREAD: u32 = 40;
 
 /// Starter deposits (next to spawn) are floored at this purity, so the
 /// first fuel burns hot enough and the first ore is worth mining.
