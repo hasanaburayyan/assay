@@ -64,14 +64,18 @@ jobs:
       # The client loads the real `sim` through a GDExtension, so the engine
       # cannot even start without it: GODOT ABORTS (exit 134, a C++ stack trace,
       # no usable message) when a `.gdextension` names a library that is not
-      # there -- measured 2026-10-01. Debug on purpose: it reuses what `cargo
-      # test` above just compiled, and the RELEASE library is what the two
-      # export jobs build and then prove from inside the shipped bundles.
+      # there -- measured 2026-10-01.
+      #
+      # RELEASE, NOT DEBUG, AND NOT AN OPTIMISATION TO UNDO. Building debug here
+      # would reuse what `cargo test` just compiled, and I tried it: the library
+      # loaded ("Initialize godot-rust ... safeguards strict") and then Godot
+      # crashed with signal 11 inside `--import`, before a single test ran (run
+      # 36942131128). Release also matches what the export jobs ship.
       - name: The sim binding the client loads
         run: |
-          cargo build -p sim-godot
+          cargo build -p sim-godot --release
           mkdir -p client/bin
-          cp target/debug/libsim_godot.so client/bin/
+          cp target/release/libsim_godot.so client/bin/
       - name: Client suite
         working-directory: sim-game/client
         run: |

@@ -67,9 +67,9 @@ impl AssaySim {
 
     /// Apply one `Tick` bundle: its inputs, then one `step`.
     ///
-    /// Returns false and changes nothing if the bundle is not the next tick.
-    /// Applying bundles out of order is precisely how a peer desyncs, so this
-    /// refuses rather than guesses.
+    /// Returns false and changes nothing unless the bundle is numbered with the
+    /// tick we are AT. Applying bundles out of order is precisely how a peer
+    /// desyncs, so this refuses rather than guesses.
     #[func]
     pub fn apply_bundle_json(&mut self, text: GString) -> bool {
         let bundle: TickBundle = match serde_json::from_str(&text.to_string()) {
@@ -168,11 +168,16 @@ impl AssaySim {
 
     /// The real work behind `apply_bundle_json`, callable without Godot.
     pub fn apply_bundle(&mut self, bundle: &TickBundle) -> bool {
-        // The relay numbers a bundle with the tick it produces. Anything else
-        // means we missed one, and stepping anyway would desync us silently.
-        if bundle.tick != self.world.tick + 1 {
+        // A BUNDLE IS NUMBERED WITH THE TICK WE ARE AT, NOT THE ONE IT
+        // PRODUCES, and I had this backwards until I read the relay: it builds
+        // `TickBundle { tick: self.world.tick, .. }` and only then steps
+        // (`sim-relay/src/main.rs`), `sim-net`'s `Welcome` says "the next
+        // bundle you receive is for `world.tick`", and the reference client
+        // refuses on `bundle.tick != world.tick` (`sim-cli/src/host.rs`). All
+        // three agree; a `+ 1` here refused every bundle a real relay sends.
+        if bundle.tick != self.world.tick {
             godot_warn!(
-                "sim-godot: ignoring bundle for tick {} while at tick {}",
+                "sim-godot: ignoring a bundle for tick {} while at tick {}",
                 bundle.tick,
                 self.world.tick
             );
@@ -292,34 +297,52 @@ mod tests {
         assert_ne!((u64::MAX - 1) as f64 as u64, u64::MAX - 1);
     }
 
-    /// Out-of-order bundles are refused, not guessed at.
+    /// Out-of-order bundles are refused, not guessed at. BOTH DIRECTIONS: the
+    /// off-by-one I actually shipped was accepting `tick + 1`, which refuses
+    /// every bundle a real relay sends, and a test that only checked `+ 5`
+    /// could not tell the two conventions apart.
     #[test]
-    fn a_bundle_for_the_wrong_tick_changes_nothing() {
-        let mut sim = AssaySim::from_world(fresh());
-        let before = sim.hash_hex_string();
-        let skipped = TickBundle {
-            tick: sim.world().tick + 5,
-            inputs: Vec::new(),
-        };
-        assert!(!sim.apply_bundle(&skipped));
-        assert_eq!(
-            sim.hash_hex_string(),
-            before,
-            "a refused bundle still changed the world"
-        );
+    fn a_bundle_for_any_tick_but_ours_changes_nothing() {
+        for wrong in [5_i64, 1, -1] {
+            let mut sim = AssaySim::from_world(fresh());
+            let before = sim.hash_hex_string();
+            let at = sim.world().tick;
+            let bundle = TickBundle {
+                tick: (at as i64 + wrong) as u64,
+                inputs: Vec::new(),
+            };
+            assert!(!sim.apply_bundle(&bundle), "accepted tick {at}{wrong:+}");
+            assert_eq!(
+                sim.hash_hex_string(),
+                before,
+                "a refused bundle still changed the world"
+            );
+            assert_eq!(sim.tick(), at as i64, "a refused bundle still advanced us");
+        }
     }
 
-    /// The next bundle in order is applied and advances exactly one tick.
+    /// A BUNDLE IS NUMBERED WITH THE TICK WE ARE AT, and applying it puts us on
+    /// the next one. The relay builds the bundle before it steps, `sim-net`'s
+    /// `Welcome` says the next bundle is for `world.tick`, and `sim-cli` refuses
+    /// anything else -- so this is the one convention, not a choice.
     #[test]
-    fn the_next_bundle_advances_one_tick() {
+    fn a_bundle_numbered_with_our_own_tick_advances_us_one() {
         let mut sim = AssaySim::from_world(fresh());
         let start = sim.tick();
         let next = TickBundle {
-            tick: sim.world().tick + 1,
+            tick: sim.world().tick,
             inputs: Vec::new(),
         };
         assert!(sim.apply_bundle(&next));
         assert_eq!(sim.tick(), start + 1);
+        // And the one after it, so an off-by-one cannot pass by being wrong
+        // only once.
+        let after = TickBundle {
+            tick: sim.world().tick,
+            inputs: Vec::new(),
+        };
+        assert!(sim.apply_bundle(&after));
+        assert_eq!(sim.tick(), start + 2);
     }
 
     /// A Welcome is read out of the real message shape, tag and all.
