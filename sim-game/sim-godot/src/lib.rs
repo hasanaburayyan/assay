@@ -20,9 +20,9 @@
 //! text. There is deliberately no method here that returns a hash as a number.
 
 use godot::prelude::*;
-use sim::World;
 use sim::command::Input;
 use sim::hash::fnv64;
+use sim::world::{World, WorldConfig};
 use sim_net::TickBundle;
 
 struct SimGodot;
@@ -94,14 +94,14 @@ impl AssaySim {
     /// what a `Hash` message reports and what proves two peers agree.
     #[func]
     pub fn hash_hex(&self) -> GString {
-        format!("{:016x}", fnv64(&self.world)).into()
+        gstring(&self.hash_hex_string())
     }
 
     /// The seed as hex text, for the same reason as the hash: a `u64` seed
     /// above 2^53 does not survive a GDScript number.
     #[func]
     pub fn seed_hex(&self) -> GString {
-        format!("{:016x}", self.world.seed).into()
+        gstring(&self.seed_hex_string())
     }
 
     #[func]
@@ -136,28 +136,28 @@ impl AssaySim {
     /// the golden hash moved twice on 2026-10-01 and moves again on ASSA-5.
     #[func]
     pub fn binding_self_check() -> GString {
-        let mut sim = Self::from_world(Self::self_check_world());
-        sim.step_with(&[]);
-        sim.hash_hex()
+        gstring(&Self::self_check_value())
     }
 
     /// The same number, computed without touching this class, so the check
     /// above compares two routes to it rather than a value to itself.
     #[func]
     pub fn binding_self_check_expected() -> GString {
-        let mut world = Self::self_check_world();
-        let mut events = Vec::new();
-        sim::step::step(&mut world, &[], &mut events);
-        format!("{:016x}", fnv64(&world)).into()
+        gstring(&Self::self_check_expected_value())
     }
+}
+
+/// Godot's string type has no `From<String>`, only `From<&str>`, and leaning
+/// on `.into()` for it is how this file failed to compile the first time.
+fn gstring(text: &str) -> GString {
+    GString::from(text)
 }
 
 // Plain Rust, no engine types: everything here is reachable from `cargo test`.
 impl AssaySim {
     /// Pull the `World` out of a `ServerMsg::Welcome`.
     pub fn world_from_welcome(text: &str) -> Result<World, String> {
-        let value: serde_json::Value =
-            serde_json::from_str(text).map_err(|why| why.to_string())?;
+        let value: serde_json::Value = serde_json::from_str(text).map_err(|why| why.to_string())?;
         let world = value
             .get("Welcome")
             .ok_or("not a Welcome message")?
@@ -190,14 +190,38 @@ impl AssaySim {
         self.last_events = events.iter().map(|event| format!("{event:?}")).collect();
     }
 
+    pub fn hash_hex_string(&self) -> String {
+        format!("{:016x}", fnv64(&self.world))
+    }
+
+    pub fn seed_hex_string(&self) -> String {
+        format!("{:016x}", self.world.seed)
+    }
+
     /// A small fixed world for the load check. Small on purpose: the check
     /// runs on every exported build and must not cost a visible pause.
     pub fn self_check_world() -> World {
-        sim::worldgen::generate(&sim::world::WorldConfig {
+        World::new(WorldConfig {
             seed: 1,
             width_chunks: 2,
             height_chunks: 2,
         })
+    }
+
+    /// What the binding computes by stepping its own world once.
+    pub fn self_check_value() -> String {
+        let mut sim = Self::from_world(Self::self_check_world());
+        sim.step_with(&[]);
+        sim.hash_hex_string()
+    }
+
+    /// The same number by the other route: `sim::step` called directly, with
+    /// no `AssaySim` in the way.
+    pub fn self_check_expected_value() -> String {
+        let mut world = Self::self_check_world();
+        let mut events = Vec::new();
+        sim::step::step(&mut world, &[], &mut events);
+        format!("{:016x}", fnv64(&world))
     }
 
     pub fn from_world(world: World) -> Self {
@@ -219,10 +243,9 @@ impl AssaySim {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sim::world::WorldConfig;
 
     fn fresh() -> World {
-        sim::worldgen::generate(&WorldConfig {
+        World::new(WorldConfig {
             seed: 4242,
             width_chunks: 6,
             height_chunks: 4,
@@ -242,8 +265,8 @@ mod tests {
         ours.step_with(&[]);
 
         assert_eq!(
-            ours.hash_hex(),
-            format!("{:016x}", fnv64(&theirs)).into(),
+            ours.hash_hex_string(),
+            format!("{:016x}", fnv64(&theirs)),
             "the binding stepped to a different world than the sim did"
         );
     }
@@ -252,7 +275,7 @@ mod tests {
     #[test]
     fn the_hash_is_sixteen_hex_digits() {
         let sim = AssaySim::from_world(fresh());
-        let hex = sim.hash_hex().to_string();
+        let hex = sim.hash_hex_string();
         assert_eq!(hex.len(), 16, "got {hex}");
         assert!(hex.chars().all(|c| c.is_ascii_hexdigit()), "got {hex}");
     }
@@ -264,7 +287,7 @@ mod tests {
         let mut world = fresh();
         world.seed = u64::MAX - 1;
         let sim = AssaySim::from_world(world);
-        assert_eq!(sim.seed_hex().to_string(), "fffffffffffffffe");
+        assert_eq!(sim.seed_hex_string(), "fffffffffffffffe");
         // What a double would have done to it:
         assert_ne!((u64::MAX - 1) as f64 as u64, u64::MAX - 1);
     }
@@ -273,13 +296,17 @@ mod tests {
     #[test]
     fn a_bundle_for_the_wrong_tick_changes_nothing() {
         let mut sim = AssaySim::from_world(fresh());
-        let before = sim.hash_hex();
+        let before = sim.hash_hex_string();
         let skipped = TickBundle {
             tick: sim.world().tick + 5,
             inputs: Vec::new(),
         };
         assert!(!sim.apply_bundle(&skipped));
-        assert_eq!(sim.hash_hex(), before, "a refused bundle still changed the world");
+        assert_eq!(
+            sim.hash_hex_string(),
+            before,
+            "a refused bundle still changed the world"
+        );
     }
 
     /// The next bundle in order is applied and advances exactly one tick.
@@ -302,6 +329,17 @@ mod tests {
         let msg = serde_json::json!({"Welcome": {"player": 0, "world": world}});
         let back = AssaySim::world_from_welcome(&msg.to_string()).expect("should parse");
         assert_eq!(fnv64(&back), fnv64(&world));
+    }
+
+    /// The two routes the shipped build's selfcheck compares must agree here
+    /// too, or the check in `scripts/selfcheck.gd` can never pass and the
+    /// failure would first show up in CI on a Windows runner.
+    #[test]
+    fn the_two_self_check_routes_agree() {
+        let value = AssaySim::self_check_value();
+        assert_eq!(value, AssaySim::self_check_expected_value());
+        assert_eq!(value.len(), 16, "got {value}");
+        assert_ne!(value, "0000000000000000", "a zero hash is not evidence");
     }
 
     #[test]

@@ -8,6 +8,13 @@ game design and art direction. This file is the code and art rulebook.
 - `sim/`: the simulation core. Game rules only.
 - `sim-net/`: wire protocol shared by client and relay.
 - `sim-relay/`: headless multiplayer host (owns the clock, orders inputs).
+- `sim-godot/`: GDExtension host. Lets the Godot client run the real `sim`
+  instead of reimplementing it in GDScript. Owns no rules; `sim/Cargo.toml`
+  never grows a `godot` dependency. Hashes and seeds cross into GDScript as
+  **hex text**, because Godot parses every JSON number as a double and a `u64`
+  hash cannot be spelled in GDScript at all. Build it before opening
+  `client/` in Godot (`make client-lib`): the engine aborts with a C++ stack
+  trace if the library the `.gdextension` names is missing.
 - `sim-cli/`: terminal client. Default is the ratatui inspector (`tui.rs`);
   `--plain` (or piped stdin) gives the line prompt. `host.rs` holds the
   session and every typed command; add new commands there and they work in
