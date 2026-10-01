@@ -92,6 +92,9 @@ Things to try
   insert 0 fuel ore:kel 5  fuel it with a reactive ore (inv shows the names)
   insert 0 ore ore:dal 10  ore to refine; the fire must reach its heat tolerance
   take 0                   collect the refined material; craft gear needs hardness 20
+  assay                    study the deposit you stand on: exact numbers instead of bands
+  rename bok Starterite    name a species you were first to mine or assay
+  craft sort ore:bok:c     3 ore become 1 ore a grade better; refined does the same in a smelter
   buildings                what every building holds and whether it's running
   events                   recent events
   quit                     leave (the host keeps running)

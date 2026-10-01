@@ -79,15 +79,16 @@ why determinism rules are non-negotiable.
   seeded roll per ADR 0001; the two chunks beside spawn always hold the
   starter material and a hand-lit fuel), `ladder.rs` (reachable rungs from
   a roster), `command.rs` (`PlayerCommand`: Mine/Craft/Place/Insert/Take/
-  Pickup/MoveTo/Stop; `SystemCommand`: AddPlayer; `Input` wraps them),
-  `step.rs` (apply inputs, then systems in fixed order: movement, hand
-  mining, hand crafting, smelters), `item.rs` (`Item` = kind + species +
-  grade, `ItemStack`), `inventory.rs` (sorted stacks), `recipe.rs` (fixed
-  table keyed by item kind with property thresholds; never names a
-  species), `building.rs` (`Building` with its material, `Smelter`,
-  `Slot`), `tuning.rs` (every rate, cap and threshold), `save.rs` (JSON
-  saves with a version), `hash.rs` (FNV-1a state hash), `debug.rs` (ASCII
-  map and tables).
+  Pickup/Assay/Rename/GrantRename/MoveTo/Stop; `SystemCommand`: AddPlayer;
+  `Input` wraps them), `step.rs` (apply inputs, then systems in fixed
+  order: movement, hand mining, assaying, hand crafting, smelters),
+  `item.rs` (`Item` = kind + species + grade, `ItemStack`), `inventory.rs`
+  (sorted stacks), `recipe.rs` (fixed table keyed by item kind with property
+  thresholds and grade-raising refining; never names a species),
+  `building.rs` (`Building` with its material, `Smelter`, `Slot`),
+  `tuning.rs` (every rate, cap and threshold), `save.rs` (JSON saves with a
+  version), `hash.rs` (FNV-1a state hash), `debug.rs` (ASCII map, tables,
+  rough-vs-exact sheet readings).
 - **`sim-net`**: wire protocol. `ClientMsg` (Hello/Submit/Hash), `ServerMsg`
   (Welcome/Refused/Tick/Desync), `TickBundle`, length-prefixed JSON framing,
   `PROTOCOL_VERSION`, `saves_dir()`.
@@ -117,6 +118,13 @@ why determinism rules are non-negotiable.
   tolerance never scale.
 - Items are kind + species + grade (kinds: ore, refined, gear, smelter) and
   stack only when all three match. Typed as `kind[:species[:grade]]`.
+- Refining raises grade at a loss: `sort` by hand (3 ore → 1 ore, +1 grade,
+  20 ticks) and resmelt in a smelter (3 refined → 1 refined, +1 grade, 40
+  ticks). Grade A cannot be refined further.
+- Sheets read as 25-wide bands until a player assays a deposit (30 ticks
+  standing on it); then exact for the whole world. The first player to mine
+  or assay a species is its discoverer and may rename it (letters, digits,
+  hyphens, ≤20) or grant rename rights. Renames are player commands.
 - Rules in `sim/src/tuning.rs` and `sim/src/recipe.rs`: hand mining needs
   hardness ≤ 40 and yields 1/2/3 ore per 4-tick cycle by grade; smelter = 5
   ore of any species, 2×2, walls = that species' heat tolerance; fuel needs
@@ -124,9 +132,9 @@ why determinism rules are non-negotiable.
   if its heat tolerance ≤ 30 (hand spark); ore smelts when the fire reaches
   its heat tolerance, 20 ticks per unit; gears need hardness ≥ 20 at grade;
   reach 3 tiles. The starter ladder is judged at grade B.
-- Save format `SAVE_VERSION = 9`. Versions 1–8 (named ores) do not load:
-  the cut-over had no compatibility shim by decision.
-- `PROTOCOL_VERSION = 3`. Bump it whenever `World` or a message changes
+- Save format `SAVE_VERSION = 10`. Versions 1–8 (named ores) do not load:
+  the cut-over had no compatibility shim by decision; v9 never shipped.
+- `PROTOCOL_VERSION = 4`. Bump it whenever `World` or a message changes
   shape; the relay refuses mismatched clients.
 - Golden determinism hash lives in `sim/tests/determinism.rs`. It changes
   whenever rules change; update it only for intentional changes and say so
@@ -193,10 +201,13 @@ top of species and grades: hand mining, item stacks, property-threshold
 recipes, and the smelter with heat-capped walls and reactive fuel (see "The
 first loop" in `GAME.md`).
 
-Not built yet, roughly in order: the rest of ADR 0001 (tiered refining,
-first-contact partial sheets and an assay action, species naming with
-rename grants), mining drills as entities (which is what lets hardness
-progress past hand mining; needs the step-factor decision), belts, inserters
+ADR 0001 is fully built except what waits on later systems: refining rung
+three ("later tech"), sheets that sharpen with better tools (today only the
+assay action sharpens them), and ladder rungs beyond zero.
+
+Not built yet, roughly in order: mining drills as entities (which is what
+lets hardness progress past hand mining; needs the step-factor decision
+that ADR 0001 left open), belts, inserters
 (the modular design system), assemblers, items on belts, generated looks
 for species, the Godot client, reconnect without restart, client-side
 movement prediction, time-based autosave, binary saves, graceful relay

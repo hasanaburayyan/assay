@@ -73,7 +73,11 @@ client yet; a Godot client is planned.
   walls take that species' heat tolerance. Fed ore and any fuel reactive
   enough (a cold fire needs fuel that lights by hand), it refines ore whose
   heat tolerance the fire reaches, on its own, until its output fills or
-  the fire goes out.
+  the fire goes out. Refined material fed back in comes out a grade better,
+  three to one.
+- **Assay and naming:** a species reads as rough bands until someone
+  assays a deposit of it. Whoever mines or assays it first discovers it
+  and may name it, or let others name it.
 
 Gameplay today is the first loop described below. Belts, inserters and
 drills are next.
@@ -100,10 +104,13 @@ better materials will fix. All numbers live in `sim/src/tuning.rs` and
 | Reach | 3 tiles (diagonals count as 1) to place, fill, empty or pick up |
 | Starter ladder | roster rerolled until rung zero exists; starter material and fuel beside spawn at purity ≥ 50 |
 
-Still to build from ADR 0001: tiered refining that raises grade, the
-first-contact partial sheet and assay action, and species naming with rename
-grants. Only rung zero of the ladder can exist until drills (and a decision
-on the step factor) let hardness progress.
+| Refining | `sort` by hand: 3 ore → 1 ore one grade up, 20 ticks. Resmelt in a smelter: 3 refined → 1 refined one grade up, 40 ticks. Grade A is the top |
+| Assay | 30 ticks standing on a deposit; until then a species' sheet shows 25-wide bands |
+| Naming | the first player to mine or assay a species may rename it (letters, digits, hyphens, 20 max) and grant that right to others |
+
+Only rung zero of the ladder can exist until drills (and a decision on the
+step factor) let hardness progress. Refining rung three and sheets that
+sharpen with better tools wait on later technology.
 
 ## Planned entities (Decided in concept, not built)
 
