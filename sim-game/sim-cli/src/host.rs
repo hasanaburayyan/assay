@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
 use sim::{
-    Event, Input, PlayerCommand, PlayerId, RejectReason, SystemCommand, TilePos, World,
-    WorldConfig, debug, step,
+    Event, Grade, Input, Item, ItemKind, PlayerCommand, PlayerId, RejectReason, Slot, SpeciesId,
+    SystemCommand, TilePos, World, WorldConfig, debug, step,
 };
 use sim_net::{ClientMsg, HASH_EVERY, TickBundle};
 
@@ -40,20 +40,31 @@ Time (single-player; online, the host runs the clock)
 Player
   goto <x> <y>                walk to a tile, one tile per tick
   move <dir> [n]              walk n tiles (default 1); dir: n s e w ne nw se sw
-  craft <item> [n]            hand-craft n (default 1), e.g. craft smelter
-  stop                        stop walking, mining and crafting
-  place <item> [x y]          put a building down (default: just east of you)
-  insert <id> <item> [n]      put items into a building, e.g. insert 0 coal 5
+  mine                        mine the deposit you stand on, by hand, until you
+                              stop or walk off it (ore hardness 40 or less)
+  craft <recipe> [item] [n]   hand-craft n (default 1) from an item stack:
+                              smelter, gear, or sort (3 ore -> 1 ore a grade up)
+  place [item] [x y]          put a smelter down (default: just east of you)
+  insert <id> ore|fuel <item> [n]   feed a building, e.g. insert 0 fuel ore:kel 5
+                              (the ore slot also takes refined: 3 -> 1 a grade up)
   take <id>                   empty a building's output into your inventory
   pickup <id>                 take a building and its contents back
-  mine                        mine the deposit you stand on, by hand, until you
-                              stop or walk off it
+  assay                       study the deposit you stand on (30 ticks): its
+                              species then shows exact numbers, not bands
+  rename <species> <name>     name a species you discovered (letters, digits, -)
+  grant <species> <player>    let another player rename it too
+  stop                        stop walking, mining, crafting and assaying
   where                       your position
-  inv                         what you're carrying
+  inv                         what you're carrying, with the names to type
+
+Items are written kind[:species[:grade]], e.g. ore, ore:kel, ore:kelvite:b.
+Species is a name prefix or its id. Leave parts off when only one of your
+stacks matches; `inv` shows the exact name for each stack.
 
 Look
   map                         draw the map (P marks players)
   players                     everyone in this world
+  species                     this world's minerals and their property sheets
   deposits                    list every deposit
   recipes                     what can be made, from what
   buildings                   every placed building and what it's doing
@@ -443,24 +454,37 @@ impl Host {
                         .crafting
                         .map(|c| format!(", crafting {} ({} to go)", c.recipe.name(), c.remaining))
                         .unwrap_or_default();
+                    let assaying = p
+                        .assaying
+                        .map(|a| format!(", assaying deposit {}", a.deposit.0))
+                        .unwrap_or_default();
                     out!(
-                        "  {} · {}{you} at ({}, {}){walking}{mining}{crafting} · carrying {}",
+                        "  {} · {}{you} at ({}, {}){walking}{mining}{crafting}{assaying} · carrying {}",
                         p.id.0,
                         p.name,
                         p.pos.x,
                         p.pos.y,
-                        describe_inventory(&p.inventory)
+                        describe_inventory(&s.world, &p.inventory)
                     );
                 }
             }
             "deposits" | "ls" => out!("{}", debug::deposit_table(&s.world)),
             "recipes" => out!("{}", debug::recipe_table()),
+            "species" | "minerals" => out!("{}", debug::species_table(&s.world)),
             "buildings" => out!("{}", debug::building_table(&s.world)),
             "at" => at(s, args)?,
             "where" => where_am_i(s)?,
             "inv" | "inventory" => {
                 let me = s.me()?;
-                out!("Carrying {}", describe_inventory(&me.inventory));
+                out!("Carrying {}", describe_inventory(&s.world, &me.inventory));
+                for st in me.inventory.stacks() {
+                    out!(
+                        "  {:>4} {:<28} type: {}",
+                        st.count,
+                        s.world.item_name(st.item),
+                        item_spec(&s.world, st.item)
+                    );
+                }
             }
             "events" | "log" => {
                 let n: usize = optional_arg(args, 1, "count", 20)?;
@@ -498,31 +522,72 @@ impl Host {
             }
             "stop" => submit(s, paused, PlayerCommand::Stop)?,
             "mine" => submit(s, paused, PlayerCommand::Mine)?,
+            "assay" => submit(s, paused, PlayerCommand::Assay)?,
+            "rename" => {
+                let usage = "Usage: rename <species> <name>, e.g. rename kel Kelvite";
+                let species = resolve_species(s, args.get(1).copied())
+                    .map_err(|e| format!("{e}\n{usage}"))?;
+                let name = args.get(2).ok_or(format!("Missing name.\n{usage}"))?;
+                submit(
+                    s,
+                    paused,
+                    PlayerCommand::Rename {
+                        species,
+                        name: (*name).to_string(),
+                    },
+                )?;
+            }
+            "grant" => {
+                let usage = "Usage: grant <species> <player name or id>, e.g. grant kel grace";
+                let species = resolve_species(s, args.get(1).copied())
+                    .map_err(|e| format!("{e}\n{usage}"))?;
+                let who = args.get(2).ok_or(format!("Missing player.\n{usage}"))?;
+                let to = s
+                    .world
+                    .players
+                    .iter()
+                    .find(|p| p.name.eq_ignore_ascii_case(who) || who.parse() == Ok(p.id.0))
+                    .map(|p| p.id)
+                    .ok_or(format!(
+                        "No player called `{who}`. `players` lists them.\n{usage}"
+                    ))?;
+                submit(s, paused, PlayerCommand::GrantRename { species, to })?;
+            }
             "place" => {
-                let usage = "Usage: place <item> [x y], e.g. place smelter (goes just east of you)";
-                let name = args.get(1).ok_or(format!("Missing item.\n{usage}"))?;
-                let item =
-                    sim::Item::parse(name).ok_or(format!("`{name}` is not an item.\n{usage}"))?;
+                let usage =
+                    "Usage: place [item] [x y], e.g. place smelter, or place smelter:kel 10 12";
+                let (spec, next) = match args.get(1) {
+                    Some(a) if a.parse::<i32>().is_err() => (Some(*a), 2),
+                    _ => (None, 1),
+                };
+                let item = resolve_item(s, spec, Some(ItemKind::Smelter))?;
                 let me = s.me()?.pos;
-                let x: i32 = optional_arg(args, 2, "x", me.x + 1)?;
-                let y: i32 = optional_arg(args, 3, "y", me.y)?;
+                let x: i32 =
+                    optional_arg(args, next, "x", me.x + 1).map_err(|e| format!("{e}\n{usage}"))?;
+                let y: i32 =
+                    optional_arg(args, next + 1, "y", me.y).map_err(|e| format!("{e}\n{usage}"))?;
                 let pos = TilePos::new(x, y);
                 submit(s, paused, PlayerCommand::Place { item, pos })?;
             }
             "insert" | "put" => {
-                let usage = "Usage: insert <building id> <item> [count], e.g. insert 0 coal 5";
+                let usage = "Usage: insert <building id> ore|fuel <item> [count], e.g. insert 0 fuel ore:kel 5";
                 let id: u32 =
                     parse_arg(args, 1, "building id").map_err(|e| format!("{e}\n{usage}"))?;
-                let name = args.get(2).ok_or(format!("Missing item.\n{usage}"))?;
-                let item =
-                    sim::Item::parse(name).ok_or(format!("`{name}` is not an item.\n{usage}"))?;
-                let count: u32 = optional_arg(args, 3, "count", 1)?;
+                let slot = match args.get(2).copied() {
+                    Some("ore" | "in" | "input") => Slot::Input,
+                    Some("fuel" | "burn") => Slot::Fuel,
+                    Some(other) => return Err(format!("`{other}` is not a slot.\n{usage}")),
+                    None => return Err(format!("Missing slot.\n{usage}")),
+                };
+                let item = resolve_item(s, args.get(3).copied(), None)?;
+                let count: u32 = optional_arg(args, 4, "count", 1)?;
                 let building = sim::BuildingId(id);
                 submit(
                     s,
                     paused,
                     PlayerCommand::Insert {
                         building,
+                        slot,
                         item,
                         count,
                     },
@@ -541,13 +606,25 @@ impl Host {
                 submit(s, paused, PlayerCommand::Pickup { building })?;
             }
             "craft" => {
-                let usage =
-                    "Usage: craft <item> [count], e.g. craft smelter. `recipes` lists them.";
-                let name = args.get(1).ok_or(format!("Missing item.\n{usage}"))?;
+                let usage = "Usage: craft <smelter|gear|sort> [item] [count], e.g. craft smelter, or craft sort ore:kel:c 2. `recipes` lists them.";
+                let name = args.get(1).ok_or(format!("Missing recipe.\n{usage}"))?;
                 let recipe = sim::RecipeId::parse(name)
                     .ok_or(format!("No recipe makes `{name}`.\n{usage}"))?;
-                let count: u32 = optional_arg(args, 2, "count", 1)?;
-                submit(s, paused, PlayerCommand::Craft { recipe, count })?;
+                let (spec, next) = match args.get(2) {
+                    Some(a) if a.parse::<u32>().is_err() => (Some(*a), 3),
+                    _ => (None, 2),
+                };
+                let item = resolve_item(s, spec, Some(recipe.recipe().input.0))?;
+                let count: u32 = optional_arg(args, next, "count", 1)?;
+                submit(
+                    s,
+                    paused,
+                    PlayerCommand::Craft {
+                        recipe,
+                        item,
+                        count,
+                    },
+                )?;
             }
             other => {
                 return Err(format!(
@@ -574,12 +651,12 @@ fn run_step(world: &mut World, me: PlayerId, inputs: &[Input]) -> Vec<String> {
 /// an event, so no checks here. While time is running, that event is the
 /// feedback.
 fn submit(s: &mut Session, paused: bool, command: PlayerCommand) -> Result<(), String> {
+    let what = describe_command(&command, &s.world);
     match &mut s.link {
         Link::Local { queue, .. } => {
             if paused {
                 out!(
-                    "Queued `{}` for tick {}. Paused: `tick` or `resume` to apply it.",
-                    describe_command(&command),
+                    "Queued `{what}` for tick {}. Paused: `tick` or `resume` to apply it.",
                     s.world.tick
                 );
             }
@@ -693,16 +770,17 @@ fn at(s: &Session, args: &[&str]) -> Result<(), String> {
             b.id.0,
             b.pos.x,
             b.pos.y,
-            debug::building_status(b)
+            debug::building_status(&s.world, b)
         );
     }
     match s.world.deposit_at(pos) {
         Some(d) => out!(
-            "({x}, {y}): deposit {} · {:?} · {} left · purity {} · {place}",
+            "({x}, {y}): deposit {} · {} · {} left · purity {} (grade {}) · {place}",
             d.id.0,
-            d.kind,
+            s.world.species(d.species).name(),
             d.amount,
-            d.purity
+            d.purity,
+            d.grade().letter()
         ),
         None if pos == s.world.spawn_tile() => out!("({x}, {y}): spawn · {place}"),
         None => out!("({x}, {y}): empty ground · {place}"),
@@ -731,9 +809,10 @@ fn where_am_i(s: &Session) -> Result<(), String> {
             " `mine` to start mining it."
         };
         out!(
-            "You're on deposit {} ({:?}, {} left).{mining}",
+            "You're on deposit {} ({}, grade {}, {} left).{mining}",
             d.id.0,
-            d.kind,
+            s.world.species(d.species).name(),
+            d.grade().letter(),
             d.amount
         );
     }
@@ -793,15 +872,114 @@ fn status(s: &Session, paused: bool, tps: u32) {
     }
 }
 
-pub fn describe_inventory(inv: &sim::Inventory) -> String {
+pub fn describe_inventory(world: &World, inv: &sim::Inventory) -> String {
     if inv.is_empty() {
         return "nothing".into();
     }
     inv.stacks()
         .iter()
-        .map(|s| format!("{} {}", s.count, s.item.name()))
+        .map(|st| format!("{} {}", st.count, world.item_name(st.item)))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// The exact `kind:species:grade` text that names this item in a command.
+pub fn item_spec(world: &World, item: Item) -> String {
+    format!(
+        "{}:{}:{}",
+        item.kind.name(),
+        world.species(item.species).name().to_ascii_lowercase(),
+        item.grade.letter().to_ascii_lowercase()
+    )
+}
+
+/// A species by name prefix (player or generated name) or by id.
+fn resolve_species(s: &Session, text: Option<&str>) -> Result<SpeciesId, String> {
+    let text = text.ok_or("Missing species. `species` lists them.")?;
+    let lower = text.to_ascii_lowercase();
+    let hits: Vec<&sim::MineralSpecies> = s
+        .world
+        .species
+        .iter()
+        .filter(|sp| {
+            text.parse::<u8>().ok() == Some(sp.id.0)
+                || sp.name().to_ascii_lowercase().starts_with(&lower)
+                || sp.generated_name.to_ascii_lowercase().starts_with(&lower)
+        })
+        .collect();
+    match hits.as_slice() {
+        [one] => Ok(one.id),
+        [] => Err(format!(
+            "No species matches `{text}`. `species` lists them."
+        )),
+        many => Err(format!(
+            "`{text}` could be: {}",
+            many.iter()
+                .map(|sp| sp.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+/// Find the one stack in your inventory that `spec` means. `spec` is
+/// `kind[:species[:grade]]`; the kind may be left off when the command
+/// already says which kind it needs (`want`).
+fn resolve_item(s: &Session, spec: Option<&str>, want: Option<ItemKind>) -> Result<Item, String> {
+    let me = s.me()?;
+    let parts: Vec<&str> = spec.map_or_else(Vec::new, |t| t.split(':').collect());
+    let (kind, rest) = match parts.first().and_then(|p| ItemKind::parse(p)) {
+        Some(k) => (Some(k), &parts[1..]),
+        None => (want, &parts[..]),
+    };
+    let kind = match (kind, want) {
+        (Some(k), Some(w)) if k != w => {
+            return Err(format!("That needs {} items, not {}.", w.name(), k.name()));
+        }
+        (Some(k), _) | (None, Some(k)) => k,
+        (None, None) => {
+            return Err(
+                "Say which item: kind[:species[:grade]], e.g. ore:kel:b. `inv` lists yours.".into(),
+            );
+        }
+    };
+    if rest.len() > 2 {
+        return Err("Too many parts: items are kind[:species[:grade]].".into());
+    }
+    let species = rest.first().copied().filter(|t| !t.is_empty());
+    let grade = match rest.get(1) {
+        Some(g) => Some(Grade::parse(g).ok_or(format!("`{g}` is not a grade (A, B or C)."))?),
+        None => None,
+    };
+    let species_matches = |item: &Item| {
+        species.is_none_or(|t| {
+            let name = s.world.species(item.species).name().to_ascii_lowercase();
+            t.parse::<u8>().ok() == Some(item.species.0)
+                || name.starts_with(&t.to_ascii_lowercase())
+        })
+    };
+    let candidates: Vec<Item> = me
+        .inventory
+        .stacks()
+        .iter()
+        .map(|st| st.item)
+        .filter(|i| i.kind == kind && species_matches(i) && grade.is_none_or(|g| i.grade == g))
+        .collect();
+    match candidates.as_slice() {
+        [one] => Ok(*one),
+        [] => Err(format!(
+            "You have no {} matching `{}`. `inv` lists what you carry.",
+            kind.name(),
+            spec.unwrap_or(kind.name())
+        )),
+        many => Err(format!(
+            "Be more specific. You carry: {}",
+            many.iter()
+                .map(|i| item_spec(&s.world, *i))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
 }
 
 fn off_map(world: &World, pos: TilePos) -> String {
@@ -839,25 +1017,53 @@ fn who(world: &World, me: PlayerId, player: PlayerId) -> String {
         .map_or_else(|| format!("player {}", player.0), |p| p.name.clone())
 }
 
-fn describe_command(cmd: &PlayerCommand) -> String {
+fn describe_command(cmd: &PlayerCommand, world: &World) -> String {
+    let spec = |item: &Item| item_spec(world, *item);
     match cmd {
         PlayerCommand::Mine => "mine".into(),
-        PlayerCommand::Craft { recipe, count } => format!("craft {} {count}", recipe.name()),
-        PlayerCommand::Place { item, pos } => format!("place {} {} {}", item.name(), pos.x, pos.y),
-        PlayerCommand::Insert {
-            building,
+        PlayerCommand::Craft {
+            recipe,
             item,
             count,
-        } => format!("insert {} {} {count}", building.0, item.name()),
+        } => format!("craft {} {} {count}", recipe.name(), spec(item)),
+        PlayerCommand::Place { item, pos } => format!("place {} {} {}", spec(item), pos.x, pos.y),
+        PlayerCommand::Insert {
+            building,
+            slot,
+            item,
+            count,
+        } => format!(
+            "insert {} {} {} {count}",
+            building.0,
+            slot_name(*slot),
+            spec(item)
+        ),
         PlayerCommand::Take { building } => format!("take {}", building.0),
         PlayerCommand::Pickup { building } => format!("pickup {}", building.0),
+        PlayerCommand::Assay => "assay".into(),
+        PlayerCommand::Rename { species, name } => {
+            format!("rename {} {name}", world.species(*species).name())
+        }
+        PlayerCommand::GrantRename { species, to } => format!(
+            "grant {} {}",
+            world.species(*species).name(),
+            who(world, PlayerId(u32::MAX), *to)
+        ),
         PlayerCommand::MoveTo { target } => format!("goto {} {}", target.x, target.y),
         PlayerCommand::Stop => "stop".into(),
     }
 }
 
+fn slot_name(slot: Slot) -> &'static str {
+    match slot {
+        Slot::Input => "ore",
+        Slot::Fuel => "fuel",
+    }
+}
+
 fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
     let who = |p: &PlayerId| who(world, me, *p);
+    let name = |item: &Item| world.item_name(*item);
     match event {
         Event::PlayerJoined { player, name } if *player == me => {
             format!("you joined as {name}")
@@ -866,10 +1072,11 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
         Event::MiningStarted {
             player,
             deposit,
-            kind,
+            species,
         } => format!(
-            "{} started mining {kind:?} at deposit {}",
+            "{} started mining {} at deposit {}",
             who(player),
+            world.species(*species).name(),
             deposit.0
         ),
         Event::OreMined {
@@ -887,7 +1094,7 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
             format!(
                 "{} mined {amount} {} (carrying {carrying}, {left} left in deposit {})",
                 who(player),
-                item.name(),
+                name(item),
                 deposit.0
             )
         }
@@ -909,14 +1116,78 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
             )
         }
         Event::DepositDepleted { deposit } => format!("deposit {} is now depleted", deposit.0),
+        Event::SpeciesDiscovered { player, species } => format!(
+            "{} discovered {}! `rename {} <name>` to name it",
+            who(player),
+            world.species(*species).name(),
+            world.species(*species).name().to_ascii_lowercase()
+        ),
+        Event::AssayStarted {
+            player,
+            deposit,
+            species,
+        } => format!(
+            "{} started assaying {} at deposit {} ({} ticks)",
+            who(player),
+            world.species(*species).name(),
+            deposit.0,
+            sim::tuning::ASSAY_TICKS
+        ),
+        Event::AssayStopped {
+            player,
+            deposit,
+            reason,
+        } => {
+            let why = match reason {
+                sim::StopReason::LeftDeposit => "walked off it",
+                _ => "stopped",
+            };
+            format!(
+                "{} stopped assaying deposit {}: {why}",
+                who(player),
+                deposit.0
+            )
+        }
+        Event::SpeciesAssayed { player, species } => {
+            let sp = world.species(*species);
+            format!(
+                "{} assayed {}: density {} · strength {} · hardness {} · heat tolerance {} · reactivity {} · conductivity {}",
+                who(player),
+                sp.name(),
+                sp.sheet.density,
+                sp.sheet.strength,
+                sp.sheet.hardness,
+                sp.sheet.heat_tolerance,
+                sp.sheet.reactivity,
+                sp.sheet.conductivity
+            )
+        }
+        Event::SpeciesRenamed {
+            player,
+            species,
+            name,
+        } => format!(
+            "{} named species {} \"{name}\" (was {})",
+            who(player),
+            species.0,
+            world.species(*species).generated_name
+        ),
+        Event::RenameGranted { species, from, to } => format!(
+            "{} let {} rename {}",
+            who(from),
+            who(to),
+            world.species(*species).name()
+        ),
         Event::CraftStarted {
             player,
             recipe,
+            item,
             count,
         } => format!(
-            "{} started crafting {count} {} ({} ticks each)",
+            "{} started crafting {count} {} from {} ({} ticks each)",
             who(player),
             recipe.name(),
+            name(item),
             recipe.recipe().ticks
         ),
         Event::ItemCrafted {
@@ -936,7 +1207,7 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
             format!(
                 "{} crafted {count} {} (carrying {carrying}{more})",
                 who(player),
-                item.name()
+                name(item)
             )
         }
         Event::CraftingStopped {
@@ -950,44 +1221,33 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
             };
             format!("{} stopped crafting {}: {why}", who(player), recipe.name())
         }
-        Event::MoveStarted { player, from, to } => format!(
-            "{} started walking from ({}, {}) to ({}, {})",
-            who(player),
-            from.x,
-            from.y,
-            to.x,
-            to.y
-        ),
-        Event::PlayerArrived { player, pos } => {
-            format!("{} arrived at ({}, {})", who(player), pos.x, pos.y)
-        }
-        Event::PlayerStopped { player, pos } => {
-            format!("{} stopped at ({}, {})", who(player), pos.x, pos.y)
-        }
         Event::BuildingPlaced {
             player,
             building,
             item,
             pos,
         } => format!(
-            "{} placed {} {} at ({}, {}); `insert {} coal 5` and ore to run it",
+            "{} placed {} as building {} at ({}, {}); `insert {} fuel <item>` and `insert {} ore <item>` to run it",
             who(player),
-            item.name(),
+            name(item),
             building.0,
             pos.x,
             pos.y,
+            building.0,
             building.0
         ),
         Event::ItemsInserted {
             player,
             building,
+            slot,
             item,
             count,
         } => format!(
-            "{} put {count} {} into building {}",
+            "{} put {count} {} into building {}'s {} slot",
             who(player),
-            item.name(),
-            building.0
+            name(item),
+            building.0,
+            slot_name(*slot)
         ),
         Event::ItemsTaken {
             player,
@@ -997,7 +1257,7 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
         } => format!(
             "{} took {count} {} from building {}",
             who(player),
-            item.name(),
+            name(item),
             building.0
         ),
         Event::BuildingRemoved {
@@ -1006,9 +1266,9 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
             item,
             pos,
         } => format!(
-            "{} picked up {} {} from ({}, {})",
+            "{} picked up {} (building {}) from ({}, {})",
             who(player),
-            item.name(),
+            name(item),
             building.0,
             pos.x,
             pos.y
@@ -1028,9 +1288,23 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
             format!(
                 "building {} smelted {count} {} ({waiting} waiting; `take {}`)",
                 building.0,
-                item.name(),
+                name(item),
                 building.0
             )
+        }
+        Event::MoveStarted { player, from, to } => format!(
+            "{} started walking from ({}, {}) to ({}, {})",
+            who(player),
+            from.x,
+            from.y,
+            to.x,
+            to.y
+        ),
+        Event::PlayerArrived { player, pos } => {
+            format!("{} arrived at ({}, {})", who(player), pos.x, pos.y)
+        }
+        Event::PlayerStopped { player, pos } => {
+            format!("{} stopped at ({}, {})", who(player), pos.x, pos.y)
         }
         Event::CommandRejected {
             player,
@@ -1042,17 +1316,52 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
                     "you're not standing on a deposit; walk onto one first".to_string()
                 }
                 RejectReason::DepositDepleted => "that deposit is already depleted".to_string(),
+                RejectReason::TooHardForHands => format!(
+                    "that ore is too hard to mine by hand (hardness over {}); drills come later",
+                    sim::tuning::HAND_MINE_MAX_HARDNESS
+                ),
                 RejectReason::UnknownPlayer => "no such player".to_string(),
                 RejectReason::ZeroCount => "the count must be at least 1".to_string(),
                 RejectReason::NotHandCraftable => {
                     "that needs a machine; `recipes` shows where each is made".to_string()
                 }
+                RejectReason::UnknownSpecies => "no such mineral in this world".to_string(),
+                RejectReason::AlreadyAssayed => {
+                    "that species is already assayed; `species` shows its sheet".to_string()
+                }
+                RejectReason::NotDiscovered => {
+                    "nobody has mined or assayed that species yet, so nobody may name it"
+                        .to_string()
+                }
+                RejectReason::NotDiscoverer => {
+                    "only its discoverer (or someone they granted) may do that".to_string()
+                }
+                RejectReason::BadName(e) => match e {
+                    sim::NameError::Empty => "the name is empty".to_string(),
+                    sim::NameError::TooLong => format!(
+                        "names are at most {} characters",
+                        sim::tuning::SPECIES_NAME_MAX
+                    ),
+                    sim::NameError::BadCharacter => {
+                        "names use letters, digits and hyphens only".to_string()
+                    }
+                },
+                RejectReason::NoSuchPlayer => "no such player; `players` lists them".to_string(),
+                RejectReason::AlreadyGranted => "they can already rename it".to_string(),
                 RejectReason::MissingItems(item) => {
                     let have = world
                         .player(*player)
                         .map_or(0, |p| p.inventory.count(*item));
-                    format!("not enough {} (you have {have})", item.name())
+                    format!("not enough {} (you have {have})", name(item))
                 }
+                RejectReason::WrongItem => "that's the wrong kind of item for this".to_string(),
+                RejectReason::AlreadyBestGrade => {
+                    "grade A is already the best; refining can't improve it".to_string()
+                }
+                RejectReason::RequirementNotMet(property, min) => format!(
+                    "its {} is below {min} at that grade; `species` shows the sheets",
+                    property.name()
+                ),
                 RejectReason::OutOfBounds => match command {
                     PlayerCommand::MoveTo { target } => off_map(world, *target),
                     _ => "that's off the map".to_string(),
@@ -1066,9 +1375,13 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
                 ),
                 RejectReason::TileOccupied => "another building is in the way".to_string(),
                 RejectReason::NotPlaceable => "that item is not a building".to_string(),
-                RejectReason::WrongItem => {
-                    "a smelter only takes coal and ore it can smelt".to_string()
+                RejectReason::TooHotForWalls => {
+                    "that ore needs more heat than this smelter's walls survive; build one from a more heat-tolerant species".to_string()
                 }
+                RejectReason::NotFuel => format!(
+                    "that doesn't burn well enough to be fuel (reactivity below {} at that grade)",
+                    sim::tuning::FUEL_MIN_REACTIVITY
+                ),
                 RejectReason::SlotFull => {
                     "that slot is full or holds a different item; `buildings` shows what's inside"
                         .to_string()
@@ -1080,7 +1393,10 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
             } else {
                 format!("{}'s ", who(player))
             };
-            format!("{whose}`{}` was rejected: {why}", describe_command(command))
+            format!(
+                "{whose}`{}` was rejected: {why}",
+                describe_command(command, world)
+            )
         }
     }
 }

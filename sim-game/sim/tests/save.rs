@@ -1,5 +1,5 @@
 use sim::{
-    DepositId, Input, Item, PlayerCommand, PlayerId, SAVE_VERSION, SaveError, SystemCommand, World,
+    DepositId, Input, PlayerCommand, PlayerId, SAVE_VERSION, SaveError, SystemCommand, World,
     WorldConfig, step,
 };
 
@@ -17,6 +17,12 @@ fn world(seed: u64) -> World {
 /// A world with one player standing on deposit `deposit`, ready to mine.
 fn world_on_deposit(seed: u64, deposit: u32) -> World {
     let mut w = world(seed);
+    for s in &mut w.species {
+        s.sheet.hardness = s
+            .sheet
+            .hardness
+            .min(sim::tuning::HAND_MINE_MAX_HARDNESS as u8);
+    }
     let center = w.deposit(DepositId(deposit)).unwrap().center;
     w.player_mut(PlayerId(0)).unwrap().pos = center;
     w
@@ -75,7 +81,8 @@ fn save_is_readable_json() {
     let json = world(42).to_json().unwrap();
     assert!(json.contains(&format!("\"version\": {SAVE_VERSION}")));
     assert!(json.contains("\"seed\": 42"));
-    assert!(json.contains("\"kind\": \"Iron\""));
+    assert!(json.contains("\"generated_name\""));
+    assert!(json.contains("\"heat_tolerance\""));
 }
 
 #[test]
@@ -104,22 +111,16 @@ fn save_and_load_from_disk() {
     assert_eq!(loaded, original);
 }
 
+/// Decision 12: the named-ore saves are gone for good, not migrated.
 #[test]
-fn version_4_saves_migrate_ore_counters_to_stacks() {
-    let mut w = world(42);
-    let mut json: serde_json::Value = serde_json::from_str(&w.to_json().unwrap()).unwrap();
-    json["version"] = 4.into();
-    json["world"]["players"][0]["inventory"] =
-        serde_json::json!({ "iron": 12, "copper": 0, "coal": 3, "stone": 0 });
-
-    let loaded = World::from_json(&json.to_string()).unwrap();
-    let inv = &loaded.players[0].inventory;
-    assert_eq!(inv.count(Item::IronOre), 12);
-    assert_eq!(inv.count(Item::Coal), 3);
-    assert_eq!(inv.stacks().len(), 2);
-
-    // The migrated world must save and reload as today's format.
-    w.players[0].inventory.add(Item::IronOre, 12);
-    w.players[0].inventory.add(Item::Coal, 3);
-    assert_eq!(loaded, w);
+fn named_ore_era_saves_are_refused() {
+    let json = world(1).to_json().unwrap().replacen(
+        &format!("\"version\": {SAVE_VERSION}"),
+        "\"version\": 8",
+        1,
+    );
+    assert!(matches!(
+        World::from_json(&json),
+        Err(SaveError::UnsupportedVersion { found: 8 })
+    ));
 }

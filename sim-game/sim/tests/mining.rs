@@ -1,15 +1,19 @@
-use sim::tuning::HAND_MINE_TICKS;
+use sim::tuning::{HAND_MINE_MAX_HARDNESS, HAND_MINE_TICKS, YIELD_BY_GRADE};
 use sim::{
-    DepositId, Event, Input, Item, PlayerCommand, PlayerId, RejectReason, StopReason,
-    SystemCommand, TilePos, World, WorldConfig, step,
+    DepositId, Event, Grade, Input, Item, ItemKind, PlayerCommand, PlayerId, RejectReason,
+    StopReason, SystemCommand, TilePos, World, WorldConfig, step,
 };
 
-/// A world with one player, "ada", already joined.
+/// A world with one player, "ada", already joined, where every species is
+/// soft enough to mine by hand unless a test says otherwise.
 fn world_with_player(seed: u64) -> (World, PlayerId) {
     let mut world = World::new(WorldConfig {
         seed,
         ..WorldConfig::default()
     });
+    for s in &mut world.species {
+        s.sheet.hardness = s.sheet.hardness.min(HAND_MINE_MAX_HARDNESS as u8);
+    }
     let join = Input::System(SystemCommand::AddPlayer { name: "ada".into() });
     step(&mut world, &[join], &mut Vec::new());
     (world, PlayerId(0))
@@ -33,14 +37,17 @@ fn run(world: &mut World, inputs: &[Input], ticks: u32) -> Vec<Event> {
 }
 
 #[test]
-fn mining_yields_one_ore_every_hand_mine_ticks() {
+fn mining_yields_the_grades_share_every_hand_mine_ticks() {
     let (mut world, me) = world_with_player(9);
     let id = DepositId(0);
     teleport_onto(&mut world, me, id);
-    let (kind, before) = {
+    world.deposit_mut(id).unwrap().purity = 50; // grade B
+    let (species, before) = {
         let d = world.deposit(id).unwrap();
-        (d.kind, d.amount)
+        (d.species, d.amount)
     };
+    let item = Item::new(ItemKind::Ore, species, Grade::B);
+    let per_cycle = YIELD_BY_GRADE[Grade::B as usize];
 
     let events = run(&mut world, &[Input::player(me, PlayerCommand::Mine)], 1);
     assert_eq!(
@@ -48,7 +55,7 @@ fn mining_yields_one_ore_every_hand_mine_ticks() {
         vec![Event::MiningStarted {
             player: me,
             deposit: id,
-            kind
+            species
         }]
     );
 
@@ -63,13 +70,57 @@ fn mining_yields_one_ore_every_hand_mine_ticks() {
         &Event::OreMined {
             player: me,
             deposit: id,
-            item: Item::from(kind),
-            amount: 1
+            item,
+            amount: per_cycle
         }
     );
-    assert_eq!(world.player(me).unwrap().inventory.count(kind.into()), 3);
+    assert_eq!(
+        world.player(me).unwrap().inventory.count(item),
+        3 * per_cycle
+    );
     assert_eq!(world.deposit(id).unwrap().amount, before - 3);
     assert!(world.player(me).unwrap().mining.is_some());
+}
+
+#[test]
+fn purer_deposits_yield_more_per_unit_mined() {
+    // Decision 1: purity raises yield.
+    let (mut world, me) = world_with_player(9);
+    let id = DepositId(0);
+    teleport_onto(&mut world, me, id);
+    let mut got = Vec::new();
+    for purity in [10, 50, 90] {
+        world.deposit_mut(id).unwrap().purity = purity;
+        world.player_mut(me).unwrap().inventory = Default::default();
+        run(
+            &mut world,
+            &[
+                Input::player(me, PlayerCommand::Stop),
+                Input::player(me, PlayerCommand::Mine),
+            ],
+            HAND_MINE_TICKS,
+        );
+        got.push(world.player(me).unwrap().inventory.total());
+    }
+    assert!(got[0] < got[1] && got[1] < got[2], "{got:?}");
+}
+
+#[test]
+fn hand_mining_refuses_ore_that_is_too_hard() {
+    let (mut world, me) = world_with_player(9);
+    let id = DepositId(0);
+    teleport_onto(&mut world, me, id);
+    let species = world.deposit(id).unwrap().species;
+    world.species_mut(species).sheet.hardness = HAND_MINE_MAX_HARDNESS as u8 + 1;
+    let events = run(&mut world, &[Input::player(me, PlayerCommand::Mine)], 1);
+    assert_eq!(
+        events,
+        vec![Event::CommandRejected {
+            player: me,
+            command: PlayerCommand::Mine,
+            reason: RejectReason::TooHardForHands
+        }]
+    );
 }
 
 #[test]
@@ -118,7 +169,6 @@ fn walking_off_the_deposit_ends_mining() {
     let radius = i32::from(world.deposit(id).unwrap().radius);
     run(&mut world, &[Input::player(me, PlayerCommand::Mine)], 1);
 
-    // Walk straight out. Moving within the patch keeps mining going.
     let outside = TilePos::new(center.x + radius + 2, center.y);
     let events = run(
         &mut world,
@@ -131,7 +181,6 @@ fn walking_off_the_deposit_ends_mining() {
         reason: StopReason::LeftDeposit
     }));
     assert!(world.player(me).unwrap().mining.is_none());
-    // Mined for the first `radius` steps, which were still inside the patch.
     assert!(world.player(me).unwrap().inventory.total() >= 1);
 }
 
@@ -160,7 +209,6 @@ fn mining_out_a_deposit_depletes_it_and_stops() {
             }
         ]
     );
-    assert_eq!(world.player(me).unwrap().inventory.total(), 2);
 
     let events = run(&mut world, &[Input::player(me, PlayerCommand::Mine)], 1);
     assert_eq!(

@@ -2,6 +2,8 @@
 
 use crate::building::{Building, BuildingId};
 use crate::hash::fnv64;
+use crate::item::Item;
+use crate::mineral::{MineralSpecies, SpeciesId};
 use crate::ore::OreDeposit;
 use crate::player::Player;
 use crate::rng::{Rng, mix};
@@ -41,37 +43,41 @@ pub struct World {
     pub rng: Rng,
     pub width_chunks: i32,
     pub height_chunks: i32,
-    /// The chunk players start in. Ore gets better with distance from here.
+    /// The chunk players start in.
     pub spawn: ChunkPos,
+    /// This world's mineral species, indexed by `SpeciesId`.
+    pub species: Vec<MineralSpecies>,
     /// All deposits, indexed by `DepositId`. Depleted deposits stay in the
     /// list with `amount == 0` so IDs remain stable.
     pub deposits: Vec<OreDeposit>,
     /// Players, indexed by `PlayerId`. A new world has none; players join
     /// through `SystemCommand::AddPlayer` so every peer adds them on the
     /// same tick.
-    #[serde(default)]
     pub players: Vec<Player>,
     /// Placed buildings, in placement order. Look up by `BuildingId`, not
     /// index: picking one up removes it from the list.
-    #[serde(default)]
     pub buildings: Vec<Building>,
     /// The next `BuildingId` to hand out.
-    #[serde(default)]
     pub next_building_id: u32,
 }
 
 impl World {
     pub fn new(config: WorldConfig) -> Self {
         let spawn = ChunkPos::new(config.width_chunks / 2, config.height_chunks / 2);
+        let species = worldgen::species_roster(config.seed);
 
         // Row-major chunk order makes deposit IDs deterministic.
         let mut deposits = Vec::new();
         for cy in 0..config.height_chunks {
             for cx in 0..config.width_chunks {
                 let id = DepositId(deposits.len() as u32);
-                if let Some(d) =
-                    worldgen::deposit_in_chunk(config.seed, ChunkPos::new(cx, cy), spawn, id)
-                {
+                if let Some(d) = worldgen::deposit_in_chunk(
+                    config.seed,
+                    ChunkPos::new(cx, cy),
+                    spawn,
+                    id,
+                    &species,
+                ) {
                     deposits.push(d);
                 }
             }
@@ -84,6 +90,7 @@ impl World {
             width_chunks: config.width_chunks,
             height_chunks: config.height_chunks,
             spawn,
+            species,
             deposits,
             players: Vec::new(),
             buildings: Vec::new(),
@@ -108,6 +115,24 @@ impl World {
         TilePos::new(
             self.spawn.x * CHUNK_SIZE + CHUNK_SIZE / 2,
             self.spawn.y * CHUNK_SIZE + CHUNK_SIZE / 2,
+        )
+    }
+
+    pub fn species(&self, id: SpeciesId) -> &MineralSpecies {
+        &self.species[usize::from(id.0)]
+    }
+
+    pub fn species_mut(&mut self, id: SpeciesId) -> &mut MineralSpecies {
+        &mut self.species[usize::from(id.0)]
+    }
+
+    /// Human-readable item name, e.g. `Korvite ore (B)`.
+    pub fn item_name(&self, item: Item) -> String {
+        format!(
+            "{} {} ({})",
+            self.species(item.species).name(),
+            item.kind.name(),
+            item.grade.letter()
         )
     }
 
@@ -138,6 +163,12 @@ impl World {
     /// The building covering `pos`, if any.
     pub fn building_at(&self, pos: TilePos) -> Option<&Building> {
         self.buildings.iter().find(|b| b.covers(pos))
+    }
+
+    /// The hottest a building's walls survive: its material's heat
+    /// tolerance, which does not scale with grade.
+    pub fn max_temperature(&self, b: &Building) -> u32 {
+        u32::from(self.species(b.material.species).sheet.heat_tolerance)
     }
 
     /// The deposit covering `pos`, if any.

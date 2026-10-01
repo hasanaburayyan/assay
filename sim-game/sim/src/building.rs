@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::item::{Item, ItemStack};
+use crate::item::{Item, ItemKind, ItemStack};
 use crate::types::TilePos;
 
 /// Stable ID for a building. Unlike deposits, buildings come and go, so IDs
@@ -16,6 +16,9 @@ pub struct Building {
     pub id: BuildingId,
     /// Top-left tile of the footprint.
     pub pos: TilePos,
+    /// The item it was placed from. Its species is the building's material:
+    /// a smelter's walls can only take that species' heat tolerance.
+    pub material: Item,
     pub kind: BuildingKind,
 }
 
@@ -24,35 +27,38 @@ pub enum BuildingKind {
     Smelter(Smelter),
 }
 
-/// Burns coal to turn ore into plates. Fixed 2×2 footprint.
+/// Which slot of a building an `Insert` aims at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Slot {
+    Input,
+    Fuel,
+}
+
+/// Burns reactive material to turn ore into refined material. Fixed 2×2.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Smelter {
-    /// Ore waiting to be smelted. One kind at a time.
+    /// Ore waiting to be smelted. One item at a time.
     pub input: Option<ItemStack>,
-    /// Coal not yet burning.
-    pub fuel: u32,
-    /// Ticks of burn left from the coal currently in the fire. Only counts
+    /// Fuel not yet burning. One item at a time.
+    pub fuel: Option<ItemStack>,
+    /// Ticks of burn left from the unit currently in the fire. Only counts
     /// down while smelting.
     pub burn_left: u32,
-    /// Plates waiting to be taken out.
+    /// How hot the fire is while `burn_left > 0`: the burning fuel's
+    /// effective reactivity. Zero when cold.
+    pub burn_temperature: u32,
+    /// Refined material waiting to be taken out.
     pub output: Option<ItemStack>,
-    /// Ticks spent on the current plate.
+    /// Ticks spent on the current unit.
     pub progress: u32,
 }
 
 impl BuildingKind {
-    /// The building an item turns into when placed, if it is a building.
-    pub fn from_item(item: Item) -> Option<BuildingKind> {
-        match item {
-            Item::Smelter => Some(BuildingKind::Smelter(Smelter::default())),
+    /// The building an item kind turns into when placed, if any.
+    pub fn for_item(kind: ItemKind) -> Option<BuildingKind> {
+        match kind {
+            ItemKind::Smelter => Some(BuildingKind::Smelter(Smelter::default())),
             _ => None,
-        }
-    }
-
-    /// The item you get back when picking the building up.
-    pub const fn item(&self) -> Item {
-        match self {
-            BuildingKind::Smelter(_) => Item::Smelter,
         }
     }
 
@@ -64,7 +70,9 @@ impl BuildingKind {
     }
 
     pub const fn name(&self) -> &'static str {
-        self.item().name()
+        match self {
+            BuildingKind::Smelter(_) => "smelter",
+        }
     }
 }
 

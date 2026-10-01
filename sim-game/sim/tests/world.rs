@@ -27,16 +27,17 @@ fn different_seeds_build_different_worlds() {
 }
 
 #[test]
-fn world_has_deposits_of_every_kind() {
+fn a_big_world_has_deposits_of_every_species() {
     let world = World::new(WorldConfig {
         seed: 7,
         width_chunks: 16,
         height_chunks: 16,
     });
-    for kind in sim::OreKind::ALL {
+    for s in &world.species {
         assert!(
-            world.deposits.iter().any(|d| d.kind == kind),
-            "no {kind:?} deposits"
+            world.deposits.iter().any(|d| d.species == s.id),
+            "no deposits of {}",
+            s.name()
         );
     }
 }
@@ -78,32 +79,38 @@ fn deposit_ids_match_their_index() {
     }
 }
 
+/// ADR 0001 withdrew "purity rises with distance from spawn". Purity is a
+/// seeded roll: no positive trend with distance, and the full range shows up.
 #[test]
-fn far_ore_is_purer_than_ore_near_spawn() {
-    let world = World::new(WorldConfig {
-        seed: 11,
-        width_chunks: 16,
-        height_chunks: 16,
-    });
-    let dist = |c: TilePos| c.chunk().distance(world.spawn);
-    let near_max = world
-        .deposits
-        .iter()
-        .filter(|d| dist(d.center) <= 1)
-        .map(|d| d.purity)
-        .max();
-    let far_min = world
-        .deposits
-        .iter()
-        .filter(|d| dist(d.center) >= 3)
-        .map(|d| d.purity)
-        .min();
-    let (Some(near_max), Some(far_min)) = (near_max, far_min) else {
-        panic!("world too small to compare near and far deposits");
-    };
+fn purity_has_no_distance_trend_and_spans_the_range() {
+    let (mut near, mut far) = ((0u64, 0u64), (0u64, 0u64));
+    let (mut lowest, mut highest) = (u8::MAX, u8::MIN);
+    for seed in 0..40 {
+        let world = World::new(WorldConfig {
+            seed,
+            width_chunks: 16,
+            height_chunks: 16,
+        });
+        for d in &world.deposits {
+            lowest = lowest.min(d.purity);
+            highest = highest.max(d.purity);
+            let bucket = match d.center.chunk().distance(world.spawn) {
+                0..=1 => &mut near,
+                2..=3 => continue,
+                _ => &mut far,
+            };
+            bucket.0 += u64::from(d.purity);
+            bucket.1 += 1;
+        }
+    }
+    let (near_avg, far_avg) = (near.0 / near.1, far.0 / far.1);
     assert!(
-        far_min > near_max,
-        "far min {far_min} should beat near max {near_max}"
+        far_avg <= near_avg + 5,
+        "far ore ({far_avg}) is still purer on average than near ore ({near_avg})"
+    );
+    assert!(
+        lowest <= 10 && highest >= 90,
+        "purity range {lowest}..{highest}"
     );
 }
 
@@ -111,8 +118,13 @@ fn far_ore_is_purer_than_ore_near_spawn() {
 fn chunks_generate_the_same_in_any_order() {
     let world = World::new(config(5));
     for d in &world.deposits {
-        let regenerated =
-            sim::worldgen::deposit_in_chunk(world.seed, d.center.chunk(), world.spawn, d.id);
+        let regenerated = sim::worldgen::deposit_in_chunk(
+            world.seed,
+            d.center.chunk(),
+            world.spawn,
+            d.id,
+            &world.species,
+        );
         assert_eq!(regenerated.as_ref(), Some(d));
     }
     // A chunk outside the map can still be generated on demand.
@@ -121,6 +133,7 @@ fn chunks_generate_the_same_in_any_order() {
         ChunkPos::new(-50, 900),
         world.spawn,
         DepositId(0),
+        &world.species,
     );
 }
 

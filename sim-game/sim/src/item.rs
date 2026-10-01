@@ -1,83 +1,75 @@
-//! Everything a player or machine can hold: raw ore, smelted plates, parts,
-//! and machines waiting to be placed.
-//!
-//! Items are fungible for now. Ore purity and part quality will attach to
-//! stacks later (a tier on `ItemStack`), which is why inventories are lists
-//! of stacks rather than a fixed set of counters.
+//! Everything a player or machine can hold. Every item is of one species at
+//! one grade: raw ore, refined material, parts made from it, and buildings
+//! waiting to be placed. Items stack only when all three match.
 
 use serde::{Deserialize, Serialize};
 
-use crate::ore::OreKind;
+use crate::mineral::{Grade, SpeciesId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum Item {
-    IronOre,
-    CopperOre,
-    Coal,
-    Stone,
-    IronPlate,
-    CopperPlate,
-    IronGear,
+pub enum ItemKind {
+    /// Straight out of the ground.
+    Ore,
+    /// Smelted ore. What parts are made from.
+    Refined,
+    Gear,
+    /// A smelter built from raw ore; its walls are that species.
     Smelter,
 }
 
-impl Item {
-    pub const ALL: [Item; 8] = [
-        Item::IronOre,
-        Item::CopperOre,
-        Item::Coal,
-        Item::Stone,
-        Item::IronPlate,
-        Item::CopperPlate,
-        Item::IronGear,
-        Item::Smelter,
+impl ItemKind {
+    pub const ALL: [ItemKind; 4] = [
+        ItemKind::Ore,
+        ItemKind::Refined,
+        ItemKind::Gear,
+        ItemKind::Smelter,
     ];
 
-    /// The name players type and see, e.g. `iron-ore`.
     pub const fn name(self) -> &'static str {
         match self {
-            Item::IronOre => "iron-ore",
-            Item::CopperOre => "copper-ore",
-            Item::Coal => "coal",
-            Item::Stone => "stone",
-            Item::IronPlate => "iron-plate",
-            Item::CopperPlate => "copper-plate",
-            Item::IronGear => "iron-gear",
-            Item::Smelter => "smelter",
+            ItemKind::Ore => "ore",
+            ItemKind::Refined => "refined",
+            ItemKind::Gear => "gear",
+            ItemKind::Smelter => "smelter",
         }
     }
 
-    /// Parse a typed name. Accepts the canonical name plus a few short
-    /// forms (`iron`, `gear`, `plate`), case-insensitively.
-    pub fn parse(s: &str) -> Option<Item> {
-        let s = s.to_ascii_lowercase();
-        Some(match s.as_str() {
-            "iron-ore" | "iron_ore" | "ironore" | "iron" => Item::IronOre,
-            "copper-ore" | "copper_ore" | "copperore" | "copper" => Item::CopperOre,
-            "coal" => Item::Coal,
-            "stone" => Item::Stone,
-            "iron-plate" | "iron_plate" | "ironplate" | "plate" => Item::IronPlate,
-            "copper-plate" | "copper_plate" | "copperplate" => Item::CopperPlate,
-            "iron-gear" | "iron_gear" | "irongear" | "gear" => Item::IronGear,
-            "smelter" => Item::Smelter,
-            _ => return None,
-        })
-    }
-
-    /// The raw item a deposit of this ore kind yields.
-    pub const fn from_ore(kind: OreKind) -> Item {
-        match kind {
-            OreKind::Iron => Item::IronOre,
-            OreKind::Copper => Item::CopperOre,
-            OreKind::Coal => Item::Coal,
-            OreKind::Stone => Item::Stone,
+    pub fn parse(s: &str) -> Option<ItemKind> {
+        match s.to_ascii_lowercase().as_str() {
+            "ore" => Some(ItemKind::Ore),
+            "refined" | "ref" | "ingot" | "plate" => Some(ItemKind::Refined),
+            "gear" | "gears" => Some(ItemKind::Gear),
+            "smelter" => Some(ItemKind::Smelter),
+            _ => None,
         }
     }
 }
 
-impl From<OreKind> for Item {
-    fn from(kind: OreKind) -> Self {
-        Item::from_ore(kind)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Item {
+    pub kind: ItemKind,
+    pub species: SpeciesId,
+    pub grade: Grade,
+}
+
+impl Item {
+    pub const fn new(kind: ItemKind, species: SpeciesId, grade: Grade) -> Self {
+        Self {
+            kind,
+            species,
+            grade,
+        }
+    }
+
+    /// Short machine-readable form, e.g. `ore#2(B)`. Hosts with a world
+    /// show species names instead (`World::item_name`).
+    pub fn code(&self) -> String {
+        format!(
+            "{}#{}({})",
+            self.kind.name(),
+            self.species.0,
+            self.grade.letter()
+        )
     }
 }
 
