@@ -79,8 +79,9 @@ fully playable in text, so every stat below has to be readable from
 10. **The sim never refuses an assembly for its mass.** On placement, and on
     a held tool's first use, `mass > budget` **breaks** the machine: no
     building, an event, and a reduced set of parts back (decision 11). The
-    heaviest part is always lost — ties resolved by lowest index in the
-    assembly's part order, so two peers cannot disagree — and every other
+    heaviest part is always lost — **superseded by amendment A1 below: the
+    heaviest part that is NOT the frame** — ties resolved by lowest index in
+    the assembly's part order, so two peers cannot disagree, and every other
     part returns on one seeded roll per part, `BREAK_RETURN_PERCENT`, taken
     in part order with exactly one `rng` call per part on every path. The
     always-lost rule lives in its own named function so that changing it to
@@ -99,9 +100,9 @@ fully playable in text, so every stat below has to be readable from
     held frame carries 240 against a 150-mass pick), and a reachable one
     must break (the same pick in a density-90 species is 270 and breaks;
     a drill's second hopper breaks it in a dense species). The pick's pool
-    is unchanged from its ruling — head size 1 × effective strength 40 ×
-    `PICK_DURABILITY_PER_STRENGTH 10` = 400 = **20 swings** at
-    `PICK_WEAR_PER_SWING 20`.
+    was head size 1 × effective strength 40 × `PICK_DURABILITY_PER_STRENGTH
+    10` = 400 = 20 swings at `PICK_WEAR_PER_SWING 20` — **superseded by
+    amendment A2 below: 60 per strength, so 120 swings.**
 
 Testable: an assembly command takes any part list fitting the frame's slots,
 and `n` hoppers for `n` in `0..=max` raises capacity and mass monotonically
@@ -111,6 +112,58 @@ overweight design placed yields no building, a break event naming the lost
 part, and fewer parts back (decision 11). The catalogue tests loop over
 `PartKind::ALL` and name no kind, so a part kind added later joins them
 without being written into them.
+
+## Amendments, 2026-10-01 (before any code was written)
+
+Recorded rather than edited in, so what was decided and who moved it both
+stay visible. All five came from the Game Director on ASSA-5 and ASSA-6, two
+of them reversing the CEO's earlier default with his agreement. **I checked
+the arithmetic in A1, A2 and A5 myself rather than taking it on faith; every
+rate below reproduces.**
+
+**A1. The part always lost in a break is the heaviest that is NOT the frame.**
+With no non-frame part, the frame is lost. This takes the one-line escape
+point 10 set aside and reverses the *which part* half of the CEO's default
+(his 19:22, accepted by the Game Director 19:43, reversed by her 20:57, agreed
+by him 20:58). Everything else in point 10 stands unchanged. The reason is
+measured, not aesthetic: mass is size × density, so at point 12's sizes the
+frame is the heaviest part of **every** demo design (pick 2d > d; drill 5d >
+d and > 2d), and mixed species only reverse it if another part's material is
+more than 2.5× denser. "Heaviest is always lost" was therefore "the frame is
+always lost" — which costs the player the budget-carrying piece on every
+failure, a punishment spiral instead of a lesson. Properties roll
+independently and uniformly over 1–100 (`worldgen.rs`), so P(density > c ×
+strength) = 1/2c for c ≥ 1: a same-species pick breaks at **C 42% / B 31% /
+A 25%**, and a four-hopper drill at B at ~57%, which is point 12's "mass is
+what stops you stacking hoppers" holding at the rate it claimed.
+
+**A2. `PICK_DURABILITY_PER_STRENGTH` 10 → 60, so the pool is 120 swings**
+at a grade-B strength-50 head. `PICK_WEAR_PER_SWING` stays 20. Decision 7
+parks the hardness ladder, so hands mine everything a pick can and a pick
+buys only **time**; 3 refined costs 3 ore plus 60 ticks of smelting, which
+20 swings cannot repay. The first number was measured in ore, and ore is not
+what a pick gates.
+
+**A3. Mining speed accumulates; it is not integer tick-steps.**
+`HAND_MINE_TICKS 4` can only express 4/3/2/1, and decision 8's test needs 60%
+and 100% of one species' hardness to differ. So work accrues per tick against
+a fixed work-per-unit (hands 25, unit 100, which leaves hands at exactly four
+ticks), with the remainder carrying so the average rate is exactly monotone
+in effective hardness. Drills read the same curve; decision 7's hand hardness
+gate does not move.
+
+**A4. The two off-by-ones differ on purpose.** A break on first use yields
+**no** ore from that swing; the swing that empties the durability pool **does**
+yield its ore. A break is a design failing, an emptied pool is work finished.
+
+**A5. The bad case has to be visible, not discovered.** At grade B, 21% of
+species have density > 2.4 × strength, which gives a **held frame whose own
+mass exceeds its own budget**: every pick built on it breaks whatever head is
+fitted, and the player is left feeding heads to a frame. Because unassayed
+sheets read as 25-wide bands, **mass against frame budget must be shown —
+banded before an assay, exact after** — and the inspector panel ASSA-5 adds
+is where that lands first. This is also why `FRAME_BUDGET_PER_STRENGTH` stays
+3: breaking is the teeth behind assaying.
 
 ## Consequences
 
