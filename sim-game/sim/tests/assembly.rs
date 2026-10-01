@@ -248,6 +248,44 @@ fn the_lost_part_is_the_heaviest_that_is_not_the_frame() {
     assert_eq!(bare.part_always_lost(&roster), 0);
 }
 
+/// A1's consequence, pinned so it is never read later as a bug: a pick has
+/// exactly two parts, so the head is **always** the part lost — at any
+/// density, including pairings where the head out-weighs the frame. Intended:
+/// the head is the size-1 piece. The mass lesson lives in drills, where which
+/// non-frame part is heaviest does vary with density.
+#[test]
+fn a_picks_lost_part_is_always_the_head() {
+    let mut saw_a_heavier_head = false;
+    for (frame_density, head_density) in [(50, 50), (99, 1), (1, 99)] {
+        let roster = vec![
+            species(0, frame_density, 50, 50),
+            species(1, head_density, 50, 50),
+        ];
+        let p = Assembly::new(
+            part(HELD, 0, Grade::B),
+            vec![part(PartKind::Head, 1, Grade::B)],
+        );
+        if Assembly::part_mass(&p.mounted[0], &roster[1])
+            > Assembly::part_mass(&p.frame, &roster[0])
+        {
+            saw_a_heavier_head = true;
+        }
+        let lost = p
+            .parts()
+            .nth(p.part_always_lost(&roster))
+            .expect("the lost index must name a part");
+        assert_eq!(
+            lost.kind,
+            PartKind::Head,
+            "frame density {frame_density}, head density {head_density}"
+        );
+    }
+    assert!(
+        saw_a_heavier_head,
+        "the interesting case — a head heavier than its frame — was never reached"
+    );
+}
+
 /// Every row in the catalogue earns its place: it is reachable, it costs
 /// something, and it moves at least one stat. Names no kind, so a kind added
 /// later is covered by this test without editing it.
