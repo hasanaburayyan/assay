@@ -76,11 +76,20 @@ model the sim does not implement; it is harmless only because
 `MIN_STARTER_RUNGS` is 1. Gate a future drill on **effective hardness**, not
 on the factor.
 
-Method: 2000 seeds of the standard 6×4-chunk test world, scored in a scratch
-`sim` integration test against `rungs()` and `effective(Hardness, Grade::B)`.
-Figures above replace the first pass quoted on ASSA-6 (39%, "1.39 rerolls"),
-which sampled fewer seeds and, in the reroll figure, counted attempts and
-called them rerolls.
+Method: 2000 seeds of the standard 6×4-chunk test world, built through
+`World::new` and scored in a scratch `sim` integration test against
+`rungs()` and `effective(Hardness, Grade::B)`.
+
+These figures replace the first pass quoted on ASSA-6 (39%, 72.0% accepted,
+"1.39 rerolls"). The reroll figure there was simply mislabelled — 1.39 was
+the expected number of *attempts*, which is 0.39 rerolls, and the same
+quantity here is 1.41 attempts / 0.41 rerolls. The percentages differ for a
+reason worth keeping: that pass drew **4000 rosters straight from
+`worldgen::species_roster`**, i.e. more samples than this one, while this
+pass builds **2000 whole worlds**. `World::new` already rerolls the roster
+until the starter ladder holds, so the two are not sampling the same
+population, and it is the second one — rosters that survive the existing
+reroll — that the proposed condition actually filters. Prefer these.
 
 ## Where grades stand (built, open to retuning)
 
