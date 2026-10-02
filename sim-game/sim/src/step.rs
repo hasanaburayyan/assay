@@ -501,13 +501,11 @@ fn apply_player(
             }
 
             let built = Built::new(assembly, &world.species);
-            let stats = built.assembly.stats(&world.species);
             let p = world.player_mut(player).expect("checked above");
             p.assemblies.push(built);
             events.push(Event::Assembled {
                 player,
                 assembly: (p.assemblies.len() - 1) as u32,
-                stats,
             });
         }
         PlayerCommand::Equip { assembly } => {
@@ -523,13 +521,12 @@ fn apply_player(
                 .expect("checked above")
                 .assemblies
                 .remove(assembly as usize);
-            let stats = taken.assembly.stats(&world.species);
             let p = world.player_mut(player).expect("checked above");
             // Whatever was in hand goes back to the list, wear and all.
             if let Some(old) = p.tool.replace(taken) {
                 p.assemblies.push(old);
             }
-            events.push(Event::Equipped { player, stats });
+            events.push(Event::Equipped { player });
         }
         PlayerCommand::Unequip => {
             let p = world.player_mut(player).expect("checked above");

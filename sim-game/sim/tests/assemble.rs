@@ -660,10 +660,19 @@ fn equipping_takes_the_tool_in_hand_with_a_full_pool() {
     assert_eq!(tool.assembly, design);
     assert_eq!(tool.durability, expected.durability);
     assert!(tool.durability > 0, "a pick must have a pool");
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, Event::Equipped { stats, .. } if *stats == expected))
+    assert!(events.iter().any(|e| matches!(e, Event::Equipped { .. })));
+    // The event deliberately carries no stats: an unassayed sheet must stay
+    // banded, so a host reads the design out of the world instead.
+    assert_eq!(
+        world
+            .player(me)
+            .unwrap()
+            .tool
+            .as_ref()
+            .unwrap()
+            .assembly
+            .stats(&world.species),
+        expected
     );
 }
 

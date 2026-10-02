@@ -460,10 +460,17 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
     let n = world.players.len() as u16;
     let b = world.buildings.len() as u16;
     let sp = world.species.len() as u16;
+    // One row per design in hand or on the built list, for me only: this panel
+    // is about what I am deciding to spend parts on.
+    let mine = world.player(me.unwrap_or(sim::PlayerId(u32::MAX)));
+    let designs = mine.map_or(0, |p| {
+        p.assemblies.len() as u16 + u16::from(p.tool.is_some())
+    });
     let [
         w_area,
         p_area,
         inv_area,
+        mach_area,
         sp_area,
         tile_area,
         bld_area,
@@ -473,6 +480,7 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
         Constraint::Length(8),
         Constraint::Length((n + 2).clamp(3, 8)), // borders + one row per player
         Constraint::Length((n + 2).clamp(3, 8)), // borders + one row per player
+        Constraint::Length((designs + 2).clamp(3, 7)), // borders + one row per design
         Constraint::Length((sp + 3).clamp(4, 11)), // borders + header + one row per species
         Constraint::Length(6),
         Constraint::Length((b + 2).clamp(3, 8)), // borders + one row per building
@@ -555,6 +563,48 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
         })
         .collect();
     f.render_widget(Paragraph::new(lines).block(panel("Inventory")), inv_area);
+
+    // Machines: what I have built, and whether it will survive being used.
+    //
+    // The verdict and the numbers come from `sim` (`debug::assembly_readout`),
+    // not from this file: a renderer reads rules, it does not own them, and two
+    // clients computing this would eventually disagree. Amendment A5's point is
+    // that the bad case has to be visible here rather than discovered when the
+    // design breaks.
+    let width = usize::from(mach_area.width.saturating_sub(10));
+    let design_line = |label: &str, built: &sim::Built| {
+        let verdict = built.assembly.stat_range(&world.species).verdict();
+        let colour = match verdict {
+            sim::BreakVerdict::Safe => palette::DIM,
+            sim::BreakVerdict::Uncertain => palette::ACCENT,
+            sim::BreakVerdict::WillBreak => palette::WARN,
+        };
+        Line::from(vec![
+            Span::styled(format!("{label:<8} "), Style::default().fg(palette::DIM)),
+            Span::styled(
+                truncate(&debug::assembly_readout(world, built), width),
+                Style::default().fg(colour),
+            ),
+        ])
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    if let Some(p) = mine {
+        match &p.tool {
+            Some(t) => lines.push(design_line("in hand", t)),
+            None => lines
+                .push(Line::from("in hand  bare hands").style(Style::default().fg(palette::DIM))),
+        }
+        for (i, built) in p.assemblies.iter().enumerate() {
+            lines.push(design_line(&format!("built {i}"), built));
+        }
+    }
+    if lines.is_empty() {
+        lines.push(Line::from("no player").style(Style::default().fg(palette::DIM)));
+    }
+    f.render_widget(
+        Paragraph::new(lines).block(panel("Machines (mass vs budget)")),
+        mach_area,
+    );
 
     // Species: the roster and its sheets
     let mut lines = vec![

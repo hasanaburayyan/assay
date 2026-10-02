@@ -15,7 +15,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::assembly::{AssemblyError, MachineStats, PartKind};
+use crate::assembly::{AssemblyError, PartKind};
 use crate::building::{BuildingId, Slot};
 use crate::item::Item;
 use crate::mineral::{NameError, Property, SpeciesId};
@@ -228,16 +228,18 @@ pub enum Event {
         count: u32,
     },
     /// A machine was built and added to the player's built list at `assembly`.
-    /// Its stats ride along because they are the point of building it.
+    ///
+    /// **No stats here on purpose.** They are derived from the parts' sheets,
+    /// and what a player may *read* of a sheet is banded until they assay it
+    /// (amendment A5). An event carrying the exact mass and budget would hand
+    /// over for free what the verdict is careful to band, and 30 ticks of
+    /// assaying would buy nothing. Hosts read the design out of the world.
     Assembled {
         player: PlayerId,
         assembly: u32,
-        stats: MachineStats,
     },
     Equipped {
         player: PlayerId,
-        /// The stats of what is now in hand.
-        stats: MachineStats,
     },
     Unequipped {
         player: PlayerId,
