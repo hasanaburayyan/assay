@@ -186,6 +186,23 @@ func _report() -> void:
 	for line in _hashes:
 		print("  %s" % line)
 	print("  the sim's verdict on the design before planting: %s" % _play.planted_verdict)
+	# EVERY DESIGN THIS PLAYER ENDS UP HOLDING, in the sim's own words. This is the bench readout a
+	# person sees, printed so a seed can be CHOSEN by what the board would read rather than by what I
+	# expect a sheet to do. Mass and budget come along because a verdict alone hides its margin: the
+	# seed this demo was built on showed WILL BREAK at mass 198 against a 192 budget, six units of
+	# room, and a worldgen change tipped it to SAFE without anyone touching the demo (ASSA-45/#38).
+	#
+	# READ, NEVER DERIVED. `verdict` is the sim's word; this prints it beside the numbers rather than
+	# comparing them here -- two renderers forming that opinion is the one disagreement the binding
+	# is specifically forbidden to have (`designs_of`, ADR 0003 A8).
+	for entry in _screen._sim.designs_of(_screen._client.player_id):
+		var design: Dictionary = entry
+		print("  bench: [%s] %s · mass %s-%s of budget %s-%s"
+				% [String(design.get("verdict", "?")),
+					"in hand" if bool(design.get("in_hand", false)) else String(
+							design.get("mount", "?")),
+					design.get("mass_low", "?"), design.get("mass_high", "?"),
+					design.get("budget_low", "?"), design.get("budget_high", "?")])
 	print("  %s" % _play.outcome)
 	print("  final: tick %d, hash %s, %d bundles applied"
 			% [_screen._sim.tick(), _screen._sim.hash_hex(), _screen._sim.applied])

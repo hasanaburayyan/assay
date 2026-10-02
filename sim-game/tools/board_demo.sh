@@ -30,7 +30,20 @@ SEED="${SEED:-777042}"
 ACCOUNT="${ACCOUNT:-hasanaburayyan}"
 TICKS="${TICKS:-400}"
 GODOT="${GODOT:-/Applications/Godot_mono.app/Contents/MacOS/Godot}"
-OUT=/tmp/limpet-demo
+# OVERRIDABLE, AND IT HAS TO BE. This was a hardcoded `/tmp/limpet-demo` followed by `rm -rf`, which
+# is fine exactly once: the moment a bench built by this script is LIVE and someone runs it again to
+# try a second seed, the second run deletes the saves directory out from under the first run's
+# relay -- while the board is being asked to open it (Decision #38). The port guard below stops two
+# relays sharing a port; nothing stopped two runs sharing a directory. I nearly did it to Nerite's
+# 7803 bench; a different PORT needs a different OUT, so pass both.
+OUT="${OUT:-/tmp/limpet-demo}"
+if [ -e "$OUT" ] && [ "${OUT_FORCE:-0}" != "1" ] && pgrep -f "sim-relay .* --port" >/dev/null 2>&1 \
+    && lsof +D "$OUT" >/dev/null 2>&1; then
+  echo "FAIL  something is still holding files in $OUT -- most likely a relay this script"
+  echo "      started earlier and that someone is using. Pass OUT=<dir> for a separate run,"
+  echo "      or OUT_FORCE=1 if you are certain."
+  exit 1
+fi
 rm -rf "$OUT"; mkdir -p "$OUT"
 export R2TS_SAVES_DIR="$OUT/saves"
 mkdir -p "$R2TS_SAVES_DIR"
