@@ -8,18 +8,22 @@ extends Node
 ## WHAT THIS NODE DOES NOT DO, AND MUST NEVER DO: apply a tick bundle. A bundle carries INPUTS, not
 ## state, so the only way to know the world at tick N is to run the sim over them -- and the sim is
 ## the Rust `sim` crate, which no line of GDScript may reimplement (principle 1). So this node
-## reports bundles and keeps count; whoever holds the sim applies them. Until that binding exists
-## the client can show the joined snapshot and nothing newer, and `tick_bundle` is where the sim
-## gets wired in, not where a second rules engine grows.
+## reports bundles and keeps count; `AssaySimHost` holds the sim and applies them.
+##
+## EVERY SIGNAL CARRIES THE RAW TEXT OF THE MESSAGE AS WELL AS THE PARSED DICTIONARY, and the two are
+## not interchangeable. The sim is fed the TEXT, because Godot's JSON has already turned every number
+## into a double by the time the Dictionary exists -- a `u64` seed in it is already wrong. The
+## Dictionary is for showing things to a person.
 ##
 ## Reconnect is deliberately absent (Decision 3): a dropped client restarts to rejoin.
 
-## Accepted: our slot, and the world to start from. The next bundle is for `world.tick`.
-signal welcomed(player: int, world: Dictionary)
+## Accepted: our slot, the world to start from, and the message's own text for the sim. The next
+## bundle is for `world.tick`.
+signal welcomed(player: int, world: Dictionary, raw: String)
 ## The relay said no. The connection is closed after this.
 signal refused(reason: String)
-## One tick's inputs, in the order every peer must apply them.
-signal tick_bundle(tick: int, inputs: Array)
+## One tick's inputs, in the order every peer must apply them, plus the message's own text.
+signal tick_bundle(tick: int, inputs: Array, raw: String)
 ## Our hash for `tick` did not match the host's. Unrecoverable in the demo: restart to rejoin.
 signal desynced(tick: int)
 ## The socket never came up, or died. `reason` is for a player to read.
@@ -52,6 +56,13 @@ func _ready() -> void:
 ## Start joining. `address` is "host", "host:port" or "[v6]:port"; a bare address takes 7777.
 func join(address: String, player_name: String) -> void:
 	_name = player_name
+	# THE WIRE'S NUMBER COMES FROM RUST, so a client that cannot ask does not join. Saying hello with
+	# an invented protocol number gets refused by the relay with a message that blames neither side,
+	# and this client could not have simulated a tick anyway -- the same missing library is why.
+	if AssayProtocol.protocol_version() == AssayProtocol.UNKNOWN_PROTOCOL:
+		_fail(("the sim binding did not load, so this client does not know which protocol it speaks "
+				+ "or how to run a tick. Build it with `make client-lib`."))
+		return
 	var split := AssayProtocol.split_address(address)
 	var host: String = split[0]
 	var port: int = split[1]
@@ -76,6 +87,25 @@ func submit(command: Variant) -> bool:
 	return _write(AssayProtocol.submit(command))
 
 
+## Send a message somebody else already wrote as JSON.
+##
+## For `ClientMsg::Hash`, which the sim binding serialises because GDScript cannot spell a `u64` (see
+## `protocol.gd`). This frames the text and writes it; it does not look inside.
+func send_text(json_text: String) -> bool:
+	if stage != Stage.JOINED:
+		note.emit("not joined, so nothing was sent")
+		return false
+	if json_text == "":
+		note.emit("refusing to send an empty message")
+		return false
+	var frame := AssayProtocol.encode_text(json_text)
+	var err := _socket.put_data(frame)
+	if err != OK:
+		_fail("could not send to %s: %s" % [_where, error_string(err)])
+		return false
+	return true
+
+
 func _process(_delta: float) -> void:
 	if stage == Stage.IDLE or stage == Stage.DEAD:
 		return
@@ -96,7 +126,7 @@ func _process(_delta: float) -> void:
 		if not _write(AssayProtocol.hello(_name)):
 			return
 		stage = Stage.GREETED
-		note.emit("said hello on protocol %d" % AssayProtocol.PROTOCOL_VERSION)
+		note.emit("said hello on protocol %d" % AssayProtocol.protocol_version())
 
 	var available := _socket.get_available_bytes()
 	if available > 0:
@@ -120,6 +150,9 @@ func _handle(msg: Variant) -> void:
 	var tagged := AssayProtocol.variant_of(msg)
 	var kind: String = tagged[0]
 	var body: Variant = tagged[1]
+	# The bytes this message arrived as. Taken before anything else, because `_handle` may be given a
+	# dictionary directly by a test, in which case there is no text and the sim is not involved.
+	var raw := _reader.last_text
 	match kind:
 		"Welcome":
 			var world: Dictionary = (body as Dictionary).get("world", {})
@@ -127,7 +160,7 @@ func _handle(msg: Variant) -> void:
 			joined_world = world
 			last_tick = int(world.get("tick", -1))
 			stage = Stage.JOINED
-			welcomed.emit(player_id, world)
+			welcomed.emit(player_id, world, raw)
 		"Refused":
 			var reason := String((body as Dictionary).get("reason", "no reason given"))
 			stage = Stage.DEAD
@@ -137,7 +170,7 @@ func _handle(msg: Variant) -> void:
 			var bundle: Dictionary = body as Dictionary
 			bundles_seen += 1
 			last_tick = int(bundle.get("tick", last_tick))
-			tick_bundle.emit(last_tick, bundle.get("inputs", []))
+			tick_bundle.emit(last_tick, bundle.get("inputs", []), raw)
 		"Desync":
 			desynced.emit(int((body as Dictionary).get("tick", -1)))
 		_:

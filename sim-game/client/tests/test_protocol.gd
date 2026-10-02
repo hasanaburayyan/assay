@@ -30,7 +30,7 @@ func test_a_message_survives_its_own_framing() -> bool:
 	var body: Dictionary = (back as Dictionary).get("Hello", {})
 	if String(body.get("name", "")) != "ada":
 		return _fail("the name did not survive: %s" % back)
-	if int(body.get("protocol", -1)) != AssayProtocol.PROTOCOL_VERSION:
+	if int(body.get("protocol", -1)) != AssayProtocol.protocol_version():
 		return _fail("the protocol number did not survive: %s" % back)
 	if reader.pending_bytes() != 0:
 		return _fail("%d bytes left over after one message" % reader.pending_bytes())
@@ -120,10 +120,11 @@ func test_a_body_that_is_not_json_kills_the_stream() -> bool:
 	return true
 
 
-## THE CROSS-LANGUAGE GUARD, AND THE REASON THIS FILE EXISTS. `PROTOCOL_VERSION` is declared in
-## Rust; this client keeps a copy because GDScript cannot read a Rust const at runtime. A copy
-## without a test is a copy that goes stale, and the failure it causes is a refused join whose
-## message blames neither side.
+## THE CROSS-LANGUAGE GUARD, AND THE REASON THIS FILE EXISTS. `PROTOCOL_VERSION` is declared in Rust
+## and this client no longer keeps a copy -- it asks the binding at runtime. So this test is no longer
+## checking a copy for staleness; it is checking that the number coming through the binding is the one
+## written in `sim-net`, which is the claim the whole arrangement rests on. It would fail if someone
+## made `protocol_version()` return a literal.
 func test_the_protocol_number_is_the_one_rust_declares() -> bool:
 	var path := "res://%s" % AssayProtocol.RUST_PROTOCOL_PATH
 	var file := FileAccess.open(path, FileAccess.READ)
@@ -139,10 +140,14 @@ func test_the_protocol_number_is_the_one_rust_declares() -> bool:
 	if m == null:
 		return _fail("no `PROTOCOL_VERSION: u32 = N` in %s: this guard is measuring nothing" % path)
 	var rust := int(m.get_string(1))
-	if rust != AssayProtocol.PROTOCOL_VERSION:
-		return _fail(("sim-net declares PROTOCOL_VERSION %d and this client sends %d. The relay "
-				+ "refuses mismatched clients, so this is a join that fails with no useful error.")
-				% [rust, AssayProtocol.PROTOCOL_VERSION])
+	var ours := AssayProtocol.protocol_version()
+	if ours == AssayProtocol.UNKNOWN_PROTOCOL:
+		return _fail(("the binding did not hand over a protocol number, so this client cannot say "
+				+ "which wire it speaks. Build it with `make client-lib`."))
+	if rust != ours:
+		return _fail(("sim-net declares PROTOCOL_VERSION %d and this client sends %d. Since the "
+				+ "number now comes from the binding, this means `protocol_version()` is returning "
+				+ "something of its own.") % [rust, ours])
 	# And the limit, for the same reason: it decides which lengths this client calls garbage.
 	var limit := RegEx.create_from_string("MAX_MESSAGE_BYTES\\s*:\\s*u32\\s*=\\s*([0-9*\\s]+);")
 	var lm := limit.search(src)
@@ -181,4 +186,32 @@ func test_only_a_one_key_object_is_a_message() -> bool:
 		var got := AssayProtocol.variant_of(bad)
 		if String(got[0]) != "":
 			return _fail("%s was read as the message %s" % [bad, got[0]])
+	return true
+
+
+## NO PROTOCOL NUMBER MAY BE WRITTEN DOWN IN GDSCRIPT AGAIN. `sim-net` declares it, the binding hands
+## it over, and the test above proves those two agree -- but none of that stops someone adding a
+## convenient constant back, which is exactly what went stale once. A comment is not a guard; reading
+## the source is.
+func test_no_gdscript_file_declares_a_protocol_number() -> bool:
+	var offenders := []
+	var re := RegEx.create_from_string("(?i)PROTOCOL(_VERSION)?\\s*:?=\\s*[0-9]+")
+	for folder in ["res://scripts", "res://tests", "res://tools"]:
+		var dir := DirAccess.open(folder)
+		if dir == null:
+			continue
+		for name in dir.get_files():
+			var file := String(name).trim_suffix(".remap")
+			if not file.ends_with(".gd"):
+				continue
+			var text := FileAccess.get_file_as_string("%s/%s" % [folder, file])
+			for line in text.split("\n"):
+				var code := String(line).strip_edges()
+				if code.begins_with("#"):
+					continue
+				if re.search(code) != null:
+					offenders.append("%s: %s" % [file, code])
+	if not offenders.is_empty():
+		return _fail(("a protocol number is declared in GDScript: %s. Read it from the binding "
+				+ "(`AssayProtocol.protocol_version()`); sim-net owns the wire.") % [offenders])
 	return true

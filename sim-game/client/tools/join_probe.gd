@@ -59,7 +59,9 @@ func _process(_delta: float) -> bool:
 	return false
 
 
-func _on_welcomed(player: int, world: Dictionary) -> void:
+## `_raw` is the message's own text, which is what the sim is fed; this probe only reads the
+## snapshot, so it does not need it. `tools/lockstep_probe.gd` is the one that steps.
+func _on_welcomed(player: int, world: Dictionary, _raw: String) -> void:
 	_welcome_tick = int(world.get("tick", -1))
 	print("  welcomed as player %d into a world at tick %d" % [player, _welcome_tick])
 
@@ -101,7 +103,7 @@ func _finish(ok: bool, why: String) -> void:
 	_why = why
 	if ok:
 		print("JOIN PROBE OK: joined as player %d, protocol %d, %d bundles to tick %d" % [
-				_client.player_id, AssayProtocol.PROTOCOL_VERSION, _client.bundles_seen,
+				_client.player_id, AssayProtocol.protocol_version(), _client.bundles_seen,
 				_client.last_tick])
 	else:
 		print("FAIL  %s" % why)

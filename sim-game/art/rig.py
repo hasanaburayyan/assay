@@ -20,6 +20,33 @@ SS = 4                # supersample factor for the raw render
 TILT = math.radians(30)
 COS = math.cos(TILT)
 
+# ---------------------------------------------------------------- shadow
+#
+# A CONTACT SHADOW, NOT A CAST ONE (Maren's ruling, ASSA-11). The bound she
+# set is the one that matters and it is not a number: AT 1x NO SHADOW MAY
+# READ AS A PART. It was failing that outright -- measured on the part set at
+# true 1x, the shadow was 1.6-2.1x as many pixels as the BODY, peaked at
+# alpha 247-249 (so, near-opaque black) and reached up to 22 px past the body
+# to the south-east, which at a 64 px sprite is most of a tile. Tiled on a
+# full screen it smeared into the sprite beside it, and a shadow that reads
+# as a second object loses to GAME.md's "readability at small size beats
+# detail" every time.
+#
+# Two knobs, because the defect has two halves:
+#   SUN_TILT      LENGTH. Shadow runs as tan(tilt) of the object's height,
+#                 so casting at 9 degrees instead of the key's 42 takes it to
+#                 a sixth (tan 0.90 -> 0.16) and tucks it under the object
+#                 instead of laying it out beside it.
+#   SHADOW_ENERGY OPACITY. The catcher's alpha is the shadow lamp's SHARE of
+#                 the light, so a weak caster among strong shadowless fills
+#                 is a grey shadow rather than a black one. Raising the fills
+#                 instead does NOT work -- measured: lifting the downward
+#                 fill 0.9 -> 2.6 moved the handle's peak alpha 249 -> 249.
+# SUN_SOFTNESS is the third: a hard edge is what made it read as geometry.
+SUN_TILT = math.radians(9)
+SUN_SOFTNESS = math.radians(30)
+SHADOW_ENERGY = 0.9
+
 # Flat, saturated palette. Few colours, high contrast. Add here, not in assets.
 PALETTE = {
     "orange": "#F08A24", "orange_dk": "#B85A12", "gun": "#2E333B", "grey": "#6F7883",
@@ -34,6 +61,50 @@ PALETTE = {
     "line": "#1A1D23",
 }
 ORE_KINDS = ["iron", "copper", "coal", "stone"]
+
+# ---------------------------------------------------------------- parts
+#
+# PARTS LIE DOWN, AND THEY ALL MOUNT AT THE ORIGIN. Both rules are here and
+# not in an asset script because they are the two things every part piece has
+# to agree on, and agreement is what this file is for.
+#
+# 1. LIE DOWN. The camera is TILT off VERTICAL, so it mostly sees an object's
+#    TOP. A part drawn standing shows the viewer its end cap, and anything
+#    wider up the axis -- a collar over a taper -- covers the whole piece at
+#    every size. Measured on ASSA-11: a 0.30 collar over a 0.26 taper hid the
+#    entire bit, and the sprite read as a lid on a drum. Lying along X also
+#    costs nothing, because the tilt compresses Y and leaves X alone. This is
+#    why `items.py` reads: its chunks lie on the ground rather than stand on
+#    it. Use `rot=LYING` on anything whose long axis is the part's long axis.
+#
+# 2. MOUNT AT THE ORIGIN, WORK TOWARDS +X. A machine is drawn by stacking
+#    whole part sprites at the SAME frame position -- that is what "modular
+#    machines look modular" has to mean mechanically, and it only works if
+#    every piece agrees where the join is. So the join sits at x=0: a head's
+#    collar straddles it and its bit runs east; a frame (held or planted)
+#    straddles it and its body runs west. Compose by overlaying frames, never
+#    by rendering a per-machine sprite.
+#
+# Part frames are PART_TILES wide so both halves of a join fit one frame.
+# 3. ONE JOIN HEIGHT FOR EVERY PIECE. Overlaying frames only assembles a
+#    machine if the parts agree how high the join sits, so PART_AXIS is it.
+#    It is the head's collar radius, because the collar is the widest thing
+#    in the set and an assembled pick lying down rests on its head -- which
+#    is also true of a real one. A thin handle therefore floats clear of the
+#    ground when rendered ALONE, and that is correct rather than a bug: a
+#    part is drawn to be assembled, and `items.py` is where loose things on
+#    the ground are drawn.
+# 4. ONE FRAME SIZE. Overlaying only works if every part renders the same
+#    rectangle, so tiles AND headroom are fixed here for the whole set. The
+#    headroom is set by the TALLEST piece, not by each piece's own need: at
+#    0.3 the hopper's mouth was clipped flat against the top of its frame
+#    (body reaching row 0, measured) while every other part had room to
+#    spare. A per-asset headroom would have hidden that as four frames of
+#    different heights that silently refuse to compose.
+LYING = (0, math.pi / 2, 0)
+PART_TILES = (2, 1)
+PART_AXIS = 0.28
+PART_HEADROOM = 0.6
 
 
 def srgb(h):
@@ -68,6 +139,71 @@ def steel():
     return mat("steel", rough=0.45, metal=0.6)
 
 
+# ------------------------------------------------------------------ grade
+#
+# THREE STEPS, C/B/A -- the sim's `Grade`, not GAME.md's four purity tiers,
+# which are about DEPOSITS. A part is kind + species + grade, and grade is
+# three, so a four-step look would invent a distinction the player can never
+# act on (Maren's ruling, ASSA-11).
+#
+# ONE GEOMETRY, GRADE AS A PARAMETER, the lever `ore.py` already uses for
+# tiers: dull toward the dark shade low, full colour high, an emissive glint
+# at the top. Three drawings of a part would be three things to keep in step,
+# and the point of a part is that it is one shape.
+#
+# SPECIES IS NOT HERE AND MUST NOT BE. A world rolls six species at seed time
+# with generated sheets, so there is nothing to bake; species is colour the
+# client applies at runtime over these neutral pieces.
+GRADES = ("C", "B", "A")
+GRADE_DULL = (0.45, 0.15, 0.0)      # mixed toward GRADE_SHADE
+GRADE_SHADE = "gun"
+GRADE_GLINT = (0.0, 0.0, 2.5)       # emission on the part's warm accent, A only
+
+# WHICH PARTS WEAR A WARM MARK, and it is not "all of them".
+#
+#   A PART WEARS A VISIBLE WARM MARK IF AND ONLY IF ITS GRADE CHANGES A NUMBER
+#   IN SIM.
+#
+# Both halves of that are load-bearing. The "only if" is the half I got wrong
+# first: I had generalised to "every part needs a warm mark", because I had
+# just found the handle rendering grade as tone alone -- mean luminance apart,
+# but the peak clipped at 255 for both B and A, so the top two steps were
+# indistinguishable at 32 px. That part did need one. The fix is not a rule
+# about parts, it is a rule about what the glint PROMISES.
+#
+# The head, the handle (which is the held frame) and the planted frame all have
+# grade setting strength, and so budget and durability. Their glint is a promise
+# the sim keeps: this grade does something. A hopper's grade is inert --
+# capacity is flat, mass is size x density, and density never scales with grade
+# -- so a glint on a hopper would advertise a difference that does not exist.
+# See hopper.py, where the band is deliberately left where the camera cannot
+# see it.
+#
+# A tone step alone is NOT a visible mark: it does not survive 32 px once the
+# highlight clips. If a part's grade matters, give it a surface the glint can
+# land on; if it does not, give it nothing and say so where the part is built.
+
+
+def mix_hex(a, b, t):
+    a, b = PALETTE.get(a, a), PALETTE.get(b, b)
+    return "#" + "".join("%02x" % round(int(a[i:i + 2], 16) * (1 - t) + int(b[i:i + 2], 16) * t)
+                         for i in (1, 3, 5))
+
+
+def graded(color, g, **kw):
+    """`mat` for a part body at grade index g (0=C, 1=B, 2=A)."""
+    t = GRADE_DULL[g]
+    return mat(mix_hex(color, GRADE_SHADE, t) if t else color, **kw)
+
+
+def graded_accent(color, g, **kw):
+    """The one warm mark a part wears, which is where grade is loudest: dulled
+    at C, as drawn at B, and glinting at A. The glint is the top step's whole
+    signal at 1x -- a tone difference alone does not survive 32 px."""
+    return mat(mix_hex(color, GRADE_SHADE, GRADE_DULL[g]) if GRADE_DULL[g] else color,
+               emit=GRADE_GLINT[g], **kw)
+
+
 def lamp(color="cyan"):
     return mat(color, emit=6)
 
@@ -83,9 +219,28 @@ class Rig:
         self.env = bpy.data.collections.new("Env"); sc.collection.children.link(self.env)
         self._parent = None
 
-        sun = bpy.data.lights.new("sun", "SUN"); sun.energy = 3.2; sun.angle = math.radians(8)
+        # THE KEY NO LONGER CASTS THE SHADOW. That is the whole fix, and it is
+        # why nothing else about the lighting had to move: the key stays where
+        # it was (42 degrees, same colour, same energy), so every existing
+        # sprite keeps the modelling it was approved with, and a separate lamp
+        # owns the shadow. Tying the two together is what made the shadow
+        # un-fixable -- shortening it meant flattening the key, and lightening
+        # it meant washing out the forms.
+        key = bpy.data.lights.new("key", "SUN"); key.energy = 3.2
+        key.angle = math.radians(8); key.use_shadow = False
+        k = bpy.data.objects.new("key", key); sc.collection.objects.link(k)
+        k.rotation_euler = (math.radians(42), math.radians(-18), math.radians(-30))
+
+        # THE SHADOW LAMP: the only thing in the scene that casts. Nearly
+        # overhead so the shadow sits UNDER the object rather than beside it,
+        # soft so its edge is not read as geometry, and weak because the
+        # catcher's alpha is this lamp's SHARE of the total light -- which is
+        # the opacity knob, now independent of how the object is modelled.
+        sun = bpy.data.lights.new("sun", "SUN")
+        sun.energy = SHADOW_ENERGY; sun.angle = SUN_SOFTNESS
         s = bpy.data.objects.new("sun", sun); sc.collection.objects.link(s)
-        s.rotation_euler = (math.radians(42), math.radians(-18), math.radians(-30))
+        s.rotation_euler = (SUN_TILT, 0, math.radians(-30))
+
         # Fill light comes from shadowless lamps, not the sky: sky light would
         # make the shadow catcher record a soft AO halo that gets cut off at
         # the frame edge. The world stays black.

@@ -6,7 +6,7 @@ extends RefCounted
 ## BIG-ENDIAN length followed by that many bytes of JSON, and the messages are Rust enums
 ## serialised by serde in its default externally-tagged form -- a variant becomes a one-key object:
 ##
-##   ClientMsg::Hello { name, protocol }  ->  {"Hello": {"name": "ada", "protocol": 4}}
+##   ClientMsg::Hello { name, protocol }  ->  {"Hello": {"name": "ada", "protocol": 5}}
 ##   ClientMsg::Submit { command }        ->  {"Submit": {"command": {...}}}
 ##   ClientMsg::Hash { tick, hash }       ->  {"Hash": {"tick": 20, "hash": 123}}
 ##   ServerMsg::Welcome { player, world } ->  {"Welcome": {"player": 0, "world": {...}}}
@@ -18,27 +18,57 @@ extends RefCounted
 ##
 ## NO SOCKET IN HERE ON PURPOSE. Bytes in, dictionaries out, so the whole protocol is testable
 ## headless with no relay running -- which is how `tests/test_protocol.gd` holds it.
-const PROTOCOL_VERSION := 5
 const DEFAULT_PORT := 7777
 ## `sim_net::MAX_MESSAGE_BYTES`. A length past this is garbage or a hostile peer, never a world.
 const MAX_MESSAGE_BYTES := 64 * 1024 * 1024
-## Where the number above is written down in Rust. The test reads this file rather than trusting
-## the constant: a client on the wrong protocol is refused by the relay, and the error a player
-## would see ("refused: protocol 4 != 5") says nothing about which side is stale.
+## Where the wire's numbers are written down in Rust. A test still reads this file, now to prove the
+## binding is handing over the real constant rather than a copy of its own.
 const RUST_PROTOCOL_PATH := "../sim-net/src/lib.rs"
+## What `protocol_version()` says when it cannot ask. Not a guess at a number: a client that invents
+## one gets refused by the relay with a message that blames neither side.
+const UNKNOWN_PROTOCOL := -1
+
+
+## THE PROTOCOL NUMBER THIS CLIENT SPEAKS, READ OUT OF RUST AT RUNTIME.
+##
+## There is deliberately no `PROTOCOL_VERSION` constant in this file any more. There was, kept honest
+## by a test that grepped `sim-net/src/lib.rs`, and that test did its job -- it caught ASSA-5 part 2
+## bumping the wire to 5 while this client still said 4. But it caught it after the mismatch was
+## already pushed, and a copy that needs a test to stay true is still a copy. `sim-net` declares the
+## number; the binding hands it over; nothing here can be stale.
+##
+## `UNKNOWN_PROTOCOL` when the binding did not load, which is a client that could not have simulated
+## anything anyway (`AssaySimHost.start` says the same thing in a sentence).
+static func protocol_version() -> int:
+	if not ClassDB.class_exists("AssaySim"):
+		return UNKNOWN_PROTOCOL
+	return int(ClassDB.class_call_static("AssaySim", "protocol_version"))
 
 
 ## GODOT'S JSON PARSES EVERY NUMBER AS A DOUBLE, AND THE SIM SPEAKS u64. Measured, not feared: a
 ## world hosted on seed 777001 arrives here as `777001.0`. Inside 2^53 that is lossless and `int()`
 ## is enough, which covers ticks, tile positions, amounts and purities. Outside it -- a full-width
 ## u64 seed, and every state hash -- a double silently rounds, so neither may be read, compared or
-## echoed through GDScript. When the Rust sim is bound into this client, hashes must come from the
-## binding as text or as its own u64 type and never through a parsed JSON number.
+## echoed through GDScript. The sim is bound in now, so the rule has somewhere to point: a hash
+## reaches this side only as HEX TEXT (`AssaySim.hash_hex()`) and leaves it only inside a message
+## Rust wrote (`AssaySim.hash_message_json()`, framed by `encode_text` below). THE RAW TEXT OF AN
+## INCOMING MESSAGE IS WHAT THE SIM IS FED, never a re-serialised Dictionary: the Dictionary has
+## already been through a double by the time anyone here can see it.
 
 
 ## One message, framed. `msg` is the already-tagged dictionary, e.g. `{"Hello": {...}}`.
 static func encode(msg: Dictionary) -> PackedByteArray:
-	var body := JSON.stringify(msg).to_utf8_buffer()
+	return encode_text(JSON.stringify(msg))
+
+
+## The same framing around JSON TEXT SOMEONE ELSE WROTE.
+##
+## For the one message GDScript cannot build: `ClientMsg::Hash` carries a `u64`, GDScript's integers
+## are signed, and `JSON.stringify` would print whatever a double made of it. So the sim binding
+## serialises that message in Rust and this frames the result without reading it. Framing is the
+## same job either way; only the authorship of the body differs.
+static func encode_text(json_text: String) -> PackedByteArray:
+	var body := json_text.to_utf8_buffer()
 	var out := PackedByteArray()
 	out.resize(4)
 	# BIG-ENDIAN, which is not Godot's default for `encode_u32`: the length is written by
@@ -50,7 +80,7 @@ static func encode(msg: Dictionary) -> PackedByteArray:
 
 
 static func hello(player_name: String) -> Dictionary:
-	return {"Hello": {"name": player_name, "protocol": PROTOCOL_VERSION}}
+	return {"Hello": {"name": player_name, "protocol": protocol_version()}}
 
 
 ## A command the player is asking for. The relay stamps WHO sent it -- there is deliberately no
@@ -59,16 +89,18 @@ static func submit(command: Variant) -> Dictionary:
 	return {"Submit": {"command": command}}
 
 
-## "After running up to `tick`, my world hashes to `hash`."
+## THERE IS DELIBERATELY NO `hash_report()` HERE, and that is the interesting part of this file.
 ##
-## UNUSABLE UNTIL THE SIM ITSELF IS IN THE CLIENT, and that is a fact about this client rather
-## than about the message: a hash is `sim::hash`'s answer over a world this client stepped, so
-## there is nothing honest to put here until the Rust sim is bound in. Worse, `hash` is a u64 and
-## GDScript integers are signed 64-bit, so a hash above 2^63 cannot even be spelled here. When the
-## binding lands, the number must come out of the sim as text or as the binding's own u64 -- never
-## through a GDScript int. Left in so the shape is recorded in one place, with the trap named.
-static func hash_report(tick: int, hash_text: String) -> Dictionary:
-	return {"Hash": {"tick": tick, "hash": hash_text}}
+## `ClientMsg::Hash { tick: u64, hash: u64 }` is the one message this client sends that GDScript
+## cannot build. The relay compares `hash` for equality against its own, and GDScript's integers are
+## signed 64-bit: a hash with the top bit set cannot be spelled here at all, and `JSON.stringify`
+## would print whatever a double made of it. A string in that field is not the answer either -- serde
+## would refuse it, so the relay would drop the connection.
+##
+## So the sim binding writes the whole message in Rust (`AssaySim.hash_message_json()`) and
+## `encode_text()` above frames it. An earlier version of this file had a `hash_report(tick,
+## hash_text)` helper that produced `{"Hash": {"hash": "95f4..."}}`; it was never called, and it was
+## wrong -- recorded here so nobody adds it back out of symmetry with `hello` and `submit`.
 
 
 ## "host", "host:port" or an IPv6 literal in brackets -> [address, port]. Mirrors `sim-cli`'s rule:
