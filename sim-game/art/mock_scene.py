@@ -37,7 +37,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from species_tints import SPECIES_TINTS
-from part_layout import PART_REPEAT_OFFSET
+from part_layout import PART_REPEAT_OFFSET, stack
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SPR = os.path.join(ROOT, "assets", "sprites")
@@ -101,15 +101,16 @@ def assemble(parts, grade):
     for p in parts:
         n = seen.get(p, 0)
         seen[p] = n + 1
-        src = frame(p, grade)
-        if n == 0:
-            out.alpha_composite(src)
-            continue
-        dx, dy = PART_REPEAT_OFFSET[0] * n, PART_REPEAT_OFFSET[1] * n
         layer = Image.new("RGBA", (w, h))
-        layer.alpha_composite(src)
-        out.alpha_composite(layer.transform((w, h), Image.AFFINE,
-                                            (1, 0, -dx, 0, 1, -dy)))
+        layer.alpha_composite(frame(p, grade))
+        if n:
+            dx, dy = PART_REPEAT_OFFSET[0] * n, PART_REPEAT_OFFSET[1] * n
+            layer = layer.transform((w, h), Image.AFFINE, (1, 0, -dx, 0, 1, -dy))
+        # `stack`, not alpha_composite: colour over, alpha max, so the parts'
+        # contact shadows cannot compound into a machine whose shadow darkens
+        # with every part bolted on (ASSA-38). The scene has to draw what the
+        # check checks, or it is a picture of a machine nobody ships.
+        out = stack(out, layer)
     return out
 
 
@@ -127,22 +128,27 @@ def blit_machine(img, parts, grade, tx, ty):
        `deposit_at(building.pos)`, so a machine works the tile it stands on. A
        2-wide footprint would immediately need a rule for WHICH tile it mines,
        and there is no good answer.
-    2. OCCUPANCY IS CARRIED BY THE CONTACT SHADOW, which is rig.py's shadow
-       rule plus one clause: the shadow must fall entirely inside the occupied
-       tile. Overhang then reads as ABOVE the ground plane rather than as
-       ground claimed. (Measured on the shipped art, it does NOT yet: see
-       ASSA-38. This is the rule, not a description of today.)
+    2. OCCUPANCY IS NOT THE SPRITE'S JOB. The first answer here was "the
+       contact shadow carries it, and must fall inside the occupied tile" --
+       withdrawn, because it cannot be met: a two-tile body sitting on the
+       ground casts a two-tile contact shadow (ASSA-38). Which tile a building
+       claims is sim state the snapshot already carries, so the CLIENT draws
+       it: a placement cursor on the target tile, and `building_at` named in
+       the tile readout beside the deposit line. A renderer reading the sim,
+       not a rule baked into a picture.
     3. COVERING A NEIGHBOURING DEPOSIT TILE IS FINE -- do not build a guard,
        an anchor rule, a nudge or a no-build margin for it. `amount` is per
        DEPOSIT; there is no per-tile ore state in `sim`, and a deposit is
        radius 2-4, so 13 to 50 tiles. Hiding one or two removes no information
        the game has, because the species read is the whole patch.
-    4. TWO MACHINES MAY OVERLAP. Placement rejects only on footprint collision
-       (`TileOccupied`) and machines are (1, 1), so adjacent machines are
-       reachable. DRAW IN ROW ORDER -- y, then x -- so the nearer machine
-       wins. This is also why ASSA-28's "you must be able to count the
-       hoppers" bar is written for an UNOCCLUDED machine: one half behind
-       another may be half readable.
+    4. TWO MACHINES NEVER SHARE A TILE, AND THEIR SPRITES OVERLAP ANYWAY.
+       Checked in `step.rs`, not remembered: placement rejects with
+       `TileOccupied` if ANY tile of the footprint already holds a building.
+       Machines are (1, 1), so a machine on the tile next door is legal -- and
+       since the sprite is two tiles wide, the two pictures overlap. DRAW IN
+       ROW ORDER, y then x, so the nearer machine wins. This is also why
+       ASSA-28's "you must be able to count the hoppers" bar is written for an
+       UNOCCLUDED machine: one half behind another may be half readable.
 
     `blit` places the footprint's top-left tile at (tx, ty), which is the same
     convention `sim` uses -- `Building::pos` is documented as "top-left tile of

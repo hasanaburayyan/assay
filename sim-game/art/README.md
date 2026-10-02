@@ -242,17 +242,26 @@ the C hopper falls under L\* 35 and its gap from the head drops to 7.7.
 
 - 1 Blender unit = 1 tile. +y is north (up on screen). A sprite's footprint
   is centred on the origin.
-- **A sprite may overhang its tile; its shadow may not.** `sim` gives a
-  machine a (1, 1) footprint while a part frame is 2 tiles wide, so the
-  sprite overhangs east, and that is fine — the art adapts to the sim, never
-  the reverse. What a player reads as *ground claimed* is the contact shadow,
-  so the shadow must fall entirely inside the occupied tile (Maren, ASSA-30;
-  the clause lives with the shadow rig in `rig.py`). Covering a neighbouring
+- **A sprite may overhang its tile, and nothing about the sprite says which
+  tile it stands on.** `sim` gives a machine a (1, 1) footprint while a part
+  frame is 2 tiles wide, so the sprite overhangs east — the art adapts to the
+  sim, never the reverse. The obvious next rule, "then the contact shadow must
+  stay inside the occupied tile", was ruled and then withdrawn within the hour
+  (ASSA-30, ASSA-38): it cannot be met, because a two-tile body sitting on the
+  ground casts a two-tile shadow. Occupancy is sim state the snapshot already
+  carries, so the **client** draws it — placement cursor, `building_at` in the
+  tile readout — and the sprite stays out of it. Covering a neighbouring
   deposit tile is explicitly fine and wants no guard: ore `amount` is per
-  deposit, not per tile. Overlapping machines are legal; draw y then x so the
-  nearer one wins. Measured on today's art the clause does **not** hold — an
-  assembled machine's shadow runs a whole tile east, under the head — which is
-  ASSA-38 and a thing to fix, not a reason to soften the rule.
+  deposit, not per tile. Two machines never share a tile (`step.rs` rejects
+  `TileOccupied` on any footprint tile) but adjacent ones overlap on screen;
+  draw y then x so the nearer wins.
+- **Overlay part sprites with `part_layout.stack`, never plain `over`.**
+  Colour composites over, alpha takes the max. Each part carries its own
+  contact shadow, so `over` compounds them and a machine's shadow darkens with
+  every part bolted on — measured 122 → 167 from one part to four, a gradient
+  that reports part count and that nobody chose (ASSA-38). Alpha-max applies
+  only below `SHADOW_CEILING`, which is read off the palette's own darkest
+  colour, so geometry composites exactly as it always did.
 - Sheets: one row per sprite (direction, variant or state), one column per
   frame. `manifest.json` gives frame size, footprint in tiles, the anchor
   (where the footprint's top-left corner sits in the frame) and animation
