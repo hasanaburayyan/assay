@@ -6,7 +6,7 @@ extends RefCounted
 ## BIG-ENDIAN length followed by that many bytes of JSON, and the messages are Rust enums
 ## serialised by serde in its default externally-tagged form -- a variant becomes a one-key object:
 ##
-##   ClientMsg::Hello { name, protocol }  ->  {"Hello": {"name": "ada", "protocol": 4}}
+##   ClientMsg::Hello { name, protocol }  ->  {"Hello": {"name": "ada", "protocol": 5}}
 ##   ClientMsg::Submit { command }        ->  {"Submit": {"command": {...}}}
 ##   ClientMsg::Hash { tick, hash }       ->  {"Hash": {"tick": 20, "hash": 123}}
 ##   ServerMsg::Welcome { player, world } ->  {"Welcome": {"player": 0, "world": {...}}}
@@ -18,14 +18,31 @@ extends RefCounted
 ##
 ## NO SOCKET IN HERE ON PURPOSE. Bytes in, dictionaries out, so the whole protocol is testable
 ## headless with no relay running -- which is how `tests/test_protocol.gd` holds it.
-const PROTOCOL_VERSION := 4
 const DEFAULT_PORT := 7777
 ## `sim_net::MAX_MESSAGE_BYTES`. A length past this is garbage or a hostile peer, never a world.
 const MAX_MESSAGE_BYTES := 64 * 1024 * 1024
-## Where the number above is written down in Rust. The test reads this file rather than trusting
-## the constant: a client on the wrong protocol is refused by the relay, and the error a player
-## would see ("refused: protocol 4 != 5") says nothing about which side is stale.
+## Where the wire's numbers are written down in Rust. A test still reads this file, now to prove the
+## binding is handing over the real constant rather than a copy of its own.
 const RUST_PROTOCOL_PATH := "../sim-net/src/lib.rs"
+## What `protocol_version()` says when it cannot ask. Not a guess at a number: a client that invents
+## one gets refused by the relay with a message that blames neither side.
+const UNKNOWN_PROTOCOL := -1
+
+
+## THE PROTOCOL NUMBER THIS CLIENT SPEAKS, READ OUT OF RUST AT RUNTIME.
+##
+## There is deliberately no `PROTOCOL_VERSION` constant in this file any more. There was, kept honest
+## by a test that grepped `sim-net/src/lib.rs`, and that test did its job -- it caught ASSA-5 part 2
+## bumping the wire to 5 while this client still said 4. But it caught it after the mismatch was
+## already pushed, and a copy that needs a test to stay true is still a copy. `sim-net` declares the
+## number; the binding hands it over; nothing here can be stale.
+##
+## `UNKNOWN_PROTOCOL` when the binding did not load, which is a client that could not have simulated
+## anything anyway (`AssaySimHost.start` says the same thing in a sentence).
+static func protocol_version() -> int:
+	if not ClassDB.class_exists("AssaySim"):
+		return UNKNOWN_PROTOCOL
+	return int(ClassDB.class_call_static("AssaySim", "protocol_version"))
 
 
 ## GODOT'S JSON PARSES EVERY NUMBER AS A DOUBLE, AND THE SIM SPEAKS u64. Measured, not feared: a
@@ -63,7 +80,7 @@ static func encode_text(json_text: String) -> PackedByteArray:
 
 
 static func hello(player_name: String) -> Dictionary:
-	return {"Hello": {"name": player_name, "protocol": PROTOCOL_VERSION}}
+	return {"Hello": {"name": player_name, "protocol": protocol_version()}}
 
 
 ## A command the player is asking for. The relay stamps WHO sent it -- there is deliberately no

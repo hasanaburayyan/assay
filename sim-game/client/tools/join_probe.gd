@@ -103,7 +103,7 @@ func _finish(ok: bool, why: String) -> void:
 	_why = why
 	if ok:
 		print("JOIN PROBE OK: joined as player %d, protocol %d, %d bundles to tick %d" % [
-				_client.player_id, AssayProtocol.PROTOCOL_VERSION, _client.bundles_seen,
+				_client.player_id, AssayProtocol.protocol_version(), _client.bundles_seen,
 				_client.last_tick])
 	else:
 		print("FAIL  %s" % why)

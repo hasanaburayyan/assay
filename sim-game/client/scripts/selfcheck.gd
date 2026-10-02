@@ -68,9 +68,9 @@ static func check() -> Array[String]:
 			failures.append("a Hello came back tagged %s" % variant[0])
 		if String(body.get("name", "")) != "selfcheck":
 			failures.append("the name did not survive framing: %s" % body.get("name", "<missing>"))
-		if int(body.get("protocol", -1)) != AssayProtocol.PROTOCOL_VERSION:
+		if int(body.get("protocol", -1)) != AssayProtocol.protocol_version():
 			failures.append("protocol came back as %s, not %d"
-					% [body.get("protocol", "<missing>"), AssayProtocol.PROTOCOL_VERSION])
+					% [body.get("protocol", "<missing>"), AssayProtocol.protocol_version()])
 	if reader.error != "":
 		failures.append("the frame reader errored: %s" % reader.error)
 

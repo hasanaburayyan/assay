@@ -42,7 +42,7 @@ func next_message() -> Variant:
 	if length > AssayProtocol.MAX_MESSAGE_BYTES:
 		error = ("the host announced a %d-byte message, past sim-net's %d-byte limit: this is not "
 				+ "a relay on protocol %d") % [length, AssayProtocol.MAX_MESSAGE_BYTES,
-				AssayProtocol.PROTOCOL_VERSION]
+				AssayProtocol.protocol_version()]
 		return null
 	if _buffer.size() < 4 + length:
 		return null

@@ -27,7 +27,7 @@ use sim::item::Item;
 use sim::mineral::{Property, SpeciesId};
 use sim::types::{PlayerId, TilePos};
 use sim::world::{CHUNK_SIZE, World, WorldConfig};
-use sim_net::{ClientMsg, HASH_EVERY, TickBundle};
+use sim_net::{ClientMsg, HASH_EVERY, PROTOCOL_VERSION, TickBundle};
 
 struct SimGodot;
 
@@ -333,6 +333,20 @@ impl AssaySim {
                 GString::new()
             }
         }
+    }
+
+    /// THE PROTOCOL NUMBER RUST DECLARES, so GDScript never keeps a copy.
+    ///
+    /// `sim-net` bumps this whenever a message or `World` changes shape and the
+    /// relay refuses any client on another number. The client used to hold its
+    /// own `const PROTOCOL_VERSION`, kept honest by a test that grepped the Rust
+    /// source — which worked (it caught ASSA-5 part 2's bump to 5) but only
+    /// after someone had already shipped the mismatch into a branch. Read at
+    /// runtime there is nothing to keep in step: one declaration, in the crate
+    /// that owns the wire.
+    #[func]
+    pub fn protocol_version() -> i64 {
+        PROTOCOL_VERSION as i64
     }
 
     /// Proof, from inside a shipped build, that this library loaded AND runs
@@ -877,6 +891,19 @@ impl AssaySim {
             Event::CommandRejected { player, reason, .. } => {
                 format!("{}: refused — {reason:?}", who(*player))
             }
+            // AN EVENT THIS CLIENT HAS NO WORDING FOR YET, SHOWN RAW RATHER
+            // THAN DROPPED OR REFUSED TO COMPILE. Unreachable today, which is
+            // why the allow is here and why it is worth keeping anyway.
+            //
+            // This arm exists because of a measured collision, not in case:
+            // ASSA-5 part 2 adds six `Event` variants, and an exhaustive match
+            // here meant the sim could not grow an event without breaking the
+            // client's BUILD. Rules lead and clients follow (repo CLAUDE.md), so
+            // the client may not be a brake on `sim`. Debug text is ugly on
+            // purpose: it is visibly a thing somebody should write a sentence
+            // for, which a silent drop would not be.
+            #[allow(unreachable_patterns)]
+            other => format!("{other:?}"),
         }
     }
 }

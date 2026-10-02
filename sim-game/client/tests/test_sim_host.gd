@@ -65,7 +65,7 @@ func test_a_welcome_that_is_not_one_is_refused() -> bool:
 ## reason `encode_text` exists is the hash message -- and if its framing differed, the relay would
 ## read a length that did not match its body and drop the connection.
 func test_framing_text_matches_framing_a_dictionary() -> bool:
-	var msg := {"Hello": {"name": "limpet", "protocol": AssayProtocol.PROTOCOL_VERSION}}
+	var msg := {"Hello": {"name": "limpet", "protocol": AssayProtocol.protocol_version()}}
 	var by_dict := AssayProtocol.encode(msg)
 	var by_text := AssayProtocol.encode_text(JSON.stringify(msg))
 	if by_dict != by_text:
