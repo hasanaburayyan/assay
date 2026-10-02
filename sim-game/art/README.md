@@ -38,8 +38,9 @@ diff you cannot explain is a stale cache, not noise.
 - `assets/<name>.py`: one script per asset. Describes shapes and frames
   only. Runs inside Blender, writes `out/<name>/*.png` + `asset.json`.
 - `build.py`: runs the asset scripts, downscales 4× to authoring size
-  (64 px per tile), packs one sheet per asset into `../assets/sprites/`,
-  writes `manifest.json` and `contact.png`.
+  (64 px per tile), packs one sheet per asset into `../client/assets/sprites/`
+  with `manifest.json`, and writes `../assets/review/contact.png`.
+  **Two destinations, see below.**
 - `species_tints.py`: the six per-species tints, as data. Kept out of
   `rig.py` because the plain-python tools cannot import `rig` (it needs
   `bpy`). Read that file before changing a colour; the table is derived, not
@@ -168,29 +169,84 @@ it may, because nothing else is spending it.
   the same dimming. The map is deliberately more chromatic than the world
   because it needs that chroma to survive being dimmed.
 
-## The engine cannot reach any of this yet, and that is measured now
+## Where the output goes, and why it is two places
+
+**Shipped art lives inside the Godot project: `client/assets/sprites/`.** A
+Godot project's `res://` is its project folder and nothing above it, so a sheet
+anywhere else cannot be loaded by a client script and cannot be packed by an
+export. For the pipeline's whole life the sheets were in `assets/sprites/`,
+the project's **sibling** — eleven files, a manifest and four measured checks,
+and the game had never drawn a pixel of any of it. That is **ASSA-34**;
+Marlow ruled the move (option A) and `build.py` writes there now.
+
+**Review output stays outside it: `assets/review/`** — `contact.png`,
+`assembled.png`, `species_probe.png`, `loudness.png`, `mock_scene.png`. Both
+export presets set `export_filter="all_resources"`, which packs every resource
+in the project whether a scene references it or not, so review sheets left
+beside the game sheets would ride into every shipped bundle and get a Godot
+`.import` sidecar apiece for textures no script will ever load. Measured at the
+move: **1.45 MB of review sheets against 680 KB of actual game art**, so the
+review output was more than twice the size of the thing it reviews. Verified
+absent from an exported pack.
 
 ```bash
-art/check_client_can_see_art.py                  # RED today, on purpose
-CLIENT_ROOT=<other dir>  art/…can_see_art.py     # moves the project root -> RED
-CLIENT_EXCLUDE='assets/*' art/…can_see_art.py    # filters it out of the bundle -> RED
+art/check_client_can_see_art.py                  # GREEN; in CI
+CLIENT_ROOT=<other dir>   art/…can_see_art.py    # moves the boundary -> RED
+CLIENT_EXCLUDE='assets/*' art/…can_see_art.py    # filtered out of the bundle -> RED
 ```
 
-A Godot project's `res://` is its project folder and nothing above it. The
-project is `client/`; `build.py` writes sheets to `assets/sprites/`, its
-sibling. So no client script can name a sheet, there is not one `.import` file
-in the project, and an export would not pack them either. Eleven sheets and
-four measured checks, and the game has never drawn a pixel of it.
+The check reads the manifest from wherever it is — inside the project wins if
+both exist — and is what fails if the output ever drifts back out. Verified
+against a real drift, not only the lever: with the sheets moved back to the old
+sibling directory it reports all ten unreachable.
 
-This check is the finding (**ASSA-34**) kept where it cannot be forgotten, and
-it becomes the guard once the layout is fixed. It reads the manifest from
-wherever it is — inside the project wins if both exist — so the move needs no
-edit here. It is deliberately **not** in CI while it is red.
+**It has one trap worth knowing**, because the lever still exited non-zero and
+I nearly ticked it off. `CLIENT_ROOT` used to be the project directory for
+every purpose — the boundary, the manifest search, and where
+`export_presets.cfg` is read. Harmless while the manifest lived outside the
+client; after the move, forcing the root elsewhere made the search miss the
+manifest and the check died with *"no manifest.json"*. Red, but for a missing
+file rather than an unreachable sheet, and a lever that reproduces the wrong
+cause is not a lever. The project directory and the **boundary** are now two
+separate things.
 
-Note the shape of the mistake, because it is the one this whole folder keeps
-making: `[importer_defaults]` in `project.godot` (ASSA-14) is correct and is
-waiting for a texture that cannot arrive, and I verified that work by copying a
-sprite in **by hand**, which is precisely how I did not notice.
+Note the shape of the original mistake, because it is the one this whole folder
+keeps making: `[importer_defaults]` in `project.godot` (ASSA-14) was correct and
+was waiting for a texture that could not arrive, and I verified that work by
+copying a sprite in **by hand**, which is precisely how I did not notice. Now
+that real sheets are in the project, all nine `.import` sidecars come out with
+`compress/mode=0`, `mipmaps/generate=false`, `detect_3d/compress_to=0`, and all
+nine load through `res://` as uncompressed RGBA8 with no mipmaps.
+
+## Do the sheets actually ship? (`art/list_pck.py`)
+
+`check_client_can_see_art.py` reads paths and presets. It does not open a
+bundle, so it cannot tell you the art is really in one:
+
+```bash
+make client-lib
+cd client && godot --headless --import && godot --headless --import
+godot --headless --export-pack macOS /tmp/assay.pck     # needs NO templates
+cd .. && art/list_pck.py /tmp/assay.pck
+```
+
+Not a gate and not in CI — it needs an export to exist. **What arrives is not
+what you would guess:** the source `.png` files are *not* in the pack. Godot
+ships the imported texture as `.godot/imported/<name>.png-<hash>.ctex`, and
+`assets/sprites/<name>.png.import` is the remap that makes
+`res://assets/sprites/<name>.png` resolve to it. A pack with no `.png` in it is
+correct; a pack with no `.ctex` would be the failure. `manifest.json` ships
+verbatim, so the client can read it at runtime.
+
+**`.import` sidecars are NOT committed, and that is deliberate** — the root
+`.gitignore` ignores them and is right to. Measured three ways on 4.6.1: with
+sidecars + cache, with sidecars and no cache, and with neither (what a fresh
+clone is), `--export-pack` succeeds and **all 19 sheet-related entries are
+byte-identical** in all three packs. The only entries that differ are Godot's
+own `uid_cache.bin` and exported-scene cache. The hazard we assumed —
+regenerated `uid://`s — does not occur either: deleting every sidecar and the
+whole `.godot/` cache and re-importing at a different absolute path reproduces
+all nine uids exactly.
 
 ## Machines are overlaid part sprites, and the seams have to show
 
@@ -200,7 +256,7 @@ A machine is never a sprite. It is whole part frames stacked at one position
 what `art/assemble.py` builds and judges, at the size the player sees:
 
 ```bash
-art/assemble.py                       # GREEN; writes assets/sprites/assembled.png
+art/assemble.py                       # GREEN; writes assets/review/assembled.png
 PART_OFFSET=0,0      art/assemble.py  # repeats back on top of each other -> FAIL
 HOPPER_LIGHT=1       art/assemble.py  # hopper back at the deck's value   -> FAIL
 HOPPER_DARK=1        art/assemble.py  # hopper sunk into its own well     -> FAIL

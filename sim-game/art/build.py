@@ -7,8 +7,24 @@
 
 Pipeline: assets/<name>.py runs inside Blender and writes raw SSx frames to
 art/out/<name>/ plus asset.json. This script downscales them to authoring
-size (64 px per tile), packs one sheet per asset into assets/sprites/, writes
-manifest.json, and renders assets/sprites/contact.png for review.
+size (64 px per tile), packs one sheet per asset into client/assets/sprites/,
+writes manifest.json there, and renders assets/review/contact.png.
+
+TWO DESTINATIONS, AND THE SPLIT IS NOT TIDINESS (ASSA-34)
+  `client/assets/sprites/` is what SHIPS. It is inside the Godot project
+  because `res://` is the project folder and nothing above it, so a sheet
+  anywhere else cannot be loaded by a script or packed by an export. That was
+  the finding: eleven files, four measured checks, and nothing the engine
+  could reach.
+
+  `assets/review/` is what WE LOOK AT - the contact sheet and the probes. They
+  stay OUTSIDE the project on purpose. Both export presets set
+  `export_filter="all_resources"`, which packs every resource in the project
+  whether a scene references it or not, so a review sheet left next to the
+  game sheets would ride into every shipped bundle and get a Godot `.import`
+  sidecar for a texture no script will ever load. Measured at the move:
+  1.45 MB of review sheets against 680 KB of actual game art, so the review
+  output was more than twice the size of the thing it reviews.
 """
 import json, os, subprocess, sys, time
 
@@ -18,7 +34,10 @@ from PIL import Image, ImageDraw
 ART = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(ART)
 OUT = os.path.join(ART, "out")
-SPRITES = os.path.join(ROOT, "assets", "sprites")
+# Shipped art, inside the Godot project. See the module docstring.
+SPRITES = os.path.join(ROOT, "client", "assets", "sprites")
+# Review sheets, deliberately outside it.
+REVIEW = os.path.join(ROOT, "assets", "review")
 BLENDER = os.environ.get("BLENDER", "/Applications/Blender.app/Contents/MacOS/Blender")
 SS = 4
 # render order = contact sheet order
@@ -136,12 +155,13 @@ def contact(manifest):
     out = Image.new("RGBA", (W, H), bg); y = 0
     for b in blocks:
         out.alpha_composite(b, (0, y)); y += b.height
-    out.save(os.path.join(SPRITES, "contact.png"))
+    out.save(os.path.join(REVIEW, "contact.png"))
 
 
 def main(argv):
     names = [a for a in argv if not a.startswith("--")] or ORDER
-    os.makedirs(OUT, exist_ok=True); os.makedirs(SPRITES, exist_ok=True)
+    os.makedirs(OUT, exist_ok=True)
+    os.makedirs(SPRITES, exist_ok=True); os.makedirs(REVIEW, exist_ok=True)
     if "--pack" not in argv:
         for n in names: render(n)
     manifest_path = os.path.join(SPRITES, "manifest.json")
@@ -152,7 +172,8 @@ def main(argv):
     manifest = {k: manifest[k] for k in ORDER if k in manifest}
     json.dump(manifest, open(manifest_path, "w"), indent=1)
     contact(manifest)
-    print(f"wrote {SPRITES}/manifest.json and contact.png")
+    print(f"wrote {SPRITES}/manifest.json")
+    print(f"wrote {REVIEW}/contact.png")
 
 
 if __name__ == "__main__":
