@@ -97,6 +97,94 @@ pub fn command_line(cmd: &PlayerCommand, world: &World) -> String {
     }
 }
 
+/// ONE COMMAND AS AN ACTION, in words that belong to no host.
+///
+/// **THE SECOND FUNCTION [`command_line`]'s OWN COMMENT PREDICTED** (Game
+/// Director, ASSA-70). `event_line` is rendered verbatim by the Godot client, so
+/// a player who pressed **Fuel** was reading `` `insert 0 fuel ore:minyte:b 10`
+/// was rejected `` — a command line, in a window that has none. ASSA-67 took
+/// that syntax out of thirteen literal sentences and could not touch this one:
+/// here the command is a runtime *value*, so no scan of the source ever saw it.
+///
+/// The split, and which half is shared: **the prose one is.** `event_line` calls
+/// this; `sim-cli` keeps [`command_line`] for its own voice — the queue echo and
+/// its usage messages — where syntax is exactly right because the reader has a
+/// prompt. One describer each, neither duplicating the other's match.
+///
+/// **EVERY PHRASE IS A GERUND, AND THAT IS LOAD-BEARING**, not taste. The
+/// sentence it goes into keeps the possessive prefix co-op needs ("" for you,
+/// "Ada's " for anyone else), and a possessive can only take a noun phrase:
+/// "Ada's moving to (12, 5) was refused" works where "Ada's move to (12, 5)"
+/// and "Ada's your move" do not. Each phrase reuses the nouns of the event that
+/// *would* have happened, so a refusal reads as the mirror of its success
+/// ("you put 10 Tonore ore (B) into building 0's fuel slot" against "putting 10
+/// Tonore ore (B) into building 0's fuel slot was refused: ...").
+pub fn command_phrase(cmd: &PlayerCommand, world: &World) -> String {
+    let name = |item: &Item| world.item_name(*item);
+    let species = |s: &SpeciesId| world.species(*s).name().to_string();
+    match cmd {
+        PlayerCommand::Mine => "mining".into(),
+        PlayerCommand::Craft {
+            recipe,
+            item,
+            count,
+        } => format!("crafting {count} {} from {}", recipe.name(), name(item)),
+        PlayerCommand::Place { item, pos } => {
+            format!("placing {} at ({}, {})", name(item), pos.x, pos.y)
+        }
+        PlayerCommand::Insert {
+            building,
+            slot,
+            item,
+            count,
+        } => format!(
+            "putting {count} {} into building {}'s {} slot",
+            name(item),
+            building.0,
+            slot_name(*slot)
+        ),
+        PlayerCommand::Take { building } => format!("taking from building {}", building.0),
+        PlayerCommand::Pickup { building } => format!("picking up building {}", building.0),
+        PlayerCommand::Assay => "assaying".into(),
+        PlayerCommand::Rename { species: s, name } => {
+            format!("naming {} \"{name}\"", species(s))
+        }
+        PlayerCommand::GrantRename { species: s, to } => format!(
+            "letting {} name {}",
+            // `None` reader, for [`command_line`]'s reason: nobody is "you" in a
+            // phrase describing somebody else's command.
+            player_name(world, None, *to),
+            species(s)
+        ),
+        PlayerCommand::MakePart {
+            kind,
+            material,
+            count,
+        } => format!("making {count} x {} from {}", kind.name(), name(material)),
+        PlayerCommand::Assemble { frame, mounted } => format!(
+            "assembling {} with {}",
+            name(frame),
+            if mounted.is_empty() {
+                "nothing mounted on it".to_string()
+            } else {
+                mounted.iter().map(name).collect::<Vec<_>>().join(", ")
+            }
+        ),
+        PlayerCommand::Equip { assembly } => format!("taking #{assembly} in hand"),
+        // "putting the tool away", not "your tool": the possessive belongs to
+        // the prefix, and "Ada's putting your tool away" is what the other
+        // reading produces. Read in `--plain` before it was worded this way.
+        PlayerCommand::Unequip => "putting the tool away".into(),
+        PlayerCommand::PlaceAssembly { assembly, pos } => {
+            format!("planting #{assembly} at ({}, {})", pos.x, pos.y)
+        }
+        PlayerCommand::MoveTo { target } => {
+            format!("moving to ({}, {})", target.x, target.y)
+        }
+        PlayerCommand::Stop => "stopping".into(),
+    }
+}
+
 /// A slot by the name a player types, not by its variant.
 fn slot_name(slot: Slot) -> &'static str {
     match slot {
@@ -337,11 +425,17 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
             building.0,
             pos.x,
             pos.y,
-            // ONLY WHERE IT IS TRUE. This event fires for a planted machine
-            // too, and the line it replaces told the owner of a drill to
-            // insert fuel and ore into it. A machine takes nothing in
+            // ONLY WHERE IT IS TRUE: a machine takes nothing in
             // (`NotInsertable` is its own rejection), so it gets the bare
             // placement sentence rather than a hint I would be inventing.
+            //
+            // **CORRECTION, MINE, ON THE GAME DIRECTOR'S READING OF #94.** This
+            // comment used to say "this event fires for a planted machine too".
+            // It does not: `Place` accepts only a smelter (`for_item` is `Some`
+            // for `ItemKind::Smelter` alone, else `NotPlaceable`) and a planted
+            // machine emits `MachinePlaced`, so `BuildingPlaced` has one emitter
+            // and the `else` arm is unreachable today. The `if` stays as
+            // future-proofing; the false fact about the event model does not.
             if item.kind == ItemKind::Smelter {
                 "; it needs fuel and ore before it will run"
             } else {
@@ -673,9 +767,13 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
             } else {
                 format!("{}'s ", who(player))
             };
+            // **THE REFUSAL NAMES THE ACTION, LIKE EVERY OTHER SENTENCE HERE**
+            // (ASSA-70). It used to spell the command as `sim-cli` syntax, so a
+            // player who pressed Fuel read `insert 0 fuel ore:minyte:b 10` back.
+            // The `why` half is untouched and still said once, for every host.
             format!(
-                "{whose}`{}` was rejected: {why}",
-                command_line(command, world)
+                "{whose}{} was refused: {why}",
+                command_phrase(command, world)
             )
         }
     }
