@@ -303,46 +303,225 @@ func test_equip_carries_the_sims_index_and_the_tool_in_hand_offers_unequip() -> 
 	return ok
 
 
-## NO BUTTON MAY CARRY A COUNT IT READ EARLIER. The pack only rebuilds when its SHAPE changes, so a
-## stack's count climbs under a row that is never rebuilt -- and `Fuel`/`Smelt` insert the WHOLE
-## stack. The first version of this captured the count in the closure: the button-driven session
-## pressed `Fuel` on a row reading 12 and inserted 2, and the fire went out mid-stack.
-func test_an_insert_counts_the_stack_when_it_is_pressed() -> bool:
+## WITH NO BUILDING TARGETED THERE IS NOTHING TO SUBMIT, AND SAYING SO IS THE ANSWER. `_insert`'s
+## early return: with no building there is no `BuildingId` to put in the command at all, so the
+## sentence is honest rather than a swallowed press. (Maren's "never refuse" is about commands the sim
+## should judge; this one cannot be built.)
+##
+## THIS TEST USED TO CLAIM MORE THAN IT PROVED, and Nerite caught it by mutation (ASSA-55). It was
+## named for the stale-count rule, and its comment said the refusal sentence "names the number it was
+## about to insert". It does not: the early return happens BEFORE any count is read, so putting the
+## captured `stack.count` back left this green and the suite at 111/0. The rule it was named for is
+## tested next door against a smelter that really stands in the world. What is left here is the
+## branch this actually covers -- and the "no building" precondition is now ASSERTED rather than
+## assumed, because that is the only thing keeping it in this branch.
+func test_an_insert_with_no_building_targeted_submits_nothing_and_says_so() -> bool:
 	var screen := _joined()
 	_tick(screen, 2)
 	var ok := _mine_some_ore(screen)
 	if ok:
-		var stacks: Array = screen._sim.inventory_of(screen._client.player_id)
-		var stack: Dictionary = stacks[0]
+		var stack := _stack_of(screen, "ore")
 		var row := _row_for(screen, AssayHud.stack_line(stack))
 		var button: Button = null if row == null else _find(row, "Fuel")
 		if button == null:
 			ok = _fail("no `Fuel` button on an ore row: %s" % _labels_of(row if row != null
 					else screen._carrying))
+		elif screen._sim.tile_at(screen._target_tile()).get("building") != null:
+			ok = _fail("a building stands on %s, so this is not the early-return branch"
+					% screen._target_tile())
 		else:
-			var before: int = int(stack.get("count", 0))
-			# Keep mining, WITHOUT rebuilding the row: the shape of the pack has not changed, so the
-			# same button object is still there and its label is the only thing that moved.
-			_tick(screen, 40)
-			var now := AssayDemoPlan.held(screen._sim.inventory_of(screen._client.player_id),
-					String(stack.get("kind", "")), int(stack.get("species", -1)),
-					String(stack.get("grade", "")))
-			if now <= before:
-				ok = _fail("mined 40 more ticks and hold %d, was %d; nothing to catch" % [now, before])
-			elif _find(row, "Fuel") != button:
-				ok = _fail("the row rebuilt, so this test cannot catch a stale count")
-			else:
-				# No building is targeted, so nothing is submitted -- but the sentence names the
-				# number it was about to insert, which is where a stale count shows.
-				_asked.clear()
-				button.pressed.emit()
-				var said: String = screen._status.text
-				if not _asked.is_empty():
-					ok = _fail("Insert with no building targeted submitted %s" % [_asked])
-				elif not said.contains("nothing to insert into"):
-					ok = _fail("pressing Fuel with no building targeted said: %s" % said)
+			_asked.clear()
+			button.pressed.emit()
+			var said: String = screen._status.text
+			if not _asked.is_empty():
+				ok = _fail("Insert with no building targeted submitted %s" % [_asked])
+			elif not said.contains("nothing to insert into"):
+				ok = _fail("pressing Fuel with no building targeted said: %s" % said)
 	screen.queue_free()
 	return ok
+
+
+## NO BUTTON MAY CARRY A COUNT IT READ EARLIER, AND THE PROOF HAS TO REACH THE SUBMITTED COMMAND
+## (ASSA-55).
+##
+## The pack only rebuilds when its SHAPE changes, so a stack's count climbs under a row that is never
+## rebuilt -- and `Fuel`/`Smelt` insert the WHOLE stack. The first version of `_insert` captured the
+## count in the closure: the button-driven session pressed `Fuel` on a row reading 12 and inserted 2,
+## and the fire went out mid-stack.
+##
+## So this needs all three at once, which is why it builds a smelter: a targeted building (or
+## `_insert` returns early and nothing is sent), a count that has MOVED since the button was made,
+## and the SAME button object still on screen.
+##
+## THE EXPECTED NUMBER IS READ OFF THE SIM, NOT THROUGH `AssayActions.held_count`. That function is
+## what `_insert` itself calls, and a test that computes its expectation with the code under test
+## agrees with its bugs -- a grade filter that stopped filtering would be invisible to both. `_counted`
+## sums the sim's own `count` fields instead.
+func test_an_insert_submits_the_count_it_read_at_the_press() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := true
+	var at := _a_placed_smelter(screen)
+	if at < 0:
+		ok = false
+	else:
+		var stack := _stack_of(screen, "ore")
+		var row := _row_for(screen, AssayHud.stack_line(stack))
+		var button: Button = null if row == null else _find(row, "Fuel")
+		var mine := _find(screen._actions, "Mine")
+		if button == null:
+			ok = _fail("no `Fuel` button on the ore row after placing a smelter: %s"
+					% _labels_of(screen._carrying))
+		elif mine == null:
+			ok = _fail("no `Mine` button to start the count climbing again")
+		else:
+			var before := _counted(screen, stack)
+			# Mining again under a row that is NOT rebuilt: crafting the smelter took the activity, so
+			# the swinging has to be asked for a second time.
+			mine.pressed.emit()
+			_tick(screen, 40)
+			var now := _counted(screen, stack)
+			if now <= before:
+				ok = _fail("mined 40 more ticks and hold %d of the ore, was %d; nothing stale to catch"
+						% [now, before])
+			elif _find(row, "Fuel") != button:
+				ok = _fail("the ore row rebuilt, so a stale count could not have survived on it")
+			else:
+				_asked.clear()
+				button.pressed.emit()
+				var want: Variant = AssayActions.insert(at, AssayActions.SLOT_FUEL,
+						AssayActions.item_of_stack(stack), now)
+				var said: String = screen._status.text
+				if _asked.size() != 1:
+					ok = _fail("`Fuel` on a targeted smelter submitted %s, not one Insert" % [_asked])
+				elif _asked[0] != want:
+					# The stale number is whatever the ROW was built with, which is lower still than
+					# `before` -- this test only took hold of the button afterwards. So report both
+					# honestly rather than naming `before` as the closure's value.
+					ok = _fail(("`Fuel` submitted %s, not %s: a count read EARLIER. The sim said %d "
+							+ "when this test took the button, and says %d now.")
+							% [_asked[0], want, before, now])
+				elif AssaySimHost.command_echo(_asked[0]) == "":
+					ok = _fail("Insert submitted %s, which serde refuses" % [_asked[0]])
+				elif not said.contains(str(now)):
+					# THE NUMBER TOLD AND THE NUMBER SENT ARE ONE NUMBER. `_act`'s sentence is the only
+					# report the player gets, and a true command under a stale sentence is still a lie.
+					ok = _fail("submitted an Insert of %d and told the player: %s" % [now, said])
+	screen.queue_free()
+	return ok
+
+
+## A SMELTER THAT REALLY STANDS IN THE WORLD, MADE THE WAY A PLAYER MAKES ONE, and targeted. Returns
+## its `BuildingId`, or -1 having already failed the run.
+##
+## BUILT, NOT PLANTED. `_insert` reads its building out of `tile_at`, so a world with a building
+## written into it by the harness would be testing the harness. Every stage here is a press or a
+## click: mine, `Craft smelter`, right-click a free 2x2, `Place`. The right-click that chooses where
+## it goes is also what targets it afterwards -- Place, Insert and Take share one mechanism (ASSA-37),
+## which is the whole reason that is worth leaning on here.
+func _a_placed_smelter(screen: Node) -> int:
+	if not _mine_some_ore(screen):
+		return -1
+	var ore := _stack_of(screen, "ore")
+	if ore.is_empty():
+		_fail("mined and hold no ore stack to craft from")
+		return -1
+	# ENOUGH THAT THE ORE ROW SURVIVES THE CRAFT. Five ore go into the smelter; if that empties the
+	# row, the pack's shape changes, every button on it is freed, and there is no stale count to have.
+	var want := AssayDemoPlan.SMELTER_ORE + 4
+	for _i in range(12):
+		if _counted(screen, ore) >= want:
+			break
+		_tick(screen, 20)
+	if _counted(screen, ore) < want:
+		_fail("mined and hold %d of %s, want %d before crafting a smelter"
+				% [_counted(screen, ore), AssayHud.stack_line(ore), want])
+		return -1
+	var craft: Button = _button_on_row(screen, ore, "Craft smelter")
+	if craft == null:
+		return -1
+	craft.pressed.emit()
+	for _i in range(6):
+		if not _stack_of(screen, "smelter").is_empty():
+			break
+		_tick(screen, AssayDemoPlan.CRAFT_TICKS)
+	var smelter := _stack_of(screen, "smelter")
+	if smelter.is_empty():
+		_fail("pressed `Craft smelter` and no smelter arrived in %d ticks"
+				% (6 * AssayDemoPlan.CRAFT_TICKS))
+		return -1
+	var me: Vector2i = screen._my_tile()
+	var spot := AssayDemoPlan.smelter_spot(me, screen._sim.size_tiles(), _buildings_near(screen, me))
+	if spot.x < 0:
+		_fail("no free 2x2 within reach of %s for a smelter" % me)
+		return -1
+	_click(screen, spot, MOUSE_BUTTON_RIGHT)
+	var place: Button = _button_on_row(screen, smelter, "Place")
+	if place == null:
+		return -1
+	place.pressed.emit()
+	_tick(screen, 4)
+	var building: Variant = screen._sim.tile_at(spot).get("building")
+	if building == null:
+		_fail("pressed `Place` for a smelter at %s and nothing stands there" % spot)
+		return -1
+	if screen._target_tile() != spot:
+		_fail("placed a smelter at %s and the buttons act on %s" % [spot, screen._target_tile()])
+		return -1
+	return int((building as Dictionary).get("id", -1))
+
+
+## The first stack of a kind the SIM says is in the pack, or {}.
+func _stack_of(screen: Node, kind: String) -> Dictionary:
+	for entry in screen._sim.inventory_of(screen._client.player_id):
+		var stack: Dictionary = entry
+		if String(stack.get("kind", "")) == kind:
+			return stack
+	return {}
+
+
+## HOW MANY OF THAT EXACT ITEM THE SIM SAYS WE HOLD, summed off the snapshot's own `count` fields.
+##
+## Deliberately not `AssayActions.held_count`: that is the function `_insert` calls, so using it here
+## would make the expectation and the thing it checks share their arithmetic. Kind, species AND grade,
+## because two grades of one ore are two stacks and two rows.
+func _counted(screen: Node, item: Dictionary) -> int:
+	var total := 0
+	for entry in screen._sim.inventory_of(screen._client.player_id):
+		var stack: Dictionary = entry
+		if String(stack.get("kind", "")) != String(item.get("kind", "")):
+			continue
+		if int(stack.get("species", -1)) != int(item.get("species", -1)):
+			continue
+		if String(stack.get("grade", "")) != String(item.get("grade", "")):
+			continue
+		total += int(stack.get("count", 0))
+	return total
+
+
+## A labelled button on the pack row describing this stack, or null having failed the run.
+func _button_on_row(screen: Node, stack: Dictionary, label: String) -> Button:
+	var line := AssayHud.stack_line(stack)
+	var row := _row_for(screen, line)
+	if row == null:
+		_fail("no pack row reads `%s`: %s" % [line, _labels_of(screen._carrying)])
+		return null
+	var button := _find(row, label)
+	if button == null:
+		_fail("no `%s` button on the row reading `%s`: %s" % [label, line, _labels_of(row)])
+	return button
+
+
+## The tiles around us the SIM says already carry a building, which is what `smelter_spot` picks
+## between. Reach is 3, so four tiles out covers every spot it would consider.
+func _buildings_near(screen: Node, at: Vector2i) -> Array:
+	var taken := []
+	for dx in range(-4, 5):
+		for dy in range(-4, 5):
+			var tile := at + Vector2i(dx, dy)
+			if screen._sim.tile_at(tile).get("building") != null:
+				taken.append(tile)
+	return taken
 
 
 ## Mine until the sim reports ore in the pack. Through the `do` section's own Mine button, because a
