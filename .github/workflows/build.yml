@@ -230,6 +230,14 @@ jobs:
           # silently library-less .app and a tester.
           find ../bundle/assay-macos/Assay.app -name 'libsim_godot.dylib' | grep .
       - name: The exported client runs
+        # A HANG IS A FAILURE AND MUST LOOK LIKE ONE. The self-check takes under a
+        # second; before ASSA-51 this step sat for 45 MINUTES on every merge,
+        # because a GUI binary whose main script failed to parse never reaches the
+        # `quit()` in `_ready` and just waits on the platform event loop. Three
+        # merges' worth of runs did that, on macOS at 10x minutes, and the job
+        # would have run to the 6-hour default. Two minutes is ~100x the honest
+        # cost of this step, so anything over it is a defect and not a slow runner.
+        timeout-minutes: 2
         run: |
           # AN EXPORT CAN SUCCEED AND SHIP A PACK THAT WILL NOT LOAD, and the
           # exit code of a missing or broken binary can still be 0 (measured),
@@ -361,6 +369,9 @@ jobs:
           }
           $lib.FullName
       - name: The exported client runs
+        # See the macOS job's copy of this step: a hang here is a parse error in a
+        # shipped script, not a slow runner (ASSA-51).
+        timeout-minutes: 2
         shell: pwsh
         run: |
           # The only check the Windows build gets: nobody at the studio has a
