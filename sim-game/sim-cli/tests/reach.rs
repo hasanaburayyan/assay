@@ -105,9 +105,20 @@ quit
     assert!(out.status.success(), "{transcript}");
 
     // `at` reports reach without standing there.
+    //
+    // **PINNED TO ITS OWN LINE, NOT TO THE TRANSCRIPT.** This assertion was
+    // first written against the whole of `stdout`, and deleting the note from
+    // `at` altogether did not redden it: the `where` report below prints the
+    // same sentence a few lines later, so the test passed for the wrong
+    // reason. An assertion that cannot fail for the reason it exists is not an
+    // assertion.
+    let at_line = stdout
+        .lines()
+        .find(|l| l.starts_with(&format!("({}, {}): deposit", bad.center.x, bad.center.y)))
+        .unwrap_or_else(|| panic!("`at` printed no deposit line\n{transcript}"));
     assert!(
-        stdout.contains(&format!("{bad_name} is too hard for anything we can build")),
-        "`at` on an unreachable deposit must say so\n{transcript}"
+        at_line.contains(&format!("{bad_name} is too hard for anything we can build")),
+        "`at` on an unreachable deposit must say so: {at_line}\n{transcript}"
     );
 
     // `where`, twice: once on the dead rock, once on the starter.
