@@ -65,6 +65,7 @@ uv run --with pillow python art/species_probe.py   # exits non-zero on a regress
 PROBE_SPAN=0.1   art/species_probe.py   # crowds the hues     -> must FAIL
 PROBE_SPARSE=0.5 art/species_probe.py   # thins ore coverage  -> must FAIL
 MAP_FLOOR=0.33   art/species_probe.py   # over-dims the disc  -> must FAIL
+MAP_OPAQUE=1     art/species_probe.py   # the old solid-disc model -> must PASS
 ```
 
 The second and third lines are not decoration. Two guards in this pipeline
@@ -83,20 +84,34 @@ in the first place.
   is mandatory and the budget has to fall on everything else.
 
 ```bash
-art/loudness.py                      # RED today, on purpose: see below
-LOUDNESS_MUTE=0     art/loudness.py  # greys everything but ore -> must PASS
-LOUDNESS_FAKE_ORE=3 art/loudness.py  # everything IS ore        -> must FAIL
+art/loudness.py                       # GREEN
+LOUDNESS_MUTE=0      art/loudness.py  # greys everything but ore -> must PASS
+LOUDNESS_FAKE_ORE=3  art/loudness.py  # everything IS ore        -> must FAIL
+LOUDNESS_NO_EXEMPT=1 art/loudness.py  # drops the exemptions     -> must FAIL
 ```
 
-It measures three things, and the third exists because the second lied: a
-surface's *mean* can clear every ore colour while the pixels it actually
-wears sit on top of one. `frame/A` scores 35.7 whole-surface and 10.9 at the
-mark. Read B and C together, never B alone.
+It measures three things and reports a fourth, and the third exists because
+the second lied: a surface's *mean* can clear every ore colour while the
+pixels it actually wears sit on top of one. `frame/A` used to score 35.7
+whole-surface and 10.9 at the mark. Read B and C together, never B alone.
 
-`loudness.py` exits non-zero on the art as it ships — `player/*` and
-`frame/A` are louder than the quietest species, and `frame/A`'s grade glint
-wears species3's yellow. That is reported to the Director, not exempted:
-`EXEMPT` in that file is empty and an entry needs a reason and a name.
+Both of its original reds are cleared, each the honest way round
+(Decision #37). `frame/A` was a **bug in the glint**: `graded_accent` emitted
+the part's own accent colour, and an emissive saturated colour slides into
+another hue as its channels clip — `#F08A24` landed on `rgb(255,254,89)`,
+which is species3's yellow. The A glint now emits neutral, so the blowout
+clips to white and no species tint is neutral. `player/*` was ruled **out of
+scope**: the budget covers what a player *scans* — ground, machines, ground
+items, UI chrome — and an avatar is one humanoid sprite you never search a
+field for. That exemption attaches to the **surface**, never to a palette
+entry, so a machine can never claim it by wearing the player's orange.
+`EXEMPT` entries carry a reason and the name of whoever ruled them, and
+`LOUDNESS_NO_EXEMPT=1` proves they are what holds those rows.
+
+Measure **D** reports the same confusion with L\* dropped, through four
+observers, and is deliberately **not** a gate: between two species lightness
+must not count (grade already spends it), but between a machine and a deposit
+it may, because nothing else is spending it.
 
 - **The map disc is a second surface with its own floor.** The client draws a
   deposit twice: a textured tile over olive terrain in the world, and a flat
@@ -106,20 +121,34 @@ wears species3's yellow. That is reported to the Director, not exempted:
 
   The disc is scored on **hue and chroma only** — on the map, brightness
   *already* means purity, so letting L\* count would let a pure brightness
-  ramp pass as six species. Measured at the dimmest disc the client can draw,
-  because every brighter purity is slack:
+  ramp pass as six species. Every constant describing the disc is **read out
+  of `client/scripts/hud.gd`**, never retyped here, and the check exits loudly
+  if it cannot find one.
 
-  | purity multiply | 1.00 | 0.80 | 0.70 | 0.60 | **0.55** | 0.50 | 0.33 |
+  | purity | 1 | **6** | 10 | 20 | 40 | 70 | 100 |
   |---|---|---|---|---|---|---|---|
-  | worst pair, 4 observers | 18.5 | 17.5 | 16.0 | 14.0 | **12.5** | 11.5 | 8.0 |
+  | worst pair, 4 observers | 11.6 | **10.8** | 10.9 | 12.0 | 13.5 | 15.5 | 18.5 |
 
-  **0.55 is a measured floor, not a taste** — 0.50 falls under 12. Red lever
-  `MAP_FLOOR=0.33` makes the check fail.
+  **This check is RED, and it is red because it used to lie** (ASSA-29). It
+  retyped three of the client's constants and got all three wrong, each in
+  the direction that measures a brighter disc than the one drawn: the floor
+  is 0.525 and not 0.55; the disc is alpha 0.85 over near-black and not
+  opaque; and the worst case is **not** at the dimmest disc, because the
+  closest pair moves with brightness. Swept properly, the shipped constant
+  bottoms out at **10.8 at purity 6** — two species a deutan player cannot
+  separate on the surface they use to choose where to walk.
+
+  Clearing it is a client constant, not an art one: `0.65 + 0.35 * purity`
+  holds 12.9, at the cost of narrowing the map's brightness range from 1.90:1
+  to 1.54:1. Red levers: `MAP_FLOOR=0.33` must fail; `MAP_OPAQUE=1` must
+  **pass**, which is what proves the alpha composite is carrying the finding
+  rather than the arithmetic.
 
   The map uses `species_tints.py` **directly**, as fills. I argued the
   opposite and was wrong: I claimed the tints were multipliers that would
   sink on a dark background, and never measured it. Nothing sinks (the
-  dimmest disc clears the background by 34.7), and a table derived from the
+  dimmest disc clears the background by 28.3 as drawn, 34.7 if you model it
+  opaque the way this check used to), and a table derived from the
   tinted ore tile is *worse* — the tile's mean carries the rock's dark
   outline and shading, so it starts with less chroma and drops to 10.0 under
   the same dimming. The map is deliberately more chromatic than the world
