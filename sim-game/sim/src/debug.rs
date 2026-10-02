@@ -1240,7 +1240,6 @@ pub fn built_table(world: &World, player: PlayerId) -> String {
     out
 }
 
-
 /// A HAND CRAFT IN PROGRESS, IN ONE SENTENCE, or `None` when nothing is being
 /// made (ASSA-49, Maren's ruling).
 ///
