@@ -27,6 +27,37 @@ pub const PROTOCOL_VERSION: u32 = 8;
 /// The rules this build runs, re-exported so a host has one place to look.
 pub const RULES_ID: &str = sim::RULES_ID;
 
+/// The size of a session's world, in chunks.
+///
+/// **ONE COPY, BECAUSE THERE WERE TWO** (ASSA-53). `sim-relay` built its world
+/// with these numbers written out, and `sim-godot::fresh_welcome_text` wrote
+/// them out again so the client's headless suite could have a real world. The
+/// Systems engineer flagged the consequence before it bit us: if the two drift,
+/// *every client test passes against a world no relay would ever send*, and
+/// nothing goes red — the drift's author would be whoever next edits the relay,
+/// who has no reason to look in the binding.
+///
+/// That is the same shape as the bug that hung six CI runs on 2026-10-02: two
+/// spellings of one thing, one of them exercised only where it happens to work.
+pub const SESSION_CHUNKS: (i32, i32) = (6, 4);
+
+/// The world a relay starts a fresh session with, and the only place its shape
+/// is decided.
+///
+/// It lives here rather than in a host because **both hosts already depend on
+/// this crate** and neither may depend on the other: the Godot binding must not
+/// pull in the relay, and the relay must not pull in the engine. `sim` itself is
+/// the wrong home — a world's size is a session convention, not a rule, and
+/// `sim` may not hold conventions it does not enforce.
+pub fn fresh_world(seed: u64) -> World {
+    let (width_chunks, height_chunks) = SESSION_CHUNKS;
+    World::new(sim::WorldConfig {
+        seed,
+        width_chunks,
+        height_chunks,
+    })
+}
+
 /// Default port for `sim-relay` and `sim-cli --connect`.
 pub const DEFAULT_PORT: u16 = 7777;
 
