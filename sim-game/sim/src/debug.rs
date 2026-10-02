@@ -221,6 +221,24 @@ fn player_possessive(world: &World, me: Option<PlayerId>, player: PlayerId) -> S
     format!("{}'s", player_name(world, me, player))
 }
 
+/// The possessive a sentence uses when the owner is already its subject:
+/// "**your** tool" to the reader, "**their** tool" about anybody else.
+///
+/// **THE SAME BUG AS [`player_possessive`]'s, ONE PRONOUN FURTHER ALONG**
+/// (ASSA-74). `Unequipped` said "{} put **their** tool away" for every reader,
+/// so your own log told you that you had put somebody else's tool away — on an
+/// action with a button in the client. `PickWornOut` had the conditional right
+/// and inline, which is how one arm of the pair drifted from the other.
+///
+/// It is a function and not two literals so that **no "your" or "their" survives
+/// in [`event_line`]**, which turns the rule into a guard a test can read off the
+/// source instead of a list of today's sentences. `None` reader means nobody is
+/// the reader, so everything is "their" — the same convention as the two
+/// functions above it.
+fn reader_possessive(me: Option<PlayerId>, player: PlayerId) -> &'static str {
+    if me == Some(player) { "your" } else { "their" }
+}
+
 /// A player's name, or "you" for the reader. `None` reader means nobody is "you".
 fn player_name(world: &World, me: Option<PlayerId>, player: PlayerId) -> String {
     if me == Some(player) {
@@ -534,7 +552,11 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
                 None => format!("{} equipped a tool", who(player)),
             }
         }
-        Event::Unequipped { player } => format!("{} put their tool away", who(player)),
+        Event::Unequipped { player } => format!(
+            "{} put {} tool away",
+            who(player),
+            reader_possessive(me, *player)
+        ),
         Event::MachinePlaced {
             player,
             building,
@@ -584,7 +606,10 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
             name(handle),
             // "back in YOUR inventory" about somebody else's tool tells the
             // reader to go looking in their own pack for a part they never had.
-            if me == Some(*player) { "your" } else { "their" }
+            // The conditional used to be here, inline; it is `reader_possessive`
+            // now because `Unequipped` got the same choice wrong while this arm
+            // got it right (ASSA-74).
+            reader_possessive(me, *player)
         ),
         Event::MachineMined {
             building,

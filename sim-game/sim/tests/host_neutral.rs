@@ -187,6 +187,97 @@ fn a_rejection_reads_without_a_prompt() {
     );
 }
 
+/// **A SENTENCE ABOUT THE READER MUST NOT SAY "THEIR"** (ASSA-74). `Unequipped`
+/// said "{} put their tool away" for everyone, so your own log told you that you
+/// had put somebody else's tool away — on an action that has a button in the
+/// client. `PickWornOut`, two arms below it, had the conditional right and
+/// inline, which is exactly how one of a pair drifts from the other.
+///
+/// Both readers, both events, because the failure is always one-sided: a check
+/// that only read its own log would have called this correct for years.
+#[test]
+fn an_event_about_the_reader_says_your_and_about_anyone_else_says_their() {
+    let world = world_with_players();
+    let (me, them) = (PlayerId(0), PlayerId(1));
+
+    let mine = debug::event_line(&world, Some(me), &Event::Unequipped { player: me });
+    assert_eq!(
+        mine, "you put your tool away",
+        "the reader's own tool is theirs to be told about"
+    );
+    let theirs = debug::event_line(&world, Some(me), &Event::Unequipped { player: them });
+    assert_eq!(
+        theirs, "grace put their tool away",
+        "and somebody else's is not the reader's"
+    );
+    // `None` is a client before its welcome: nobody is "you", so nothing is
+    // "your" either.
+    let nobody = debug::event_line(&world, None, &Event::Unequipped { player: me });
+    assert_eq!(nobody, "ada put their tool away", "{nobody}");
+}
+
+/// **THE OTHER ARM OF THE PAIR, AND THE MUTATION FOUND IT UNCOVERED.**
+/// `ToolWornOut` had this conditional right all along, inline, and swapping the
+/// helper's arms reddened only the `Unequipped` test above — so nothing was
+/// pinning the one that was already correct. Its own test, not another case in
+/// that one, so each half fails on its own rather than hiding behind the first
+/// assertion to go.
+///
+/// Worth pinning because "the handle is back in YOUR inventory" about somebody
+/// else's tool sends the reader looking in their own pack for a part they never
+/// had.
+#[test]
+fn a_worn_out_tool_is_named_for_its_owner_twice() {
+    let world = world_with_players();
+    let (me, them) = (PlayerId(0), PlayerId(1));
+    let worn = |reader| {
+        debug::event_line(
+            &world,
+            reader,
+            &Event::ToolWornOut {
+                player: me,
+                head: Item::new(ItemKind::Part(PartKind::Head), SpeciesId(1), Grade::B),
+                handle: Item::new(
+                    ItemKind::Part(PartKind::Frame(Mount::Held)),
+                    SpeciesId(0),
+                    Grade::C,
+                ),
+            },
+        )
+    };
+    let (mine, theirs) = (worn(Some(me)), worn(Some(them)));
+    assert!(
+        mine.starts_with("your ") && mine.contains("back in your inventory"),
+        "the reader's own worn tool is theirs twice over: {mine}"
+    );
+    assert!(
+        theirs.starts_with("ada's ") && theirs.contains("back in their inventory"),
+        "and a teammate's is named, then \"their\": {theirs}"
+    );
+}
+
+/// The guard the fix bought: the two literals now live in `reader_possessive`,
+/// so **a new sentence in `event_line` cannot get this wrong quietly.** The same
+/// shape as the no-backtick guard above, and for the same reason — a list of
+/// today's sentences only catches today's.
+#[test]
+fn no_event_line_sentence_writes_a_possessive_pronoun_itself() {
+    for (n, line) in event_line_body().lines().enumerate() {
+        if line.trim_start().starts_with("//") {
+            continue;
+        }
+        for pronoun in ["\"your\"", "\"their\""] {
+            assert!(
+                !line.contains(pronoun),
+                "event_line writes {pronoun} itself at body line {n}: {line}\n\
+                 Whose it is depends on who is reading, so it comes from \
+                 `reader_possessive` or `player_possessive`, never from a literal \
+                 (ASSA-74)."
+            );
+        }
+    }
+}
+
 fn refusal(world: &World, command: PlayerCommand, reason: RejectReason) -> String {
     debug::event_line(
         world,
