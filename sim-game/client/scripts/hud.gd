@@ -219,15 +219,26 @@ static func stack_verbs(stack: Dictionary, recipes: Array, part_kinds: Array,
 			# A recipe that is NOT hand-work happens inside a building, so this kind is something a
 			# smelter eats -- both slots, because which one a species is good for (hot enough fuel, or
 			# ore that melts) is a sheet reading and only the sim has it.
-			verbs.append({"label": "Insert fuel", "verb": "insert", "slot": AssayActions.SLOT_FUEL})
-			verbs.append({"label": "Insert input", "verb": "insert", "slot": AssayActions.SLOT_INPUT})
+			# SHORT LABELS, DETAIL IN THE TOOLTIP. Two buttons and a stack line have to fit a 320px
+			# panel, and "Insert all 12 into the Fuel slot" is a sentence, not a label. `main.gd`
+			# composes that sentence as the hint, with the count in it.
+			verbs.append({"label": "Fuel", "verb": "insert", "slot": AssayActions.SLOT_FUEL})
+			verbs.append({"label": "Smelt", "verb": "insert", "slot": AssayActions.SLOT_INPUT})
 	if footprint.x > 0 and footprint.y > 0:
 		verbs.append({"label": "Place", "verb": "place"})
 	for entry in part_kinds:
-		if String((entry as Dictionary).get("name", "")) != kind:
-			continue
-		# The first part added is the frame, so the word changes rather than the button.
-		verbs.append({"label": "Mount" if building else "Frame", "verb": "build"})
+		var part: Dictionary = entry
+		# ONE `Make` PER PART KIND THE CATALOGUE HOLDS, on the row whose item is the material a part
+		# is made of. `material` is the sim's answer (`step.rs`: "a part is made of refined material
+		# and nothing else"), so a row only grows these buttons because the sim would accept them --
+		# and a FIFTH part kind appears here with no change to this client.
+		if String(part.get("material", "")) == kind:
+			verbs.append({"label": "Make %s" % String(part.get("name", "?")), "verb": "make",
+					"kind": part.get("tag"), "part": String(part.get("name", "?"))})
+		# And the row for a part itself offers the way into an `Assemble`. The first part added is
+		# the frame, so the word changes rather than the button.
+		if String(part.get("name", "")) == kind:
+			verbs.append({"label": "Mount" if building else "Frame", "verb": "build"})
 	return verbs
 
 

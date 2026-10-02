@@ -578,7 +578,7 @@ func _making() -> void:
 		if refined.is_empty():
 			_finish(false, "took the refined material and the inventory has no stack of it")
 			return
-		var material := AssayDemoPlan.item_of_stack(refined)
+		var material := AssayActions.item_of_stack(refined)
 		_sent["make parts"] = true
 		for order in [["handle", 1], ["head", 2], ["frame", 1]]:
 			if not _client.submit(AssayActions.make_part(AssaySimHost.part_tag(String(order[0])),

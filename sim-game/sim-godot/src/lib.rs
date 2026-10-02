@@ -425,7 +425,18 @@ impl AssaySim {
         gstring(&fresh_welcome_text(&seed.to_string(), &name.to_string()))
     }
 
-    /// EVERY PART THE CATALOGUE HOLDS: `name`, `size`, and `tag`.
+    /// WHAT A PART IS MADE OF: the one item kind `MakePart` accepts as material.
+    ///
+    /// `step.rs` says it in one line -- "a part is made of refined material and
+    /// nothing else, so say so rather than quietly coercing whatever the client
+    /// sent" -- and the client needs it to decide which pack row gets a `Make`
+    /// button. Naming it here rather than in GDScript puts it in the crate that
+    /// can be tested against `step` itself, and
+    /// `a_part_is_made_of_the_material_this_catalogue_names` does exactly that:
+    /// it submits a `MakePart` with the wrong kind and checks the sim refuses.
+    pub const PART_MATERIAL: sim::ItemKind = sim::ItemKind::Refined;
+
+    /// EVERY PART THE CATALOGUE HOLDS: `name`, `size`, `material` and `tag`.
     ///
     /// So the client's "make a part" buttons are the sim's list rather than four
     /// strings typed into GDScript. ADR 0003's consequence is that a new part
@@ -447,6 +458,7 @@ impl AssaySim {
                 Some(vdict! {
                     "name" => &gstring(kind.name()).to_variant(),
                     "size" => &(sim::assembly::spec(*kind).size as i64).to_variant(),
+                    "material" => &gstring(Self::PART_MATERIAL.name()).to_variant(),
                     "tag" => &tag,
                 })
             })
@@ -1773,6 +1785,57 @@ mod tests {
             let value = serde_json::to_value(id).expect("a recipe id serialises");
             assert!(!has_a_number(&value), "{value} holds a number");
         }
+    }
+
+    /// `PART_MATERIAL` IS THE KIND `step` ACTUALLY ACCEPTS, not a comment about
+    /// one. The client puts a `Make` button on a pack row because that row's
+    /// item kind matches this, so if the rule moved in `sim` and this did not,
+    /// the button would appear on the wrong row and every press would be
+    /// dropped. Submitted both ways through the real `step`.
+    #[test]
+    fn a_part_is_made_of_the_material_this_catalogue_names() {
+        let (mut sim, me) = with_a_player("limpet");
+        let species = sim.world().species[0].id;
+        let right = Item::new(AssaySim::PART_MATERIAL, species, sim::Grade::B);
+        let wrong = Item::new(sim::ItemKind::Ore, species, sim::Grade::B);
+        for item in [right, wrong] {
+            sim.world
+                .player_mut(me)
+                .expect("the player exists")
+                .inventory
+                .add(item, 20);
+        }
+        let make = |material: Item| {
+            Input::player(
+                me,
+                sim::PlayerCommand::MakePart {
+                    kind: PartKind::Head,
+                    material,
+                    count: 1,
+                },
+            )
+        };
+        sim.step_with(&[make(wrong)]);
+        let head = Item::new(sim::ItemKind::Part(PartKind::Head), species, sim::Grade::B);
+        assert!(
+            !sim.world()
+                .player(me)
+                .expect("exists")
+                .inventory
+                .has(head, 1),
+            "a part was made out of {}, which `step` is supposed to refuse",
+            wrong.kind.name()
+        );
+        sim.step_with(&[make(right)]);
+        assert!(
+            sim.world()
+                .player(me)
+                .expect("exists")
+                .inventory
+                .has(head, 1),
+            "a part could not be made out of {}, which the catalogue names as its material",
+            AssaySim::PART_MATERIAL.name()
+        );
     }
 
     fn has_a_number(value: &serde_json::Value) -> bool {

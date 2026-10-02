@@ -70,8 +70,13 @@ var _targeted := false
 ## and sent as an item without this client inventing either. THE FIRST ONE IS THE FRAME, which is
 ## `sim-cli`'s rule (`assemble <frame> <part>...`) kept rather than invented.
 var _building: Array = []
-## Tile size last drawn at, so a click can be turned back into a tile. Set by `_draw`, which is the
-## only place that decides it; 0 means nothing has been drawn yet and a click means nothing.
+## The tile size the map is drawn at, so a click can be turned back into a tile. 0 means there is no
+## world yet and a click means nothing.
+##
+## SET BY `_refresh`, NOT BY `_draw`, and that was a real bug rather than tidying. A click turning
+## into a tile used to depend on a frame having already been painted: the first click after a Welcome
+## could land before the first `_draw` and be silently dropped, and HEADLESS THERE IS NO `_draw` AT
+## ALL -- so no test could ever press the map. It is `AssayHud.map_cell`'s pure answer either way.
 var _cell := 0.0
 ## Hash reports actually put on the wire. See `_on_tick_bundle`.
 var _hashes_sent := 0
@@ -262,6 +267,8 @@ func _refresh() -> void:
 	# survive a GDScript number -- that is not caution, it is measured. The bundle and hash counts are
 	# here because a client that has stopped applying bundles looks exactly like one that is idle.
 	var size := _sim.size_tiles()
+	# WHERE A CLICK LANDS, WORKED OUT WITHOUT PAINTING ANYTHING. See `_cell`.
+	_cell = AssayHud.map_cell(size)
 	_detail.text = ("world seed %s, %d x %d tiles, %d species, %d players · tick %d, hash %s · "
 			+ "%d bundles applied, %d hashes reported") % [
 			_sim.seed_text(), size.x, size.y, _sim.species_names().size(), _sim.players().size(),
@@ -330,11 +337,8 @@ func _rebuild_bench(designs: Array) -> void:
 		body.custom_minimum_size = Vector2(PANEL, 0.0)
 		body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		row.add_child(body)
-		var buttons := HBoxContainer.new()
-		buttons.add_theme_constant_override("separation", 4)
-		for descriptor in AssayHud.design_verbs(design):
-			buttons.add_child(_design_button(descriptor as Dictionary, design))
-		row.add_child(buttons)
+		row.add_child(_verb_row(AssayHud.design_verbs(design),
+				func(descriptor: Dictionary) -> Button: return _design_button(descriptor, design)))
 		_bench.add_child(row)
 		_write_design(row, design)
 
@@ -427,11 +431,8 @@ func _rebuild_pack(stacks: Array) -> void:
 		var verbs := AssayHud.stack_verbs(stack, recipes, part_kinds, footprint,
 				not _building.is_empty())
 		if not verbs.is_empty():
-			var buttons := HBoxContainer.new()
-			buttons.add_theme_constant_override("separation", 4)
-			for descriptor in verbs:
-				buttons.add_child(_stack_button(descriptor as Dictionary, stack, footprint))
-			row.add_child(buttons)
+			row.add_child(_verb_row(verbs, func(descriptor: Dictionary) -> Button:
+					return _stack_button(descriptor, stack, footprint)))
 		_carrying.add_child(row)
 		label.text = AssayHud.stack_line(stack)
 
@@ -449,18 +450,32 @@ func _stack_button(descriptor: Dictionary, stack: Dictionary, footprint: Vector2
 					AssayActions.craft(recipe, AssayActions.item_of_stack(stack), 1)),
 					"one batch, from %s" % what)
 		"insert":
-			# THE WHOLE STACK, and the tooltip says the number. A button cannot ask for a quantity
-			# without growing a field, and picking a smaller number for the player would be this
-			# client deciding how much fuel a fire wants -- which is a sheet reading it does not have.
-			# `Pick up` gives a building and its contents back, so nothing is spent for good.
+			# THE WHOLE STACK. A button cannot ask for a quantity without growing a field, and
+			# picking a smaller number for the player would be this client deciding how much fuel a
+			# fire wants -- which is a sheet reading it does not have. `Pick up` gives a building and
+			# its contents back, so nothing is spent for good.
+			#
+			# AND "THE WHOLE STACK" IS COUNTED WHEN THE BUTTON IS PRESSED, NOT WHEN IT WAS BUILT.
+			# This is the rule at the top of the file and I broke it here first: the row only
+			# rebuilds when the pack's SHAPE changes, so a count captured in the closure froze at
+			# whatever was in hand the moment the row appeared. The button-driven session caught it
+			# -- it pressed `Fuel` on a row reading 12 and inserted 2, and the fire went out
+			# mid-stack. A tooltip with a number in it would go stale the same way, so it has none.
 			var slot := String(descriptor.get("slot", ""))
-			return _button(label, func() -> void: _insert(stack, slot, count),
-					"put all %d into the %s slot of the building you are acting on" % [count, slot])
+			return _button(label, func() -> void: _insert(stack, slot),
+					"put everything you are carrying of this into the %s slot of the building you "
+							% slot + "are acting on")
 		"place":
 			return _button(label, func() -> void: _act(label,
 					AssayActions.place(AssayActions.item_of_stack(stack), _target_tile())),
 					"stand it on the %d x %d tiles from the one you are acting on"
 							% [footprint.x, footprint.y])
+		"make":
+			var kind: Variant = descriptor.get("kind")
+			var part := String(descriptor.get("part", "?"))
+			return _button(label, func() -> void: _act(label,
+					AssayActions.make_part(kind, AssayActions.item_of_stack(stack), 1)),
+					"one %s, out of this material" % part)
 		"build":
 			return _button(label, func() -> void: _choose_part(stack),
 					"use as the frame of the next machine" if _building.is_empty()
@@ -537,12 +552,22 @@ func _act(what: String, command: Variant) -> void:
 ## Insert needs a building, and there may not be one. THIS IS NOT A REFUSAL -- with no building there
 ## is no `BuildingId` to put in the command at all, so there is nothing to send and saying so is the
 ## only honest answer. Maren's "never refuse" is about commands the sim should judge.
-func _insert(stack: Dictionary, slot: String, count: int) -> void:
+func _insert(stack: Dictionary, slot: String) -> void:
 	var target := _target_tile()
 	var building: Variant = _sim.tile_at(target).get("building")
 	if building == null:
 		_say("nothing to insert into at %d, %d — right-click a building first"
 				% [target.x, target.y], AssayHud.Say.FAILED)
+		return
+	# HOW MANY WE ARE ACTUALLY CARRYING, ASKED NOW. Grade is part of the question: two grades of one
+	# ore are two stacks and two rows, and inserting the other row's count would be a number from a
+	# different row.
+	var count := AssayDemoPlan.held(_sim.inventory_of(_client.player_id),
+			String(stack.get("kind", "")), int(stack.get("species", -1)),
+			String(stack.get("grade", "")))
+	if count <= 0:
+		_say("you are not carrying any %s any more" % String(stack.get("name", "?")),
+				AssayHud.Say.FAILED)
 		return
 	_act("Insert %d into %s" % [count, slot], AssayActions.insert(
 			int((building as Dictionary).get("id", -1)), slot,
@@ -582,6 +607,21 @@ func _clear_build() -> void:
 ## THE TILE EVERY PLACEMENT LANDS ON: the one you chose, or the one you stand on until you choose.
 func _target_tile() -> Vector2i:
 	return _target if _targeted else _my_tile()
+
+
+## A ROW OF VERB BUTTONS THAT WRAPS. An `HFlowContainer`, not an `HBoxContainer`, and that is not a
+## style choice: a refined stack offers six buttons (Fuel, Smelt and one Make per part kind) and an
+## HBox would run them off the right edge of a 320px panel. The column only scrolls vertically, so a
+## button pushed sideways is a button that cannot be pressed -- which is the exact failure the scroll
+## box was added to avoid.
+func _verb_row(verbs: Array, make_button: Callable) -> Control:
+	var row := HFlowContainer.new()
+	row.add_theme_constant_override("h_separation", 4)
+	row.add_theme_constant_override("v_separation", 2)
+	row.custom_minimum_size = Vector2(PANEL, 0.0)
+	for descriptor in verbs:
+		row.add_child(make_button.call(descriptor as Dictionary))
+	return row
 
 
 func _button(label: String, on_press: Callable, hint := "") -> Button:
@@ -707,10 +747,7 @@ func _draw() -> void:
 	if _client == null or not _sim.running():
 		return
 	var size := _sim.size_tiles()
-	if size.x <= 0 or size.y <= 0:
-		return
-	_cell = AssayHud.map_cell(size)
-	if _cell <= 0.0:
+	if size.x <= 0 or size.y <= 0 or _cell <= 0.0:
 		return
 	draw_rect(Rect2(MARGIN, Vector2(size) * _cell), AssayHud.MAP_BG, true)
 
