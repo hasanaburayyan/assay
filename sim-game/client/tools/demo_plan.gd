@@ -78,12 +78,12 @@ static func part_size(kind: String) -> int:
 ## How many of one kind, species and grade a player is carrying, out of `inventory_of`. Grade is
 ## optional: "" counts every grade, which is what matters when ore of two grades is the same input.
 ##
-## THE BODY MOVED TO `AssayActions.held_count` AND THIS IS NOW A FORWARD, because `main.gd` needs the
+## THE BODY MOVED TO `AssayInventory.held` AND THIS IS NOW A FORWARD, because `main.gd` needs the
 ## same count and a shipped script may not reference a class under `tools/` -- the export excludes it,
 ## so the reference is a parse error in the bundle and nowhere else (ASSA-51). The forward stays so the
 ## probes keep their own vocabulary and there is still exactly one implementation.
 static func held(stacks: Array, kind: String, species: int, grade: String = "") -> int:
-	return AssayActions.held_count(stacks, kind, species, grade)
+	return AssayInventory.held(stacks, kind, species, grade)
 
 
 ## The one stack of a kind and species a player holds, or `{}`. Highest grade first, so a chain that

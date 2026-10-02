@@ -67,6 +67,21 @@ const STACK_LINE := "StackLine"
 
 const ICON_PX := 32.0
 
+## THE ICON'S OWN BOX, AND WHY IT HAS A HEIGHT (ASSA-65, Cove's measurement on ASSA-57).
+##
+## `custom_minimum_size` is a FLOOR, not a size. A `TextureRect` in an `HBoxContainer` fills the row
+## vertically by default, so the rect was 32 x WHATEVER THE ROW WAS, and
+## `STRETCH_KEEP_ASPECT_CENTERED` scales by `min(32/fw, h/fh)`. Cove asked the engine what that came
+## to and it was **15/32** for an ore item -- 30 of 64 source columns surviving, spaced 2 and 3 apart,
+## which is uneven sampling of pixel art rather than a scale. And because a row is as tall as its
+## buttons, THE SAME ITEM CHANGED SIZE WHEN ITS VERBS CHANGED: a number from the UI deciding how art
+## is resampled.
+##
+## 48 is the height that makes the ratios exact, and it is arithmetic rather than taste: the ore sheet
+## is 64x96, so `min(32/64, 48/96)` is **1/2** on the nose, and a 128x102 part sheet is **1/4**. With
+## `SIZE_SHRINK_CENTER` the rect is this box and nothing else, so neither scale can be moved by a verb.
+const ICON_BOX_PX := Vector2(ICON_PX, 48.0)
+
 const UNBUILT := "nothing built yet"
 var _bench_showing := UNBUILT
 var _pack_showing := UNBUILT
@@ -459,7 +474,10 @@ func _rebuild_pack(stacks: Array) -> void:
 		if icon != null:
 			var art := TextureRect.new()
 			art.texture = icon
-			art.custom_minimum_size = Vector2(ICON_PX, ICON_PX)
+			art.custom_minimum_size = ICON_BOX_PX
+			# SHRINK_CENTER, or the row's height is still half of the scale: FILL stretches this rect
+			# to whatever the buttons beside it need, and the ratio is nobody's decision again.
+			art.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 			# The species' own slot, from the table CI holds equal to the art pipeline's copy. The
@@ -632,7 +650,7 @@ func _insert(stack: Dictionary, slot: String) -> void:
 	# HOW MANY WE ARE ACTUALLY CARRYING, ASKED NOW. Grade is part of the question: two grades of one
 	# ore are two stacks and two rows, and inserting the other row's count would be a number from a
 	# different row.
-	var count := AssayActions.held_count(_sim.inventory_of(_client.player_id),
+	var count := AssayInventory.held(_sim.inventory_of(_client.player_id),
 			String(stack.get("kind", "")), int(stack.get("species", -1)),
 			String(stack.get("grade", "")))
 	if count <= 0:

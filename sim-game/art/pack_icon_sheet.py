@@ -198,8 +198,20 @@ nearest_blit(compare, ore_frame, tint_of(ore), 1.0, 1.0, ore["icon"]["drawn"][0]
 nearest_blit(compare, ore_frame, tint_of(ore), int(ICON) + 9.0, 1.0, fw * 0.5, fh * 0.5,
              zoom=ZOOM)
 dc = ImageDraw.Draw(compare)
-dc.text((2, 46 * ZOOM), "15/32 = 0.469 (shipped)", font=f12, fill=(240, 240, 240))
-dc.text((int(ICON) * ZOOM + 36, 46 * ZOOM), "1/2 = 0.500", font=f12, fill=(240, 240, 240))
+# THE LEFT LABEL IS READ, NOT TYPED (Limpet, ASSA-65). The left blit has always used the drawn
+# size out of the layout JSON, so the PICTURE followed the client; the caption under it said
+# "15/32 = 0.469 (shipped)" as a literal and went stale the moment the icon got a fixed box --
+# a panel captioned "shipped" showing a scale that is not shipped. Now the two halves of this
+# panel agree when the client is right, which is the point of putting them side by side.
+_shipped = ore["icon"]["scale"]
+_inverse = 1.0 / _shipped if _shipped else 0.0
+dc.text((2, 46 * ZOOM),
+        ("1/%d = %.3f (shipped)" % (round(_inverse), _shipped)
+         if _shipped and abs(_inverse - round(_inverse)) < 1e-4
+         else "%.3f = 1/%.3f (shipped)" % (_shipped, _inverse)),
+        font=f12, fill=(240, 240, 240))
+dc.text((int(ICON) * ZOOM + 36, 46 * ZOOM), "1/2 = 0.500 (a clean half)",
+        font=f12, fill=(240, 240, 240))
 
 # ---------------------------------------------------- panel 4: every species, the same ore icon
 sp_w = (int(ICON) + 10) * len(TINTS)
@@ -290,14 +302,16 @@ print("plate #%02X%02X%02X spread (max contrast, worst..best): %.2f..%.2f = %.1f
          max(c[-1] for _, c in on_plate) / min(c[-1] for _, c in on_plate))))
 print()
 # WHICH SOURCE ROWS AND COLUMNS SURVIVE. A scale of 1/2 or 1/4 keeps every nth; 15/32 does not.
-for label, (dw, dh), (fw_, fh_) in [
-        ("ore 30x45 from 64x96", tuple(ore["icon"]["drawn"]), ore_frame.size)]:
+#
+# THE VERDICT IS COMPUTED, NOT ASSERTED (Limpet, ASSA-65). The size in the label and the words
+# "not evenly spaced" used to be literals -- true when this was written against 15/32, and false
+# the moment the icon got a fixed box: the run below reported `gaps [2]`, a single uniform gap,
+# under a sentence saying the spacing was uneven. One gap is even sampling; more than one is not.
+for (dw, dh), (fw_, fh_) in [(tuple(ore["icon"]["drawn"]), ore_frame.size)]:
     cols = [int((dx + 0.5) / dw * fw_) for dx in range(int(dw))]
-    runs = {}
-    for c in cols:
-        runs[c] = runs.get(c, 0) + 1
     kept = len(set(cols))
-    print("%s: %d of %d source columns survive, and they are not evenly spaced "
-          "(gaps %s)" % (label, kept, fw_,
-                         sorted(set(b - a for a, b in zip(cols, cols[1:])))))
+    gaps = sorted(set(b - a for a, b in zip(cols, cols[1:])))
+    print("ore %gx%g from %gx%g: %d of %d source columns survive, and they are %s (gaps %s)"
+          % (dw, dh, fw_, fh_, kept, fw_,
+             "evenly spaced" if len(gaps) == 1 else "NOT evenly spaced", gaps))
 print("sheet written to %s (%dx%d)" % (OUT, sheet.width, sheet.height))
