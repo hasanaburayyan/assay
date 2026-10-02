@@ -514,6 +514,13 @@ impl AssaySim {
                     "input" => &gstring(recipe.input.0.name()).to_variant(),
                     "input_count" => &(recipe.input.1 as i64).to_variant(),
                     "hand" => &id.is_hand_craftable().to_variant(),
+                    // THE CLAUSE THE TERMINAL'S RECIPE TABLE ALREADY PRINTS,
+                    // from `sim::debug::recipe_dead_end` -- the same call, not
+                    // a second sentence (ASSA-84, Maren's ruling 2). Empty when
+                    // something consumes the output, so a client that renders
+                    // it when non-empty needs no edit the day a recipe stops
+                    // being a dead end.
+                    "dead_end" => &gstring(&sim::debug::recipe_dead_end(recipe)).to_variant(),
                 })
             })
             .collect()

@@ -281,3 +281,66 @@ func _find(node: Node, label: String) -> Button:
 		if found != null:
 			return found
 	return null
+
+
+## THE CRAFT BUTTON WARNS WHAT ONLY THE TERMINAL'S TABLE WARNED (ASSA-84).
+##
+## ASSA-59 settled that nothing in this game consumes a gear, and the recipe table says so in a
+## clause derived from `is_consumed`. That table is sim-cli only, so the window player got the
+## invitation without the warning -- and at a window a BUTTON is a stronger invitation than a row,
+## for an output that costs 2 refined.
+##
+## NOTHING HERE NAMES THE GEAR, and that is the point of the test as much as of the code. It asks the
+## SIM which recipes are dead ends and then requires exactly those buttons to carry exactly that
+## sentence. The day something consumes that output, the sim stops saying it, this test stops
+## expecting it, and no one edits either.
+func test_a_craft_button_carries_the_sims_dead_end_clause_and_only_then() -> bool:
+	var screen := _joined()
+	var ok := true
+	var recipes: Array = AssaySimHost.recipes()
+	var checked := 0
+	var warned := 0
+	for entry in recipes:
+		var recipe: Dictionary = entry
+		if not bool(recipe.get("hand", false)):
+			continue
+		var stack := {"kind": String(recipe.get("input", "")), "species": 1, "grade": "B",
+				"count": 9, "name": "test material"}
+		var verbs := AssayHud.stack_verbs(stack, recipes, [], Vector2i.ZERO, false)
+		for verb in verbs:
+			var descriptor: Dictionary = verb
+			if String(descriptor.get("verb", "")) != "craft":
+				continue
+			if String(descriptor.get("label", "")) != "Craft %s" % String(recipe.get("name", "?")):
+				continue
+			checked += 1
+			var button: Button = screen._stack_button(descriptor, stack, Vector2i.ZERO)
+			if button == null:
+				ok = _fail("no button for %s" % descriptor)
+				break
+			# RULING 1: the button exists and is pressable whatever the sim says about its output.
+			if button.disabled:
+				ok = _fail("`%s` is disabled; a legal action stays offered" % button.text)
+				break
+			var want := String(recipe.get("dead_end", ""))
+			if want == "":
+				if button.tooltip_text.contains("nothing uses"):
+					ok = _fail(("`%s` warns `%s` while the sim says its output IS consumed")
+							% [button.text, button.tooltip_text])
+					break
+			else:
+				warned += 1
+				if not button.tooltip_text.contains(want):
+					ok = _fail(("`%s` should carry the sim's clause `%s` and reads `%s`")
+							% [button.text, want, button.tooltip_text])
+					break
+		if not ok:
+			break
+	if ok and checked == 0:
+		ok = _fail("no hand-craft buttons were built, so nothing was checked")
+	elif ok and warned == 0:
+		ok = _fail(("no recipe in this build is a dead end, so the warning was never exercised. "
+				+ "If something now consumes every output that is good news and this test should "
+				+ "be retired, not loosened."))
+	screen.queue_free()
+	return ok
