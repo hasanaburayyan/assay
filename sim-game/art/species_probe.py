@@ -38,10 +38,16 @@ import sys
 
 from PIL import Image
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from species_tints import SPECIES_TINTS
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SPR = os.path.join(ROOT, "assets", "sprites")
 GAME = 32
 SPECIES = 6        # sim/src/tuning.rs SPECIES_PER_WORLD
+# The sim's grades, worst first. Keyed to Grade::letter(); the art no longer
+# invents quartiles that cross no real boundary.
+GRADE_ROWS = ("C", "B", "A")
 
 # dE76 thresholds. 2.3 is the just-noticeable difference under ideal side-by-
 # side viewing; nothing on a game map is ideal or side-by-side, so:
@@ -272,7 +278,22 @@ def main():
     # species-neutral tiles are rendered, so the stand-in would now be
     # measuring my own filter instead of the thing that ships. neutralise()
     # is kept for the one comparison below that still needs it.
-    base = frame_of("ore", "t3_full_v0")
+    # GRADE C, THE DARKEST TILE, ON PURPOSE. This used to be the middle of
+    # the ladder, which measured species where the art is kindest to them.
+    # `modulate` is a multiply, so a darker rock scales the gap between two
+    # species by exactly its own factor - the same arithmetic Maren used to
+    # rule that purity must not dim the tint, applied to my own ladder. The
+    # worst case for telling two species apart is the bottom of the ladder,
+    # so every species number below is measured there.
+    base = frame_of("ore", "C_full_v0")
+    # ...but FINDABILITY is a different question and belongs at a different
+    # grade. Species separation is worst where the rock is darkest (C), so it
+    # is measured there. "Does a deposit stand off the terrain" is about
+    # COVERAGE, and a grade C tile is sparse ON PURPOSE - poor ore should look
+    # poor. Judging pop at C rejects every tint there is and tells you nothing
+    # about the art, so pop is measured on a typical tile and C is reported
+    # separately as the subtle end of the ladder.
+    pop_base = frame_of("ore", "B_full_v0")
     ground = at_1x(frame_of("ground", "v0"))
     gmean = mean_rgb(ground)
     ok = True
@@ -283,7 +304,7 @@ def main():
     bm = mean_rgb(at_1x(base))
     bl = lab(bm)
     chroma = math.sqrt(bl[1] ** 2 + bl[2] ** 2)
-    print("base ore/t3_full_v0: mean rgb (%.0f, %.0f, %.0f), L* %.1f, chroma %.1f"
+    print("base ore/C_full_v0 (darkest grade): mean rgb (%.0f, %.0f, %.0f), L* %.1f, chroma %.1f"
           % (bm[0], bm[1], bm[2], bl[0], chroma))
     if bl[0] < 55:
         ok = False
@@ -321,11 +342,16 @@ def main():
     # score coverage as if it were free.
     print()
     n = 6
-    pops = [dE(mean_rgb(over_ground(tint(base, h))), gmean) for h in hues(n)]
-    for k, d in enumerate(pops):
-        print("species %d vs ground: dE %5.1f %s" % (k, d, "" if d >= POP else "<-- SINKS INTO TERRAIN"))
-    if min(pops) < POP:
-        ok = False
+    for g in GRADE_ROWS:
+        gt = frame_of("ore", "%s_full_v0" % g)
+        ps = [dE(mean_rgb(over_ground(tint(gt, h))), gmean) for h in hues(n)]
+        note = "" if min(ps) >= POP else ("<-- subtle by design (sparse)" if g == "C"
+                                          else "<-- SINKS INTO TERRAIN")
+        print("grade %s vs ground: worst species dE %5.1f, best %5.1f  %s"
+              % (g, min(ps), max(ps), note))
+        if g != "C" and min(ps) < POP:
+            ok = False
+    pops = [dE(mean_rgb(over_ground(tint(pop_base, h))), gmean) for h in hues(n)]
 
     # ---- 3. THE AXIS COLLISION
     # An ore tile already spends a visual axis on TIER, and parts spend one on
@@ -333,22 +359,23 @@ def main():
     # reads a 32px tile that is carrying two things at once. The question is
     # not whether each axis works alone; it is whether a low tier of one
     # species lands on a high tier of another.
-    print("\naxis collision: species (hue) against tier (tone), 6 species x 4 tiers")
+    print("\naxis collision: species (hue) against grade (tone), 6 species x 3 grades")
     cells = {}
     for s, h in enumerate(hues(6)):
-        for t, row in enumerate(("t1", "t2", "t3", "t4")):
+        for t, row in enumerate(GRADE_ROWS):
             tile = over_ground(tint(frame_of("ore", "%s_full_v0" % row), h))
             cells[(s, t)] = mean_rgb(tile)
     cross = [(dE(cells[a], cells[b]), a, b)
              for a in cells for b in cells if a < b and a[0] != b[0]]
     same = [(dE(cells[(s, t1)], cells[(s, t2)]), s, t1, t2)
-            for s in range(6) for t1 in range(4) for t2 in range(t1 + 1, 4)]
+            for s in range(6) for t1 in range(len(GRADE_ROWS))
+            for t2 in range(t1 + 1, len(GRADE_ROWS))]
     cw, ca, cb = min(cross)
     sw, ss, st1, st2 = min(same)
-    print("  closest DIFFERENT-species pair across all tiers: %s vs %s at dE %5.1f"
+    print("  closest DIFFERENT-species pair across all grades: %s vs %s at dE %5.1f"
           % (ca, cb, cw))
-    print("  closest same-species tier step (how readable tier is): dE %5.1f (species %d, t%d vs t%d)"
-          % (sw, ss, st1 + 1, st2 + 1))
+    print("  closest same-species grade step (how readable grade is): dE %5.1f (species %d, %s vs %s)"
+          % (sw, ss, GRADE_ROWS[st1], GRADE_ROWS[st2]))
     if cw < DISTINCT:
         # NOT a probe failure: this is measured on EVEN HUE spacing, which
         # check 5 rejects and check 7 replaces. Left in because it is the
@@ -369,7 +396,7 @@ def main():
     floor_sat = None
     for s in (0.70, 0.60, 0.50, 0.40, 0.30, 0.22, 0.15, 0.10):
         rockm = [mean_rgb(at_1x(tint(base, h))) for h in hues(6, sat=s)]
-        compm = [mean_rgb(over_ground(tint(base, h))) for h in hues(6, sat=s)]
+        compm = [mean_rgb(over_ground(tint(pop_base, h))) for h in hues(6, sat=s)]
         worst = min(dE(rockm[i], rockm[j])
                     for i in range(6) for j in range(i + 1, 6))
         gpop = min(dE(m, gmean) for m in compm)
@@ -378,8 +405,13 @@ def main():
             floor_sat = s
         print("  sat %.2f: closest species pair dE %5.1f, worst vs ground dE %5.1f  %s"
               % (s, worst, gpop, mark))
-    print("  -> six species hold down to saturation %.2f. Below that they start\n"
-          "     merging into each other or into the terrain." % floor_sat)
+    if floor_sat is None:
+        print("  -> NO saturation passes both floors on this tile. At the bottom of")
+        print("     the ladder that is a COVERAGE result, not a colour one: a sparse")
+        print("     tile is mostly terrain, so it cannot differ from terrain.")
+    else:
+        print("  -> six species hold down to saturation %.2f. Below that they start\n"
+              "     merging into each other or into the terrain." % floor_sat)
 
     # ---- 4. IS THE TIER LADDER ITSELF READABLE, on the art as it ships?
     #
@@ -411,12 +443,14 @@ def main():
     OLD_TIER_STEP = 3.5   # the art this replaced
     TIER_STEP = 5.0       # enforced: must stay well clear of what it replaced
     TIER_TARGET = 6.0     # wanted, not reached; see above
-    print("\ntier readability on the art as it ships (no tint)")
-    means = [mean_rgb(over_ground(frame_of("ore", "t%d_full_v0" % t))) for t in (1, 2, 3, 4)]
-    steps = [dE(means[i], means[i + 1]) for i in range(3)]
+    print("\ngrade readability on the art as it ships (no tint)")
+    means = [mean_rgb(over_ground(frame_of("ore", "%s_full_v0" % g))) for g in GRADE_ROWS]
+    steps = [dE(means[i], means[i + 1]) for i in range(len(means) - 1)]
     worst_orig = min(steps)
-    print("  t1>t2 %5.1f  t2>t3 %5.1f  t3>t4 %5.1f   full t1-t4 range %5.1f"
-          % (steps[0], steps[1], steps[2], dE(means[0], means[3])))
+    print("  %s   full %s-%s range %5.1f"
+          % ("  ".join("%s>%s %5.1f" % (GRADE_ROWS[i], GRADE_ROWS[i + 1], steps[i])
+                       for i in range(len(steps))),
+             GRADE_ROWS[0], GRADE_ROWS[-1], dE(means[0], means[-1])))
     print("  smallest adjacent step dE %.1f (%.1fx JND), against %.1f for the art\n"
           "  this replaced (+%.0f%%). Guard %.1f: %s. Target %.1f: %s."
           % (worst_orig, worst_orig / JND, OLD_TIER_STEP,
@@ -453,7 +487,7 @@ def main():
         for s in sats:
             hs = hues(6, sat=s, span=SPAN)
             rockm = [mean_rgb(as_seen(at_1x(tint(base, h)), observer)) for h in hs]
-            compm = [mean_rgb(over_ground(tint(base, h), observer)) for h in hs]
+            compm = [mean_rgb(over_ground(tint(pop_base, h), observer)) for h in hs]
             worst = min(dE(rockm[i], rockm[j])
                         for i in range(6) for j in range(i + 1, 6))
             gpop = min(dE(m, gm) for m in compm)
@@ -510,7 +544,7 @@ def main():
         for k in MUTES:
             rockm = [mean_rgb(as_seen(at_1x(tint(base, mute(c, k))), observer))
                      for c in table]
-            compm = [mean_rgb(over_ground(tint(base, mute(c, k)), observer))
+            compm = [mean_rgb(over_ground(tint(pop_base, mute(c, k)), observer))
                      for c in table]
             worst = min(dE(rockm[i], rockm[j])
                         for i in range(len(table)) for j in range(i + 1, len(table)))
@@ -589,6 +623,48 @@ def main():
         print("  -> the borrowed table does not clear both floors either. It is close\n"
               "     on species and fails on terrain, which check 7 explains.")
 
+    # ---- 6c. WHAT THE LADDER COSTS THE SPECIES MARGIN.
+    #
+    # Maren ruled that purity must not DIM the species tint, because a
+    # uniform multiply scales the gap between two species by exactly its own
+    # factor. That ruling is about the map circle, but the arithmetic does not
+    # care which surface it is on, and MY LADDER IS PARTLY LIGHTNESS: a grade
+    # C rock is darker than a grade A one, so the same compression happens
+    # inside the tile art. Neither of us said that out loud, and every species
+    # number I have reported until now was measured at ONE grade.
+    #
+    # So: measure the six tints at each grade. The spread between the grades
+    # is what the ladder costs, and grade C is the number that has to clear
+    # the floor. If it does not, the ladder has to buy its contrast from
+    # COVERAGE instead of value - which is free, because count and size change
+    # how much rock there is without changing how bright it is.
+    print("\n  what the grade ladder costs THE SHIPPED TABLE (art/species_tints.py),")
+    print("  closest pair by hue/chroma, worst observer, at each grade:")
+    ladder_ok = True
+    for g in GRADE_ROWS:
+        worst, worst_o = 1e9, None
+        for o in OBSERVERS:
+            ls = [lab(mean_rgb(as_seen(at_1x(tint(frame_of("ore", "%s_full_v0" % g),
+                                                  hex_rgb(c))), o)))
+                  for c in SPECIES_TINTS]
+            w = min(math.sqrt(sum((ls[i][t] - ls[j][t]) ** 2 for t in (1, 2)))
+                    for i in range(len(SPECIES_TINTS))
+                    for j in range(i + 1, len(SPECIES_TINTS)))
+            if w < worst:
+                worst, worst_o = w, o
+        mark = "OK" if worst >= DISTINCT else "BELOW FLOOR"
+        if worst < DISTINCT:
+            ladder_ok = False
+        print("    grade %s: %5.1f  (worst observer: %s)  %s" % (g, worst, worst_o, mark))
+    if not ladder_ok:
+        ok = False
+        print("    -> the ladder is too dark at the bottom, so grade is eating the")
+        print("       species margin. Move contrast from VALUE to COVERAGE in")
+        print("       ore.py (shade() floor, count/size) - coverage is free here.")
+    else:
+        print("    -> the grade ladder costs the species read nothing it cannot")
+        print("       afford. Grade C is the binding one, and it clears.")
+
     # ---- 7. DERIVE THE TABLE AGAINST OUR OWN TERRAIN.
     #
     # The lift sweep failed and the per-species numbers said why: slot 2 is
@@ -607,7 +683,7 @@ def main():
     # number is what produced the even-hue scheme that fails at protan 5.7.
     gmeans = {o: mean_rgb(as_seen(ground, o)) for o in OBSERVERS}
 
-    def derive(label, sats):
+    def derive(label, sats, pop_base=pop_base):
         cands = []
         # SPAN is the RED lever: at 1.0 these are 24 hues round the wheel, and
         # below it they crowd into a slice too narrow to hold six species, so
@@ -618,7 +694,8 @@ def main():
                     c = tuple(round(x * 255) for x in colorsys.hsv_to_rgb(hdeg / 360.0, sat, val))
                     layer = tint(base, c)
                     rock = {o: lab(mean_rgb(as_seen(at_1x(layer), o))) for o in OBSERVERS}
-                    pop = min(dE(mean_rgb(over_ground(layer, o)), gmeans[o]) for o in OBSERVERS)
+                    poplayer = tint(pop_base, c)
+                    pop = min(dE(mean_rgb(over_ground(poplayer, o)), gmeans[o]) for o in OBSERVERS)
                     if pop >= POP:
                         cands.append((c, rock, pop))
         total = 24 * len(sats) * 3
@@ -716,7 +793,7 @@ def main():
     rows = 4 + len(OBSERVERS) * 2
     sheet_img = Image.new("RGBA", (w, rows * (cell + gap) + gap + 2 * bar), (30, 32, 30, 255))
     for (s, t), _ in sorted(cells.items()):
-        tile = over_ground(tint(frame_of("ore", "%s_full_v0" % ("t1", "t2", "t3", "t4")[t]), hues(6)[s]))
+        tile = over_ground(tint(frame_of("ore", "%s_full_v0" % GRADE_ROWS[t]), hues(6)[s]))
         sheet_img.alpha_composite(tile, (gap + s * (cell + gap), gap + t * (cell + gap)))
     table = slots()
     for b, colours in enumerate(([hues(6, span=SPAN)[i] for i in range(6)], table)):
@@ -726,7 +803,7 @@ def main():
                 tile = over_ground(tint(base, c), observer)
                 sheet_img.alpha_composite(tile, (gap + s * (cell + gap), y0 + i * (cell + gap)))
     sheet_img.save(os.path.join(SPR, "species_probe.png"))
-    print("\nwrote assets/sprites/species_probe.png: 6 species x 4 tiers, then the")
+    print("\nwrote assets/sprites/species_probe.png: 6 species x 3 grades, then the")
     print("same six through normal/protan/deutan/tritan twice - EVEN HUE first,")
     print("then the DESIGNED SLOTS. Compare the protan row of each block.")
     return 0 if ok else 1
