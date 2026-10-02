@@ -301,18 +301,26 @@ quit
         );
     }
 
-    // The pick WORE while it was in hand: the readout's pool is lower the
-    // second time it is printed. This is the only part of decision 12 the
+    // The pick WORE while it was in hand: the readout's SWINGS USED is higher
+    // the second time it is printed. This is the only part of decision 12 the
     // play-through can show without running 120 swings, and asserting the
     // direction rather than a value keeps it true across a retune.
-    let pools: Vec<u32> = stdout
+    //
+    // A10's readout counts up now rather than down (swings used, not a pool),
+    // so this reads `last > first`. A test that had kept the old direction
+    // would have gone on passing on an empty list.
+    let used: Vec<u32> = stdout
         .lines()
         .filter_map(|l| l.split("durability ").nth(1))
-        .filter_map(|rest| rest.split('/').next()?.parse().ok())
+        .filter_map(|rest| rest.split(' ').next()?.parse().ok())
         .collect();
     assert!(
-        pools.len() >= 2 && pools.last() < pools.first(),
-        "the pick's pool must fall as it is used, got {pools:?}\n{transcript}"
+        used.len() >= 2,
+        "the readout should be printed at least twice: {used:?}\n{transcript}"
+    );
+    assert!(
+        used.last() > used.first(),
+        "the pick's swings used must rise as it is used, got {used:?}\n{transcript}"
     );
 
     // And the drill is still standing at the end, which is decision 12's
