@@ -94,6 +94,14 @@ fn main() {
         "Hosting world {} at tick {} on port {} ({} ticks/s)",
         opts.seed, world.tick, opts.port, opts.tps
     );
+    // ASSA-40: so pairing a downloaded zip to a running host is reading, not
+    // guessing. A peer on a different rules id is refused at join, with both
+    // numbers named.
+    println!(
+        "Rules {} · protocol v{}",
+        sim_net::RULES_ID,
+        PROTOCOL_VERSION
+    );
     println!("Saves: {}", saves_dir().display());
     println!("Players join with:");
     println!(
@@ -224,17 +232,19 @@ impl Relay {
             return;
         };
         match msg {
-            ClientMsg::Hello { name, protocol } => {
+            ClientMsg::Hello {
+                name,
+                protocol,
+                rules,
+            } => {
                 if conn.joined.is_some() || pending.iter().any(|p| p.conn == id) {
                     return;
                 }
-                if protocol != PROTOCOL_VERSION {
-                    return self.refuse(
-                        id,
-                        format!(
-                            "This host speaks protocol v{PROTOCOL_VERSION} but your client sent v{protocol}. Update to the same build as the host."
-                        ),
-                    );
+                // Both the wire and the rules, worded in one place
+                // (ASSA-40). A peer that disagrees about either is refused
+                // here rather than discovering it as a desync.
+                if let Err(reason) = sim_net::check_join(protocol, &rules) {
+                    return self.refuse(id, reason);
                 }
                 let account = match self.auth.authenticate(&name) {
                     Ok(a) => a,

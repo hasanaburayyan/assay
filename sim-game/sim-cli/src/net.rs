@@ -26,6 +26,7 @@ pub fn join(addr: &str, name: &str) -> Result<(TcpStream, String, PlayerId, Worl
     let hello = ClientMsg::Hello {
         name: name.to_string(),
         protocol: PROTOCOL_VERSION,
+        rules: sim_net::RULES_ID.to_string(),
     };
     write_msg(&mut stream, &hello).map_err(|e| format!("Could not talk to {addr}: {e}"))?;
 

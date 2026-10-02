@@ -27,6 +27,9 @@ const RUST_PROTOCOL_PATH := "../sim-net/src/lib.rs"
 ## What `protocol_version()` says when it cannot ask. Not a guess at a number: a client that invents
 ## one gets refused by the relay with a message that blames neither side.
 const UNKNOWN_PROTOCOL := -1
+## What `rules_id()` says when it cannot ask. Readable in a refusal rather than an empty string,
+## which would look like a relay bug instead of a client that never loaded its rules (ASSA-40).
+const UNKNOWN_RULES := "unknown-rules"
 
 
 ## THE PROTOCOL NUMBER THIS CLIENT SPEAKS, READ OUT OF RUST AT RUNTIME.
@@ -80,7 +83,28 @@ static func encode_text(json_text: String) -> PackedByteArray:
 
 
 static func hello(player_name: String) -> Dictionary:
-	return {"Hello": {"name": player_name, "protocol": protocol_version()}}
+	return {
+		"Hello": {
+			"name": player_name,
+			"protocol": protocol_version(),
+			"rules": rules_id(),
+		}
+	}
+
+
+## WHICH RULES THIS BUILD RUNS (ASSA-40), read from Rust for the same reason as
+## `protocol_version()`: a copy kept in GDScript is a copy that goes stale, and this one would go
+## stale every time a tuning constant moved. Hex TEXT, compared for equality by the relay -- see
+## `AssaySim.rules_id()`.
+##
+## `UNKNOWN_RULES` when the binding did not load, guarded the same way as the protocol number
+## because the same missing library causes both. `join()` refuses to say hello in that case, so this
+## value should never reach a relay; if it ever does, it is refused by name instead of silently
+## matching nothing.
+static func rules_id() -> String:
+	if not ClassDB.class_exists("AssaySim"):
+		return UNKNOWN_RULES
+	return String(ClassDB.class_call_static("AssaySim", "rules_id"))
 
 
 ## A command the player is asking for. The relay stamps WHO sent it -- there is deliberately no

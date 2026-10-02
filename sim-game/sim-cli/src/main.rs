@@ -45,6 +45,14 @@ fn main() {
 
     if !use_inspector {
         println!("r2ts sim · type `help` for commands");
+        // ASSA-40: printed before any join attempt, so a refusal naming two
+        // rules ids can be read against the one this build actually carries
+        // — and so a scripted session records it.
+        println!(
+            "rules {} · protocol v{}",
+            sim_net::RULES_ID,
+            sim_net::PROTOCOL_VERSION
+        );
     }
     if let Some(addr) = &opts.connect {
         let (stream, addr, me, world) = net::join(addr, &opts.name).unwrap_or_else(|e| {

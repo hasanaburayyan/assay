@@ -18,7 +18,14 @@ use serde::{Deserialize, Serialize};
 use sim::{Input, PlayerCommand, PlayerId, World};
 
 /// Bump whenever a message changes shape. Mismatched clients are refused.
-pub const PROTOCOL_VERSION: u32 = 6;
+///
+/// **THIS IS NOT THE RULES.** It answers "can we understand each other's
+/// messages", and two builds can understand each other perfectly while
+/// playing different games — see [`sim::RULES_ID`] and [`check_join`].
+pub const PROTOCOL_VERSION: u32 = 7;
+
+/// The rules this build runs, re-exported so a host has one place to look.
+pub const RULES_ID: &str = sim::RULES_ID;
 
 /// Default port for `sim-relay` and `sim-cli --connect`.
 pub const DEFAULT_PORT: u16 = 7777;
@@ -31,8 +38,13 @@ const MAX_MESSAGE_BYTES: u32 = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ClientMsg {
-    /// First message on every connection.
-    Hello { name: String, protocol: u32 },
+    /// First message on every connection. `rules` is the sender's
+    /// [`sim::RULES_ID`]; see [`check_join`] for why both numbers are here.
+    Hello {
+        name: String,
+        protocol: u32,
+        rules: String,
+    },
     /// Ask for a command to be scheduled. There is deliberately no way to
     /// send a `SystemCommand`, and no player field: the relay stamps who
     /// sent it.
@@ -58,6 +70,41 @@ pub enum ServerMsg {
 pub struct TickBundle {
     pub tick: u64,
     pub inputs: Vec<Input>,
+}
+
+/// Whether a peer saying [`ClientMsg::Hello`] may join, and if not, the
+/// sentence to refuse it with (ASSA-40).
+///
+/// **TWO QUESTIONS, ASKED IN THIS ORDER.** Can we understand each other's
+/// messages (`protocol`), and are we playing the same game (`rules`)? The
+/// second is the one that bit us: #47 changed a single tuning constant, so
+/// every derived stat changed, and the relay running since before it spoke
+/// protocol 6 exactly like its clients. Nothing diverges while a player only
+/// walks and reads; the first mined unit is worth different work, the hash
+/// check fires twenty ticks later, and the client says the session is
+/// unrecoverable. One rebuild, an hour and a half, and a held playtest.
+///
+/// **THE WORDING LIVES HERE AND NOWHERE ELSE** so the relay, `sim-cli` and
+/// the Godot client cannot each invent their own. It names both identities,
+/// because "your build is wrong" without saying which build is useless, and
+/// it ends in the only action that fixes it. A stranger reading it should not
+/// need to know what a lockstep peer is.
+pub fn check_join(protocol: u32, rules: &str) -> Result<(), String> {
+    if protocol != PROTOCOL_VERSION {
+        return Err(format!(
+            "This host speaks protocol v{PROTOCOL_VERSION} but your client sent \
+             v{protocol}. Download the build that matches this host."
+        ));
+    }
+    if rules != RULES_ID {
+        return Err(format!(
+            "This host runs game rules {RULES_ID} but your client was built from \
+             rules {rules}. You would both play a different game and desync \
+             within a few seconds. Download the build that matches this host: \
+             {RULES_ID}"
+        ));
+    }
+    Ok(())
 }
 
 /// Where host programs (relay and client) keep world saves.

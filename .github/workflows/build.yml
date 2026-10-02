@@ -234,6 +234,20 @@ jobs:
           cat selfcheck.txt
           grep -qx 'CLIENT SELFCHECK OK' selfcheck.txt
           rm selfcheck.txt
+      # ASSA-40: the rules this bundle plays, in the run log, so a tester's
+      # zip can be paired with a running relay by reading rather than by
+      # `lsof` and a binary mtime. The relay prints the same line on start
+      # and refuses a peer that disagrees.
+      - name: Rules identity
+        run: |
+          id=$(bundle/assay-macos/sim-cli --plain </dev/null | sed -n 's/^rules \([0-9a-f]*\).*/\1/p')
+          test -n "$id" || { echo "sim-cli did not print a rules identity"; exit 1; }
+          # In VERSION.txt as well as the log: the log is for whoever hosts,
+          # the file travels with the zip for whoever downloads it.
+          echo "Game rules $id (a host on other rules will refuse this build)" \
+            >> bundle/assay-macos/VERSION.txt
+          echo "assay-macos rules identity: $id"
+          echo "assay-macos rules identity: \`$id\`" >> "$GITHUB_STEP_SUMMARY"
       - name: Zip
         run: cd bundle && ditto -c -k --keepParent assay-macos assay-macos.zip
       - uses: actions/upload-artifact@v4
@@ -361,6 +375,20 @@ jobs:
             throw "the exported client failed its self-check"
           }
           Remove-Item $marker
+      # ASSA-40, same as the macOS job. The two identities from one commit
+      # must MATCH: the fingerprint drops carriage returns precisely so a
+      # CRLF checkout here agrees with the Mac, and a tester pairing a
+      # Windows zip to a Mac-hosted relay depends on it.
+      - name: Rules identity
+        shell: pwsh
+        run: |
+          $out = $null | bundle/assay-windows/sim-cli.exe --plain
+          $id = ($out | Select-String -Pattern '^rules ([0-9a-f]+)').Matches.Groups[1].Value
+          if (-not $id) { throw "sim-cli did not print a rules identity: $out" }
+          Add-Content bundle/assay-windows/VERSION.txt `
+            "Game rules $id (a host on other rules will refuse this build)"
+          Write-Output "assay-windows rules identity: $id"
+          Add-Content $env:GITHUB_STEP_SUMMARY "assay-windows rules identity: ``$id``"
       - name: Zip
         shell: pwsh
         run: Compress-Archive -Path bundle/assay-windows -DestinationPath bundle/assay-windows.zip

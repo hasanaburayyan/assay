@@ -448,6 +448,26 @@ impl AssaySim {
         PROTOCOL_VERSION as i64
     }
 
+    /// WHICH RULES THIS BUILD RUNS, for the same reason and by the same route
+    /// as [`Self::protocol_version`]: one declaration, in Rust, read at
+    /// runtime (ASSA-40).
+    ///
+    /// **HEX TEXT, NEVER A NUMBER.** Sixteen hex digits do not survive a
+    /// GDScript double any better than a `u64` hash does, and this one is
+    /// compared for equality by the relay — a value mangled on the way out
+    /// would be refused every time, which is the most confusing possible
+    /// failure. Same rule as hashes and seeds.
+    #[func]
+    pub fn rules_id() -> GString {
+        gstring(Self::rules_id_string())
+    }
+
+    /// `rules_id` without Godot in the way, so a test can read it: a
+    /// `GString` cannot be built outside the engine's load window.
+    pub fn rules_id_string() -> &'static str {
+        sim::RULES_ID
+    }
+
     /// Proof, from inside a shipped build, that this library loaded AND runs
     /// the sim — not merely that Godot registered a class name.
     ///
@@ -1019,6 +1039,19 @@ impl AssaySim {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// GDScript gets the rules identity from here, as text, and puts it in
+    /// `Hello` (ASSA-40). Sixteen hex digits is also what stops it being
+    /// mangled: a client whose id arrived through a double would be refused
+    /// by every host, which is the least debuggable failure available.
+    #[test]
+    fn the_rules_identity_crosses_as_the_sims_own_hex_text() {
+        let id = AssaySim::rules_id_string();
+        assert_eq!(id, sim::RULES_ID);
+        assert_eq!(id.len(), 16, "{id}");
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()), "{id}");
+    }
+
     // Only the tests name these now: the event wording they used to feed is
     // `sim::debug::event_line`'s, and this crate no longer matches on `Event`.
     use sim::building::Slot;
