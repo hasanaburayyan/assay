@@ -315,6 +315,134 @@
   "sheet": "items.png",
   "columns": 1
  },
+ "head": {
+  "name": "head",
+  "tiles": [
+   2,
+   1
+  ],
+  "frame_px": [
+   128,
+   102
+  ],
+  "anchor_px": [
+   0,
+   38
+  ],
+  "rows": [
+   {
+    "name": "C",
+    "frames": 1
+   },
+   {
+    "name": "B",
+    "frames": 1
+   },
+   {
+    "name": "A",
+    "frames": 1
+   }
+  ],
+  "animations": {},
+  "sheet": "head.png",
+  "columns": 1
+ },
+ "handle": {
+  "name": "handle",
+  "tiles": [
+   2,
+   1
+  ],
+  "frame_px": [
+   128,
+   102
+  ],
+  "anchor_px": [
+   0,
+   38
+  ],
+  "rows": [
+   {
+    "name": "C",
+    "frames": 1
+   },
+   {
+    "name": "B",
+    "frames": 1
+   },
+   {
+    "name": "A",
+    "frames": 1
+   }
+  ],
+  "animations": {},
+  "sheet": "handle.png",
+  "columns": 1
+ },
+ "frame": {
+  "name": "frame",
+  "tiles": [
+   2,
+   1
+  ],
+  "frame_px": [
+   128,
+   102
+  ],
+  "anchor_px": [
+   0,
+   38
+  ],
+  "rows": [
+   {
+    "name": "C",
+    "frames": 1
+   },
+   {
+    "name": "B",
+    "frames": 1
+   },
+   {
+    "name": "A",
+    "frames": 1
+   }
+  ],
+  "animations": {},
+  "sheet": "frame.png",
+  "columns": 1
+ },
+ "hopper": {
+  "name": "hopper",
+  "tiles": [
+   2,
+   1
+  ],
+  "frame_px": [
+   128,
+   102
+  ],
+  "anchor_px": [
+   0,
+   38
+  ],
+  "rows": [
+   {
+    "name": "C",
+    "frames": 1
+   },
+   {
+    "name": "B",
+    "frames": 1
+   },
+   {
+    "name": "A",
+    "frames": 1
+   }
+  ],
+  "animations": {},
+  "sheet": "hopper.png",
+  "columns": 1
+ },
  "drill": {
   "name": "drill",
   "tiles": [
