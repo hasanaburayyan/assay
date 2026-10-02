@@ -175,12 +175,17 @@ def write_part_contract():
 
     WHY IT HAS TO BE SHIPPED AT ALL. The sheets and the manifest tell a client
     how to slice frames, and nothing tells it how to COMBINE them. A client
-    that blits part frames at one position with the default operator gets both
-    defects this pipeline already measured and rejected: repeats become
-    invisible (a second hopper adds 25 px at 1x instead of 108, which is
-    antialiasing) and contact shadows compound (darkest alpha runs 128 -> 221
-    over four hoppers, so shadow darkness reports part count). Measured
-    2026-10-02, picture in `shared/assay/part-contract-2026-10-02.png`.
+    that blits part frames at one position with the default operator gets the
+    defect this pipeline measured and rejected: repeats become invisible (a
+    second hopper adds 25 px at 1x instead of 108, which is antialiasing).
+    Measured 2026-10-02, picture in `shared/assay/part-contract-2026-10-02.png`.
+
+    THE SHADOW HALF OF THAT SENTENCE IS NO LONGER TRUE AND I AM NOT LEAVING IT
+    STANDING. It read "darkest alpha runs 128 -> 221 over four hoppers". Since
+    ASSA-64 a hopper carries no contact shadow, so plain `over` and `stack`
+    both come out flat at 93 -- re-measured both ways today, not edited to
+    agree. The rule still ships, because a client is still held to it and
+    because the day a ground-standing part is drawn the compounding is back.
     """
     import part_layout
     contract = {
@@ -200,6 +205,10 @@ def write_part_contract():
             "shadow: composite colour OVER but take alpha MAX, so shadows never "
             "accumulate. Plain `over` makes a machine's shadow darken with every "
             "part added, which is a gradient reporting part count."),
+        # ASSA-64. The rule above is still the contract; this says why a client
+        # that ignored it would no longer produce the defect, which is a
+        # different claim and worth shipping beside it.
+        "shadow_source": part_layout.MOUNTED_PARTS_CARRY_NO_SHADOW,
     }
     json.dump(contract, open(os.path.join(SPRITES, "part_layout.json"), "w"), indent=1)
 

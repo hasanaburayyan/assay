@@ -32,7 +32,17 @@ def build(g):
     SHAPE depends on `g` -- only the ink -- which is the point: a part is one
     silhouette the player learns once, and grade is how good that part is."""
     r = rig.Rig(samples=64)
-    r.shadow_catcher()
+    # NO SHADOW CATCHER -- A BOUNCE PLANE INSTEAD, AND THAT IS THE DRAWING
+    # SAYING SOMETHING (ASSA-64,
+    # Maren's ruling). A contact shadow means "this part stands on the
+    # ground". A head never does: in sim it is a MOUNTED part, it only ever
+    # exists bolted to a frame, and `Design { frame, mounted }` enforces that
+    # by type. It carried one anyway -- measured, 2473 shadow pixels per grade
+    # frame against the planted frame's 1718, so the one part that really
+    # stands on the ground had the LEAST shadow of the four. With this gone,
+    # every machine has exactly one contact shadow by construction, which is
+    # what makes a client's plain `over` correct rather than approximate.
+    r.bounce()
     gun, grey = mat("gun"), rig.graded("grey", g)
     steel = rig.graded("steel", g, rough=0.45, metal=0.6)
 

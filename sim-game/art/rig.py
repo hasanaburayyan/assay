@@ -447,6 +447,28 @@ class Rig:
         o = bpy.context.object; o.is_shadow_catcher = True
         return self._place(o, self.env, None, 0)
 
+    def bounce(self, size=12):
+        """The ground as a LIGHT SOURCE ONLY: it bounces, it records no shadow.
+
+        For a part that never touches the ground (ASSA-64). Dropping
+        `shadow_catcher()` from head and hopper removed the shadow AND the
+        biggest fill in the scene with it -- measured on the first attempt, the
+        hopper went from 15% of its pixels under L*35 to 81%, so the body
+        joined its own well and `art/assemble.py`'s open-shape check went red.
+        That is the catcher's SECOND job, which nobody had written down: a
+        default-material plane under a key light at 9 degrees is most of what
+        lights the underside of these parts.
+
+        So the plane stays, with the same default albedo, and only the two
+        flags that make it a shadow change: it is not a catcher, and the camera
+        cannot see it.
+        """
+        bpy.ops.mesh.primitive_plane_add(size=size)
+        o = bpy.context.object
+        o.is_shadow_catcher = False
+        o.visible_camera = False
+        return self._place(o, self.env, None, 0)
+
     # ---------------------------------------------------------------- camera
     def frame(self, tiles_w, tiles_h, headroom=0.0, center=(0, 0)):
         """Frame a footprint of tiles_w x tiles_h tiles centred on `center`,

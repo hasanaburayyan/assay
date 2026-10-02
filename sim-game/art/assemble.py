@@ -81,7 +81,16 @@ if os.environ.get("PART_OFFSET"):
 #                   fixing that breaks the part; the OPEN BOX check MUST fail.
 #   STACK_OVER=1    puts plain `alpha_composite` back in place of
 #                   part_layout.stack, which is the operator that compounded
-#                   the parts' shadows (ASSA-38); CHECK 6 MUST fail.
+#                   the parts' shadows (ASSA-38).
+#                   THIS LEVER NO LONGER FIRES, AND THAT IS THE POINT OF
+#                   ASSA-64: head and hopper carry no contact shadow at all
+#                   now, so there is nothing for `over` to compound and check 6
+#                   reads a flat 93 either way. Re-run on the pre-ASSA-64
+#                   sheets and it fails as it always did. A lever that has gone
+#                   quiet is a lever that has stopped covering anything, so the
+#                   witness moved rather than disappeared: the thing that now
+#                   fails if a mounted part gets a shadow back is check 4 of
+#                   `art/check_part_contract.py`, which is in CI.
 #   FAKE_CVD_IDENTITY=1  makes the colour-blind transform a no-op, which is how
 #                   an observer fold DIES: not with an error, but by quietly
 #                   scoring normal vision under four names. Check 3 MUST fail.
@@ -641,12 +650,19 @@ def main():
 
     # 6. DOES A MACHINE'S SHADOW GET DARKER AS IT GAINS PARTS? (ASSA-38)
     #
-    # Every part sprite carries its own contact shadow, so stacking parts with
+    # Every part sprite USED TO carry its own contact shadow, so stacking parts with
     # plain `over` compounds them: a machine's darkest shadow ran 122 -> 128 ->
     # 145 -> 167 from one part to four. That is a gradient nobody chose, read
     # off a quantity - part count - that the shadow has no business reporting,
     # and it is the mirror image of what the glint rule forbids. Maren ruled
     # the cheap fix: colour over, ALPHA MAX (`part_layout.stack`).
+    #
+    # SINCE ASSA-64 THE DEFECT CANNOT ARISE FOR THESE PARTS AT ALL: only a
+    # planted frame carries a contact shadow and a Design has exactly one
+    # frame, so this check now reads a flat 93 under either operator (measured,
+    # both ways, today). It stays because the operator is still the contract a
+    # client is held to, and because a part that DOES stand on the ground would
+    # bring the compounding back the day it is drawn.
     #
     # MEASURED AS A PROPERTY OF THE OPERATOR, not of a shadow I have to
     # recognise. My own shadow classifier ("pure black with partial alpha")

@@ -6,6 +6,10 @@ extends RefCounted
 ## the sim, and the darkest shadow's alpha climbs 128/145/181/205/221 so that the shadow reports how
 ## many parts a machine has.
 ##
+## THAT SECOND MEASUREMENT IS NOW HISTORY, and this file says so where it matters (rule 2 below).
+## ASSA-64 took the baked contact shadow off every part that is MOUNTED rather than planted, so the
+## sheets this test composes no longer have four shadows to stack -- Cove, 2026-10-02.
+##
 ## EVERY TEST HERE CARRIES ITS OWN LEVER, because a measurement that cannot come out wrong is not
 ## evidence. Both re-compose with the rule switched off through a doctored contract -- offset (0, 0)
 ## for rule 1, `shadow_ceiling` 0 for rule 2, which makes the alpha-MAX branch unreachable -- and
@@ -23,6 +27,13 @@ const SOLID := 0.5
 ## What one added repeat has to be worth to count as a part you can see. Cove's naive row gained 17 px
 ## at its worst and the rules row gained 108 at its worst, so anything in between separates them.
 const REAL_GAIN := 60
+
+## What the rule has to be worth at its deepest pixel to count as holding back a SHADOW rather than a
+## rounding step. Derived, not chosen: the sheets are 8-bit, so one step is 1/255 and this test already
+## calls two alphas equal inside 0.004, which IS that step. Four steps is a hold-back that survives
+## being written back out to 8 bits and is still a different colour there. Measured 0.129 of 1.0 on a
+## drill, eight times this -- so it is a floor against the rule going quiet, not a target to hit.
+const REAL_HOLD := 4.0 / 255.0
 
 var runner = null
 
@@ -133,9 +144,36 @@ func test_each_added_repeat_is_a_part_you_can_see() -> bool:
 
 ## RULE 2: A MACHINE'S SHADOW DOES NOT REPORT HOW MANY PARTS IT HAS.
 ##
-## Each part sprite carries its own contact shadow. Under plain `over` those alphas accumulate, so the
-## shadow deepens with every part -- a gradient a player would read as something about the machine.
-## Alpha MAX below the ceiling keeps it the shadow of one part.
+## Under plain `over`, sub-ceiling alphas accumulate, so a machine's shadow deepens with every part --
+## a gradient a player would read as something about the machine. Alpha MAX below the ceiling keeps it
+## the shadow of one part.
+##
+## WHAT ASSA-64 CHANGED, AND WHY THIS TEST'S LAST ASSERTION WENT with it. When this was written every
+## part sprite carried its own baked contact shadow. It does not any more: a shadow means the part
+## STANDS ON THE GROUND, so only the planted frame keeps one and head and hopper are rendered off it.
+## A Design has exactly one frame, so the shipped sheets cannot compound a contact shadow at all, and
+## the "deepest held-back alpha must GROW" assertion that used to close this test pinned flat --
+## [0.129] x5 on a frame, a head and four hoppers. Measured by Cove on 2026-10-02:
+##
+##        4 repeats of   held-back px     deepest held back
+##        frame          437 579 714      0.179 0.179 0.179   <- the one part that KEPT its shadow
+##        head            24  39  53      0.204 0.331 0.384   <- the one ASSA-64 stripped
+##        hopper           6  10  14      0.091 0.091 0.091
+##        handle        1198 1553 1901    0.209 0.278 0.315
+##        drill (1+1+4)   20  21  25 26 28  0.129 x5
+##
+## READ THE FIRST TWO ROWS BEFORE REVIVING THAT ASSERTION WITH A DIFFERENT PART LIST. Depth still
+## compounds for head and handle and does NOT for frame -- the opposite way round from which parts own
+## a contact shadow. It tracks whether a sprite's dark OUTLINE RIM crosses its own repeat, and a rim is
+## the thing this file already warns twice is not a shadow (notes 1 and 2 below). Picking `head` x4 to
+## keep the number green would be greening this test on antialiasing.
+##
+## So the defect rule 2 defends against is no longer reachable from the art, which is the good outcome
+## and not a reason to stop defending it: the rule is a cached per-assembly composite that costs
+## nothing, and the next planted part kind (a leg, a base, a second frame) brings the stacking back
+## with it. Whether to keep it is on ASSA-63 for Limpet and Maren; this test keeps its teeth on what
+## the CLIENT still owes either way, and the ART side -- no contact shadow on a mounted part -- is
+## guarded where it belongs, in `art/check_part_contract.py` in CI.
 ##
 ## MEASURED PIXEL AGAINST PIXEL, THE SAME MACHINE COMPOSED BOTH WAYS -- which took me two wrong
 ## statistics to arrive at, and both failures are worth leaving written down:
@@ -153,11 +191,14 @@ func test_each_added_repeat_is_a_part_you_can_see() -> bool:
 ## row), and compare the two images pixel by pixel. Identical geometry, identical outlines; the only
 ## difference is accumulation.
 ##
-## `held_back` is where the rule kept a shadow lighter than `over` would have. It has to GROW with
-## every part added, because that growth IS the defect Cove named: a shadow that deepens with each
-## part is a gradient reporting part count. And nothing may come out DEEPER than plain `over` -- that
-## direction is arithmetic (max(a, b) <= a + b(1-a)), asserted because it is cheap and names which way
-## the rule is meant to point.
+## `held_back` is where the rule kept a shadow lighter than `over` would have. Its AREA has to grow
+## with every part added: each repeat lands somewhere new, so each one brings the rule more to cover,
+## and an area that stopped growing would mean the rule does nothing on every part after the first.
+## Its DEPTH is no longer asserted to grow, for the reason written out above -- what remains is that
+## the deepest hold-back is worth real 8-bit steps rather than rounding, so "the rule fired" cannot be
+## satisfied by antialiasing noise. And nothing may come out DEEPER than plain `over` -- that direction
+## is arithmetic (max(a, b) <= a + b(1-a)), asserted because it is cheap and names which way the rule
+## is meant to point.
 func test_the_shadow_rule_holds_back_more_as_a_machine_gains_parts() -> bool:
 	var parts := _drill_parts(4)
 	if parts.is_empty():
@@ -204,9 +245,12 @@ func test_the_shadow_rule_holds_back_more_as_a_machine_gains_parts() -> bool:
 		return _fail(("four hoppers accumulate no more shadow than a bare frame and head (%s), so "
 				+ "this would pass with the rule doing nothing on every part after the first.")
 				% [held])
-	if float(gaps[gaps.size() - 1]) <= float(gaps[0]):
-		return _fail(("the deepest shadow the rule held back did not grow with the parts (%s). "
-				+ "Cove measured the naive darkest going 128 -> 221 of 255 over four parts.") % [gaps])
+	for i in range(gaps.size()):
+		if float(gaps[i]) < REAL_HOLD:
+			return _fail(("at %d parts the deepest the rule held a shadow back was %s, under %s -- "
+					+ "the rule fired only on rounding, so it is not holding back a shadow anyone "
+					+ "could see. Deepest hold-backs when this was written: %s.")
+					% [i + 2, gaps[i], REAL_HOLD, gaps])
 	return true
 
 

@@ -67,6 +67,61 @@ PART_REPEAT_OFFSET = (14, -6)
 # into shadow.
 SHADOW_CEILING = 34
 
+# WHOSE SHADOW IT IS (ASSA-64, Maren's ruling). A contact shadow means "this
+# part stands on the ground", and only a PLANTED FRAME does. Head and hopper
+# are mounted -- they exist only bolted to a frame -- and they carried the most
+# shadow of the four parts (2473 and 2621 pixels per grade frame) while the
+# planted frame carried the least (1718). They are rendered with no shadow
+# catcher now.
+#
+# WHY THIS IS AN INVARIANT AND NOT A TIDY-UP: sim's `Design` is
+# `{ frame: Part, mounted: Vec<Part> }`, exactly one frame enforced by the
+# type, with `AssemblyError::FrameMounted` refusing a frame in a mounted slot.
+# So once only frames carry shadow, a machine has EXACTLY ONE contact shadow by
+# construction. `stack()` below still takes alpha MAX and `SHADOW_CEILING` is
+# unchanged -- both stay because they cost nothing and a future ground-standing
+# part would need them -- but a client that composites with plain `over` is now
+# correct rather than lucky.
+MOUNTED_PARTS_CARRY_NO_SHADOW = (
+    "only a planted frame carries a contact shadow; mounted parts (head, "
+    "hopper) are rendered without one. sim's Design has exactly one frame, so "
+    "a machine has exactly one contact shadow and plain `over` cannot compound "
+    "what is not there.")
+
+# HOW WIDE THE INK RIM IS, in authoring pixels, and why a shadow check needs to
+# know. `rig.py` draws outlines with Freestyle at `line_thickness = 0.35 * SS`,
+# which is a sub-pixel stroke once the SSx render is downscaled to authoring
+# size -- but a sub-pixel stroke over transparency comes back from the
+# compositor as NEARLY BLACK pixels (measured: 114 pixels of one grade frame are
+# exactly (0,0,0)), so "dark" alone cannot tell a sprite's own outline from a
+# shadow lying beside it. A dark pixel this far from any SURFACE pixel is not
+# the outline. One pixel for the stroke, one for its antialiasing.
+INK_RIM_PX = 2
+
+# The most alpha a dark pixel out past the ink rim may carry before it counts as
+# a shadow, and it is DERIVED rather than chosen. Sheets are downscaled from an
+# SSx supersampled render, so ONE stray sample in a destination pixel comes out
+# at 255/SS**2. Anything at or below that is less ink than a single sample of
+# the render can produce; a real contact shadow covers whole pixels and arrives
+# at alpha 122-250 (measured on the sheets this replaced). The stripped head and
+# hopper come in at 2 and 1.
+#
+# SS is read out of `rig.py` rather than copied, because a constant copied out
+# of another file has stopped being about that file. Text, not import: rig.py
+# needs `bpy` and this module is imported by plain-python tools too.
+def _supersample():
+    import os
+    import re
+    rig_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rig.py")
+    found = re.search(r"^SS\s*=\s*(\d+)", open(rig_py).read(), re.M)
+    if not found:
+        raise ValueError("no `SS = ` in rig.py, so the render's supersample factor is "
+                         "unknown and the shadow bound below would be invented")
+    return int(found.group(1))
+
+
+SHADOW_NOISE_ALPHA = 255 // (_supersample() ** 2)
+
 
 def stack(dst, src):
     """Overlay one part frame onto another: colour OVER, alpha MAX.
