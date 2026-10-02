@@ -169,6 +169,30 @@ impl AssaySim {
             .collect()
     }
 
+    /// WHAT THIS PLAYER IS CRAFTING RIGHT NOW, in the sim's own sentence, or ""
+    /// when nothing is being made (ASSA-49).
+    ///
+    /// The wording is `sim::debug::crafting_readout` rather than anything built
+    /// here, for the reason `durability_readout` is shared: `sim-cli` and this
+    /// client both have to say it, and two wordings for one fact is the
+    /// disagreement nobody notices. A host may put its own label in front of the
+    /// sentence; it may not word the number.
+    ///
+    /// EMPTY STRING AND NOT A NULL, because the caller's question is "is there a
+    /// line to show", and `""` answers it without a type change. `designs_of`
+    /// leaves a key ABSENT for the same kind of question and that was right
+    /// there, where the key's presence IS the fact; here the fact is a sentence.
+    #[func]
+    pub fn crafting_line(&self, player: i64) -> GString {
+        let Some(id) = player_id_of(player) else {
+            return GString::new();
+        };
+        match sim::debug::crafting_readout(&self.world, id) {
+            Some(line) => gstring(&line),
+            None => GString::new(),
+        }
+    }
+
     /// ONE PLAYER'S INVENTORY: kind, species, grade, count, and the name the
     /// sim gives the item. Empty for a player id the world does not have, which
     /// is also what a client has before its `Welcome`.

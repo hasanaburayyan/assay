@@ -1301,3 +1301,43 @@ pub fn built_table(world: &World, player: PlayerId) -> String {
     );
     out
 }
+
+/// A HAND CRAFT IN PROGRESS, IN ONE SENTENCE, or `None` when nothing is being
+/// made (ASSA-49, Maren's ruling).
+///
+/// Pressing Craft again while one is running refunds the current unit and
+/// starts over — the same "latest command wins" as `MoveTo` and `Mine`, and
+/// the rule is right. What was wrong is that nothing said a craft was
+/// running, so a person who presses a button and sees nothing presses again
+/// and throws the work away. The sentence is the whole fix; the rule does not
+/// move.
+///
+/// **It lives here so both hosts say it once.** `sim-cli` and the Godot client
+/// each had their own idea of how to word a number before `event_line` and
+/// `durability_readout` were pulled in here, and two wordings for one fact is
+/// the disagreement nobody notices.
+///
+/// **The batch is the part worth naming.** One `sort` is 20 ticks, which is
+/// two seconds; ten of them is 200 ticks and twenty seconds of a button that
+/// looks broken. So the count of batches still to go is in the sentence
+/// whenever it is more than one, and the ticks are for the batch actually
+/// being worked — `progress` only ever describes the current unit, because the
+/// inputs for the later ones have not been consumed yet.
+///
+/// Ticks, never a bar and never seconds: the tick is what the sim counts in,
+/// and a clock rate belongs to a host. A renderer that wants a bar can divide,
+/// but then the scaling is its own claim and not the sim's.
+pub fn crafting_readout(world: &World, player: PlayerId) -> Option<String> {
+    let crafting = world.player(player)?.crafting?;
+    let recipe = crafting.recipe.recipe();
+    let left = recipe.ticks.saturating_sub(crafting.progress);
+    let making = world.item_name(recipe.output_for(crafting.input)?);
+    Some(if crafting.remaining > 1 {
+        format!(
+            "making {making}: {left} ticks left on this one, {} to go after it",
+            crafting.remaining - 1
+        )
+    } else {
+        format!("making {making}: {left} ticks left")
+    })
+}

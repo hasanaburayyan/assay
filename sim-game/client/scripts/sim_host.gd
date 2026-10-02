@@ -278,3 +278,14 @@ static func fresh_welcome_json(world_seed: String, player_name: String) -> Strin
 ## lockstep cannot absorb.
 func designs_of(player: int) -> Array:
 	return _sim.designs_of(player) if _sim != null else []
+
+
+## WHAT THIS PLAYER IS CRAFTING, in the sim's own sentence, or "" when nothing is (ASSA-49).
+##
+## The wording is `sim::debug::crafting_readout`, shared with `sim-cli` for the same reason
+## `durability_readout` is: two hosts wording one number is the disagreement nobody notices. This
+## client may put a label in front of the sentence and may not rewrite it, and it certainly may not
+## work the ticks out for itself -- `Crafting` holds `progress`, and turning that into "ticks left"
+## needs the recipe's cost, which is a rule.
+func crafting_line(player: int) -> String:
+	return String(_sim.crafting_line(player)) if _sim != null else ""

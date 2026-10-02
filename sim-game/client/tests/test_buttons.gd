@@ -445,3 +445,47 @@ func test_the_pack_count_climbs_without_rebuilding_the_row() -> bool:
 								+ "stopped finding its label.") % [label.text, wanted])
 	screen.queue_free()
 	return ok
+
+
+## ASSA-49: A RUNNING CRAFT SAYS SO ON SCREEN, AND STOPS SAYING SO WHEN IT FINISHES.
+##
+## Pressing Craft again while one runs refunds the current unit and starts over -- "latest command
+## wins", the same as `MoveTo` and `Mine` -- and that rule is right. The defect was silence: a person
+## who presses a button and sees nothing presses it again and throws the work away. So the line is the
+## fix, and this is the test that it is actually on the panel rather than merely available.
+##
+## IT ASKS THE SCREEN, NOT THE SIM. `crafting_readout` is unit-tested in `sim/tests/crafting.rs`
+## against the whole sentence; what can only be checked here is that `_refresh` puts it in the `do`
+## section and takes it away again, which is the half that broke twice this week in other panels.
+func test_a_running_craft_is_named_on_the_do_section() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_some_ore(screen)
+	if ok:
+		var before := _text_of(screen._actions)
+		if before.contains("making "):
+			ok = _fail("the do section claimed a craft before one was started: %s" % before)
+	if ok:
+		var stacks: Array = screen._sim.inventory_of(screen._client.player_id)
+		var row := _row_for(screen, AssayHud.stack_line(stacks[0] as Dictionary))
+		var button: Button = null if row == null else _find(row, "Craft smelter")
+		if button == null:
+			ok = _fail("no `Craft smelter` button to press")
+		else:
+			button.pressed.emit()
+			_tick(screen, 2)
+			var during := _text_of(screen._actions)
+			if not during.contains("making "):
+				ok = _fail(("a craft is running and the do section does not say so: %s. The ticks "
+						+ "come from the sim; this client only prints them.") % during)
+			elif not during.contains("ticks left"):
+				ok = _fail("the running craft does not say how long is left: %s" % during)
+			else:
+				# AND IT GOES AWAY. A line that appears and never clears is worse than no line: it
+				# would say a craft is running forever, which is the same lie the silence was.
+				_tick(screen, PATIENCE)
+				var after := _text_of(screen._actions)
+				if after.contains("making "):
+					ok = _fail("the craft finished and the do section still claims one: %s" % after)
+	screen.queue_free()
+	return ok

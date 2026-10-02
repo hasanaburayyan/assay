@@ -43,6 +43,9 @@ var _carrying := VBoxContainer.new()
 var _actions := VBoxContainer.new()
 var _cursor := Label.new()
 var _log := Label.new()
+## The running-craft countdown inside the `do` section. Held because its text changes every tick while
+## the section around it must not be rebuilt; remade whenever that section is (ASSA-49).
+var _crafting: Label = null
 ## THE PART MENU'S HOME: one headline label plus one body label per design, rebuilt only when the
 ## list changes. Not a Label like the others, because the verdict is a WORD IN ITS OWN COLOUR above
 ## numbers in another (Maren's ruling) and one Label can only be one colour.
@@ -281,6 +284,12 @@ func _refresh() -> void:
 		source = "where you stand"
 	_cursor.text = "%s\n%s" % [source, "\n".join(AssayHud.tile_lines(_sim.tile_at(at)))]
 	_log.text = "\n".join(_events)
+	# The running craft's countdown, set every refresh for the reason in `_refresh_actions`. The
+	# sentence is the sim's (`sim::debug::crafting_readout`); an empty one means nothing is being made,
+	# and hiding the label rather than printing a blank keeps the panel from gaining a silent gap.
+	if is_instance_valid(_crafting):
+		_crafting.text = _sim.crafting_line(_client.player_id) if _client != null else ""
+		_crafting.visible = _crafting.text != ""
 	# WHICH WORLD, WHICH TICK, WHICH HASH. The seed and the hash are TEXT, because a u64 cannot
 	# survive a GDScript number -- that is not caution, it is measured. The bundle and hash counts are
 	# here because a client that has stopped applying bundles looks exactly like one that is idle.
@@ -564,6 +573,19 @@ func _refresh_actions() -> void:
 			"study the deposit under you until its sheet reads exact instead of in bands"))
 	_actions.add_child(here)
 	_actions.add_child(_note(AssayHud.target_line(target, _targeted, facts)))
+	# A RUNNING CRAFT SAYS SO (ASSA-49, Maren's ruling), and the label is KEPT rather than rebuilt.
+	#
+	# Pressing Craft again while one runs refunds the current unit and starts over -- "latest command
+	# wins", the same as `MoveTo` and `Mine` -- and that rule is right. What was wrong is the silence:
+	# a person who presses a button and sees nothing presses it again and loses the work.
+	#
+	# WHY IT IS NOT IN THE SIGNATURE ABOVE. The ticks left change EVERY TICK, so folding the sentence
+	# into `signature` would rebuild this whole section ten times a second and destroy whatever button
+	# the pointer is over -- the exact cost the signature exists to avoid. So the line is made once
+	# here and its text is set in `_refresh`, which is how `_cursor` and `_log` already work. A
+	# countdown is the one thing on this panel that must change without anything being rebuilt.
+	_crafting = _note("")
+	_actions.add_child(_crafting)
 
 	if building != null:
 		var row := HBoxContainer.new()
