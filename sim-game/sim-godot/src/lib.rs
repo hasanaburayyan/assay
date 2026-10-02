@@ -655,6 +655,8 @@ fn deposit_dict(deposit: &DepositFacts) -> VarDictionary {
         "grade" => &gstring(&deposit.grade).to_variant(),
         "depleted" => deposit.depleted,
         "assayed" => deposit.assayed,
+        "hand_minable" => deposit.hand_minable,
+        "reach_note" => &gstring(&deposit.reach_note).to_variant(),
     }
 }
 
@@ -823,6 +825,22 @@ pub struct DepositFacts {
     /// Whether this species' sheet is exact yet. The cue a player needs before
     /// spending ore on a machine whose mass is still a guess.
     pub assayed: bool,
+    /// Whether anything in the game can mine this at all, straight from
+    /// `sim::ladder::hand_minable` — the function `step` itself asks.
+    ///
+    /// **THE CLIENT MUST NOT WORK THIS OUT** (ASSA-43). A `hud.gd` that
+    /// compared a hardness against 40 would be a second opinion about a rule,
+    /// and the rule is not even "40": it is one function that `step`,
+    /// `mine_by_machine`, the deposit line and this field all ask. It is a
+    /// field and not a lookup through `species_facts` so that the one line
+    /// that must not invite an assay has the fact in its own hand.
+    pub hand_minable: bool,
+    /// The sim's sentence for why nothing can mine it, EMPTY when it can.
+    ///
+    /// Same shape as [`BuildingFacts::status`]: wording the sim owns and a
+    /// host only renders, so a planted drill and the rock under it can never
+    /// tell a player two different stories about the same gate.
+    pub reach_note: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1092,6 +1110,9 @@ impl AssaySim {
                     grade: deposit.grade().letter().to_string(),
                     depleted: deposit.is_depleted(),
                     assayed: self.world.species(deposit.species).assayed,
+                    hand_minable: sim::ladder::hand_minable(self.world.species(deposit.species)),
+                    reach_note: sim::debug::deposit_reach_note(&self.world, deposit)
+                        .unwrap_or_default(),
                 })
             } else {
                 None
@@ -2121,6 +2142,53 @@ mod tests {
             beside.deposit.is_none(),
             "a tile {out} away diagonally reported {:?}",
             beside.deposit
+        );
+    }
+
+    /// **THE CLIENT MUST NEVER WORK REACH OUT** (ASSA-43). 40.7% of deposits
+    /// are of a species nothing in the game can mine, and the tile line used
+    /// to describe them exactly like the ones that yield — down to inviting an
+    /// assay whose sheet a player can never spend. The fact and the sentence
+    /// both come from `sim`, so `hud.gd` has no reason to hold an opinion
+    /// about the number 40, and both halves are checked here: the dead rock
+    /// AND a live one, because a field that was always `false` would satisfy
+    /// half a test.
+    #[test]
+    fn a_deposit_reports_whether_anything_can_mine_it() {
+        let mut world = fresh();
+        let dead = world.deposits[0].clone();
+        world.species_mut(dead.species).sheet.hardness =
+            sim::tuning::HAND_MINE_MAX_HARDNESS as u8 + 1;
+        let live = world
+            .deposits
+            .iter()
+            .find(|d| sim::ladder::hand_minable(world.species(d.species)))
+            .expect("a world the ladder guarantees has a minable deposit")
+            .clone();
+        let sim = AssaySim::from_world(world);
+
+        let out_of_reach = sim
+            .tile_facts(dead.center.x, dead.center.y)
+            .deposit
+            .expect("on the deposit");
+        assert!(!out_of_reach.hand_minable);
+        assert!(
+            out_of_reach
+                .reach_note
+                .contains(sim.world().species(dead.species).name()),
+            "the client is handed the sentence, named: {:?}",
+            out_of_reach.reach_note
+        );
+
+        let in_reach = sim
+            .tile_facts(live.center.x, live.center.y)
+            .deposit
+            .expect("on the deposit");
+        assert!(in_reach.hand_minable);
+        assert_eq!(
+            in_reach.reach_note, "",
+            "nothing to say about a rock that yields, and an empty note is how \
+             `hud.gd` knows to leave the line alone"
         );
     }
 

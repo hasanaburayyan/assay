@@ -698,6 +698,12 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
                         d.grade().letter(),
                         if d.is_depleted() { " · DEPLETED" } else { "" }
                     )));
+                    // Reach, on its own line and from the sim (ASSA-43). The
+                    // panel named everything about the rock except whether
+                    // anything in the game can break it.
+                    if let Some(why) = debug::deposit_reach_note(world, d) {
+                        lines.push(Line::from(why));
+                    }
                 }
                 None if t == world.spawn_tile() => lines.push(Line::from("spawn")),
                 None => lines.push(Line::from("empty ground")),

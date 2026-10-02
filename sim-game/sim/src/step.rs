@@ -9,9 +9,9 @@ use crate::mineral::{Property, SpeciesId, validate_name};
 use crate::player::{Assaying, Crafting, Mining, Player};
 use crate::recipe::{Recipe, smelter_recipe_for};
 use crate::tuning::{
-    ASSAY_TICKS, BURN_TICKS_PER_REACTIVITY, FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS,
-    HAND_SPARK_TEMPERATURE, HAND_WORK_PER_TICK, PICK_WEAR_PER_SWING, REACH, SMELTER_FUEL_CAP,
-    SMELTER_INPUT_CAP, SMELTER_OUTPUT_CAP, WORK_PER_UNIT, YIELD_BY_GRADE,
+    ASSAY_TICKS, BURN_TICKS_PER_REACTIVITY, FUEL_MIN_REACTIVITY, HAND_SPARK_TEMPERATURE,
+    HAND_WORK_PER_TICK, PICK_WEAR_PER_SWING, REACH, SMELTER_FUEL_CAP, SMELTER_INPUT_CAP,
+    SMELTER_OUTPUT_CAP, WORK_PER_UNIT, YIELD_BY_GRADE,
 };
 use crate::types::{PlayerId, TilePos};
 use crate::world::World;
@@ -118,7 +118,12 @@ fn apply_player(
                 return reject(RejectReason::DepositDepleted, events);
             }
             let (deposit, species) = (d.id, d.species);
-            if u32::from(world.species(species).sheet.hardness) > HAND_MINE_MAX_HARDNESS {
+            // ONE GATE, NAMED ONCE (ASSA-43). This used to compare against
+            // `HAND_MINE_MAX_HARDNESS` here, which made `ladder::hand_minable`
+            // a second copy of the rule that merely happened to agree. Every
+            // reader of reach — this, `mine_by_machine`, `building_status`, the
+            // deposit line, the Godot facts — now asks the same function.
+            if !crate::ladder::hand_minable(world.species(species)) {
                 return reject(RejectReason::TooHardForHands, events);
             }
             let p = world.player_mut(player).expect("checked above");
@@ -867,7 +872,7 @@ fn mine_by_machine(world: &mut World, events: &mut Vec<Event>) {
         let (deposit, grade) = (d.id, d.grade());
         let item = Item::new(ItemKind::Ore, d.species, grade);
         let amount = YIELD_BY_GRADE[grade as usize];
-        if u32::from(world.species(item.species).sheet.hardness) > HAND_MINE_MAX_HARDNESS {
+        if !crate::ladder::hand_minable(world.species(item.species)) {
             continue;
         }
 
