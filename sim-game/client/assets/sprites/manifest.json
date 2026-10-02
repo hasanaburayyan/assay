@@ -101,6 +101,10 @@
    {
     "name": "ore",
     "frames": 1
+   },
+   {
+    "name": "refined",
+    "frames": 1
    }
   ],
   "animations": {},

@@ -26,21 +26,23 @@ const SHEET_DIR := "res://assets/sprites/"
 ## WHICH SHEET AND ROW AN ITEM KIND USES, and the honest gaps.
 ##
 ## `ore` as an ITEM is `items.png`'s own row, not the `ore.png` world tile: the tile is a rock on the
-## ground and the item is a thing in a pack, and Cove drew them separately. The four part kinds have a
-## row per grade. `refined`, `gear` and `smelter` have NO art yet and are listed here as empty on
-## purpose, so the gap is visible in this file rather than looking like a missing case.
+## ground and the item is a thing in a pack, and Cove drew them separately. `refined` is the second
+## row of the same sheet (ASSA-66). The four part kinds have a row per grade. `gear` and `smelter`
+## have NO art yet and are listed here as empty on purpose, so the gap is visible in this file rather
+## than looking like a missing case.
 ##
-## THESE EMPTY ENTRIES ARE DOCUMENTATION, NOT THE GUARD, and I checked rather than assuming: pointing
-## `refined` at `items` still draws nothing, because `items` has one row called `ore` and `_row_for`
-## finds no row named for the grade. The row lookup is what actually refuses. Said here so the next
-## person does not trust the wrong line.
+## THESE EMPTY ENTRIES ARE DOCUMENTATION, NOT THE GUARD, and that was checked rather than assumed:
+## before `items` had a second row, pointing `refined` here still drew nothing, because `_row_for`
+## found no row named for the grade. The row lookup is what actually refuses. Said here so the next
+## person does not trust the wrong line -- and it is why adding the row to the sheet was not on its
+## own enough to make the icon appear.
 const SHEET_OF := {
 	"ore": "items",
+	"refined": "items",
 	"head": "head",
 	"handle": "handle",
 	"frame": "frame",
 	"hopper": "hopper",
-	"refined": "",
 	"gear": "",
 	"smelter": "",
 }
@@ -58,9 +60,9 @@ static func manifest() -> Dictionary:
 
 ## THE FRAME FOR ONE PACK STACK, or null when we have no art for it.
 ##
-## Null is a normal answer and not a failure: `items.png` carries ore and nothing else, so a refined
-## bar, a gear and a smelter all come back null today. The caller draws a row without an icon, which
-## is why `stack_line` has to stay a complete sentence.
+## Null is a normal answer and not a failure: `items.png` carries ore and refined, so a gear and a
+## smelter still come back null today. The caller draws a row without an icon, which is why
+## `stack_line` has to stay a complete sentence.
 static func icon_for(stack: Dictionary) -> AtlasTexture:
 	var kind := String(stack.get("kind", "")).to_lower()
 	var sheet := String(SHEET_OF.get(kind, ""))
@@ -88,15 +90,24 @@ static func icon_for(stack: Dictionary) -> AtlasTexture:
 	return atlas
 
 
-## WHICH ROW, BY THE SIM'S OWN GRADE LETTER. `items` has a single row, so ore ignores grade -- Cove
-## drew one ore icon, and inventing a per-grade variation it does not have would be this file deciding
-## something. The part sheets have exactly C, B and A.
+## WHICH ROW: AN ITEM SHEET NAMES ITS ROW FOR THE KIND, A PART SHEET FOR THE GRADE.
+##
+## `items` rows are called `ore` and `refined`, so the kind finds them by name. That used to be
+## `if kind == "ore": return 0` -- an index this file chose, which was correct only while `items` had
+## exactly one row, and silently wrong the moment a second was added above or below it (ASSA-66).
+## Asking the manifest for the row by name is the same thing the part sheets already do with C/B/A,
+## and it means adding a third item row needs nothing here.
+##
+## ITEM ROWS IGNORE GRADE, DELIBERATELY. Ore and refined are each one drawing: a refined bar is held
+## at C, B and A and the grade is in the row's sentence, and inventing a per-grade variation the art
+## does not have would be this file deciding something. The part sheets have exactly C, B and A.
 static func _row_for(kind: String, grade: String, spec: Dictionary) -> int:
 	var rows: Array = spec.get("rows", [])
 	if rows.is_empty():
 		return -1
-	if kind == "ore":
-		return 0
+	for i in range(rows.size()):
+		if String((rows[i] as Dictionary).get("name", "")) == kind:
+			return i
 	var wanted := grade.to_upper()
 	for i in range(rows.size()):
 		if String((rows[i] as Dictionary).get("name", "")) == wanted:
