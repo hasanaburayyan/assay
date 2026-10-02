@@ -837,7 +837,32 @@ fn seed_14247_shows_both_a_cold_light_and_a_hotter_fire() {
 #[test]
 fn the_smelter_row_says_its_walls_come_from_its_material_and_that_is_true() {
     let table = sim::debug::recipe_table();
+    // THE CONSEQUENCE IS ITS OWN ASSERTION (ASSA-76), not a substring of the
+    // whole clause: dropping "melts ore up to its walls" would otherwise leave
+    // a definition with nothing to care about, which is what shipped on
+    // ASSA-61 and what the Game Director filed ASSA-76 to fix.
+    let consequence = "melts ore up to its walls";
     let clause = "walls = the heat tolerance of the ore you build it from";
+    let smelter_row = table
+        .lines()
+        .find(|l| l.starts_with("smelter"))
+        .expect("a smelter row");
+    assert!(
+        smelter_row.contains(consequence),
+        "the row must say what walls DO before what they are made of: {smelter_row}"
+    );
+    assert!(
+        smelter_row.find(consequence) < smelter_row.find(clause),
+        "consequence first, definition second: {smelter_row}"
+    );
+    // From the clause to the end of the row, so the count and tick columns are
+    // not mistaken for figures inside the sentence.
+    let from_clause = &smelter_row[smelter_row.find(consequence).expect("just asserted")..];
+    assert!(
+        !from_clause.chars().any(|c| c.is_ascii_digit()),
+        "no figures in this clause: the species table and building_status \
+         carry them (ASSA-61): {from_clause}"
+    );
     for r in &sim::RECIPES {
         let row = table
             .lines()
