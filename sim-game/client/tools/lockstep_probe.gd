@@ -255,7 +255,7 @@ func _maybe_walk() -> void:
 	if _walk_to == _walk_from:
 		_finish(false, "nowhere to walk from %s in a %s world" % [_walk_from, size])
 		return
-	if not _client.submit({"MoveTo": {"target": {"x": _walk_to.x, "y": _walk_to.y}}}):
+	if not _client.submit(AssayActions.move_to(_walk_to)):
 		_finish(false, "the MoveTo command was not submitted")
 		return
 	_walk_sent = true
@@ -293,7 +293,7 @@ func _advance_session() -> void:
 				_leave_for_fuel(at)
 		Step.TO_FUEL:
 			if at == _fuel_stand:
-				_once("mine fuel", "Mine")
+				_once("mine fuel", AssayActions.mine())
 				_step = Step.FUEL_MINING
 		Step.FUEL_MINING:
 			if _held("ore", _fuel) >= AssayDemoPlan.FUEL_ORE:
@@ -387,7 +387,7 @@ func _begin_session(at: Vector2i) -> void:
 				% [_want_ticks, needed, _ore_wanted, HAND_MINE_TICKS,
 				AssayDemoPlan.refined_needed() * AssayDemoPlan.SMELT_TICKS_PER_ORE, needed])
 		return
-	if not _client.submit({"MoveTo": {"target": {"x": _stand_at.x, "y": _stand_at.y}}}):
+	if not _client.submit(AssayActions.move_to(_stand_at)):
 		_finish(false, "the MoveTo command was not submitted")
 		return
 	print(("  session: material %s, fuel %s (the sim's pair). Walking from %s to %s on the deposit "
@@ -409,7 +409,7 @@ func _deposit_cover(center: Vector2i) -> Dictionary:
 
 func _begin_mining() -> void:
 	_ore_before = _held("ore", _material)
-	_once("mine", "Mine")
+	_once("mine", AssayActions.mine())
 	_step = Step.MINING
 	print("  session: standing on %s at %s, mining from tick %d"
 			% [_species_name(_material), _stand_at, _sim.tick()])
@@ -428,7 +428,7 @@ func _mining(_at: Vector2i) -> void:
 	var exact := AssaySessionPlan.is_assayed(_sim.species_sheets(), _material)
 	if not exact and not _assay_sent:
 		_assay_sent = true
-		_once("assay", "Assay")
+		_once("assay", AssayActions.assay())
 		print("  session: assaying %s from tick %d (%d ticks of standing still)"
 				% [_species_name(_material), _sim.tick(), ASSAY_TICKS])
 	elif exact and not _assay_sent:
@@ -452,8 +452,8 @@ func _mining(_at: Vector2i) -> void:
 	if ore.is_empty():
 		_finish(false, "the sim says we hold %d ore and the inventory has no stack of it" % held)
 		return
-	_once("craft smelter", {"Craft": {"recipe": "Smelter",
-			"item": AssayDemoPlan.item_of_stack(ore), "count": 1}})
+	_once("craft smelter", AssayActions.craft(AssaySimHost.recipe_tag("smelter"),
+			AssayActions.item_of_stack(ore), 1))
 	_step = Step.CRAFTING
 
 
@@ -464,7 +464,7 @@ func _leave_for_fuel(at: Vector2i) -> void:
 		return
 	_fuel_stand = AssayDemoPlan.stand_tile(_fuel_center, _client.player_id,
 			_deposit_cover(_fuel_center))
-	if not _client.submit({"MoveTo": {"target": {"x": _fuel_stand.x, "y": _fuel_stand.y}}}):
+	if not _client.submit(AssayActions.move_to(_fuel_stand)):
 		_finish(false, "the MoveTo to the fuel deposit was not submitted")
 		return
 	_step = Step.TO_FUEL
@@ -487,8 +487,8 @@ func _placing(at: Vector2i) -> void:
 		if smelter.is_empty():
 			_finish(false, "the craft finished and no smelter is in the pack")
 			return
-		_once("place smelter", {"Place": {"item": AssayDemoPlan.item_of_stack(smelter),
-				"pos": {"x": _smelter_at.x, "y": _smelter_at.y}}})
+		_once("place smelter", AssayActions.place(AssayActions.item_of_stack(smelter),
+				_smelter_at))
 		return
 	# Waiting for the building to exist in the stepped world.
 	var building: Variant = _sim.tile_at(_smelter_at).get("building")
@@ -523,12 +523,11 @@ func _loading() -> void:
 		if fuel.is_empty() or ore.is_empty():
 			_finish(false, "the smelter is placed and we hold fuel=%s ore=%s" % [fuel, ore])
 			return
-		_once("insert fuel", {"Insert": {"building": _building, "slot": "Fuel",
-				"item": AssayDemoPlan.item_of_stack(fuel), "count": AssayDemoPlan.FUEL_ORE}})
+		_once("insert fuel", AssayActions.insert(_building, AssayActions.SLOT_FUEL,
+				AssayActions.item_of_stack(fuel), AssayDemoPlan.FUEL_ORE))
 		_sent["insert ore"] = true
-		if not _client.submit({"Insert": {"building": _building, "slot": "Input",
-				"item": AssayDemoPlan.item_of_stack(ore),
-				"count": AssayDemoPlan.refined_needed()}}):
+		if not _client.submit(AssayActions.insert(_building, AssayActions.SLOT_INPUT,
+				AssayActions.item_of_stack(ore), AssayDemoPlan.refined_needed())):
 			_finish(false, "the Insert of ore was not submitted")
 		return
 	# THE SMELTER'S OWN SENTENCE SAYS WHEN THE ORE LANDED: `sim::debug::building_status` calls an
@@ -558,7 +557,7 @@ func _smelting() -> void:
 	var status := _smelter_status()
 	if not status.contains("idle: nothing to refine"):
 		return
-	if _once("take", {"Take": {"building": _building}}):
+	if _once("take", AssayActions.take(_building)):
 		print("  session: the fire is out at tick %d -- %s" % [_sim.tick(), status])
 		return
 	_refined_held = _held("refined", _material)
@@ -582,8 +581,8 @@ func _making() -> void:
 		var material := AssayDemoPlan.item_of_stack(refined)
 		_sent["make parts"] = true
 		for order in [["handle", 1], ["head", 2], ["frame", 1]]:
-			if not _client.submit({"MakePart": {"kind": AssayDemoPlan.part_kind_tag(order[0]),
-					"material": material, "count": order[1]}}):
+			if not _client.submit(AssayActions.make_part(AssaySimHost.part_tag(String(order[0])),
+					material, int(order[1]))):
 				_finish(false, "the MakePart of a %s was not submitted" % order[0])
 				return
 		return
@@ -600,9 +599,9 @@ func _making() -> void:
 ## hand and leaves the list empty again, which is why the drill is index 0 too.
 func _pick() -> void:
 	if not _sent.has("assemble pick"):
-		_once("assemble pick", {"Assemble": {
-				"frame": AssayDemoPlan.item_of_stack(_stack("handle", _material)),
-				"mounted": [AssayDemoPlan.item_of_stack(_stack("head", _material))]}})
+		_once("assemble pick", AssayActions.assemble(
+				AssayActions.item_of_stack(_stack("handle", _material)),
+				[AssayActions.item_of_stack(_stack("head", _material))]))
 		return
 	var designs := _sim.designs_of(_client.player_id)
 	if _pick_at < 0:
@@ -611,7 +610,7 @@ func _pick() -> void:
 		_pick_at = _sim.tick()
 		print("  session: a pick is built at tick %d -- %s" % [_pick_at,
 				String((designs[0] as Dictionary).get("verdict", "?"))])
-		_once("equip", {"Equip": {"assembly": 0}})
+		_once("equip", AssayActions.equip(0))
 		return
 	for entry in designs:
 		if bool((entry as Dictionary).get("in_hand", false)):
@@ -673,9 +672,9 @@ func _check_demo() -> bool:
 ## verdict is a promise the placement has to keep.
 func _drill(at: Vector2i) -> void:
 	if not _sent.has("assemble drill"):
-		_once("assemble drill", {"Assemble": {
-				"frame": AssayDemoPlan.item_of_stack(_stack("frame", _material)),
-				"mounted": [AssayDemoPlan.item_of_stack(_stack("head", _material))]}})
+		_once("assemble drill", AssayActions.assemble(
+				AssayActions.item_of_stack(_stack("frame", _material)),
+				[AssayActions.item_of_stack(_stack("head", _material))]))
 		return
 	for entry in _sim.designs_of(_client.player_id):
 		var design: Dictionary = entry
@@ -700,11 +699,10 @@ func _drill(at: Vector2i) -> void:
 			# A BARE STRING, like `Mine`. `Stop` is a unit variant, and externally-tagged JSON spells
 			# those as the name alone -- `{"Stop": {}}` is refused, which would have left the player
 			# mining and the bench rotting exactly as before, with the probe reporting success.
-			_once("stop", "Stop")
+			_once("stop", AssayActions.stop())
 			_step = Step.CRUISING
 			return
-		_once("plant", {"PlaceAssembly": {"assembly": int(design.get("index", 0)),
-				"pos": {"x": _drill_spot.x, "y": _drill_spot.y}}})
+		_once("plant", AssayActions.place_assembly(int(design.get("index", 0)), _drill_spot))
 		_step = Step.PLANTING
 		return
 

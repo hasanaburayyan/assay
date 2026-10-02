@@ -170,12 +170,116 @@ static func status_color(level: int) -> Color:
 static func inventory_lines(stacks: Array) -> PackedStringArray:
 	var lines := PackedStringArray()
 	if stacks.is_empty():
-		lines.append("carrying nothing")
+		lines.append(nothing_carried_line())
 		return lines
 	for entry in stacks:
-		var stack: Dictionary = entry
-		lines.append("%d × %s" % [int(stack.get("count", 0)), String(stack.get("name", "?"))])
+		lines.append(stack_line(entry as Dictionary))
 	return lines
+
+
+## ONE STACK, as its row's words. Split out of `inventory_lines` when the pack became rows with
+## buttons on them (ASSA-37): one wording, whether it is read as a list or pressed.
+static func stack_line(stack: Dictionary) -> String:
+	return "%d × %s" % [int(stack.get("count", 0)), String(stack.get("name", "?"))]
+
+
+## What the pack says when it is empty, which is every player for their first few ticks.
+static func nothing_carried_line() -> String:
+	return "carrying nothing"
+
+
+## EVERY VERB A STACK AFFORDS, as descriptors for the row's buttons: `{label, verb, ...}`.
+##
+## WHAT A PLAYER CAN DO WITH A THING IS THE SIM'S LIST, NOT MINE. `recipes` and `part_kinds` are
+## `AssaySim`'s own catalogues, so a Craft button exists because some hand recipe eats this kind of
+## item and for no other reason. The alternative was four kind names written into this client, which
+## would make it the one file that still had to be edited when `PART_SPECS` or `RECIPES` grew -- and
+## ADR 0003's whole point is that a new part kind needs no new code.
+##
+## THIS DECIDES NOTHING ABOUT LEGALITY. Not whether the batch is affordable, not whether the species
+## is hard enough, not whether a smelter is in reach. `sim::step` validates every command on every
+## peer; a button missing here would be this client holding an opinion the other peers do not have.
+## A verb is offered when the COMMAND CAN BE BUILT AT ALL, and then the sim answers.
+##
+## `building` is whether an assembly is part-way built, which changes one word: the first part you add
+## is the FRAME (`sim-cli`'s `assemble <frame> <part>...` rule, kept rather than invented).
+## `footprint` is `AssaySimHost.footprint_of_item`, so "is this placeable" is also the sim's answer.
+static func stack_verbs(stack: Dictionary, recipes: Array, part_kinds: Array,
+		footprint: Vector2i, building: bool) -> Array:
+	var kind := String(stack.get("kind", ""))
+	var verbs := []
+	for entry in recipes:
+		var recipe: Dictionary = entry
+		if String(recipe.get("input", "")) != kind:
+			continue
+		if bool(recipe.get("hand", false)):
+			verbs.append({"label": "Craft %s" % String(recipe.get("name", "?")), "verb": "craft",
+					"recipe": recipe.get("tag")})
+		elif not _has_verb(verbs, "insert"):
+			# A recipe that is NOT hand-work happens inside a building, so this kind is something a
+			# smelter eats -- both slots, because which one a species is good for (hot enough fuel, or
+			# ore that melts) is a sheet reading and only the sim has it.
+			verbs.append({"label": "Insert fuel", "verb": "insert", "slot": AssayActions.SLOT_FUEL})
+			verbs.append({"label": "Insert input", "verb": "insert", "slot": AssayActions.SLOT_INPUT})
+	if footprint.x > 0 and footprint.y > 0:
+		verbs.append({"label": "Place", "verb": "place"})
+	for entry in part_kinds:
+		if String((entry as Dictionary).get("name", "")) != kind:
+			continue
+		# The first part added is the frame, so the word changes rather than the button.
+		verbs.append({"label": "Mount" if building else "Frame", "verb": "build"})
+	return verbs
+
+
+## EVERY VERB A DESIGN ROW AFFORDS. Three cases and no fourth: the tool in your hands can go back on
+## the bench, a held design can go into your hands, a planted one can go on the map.
+##
+## PLACE IS HERE WHATEVER THE VERDICT SAYS (Maren's ruling, ASSA-5/7). An over-budget design BREAKS
+## at placement -- that is where the sim tests mass, by decision 11 -- and breaking is a soft reset
+## that hands the parts back. A client that hid the button would be turning a mechanic into an error
+## message, and WILL BREAK would stop being a prediction a player can choose to test.
+static func design_verbs(design: Dictionary) -> Array:
+	if bool(design.get("in_hand", false)):
+		return [{"label": "Unequip", "verb": "unequip"}]
+	if String(design.get("mount", "")) == "planted":
+		return [{"label": "Place", "verb": "place_assembly"}]
+	return [{"label": "Equip", "verb": "equip"}]
+
+
+static func _has_verb(verbs: Array, verb: String) -> bool:
+	for entry in verbs:
+		if String((entry as Dictionary).get("verb", "")) == verb:
+			return true
+	return false
+
+
+## WHERE A BUTTON ACTS, said out loud. A target that is only drawn is a target a player has to infer,
+## and Place, Insert and Take all land on it -- so the one sentence names the tile and what is on it.
+##
+## "where you stand" until the map is right-clicked, which is not a placeholder: your own tile is the
+## one tile every player has, and planting beside yourself is the common case.
+static func target_line(tile: Vector2i, chosen: bool, tile_facts: Dictionary) -> String:
+	var what := "right-click the map to choose a tile"
+	var building: Variant = tile_facts.get("building")
+	if building != null:
+		what = "%s %d" % [String((building as Dictionary).get("kind", "?")),
+				int((building as Dictionary).get("id", -1))]
+	elif bool(tile_facts.get("in_bounds", false)):
+		what = "empty ground" if tile_facts.get("deposit") == null else "on a deposit"
+	return "acting on (%d, %d) · %s · %s" % [tile.x, tile.y,
+			"chosen" if chosen else "where you stand", what]
+
+
+## THE PARTS WAITING TO BE ASSEMBLED, as one line. Empty while nothing is chosen, because a heading
+## over a blank reads as a bug.
+static func building_line(parts: Array) -> String:
+	if parts.is_empty():
+		return ""
+	var names := PackedStringArray()
+	for entry in parts:
+		names.append(String((entry as Dictionary).get("name", "?")))
+	return "assembling: %s on a %s" % [", ".join(names.slice(1)) if names.size() > 1 else "nothing",
+			names[0]]
 
 
 ## WHAT IS UNDER THE CURSOR, as lines. A tile off the map says so: the cursor is off the map most of

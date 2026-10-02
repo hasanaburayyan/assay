@@ -8,17 +8,17 @@ extends RefCounted
 ## rather than in the probe so a test can hand them a world and check the answer, instead of a person
 ## reading a relay log and hoping.
 ##
-## NOTHING HERE DECIDES A RULE, and two places are worth saying out loud:
+## NOTHING HERE DECIDES A RULE, and one thing is worth saying out loud: AN ITEM IS ALWAYS ECHOED,
+## NEVER INVENTED. Every command takes its item from a stack the sim named in `inventory_of` (`kind`,
+## `species`, `grade` come straight back), or from `starter_pair()`. The client never works out what
+## it is carrying.
 ##
-##  - AN ITEM IS ALWAYS ECHOED, NEVER INVENTED. Every command below takes its item from a stack the
-##    sim named in `inventory_of` (`kind`, `species`, `grade` come straight back), or from
-##    `starter_pair()`. The client never works out what it is carrying.
-##  - THE SHAPES ARE SERDE'S. `handle` is `PartKind::Frame(Mount::Held)`, so its item nests three
-##    enums deep: `{"kind":{"Part":{"Frame":"Held"}},...}`. GDScript BUILDS that (parsing it would
-##    turn every number into a double, and serde will not take `3.0` for a `u8`), so
-##    `test_sim_binding.gd` holds every shape here against `AssaySim.item_json`, which is serde
-##    writing it. That test is the only one that cannot agree with my own misreading of the protocol
-##    -- which is exactly the mistake I made with the bundle tick convention.
+## THE COMMAND SHAPES THEMSELVES MOVED OUT (ASSA-37) and now live in `scripts/actions.gd`, with the
+## item and part-kind tags that go in them. The reason is that the client grew BUTTONS: this file was
+## the only place that knew how to spell a command while the probe was the only thing that could act,
+## and two spellings of one command is the single disagreement nobody would notice -- the probe would
+## keep passing while a button was dropped by the relay in silence. What is left here is the demo
+## loop's QUANTITIES AND GEOMETRY, which is what a plan is.
 ##
 ## THE NUMBERS BELOW ARE `sim::tuning`'s, REPEATED ONLY TO SIZE QUANTITIES AND A DEADLINE, the same
 ## licence `lockstep_probe.gd` already takes for `HAND_MINE_TICKS`. No outcome is decided with them:
@@ -73,59 +73,6 @@ static func part_size(kind: String) -> int:
 			return FRAME_SIZE
 		_:
 			return 0
-
-
-## `PartKind` as serde tags it, for `MakePart`'s `kind` field, which is a part kind and NOT an item.
-## A bare string for the two plain kinds; `Frame` carries its `Mount`, so `handle` and `frame` are the
-## same kind with different mounts -- which is the catalogue's design, not a quirk of the wire.
-static func part_kind_tag(kind: String) -> Variant:
-	match kind.to_lower():
-		"head":
-			return "Head"
-		"hopper":
-			return "Hopper"
-		"handle":
-			return {"Frame": "Held"}
-		"frame":
-			return {"Frame": "Planted"}
-		_:
-			return kind
-
-
-## An item descriptor, in the shape serde reads an `Item` from. The keys are in the order the Rust
-## struct declares them, which costs nothing and makes the two texts comparable by eye.
-static func item(kind: String, species: int, grade: String) -> Dictionary:
-	return {"kind": _kind_tag(kind), "species": species, "grade": grade.to_upper()}
-
-
-## `ItemKind` as serde tags it: a bare string for the plain kinds, and a nest for a part, because
-## `ItemKind::Part(PartKind)` and `PartKind::Frame(Mount)` are each an enum carrying an enum.
-##
-## An unknown kind is returned UNCHANGED rather than guessed at. It will not parse on the sim's side,
-## so the command is refused by name instead of being quietly turned into some other item.
-static func _kind_tag(kind: String) -> Variant:
-	match kind.to_lower():
-		"ore":
-			return "Ore"
-		"refined":
-			return "Refined"
-		"gear":
-			return "Gear"
-		"smelter":
-			return "Smelter"
-		"head", "hopper", "handle", "frame":
-			# ONE SOURCE for the part tag, so an item and a `MakePart` can never disagree about what
-			# a handle is.
-			return {"Part": part_kind_tag(kind)}
-		_:
-			return kind
-
-
-## The item a stack in `inventory_of` is, ready to be sent back. THE SIM NAMED ALL THREE FIELDS; this
-## only rearranges them.
-static func item_of_stack(stack: Dictionary) -> Dictionary:
-	return item(String(stack.get("kind", "")), int(stack.get("species", -1)),
-			String(stack.get("grade", "C")))
 
 
 ## How many of one kind, species and grade a player is carrying, out of `inventory_of`. Grade is

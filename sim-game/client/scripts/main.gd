@@ -13,8 +13,14 @@ extends Node2D
 
 ## WHERE THINGS GO lives in `AssayHud` with the rest of the view's rules, so the one that matters can
 ## be tested: the HUD column sits BESIDE the map (Maren's ruling, ASSA-7), its width coming out of the
-## map's own width term rather than covering it. The part menu lands in that same column once there is
-## an assemble command to drive it.
+## map's own width term rather than covering it.
+##
+## AND THE COLUMN IS WHERE A PERSON ACTS (ASSA-37). Until now only the scripted probe could mine,
+## craft, equip or plant; a human could walk, look and read. Every button below submits the SAME
+## `PlayerCommand` `sim-cli` sends, built by `AssayActions` -- the one file that spells a command, so
+## that the probe and the buttons cannot drift apart. No button predicts, none refuses, and none
+## decides whether what it asked for was legal: `sim::step` validates on every peer, and the answer
+## comes back in the event log a tick later.
 const MARGIN := AssayHud.MARGIN
 const VIEW := AssayHud.VIEW
 const PANEL := AssayHud.PANEL
@@ -28,16 +34,42 @@ var _host := LineEdit.new()
 var _name := LineEdit.new()
 var _status := Label.new()
 var _detail := Label.new()
-var _carrying := Label.new()
+## THE PACK, AS ROWS YOU CAN ACT ON (ASSA-37). A container and not a Label any more: a stack's row
+## carries the verbs that stack affords, which is what turns "3 × ore" from a readout into the start
+## of the craft chain. The words are still `AssayHud.stack_line`'s, so the list reads the same.
+var _carrying := VBoxContainer.new()
+## WHAT YOU CAN DO WHERE YOU ARE: Mine, Stop, Assay, the tile every placement lands on, and the
+## verbs of whatever building is on it.
+var _actions := VBoxContainer.new()
 var _cursor := Label.new()
 var _log := Label.new()
 ## THE PART MENU'S HOME: one headline label plus one body label per design, rebuilt only when the
 ## list changes. Not a Label like the others, because the verdict is a WORD IN ITS OWN COLOUR above
 ## numbers in another (Maren's ruling) and one Label can only be one colour.
 var _bench := VBoxContainer.new()
-## What the bench was last built from, so ten refreshes a second do not rebuild nodes that have not
-## changed. The designs themselves are the signature: if they are identical, so is the panel.
-var _bench_showing := ""
+## What each section was last built from, so ten refreshes a second do not rebuild nodes that have
+## not changed. The sim's own values are the signature: if they are identical, so is the panel. This
+## matters more now than it did -- rebuilding a row ten times a second would destroy a button under
+## the pointer -- and A BUTTON NEVER CAPTURES THE STATE IT ACTS ON. It reads the target tile and the
+## sim when it is PRESSED, so choosing a tile after seeing the button works and costs no rebuild.
+## NOT "" -- AN EMPTY PACK AND AN EMPTY BENCH HAVE AN EMPTY SHAPE, so starting these at "" made the
+## first refresh a no-op and left the sections blank until something was mined. The suite caught it
+## because `test_main_screen.gd` asserts the empty bench says which kind of empty it is; without that
+## line the shipped client would have had two headings over nothing on its first screen.
+const UNBUILT := "nothing built yet"
+var _bench_showing := UNBUILT
+var _pack_showing := UNBUILT
+var _actions_showing := UNBUILT
+## THE TILE EVERY PLACEMENT LANDS ON. `_targeted` false means "where you stand", which is not a
+## placeholder: your own tile is the one tile every player has, and planting beside yourself is the
+## common case. Right-click chooses another; left-click still walks, because walking is the thing a
+## player does most.
+var _target := Vector2i.ZERO
+var _targeted := false
+## THE PARTS CHOSEN FOR THE NEXT `Assemble`, as the SIM'S OWN STACKS so a row can be named on screen
+## and sent as an item without this client inventing either. THE FIRST ONE IS THE FRAME, which is
+## `sim-cli`'s rule (`assemble <frame> <part>...`) kept rather than invented.
+var _building: Array = []
 ## Tile size last drawn at, so a click can be turned back into a tile. Set by `_draw`, which is the
 ## only place that decides it; 0 means nothing has been drawn yet and a click means nothing.
 var _cell := 0.0
@@ -118,14 +150,26 @@ func _build_ui() -> void:
 	_detail.position = Vector2(24.0, 74.0)
 	add_child(_detail)
 
-	# THE HUD COLUMN, beside the map. Three sections, each the plainest thing that answers one
-	# question: what am I carrying, what is under the cursor, what just happened.
+	# THE HUD COLUMN, beside the map. Each section is the plainest thing that answers one question:
+	# what am I carrying, what can I do here, what have I built, what is under the cursor, what just
+	# happened.
+	#
+	# SCROLLED, SINCE THE ROWS GREW BUTTONS. A full pack plus a bench is taller than 720px, and a
+	# button pushed off the bottom of the window is worse than a disabled one -- it looks available
+	# and cannot be pressed. The scroll box is what carries the position now; the inner column sits at
+	# the origin inside it.
+	var scroll := ScrollContainer.new()
+	scroll.position = Vector2(VIEW.x - PANEL - MARGIN.x, MARGIN.y)
+	scroll.custom_minimum_size = Vector2(PANEL, VIEW.y - MARGIN.y - 24.0)
+	scroll.size = scroll.custom_minimum_size
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	add_child(scroll)
 	var column := VBoxContainer.new()
-	column.position = Vector2(VIEW.x - PANEL - MARGIN.x, MARGIN.y)
 	column.custom_minimum_size = Vector2(PANEL, 0.0)
 	column.add_theme_constant_override("separation", 10)
-	add_child(column)
-	for part in [["you", _carrying], ["bench", _bench], ["cursor", _cursor], ["last tick", _log]]:
+	scroll.add_child(column)
+	for part in [["you", _carrying], ["do", _actions], ["bench", _bench], ["cursor", _cursor],
+			["last tick", _log]]:
 		var heading := Label.new()
 		heading.text = String(part[0])
 		heading.modulate = Color(0.60, 0.64, 0.70)
@@ -135,6 +179,8 @@ func _build_ui() -> void:
 		if body is Label:
 			(body as Label).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		column.add_child(body)
+	_refresh_pack()
+	_refresh_actions()
 	_refresh_bench()
 
 
@@ -203,7 +249,6 @@ func _refresh() -> void:
 		_detail.text = ("joined at tick %d, but no world is being simulated: %s"
 				% [int(joined.get("tick", -1)), _sim.fail_reason])
 		return
-	_carrying.text = "\n".join(AssayHud.inventory_lines(_sim.inventory_of(_client.player_id)))
 	# The tile under the mouse, or your own tile until the mouse has been over the map. Which one it
 	# is has to be on screen: a readout that silently changed subject would be unreadable.
 	var at := _hover
@@ -221,10 +266,12 @@ func _refresh() -> void:
 			+ "%d bundles applied, %d hashes reported") % [
 			_sim.seed_text(), size.x, size.y, _sim.species_names().size(), _sim.players().size(),
 			_sim.tick(), _sim.hash_hex(), _sim.applied, _hashes_sent]
+	_refresh_pack()
+	_refresh_actions()
 	_refresh_bench()
 
 
-## THE PART MENU: every design you hold, verdict first.
+## THE PART MENU: every design you hold, verdict first, with the one verb that design affords.
 ##
 ## Maren's ruling, and the reason this is nodes rather than one Label: THE VERDICT IS THE HEADLINE
 ## AND THE NUMBERS ARE THE SMALL PRINT. A player predicting a break should read one word, not
@@ -233,42 +280,335 @@ func _refresh() -> void:
 ##
 ## NOTHING HERE DECIDES ANYTHING. The verdict, the spans, the durability wording and the list of
 ## species still reading rough all arrive from `sim` through the binding. The one thing this client
-## adds is the arrangement.
+## adds is the arrangement -- and now the button, whose command is `AssayActions`' and whose legality
+## is `sim::step`'s. PLACE IS ON EVERY PLANTED ROW WHATEVER THE VERDICT SAYS: an over-budget design
+## breaks at placement, which is where the sim tests mass, and hiding the button would turn a
+## mechanic into an error message (Maren's ruling, ASSA-5/7).
 ##
-## NO PLACE BUTTON YET, and that is deliberate rather than an oversight: the ruling is that place is
-## never disabled, and a button that cannot work is a disabled one with extra steps. Placement lands
-## with the command path that can be driven end to end.
+## THE STRUCTURE IS THE SIGNATURE, NOT THE WHOLE LIST, and that is not an optimisation. Durability
+## moves every swing, so rebuilding on any change at all would free the Place button under the
+## pointer four times a second while the player is mining. The rows stay; the numbers in them are
+## rewritten.
 func _refresh_bench() -> void:
 	var designs := _sim.designs_of(_client.player_id) if _client != null else []
-	var signature := str(designs)
-	if signature == _bench_showing:
+	var signature := _bench_shape(designs)
+	if signature != _bench_showing:
+		_bench_showing = signature
+		_rebuild_bench(designs)
 		return
-	_bench_showing = signature
-	for child in _bench.get_children():
-		child.queue_free()
-		_bench.remove_child(child)
+	for i in range(designs.size()):
+		_write_design(_bench.get_child(i), designs[i] as Dictionary)
+
+
+## What a bench LOOKS like, ignoring every number that moves on its own: which designs, in which
+## order, on which mount, and which verb each one offers.
+func _bench_shape(designs: Array) -> String:
+	var shape := PackedStringArray()
+	for entry in designs:
+		var design: Dictionary = entry
+		shape.append("%d/%s/%s" % [int(design.get("index", -1)),
+				"hand" if bool(design.get("in_hand", false)) else "bench",
+				String(design.get("mount", "?"))])
+	return "|".join(shape)
+
+
+func _rebuild_bench(designs: Array) -> void:
+	_clear(_bench)
 	if designs.is_empty():
-		var empty := Label.new()
-		empty.text = AssayHud.no_designs_line()
-		empty.modulate = Color(0.55, 0.58, 0.64)
-		empty.custom_minimum_size = Vector2(PANEL, 0.0)
-		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		_bench.add_child(empty)
+		_bench.add_child(_note(AssayHud.no_designs_line()))
 		return
 	for entry in designs:
 		var design: Dictionary = entry
+		var row := VBoxContainer.new()
+		row.add_theme_constant_override("separation", 2)
 		var verdict := Label.new()
-		verdict.text = String(design.get("verdict", "?"))
-		verdict.modulate = AssayHud.verdict_color(verdict.text)
 		verdict.add_theme_font_size_override("font_size", 19)
-		_bench.add_child(verdict)
+		row.add_child(verdict)
 		var body := Label.new()
-		body.text = "\n".join(AssayHud.design_lines(design))
 		body.modulate = Color(0.78, 0.80, 0.85)
 		body.add_theme_font_size_override("font_size", 13)
 		body.custom_minimum_size = Vector2(PANEL, 0.0)
 		body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		_bench.add_child(body)
+		row.add_child(body)
+		var buttons := HBoxContainer.new()
+		buttons.add_theme_constant_override("separation", 4)
+		for descriptor in AssayHud.design_verbs(design):
+			buttons.add_child(_design_button(descriptor as Dictionary, design))
+		row.add_child(buttons)
+		_bench.add_child(row)
+		_write_design(row, design)
+
+
+## The numbers in one row, rewritten. The verdict is a WORD IN ITS OWN COLOUR, and it can change
+## under a static row -- an assay turns UNCERTAIN into SAFE or WILL BREAK without the design moving.
+func _write_design(row: Node, design: Dictionary) -> void:
+	var verdict: Label = row.get_child(0) as Label
+	var body: Label = row.get_child(1) as Label
+	if verdict == null or body == null:
+		return
+	verdict.text = String(design.get("verdict", "?"))
+	verdict.modulate = AssayHud.verdict_color(verdict.text)
+	body.text = "\n".join(AssayHud.design_lines(design))
+
+
+## One verb on one design row. `index` is the sim's, NOT the row's position: the tool in hand is a
+## row with no index of its own (`designs_of` reports -1 for it), so counting rows would equip the
+## wrong design the moment anything was in hand.
+func _design_button(descriptor: Dictionary, design: Dictionary) -> Button:
+	var label := String(descriptor.get("label", "?"))
+	var index := int(design.get("index", -1))
+	match String(descriptor.get("verb", "")):
+		"equip":
+			return _button(label, func() -> void: _act(label, AssayActions.equip(index)),
+					"take this design into your hands")
+		"unequip":
+			return _button(label, func() -> void: _act(label, AssayActions.unequip()),
+					"put the tool in your hands back on the bench")
+		"place_assembly":
+			# NEVER DISABLED AND NEVER CHECKED FIRST. Over budget is not this client's verdict to act
+			# on: the sim breaks the design at placement and hands the parts back.
+			return _button(label, func() -> void: _act("%s %d" % [label, index],
+					AssayActions.place_assembly(index, _target_tile())),
+					"plant this design on the tile you are acting on")
+		_:
+			return _button(label, func() -> void: _say(
+					"no command for %s" % label, AssayHud.Say.FAILED))
+
+
+## THE PACK, AS ROWS YOU CAN ACT ON. The words are `AssayHud.stack_line`'s and the verbs are
+## `AssayHud.stack_verbs`', which reads them out of the sim's own recipe table and part catalogue --
+## so a Craft button exists because some hand recipe eats this kind of item, and for no other reason.
+##
+## SAME SIGNATURE RULE AS THE BENCH: a count climbs every mining cycle, so only the shape of the pack
+## rebuilds the rows.
+func _refresh_pack() -> void:
+	var stacks := _sim.inventory_of(_client.player_id) if _client != null else []
+	var signature := "%s@%d" % [_pack_shape(stacks), _building.size()]
+	if signature != _pack_showing:
+		_pack_showing = signature
+		_rebuild_pack(stacks)
+		return
+	for i in range(stacks.size()):
+		var label: Label = _carrying.get_child(i).get_child(0) as Label
+		if label != null:
+			label.text = AssayHud.stack_line(stacks[i] as Dictionary)
+
+
+## What a pack LOOKS like: which items, in which order. Not how many of each, which climbs on its
+## own every mining cycle.
+func _pack_shape(stacks: Array) -> String:
+	var shape := PackedStringArray()
+	for entry in stacks:
+		var stack: Dictionary = entry
+		shape.append("%s/%d/%s" % [String(stack.get("kind", "?")), int(stack.get("species", -1)),
+				String(stack.get("grade", "?"))])
+	return "|".join(shape)
+
+
+func _rebuild_pack(stacks: Array) -> void:
+	_clear(_carrying)
+	if stacks.is_empty():
+		_carrying.add_child(_note(AssayHud.nothing_carried_line()))
+		return
+	var recipes := AssaySimHost.recipes()
+	var part_kinds := AssaySimHost.part_kinds()
+	for entry in stacks:
+		var stack: Dictionary = entry
+		var row := VBoxContainer.new()
+		row.add_theme_constant_override("separation", 2)
+		var label := Label.new()
+		label.add_theme_font_size_override("font_size", 13)
+		label.custom_minimum_size = Vector2(PANEL, 0.0)
+		row.add_child(label)
+		# WHETHER AN ITEM CAN BE PLACED IS THE SIM'S ANSWER TOO, by footprint: 2x2 for a smelter, 0x0
+		# for a thing that is not a building.
+		var footprint := AssaySimHost.footprint_of_item(String(stack.get("kind", "")),
+				int(stack.get("species", -1)), String(stack.get("grade", "C")))
+		var verbs := AssayHud.stack_verbs(stack, recipes, part_kinds, footprint,
+				not _building.is_empty())
+		if not verbs.is_empty():
+			var buttons := HBoxContainer.new()
+			buttons.add_theme_constant_override("separation", 4)
+			for descriptor in verbs:
+				buttons.add_child(_stack_button(descriptor as Dictionary, stack, footprint))
+			row.add_child(buttons)
+		_carrying.add_child(row)
+		label.text = AssayHud.stack_line(stack)
+
+
+## One verb on one stack. EVERY ITEM SENT IS THE ONE THE SIM NAMED: `item_of_stack` rearranges the
+## three fields out of `inventory_of` and this client never works out what it is carrying.
+func _stack_button(descriptor: Dictionary, stack: Dictionary, footprint: Vector2i) -> Button:
+	var label := String(descriptor.get("label", "?"))
+	var count := int(stack.get("count", 0))
+	var what := AssayHud.stack_line(stack)
+	match String(descriptor.get("verb", "")):
+		"craft":
+			var recipe: Variant = descriptor.get("recipe")
+			return _button(label, func() -> void: _act(label,
+					AssayActions.craft(recipe, AssayActions.item_of_stack(stack), 1)),
+					"one batch, from %s" % what)
+		"insert":
+			# THE WHOLE STACK, and the tooltip says the number. A button cannot ask for a quantity
+			# without growing a field, and picking a smaller number for the player would be this
+			# client deciding how much fuel a fire wants -- which is a sheet reading it does not have.
+			# `Pick up` gives a building and its contents back, so nothing is spent for good.
+			var slot := String(descriptor.get("slot", ""))
+			return _button(label, func() -> void: _insert(stack, slot, count),
+					"put all %d into the %s slot of the building you are acting on" % [count, slot])
+		"place":
+			return _button(label, func() -> void: _act(label,
+					AssayActions.place(AssayActions.item_of_stack(stack), _target_tile())),
+					"stand it on the %d x %d tiles from the one you are acting on"
+							% [footprint.x, footprint.y])
+		"build":
+			return _button(label, func() -> void: _choose_part(stack),
+					"use as the frame of the next machine" if _building.is_empty()
+							else "mount on the frame you chose")
+		_:
+			return _button(label, func() -> void: _say(
+					"no command for %s" % label, AssayHud.Say.FAILED))
+
+
+## WHAT YOU CAN DO WHERE YOU ARE: the three actions that need no item, the tile every placement lands
+## on, the verbs of whatever building is on it, and the assembly you are part-way through.
+##
+## THE SIGNATURE HOLDS ONLY THE BUILDING'S ID, never its status. A smelter's status sentence changes
+## every tick while it burns, and rebuilding on that would free the Take button four times a second.
+func _refresh_actions() -> void:
+	var target := _target_tile()
+	var facts := _sim.tile_at(target) if _sim.running() else {}
+	var building: Variant = facts.get("building")
+	var at := -1 if building == null else int((building as Dictionary).get("id", -1))
+	var signature := "%s/%s/%d/%s" % [target, _targeted, at, _building]
+	if signature == _actions_showing:
+		return
+	_actions_showing = signature
+	_clear(_actions)
+	if not _sim.running():
+		# Before a Welcome there is no tile to act on and no player to act as. A row of buttons that
+		# could only report "not joined" would be the Join button's answer in a worse place.
+		_actions.add_child(_note("join a world and these become the things you can do"))
+		return
+
+	var here := HBoxContainer.new()
+	here.add_theme_constant_override("separation", 4)
+	here.add_child(_button("Mine", func() -> void: _act("Mine", AssayActions.mine()),
+			"hand-mine the deposit under you. Keeps swinging until you Stop."))
+	here.add_child(_button("Stop", func() -> void: _act("Stop", AssayActions.stop()),
+			"stop walking, mining, crafting and assaying"))
+	here.add_child(_button("Assay", func() -> void: _act("Assay", AssayActions.assay()),
+			"study the deposit under you until its sheet reads exact instead of in bands"))
+	_actions.add_child(here)
+	_actions.add_child(_note(AssayHud.target_line(target, _targeted, facts)))
+
+	if building != null:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 4)
+		row.add_child(_button("Take", func() -> void: _act("Take", AssayActions.take(at)),
+				"empty the output slot into your pack"))
+		row.add_child(_button("Pick up", func() -> void: _act("Pick up", AssayActions.pickup(at)),
+				"take the building back, with whatever is inside it"))
+		_actions.add_child(row)
+
+	if not _building.is_empty():
+		_actions.add_child(_note(AssayHud.building_line(_building)))
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 4)
+		row.add_child(_button("Assemble", _assemble,
+				"build the machine from the parts you chose"))
+		row.add_child(_button("Clear", _clear_build, "put the chosen parts back"))
+		_actions.add_child(row)
+
+
+## ONE DOOR FOR EVERY BUTTON ON THIS SCREEN, and the only place any of them reaches the wire.
+##
+## It says what it sent, because a button that shows nothing reads as a dead button (Maren's ruling
+## on Join, and the same argument applies here). It does not predict: the world changes when a bundle
+## carrying this command comes back around and the sim steps, which for the player's own action is
+## about a tick later.
+func _act(what: String, command: Variant) -> void:
+	if _client.submit(command):
+		_say("%s · submitted at tick %d" % [what, _sim.tick()], AssayHud.Say.JOINED)
+		return
+	_say("%s · not submitted; join a world first" % what, AssayHud.Say.FAILED)
+
+
+## Insert needs a building, and there may not be one. THIS IS NOT A REFUSAL -- with no building there
+## is no `BuildingId` to put in the command at all, so there is nothing to send and saying so is the
+## only honest answer. Maren's "never refuse" is about commands the sim should judge.
+func _insert(stack: Dictionary, slot: String, count: int) -> void:
+	var target := _target_tile()
+	var building: Variant = _sim.tile_at(target).get("building")
+	if building == null:
+		_say("nothing to insert into at %d, %d — right-click a building first"
+				% [target.x, target.y], AssayHud.Say.FAILED)
+		return
+	_act("Insert %d into %s" % [count, slot], AssayActions.insert(
+			int((building as Dictionary).get("id", -1)), slot,
+			AssayActions.item_of_stack(stack), count))
+
+
+## Choose a part for the next `Assemble`. The first one is the FRAME, which is `sim-cli`'s rule kept
+## rather than invented, and the row's button says which it is about to be.
+func _choose_part(stack: Dictionary) -> void:
+	_building.append(stack)
+	_say("%s %s" % ["frame:" if _building.size() == 1 else "mounting", AssayHud.stack_line(stack)],
+			AssayHud.Say.JOINED)
+	_refresh_pack()
+	_refresh_actions()
+
+
+## Build the machine. REJECTED ONLY FOR PARTS THAT DO NOT FIT, never for weight -- mass is tested at
+## placement (sim decision 11). The choice is cleared either way: the event log carries the sim's
+## reason, and a half-chosen assembly left on screen after a refusal reads as a stuck button.
+func _assemble() -> void:
+	if _building.is_empty():
+		return
+	var mounted := []
+	for stack in _building.slice(1):
+		mounted.append(AssayActions.item_of_stack(stack as Dictionary))
+	_act("Assemble", AssayActions.assemble(
+			AssayActions.item_of_stack(_building[0] as Dictionary), mounted))
+	_clear_build()
+
+
+func _clear_build() -> void:
+	_building.clear()
+	_refresh_pack()
+	_refresh_actions()
+
+
+## THE TILE EVERY PLACEMENT LANDS ON: the one you chose, or the one you stand on until you choose.
+func _target_tile() -> Vector2i:
+	return _target if _targeted else _my_tile()
+
+
+func _button(label: String, on_press: Callable, hint := "") -> Button:
+	var button := Button.new()
+	button.text = label
+	button.tooltip_text = hint
+	button.add_theme_font_size_override("font_size", 12)
+	button.pressed.connect(on_press)
+	return button
+
+
+## A line of small grey print: a heading with nothing under it reads as a bug, so every empty section
+## says which kind of empty it is.
+func _note(line: String) -> Label:
+	var label := Label.new()
+	label.text = line
+	label.modulate = Color(0.55, 0.58, 0.64)
+	label.add_theme_font_size_override("font_size", 13)
+	label.custom_minimum_size = Vector2(PANEL, 0.0)
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	return label
+
+
+func _clear(box: Node) -> void:
+	for child in box.get_children():
+		child.queue_free()
+		box.remove_child(child)
 
 
 ## The tile my own player is on, as the sim has them. Spawn before there is a player of mine to find:
@@ -281,20 +621,36 @@ func _my_tile() -> Vector2i:
 	return _sim.spawn_tile()
 
 
-## Click a tile to walk there. The command is the same `PlayerCommand::MoveTo` `sim-cli` sends; the
-## sim decides whether it is legal and the movement system walks us one tile per tick. NOTHING MOVES
-## HERE -- the player on screen moves when a bundle carrying this command comes back around.
+## TWO THINGS A MOUSE DOES ON THE MAP, and which is which matters.
+##
+## LEFT CLICK WALKS. The command is the same `PlayerCommand::MoveTo` `sim-cli` sends; the sim decides
+## whether it is legal and the movement system walks us one tile per tick. NOTHING MOVES HERE -- the
+## player on screen moves when a bundle carrying this command comes back around.
+##
+## RIGHT CLICK CHOOSES THE TILE THE BUTTONS ACT ON (ASSA-37). Place, Insert and Take all need a tile,
+## and ONE mechanism serving all three is what keeps the rule explainable: a placement is never a
+## second click on a button, and a click never means two things at once. Walking kept the left button
+## because it is the thing a player does most.
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		_track_hover(event.position)
 		return
-	if not (event is InputEventMouseButton and event.pressed and event.button_index == 1):
+	if not (event is InputEventMouseButton and event.pressed):
 		return
-	var target: Variant = _tile_under(event.position)
-	if target == null:
+	var at: Variant = _tile_under(event.position)
+	if at == null:
 		return
-	var tile: Vector2i = target
-	if _client.submit({"MoveTo": {"target": {"x": tile.x, "y": tile.y}}}):
+	var tile: Vector2i = at
+	if event.button_index == MOUSE_BUTTON_RIGHT:
+		_target = tile
+		_targeted = true
+		_say("acting on %d, %d" % [tile.x, tile.y], AssayHud.Say.JOINED)
+		_refresh()
+		queue_redraw()
+		return
+	if event.button_index != MOUSE_BUTTON_LEFT:
+		return
+	if _client.submit(AssayActions.move_to(tile)):
 		_say("walking to %d, %d" % [tile.x, tile.y], AssayHud.Say.JOINED)
 
 
@@ -402,6 +758,14 @@ func _draw() -> void:
 					Color(0.95, 0.85, 0.45, 0.35) if mine else Color(0.75, 0.78, 0.85, 0.25), 1.0)
 		draw_rect(Rect2(at - Vector2(_cell, _cell), Vector2(_cell, _cell) * 2.0),
 				Color(0.95, 0.85, 0.45) if mine else Color(0.75, 0.78, 0.85), true)
+
+	# THE TILE THE BUTTONS ACT ON, if one has been chosen. Drawn before the hover outline and in its
+	# own colour, because the two mean different things -- this one is where a placement lands and it
+	# stays put, where the hover outline follows the mouse and vanishes with it. Thicker, so the two
+	# are still telling apart on top of each other.
+	if _targeted:
+		draw_rect(Rect2(MARGIN + Vector2(_target) * _cell, Vector2(_cell, _cell)),
+				Color(0.95, 0.85, 0.45, 0.85), false, 2.0)
 
 	# The tile the readout is talking about, outlined. Drawn last so it is never buried, and only
 	# while the mouse is actually over the map -- an outline left behind would point at an answer the

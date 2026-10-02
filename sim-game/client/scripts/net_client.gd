@@ -30,6 +30,13 @@ signal desynced(tick: int)
 signal link_failed(reason: String)
 ## Narration for the console / a probe's stdout.
 signal note(line: String)
+## EVERY COMMAND THE UI ASKED THIS CLIENT TO SUBMIT, whether or not it reached a socket.
+##
+## Emitted before the stage check on purpose, and for two reasons. A test can press a REAL button and
+## see what it would send with no relay in the room, which is the only way ASSA-37's "no client-only
+## command path" is checkable at all. And a command the UI asked for but could not send is itself the
+## thing worth seeing: it is a button that looked like it worked.
+signal asked(command: Variant)
 
 enum Stage { IDLE, CONNECTING, GREETED, JOINED, DEAD }
 
@@ -47,6 +54,8 @@ var _socket := StreamPeerTCP.new()
 var _reader := AssayFrameReader.new()
 var _name := ""
 var _where := ""
+## No socket: see `play_offline`.
+var _offline := false
 
 
 func _ready() -> void:
@@ -81,6 +90,7 @@ func join(address: String, player_name: String) -> void:
 ## Ask the relay to schedule a command. Safe to call only once joined; a command sent before the
 ## welcome would reach a relay that has not stamped us a player yet.
 func submit(command: Variant) -> bool:
+	asked.emit(command)
 	if stage != Stage.JOINED:
 		note.emit("not joined, so nothing was submitted")
 		return false
@@ -98,6 +108,13 @@ func send_text(json_text: String) -> bool:
 	if json_text == "":
 		note.emit("refusing to send an empty message")
 		return false
+	# OFFLINE THIS IS FALSE, AND THAT IS THE HONEST ANSWER, unlike `submit` above. A command submitted
+	# offline does take effect -- the caller delivers it in its own bundle -- but a hash report
+	# offline has no recipient and nothing compares it to anything, so "0 hashes reported" is what the
+	# HUD should say.
+	if _offline:
+		note.emit("offline, so no hash report was sent")
+		return false
 	var frame := AssayProtocol.encode_text(json_text)
 	var err := _socket.put_data(frame)
 	if err != OK:
@@ -106,8 +123,42 @@ func send_text(json_text: String) -> bool:
 	return true
 
 
+## PLAY WITH NO SOCKET: the same client, fed by hand.
+##
+## For the headless suite and `tools/button_session.gd`. NOT A SINGLE-PLAYER MODE and not a second
+## way to act: there is no clock behind it, so whoever turns this on has to write the tick bundles
+## itself, which is precisely the relay's job and precisely what makes this a harness.
+##
+## WHAT STAYS REAL IS EVERYTHING BUT THE SOCKET. `feed_offline` pushes a message through the actual
+## frame reader and the actual `_handle`, so the framing, the Welcome and every bundle run the code a
+## joined client runs; `submit` is the same `submit`, down to the `asked` signal. Only `_write` has
+## nowhere to go. That matters because the whole point of the button tests is that there is ONE
+## command path, and a harness with its own would prove nothing about the real one.
+func play_offline() -> void:
+	_offline = true
+	_where = "offline"
+	note.emit("playing offline: no socket, and the caller owns the clock")
+
+
+## One message, as if it had arrived off the wire. Framed first so the reader does its real work.
+func feed_offline(json_text: String) -> void:
+	if not _offline:
+		push_error("feed_offline on a client that is not offline; call play_offline() first")
+		return
+	_reader.feed(AssayProtocol.encode_text(json_text))
+	while true:
+		var msg: Variant = _reader.next_message()
+		if msg == null:
+			if _reader.error != "":
+				_fail(_reader.error)
+			return
+		_handle(msg)
+		if stage == Stage.DEAD:
+			return
+
+
 func _process(_delta: float) -> void:
-	if stage == Stage.IDLE or stage == Stage.DEAD:
+	if _offline or stage == Stage.IDLE or stage == Stage.DEAD:
 		return
 	_socket.poll()
 	var status := _socket.get_status()
@@ -180,6 +231,10 @@ func _handle(msg: Variant) -> void:
 
 
 func _write(msg: Dictionary) -> bool:
+	# OFFLINE THE COMMAND STILL HAPPENS: the caller is going to deliver it in a bundle of its own, so
+	# reporting success here is true. See `play_offline`, and `send_text` for the case where it is not.
+	if _offline:
+		return true
 	var frame := AssayProtocol.encode(msg)
 	var err := _socket.put_data(frame)
 	if err != OK:

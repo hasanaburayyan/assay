@@ -91,7 +91,7 @@ func test_the_species_colour_table_is_as_long_as_the_sims_roster() -> bool:
 ## THE ITEM DICTIONARIES THE DEMO SENDS ARE THE SHAPE SERDE READS, AND THIS IS THE ONE TEST OF THAT
 ## WHICH CANNOT AGREE WITH MY OWN MISREADING.
 ##
-## `AssayDemoPlan.item` builds the JSON by hand -- it has to, because parsing would turn every number
+## `AssayActions.item` builds the JSON by hand -- it has to, because parsing would turn every number
 ## into a double and serde will not take `3.0` for a `u8` -- and `Item` is three nested enums and a
 ## newtype. `{"kind":{"Part":{"Frame":"Held"}},"species":3,"grade":"C"}` is a shape nothing on this
 ## side would notice getting wrong: a malformed command is dropped before `step` ever sees it, so the
@@ -110,7 +110,7 @@ func test_every_item_the_demo_sends_is_the_shape_serde_reads() -> bool:
 				var serdes := AssaySimHost.item_json(kind, species, grade)
 				if serdes == "":
 					return _fail("the sim will not spell %s:%d:%s at all" % [kind, species, grade])
-				var mine := JSON.stringify(AssayDemoPlan.item(kind, species, grade))
+				var mine := JSON.stringify(AssayActions.item(kind, species, grade))
 				# SERDE'S OWN VERDICT ON THE CLIENT'S OWN TEXT, not a comparison of two parsed
 				# values. Comparing parsed values is what I wrote first, and a planted mutation
 				# walked straight through it: sending `species` as `3.0` passed, because Godot
