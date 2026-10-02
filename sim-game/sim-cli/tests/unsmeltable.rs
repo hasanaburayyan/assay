@@ -11,23 +11,19 @@
 //! That is the exact world this sentence exists for, so it is the world the
 //! test plays. The friend test itself is seed 14247 now (ASSA-45).
 //!
-//! The world is built at 6x4 chunks on purpose: `WorldConfig::default()` is
-//! 8x8, which is a *different world* for the same seed, and the hosts and CI
-//! build 6x4. I measured that rather than assuming.
+//! The world comes from `sim_net::fresh_world`, the one place a session's
+//! shape is decided (ASSA-53): `WorldConfig::default()` is 8x8, which is a
+//! *different world* for the same seed, and the hosts and CI build 6x4.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use sim::{World, WorldConfig};
+use sim::World;
 
 const UNSMELTABLE_SEED: u64 = 10027;
 
 fn host_world(seed: u64) -> World {
-    World::new(WorldConfig {
-        seed,
-        width_chunks: 6,
-        height_chunks: 4,
-    })
+    sim_net::fresh_world(seed)
 }
 
 #[test]

@@ -16,7 +16,7 @@ use sim::tuning::{
     FRAME_BUDGET_PER_STRENGTH, GEAR_MIN_HARDNESS, HEAD_SIZE, HOPPER_SIZE, PLANTED_FRAME_SIZE,
 };
 use sim::worldgen::STARTER_CHUNKS;
-use sim::{ChunkPos, OreDeposit, Property, TilePos, World, WorldConfig};
+use sim::{ChunkPos, OreDeposit, Property, TilePos, World};
 
 /// Chebyshev distance: ticks it takes to walk between two tiles.
 pub fn walk(from: TilePos, to: TilePos) -> i32 {
@@ -62,11 +62,11 @@ pub struct Codes {
 
 /// The starter deposits of this seed's world, as a host will build it.
 pub fn starters(seed: u64) -> (World, OreDeposit, OreDeposit) {
-    let world = World::new(WorldConfig {
-        seed,
-        width_chunks: 6,
-        height_chunks: 4,
-    });
+    // `sim_net::fresh_world` and not a `WorldConfig` written out here: the
+    // same seed at `WorldConfig::default()`'s 8x8 is a DIFFERENT world, and
+    // the doc comment above only stays true while one place decides the shape
+    // (ASSA-53).
+    let world = sim_net::fresh_world(seed);
     let at = |i: usize| {
         let (dx, dy) = STARTER_CHUNKS[i];
         let chunk = ChunkPos::new(world.spawn.x + dx, world.spawn.y + dy);

@@ -15,21 +15,20 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 use sim::tuning::SMELTER_INPUT_CAP;
-use sim::{World, WorldConfig};
 
-/// The seed Maren pinned for the friend test (ASSA-45). It is a literal here on
-/// purpose: this is the world a stranger will actually be handed, and the bug
-/// was found on it. Everything else is derived, so only the number would change
-/// if the pin moves.
-const FRIEND_SEED: u64 = 10027;
+/// The seed the bug was found on, which is why it is a literal here.
+///
+/// **IT IS NO LONGER THE FRIEND-TEST PIN** and must not be read as one: the
+/// Game Director pinned 10027 at 12:11 on 2026-10-02 and withdrew it at 13:27
+/// because spawn there stands on ore no hand-lit fire can smelt. The pin is
+/// 14247 (ASSA-45), guarded by `demo_seed.rs`. This test keeps 10027 because a
+/// reproduction belongs on the world it was reproduced on; everything else
+/// below is derived from the world, so the number is all that would change.
+const REPRO_SEED: u64 = 10027;
 
 #[test]
 fn one_press_fills_the_slot_and_says_what_stayed_in_hand() {
-    let world = World::new(WorldConfig {
-        seed: FRIEND_SEED,
-        width_chunks: 6,
-        height_chunks: 4,
-    });
+    let world = sim_net::fresh_world(REPRO_SEED);
     let spawn = world.spawn_tile();
     let under_foot = world
         .deposit_at(spawn)
@@ -45,7 +44,7 @@ fn one_press_fills_the_slot_and_says_what_stayed_in_hand() {
     // the whole pile in one go, exactly as the client's single button does.
     let offer = SMELTER_INPUT_CAP * 4;
     let script = format!(
-        "new {FRIEND_SEED}
+        "new {REPRO_SEED}
 pause
 mine
 tick 300
