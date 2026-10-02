@@ -241,8 +241,12 @@ static func span(low: int, high: int) -> String:
 
 ## THE VERDICT'S COLOUR. Three states, and the interesting one is UNCERTAIN.
 ##
-## Maren's ruling (ASSA-7): UNCERTAIN MUST NOT LOOK LIKE A WARNING. It is exactly half of all designs
-## at grade B and it is the advertisement for assaying, so it gets an informational COOL colour, not
+## Maren's ruling (ASSA-7): UNCERTAIN MUST NOT LOOK LIKE A WARNING. It is 36.9% of every design a
+## player can build -- NOT half; the half in ADR 0003 A8 is what an UNCERTAIN design does when you
+## place it, not how many designs are UNCERTAIN, and this line had the two confused. Measured over
+## 2000 worlds, unassayed, counting only the grades a world's deposits can actually reach, against
+## A8's predicted 37.5%. It is still the advertisement for assaying, so it gets an informational
+## COOL colour, not
 ## the amber a client reaches for by habit. WILL BREAK is warm but not alarm red -- the charter's
 ## feel is "calm, never punishing", and a break is a soft reset that hands parts back.
 static func verdict_color(verdict: String) -> Color:

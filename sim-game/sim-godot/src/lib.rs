@@ -699,8 +699,8 @@ pub struct DesignFacts {
     /// Species in this design whose sheet still reads rough, by name. THIS IS
     /// WHAT LETS "UNCERTAIN" NAME ITS OWN RESOLUTION — "assay Korvite to know"
     /// rather than a yellow border that reads as danger. Without it the state
-    /// can only say "assay something", and half of all designs at grade B are
-    /// UNCERTAIN.
+    /// can only say "assay something", and 36.9% of the designs a player can
+    /// build read UNCERTAIN (measured, 2000 worlds; ADR 0003 A8).
     pub unassayed: Vec<String>,
     pub parts: Vec<PartFacts>,
 }

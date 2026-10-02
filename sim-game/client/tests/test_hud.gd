@@ -340,8 +340,9 @@ func _design() -> Dictionary:
 	}
 
 
-## UNCERTAIN MUST NOT LOOK LIKE A WARNING (Maren's ruling, ASSA-7). It is half of all designs at
-## grade B and it is the advertisement for assaying; if it reads as danger, players stop building and
+## UNCERTAIN MUST NOT LOOK LIKE A WARNING (Maren's ruling, ASSA-7). It is 36.9% of the designs a
+## player can build (measured, 2000 worlds) and it is the advertisement for assaying; if it reads as
+## danger, players stop building and
 ## the loop the game is named after never gets its pitch. So: a COOL hue, and never the colour a
 ## failure wears.
 func test_uncertain_is_not_coloured_like_a_warning() -> bool:
