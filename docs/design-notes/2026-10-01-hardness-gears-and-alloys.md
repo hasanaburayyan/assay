@@ -101,13 +101,28 @@ These figures replace the first pass quoted on ASSA-6 (39%, 72.0% accepted,
 "1.39 rerolls"). The reroll figure there was simply mislabelled — 1.39 was
 the expected number of *attempts*, which is 0.39 rerolls, and the same
 quantity here is 1.41 attempts / 0.41 rerolls — both of the *existing* loop,
-not of worldgen; see the correction above. The percentages differ for a
-reason worth keeping: that pass drew **4000 rosters straight from
-`worldgen::species_roster`**, i.e. more samples than this one, while this
-pass builds **2000 whole worlds**. `World::new` already rerolls the roster
-until the starter ladder holds, so the two are not sampling the same
-population, and it is the second one — rosters that survive the existing
-reroll — that the proposed condition actually filters. Prefer these.
+not of worldgen; see the correction above.
+
+**The percentages differ by sample size alone, and neither pass was wrong**
+(Marlow, measured on `878a5f1`). An earlier revision of this paragraph
+blamed the population: 4000 rosters drawn from `worldgen::species_roster`
+against 2000 worlds built through `World::new`. Those are the same
+population by construction — `World::new` *calls* `species_roster`
+(`world.rs:68`), which is itself the reroll loop, and a roster depends on
+the seed alone, not on world size. The rosters are byte-identical for all of
+seeds 0..1000, and scoring the same code by **either** path gives:
+
+| seeds | loses to hands | hardest alone | one minable | both accept |
+|---|---|---|---|---|
+| 2000 | 40.0% | 23.9% | 9.2% | 70.9% |
+| 4000 | 38.9% | 22.4% | 9.5% | 72.0% |
+
+So these figures carry about a point of sampling noise and **should be
+quoted as "about 40%", never to a decimal**. The same effect is visible in
+the reroll total above: 3.32 rolls per world over 1000 seeds, 3.44 over
+2000. What is stable across every sample is the part the ruling rests on:
+worst accepted pick **3.85 ticks/unit against the hands' 4.00**, best 1.56,
+median 2.08.
 
 ## Where grades stand (built, open to retuning)
 
