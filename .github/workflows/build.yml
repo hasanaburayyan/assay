@@ -91,12 +91,13 @@ jobs:
       # and Godot exits 0 on a parse error, so a file that cannot compile costs
       # nothing to ship. `project.godot` also makes unreachable code and
       # discarded expressions errors, so this gates those too. ~20s.
-      - name: Every GDScript file compiles
-        working-directory: sim-game/client
-        run: |
-          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
-            tools/check_every_script.sh
-      - name: Client suite
+      # IMPORTED BEFORE ANYTHING READS THE PROJECT, and in its own step because
+      # two things below need it. A `class_name` is only a global identifier once
+      # the import has written `.godot/global_script_class_cache.cfg` -- without
+      # it every file naming `AssayHud` fails to parse. That is exactly how the
+      # compile check below passed on my machine, where `.godot/` already existed,
+      # and failed on a fresh runner naming 16 files.
+      - name: Import the client project
         working-directory: sim-game/client
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64"
@@ -115,6 +116,21 @@ jobs:
           # jobs below do the same and say less.
           "$GODOT" --headless --import || "$GODOT" --headless --import
           grep -q 'sim.gdextension' .godot/extension_list.cfg
+      # EVERY .gd FILE COMPILES, INCLUDING THE ONES NOTHING INSTANTIATES. The
+      # suite below is a strong guard for loaded code and no guard at all for a
+      # probe in `tools/`, which nobody loads until the moment they need it --
+      # and Godot exits 0 on a parse error, so a file that cannot compile at all
+      # costs nothing to ship. `project.godot` also makes unreachable code and
+      # discarded expressions errors, so this gates those too. ~20s.
+      - name: Every GDScript file compiles
+        working-directory: sim-game/client
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
+            tools/check_every_script.sh
+      - name: Client suite
+        working-directory: sim-game/client
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64"
           "$GODOT" --headless --script tests/run_tests.gd | tee suite.log
           # GODOT EXITS 0 ON A COMPILE ERROR, so the count the runner prints is
           # the verdict and the exit code is not. Grep the file, never a pipe.

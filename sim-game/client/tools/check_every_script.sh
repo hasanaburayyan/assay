@@ -29,6 +29,20 @@ fi
 
 cd "$(dirname "$0")/.." || exit 2
 
+# THE PROJECT MUST BE IMPORTED FIRST, AND THAT IS NOT A CONVENIENCE CHECK.
+# A `class_name` is only a global identifier once the import has written
+# `.godot/global_script_class_cache.cfg`; without it every file naming `AssayHud`
+# fails to parse and this script reports 16 broken files that are all fine. That
+# is exactly what happened the first time it ran in CI -- it passed here, where
+# `.godot/` already existed, and failed on a fresh runner. Saying so beats
+# reporting nonsense.
+if [ ! -f .godot/global_script_class_cache.cfg ]; then
+  echo "no .godot/global_script_class_cache.cfg: run '\$GODOT --headless --import'" >&2
+  echo "first (twice -- the first import of a project with a GDExtension crashes" >&2
+  echo "on exit in Godot's own doc generation, having written a complete cache)." >&2
+  exit 2
+fi
+
 checked=0
 failed=0
 # Sorted so the output is the same on every machine, and `-print0`-free because
