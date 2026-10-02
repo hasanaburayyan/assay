@@ -756,3 +756,63 @@ fn a_placed_machine_never_wears() {
         "and it is still standing"
     );
 }
+
+// ---------------------------------------------------------------------------
+// What the inspector says about a planted machine
+// ---------------------------------------------------------------------------
+
+/// Every way a drill can be doing nothing has to SAY so. A player who paid
+/// eight refined for a machine and sees it sit there needs the reason in the
+/// one place they look, not a guess — decision 7's refusal especially, which
+/// is invisible otherwise and reads as a bug.
+#[test]
+fn the_panel_names_every_reason_a_drill_is_not_mining() {
+    let (mut world, me) = world_with_player();
+    let (_, center) = deposit_under_player(&mut world, me, Grade::C);
+    let index = assemble(&mut world, me, &drill(Grade::A, 0));
+    send(
+        &mut world,
+        me,
+        PlayerCommand::PlaceAssembly {
+            assembly: index,
+            pos: center,
+        },
+    );
+    let status = |w: &World| {
+        let b = &w.buildings[0];
+        match &b.kind {
+            sim::BuildingKind::Machine(m) => sim::debug::machine_status(w, b, m),
+            other => panic!("expected a machine, got {other:?}"),
+        }
+    };
+
+    run(&mut world, 10);
+    assert!(
+        status(&world).contains("mining "),
+        "working: {}",
+        status(&world)
+    );
+
+    run(&mut world, 500);
+    assert!(
+        status(&world).contains("stalled: full"),
+        "a full buffer must not still read as mining: {}",
+        status(&world)
+    );
+
+    // Decision 7, made visible.
+    world.species_mut(ROCK).sheet.hardness = HAND_MINE_MAX_HARDNESS as u8 + 1;
+    assert!(
+        status(&world).contains("too hard"),
+        "a drill on ore it cannot touch must say why: {}",
+        status(&world)
+    );
+
+    world.species_mut(ROCK).sheet.hardness = 30;
+    world.deposit_mut(DepositId(0)).unwrap().amount = 0;
+    assert!(
+        status(&world).contains("mined out"),
+        "a dead deposit is its own reason: {}",
+        status(&world)
+    );
+}

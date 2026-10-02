@@ -1,13 +1,24 @@
-//! The reference play-through: a fresh world to the first gear, driven
-//! through the plain prompt exactly as a script or a tester would, against
-//! whatever minerals the seed rolled. If this breaks, the loop is not
+//! The reference play-through: a fresh world through the WHOLE demo loop,
+//! driven through the plain prompt exactly as a script or a tester would,
+//! against whatever minerals the seed rolled. If this breaks, the loop is not
 //! playable headless.
+//!
+//! **WHERE IT ENDS** (Game Director's ruling 9 on ASSA-8, which named the one
+//! thing "a full demo loop" had never been defined to mean): hand-mine ore,
+//! assay, refine, assemble a pick, mine with it, assemble a drill, place it
+//! inside the frame's budget, it produces into its hopper, and the player
+//! takes that ore back out. The first gear is kept as a waypoint on the way.
+//!
+//! There is no victory state anywhere in this, deliberately. "Completion" is
+//! a test condition; the world keeps running.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
 
 use sim::ladder::starter_species;
-use sim::tuning::GEAR_MIN_HARDNESS;
+use sim::tuning::{
+    FRAME_BUDGET_PER_STRENGTH, GEAR_MIN_HARDNESS, HEAD_SIZE, HOPPER_SIZE, PLANTED_FRAME_SIZE,
+};
 use sim::worldgen::STARTER_CHUNKS;
 use sim::{ChunkPos, OreDeposit, Property, TilePos, World, WorldConfig};
 
@@ -38,21 +49,36 @@ fn starters(seed: u64) -> (World, OreDeposit, OreDeposit) {
 }
 
 #[test]
-fn fresh_world_to_first_gear_through_the_plain_prompt() {
+fn fresh_world_through_the_whole_demo_loop_on_the_plain_prompt() {
     // Any seed starts climbable, but gears also need the starter material to
     // be hard enough at its rolled grade, and the fuel to burn hot enough
     // for it. Pick the first seed where that holds; most do.
-    let (seed, world, material, fuel) = (1..200)
+    //
+    // ASSA-6 adds one more condition, and it is a REAL one rather than a
+    // convenience: the loop now ends in a planted drill, and decision 11 says
+    // placement is the test, so the seed's material must make a drill that
+    // fits its own frame's budget. Same species throughout, that is
+    // `8 x density <= 15 x effective strength` (sizes 5 + 1 + 2 against
+    // `PLANTED_FRAME_SIZE x FRAME_BUDGET_PER_STRENGTH`). On a seed where it
+    // fails, the honest outcome is a drill that breaks when planted — which
+    // is a correct sim and a useless play-through.
+    let (seed, world, material, fuel) = (1..400)
         .map(|seed| {
             let (w, m, f) = starters(seed);
             (seed, w, m, f)
         })
         .find(|(_, w, m, f)| {
             let (ms, fs) = (w.species(m.species), w.species(f.species));
+            let drill_mass =
+                (PLANTED_FRAME_SIZE + HEAD_SIZE + HOPPER_SIZE) * u32::from(ms.sheet.density);
+            let frame_budget = PLANTED_FRAME_SIZE
+                * FRAME_BUDGET_PER_STRENGTH
+                * ms.effective(Property::Strength, m.grade());
             ms.effective(Property::Hardness, m.grade()) >= GEAR_MIN_HARDNESS
                 && fs.effective(Property::Reactivity, f.grade())
                     >= u32::from(ms.sheet.heat_tolerance)
                 && m.species != f.species
+                && drill_mass <= frame_budget
         })
         .expect("some seed supports the full loop");
     let (ms, fs) = (world.species(material.species), world.species(fuel.species));
@@ -72,6 +98,12 @@ fn fresh_world_to_first_gear_through_the_plain_prompt() {
         fuel.grade().letter().to_ascii_lowercase()
     );
     let refined = mat_ore.replacen("ore:", "refined:", 1);
+    // Part specs the CLI resolves against the inventory: `<part>:<species>:<grade>`.
+    let sp = format!(
+        "{}:{}",
+        ms.name().to_ascii_lowercase(),
+        material.grade().letter().to_ascii_lowercase()
+    );
 
     let script = format!(
         "new {seed}
@@ -98,6 +130,42 @@ craft gear {refined} 2
 tick 10
 buildings
 inv
+goto {} {}
+tick {}
+mine
+tick 120
+goto {} {}
+tick {}
+insert 0 fuel {fuel_ore} 40
+insert 0 ore {mat_ore} 14
+tick 400
+take 0
+tick 1
+make handle {refined}
+make head {refined}
+tick 60
+assemble handle:{sp} head:{sp}
+tick 1
+built
+equip 0
+goto {} {}
+tick {}
+mine
+tick 60
+built
+make frame {refined}
+make head {refined}
+make hopper {refined}
+tick 200
+assemble frame:{sp} head:{sp} hopper:{sp}
+tick 1
+built
+plant 0 {} {}
+tick 200
+buildings
+take 1
+tick 1
+inv
 quit
 ",
         material.center.x,
@@ -106,6 +174,22 @@ quit
         fuel.center.x,
         fuel.center.y,
         walk(material.center, fuel.center).max(20), // craft finishes on the way
+        // Back for the ore the pick and the drill are made of: 3 refined for
+        // a pick, 8 for a drill, and smelting is one unit at a time.
+        material.center.x,
+        material.center.y,
+        walk(fuel.center, material.center),
+        fuel.center.x,
+        fuel.center.y,
+        walk(material.center, fuel.center),
+        // Mine again, this time with the pick in hand.
+        material.center.x,
+        material.center.y,
+        walk(fuel.center, material.center),
+        // The drill goes on the deposit tile it works: a machine is 1x1 and
+        // mines what is underneath it.
+        material.center.x,
+        material.center.y,
     );
 
     let saves = std::env::temp_dir().join(format!("assay-first-plate-{}", std::process::id()));
@@ -150,17 +234,26 @@ quit
             "missing {expected:?}\n{transcript}"
         );
     }
-    let carrying = stdout
+    // Two waypoints, two inventory lines. The gear is kept exactly as it was
+    // (Game Director's ruling 9: "keep the gear waypoint the test already
+    // proves; do not delete it"), and the drill cycle closing is the new end.
+    let inventories: Vec<&str> = stdout
         .lines()
-        .rfind(|l| l.starts_with("Carrying "))
-        .unwrap_or_else(|| panic!("no inventory line\n{transcript}"));
+        .filter(|l| l.starts_with("Carrying "))
+        .collect();
+    assert_eq!(
+        inventories.len(),
+        2,
+        "one inventory at the gear, one at the end\n{transcript}"
+    );
+    let (at_gear, at_end) = (inventories[0], inventories[1]);
     assert!(
-        carrying.contains(&format!("6 {m} refined ({g})")),
-        "{carrying}\n{transcript}"
+        at_gear.contains(&format!("6 {m} refined ({g})")),
+        "{at_gear}\n{transcript}"
     );
     assert!(
-        carrying.contains(&format!("2 {m} gear ({g})")),
-        "{carrying}\n{transcript}"
+        at_gear.contains(&format!("2 {m} gear ({g})")),
+        "{at_gear}\n{transcript}"
     );
     assert!(
         stdout.contains("   0  smelter"),
@@ -169,5 +262,65 @@ quit
     assert!(
         stdout.contains("conductivity") || stdout.contains("cond"),
         "{transcript}"
+    );
+
+    // ---------------------------------------------------------------------
+    // THE REST OF THE DEMO LOOP, clause by clause from ruling 9. Each of
+    // these is a decision in the note, and the point of asserting them from
+    // the TRANSCRIPT rather than from the world is that a player typing the
+    // same words gets the same game.
+    // ---------------------------------------------------------------------
+    for expected in [
+        // Parts, from refined material, with no new recipe system.
+        format!("you made 1 x {m} handle ({g})"),
+        format!("you made 1 x {m} head ({g})"),
+        format!("you made 1 x {m} frame ({g})"),
+        format!("you made 1 x {m} hopper ({g})"),
+        // A pick: head plus the held frame, assembled and taken in hand.
+        format!("handle({m} {g}) + head({m} {g})"),
+        "you equipped a tool".to_string(),
+        // A drill: head plus a planted frame plus a hopper, from the SAME
+        // command. Decision 6 in one line of transcript.
+        format!("frame({m} {g}) + head({m} {g}) + hopper({m} {g})"),
+        "you planted machine 1".to_string(),
+        // It produces into its buffer, and the ore comes back out.
+        format!("machine 1 mined 2 {m} ore ({g})"),
+        "from building 1".to_string(),
+    ] {
+        assert!(
+            stdout.contains(&expected),
+            "missing {expected:?}\n{transcript}"
+        );
+    }
+
+    // The pick WORE while it was in hand: the readout's pool is lower the
+    // second time it is printed. This is the only part of decision 12 the
+    // play-through can show without running 120 swings, and asserting the
+    // direction rather than a value keeps it true across a retune.
+    let pools: Vec<u32> = stdout
+        .lines()
+        .filter_map(|l| l.split("durability ").nth(1))
+        .filter_map(|rest| rest.split('/').next()?.parse().ok())
+        .collect();
+    assert!(
+        pools.len() >= 2 && pools.last() < pools.first(),
+        "the pick's pool must fall as it is used, got {pools:?}\n{transcript}"
+    );
+
+    // And the drill is still standing at the end, which is decision 12's
+    // other half: placed machines do not wear out.
+    assert!(
+        stdout.contains("   1  machine"),
+        "the buildings table should list the planted drill\n{transcript}"
+    );
+    assert!(
+        !stdout.contains("wore out"),
+        "nothing in this script runs a pool to zero; if it does, the \
+         assertions above are measuring the wrong thing\n{transcript}"
+    );
+    assert!(
+        at_end.contains(&format!("{m} ore ({g})")),
+        "the loop closes with the drill's ore in the player's hands: \
+         {at_end}\n{transcript}"
     );
 }

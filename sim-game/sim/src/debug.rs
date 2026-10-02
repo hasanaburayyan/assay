@@ -8,7 +8,9 @@ use crate::building::{Building, BuildingKind, Machine};
 use crate::item::ItemStack;
 use crate::mineral::{Grade, MineralSpecies, Property, Sheet};
 use crate::recipe::{RECIPES, Station};
-use crate::tuning::{FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS, SMELTER_OUTPUT_CAP};
+use crate::tuning::{
+    FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS, SMELTER_OUTPUT_CAP, YIELD_BY_GRADE,
+};
 use crate::types::{PlayerId, TilePos};
 use crate::world::World;
 
@@ -235,14 +237,31 @@ pub fn machine_status(world: &World, b: &Building, m: &Machine) -> String {
     // Capacity is flat from the kind, so it is exact whether or not anyone has
     // assayed anything; mass and speed are read off sheets and are not.
     let capacity = range.low.capacity;
+    // EVERY WAY A DRILL CAN BE DOING NOTHING HAS TO SAY SO HERE, because the
+    // alternative is a player watching a machine they paid eight refined for
+    // and guessing. A5's rule — the bad case must be visible — is not only
+    // about mass.
     let state = match world.deposit_at(b.pos) {
         None => "idle: no deposit underneath".to_string(),
-        Some(_) if m.held.is_some_and(|h| h.count >= capacity) => "stalled: full".to_string(),
-        // Deliberately not "working": decision 12 parks drill wear and the
-        // mining system is ASSA-6, so today a planted machine sits on its
-        // deposit and does nothing. Saying otherwise would be a lie in the
-        // one place a player looks to find out.
-        Some(d) => format!("on {}", world.species(d.species).name()),
+        Some(d) if d.is_depleted() => "idle: deposit is mined out".to_string(),
+        // Decision 7: a drill is a throughput upgrade, never a hardness
+        // unlock, so it refuses exactly what hands refuse. Without this line
+        // that refusal is invisible and reads as a bug.
+        Some(d) if u32::from(world.species(d.species).sheet.hardness) > HAND_MINE_MAX_HARDNESS => {
+            format!(
+                "idle: {} is too hard to mine (hardness above {HAND_MINE_MAX_HARDNESS})",
+                world.species(d.species).name()
+            )
+        }
+        // The sim stops a machine that has no room for a WHOLE unit, so the
+        // readout has to use the same test or it will call a stopped drill
+        // "mining" for the last few units of its buffer.
+        Some(d)
+            if m.held.map_or(0, |h| h.count) + YIELD_BY_GRADE[d.grade() as usize] > capacity =>
+        {
+            "stalled: full, take the ore out".to_string()
+        }
+        Some(d) => format!("mining {}", world.species(d.species).name()),
     };
     // Same reason as `assembly_readout`: what it is holding and what it is
     // doing come before the design it was built from, because the table line
