@@ -499,3 +499,80 @@ fn a_hoppers_grade_changes_nothing() {
     let heavy = Assembly::part_mass(&part(PartKind::Hopper, 1, Grade::B), &species[1]);
     assert!(heavy > light, "a denser species must make a heavier hopper");
 }
+
+/// A banded row must add up to the banded headline. A part menu lists the
+/// parts under one mass-vs-budget verdict, and rows that do not sum to the
+/// total it is judged on are a spreadsheet that argues with itself.
+#[test]
+fn per_part_mass_ranges_sum_to_the_designs_mass_range() {
+    let mut roster = roster();
+    roster[0].assayed = false;
+    roster[1].assayed = false;
+    for a in [
+        pick(0, Grade::B),
+        drill(1, Grade::C, 2),
+        drill(0, Grade::A, 1),
+    ] {
+        let range = a.stat_range(&roster);
+        let (mut low, mut high) = (0, 0);
+        for p in a.parts() {
+            let (l, h) = Assembly::part_mass_range(p, &roster[p.material.species.0 as usize]);
+            low += l;
+            high += h;
+        }
+        assert_eq!(
+            low, range.low.mass,
+            "the low ends must sum to the low total"
+        );
+        assert_eq!(
+            high, range.high.mass,
+            "the high ends must sum to the high total"
+        );
+    }
+}
+
+/// A mixed-species design is two sheets and two bands, and only the rough one
+/// may be a range. The point of the list: a player sees which material to
+/// assay, not that "something" is uncertain.
+#[test]
+fn only_an_unassayed_part_reads_as_a_range() {
+    let mut roster = roster();
+    roster[1].assayed = false;
+    let mixed = Assembly::new(
+        part(PLANTED, 0, Grade::B),
+        vec![part(PartKind::Head, 1, Grade::B)],
+    );
+    let parts: Vec<&Part> = mixed.parts().collect();
+    let (flo, fhi) = Assembly::part_mass_range(parts[0], &roster[0]);
+    assert_eq!(flo, fhi, "an assayed species must read as one number");
+    assert_eq!(
+        flo,
+        Assembly::part_mass(parts[0], &roster[0]),
+        "and that number must be exactly what part_mass says"
+    );
+    let (hlo, hhi) = Assembly::part_mass_range(parts[1], &roster[1]);
+    assert!(hlo < hhi, "an unassayed species must read as a band");
+    let exact = Assembly::part_mass(parts[1], &roster[1]);
+    assert!(
+        hlo <= exact && exact <= hhi,
+        "the band {hlo}-{hhi} must contain the truth {exact}"
+    );
+}
+
+/// Density never scales with grade, so sorting a material to A does not make
+/// the band narrower. This is the whole reason assaying is worth 30 ticks, and
+/// a menu that implied otherwise would be selling the wrong action.
+#[test]
+fn grade_does_not_narrow_an_unassayed_parts_mass_band() {
+    let mut roster = roster();
+    roster[0].assayed = false;
+    let mut widths = Vec::new();
+    for grade in [Grade::C, Grade::B, Grade::A] {
+        let (low, high) = Assembly::part_mass_range(&part(PartKind::Head, 0, grade), &roster[0]);
+        widths.push(high - low);
+    }
+    assert!(
+        widths.iter().all(|w| *w == widths[0] && *w > 0),
+        "every grade must read the same non-zero band, got {widths:?}"
+    );
+}

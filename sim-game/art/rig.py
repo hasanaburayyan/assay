@@ -53,14 +53,22 @@ PALETTE = {
     "steel": "#B9C2CC", "cyan": "#3FD8FF", "brass": "#E2B04A", "rubber": "#1B1D22",
     "ground": "#6E7A4E", "ground_dk": "#5F6B43", "ground_ore": "#57603F",
     "skin": "#E0B48C", "suit": "#F08A24", "visor": "#3FD8FF",
-    # ore kinds: base / dark / accent (accent is the high-purity glint)
-    "iron": "#8FA7C4", "iron_dk": "#4C5C73", "iron_hi": "#DCEBFF",
-    "copper": "#D9772E", "copper_dk": "#8A4517", "copper_hi": "#5FE0B0",
-    "coal": "#33363D", "coal_dk": "#1B1D22", "coal_hi": "#FF8A3C",
-    "stone": "#B8AE94", "stone_dk": "#7B7461", "stone_hi": "#FFF2C0",
+    # ORE: one species-neutral set, base / dark / accent (accent is the
+    # high-purity glint). There is deliberately no iron, copper, coal or
+    # stone here and there must never be again - a world rolls six species
+    # from its seed (ADR 0001) and nothing may name one.
+    #
+    # LIGHT ON PURPOSE. The client multiplies a species colour over these
+    # pixels and a multiply cannot brighten, so this lightness is the budget
+    # the tint spends; a mid-grey base makes every species mud. Near-neutral
+    # on purpose too: whatever hue sits here is added to all six species at
+    # once. Both measured in art/species_probe.py.
+    "ore": "#CCC8C2", "ore_dk": "#7B7872", "ore_hi": "#F6F2EA",
     "line": "#1A1D23",
 }
-ORE_KINDS = ["iron", "copper", "coal", "stone"]
+
+from species_tints import SPECIES_TINTS  # noqa: F401  (data, see that file)
+from part_layout import PART_REPEAT_OFFSET  # noqa: F401  (rule 5, see that file)
 
 # ---------------------------------------------------------------- parts
 #
@@ -85,6 +93,19 @@ ORE_KINDS = ["iron", "copper", "coal", "stone"]
 #    straddles it and its body runs west. Compose by overlaying frames, never
 #    by rendering a per-machine sprite.
 #
+# 5. REPEATED PARTS STEP ALONG THE FRAME (the offset rule). Rule 2 is right
+#    for parts that DIFFER and cannot express a COUNT: two hopper sprites
+#    stacked at one position are one hopper. Measured on ASSA-16, a drill's
+#    solid footprint at 1x went 1258 -> 1376 -> 1389 px for zero, one and two
+#    hoppers - the second added 13 px, which is antialiased edge hardening,
+#    not a part. Capacity is a real number in sim (MAX_HOPPER_SLOTS x
+#    HOPPER_CAPACITY) and the grade-glint rule below says a real difference
+#    owes the picture a visible one, so the nth repeat of a part kind is drawn
+#    at n * PART_REPEAT_OFFSET, in Assembly::parts() order. The offset and the
+#    reasoning behind its value live in art/part_layout.py, which is importable
+#    without Blender; art/assemble.py executes the rule and judges it at a FULL
+#    machine rather than at the two hoppers the demo happens to use.
+#
 # Part frames are PART_TILES wide so both halves of a join fit one frame.
 # 3. ONE JOIN HEIGHT FOR EVERY PIECE. Overlaying frames only assembles a
 #    machine if the parts agree how high the join sits, so PART_AXIS is it.
@@ -101,6 +122,27 @@ ORE_KINDS = ["iron", "copper", "coal", "stone"]
 #    (body reaching row 0, measured) while every other part had room to
 #    spare. A per-asset headroom would have hidden that as four frames of
 #    different heights that silently refuse to compose.
+#
+# 6. ORE OWNS SATURATION (Maren, ruling 3 on ASSA-20). Ore is the only fully
+#    saturated thing in Assay. Ground, buildings, parts, items and UI chrome
+#    all stay UNDER the quietest ore surface a player can see -- not under
+#    the average species, under the floor of the shipped table, because a
+#    machine that out-shouts two of six species has beaten ore on the map
+#    where those two species live.
+#
+#    WHY THIS IS A RULE AND NOT A PREFERENCE. Species identity is carried by
+#    TINT ALONE (Decision #36). Shape, outline, pattern and tier are all
+#    already spent on other things, so colour is not ore's best channel, it
+#    is ore's only one. Everything else in the game has shape and position to
+#    spend instead, which is why the budget falls on them and not on ore.
+#    Measured the other way round too: art/species_probe.py shows a muted
+#    species table cannot work, because a low-chroma multiply stays low over
+#    any base -- so ore's loudness is mandatory, not a taste.
+#
+#    ENFORCED by art/loudness.py against the real packed sheets, with the
+#    floor read from art/species_tints.py rather than written down here. It
+#    is RED today on player/* and frame/A; which way that red clears is the
+#    Director's call and is NOT to be painted over by an exemption.
 LYING = (0, math.pi / 2, 0)
 PART_TILES = (2, 1)
 PART_AXIS = 0.28

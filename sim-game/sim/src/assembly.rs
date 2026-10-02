@@ -568,17 +568,30 @@ impl Assembly {
         stats.mass
     }
 
+    /// What one part weighs as a player can read it: exact once its species is
+    /// assayed, the two ends of its density band before that.
+    ///
+    /// The banded twin of [`Assembly::part_mass`], and the per-part half of
+    /// [`Assembly::stat_range`] — a menu that lists the parts under a banded
+    /// total needs rows that add up to it, and a row showing an exact mass for
+    /// a species still reading rough would invent certainty the sim does not
+    /// have. Density never scales with grade, so assaying is the only thing
+    /// that narrows this.
+    pub fn part_mass_range(part: &Part, species: &MineralSpecies) -> (u32, u32) {
+        let mut low = MachineStats::default();
+        let mut high = MachineStats::default();
+        let s = spec(part.kind);
+        let grade = part.material.grade;
+        contribute_reading(s, &|p| reading(species, p, grade).0, &mut low);
+        contribute_reading(s, &|p| reading(species, p, grade).1, &mut high);
+        (low.mass, high.mass)
+    }
+
     /// Refined material the whole design costs, which is the sum of sizes.
     pub fn refined_cost(&self) -> u32 {
         self.parts().map(|p| spec(p.kind).size).sum()
     }
 
-    /// The part a break always loses, as an index into [`Assembly::parts`].
-    ///
-    /// **The heaviest part that is not the frame** (ADR 0003 amendment A1),
-    /// ties going to the lowest index so peers agree. With nothing mounted,
-    /// the frame itself is lost. The whole rule is this function, so moving
-    /// it back to "the heaviest part, frame included" is one line.
     /// Every stat as the range a player can read it in, banded per part from
     /// that part's own species — so a mixed-species design is two sheets and
     /// two bands with no special case.
@@ -625,6 +638,12 @@ impl Assembly {
         outcome
     }
 
+    /// The part a break always loses, as an index into [`Assembly::parts`].
+    ///
+    /// **The heaviest part that is not the frame** (ADR 0003 amendment A1),
+    /// ties going to the lowest index so peers agree. With nothing mounted,
+    /// the frame itself is lost. The whole rule is this function, so moving
+    /// it back to "the heaviest part, frame included" is one line.
     pub fn part_always_lost(&self, species: &[MineralSpecies]) -> usize {
         let heaviest = self
             .mounted

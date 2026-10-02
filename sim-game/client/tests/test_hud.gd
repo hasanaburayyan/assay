@@ -212,3 +212,126 @@ func _tile_with(extra: Dictionary) -> Dictionary:
 	return {"in_bounds": true, "pos": Vector2i(10, 9), "chunk": Vector2i(0, 0),
 			"chunks_from_spawn": 3, "is_spawn": false, "deposit": deposit, "building": null,
 			"players_here": PackedStringArray()}
+
+
+## A design as `AssaySim.designs_of` hands it over: an UNCERTAIN held pick of one rough species.
+func _design() -> Dictionary:
+	return {
+		"index": -1, "in_hand": true, "verdict": "UNCERTAIN",
+		"mass_low": 26, "mass_high": 50, "budget_low": 40, "budget_high": 40,
+		"mount": "held", "durability": "100% of 2400-3600",
+		"unassayed": PackedStringArray(["Korvite"]),
+		"parts": [
+			{"kind": "frame", "species": 0, "species_name": "Korvite", "grade": "B",
+					"mass_low": 18, "mass_high": 34},
+			{"kind": "head", "species": 0, "species_name": "Korvite", "grade": "B",
+					"mass_low": 8, "mass_high": 16},
+		],
+	}
+
+
+## UNCERTAIN MUST NOT LOOK LIKE A WARNING (Maren's ruling, ASSA-7). It is half of all designs at
+## grade B and it is the advertisement for assaying; if it reads as danger, players stop building and
+## the loop the game is named after never gets its pitch. So: a COOL hue, and never the colour a
+## failure wears.
+func test_uncertain_is_not_coloured_like_a_warning() -> bool:
+	var uncertain := AssayHud.verdict_color("UNCERTAIN")
+	if uncertain.h < 0.45 or uncertain.h > 0.75:
+		return _fail(("UNCERTAIN is at hue %f, which is in the warm/alarm half of the wheel. The "
+				+ "ruling is that it must not read as danger.") % uncertain.h)
+	var breaking := AssayHud.verdict_color("WILL BREAK")
+	if breaking.h > 0.2 and breaking.h < 0.8:
+		return _fail("WILL BREAK is at hue %f, which is not warm enough to read as a cost"
+				% breaking.h)
+	if uncertain.is_equal_approx(AssayHud.status_color(AssayHud.Say.FAILED)):
+		return _fail("UNCERTAIN wears the same colour as a connection failure")
+	if AssayHud.verdict_color("SAFE").is_equal_approx(uncertain):
+		return _fail("SAFE and UNCERTAIN are the same colour, so the headline carries no state")
+	return true
+
+
+## A span is the sim's two ends, formatted and never averaged. Exact once a species is assayed, which
+## is the only thing that narrows it.
+func test_a_span_bands_while_rough_and_is_one_number_when_exact() -> bool:
+	if AssayHud.span(26, 50) != "26-50":
+		return _fail("a rough reading must show both ends, got %s" % AssayHud.span(26, 50))
+	if AssayHud.span(38, 38) != "38":
+		return _fail("an exact reading must be one number, got %s" % AssayHud.span(38, 38))
+	return true
+
+
+## THE VERDICT IS THE HEADLINE, so it must not also be buried in the small print: it is its own
+## label in its own colour, and a second copy in grey would undo that.
+func test_the_verdict_word_is_not_repeated_in_the_small_print() -> bool:
+	for line in AssayHud.design_lines(_design()):
+		if String(line).contains("UNCERTAIN"):
+			return _fail("the verdict is repeated in the body text: %s" % line)
+	return true
+
+
+## UNCERTAIN MUST NAME WHAT RESOLVES IT. "assay something" is not an action; "assay Korvite to know"
+## is, and it is the only advertisement assaying gets.
+func test_an_uncertain_design_names_the_material_to_assay() -> bool:
+	var found := false
+	for line in AssayHud.design_lines(_design()):
+		if String(line).contains("assay Korvite"):
+			found = true
+	if not found:
+		return _fail("no line names the rough species: %s" % AssayHud.design_lines(_design()))
+	var known := _design()
+	known["unassayed"] = PackedStringArray()
+	for line in AssayHud.design_lines(known):
+		if String(line).begins_with("assay "):
+			return _fail("a design with nothing rough still advises an assay: %s" % line)
+	return true
+
+
+## DURABILITY IS HELD-ONLY (Maren's ruling, ASSA-5). The binding leaves the key out on a planted
+## design, and the panel must not print the word anyway.
+func test_a_planted_design_shows_no_durability_at_all() -> bool:
+	var planted := _design()
+	planted.erase("durability")
+	planted["mount"] = "planted"
+	planted["in_hand"] = false
+	for line in AssayHud.design_lines(planted):
+		if String(line).contains("durability"):
+			return _fail("a planted design printed a durability line: %s" % line)
+	var held_lines := "\n".join(AssayHud.design_lines(_design()))
+	if not held_lines.contains("durability 100% of 2400-3600"):
+		return _fail("a held design must show its pool, got %s" % held_lines)
+	return true
+
+
+## A PART ROW CARRIES KIND, SPECIES, GRADE AND MASS. Nothing else -- every other sheet property
+## belongs to the assay panel, and over-showing is how this becomes a spreadsheet.
+func test_a_part_row_carries_four_things_and_the_rows_sum_to_the_headline() -> bool:
+	var lines := AssayHud.design_lines(_design())
+	var rows := PackedStringArray()
+	for line in lines:
+		if String(line).begins_with("  "):
+			rows.append(String(line))
+	if rows.size() != 2:
+		return _fail("two parts must give two rows, got %s" % [rows])
+	if rows[0] != "  frame · Korvite B · mass 18-34":
+		return _fail("unexpected part row: '%s'" % rows[0])
+	# The sim guarantees the rows add up to the headline; the panel must not lose that by rounding
+	# or by showing one end. Checked here because a reader compares them with their eyes.
+	var design := _design()
+	var low := 0
+	var high := 0
+	for entry in design["parts"]:
+		low += int(entry["mass_low"])
+		high += int(entry["mass_high"])
+	if low != int(design["mass_low"]) or high != int(design["mass_high"]):
+		return _fail("the fixture itself does not add up, which would hide a real failure")
+	if not "\n".join(lines).contains("mass 26-50 of 40 budget"):
+		return _fail("the headline numbers are missing: %s" % lines)
+	return true
+
+
+## A heading over an empty space reads as a bug. Until the craft chain runs every player has zero
+## designs, so this is the panel's normal state today and it has to say which it is.
+func test_an_empty_bench_says_so_rather_than_showing_nothing() -> bool:
+	if not AssayHud.no_designs_line().contains("nothing built"):
+		return _fail("got %s" % AssayHud.no_designs_line())
+	return true

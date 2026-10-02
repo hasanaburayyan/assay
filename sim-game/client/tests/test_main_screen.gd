@@ -113,3 +113,29 @@ func test_the_hud_asks_for_nothing_before_there_is_a_world() -> bool:
 	if carrying != "":
 		return _fail("the HUD had something to say about a world that does not exist: %s" % carrying)
 	return true
+
+
+## THE PART MENU IS ON THE SCREEN, not only in `AssayHud`'s pure functions. A tested helper that
+## nothing calls is the failure I keep repeating in new costumes: 42 tests passed while `main.gd`
+## had a parse error, because nothing loaded it.
+##
+## Before a world there are no designs, so the honest state is the one a player sees most today: a
+## heading with a sentence under it that says which kind of empty it is.
+func test_the_bench_is_wired_into_the_column_and_says_when_it_is_empty() -> bool:
+	var screen := _screen()
+	var bench: VBoxContainer = screen._bench
+	var ok := true
+	var column: Control = bench.get_parent() as Control
+	if column == null:
+		ok = _fail("the bench was never added to the screen")
+	elif column.position.x < AssayHud.VIEW.x - AssayHud.PANEL - AssayHud.MARGIN.x:
+		ok = _fail("the bench's column starts at x %f, which is over the map" % column.position.x)
+	elif bench.get_child_count() != 1:
+		ok = _fail("an empty bench should hold one line, holds %d" % bench.get_child_count())
+	else:
+		var line: Label = bench.get_child(0) as Label
+		if line == null or not line.text.contains("nothing built"):
+			ok = _fail("an empty bench must say so, shows '%s'"
+					% ("" if line == null else line.text))
+	screen.queue_free()
+	return ok

@@ -202,16 +202,30 @@ fn slot(world: &World, stack: Option<ItemStack>) -> String {
     })
 }
 
-/// The parts a design is made of, as `handle(Korvite B) + head(Adaite A)`.
+/// The parts a design is made of, as `handle(Korvite B 150) + head(Adaite A
+/// 26-50)`.
+///
+/// **The mass is per part and banded like every other sheet reading**, because
+/// a player looking at an over-budget design picks which part to change out of
+/// this line, and the heaviest non-frame part is also the one a break always
+/// loses. Last on the line on purpose: the inspector's side panel truncates it
+/// and the kinds and species must survive that.
 pub fn parts_summary(world: &World, assembly: &Assembly) -> String {
     assembly
         .parts()
         .map(|p| {
+            let species = world.species(p.material.species);
+            let (low, high) = Assembly::part_mass_range(p, species);
             format!(
-                "{}({} {})",
+                "{}({} {} {})",
                 p.kind.name(),
-                world.species(p.material.species).name(),
-                p.material.grade.letter()
+                species.name(),
+                p.material.grade.letter(),
+                if low == high {
+                    low.to_string()
+                } else {
+                    format!("{low}-{high}")
+                }
             )
         })
         .collect::<Vec<_>>()
@@ -368,6 +382,33 @@ pub fn part_table() -> String {
     out
 }
 
+/// THE DURABILITY POOL AS A PLAYER MAY READ IT: exact against the exact pool
+/// once every species in the design is assayed, a percentage of the banded
+/// pool while any of them is still rough.
+///
+/// **Public and shared on purpose.** The Godot part menu shows this same
+/// number (`sim-godot`'s `designs_of`), and A10 is a rule about what a player
+/// is allowed to know, not a formatting preference — two hosts spelling it
+/// two ways is how the leak comes back in one of them. One wording, one place.
+///
+/// The denominator is the TRUE max from `stats()`, never a band end: a
+/// percentage over a published band end is the exact pool with extra
+/// arithmetic. `div_ceil` so a pick with swings left never reads 0%.
+pub fn durability_readout(world: &World, built: &Built) -> String {
+    let range = built.assembly.stat_range(&world.species);
+    let max = built.assembly.stats(&world.species).durability;
+    if range.low.durability == range.high.durability {
+        format!("{}/{}", built.durability, max)
+    } else {
+        format!(
+            "{}% of {}-{}",
+            (100 * built.durability).div_ceil(max.max(1)),
+            range.low.durability,
+            range.high.durability
+        )
+    }
+}
+
 /// One line for a design the player has built: what it is, what it weighs
 /// against its budget, and the verdict.
 ///
@@ -379,6 +420,11 @@ pub fn part_table() -> String {
 /// **Durability only for a held frame** (same ruling): the head contributes a
 /// pool whatever frame it sits on, but drill wear is parked, so showing it on a
 /// planted design would teach a mechanic that does not exist.
+///
+/// **The pool itself is banded like everything else** (amendment A10): exact
+/// against its true max once the sheet is known, a percentage of the pool's
+/// *class* while it is not. See the held branch for why a number there was a
+/// leak.
 pub fn assembly_readout(world: &World, built: &Built) -> String {
     let a = &built.assembly;
     let range = a.stat_range(&world.species);
@@ -400,12 +446,20 @@ pub fn assembly_readout(world: &World, built: &Built) -> String {
     );
     match a.mount() {
         Some(Mount::Held) => {
-            let _ = write!(
-                out,
-                " · durability {}/{}",
-                built.durability,
-                show(range.low.durability, range.high.durability)
-            );
+            // THE POOL IS NEVER PRINTED AS A NUMBER WHILE THE SHEET IS BANDED
+            // (ADR 0003 amendment A10). `pool_max = HEAD_SIZE x eff strength x
+            // PICK_DURABILITY_PER_STRENGTH`, and both constants are published,
+            // so an exact pool divided by 60 *is* the head's effective
+            // strength -- and `(pool + 20 x swings) / 60` recovers it at any
+            // moment, not only at full. It was the one `Source::Property` stat
+            // read exactly while mass and budget were banded, which made a
+            // pick a free assay of strength.
+            //
+            // The denominator is the TRUE max from `stats()`, never a band
+            // end: a percentage over a published band end is the exact pool
+            // with extra arithmetic. `div_ceil` so a pick with swings left
+            // never reads 0%.
+            let _ = write!(out, " · durability {}", durability_readout(world, built));
         }
         _ => {
             let _ = write!(

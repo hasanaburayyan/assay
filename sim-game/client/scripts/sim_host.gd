@@ -157,3 +157,13 @@ func tile_at(at: Vector2i) -> Dictionary:
 ## exact value or the sim's band, as TEXT), `hand_minable`, `hand_lit_fuel`.
 func species_sheets() -> Array:
 	return _sim.species_sheets() if _sim != null else []
+
+
+## EVERY DESIGN ONE PLAYER HOLDS, for the part menu: the tool in hand first (`index` -1), then the
+## built list in the order `Equip` and `PlaceAssembly` index.
+##
+## `verdict` is the sim's own word and the client may not derive it from the numbers beside it; see
+## `designs_of` in the binding for why two renderers forming that opinion is the one disagreement
+## lockstep cannot absorb.
+func designs_of(player: int) -> Array:
+	return _sim.designs_of(player) if _sim != null else []
