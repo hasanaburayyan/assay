@@ -22,20 +22,33 @@ extends SceneTree
 ##  - a bundle is refused, which means our tick and the relay's have parted company
 ##  - no hash was ever due, so the silence proves nothing (HASH_EVERY is 20 ticks)
 ##  - the relay sends `Desync`: our world drifted from the host's
-##  - in `session` mode, the sim refuses one of our commands, or an action never takes effect
+##  - in `session` mode, the sim refuses one of our commands, or a stage of the loop never takes
+##    effect in the stepped world inside the tick budget
 ##
 ## THE THIRD ARGUMENT PICKS HOW MUCH IS PROVED:
 ##  - nothing: we apply bundles and report hashes. A spectator that keeps up.
 ##  - `walk`: one `MoveTo`, and OUR OWN PLAYER MUST HAVE MOVED IN THE STEPPED WORLD. The whole round
 ##    trip -- command out, relay orders it onto a tick, bundle back, sim walks us.
-##  - `session`: a scripted demo session. Walk ONTO a deposit, `Mine` it until ore arrives, `Assay`
-##    it until the sheet is exact, then keep stepping. This is the mode ASSA-7's "three or more
-##    clients and the relay keep matching hashes through a full demo session" asks for: hashes
-##    matching while the world is EMPTY proves much less than hashes matching while three peers are
-##    changing it. Which deposit is `AssaySessionPlan`'s call, and it is unit-tested.
+##  - `session`: THE WHOLE DEMO LOOP, start to finish. Walk onto a deposit of the material this world
+##    guarantees, mine it, assay it, craft a smelter, mine fuel, place the smelter, load it, smelt,
+##    take the refined, make a handle, two heads and a frame, assemble a pick, equip it, assemble a
+##    drill and plant it. This is what ASSA-7 asks for: hashes matching while the world is EMPTY
+##    proves much less than hashes matching while three peers mine, build and plant in it.
 ##
-## Nothing is predicted in any mode. Every position, count and sheet checked is read back out of the
-## stepped world, so a check can only pass if the real rules produced the state it is reading.
+## WHY THE PLANTING MATTERS MOST. `PlaceAssembly` is the only action in the loop that draws from the
+## world's `Rng`: an overweight design calls `break_apart`, which rolls which parts come back. A
+## client whose Rng had drifted by one draw would agree with everybody up to that moment and disagree
+## for the rest of the world's life. It is the single most desync-prone thing in the game, so the
+## session ends by planting something.
+##
+## AND THE VERDICT IS TREATED AS A PROMISE. `designs_of` gives the sim's own word on a design before
+## it is placed: SAFE must then be placed, WILL BREAK must then break. UNCERTAIN promises nothing --
+## it is a band overlapping the budget -- so the probe only records which happened. The verdict is
+## never recomputed here; comparing mass against budget in GDScript is exactly the second opinion
+## lockstep cannot absorb.
+##
+## Nothing is predicted in any mode. Every position, count, sheet and design checked is read back out
+## of the stepped world, so a check can only pass if the real rules produced the state it is reading.
 ##
 ## Reconnect is deliberately absent (Decision 3), so there is no retry here either.
 
@@ -48,9 +61,23 @@ const SECONDS_PER_TICK := 0.5
 const HAND_MINE_TICKS := 4
 const ASSAY_TICKS := 30
 
-## What the scripted session is doing. `CRUISING` is after the script is done: still stepping, still
-## reporting hashes, which is most of a long run.
-enum Step { WALKING, MINING, ASSAYING, CRUISING }
+## WHAT THE SCRIPTED SESSION IS DOING, in the order it does it. `CRUISING` is after the loop is
+## done: still stepping, still reporting hashes, which is most of a long run.
+enum Step {
+	WALKING,
+	MINING,
+	CRAFTING,
+	TO_FUEL,
+	FUEL_MINING,
+	PLACING,
+	LOADING,
+	SMELTING,
+	MAKING,
+	PICK,
+	DRILL,
+	PLANTING,
+	CRUISING,
+}
 
 var _client: AssayNetClient
 var _sim := AssaySimHost.new()
@@ -66,18 +93,41 @@ var _walking := false
 var _walk_from := Vector2i.ZERO
 var _walk_to := Vector2i.ZERO
 var _walk_sent := false
-## `session` mode: the script, and the tick each part of it actually completed on. -1 means "has not
-## happened", and every one of them is set by reading the stepped world, never by sending a command.
+## `session` mode. Every `_*_at` is the tick the STEPPED WORLD showed a stage finished on, never the
+## tick we sent its command; -1 means it has not happened.
 var _session := false
 var _step: Step = Step.WALKING
-var _target_species := -1
+var _material := -1
+var _fuel := -1
 var _target_center := Vector2i.ZERO
+var _stand_at := Vector2i.ZERO
+var _fuel_center := Vector2i.ZERO
+var _fuel_stand := Vector2i.ZERO
 var _ore_before := 0
-var _mine_sent_at := -1
+var _ore_wanted := 0
 var _mined_at := -1
-var _assay_sent_at := -1
+var _assay_sent := false
+var _assay_skipped := false
 var _assayed_at := -1
-var _ore_mined := 0
+var _crafted_at := -1
+var _smelter_at := Vector2i(-1, -1)
+var _building := -1
+var _placed_at := -1
+var _loaded_at := -1
+var _taken_at := -1
+var _refined_held := 0
+var _parts_at := -1
+var _pick_at := -1
+var _equipped_at := -1
+var _drill_at := -1
+var _drill_spot := Vector2i(-1, -1)
+var _drill_verdict := ""
+var _planted_at := -1
+var _broke_at := -1
+var _break_line := ""
+## One-shot submissions, keyed by stage name, so no stage can send its command twice while waiting for
+## the world to show it happened.
+var _sent := {}
 ## HASHES WE ACTUALLY PUT ON THE WIRE, counted here and not in the host. The host counts the ones it
 ## produced, and the difference is the whole point: a report that was never sent is a report the relay
 ## never checked, and a probe that counted those would pass without ever being contradicted.
@@ -207,10 +257,11 @@ func _maybe_walk() -> void:
 
 ## THE SCRIPTED SESSION, one bundle at a time.
 ##
-## Each part of it moves on only when the STEPPED WORLD shows the previous part happened: we are on
-## the tile, the ore is in the inventory, the sheet is exact. Timing is never assumed -- the relay
-## owns the clock and another peer's inputs share our ticks, so "it has been 4 ticks, we must have
-## mined" is exactly the kind of local guess this client is not allowed to make.
+## Each stage moves on only when the STEPPED WORLD shows the previous one happened: we are on the
+## tile, the ore is in the inventory, the sheet is exact, the smelter is on the map, the part is in
+## our hands. Timing is never assumed -- the relay owns the clock and other peers' inputs share our
+## ticks, so "it has been 4 ticks, we must have mined" is exactly the kind of local guess this client
+## is not allowed to make.
 func _advance_session() -> void:
 	if not _session or _done:
 		return
@@ -221,84 +272,407 @@ func _advance_session() -> void:
 	var at := me.get("pos", Vector2i.ZERO) as Vector2i
 	match _step:
 		Step.WALKING:
-			if _target_species < 0:
-				_choose_target(at)
+			if _material < 0:
+				_begin_session(at)
 				return
-			if at == _target_center:
+			if at == _stand_at:
 				_begin_mining()
 		Step.MINING:
-			var held := AssaySessionPlan.ore_held(_sim.inventory_of(_client.player_id),
-					_target_species)
-			if held > _ore_before:
-				_ore_mined = held - _ore_before
-				_mined_at = _sim.tick()
-				print("  mined: %d ore of %s arrived by tick %d" % [_ore_mined, _species_name(),
-						_mined_at])
-				_begin_assaying()
-		Step.ASSAYING:
-			if AssaySessionPlan.is_assayed(_sim.species_sheets(), _target_species):
-				_assayed_at = _sim.tick()
-				print("  assayed: %s reads exact at tick %d" % [_species_name(), _assayed_at])
-				_step = Step.CRUISING
+			_mining(at)
+		Step.CRAFTING:
+			if _held("smelter", _material) > 0:
+				_crafted_at = _sim.tick()
+				print("  session: a smelter is in the pack at tick %d" % _crafted_at)
+				_leave_for_fuel(at)
+		Step.TO_FUEL:
+			if at == _fuel_stand:
+				_once("mine fuel", "Mine")
+				_step = Step.FUEL_MINING
+		Step.FUEL_MINING:
+			if _held("ore", _fuel) >= AssayDemoPlan.FUEL_ORE:
+				print("  session: %d fuel ore held at tick %d" % [_held("ore", _fuel), _sim.tick()])
+				_step = Step.PLACING
+		Step.PLACING:
+			_placing(at)
+		Step.LOADING:
+			_loading()
+		Step.SMELTING:
+			_smelting()
+		Step.MAKING:
+			_making()
+		Step.PICK:
+			_pick()
+		Step.DRILL:
+			_drill(at)
+		Step.PLANTING:
+			_planting()
 		Step.CRUISING:
 			pass
 
 
-## Pick a deposit and start walking. Done once, two bundles in, for the same reason `walk` waits:
-## until the sim has stepped us at least once, the only position we have is one we were told.
-func _choose_target(at: Vector2i) -> void:
+## SEND A COMMAND ONCE, however many bundles we then wait through. Returns true the first time.
+func _once(key: String, command: Variant) -> bool:
+	if _sent.has(key):
+		return false
+	_sent[key] = true
+	if not _client.submit(command):
+		_finish(false, "the %s command was not submitted" % key)
+	return true
+
+
+func _held(kind: String, species: int) -> int:
+	return AssayDemoPlan.held(_sim.inventory_of(_client.player_id), kind, species)
+
+
+func _stack(kind: String, species: int) -> Dictionary:
+	return AssayDemoPlan.best_stack(_sim.inventory_of(_client.player_id), kind, species)
+
+
+## PICK THE MATERIAL, THE FUEL AND THE DEPOSIT, AND START WALKING. Done once, two bundles in, for the
+## same reason `walk` waits: until the sim has stepped us at least once, the only position we have is
+## one we were told about rather than one we hold.
+func _begin_session(at: Vector2i) -> void:
 	if _sim.applied < 2:
 		return
-	# RANK IS OUR PLAYER ID so three peers take three different species -- see `session_plan.gd`.
-	var deposit := AssaySessionPlan.choose_deposit(_sim.deposits(), _sim.species_sheets(), at,
+	# THE SIM CHOOSES THE PAIR. "Does this fuel melt that ore" is a rule, and before an assay a
+	# client holds a 25-wide band to guess with -- see `starter_pair` in the binding.
+	var pair := _sim.starter_pair()
+	if pair.size() != 2:
+		_finish(false, "this world has no starter pair, so there is no loop to play")
+		return
+	_material = pair[0]
+	_fuel = pair[1]
+	_ore_wanted = AssayDemoPlan.material_ore_needed()
+	if _fuel == _material:
+		# ONE SPECIES CAN BE BOTH, and a scripted session that assumed otherwise would fail on a
+		# perfectly good world. Then there is no second deposit to walk to: mine the fuel here.
+		_ore_wanted += AssayDemoPlan.FUEL_ORE
+
+	var deposit := AssaySessionPlan.nearest_of_species(_sim.deposits(), _material, at,
 			_client.player_id)
 	if deposit.is_empty():
-		_finish(false, ("no deposit in this world is hand-minable, unassayed and still holding ore, "
-				+ "so there is no session to play. Host a fresh world."))
+		_finish(false, ("no deposit of the starter material (species %d) still holds ore, so there "
+				+ "is no loop to play. Host a fresh world.") % _material)
 		return
-	_target_species = int(deposit.get("species", -1))
 	_target_center = deposit.get("center", Vector2i.ZERO) as Vector2i
-	var needed := AssaySessionPlan.ticks_needed(at, _target_center, HAND_MINE_TICKS, ASSAY_TICKS)
-	if _want_ticks < needed:
-		_finish(false, ("%d ticks cannot cover this session: %d tiles to walk, %d to mine, %d to "
-				+ "assay. Ask for at least %d.") % [_want_ticks,
-				AssaySessionPlan.walk_ticks(at, _target_center), HAND_MINE_TICKS, ASSAY_TICKS,
-				needed])
+	if int(deposit.get("amount", 0)) < _ore_wanted:
+		_finish(false, ("the %s deposit at %s holds %d ore and this loop needs %d. Host a world "
+				+ "with more in its starter chunks.") % [_species_name(_material), _target_center,
+				int(deposit.get("amount", 0)), _ore_wanted])
 		return
-	if not _client.submit({"MoveTo": {"target": {"x": _target_center.x, "y": _target_center.y}}}):
+	_stand_at = AssayDemoPlan.stand_tile(_target_center, _client.player_id,
+			_deposit_cover(_target_center))
+
+	if _fuel != _material:
+		var fuel_deposit := AssaySessionPlan.nearest_of_species(_sim.deposits(), _fuel,
+				_target_center, _client.player_id)
+		if fuel_deposit.is_empty():
+			_finish(false, "no deposit of the starter fuel (species %d) holds ore" % _fuel)
+			return
+		_fuel_center = fuel_deposit.get("center", Vector2i.ZERO) as Vector2i
+
+	var needed := AssayDemoPlan.ticks_needed(AssaySessionPlan.walk_ticks(at, _stand_at),
+			AssaySessionPlan.walk_ticks(_stand_at, _fuel_center) if _fuel != _material else 0,
+			1, HAND_MINE_TICKS, ASSAY_TICKS)
+	if _want_ticks < needed:
+		_finish(false, ("%d ticks cannot cover the whole loop: it needs about %d (%d ore to mine at "
+				+ "%d ticks a cycle, %d to smelt, plus the walking). Ask for at least %d.")
+				% [_want_ticks, needed, _ore_wanted, HAND_MINE_TICKS,
+				AssayDemoPlan.refined_needed() * AssayDemoPlan.SMELT_TICKS_PER_ORE, needed])
+		return
+	if not _client.submit({"MoveTo": {"target": {"x": _stand_at.x, "y": _stand_at.y}}}):
 		_finish(false, "the MoveTo command was not submitted")
 		return
-	print("  session: walking from %s to the %s deposit at %s (%d tiles)" % [at, _species_name(),
-			_target_center, AssaySessionPlan.walk_ticks(at, _target_center)])
+	print(("  session: material %s, fuel %s (the sim's pair). Walking from %s to %s on the deposit "
+			+ "at %s; want %d ore, %d of it for the fire.") % [_species_name(_material),
+			_species_name(_fuel), at, _stand_at, _target_center, _ore_wanted,
+			AssayDemoPlan.refined_needed()])
+
+
+## WHICH OF THE CANDIDATE TILES THE SIM SAYS THE DEPOSIT COVERS. Asked rather than worked out: a
+## deposit's radius is a circle and `tile_at` is the only thing entitled to an opinion about it.
+func _deposit_cover(center: Vector2i) -> Dictionary:
+	var cover := {}
+	for dx in range(-2, 3):
+		for dy in range(-2, 3):
+			var tile := center + Vector2i(dx, dy)
+			cover[tile] = _sim.tile_at(tile).get("deposit") != null
+	return cover
 
 
 func _begin_mining() -> void:
-	_ore_before = AssaySessionPlan.ore_held(_sim.inventory_of(_client.player_id), _target_species)
-	if not _client.submit("Mine"):
-		_finish(false, "the Mine command was not submitted")
-		return
-	_mine_sent_at = _sim.tick()
+	_ore_before = _held("ore", _material)
+	_once("mine", "Mine")
 	_step = Step.MINING
-	print("  session: standing on %s at %s, mining from tick %d" % [_species_name(), _target_center,
-			_mine_sent_at])
+	print("  session: standing on %s at %s, mining from tick %d"
+			% [_species_name(_material), _stand_at, _sim.tick()])
 
 
-## Assay on top of mining, not instead of it: `mining` and `assaying` are separate fields on a
-## player and both systems run every tick, so the rest of the session has ore still arriving while
-## the sheet sharpens. More inputs per tick is the point of this mode.
-func _begin_assaying() -> void:
-	if not _client.submit("Assay"):
-		_finish(false, "the Assay command was not submitted")
+## MINE AND ASSAY TOGETHER. `mining` and `assaying` are separate fields on a player and both systems
+## run every tick, so the ore keeps arriving while the sheet sharpens. More inputs per tick is the
+## point of this mode.
+##
+## THE ASSAY IS SKIPPED IF ANOTHER PEER GOT THERE FIRST. Assaying is per world, so the second peer to
+## submit it would be refused with `AlreadyAssayed` -- and reading the world before acting is what a
+## player does, where retrying around a refusal is what a script does. Either way the species is
+## exact before any part is made of it, which is what makes the design's verdict a number and not a
+## band.
+func _mining(_at: Vector2i) -> void:
+	var exact := AssaySessionPlan.is_assayed(_sim.species_sheets(), _material)
+	if not exact and not _assay_sent:
+		_assay_sent = true
+		_once("assay", "Assay")
+		print("  session: assaying %s from tick %d (%d ticks of standing still)"
+				% [_species_name(_material), _sim.tick(), ASSAY_TICKS])
+	elif exact and not _assay_sent:
+		_assay_skipped = true
+		_assay_sent = true
+		print("  session: %s was already exact at tick %d -- another peer assayed it"
+				% [_species_name(_material), _sim.tick()])
+	if exact and _assayed_at < 0:
+		_assayed_at = _sim.tick()
+	var held := _held("ore", _material)
+	if held > _ore_before and _mined_at < 0:
+		_mined_at = _sim.tick()
+		print("  session: first %s ore arrived at tick %d" % [_species_name(_material), _mined_at])
+	if held < _ore_wanted or not exact:
 		return
-	_assay_sent_at = _sim.tick()
-	_step = Step.ASSAYING
-	print("  session: assaying %s from tick %d (%d ticks of standing still)" % [_species_name(),
-			_assay_sent_at, ASSAY_TICKS])
+	print("  session: %d %s ore held and the sheet is exact at tick %d"
+			% [held, _species_name(_material), _sim.tick()])
+	# THE ITEM IS THE ONE THE SIM NAMED. Its kind, species and grade come straight back out of
+	# `inventory_of`; nothing here works out what we are carrying.
+	var ore := _stack("ore", _material)
+	if ore.is_empty():
+		_finish(false, "the sim says we hold %d ore and the inventory has no stack of it" % held)
+		return
+	_once("craft smelter", {"Craft": {"recipe": "Smelter",
+			"item": AssayDemoPlan.item_of_stack(ore), "count": 1}})
+	_step = Step.CRAFTING
 
 
-func _species_name() -> String:
-	var named := AssaySessionPlan.species_name(_sim.species_sheets(), _target_species)
-	return named if named != "" else "species %d" % _target_species
+func _leave_for_fuel(at: Vector2i) -> void:
+	if _fuel == _material:
+		# We mined the fuel at the same deposit; place the smelter where we stand.
+		_step = Step.PLACING
+		return
+	_fuel_stand = AssayDemoPlan.stand_tile(_fuel_center, _client.player_id,
+			_deposit_cover(_fuel_center))
+	if not _client.submit({"MoveTo": {"target": {"x": _fuel_stand.x, "y": _fuel_stand.y}}}):
+		_finish(false, "the MoveTo to the fuel deposit was not submitted")
+		return
+	_step = Step.TO_FUEL
+	print("  session: walking from %s to the %s fuel at %s (%d tiles)"
+			% [at, _species_name(_fuel), _fuel_stand, AssaySessionPlan.walk_ticks(at, _fuel_stand)])
+
+
+## PUT THE SMELTER DOWN BESIDE US, on a 2x2 the sim says is free. Three peers craft at once, so the
+## spot is chosen against the buildings the world actually holds rather than a guess -- otherwise the
+## second peer is refused `TileOccupied` and the run dies on a collision, not a bug.
+func _placing(at: Vector2i) -> void:
+	if _building >= 0:
+		return
+	if _smelter_at.x < 0:
+		_smelter_at = AssayDemoPlan.smelter_spot(at, _sim.size_tiles(), _buildings_near(at))
+		if _smelter_at.x < 0:
+			_finish(false, "no free 2x2 within reach of %s to put a smelter on" % at)
+			return
+		var smelter := _stack("smelter", _material)
+		if smelter.is_empty():
+			_finish(false, "the craft finished and no smelter is in the pack")
+			return
+		_once("place smelter", {"Place": {"item": AssayDemoPlan.item_of_stack(smelter),
+				"pos": {"x": _smelter_at.x, "y": _smelter_at.y}}})
+		return
+	# Waiting for the building to exist in the stepped world.
+	var building: Variant = _sim.tile_at(_smelter_at).get("building")
+	if building == null:
+		return
+	_building = int((building as Dictionary).get("id", -1))
+	_placed_at = _sim.tick()
+	print("  session: smelter %d is on the map at %s, tick %d"
+			% [_building, _smelter_at, _placed_at])
+	_step = Step.LOADING
+
+
+## The tiles near us the SIM says already hold a building. Only the tiles a smelter could go on, so
+## this is a handful of `tile_at` calls and not a scan of the world.
+func _buildings_near(at: Vector2i) -> Array:
+	var taken := []
+	for dx in range(-4, 5):
+		for dy in range(-4, 5):
+			var tile := at + Vector2i(dx, dy)
+			if _sim.tile_at(tile).get("building") != null:
+				taken.append(tile)
+	return taken
+
+
+## FUEL FIRST, THEN ORE, both in one tick. The smelter holds one input stack at a time and burns fuel
+## to reach the ore's heat tolerance; loading the ore first would just stall the fire until the fuel
+## arrived, which is a slower way to the same place.
+func _loading() -> void:
+	if not _sent.has("insert fuel"):
+		var fuel := _stack("ore", _fuel)
+		var ore := _stack("ore", _material)
+		if fuel.is_empty() or ore.is_empty():
+			_finish(false, "the smelter is placed and we hold fuel=%s ore=%s" % [fuel, ore])
+			return
+		_once("insert fuel", {"Insert": {"building": _building, "slot": "Fuel",
+				"item": AssayDemoPlan.item_of_stack(fuel), "count": AssayDemoPlan.FUEL_ORE}})
+		_sent["insert ore"] = true
+		if not _client.submit({"Insert": {"building": _building, "slot": "Input",
+				"item": AssayDemoPlan.item_of_stack(ore),
+				"count": AssayDemoPlan.refined_needed()}}):
+			_finish(false, "the Insert of ore was not submitted")
+		return
+	# THE SMELTER'S OWN SENTENCE SAYS WHEN THE ORE LANDED: `sim::debug::building_status` calls an
+	# empty input slot "idle: nothing to refine", so the moment it stops saying that, there is ore in
+	# the fire. `_smelting` then waits for the same sentence to come BACK, which is the fire going out
+	# because everything we put in has been refined. One source for both edges.
+	var status := _smelter_status()
+	if status == "" or status.contains("idle: nothing to refine"):
+		return
+	_loaded_at = _sim.tick()
+	print("  session: smelter %d loaded at tick %d -- %s" % [_building, _loaded_at, status])
+	_step = Step.SMELTING
+
+
+func _smelter_status() -> String:
+	var building: Variant = _sim.tile_at(_smelter_at).get("building")
+	if building == null:
+		return ""
+	return String((building as Dictionary).get("status", ""))
+
+
+## WAIT FOR THE FIRE TO FINISH, THEN TAKE. "idle: nothing to refine" is the SIM'S OWN sentence for an
+## empty input slot (`sim::debug::building_status`), so this is reading its words rather than counting
+## ticks of our own -- and if that wording ever changes, this stage times out with the status printed
+## beside the failure instead of taking an empty slot and being refused.
+func _smelting() -> void:
+	var status := _smelter_status()
+	if not status.contains("idle: nothing to refine"):
+		return
+	if _once("take", {"Take": {"building": _building}}):
+		print("  session: the fire is out at tick %d -- %s" % [_sim.tick(), status])
+		return
+	_refined_held = _held("refined", _material)
+	if _refined_held < AssayDemoPlan.refined_needed():
+		return
+	_taken_at = _sim.tick()
+	print("  session: took %d refined %s at tick %d"
+			% [_refined_held, _species_name(_material), _taken_at])
+	_step = Step.MAKING
+
+
+## A HANDLE, TWO HEADS AND A FRAME, all in one tick. `MakePart` takes effect the moment it is applied,
+## so three commands on one tick is three parts on one tick -- and three commands from one player on
+## one tick is itself worth putting through a relay.
+func _making() -> void:
+	if not _sent.has("make parts"):
+		var refined := _stack("refined", _material)
+		if refined.is_empty():
+			_finish(false, "took the refined material and the inventory has no stack of it")
+			return
+		var material := AssayDemoPlan.item_of_stack(refined)
+		_sent["make parts"] = true
+		for order in [["handle", 1], ["head", 2], ["frame", 1]]:
+			if not _client.submit({"MakePart": {"kind": AssayDemoPlan.part_kind_tag(order[0]),
+					"material": material, "count": order[1]}}):
+				_finish(false, "the MakePart of a %s was not submitted" % order[0])
+				return
+		return
+	if _held("handle", _material) < 1 or _held("head", _material) < 2 \
+			or _held("frame", _material) < 1:
+		return
+	_parts_at = _sim.tick()
+	print("  session: a handle, two heads and a frame at tick %d" % _parts_at)
+	_step = Step.PICK
+
+
+## A PICK: a handle with a head on it, then put it in our hands. `Assemble` takes the part items out
+## of the pack and appends to the built list, so the pick is the last index; `Equip` moves it to the
+## hand and leaves the list empty again, which is why the drill is index 0 too.
+func _pick() -> void:
+	if not _sent.has("assemble pick"):
+		_once("assemble pick", {"Assemble": {
+				"frame": AssayDemoPlan.item_of_stack(_stack("handle", _material)),
+				"mounted": [AssayDemoPlan.item_of_stack(_stack("head", _material))]}})
+		return
+	var designs := _sim.designs_of(_client.player_id)
+	if _pick_at < 0:
+		if designs.is_empty():
+			return
+		_pick_at = _sim.tick()
+		print("  session: a pick is built at tick %d -- %s" % [_pick_at,
+				String((designs[0] as Dictionary).get("verdict", "?"))])
+		_once("equip", {"Equip": {"assembly": 0}})
+		return
+	for entry in designs:
+		if bool((entry as Dictionary).get("in_hand", false)):
+			_equipped_at = _sim.tick()
+			print("  session: the pick is in hand at tick %d" % _equipped_at)
+			_step = Step.DRILL
+			return
+
+
+## A DRILL: a planted frame with a head on it. Its verdict is read BEFORE it is planted, because that
+## verdict is a promise the placement has to keep.
+func _drill(at: Vector2i) -> void:
+	if not _sent.has("assemble drill"):
+		_once("assemble drill", {"Assemble": {
+				"frame": AssayDemoPlan.item_of_stack(_stack("frame", _material)),
+				"mounted": [AssayDemoPlan.item_of_stack(_stack("head", _material))]}})
+		return
+	for entry in _sim.designs_of(_client.player_id):
+		var design: Dictionary = entry
+		if bool(design.get("in_hand", false)) or String(design.get("mount", "")) != "planted":
+			continue
+		_drill_at = _sim.tick()
+		_drill_verdict = String(design.get("verdict", "?"))
+		_drill_spot = AssayDemoPlan.smelter_spot(at, _sim.size_tiles(), _buildings_near(at))
+		if _drill_spot.x < 0:
+			_finish(false, "no free 2x2 within reach of %s to plant a drill on" % at)
+			return
+		print(("  session: a drill is built at tick %d, index %d, the sim calls it %s (mass %d-%d "
+				+ "of %d-%d budget). Planting it at %s.") % [_drill_at,
+				int(design.get("index", -1)), _drill_verdict, int(design.get("mass_low", 0)),
+				int(design.get("mass_high", 0)), int(design.get("budget_low", 0)),
+				int(design.get("budget_high", 0)), _drill_spot])
+		_once("plant", {"PlaceAssembly": {"assembly": int(design.get("index", 0)),
+				"pos": {"x": _drill_spot.x, "y": _drill_spot.y}}})
+		_step = Step.PLANTING
+		return
+
+
+## DID IT SURVIVE? Either a machine is on the map at that spot, or the design is gone from the built
+## list and the sim told us it came apart. Both are read out of the stepped world; neither is guessed
+## from the numbers.
+func _planting() -> void:
+	if _sim.tile_at(_drill_spot).get("building") != null:
+		_planted_at = _sim.tick()
+		print("  session: the drill is planted at %s, tick %d" % [_drill_spot, _planted_at])
+		_step = Step.CRUISING
+		return
+	var planted := false
+	for entry in _sim.designs_of(_client.player_id):
+		if String((entry as Dictionary).get("mount", "")) == "planted":
+			planted = true
+	if planted:
+		return
+	# The design left the built list and nothing stands where it went: it broke, and `break_apart`
+	# rolled which parts came back FROM THE WORLD'S RNG. That roll is the most desync-prone draw in
+	# the game, which is why this session ends here.
+	for line in _sim.event_lines(_client.player_id):
+		if String(line).contains("MachineBroke") or String(line).to_lower().contains("broke"):
+			_break_line = String(line)
+	_broke_at = _sim.tick()
+	print("  session: the drill came apart at tick %d. %s"
+			% [_broke_at, _break_line if _break_line != "" else "(no worded event for it yet)"])
+	_step = Step.CRUISING
+
+
+func _species_name(species: int) -> String:
+	var named := AssaySessionPlan.species_name(_sim.species_sheets(), species)
+	return named if named != "" else "species %d" % species
 
 
 ## Our own player, out of the stepped world. Found by id, because `players` is indexed by `PlayerId`
@@ -356,45 +730,107 @@ func _check_walked() -> bool:
 	return true
 
 
-## DID THE SESSION ACTUALLY HAPPEN? Every answer is read back out of the stepped world at the end of
-## the run, not remembered from when we sent the command. A probe that passed on "I submitted Mine"
-## would pass against a relay that threw our inputs away.
+## DID THE WHOLE LOOP ACTUALLY HAPPEN? Every answer is read back out of the stepped world at the end
+## of the run, not remembered from when the command was sent. A probe that passed on "I submitted
+## Mine" would pass against a relay that threw our inputs away.
+##
+## The stage that got furthest is named in every failure, because "the loop did not finish" is not a
+## report -- which stage it died in, and what the sim's state was there, is.
+## A session failure, worded and recorded, returning false so `_check_session` can `return
+## _fail_session(...)` in one line where it is checking several things in a row.
+func _fail_session(why: String) -> bool:
+	_finish(false, why)
+	return false
+
+
 func _check_session() -> bool:
-	if _target_species < 0:
-		_finish(false, "session mode asked for but no deposit was ever chosen")
+	if _material < 0:
+		_finish(false, "session mode asked for but no material was ever chosen")
 		return false
-	var me := _my_player()
-	var at := me.get("pos", Vector2i.ZERO) as Vector2i
-	if at != _target_center:
-		_finish(false, ("the sim has us at %s, not on the %s deposit at %s: the walk never "
-				+ "finished, so %d ticks was too few") % [at, _species_name(), _target_center,
-				_sim.applied])
+	if _mined_at < 0:
+		_finish(false, ("never mined: the sim has us at %s, the %s deposit is at %s (stand tile %s)"
+				% [(_my_player().get("pos", Vector2i.ZERO) as Vector2i),
+				_species_name(_material), _target_center, _stand_at]))
 		return false
-	var held := AssaySessionPlan.ore_held(_sim.inventory_of(_client.player_id), _target_species)
-	if held <= _ore_before:
-		_finish(false, ("stood on the %s deposit and submitted Mine at tick %d, and the sim still "
-				+ "has %d of its ore in our inventory") % [_species_name(), _mine_sent_at, held])
+	if not AssaySessionPlan.is_assayed(_sim.species_sheets(), _material):
+		_finish(false, "the sim still reads %s as rough, so the assay never finished"
+				% _species_name(_material))
 		return false
-	if not AssaySessionPlan.is_assayed(_sim.species_sheets(), _target_species):
-		_finish(false, ("submitted Assay at tick %d and the sim still reads %s as rough, so the "
-				+ "assay never finished") % [_assay_sent_at, _species_name()])
+	if _crafted_at < 0:
+		_finish(false, ("never crafted a smelter: %d %s ore held, wanted %d"
+				% [_held("ore", _material), _species_name(_material), _ore_wanted]))
 		return false
-	# The HUD is what a person would be looking at while this ran, and it is pure functions of these
-	# same dictionaries -- so the words on the panel are checkable here, against the world that
+	if _placed_at < 0:
+		_finish(false, "never placed the smelter (spot %s, step %d)" % [_smelter_at, _step])
+		return false
+	if _taken_at < 0:
+		_finish(false, ("never took refined material out of smelter %d. Its status: %s"
+				% [_building, _smelter_status()]))
+		return false
+	if _parts_at < 0:
+		_finish(false, ("never made the parts: %d handles, %d heads, %d frames, %d refined held"
+				% [_held("handle", _material), _held("head", _material),
+				_held("frame", _material), _held("refined", _material)]))
+		return false
+	if _equipped_at < 0:
+		_finish(false, "never got a pick into our hands (designs: %s)"
+				% [_sim.designs_of(_client.player_id)])
+		return false
+	if _planted_at < 0 and _broke_at < 0:
+		_finish(false, ("never planted the drill: verdict %s, spot %s, designs %s"
+				% [_drill_verdict, _drill_spot, _sim.designs_of(_client.player_id)]))
+		return false
+
+	# THE VERDICT WAS A PROMISE. SAFE means the mass band sits wholly under the budget band, so it
+	# cannot be overweight; WILL BREAK means it sits wholly over. UNCERTAIN promises nothing, and the
+	# probe says which happened rather than pretending it was told.
+	if _drill_verdict.to_upper().contains("SAFE") and _planted_at < 0:
+		_finish(false, ("the sim called the drill %s and it came apart anyway: a SAFE design has its "
+				+ "whole mass band under its budget band, so this is the sim disagreeing with itself")
+				% _drill_verdict)
+		return false
+	if _drill_verdict.to_upper().contains("BREAK") and _broke_at < 0:
+		_finish(false, ("the sim called the drill %s and it planted fine: a WILL BREAK design has "
+				+ "its whole mass band over its budget band") % _drill_verdict)
+		return false
+
+	# A tool in hand, read out of the sim, with the sim's own verdict on it.
+	var tool := {}
+	for entry in _sim.designs_of(_client.player_id):
+		if bool((entry as Dictionary).get("in_hand", false)):
+			tool = entry
+	if tool.is_empty():
+		_finish(false, "the loop finished and the sim says nothing is in our hands")
+		return false
+	# The HUD is what a person would have been looking at while this ran, and it is pure functions of
+	# these same dictionaries -- so the words on the panel are checkable here, against the world that
 	# produced them, without a screen.
-	var lines := AssayHud.inventory_lines(_sim.inventory_of(_client.player_id))
-	var ore := String(_species_name())
-	var found := false
-	for line in lines:
-		if String(line).contains(ore):
-			found = true
-	if not found:
-		_finish(false, ("the sim has %d %s ore in our inventory and the HUD's own inventory lines "
-				+ "do not mention it: %s") % [held, ore, lines])
+	var verdict := String(tool.get("verdict", ""))
+	var panel := "\n".join(AssayHud.design_lines(tool))
+	# THE VERDICT IS NOT IN THESE LINES, AND I HAD THIS WRONG FIRST: `main.gd` draws it as a word in
+	# its own colour ABOVE the lines, because a verdict that reads as body text is a verdict nobody
+	# reads. So what the lines must carry is the numbers under it, and what the HUD must have for the
+	# verdict is a colour it actually recognises -- an unknown verdict falls to a neutral grey, and a
+	# grey "WILL BREAK" is the failure worth catching.
+	for number in ["mass %d" % int(tool.get("mass_low", -1)),
+			"%d budget" % int(tool.get("budget_low", -1))]:
+		if not panel.contains(number):
+			return _fail_session("the part menu does not show '%s' for the tool in hand: %s"
+					% [number, panel])
+	if AssayHud.verdict_color(verdict) == AssayHud.verdict_color("something else entirely"):
+		_finish(false, ("the HUD has no colour of its own for the verdict '%s', so it would draw it "
+				+ "in the neutral grey it uses for a word it does not know") % verdict)
 		return false
-	print(("  session: %s mined from tick %d (first ore at %d, %d held now) and assayed from tick "
-			+ "%d (exact at %d). The HUD's own lines say so.") % [ore, _mine_sent_at, _mined_at,
-			held - _ore_before, _assay_sent_at, _assayed_at])
+	print(("  session: mined at %d, exact at %d%s, smelter crafted %d and placed %d, loaded %d, "
+			+ "refined taken %d (%d units), parts %d, pick built %d and equipped %d, drill built %d "
+			+ "(%s) and %s at %d.") % [_mined_at, _assayed_at,
+			" (another peer's assay)" if _assay_skipped else "", _crafted_at, _placed_at,
+			_loaded_at, _taken_at, _refined_held, _parts_at, _pick_at, _equipped_at, _drill_at,
+			_drill_verdict, "planted" if _planted_at >= 0 else "came apart",
+			_planted_at if _planted_at >= 0 else _broke_at])
+	print("  session: the part menu for the tool in hand reads --")
+	for line in AssayHud.design_lines(tool):
+		print("    %s" % line)
 	return true
 
 

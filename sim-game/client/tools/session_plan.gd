@@ -22,6 +22,12 @@ extends RefCounted
 ## rather than something to retry around.
 
 
+## How many of the nearest deposits of one species peers spread themselves over. Three, because
+## three peers is the demo's shape; a fourth peer wraps onto the first deposit, which is a sharper
+## test than a long walk.
+const NEARBY_DEPOSITS := 3
+
+
 ## The deposit this peer should walk to, or `{}` when the world offers none.
 ##
 ## Candidate species: hand-minable (the sim's own verdict) and not yet assayed. Candidate deposits:
@@ -43,6 +49,39 @@ static func choose_deposit(deposits: Array, sheets: Array, from: Vector2i, rank:
 			best_key = key
 			best = deposit
 	return best
+
+
+## A DEPOSIT OF ONE NAMED SPECIES FOR THIS PEER: among the nearest few that still hold ore, the one
+## this peer's rank picks. `{}` if the species has none left.
+##
+## The full demo loop has no choice of species -- it has to use the pair the sim guarantees can be
+## mined and smelted (`starter_pair`) -- so the divergence between peers moves here instead, to WHICH
+## DEPOSIT of that one species each stands on. Three peers on three nearby patches of the same
+## material is the interesting case: the amount comes down from different deposits on interleaved
+## ticks, and if two peers do land on one patch, its amount comes down from both on the same tick,
+## which is the most ordering-sensitive thing the loop does.
+##
+## NEAREST FEW, not nearest: taking the nearest would put every peer on one deposit, and taking the
+## rank-th of ALL of them would send peer three on a hundred-tile walk in a 96x64 world. Sorted by
+## distance then id, so the answer is a pure function of the world and identical on every peer.
+static func nearest_of_species(deposits: Array, species: int, from: Vector2i,
+		rank: int) -> Dictionary:
+	var candidates := []
+	for entry in deposits:
+		var deposit: Dictionary = entry
+		if int(deposit.get("species", -1)) != species or int(deposit.get("amount", 0)) <= 0:
+			continue
+		candidates.append(deposit)
+	if candidates.is_empty():
+		return {}
+	candidates.sort_custom(func(a, b):
+		var da := walk_ticks(from, a.get("center", Vector2i.ZERO) as Vector2i)
+		var db := walk_ticks(from, b.get("center", Vector2i.ZERO) as Vector2i)
+		if da != db:
+			return da < db
+		return int(a.get("id", 0)) < int(b.get("id", 0)))
+	var reachable: int = mini(NEARBY_DEPOSITS, candidates.size())
+	return candidates[maxi(rank, 0) % reachable]
 
 
 ## The species id this peer should work on, or -1 if the world has none left for it.

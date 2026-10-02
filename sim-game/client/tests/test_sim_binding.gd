@@ -28,6 +28,9 @@ const REQUIRED_METHODS := [
 	"protocol_version",
 	# The roster size, so the client's species colour table is checked against the sim's own count.
 	"species_per_world",
+	# The scripted demo session's two: the pair the world guarantees, and serde's own spelling of an
+	# item, which is what the session's commands are checked against.
+	"starter_pair", "item_json", "item_echo",
 ]
 
 
@@ -82,6 +85,46 @@ func test_the_species_colour_table_is_as_long_as_the_sims_roster() -> bool:
 		return _fail(("the sim rolls %d species and the client has %d tints. Rerun "
 				+ "art/species_probe.py for %d slots; do not pad the table by hand.")
 				% [roster, AssayHud.SPECIES_TINTS.size(), roster])
+	return true
+
+
+## THE ITEM DICTIONARIES THE DEMO SENDS ARE THE SHAPE SERDE READS, AND THIS IS THE ONE TEST OF THAT
+## WHICH CANNOT AGREE WITH MY OWN MISREADING.
+##
+## `AssayDemoPlan.item` builds the JSON by hand -- it has to, because parsing would turn every number
+## into a double and serde will not take `3.0` for a `u8` -- and `Item` is three nested enums and a
+## newtype. `{"kind":{"Part":{"Frame":"Held"}},"species":3,"grade":"C"}` is a shape nothing on this
+## side would notice getting wrong: a malformed command is dropped before `step` ever sees it, so the
+## probe would fail as "the parts never arrived" and I would go looking in the wrong place. On
+## 2026-10-01 I wrote both a protocol convention and its test from the same wrong assumption and they
+## agreed with each other; `AssaySim.item_json` is serde writing the same item, so this cannot.
+##
+## Compared as PARSED values, not as text: both sides go through the same `JSON.parse_string`, so key
+## order, whitespace and Godot's doubles cannot make an agreement look like a difference.
+func test_every_item_the_demo_sends_is_the_shape_serde_reads() -> bool:
+	if not ClassDB.class_exists("AssaySim"):
+		return _fail("no AssaySim class; see the failure above")
+	for kind in ["ore", "refined", "smelter", "head", "handle", "frame", "hopper"]:
+		for species in [0, 3, 5]:
+			for grade in ["C", "B", "A"]:
+				var serdes := AssaySimHost.item_json(kind, species, grade)
+				if serdes == "":
+					return _fail("the sim will not spell %s:%d:%s at all" % [kind, species, grade])
+				var mine := JSON.stringify(AssayDemoPlan.item(kind, species, grade))
+				# SERDE'S OWN VERDICT ON THE CLIENT'S OWN TEXT, not a comparison of two parsed
+				# values. Comparing parsed values is what I wrote first, and a planted mutation
+				# walked straight through it: sending `species` as `3.0` passed, because Godot
+				# parses `3` and `3.0` back to the same double, while serde refuses a float where a
+				# `u8` belongs and the relay would have dropped the command. The echo is the
+				# deserialiser that will actually read it.
+				var echoed := AssaySimHost.item_echo(mine)
+				if echoed != serdes:
+					return _fail(("%s:%d:%s -- the client builds %s, and serde reads that as %s "
+							+ "where it writes %s") % [kind, species, grade, mine,
+							echoed if echoed != "" else "NOTHING AT ALL (refused)", serdes])
+	# And a kind the sim does not know is refused on BOTH sides rather than quietly becoming an item.
+	if AssaySimHost.item_json("widget", 1, "C") != "":
+		return _fail("the sim spelled an item for a kind that does not exist")
 	return true
 
 
