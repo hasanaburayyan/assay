@@ -8,8 +8,10 @@ extends RefCounted
 ## that plainly says "this player walked", and assert the client recorded the bundle and moved
 ## nobody.
 ##
-## It also pins the reason the client cannot draw tick N yet: with no sim bound in, the newest thing
-## it can honestly show is the snapshot it joined on.
+## The sim IS bound in now (`AssaySimHost`), and that does not weaken this test, it sharpens it: the
+## net client still may not apply a bundle, because the one place allowed to is the host, and the one
+## thing allowed to do the applying is Rust. What changed is where the newest world comes from, not
+## who is permitted to compute it.
 
 var runner = null
 
@@ -60,7 +62,7 @@ func test_a_tick_bundle_moves_nobody() -> bool:
 	var client := _joined_client()
 	var before := JSON.stringify(client.joined_world)
 	var seen := []
-	client.tick_bundle.connect(func(tick, inputs): seen.append([tick, inputs.size()]))
+	client.tick_bundle.connect(func(tick, inputs, _raw): seen.append([tick, inputs.size()]))
 	client._handle({"Tick": {"tick": 6, "inputs": [
 		{"Player": {"player": 1, "command": {"MoveTo": {"target": {"x": 60, "y": 40}}}}},
 	]}})

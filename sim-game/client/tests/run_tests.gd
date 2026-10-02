@@ -26,8 +26,15 @@ func _initialize() -> void:
 		return
 	for path in names:
 		var script: GDScript = load(path)
-		if script == null:
-			failures.append("%s would not load" % path)
+		# A TEST FILE WITH A PARSE ERROR LOADS AS A NON-NULL, UNUSABLE SCRIPT. Calling `new()` on it
+		# raises an error that leaves `_initialize` without ever reaching `quit()`, and a headless
+		# Godot with nothing to do then SITS THERE FOREVER -- in CI that is the job's whole timeout
+		# spent on a typo, with no count printed and no reason given. Measured 2026-10-01 on a bad
+		# `tests/test_sim_host.gd`. So the file is checked before it is used, and a broken one is a
+		# failure like any other.
+		if script == null or not script.can_instantiate():
+			failures.append("%s would not load; fix the parse error above" % path)
+			print("FAIL  %s would not load" % path.get_file())
 			continue
 		var suite = script.new()
 		if suite.has_method("set_runner"):

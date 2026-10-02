@@ -5,23 +5,53 @@ A Godot 4 client that joins `sim-relay` as a lockstep peer (ASSA-7, step 6 of th
 rules. `sim-net/src/lib.rs` is the authority for the wire, and a test reads that
 file so this client's `PROTOCOL_VERSION` cannot go stale against it.
 
+**Build the sim binding before you open or run anything here:** `make client-lib`
+from the repo root. The client loads the real `sim` through a GDExtension, and
+Godot aborts with a C++ stack trace if the library named in `sim.gdextension` is
+not in `bin/`. The first `--import` after `.godot/` is gone also crashes on exit
+in Godot's own doc generation, having already written a complete cache — run it
+twice, which is what CI does.
+
     godot --headless --path . --script res://tests/run_tests.gd
     godot --headless --path . --script res://tools/join_probe.gd -- localhost:7777 ada 3
+    godot --headless --path . --script res://tools/lockstep_probe.gd \
+        -- localhost:7777 ada 45 walk
     godot --path .                      # the window: host address, name, Join
 
 ## What works today
 
-Join and handshake, the welcome snapshot (species, deposits, players, spawn),
-tick bundles counted as they arrive, and the joined snapshot drawn from its own
-numbers.
+Join and handshake, the welcome snapshot, and then the part that makes this a peer
+rather than a viewer: every tick bundle is applied through the real Rust `sim`, the
+world is drawn at the tick the sim is actually on, a state hash is reported to the
+relay every 20 ticks, and clicking a tile submits `MoveTo`.
 
-## What it cannot do yet, and why that is a decision and not a gap
+Measured against a real relay on 2026-10-01 (`lockstep_probe.gd`): three Godot
+clients joined one relay at tick 568, applied 60 bundles each, and all three
+reported the identical hash `a39c3182418f0c06` at tick 628 with no desync. In walk
+mode one client submitted `MoveTo` and the sim walked it from (56, 40) to (60, 40).
+And the check is not vacuous: made to report a deliberately wrong hash, it was
+caught — `DESYNC: badhash reported 0000000000003039 for tick 3900, host has
+96de8486c066984d`.
 
-A `TickBundle` carries INPUTS, not state. The only way to know the world at tick
-N is to run `sim::step` over them, and that is Rust code no line of GDScript may
-reimplement (principle 1 in the repo CLAUDE.md). So this client shows the tick it
-joined on and nothing newer. Movement, the part menu and placement all wait on one
-decision: how the `sim` crate gets into the client (a GDExtension binding is the
-candidate) or whether the relay gains a snapshot message. Until then
-`AssayNetClient.tick_bundle` is where the sim gets wired in -- never where a
-second rules engine grows.
+## The two rules this client lives by
+
+**No GDScript may run a game rule.** A `TickBundle` carries INPUTS, not state, so
+the world at tick N exists only once something runs `sim::step` — and that is the
+`sim-godot` GDExtension, reached only through `AssaySimHost`. Nothing here
+predicts, interpolates or recomputes a stat. A position on screen is a position
+the sim is on; a player's `target` is drawn as a line to where the sim is walking
+them, never as a frame of motion we invented.
+
+**The sim is fed the message's bytes, never a parsed Dictionary.** Godot's JSON
+turns every number into a double, so by the time a `Welcome` is a Dictionary its
+`u64` seed is already wrong. Every signal carries the raw text alongside the
+Dictionary: the text goes to the sim, the Dictionary goes on screen. The same trap
+runs the other way — a `ClientMsg::Hash` carries a `u64` and GDScript's integers
+are signed, so that one message is written in Rust and only framed here.
+
+## Not here yet
+
+The part menu and placement (they wait on ASSA-5's assembly commands), sprites
+(the species in a world are generated, so `assets/sprites` has nothing to draw
+them with yet), and reconnect — out of scope by Decision 3: a dropped client
+restarts to rejoin.
