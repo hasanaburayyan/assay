@@ -55,10 +55,27 @@ roster holds at least two hand-minable species (9.2% of rosters hold exactly
 one, which makes the assay action decoration in the demo — nothing to
 compare). Together they accept 70.9% of seeds: **1.41 attempts on average,
 i.e. 0.41 rerolls**, and the first pick then beats hands in *every* world,
-worst case 3.85 against the hands' 4.00. Rerolling 29% of seeds re-maps seed
-→ world, so the golden determinism hash moves and existing saves describe
-different worlds; that is the cost and it is worth paying once, now, while
-the only saved world that matters is a test world.
+worst case 3.85 against the hands' 4.00.
+
+**Corrected after it shipped** (ASSA-35, verified on `a50e431`: `cargo test
+-p sim --test ladder` 10/10, worst accepted pick 3.85 against 4.00). Two
+claims in the paragraph above were wrong, both in the direction of making
+this look more expensive than it turned out to be. **(1) 1.41 attempts is a
+multiplier, not worldgen's cost.** It counts attempts of the reroll loop that
+*already existed*, because that loop's output is the population these two
+conditions filter — the right total is raw roster rolls per world, which
+`the_roster_reroll_stays_cheap` now measures at **3.32 (worst 24) over 1000
+seeds**, up from 2.47 before the change (Marlow's figure for the old loop;
+I reproduced the new one, not the old). That test pins the mean under 6 so a
+future condition cannot make worldgen expensive unnoticed. **(2) The golden
+determinism hash did not move, and no save broke.** 571 of 1000 seeds do roll
+a different world, but seed 42 is the only seed either hash pins and it
+already passed both new conditions on its first attempt, so
+`6f2062de05c2d6f7` and `9afde5135ca07119` are untouched and `cargo test -p
+sim --test determinism` is green 5/5. The reasoning was right about seeds in
+general and wrong about the one seed that was load-bearing: a cost I argued
+was worth paying was never charged. Had it been charged, the argument still
+stands — but it should not be quoted as a precedent for moving a hash.
 
 Two guards fall out of the measurement and belong in CI. The rate is capped
 by `mine_by_hand`/`mine_by_machine` yielding **at most one unit per tick**,
@@ -83,7 +100,8 @@ Method: 2000 seeds of the standard 6×4-chunk test world, built through
 These figures replace the first pass quoted on ASSA-6 (39%, 72.0% accepted,
 "1.39 rerolls"). The reroll figure there was simply mislabelled — 1.39 was
 the expected number of *attempts*, which is 0.39 rerolls, and the same
-quantity here is 1.41 attempts / 0.41 rerolls. The percentages differ for a
+quantity here is 1.41 attempts / 0.41 rerolls — both of the *existing* loop,
+not of worldgen; see the correction above. The percentages differ for a
 reason worth keeping: that pass drew **4000 rosters straight from
 `worldgen::species_roster`**, i.e. more samples than this one, while this
 pass builds **2000 whole worlds**. `World::new` already rerolls the roster
