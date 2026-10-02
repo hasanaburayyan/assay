@@ -346,7 +346,30 @@ mod tests {
             assert!(said.contains("Nothing is wrong with your machine"), "{said}");
         }
 
-        // 3. NON-VACUITY: a greeting that agrees about everything reaches the
+        // 3. **OUR PROTOCOL, NO RULES FIELD.** This arm exists because a
+        //    mutation found it: swapping `unwrap_or(RULES_ID)` for
+        //    `unwrap_or("")` reddened NOTHING, since `check_join` answers the
+        //    protocol question first and never reads the rules argument when
+        //    the protocol already disagrees. The two arms were mutually
+        //    exclusive by construction and my tests only reached one of them.
+        //    Reachable for real: a build on this protocol that renames a field,
+        //    or a frame damaged after its protocol number. It must be told the
+        //    truth -- "I could not read it" -- not that its rules are wrong.
+        let ours_no_rules = refuse_unreadable(&Greeting {
+            protocol: Some(PROTOCOL_VERSION),
+            rules: None,
+            name: Some("ada".into()),
+        });
+        assert!(
+            !ours_no_rules.contains("runs game rules"),
+            "a missing rules field is not a rules mismatch: {ours_no_rules}"
+        );
+        assert!(
+            ours_no_rules.contains("could not read your client's first message"),
+            "{ours_no_rules}"
+        );
+
+        // 4. NON-VACUITY: a greeting that agrees about everything reaches the
         //    fallback rather than borrowing check_join's complaint, so this
         //    function cannot be passing arm 1 by accident.
         let same = refuse_unreadable(&Greeting {
