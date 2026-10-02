@@ -154,6 +154,52 @@ it may, because nothing else is spending it.
   the same dimming. The map is deliberately more chromatic than the world
   because it needs that chroma to survive being dimmed.
 
+## Machines are overlaid part sprites, and the seams have to show
+
+A machine is never a sprite. It is whole part frames stacked at one position
+(`rig.py` rule 2), with the nth repeat of a kind stepped by
+`PART_REPEAT_OFFSET` (rule 5), so capacity is something you can count. That is
+what `art/assemble.py` builds and judges, at the size the player sees:
+
+```bash
+art/assemble.py                   # GREEN; writes assets/sprites/assembled.png
+PART_OFFSET=0,0  art/assemble.py  # repeats back on top of each other -> FAIL
+HOPPER_LIGHT=1   art/assemble.py  # hopper back at the deck's value   -> FAIL
+HOPPER_DARK=1    art/assemble.py  # hopper sunk into its own well     -> FAIL
+```
+
+It checks five things. Three were there already: one assembly path builds a
+pick and a drill; solid footprint grows with every hopper (a sprite
+composited onto itself cannot grow a footprint, which is why that is the
+measure and "pixels touched" is not); and a C machine still differs from an A
+one once the parts are overlaid. Two are newer, and they are about VALUE:
+
+- **No grade is the odd one out.** The deck-to-hopper and head-to-hopper seams
+  are measured as the median dE76 between touching pixels at 1×, per grade,
+  for one to three hoppers. A grade may not read at less than **half** the
+  strongest grade's seam on the same machine. Shipped on main @2a57a20 that
+  ran C 36.9, B 55.1, **A 13.3** — a grade-A chassis blows out neutral
+  (Decision #37), so a white deck sat under a steel hopper and the machine
+  whose hoppers check 2 had just proved were there was one pale mass
+  (ASSA-28). Note that `DISTINCT` **would have passed it**: 13.3 clears 12.
+  What makes a seam readable is that it is about as readable as the seams
+  beside it, so the bar is a ratio against a sibling, not a floor.
+- **The hopper is still an open box.** Fixing the seam means darkening the
+  hopper, and far enough down the body falls into its own shadowed well and
+  the only silhouette difference in the part set closes up. Gated at *half*
+  the part under L\* 35 — not a tuned coefficient, the sentence "a box whose
+  interior is most of it is not a box with a hole in it".
+
+The fix was the **hopper's value, not the mark**: narrowing the glint to the
+yoke drops `frame`'s own B→A step to 8.6, under `DISTINCT` and barely over the
+7.3 of a part whose grade changes nothing in sim, which is the exact failure
+the glint rule exists to prevent (Maren, ASSA-28). The hopper is now `grey`
+and **the same grey at every grade** — `sim/src/assembly.rs` gives a hopper
+Mass from Density and a flat Capacity, and density never scales with grade, so
+a grade-A hopper and a grade-C one are the same object to the rules. The
+grade dulling was also what made it unaffordable: with it still on, 34.7% of
+the C hopper falls under L\* 35 and its gap from the head drops to 7.7.
+
 ## Conventions
 
 - 1 Blender unit = 1 tile. +y is north (up on screen). A sprite's footprint
