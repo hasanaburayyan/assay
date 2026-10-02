@@ -366,6 +366,22 @@ impl AssaySim {
         gstring(&item_text(&kind.to_string(), species, &grade.to_string()))
     }
 
+    /// DOES SERDE ACCEPT WHAT THE CLIENT BUILT? Takes the JSON text a client
+    /// wrote for an `Item` and gives back serde's own spelling of whatever it
+    /// read, or "" if serde refuses it.
+    ///
+    /// `item_json` alone was not enough, and a planted mutation proved it:
+    /// sending `species` as `3.0` instead of `3` passed a test that compared the
+    /// two sides as PARSED values, because Godot parses both back to the same
+    /// double. Serde does not — a `u8` will not come from a float — so the
+    /// command would have been dropped before `step` saw it, and the probe would
+    /// have failed as "the parts never arrived". This runs the client's own text
+    /// through the deserialiser that will actually read it.
+    #[func]
+    pub fn item_echo(text: GString) -> GString {
+        gstring(&item_echo_text(&text.to_string()))
+    }
+
     /// HOW MANY SPECIES A WORLD ROLLS (`sim::tuning::SPECIES_PER_WORLD`).
     ///
     /// Here so the client's per-species colour table can be checked against the
@@ -549,6 +565,15 @@ pub fn item_text(kind: &str, species: i64, grade: &str) -> String {
         return String::new();
     };
     serde_json::to_string(&Item::new(kind, SpeciesId(species), grade)).unwrap_or_default()
+}
+
+/// SERDE'S VERDICT ON A CLIENT'S OWN ITEM TEXT, re-spelled. Empty if it refuses.
+/// Engine-free so `cargo test` can pin what it refuses — see `AssaySim::item_echo`.
+pub fn item_echo_text(text: &str) -> String {
+    match serde_json::from_str::<Item>(text) {
+        Ok(item) => serde_json::to_string(&item).unwrap_or_default(),
+        Err(_) => String::new(),
+    }
 }
 
 /// PLAIN DATA, NO ENGINE TYPES, on purpose: a `Dictionary` cannot be built
@@ -1642,6 +1667,32 @@ mod tests {
         // A species id that cannot be a `SpeciesId` is refused rather than
         // wrapped: a command naming species 300 is a bug, not a request.
         assert_eq!(item_text("ore", 300, "c"), "");
+    }
+
+    /// SERDE REFUSES A FLOAT WHERE A `u8` BELONGS, and that is the trap worth
+    /// pinning: Godot's JSON parses every number as a double, so a client that
+    /// round-trips its own command text turns `3` into `3.0` and the relay drops
+    /// the command before `step` ever sees it. The failure arrives as "the
+    /// action never happened", nowhere near the cause.
+    #[test]
+    fn serde_refuses_a_float_species_and_accepts_what_the_client_should_send() {
+        let good = r#"{"kind":"Ore","species":3,"grade":"C"}"#;
+        assert_eq!(item_echo_text(good), good, "serde should read its own text");
+        for bad in [
+            r#"{"kind":"Ore","species":3.0,"grade":"C"}"#,
+            r#"{"kind":"Ore","species":"3","grade":"C"}"#,
+            r#"{"kind":{"Part":"Handle"},"species":3,"grade":"C"}"#,
+            r#"{"kind":"Ore","grade":"C"}"#,
+            "not json at all",
+        ] {
+            assert_eq!(item_echo_text(bad), "", "serde should have refused {bad}");
+        }
+        // Key order is serde's business, not the client's: the same item written
+        // in another order is still that item.
+        assert_eq!(
+            item_echo_text(r#"{"grade":"C","species":3,"kind":"Ore"}"#),
+            good
+        );
     }
 
     /// THE SPECIES LETTER IS THE SIM'S, AND IT IS THE *GENERATED* NAME'S.
