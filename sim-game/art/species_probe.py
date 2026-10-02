@@ -93,13 +93,21 @@ POP_C = 5.0
 # out of another file is a number that has stopped being about that file.
 #
 # RED LEVERS, and they reproduce the cause rather than lowering a bar:
-#   MAP_OPAQUE=1  restores the old solid-disc model. The check MUST go GREEN,
-#                 which is what proves the alpha composite is load-bearing and
-#                 that this measure moved because of the art and not the
-#                 arithmetic.
 #   MAP_FLOOR=k   pretends the client shipped base `k` instead of the one in
 #                 hud.gd. At 0.33 the check MUST fail -- a client constant set
 #                 too low is the regression the guard is named after.
+#   MAP_ALPHA=a   pretends the client shipped alpha `a`. At 0.85 the check MUST
+#                 fail (10.8 at purity 6): that was the shipped disc this file
+#                 was written to catch, and it is what proves the composite is
+#                 still load-bearing rather than arithmetic that cancels out.
+#   MAP_OPAQUE=1  the original form of the lever above, back when the client
+#                 drew the disc at alpha 0.85 and modelling it solid was the
+#                 generous error. hud.gd now ships alpha 1.0 (Maren's ruling,
+#                 ASSA-7), so pretending it is opaque CHANGES NOTHING and the
+#                 lever can no longer fail. It says so rather than going quietly
+#                 green: a lever that cannot fire is not evidence, and a green
+#                 run from a dead lever is how this check came to certify a disc
+#                 the client did not draw in the first place. Use MAP_ALPHA.
 MAP_OPAQUE = bool(os.environ.get("MAP_OPAQUE"))
 
 HUD_GD = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -155,11 +163,24 @@ if os.environ.get("MAP_FLOOR"):
     MAP_SPAN = 1.0 - MAP_BASE
     print("[RED LEVER] map purity base forced to %.2f, overriding hud.gd; at"
           " 0.33 the\n            MAP DISC check MUST fail.\n" % MAP_BASE)
-if MAP_OPAQUE:
-    print("[RED LEVER] map disc modelled as OPAQUE, the way this check had it\n"
-          "            wrong until ASSA-29. It MUST pass that way; the client\n"
-          "            draws it at alpha %.2f over a near-black map.\n"
+if os.environ.get("MAP_ALPHA"):
+    MAP_ALPHA = float(os.environ["MAP_ALPHA"])
+    print("[RED LEVER] map disc alpha forced to %.2f, overriding hud.gd; at"
+          " 0.85 the\n            MAP DISC check MUST fail (10.8 at purity 6),"
+          " because that is the\n            disc the client used to draw.\n"
           % MAP_ALPHA)
+if MAP_OPAQUE:
+    if MAP_ALPHA >= 1.0:
+        print("[DEAD LEVER] MAP_OPAQUE does nothing: hud.gd already draws the"
+              " disc at\n             alpha %.2f, so the solid model IS the"
+              " shipped one. A lever that\n             cannot fail is not"
+              " evidence -- use MAP_ALPHA=0.85, which must FAIL.\n"
+              % MAP_ALPHA)
+    else:
+        print("[RED LEVER] map disc modelled as OPAQUE, the way this check had"
+              " it\n            wrong until ASSA-29. It MUST pass that way; the"
+              " client\n            draws it at alpha %.2f over a near-black"
+              " map.\n" % MAP_ALPHA)
 
 
 def map_disc(hexcolour, purity):

@@ -21,8 +21,7 @@
 
 use godot::prelude::*;
 use sim::assembly::{Assembly, Built, Mount};
-use sim::building::Slot;
-use sim::command::{Event, Input, StopReason};
+use sim::command::{Event, Input};
 use sim::hash::fnv64;
 use sim::item::Item;
 use sim::mineral::{Property, SpeciesId};
@@ -996,244 +995,34 @@ impl AssaySim {
         }
     }
 
-    /// One event as a sentence. `me` is written "you"; everyone else is named.
+    /// One event as a sentence, FROM THE SIM, which is the only copy of that
+    /// wording now.
+    ///
+    /// This used to be a 215-line match of its own, and the duplication was not
+    /// theoretical: it had no arm for any of the events the assembly model added,
+    /// so it fell to `format!("{other:?}")` and showed players raw Rust `Debug`
+    /// at the most dramatic moment in the game -- `MachineBroke { player:
+    /// PlayerId(0), ... }` where Maren's ruling asks for "that design was too
+    /// heavy". Nerite caught it; the probe's own evidence run printed it.
+    ///
+    /// THE FALLBACK ARM IS GONE BECAUSE THE MATCH IS GONE. PR #23 added that arm
+    /// for a real reason -- an exhaustive `match Event` HERE made the client a
+    /// brake on the sim's build -- and deleting the match keeps that property
+    /// while removing the hole it left: `sim::debug::event_line` is exhaustive in
+    /// the crate that owns `Event`, so a new variant now fails to compile for the
+    /// person adding it, who is the one who knows what it should say.
     pub fn describe(&self, me: Option<PlayerId>, event: &Event) -> String {
-        let world = &self.world;
-        let who = |player: PlayerId| match me {
-            Some(mine) if mine == player => "you".to_string(),
-            _ => world
-                .player(player)
-                .map_or(format!("player {}", player.0), |found| found.name.clone()),
-        };
-        let item = |item: &Item| world.item_name(*item);
-        let species = |id: SpeciesId| world.species(id).name().to_string();
-        match event {
-            Event::PlayerJoined { player, name } => match me {
-                Some(mine) if mine == *player => format!("you joined as {name}"),
-                _ => format!("{name} joined"),
-            },
-            Event::MoveStarted { player, to, .. } => {
-                format!("{} set off for ({}, {})", who(*player), to.x, to.y)
-            }
-            Event::PlayerArrived { player, pos } => {
-                format!("{} arrived at ({}, {})", who(*player), pos.x, pos.y)
-            }
-            Event::PlayerStopped { player, pos } => {
-                format!("{} stopped at ({}, {})", who(*player), pos.x, pos.y)
-            }
-            Event::MiningStarted {
-                player,
-                deposit,
-                species: id,
-            } => format!(
-                "{} started mining {} at deposit {}",
-                who(*player),
-                species(*id),
-                deposit.0
-            ),
-            Event::OreMined {
-                player,
-                deposit,
-                item: mined,
-                amount,
-            } => format!(
-                "{} mined {amount} {} ({} left in deposit {})",
-                who(*player),
-                item(mined),
-                world.deposit(*deposit).map_or(0, |found| found.amount),
-                deposit.0
-            ),
-            Event::MiningStopped {
-                player,
-                deposit,
-                reason,
-            } => format!(
-                "{} stopped mining deposit {}: {}",
-                who(*player),
-                deposit.0,
-                stop_reason(*reason)
-            ),
-            Event::DepositDepleted { deposit } => format!("deposit {} is mined out", deposit.0),
-            Event::SpeciesDiscovered {
-                player,
-                species: id,
-            } => {
-                format!("{} discovered {}", who(*player), species(*id))
-            }
-            Event::AssayStarted {
-                player,
-                deposit,
-                species: id,
-            } => format!(
-                "{} started assaying {} at deposit {} ({} ticks)",
-                who(*player),
-                species(*id),
-                deposit.0,
-                sim::tuning::ASSAY_TICKS
-            ),
-            Event::AssayStopped {
-                player,
-                deposit,
-                reason,
-            } => format!(
-                "{} stopped assaying deposit {}: {}",
-                who(*player),
-                deposit.0,
-                stop_reason(*reason)
-            ),
-            Event::SpeciesAssayed {
-                player,
-                species: id,
-            } => format!(
-                "{} assayed {}: its sheet is exact for everyone now",
-                who(*player),
-                species(*id)
-            ),
-            Event::SpeciesRenamed {
-                player,
-                species: id,
-                name,
-            } => format!("{} renamed species {} to {name}", who(*player), id.0),
-            Event::RenameGranted {
-                species: id,
-                from,
-                to,
-            } => format!("{} let {} rename {}", who(*from), who(*to), species(*id)),
-            Event::CraftStarted {
-                player,
-                recipe,
-                item: made,
-                count,
-            } => format!(
-                "{} started {} × {} ({})",
-                who(*player),
-                count,
-                item(made),
-                recipe.recipe().name
-            ),
-            Event::ItemCrafted {
-                player,
-                item: made,
-                count,
-                remaining,
-                ..
-            } => format!(
-                "{} made {count} {}{}",
-                who(*player),
-                item(made),
-                if *remaining > 0 {
-                    format!(" ({remaining} batches to go)")
-                } else {
-                    String::new()
-                }
-            ),
-            Event::CraftingStopped {
-                player,
-                recipe,
-                reason,
-            } => format!(
-                "{} stopped making {}: {}",
-                who(*player),
-                recipe.recipe().name,
-                stop_reason(*reason)
-            ),
-            Event::BuildingPlaced {
-                player,
-                building,
-                item: built,
-                pos,
-            } => format!(
-                "{} placed {} {} at ({}, {})",
-                who(*player),
-                item(built),
-                building.0,
-                pos.x,
-                pos.y
-            ),
-            Event::BuildingRemoved {
-                player,
-                building,
-                item: taken,
-                pos,
-            } => format!(
-                "{} picked up {} {} at ({}, {})",
-                who(*player),
-                item(taken),
-                building.0,
-                pos.x,
-                pos.y
-            ),
-            Event::ItemsInserted {
-                player,
-                building,
-                slot,
-                item: put,
-                count,
-            } => format!(
-                "{} put {count} {} in building {}'s {} slot",
-                who(*player),
-                item(put),
-                building.0,
-                slot_name(*slot)
-            ),
-            Event::ItemsTaken {
-                player,
-                building,
-                item: took,
-                count,
-            } => format!(
-                "{} took {count} {} from building {}",
-                who(*player),
-                item(took),
-                building.0
-            ),
-            Event::ItemSmelted {
-                building,
-                item: smelted,
-                count,
-            } => format!("building {} smelted {count} {}", building.0, item(smelted)),
-            // The reason is the sim's own enum. A player reading "NotOnDeposit"
-            // is reading a word, not a code, and a client that translated it
-            // would be guessing which rule refused them.
-            Event::CommandRejected { player, reason, .. } => {
-                format!("{}: refused — {reason:?}", who(*player))
-            }
-            // AN EVENT THIS CLIENT HAS NO WORDING FOR YET, SHOWN RAW RATHER
-            // THAN DROPPED OR REFUSED TO COMPILE. Unreachable today, which is
-            // why the allow is here and why it is worth keeping anyway.
-            //
-            // This arm exists because of a measured collision, not in case:
-            // ASSA-5 part 2 adds six `Event` variants, and an exhaustive match
-            // here meant the sim could not grow an event without breaking the
-            // client's BUILD. Rules lead and clients follow (repo CLAUDE.md), so
-            // the client may not be a brake on `sim`. Debug text is ugly on
-            // purpose: it is visibly a thing somebody should write a sentence
-            // for, which a silent drop would not be.
-            #[allow(unreachable_patterns)]
-            other => format!("{other:?}"),
-        }
-    }
-}
-
-fn stop_reason(reason: StopReason) -> &'static str {
-    match reason {
-        StopReason::Stopped => "stopped",
-        StopReason::LeftDeposit => "walked off it",
-        StopReason::Depleted => "mined it out",
-        StopReason::OutOfInputs => "ran out of inputs",
-    }
-}
-
-fn slot_name(slot: Slot) -> &'static str {
-    match slot {
-        Slot::Input => "ore",
-        Slot::Fuel => "fuel",
+        sim::debug::event_line(&self.world, me, event)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Only the tests name these now: the event wording they used to feed is
+    // `sim::debug::event_line`'s, and this crate no longer matches on `Event`.
+    use sim::building::Slot;
+    use sim::command::StopReason;
 
     fn fresh() -> World {
         World::new(WorldConfig {
@@ -1963,6 +1752,11 @@ mod tests {
         let (sim, me) = with_a_player("limpet");
         let species = sim.world().species[0].id;
         let item = Item::new(sim::ItemKind::Ore, species, sim::Grade::C);
+        let head = Item::new(
+            sim::ItemKind::Part(sim::assembly::PartKind::Head),
+            species,
+            sim::Grade::C,
+        );
         let events = vec![
             Event::PlayerJoined {
                 player: me,
@@ -2081,13 +1875,61 @@ mod tests {
                 command: sim::PlayerCommand::Mine,
                 reason: sim::RejectReason::NotOnDeposit,
             },
+            // THE EIGHT THE ASSEMBLY MODEL ADDED, and the reason this list grew:
+            // they had no arm at all and fell to `format!("{other:?}")`, so a
+            // player saw `MachineBroke { player: PlayerId(0), ... }` at the most
+            // dramatic moment in the game. The wording is one function in `sim`
+            // now, exhaustive there, so this list is a check that the Godot path
+            // reaches it -- not the thing holding the arms in place.
+            Event::PartsMade {
+                player: me,
+                part: head,
+                count: 2,
+            },
+            Event::Assembled {
+                player: me,
+                assembly: 0,
+            },
+            Event::Equipped { player: me },
+            Event::Unequipped { player: me },
+            Event::MachinePlaced {
+                player: me,
+                building: sim::BuildingId(1),
+                pos: TilePos::new(12, 9),
+            },
+            Event::MachineBroke {
+                player: me,
+                pos: Some(TilePos::new(12, 9)),
+                mass: 564,
+                budget: 60,
+                lost: vec![head],
+                returned: vec![item],
+            },
+            Event::ToolWornOut {
+                player: me,
+                head,
+                handle: item,
+            },
         ];
         for event in &events {
             let line = sim.describe(Some(me), event);
+            // A Debug shape is more than a newtype: `{ ` is the struct-literal
+            // form every unworded variant used to come out as.
+            assert!(
+                !line.contains("{ ") && !line.contains("Part("),
+                "{event:?} leaked a Debug shape: {line}"
+            );
             assert!(!line.is_empty(), "{event:?} described as nothing");
             assert!(
                 !line.contains("PlayerId(") && !line.contains("SpeciesId("),
                 "{event:?} leaked a Debug shape: {line}"
+            );
+            // READ IT OUT LOUD. "you's design broke" contains "you" and passes any
+            // check for it, which is how a possessive built from a name survives
+            // into the one event a player is most likely to read twice.
+            assert!(
+                !line.contains("you's"),
+                "{event:?} reads as a possessive of 'you': {line}"
             );
             // Every line about me is about me by name.
             if !matches!(
