@@ -378,7 +378,7 @@ func test_an_insert_with_no_building_targeted_submits_nothing_and_says_so() -> b
 ## `_insert` returns early and nothing is sent), a count that has MOVED since the button was made,
 ## and the SAME button object still on screen.
 ##
-## THE EXPECTED NUMBER IS READ OFF THE SIM, NOT THROUGH `AssayActions.held_count`. That function is
+## THE EXPECTED NUMBER IS READ OFF THE SIM, NOT THROUGH `AssayInventory.held`. That function is
 ## what `_insert` itself calls, and a test that computes its expectation with the code under test
 ## agrees with its bugs -- a grade filter that stopped filtering would be invisible to both. `_counted`
 ## sums the sim's own `count` fields instead.
@@ -507,7 +507,7 @@ func _stack_of(screen: Node, kind: String) -> Dictionary:
 
 ## HOW MANY OF THAT EXACT ITEM THE SIM SAYS WE HOLD, summed off the snapshot's own `count` fields.
 ##
-## Deliberately not `AssayActions.held_count`: that is the function `_insert` calls, so using it here
+## Deliberately not `AssayInventory.held`: that is the function `_insert` calls, so using it here
 ## would make the expectation and the thing it checks share their arithmetic. Kind, species AND grade,
 ## because two grades of one ore are two stacks and two rows.
 func _counted(screen: Node, item: Dictionary) -> int:
