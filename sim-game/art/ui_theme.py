@@ -25,9 +25,20 @@ on "the manifest describes X and there is no X.png", and `build.py` ends with
 is not an asset would break two checks AND be silently dropped by the next
 build. Exactly the finding that put the part contract in its own file. This is
 a sibling of the manifest for the same reason.
+
+STDLIB ONLY, deliberately. `build.py` runs under `uv` with Pillow, but the CI
+check that keeps this honest runs on plain `python3` with no pip, exactly like
+`check_part_contract.py`. If the median lived here in Pillow and again in the
+check in stdlib, there would be two implementations of the shipped colour that
+can disagree -- the "two readers" failure this pipeline keeps getting bitten
+by. So the derivation is written once, in the decoder both can use.
 """
 import os
 import statistics
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from png_stdlib import read_rgba  # noqa: E402  (after sys.path, on purpose)
 
 # A pixel is ground rather than the transparent margin around it. The sheet is
 # opaque where there is tile at all, so this only excludes the edges.
@@ -48,9 +59,9 @@ def plate_rgb(sprites_dir):
     Takes the directory rather than finding it, so the check and the build are
     provably reading the same file rather than each resolving a path.
     """
-    from PIL import Image
     path = os.path.join(sprites_dir, "ground.png")
-    pixels = [p for p in Image.open(path).convert("RGBA").getdata() if p[3] >= OPAQUE]
+    _w, _h, px = read_rgba(path)
+    pixels = [p for row in px for p in row if p[3] >= OPAQUE]
     if not pixels:
         raise SystemExit("ui_theme: %s has no opaque pixels, so it is not a ground sheet" % path)
     return tuple(int(statistics.median([p[i] for p in pixels])) for i in range(3))
