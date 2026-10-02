@@ -136,13 +136,41 @@ exactly what it costs to put a promise in a sentence that no decision backs.
 
 ## Open questions
 
-- Which sheet properties beyond hardness, strength and density do parts read
-  in the demo, if any (heat tolerance for a burner head, say)?
-- What fraction of parts come back on a break, and is it per part or a
-  roll? Must be deterministic either way.
-- Durability numbers: how many swings a grade B head of middling strength
-  should last so a pick feels worth making but not permanent.
-- Does the hopper's own material matter (density only, or capacity too)?
+Five of these were answered while the demo was built and the list did not say
+so. **A spec that still asks a question the code has settled is a trap** — this
+is the newest note, so a reader takes its questions as live and reopens a
+decision ADR 0003 already made. Each is struck through below with the answer
+and the line of code that holds it, re-read on `main` today rather than
+recalled (Maren, 2026-10-02).
+
+- ~~Which sheet properties beyond hardness, strength and density do parts read
+  in the demo, if any (heat tolerance for a burner head, say)?~~ **None.**
+  `PART_SPECS` (`assembly.rs`) reads exactly three: density → mass on every
+  part, hardness → speed on the head alone, strength → durability on the head
+  and budget on a frame. Heat tolerance, reactivity and conductivity are
+  invisible to parts, which is why a burner head is a later idea and not a
+  missing feature.
+- ~~What fraction of parts come back on a break, and is it per part or a
+  roll? Must be deterministic either way.~~ **Per part, a 50% roll**, plus one
+  part that is always lost: the heaviest that is not the frame
+  (`part_always_lost`, ADR 0003 A1). Determinism is handled by rolling once
+  per part in part order **on every path, including the always-lost one**, so
+  the rng stream advances the same on every peer. **Still a working default,
+  not a board answer** — `BREAK_RETURN_PERCENT` says so in its own comment;
+  the CEO set it to unblock and the board has not spoken. Changing it is one
+  line.
+- ~~Durability numbers: how many swings a grade B head of middling strength
+  should last so a pick feels worth making but not permanent.~~ **120 swings**
+  at a grade-B strength-50 head: pool = head size × effective strength ×
+  `PICK_DURABILITY_PER_STRENGTH` (60, raised from 10 in ADR 0003 A2), drained
+  `PICK_WEAR_PER_SWING` (20) per swing. The raise was forced by arithmetic,
+  not feel: hands mine every deposit a pick can, so a pick buys only time, and
+  at 20 swings it could not repay the 60 ticks of smelting its 3 refined cost.
+- ~~Does the hopper's own material matter (density only, or capacity too)?~~
+  **Density only.** Capacity is flat from the kind — `HOPPER_CAPACITY` 50 per
+  hopper on top of the planted frame's buffer of 10 — so hopper species is one
+  legible choice: make it light. Mass, not a slot count, is what stops you
+  stacking hoppers.
 - ~~The gear's hardness gate and the `requires` field on recipes: the
   discussion note argued requirements belong on the schematic; this note's
   assembly model makes gears an ordinary part. Decide whether gears survive
@@ -153,13 +181,33 @@ exactly what it costs to put a promise in a sentence that no decision backs.
   `step.rs`, not through `requires`. So the field has exactly one user and
   it is the unused recipe. Whoever retires gears retires `requires` with
   them; neither is load-bearing for anything else in the demo.
-- How the Godot client presents the part catalogue and the frame budget so
+- ~~How the Godot client presents the part catalogue and the frame budget so
   a player can predict a break before placing (sim exposes mass and budget;
-  the client decides how to show them).
-- Godot export in CI: export templates, signing, and whether the client
-  bundles a relay for the host or the host runs the Rust relay separately.
+  the client decides how to show them).~~ **Built (ASSA-37), and the rule is
+  that the client renders the verdict and never computes it**: a design row
+  leads with SAFE / UNCERTAIN / WILL BREAK from the sim, shows mass against
+  budget, and placement is never disabled — a player may place something that
+  will break. While the sheet is rough both terms read as bands, which is why
+  UNCERTAIN is the demo's advertisement for assaying and must not be dressed
+  as danger. **What is still open is taste, not design**: whether that panel
+  reads as a design or as a debug strip is Decision #38, with the board.
+- ~~Godot export in CI: export templates, signing, and whether the client
+  bundles a relay for the host or the host runs the Rust relay separately.~~
+  **Settled by what shipped (ASSA-9):** CI exports Mac and Windows bundles,
+  each zip carries `sim-cli`, `sim-relay` **and** the client, so **the host
+  runs the Rust relay separately** and nothing is bundled into the client.
+  Templates are anonymous downloads and signing is ad-hoc. The half that is
+  genuinely open is not export at all — it is how a friend outside the host's
+  machine reaches that relay, which is Decision #40, with the board.
 
 ## Suggested next steps
+
+**All seven are built.** They became ASSA-3 through ASSA-9, one item per step,
+all in board review; the live milestone is ASSA-2. The step that is done but
+not *proven* is the last one: the artifacts exist and a human has opened the
+window (Decision #34), but nobody outside this machine has played one, which
+is what Decision #40 is for. Read the list below as the record of how the
+demo was built, not as work waiting to start.
 
 1. Fold decision 13 into worldgen: add a core-quality tuning constant to the
    purity roll, update ADR 0001 (or write ADR 0002) and the golden hash.
