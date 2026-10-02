@@ -18,7 +18,7 @@ extends RefCounted
 ##
 ## NO SOCKET IN HERE ON PURPOSE. Bytes in, dictionaries out, so the whole protocol is testable
 ## headless with no relay running -- which is how `tests/test_protocol.gd` holds it.
-const PROTOCOL_VERSION := 4
+const PROTOCOL_VERSION := 5
 const DEFAULT_PORT := 7777
 ## `sim_net::MAX_MESSAGE_BYTES`. A length past this is garbage or a hostile peer, never a world.
 const MAX_MESSAGE_BYTES := 64 * 1024 * 1024
