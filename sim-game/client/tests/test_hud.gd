@@ -115,33 +115,95 @@ func test_the_map_disc_is_the_surface_the_probe_measured() -> bool:
 	return true
 
 
-## A LETTER ON A PATCH HAS TO BE READABLE ON EVERY PATCH, which is the whole point of having it: the
-## tints clear the colour-blindness floor by single digits, so the glyph is what a protan player
-## actually reads. Measured as a contrast ratio against the deposit colour composited over the map,
-## at the purities the map really draws, for all six slots. The floor is 3.0, WCAG's bar for large
-## text.
+## WCAG RELATIVE LUMINANCE, WRITTEN OUT HERE ON PURPOSE AND NOT CALLED FROM `AssayHud`.
 ##
-## This is an INSTRUMENT, not an echo of `glyph_color`: it computes contrast, where the function
-## decides a threshold. A tint added later that no letter can sit on fails here instead of shipping.
-## (Godot's `get_luminance` is a weighted sum of sRGB values, not linearised, so these numbers are a
-## consistent measure rather than a certified WCAG figure -- the comparison is what is load-bearing.)
-func test_the_species_letter_is_readable_on_every_patch() -> bool:
+## This is the whole reason the previous version of this test was useless. It scored contrast with
+## `Color.get_luminance()` -- the same quantity `glyph_color` was deciding with -- so the test and the
+## bug were computing the identical wrong number and agreeing with each other. It even said so in its
+## own docstring ("a consistent measure rather than a certified WCAG figure") and I shipped it anyway.
+## 226 of 600 disc states had the worse glyph and this test was green about all of them.
+##
+## So: the piecewise sRGB transfer function, spelled out, with no call into the file under test. If
+## `AssayHud.relative_luminance` and this ever disagree, one of them is wrong and the suite says so.
+func _wcag_luminance(c: Color) -> float:
+	var channels := [c.r, c.g, c.b]
+	var lin := []
+	for v: float in channels:
+		lin.append(v / 12.92 if v <= 0.04045 else pow((v + 0.055) / 1.055, 2.4))
+	return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+
+
+func _wcag_ratio(a: Color, b: Color) -> float:
+	var x := _wcag_luminance(a) + 0.05
+	var y := _wcag_luminance(b) + 0.05
+	return x / y if x > y else y / x
+
+
+## THE LETTER TAKES THE HIGHER-CONTRAST OF THE TWO GLYPH COLOURS, AT EVERY SPECIES AND EVERY PURITY.
+##
+## ASSA-39, Maren's ruling (option A) and her sharpening of its acceptance. The assertion is OPTIMALITY,
+## not a floor: picking the better of two is optimal by construction, so "the chosen glyph is the
+## higher-ratio one" is an invariant that cannot rot, while "every state clears 3.0" is a number that
+## would have to be revisited every time a tint moves -- and the tints moved twice this week. The worst
+## case of the best possible picker is 4.52, which is the CEILING of this two-colour family rather than
+## a target; it is printed, not asserted.
+##
+## SWEPT, NOT SAMPLED: all six tints x purity 1..100. The old test sampled five purities and the real
+## defect was worst at purity 52 for one species and 65 for another. Cove's own correction on the item
+## is worth keeping in view though -- end-sampling WOULD have caught this one, because purity 1 is
+## suboptimal for three species; what hid it was sampling one species and the broken instrument above.
+## Sweeping is cheap and removes the argument entirely.
+func test_the_species_letter_always_takes_the_higher_contrast_colour() -> bool:
+	var checked := 0
 	var worst := 99.0
 	var worst_at := ""
 	for species in range(AssayHud.SPECIES_TINTS.size()):
-		for purity in [1, 25, 50, 75, 100]:
+		for purity in range(1, 101):
 			var patch := AssayHud.deposit_color(species, purity)
 			var lit := AssayHud.MAP_BG.lerp(Color(patch.r, patch.g, patch.b), patch.a)
-			var glyph := AssayHud.glyph_color(patch)
-			var high: float = maxf(lit.get_luminance(), glyph.get_luminance()) + 0.05
-			var low: float = minf(lit.get_luminance(), glyph.get_luminance()) + 0.05
-			var ratio := high / low
-			if ratio < worst:
-				worst = ratio
-				worst_at = "species %d at purity %d (%s on %s)" % [species, purity, glyph, lit]
-	if worst < 3.0:
-		return _fail("the worst species letter makes a contrast ratio of %f, under 3.0: %s"
-				% [worst, worst_at])
+			var dark := _wcag_ratio(lit, AssayHud.GLYPH_DARK)
+			var light := _wcag_ratio(lit, AssayHud.GLYPH_LIGHT)
+			var got := AssayHud.glyph_color(patch)
+			var took: float = dark if got == AssayHud.GLYPH_DARK else light
+			var best: float = maxf(dark, light)
+			# Equal-contrast states exist (the flip points: red 72, pink 24, sky blue 47), and either
+			# choice is correct there, so the comparison has to tolerate the tie rather than demand an
+			# identity. 1e-6 is far below the 8-bit quantisation of any colour on screen.
+			if took < best - 1e-6:
+				return _fail(("species %d at purity %d took the glyph worth %f when %f was available "
+						+ "(dark %f, light %f). Picking the better of two is optimal by construction, so "
+						+ "this means the rule is deciding on something other than the ratio -- most "
+						+ "likely a threshold on Color.get_luminance(), which is not a perceptual "
+						+ "luminance. That was ASSA-39.")
+						% [species, purity, took, best, dark, light])
+			if took < worst:
+				worst = took
+				worst_at = "species %d at purity %d" % [species, purity]
+			checked += 1
+	if checked != 600:
+		return _fail("swept %d states, expected 600" % checked)
+	print("    glyph contrast: worst %f at %s (the ceiling of this pair, not a floor)"
+			% [worst, worst_at])
+	return true
+
+
+## AND THE ENGINE'S LINEARISATION IS THE ONE WCAG SPECIFIES, which the rule above leans on entirely.
+## `AssayHud.relative_luminance` uses `Color.srgb_to_linear()`; this checks it against the formula
+## written out in `_wcag_luminance`, over every value an 8-bit channel can hold. Measured rather than
+## assumed, because "the engine surely does the standard thing" is how the old 0.221 comment happened.
+func test_the_engines_linearisation_is_the_wcag_one() -> bool:
+	var worst := 0.0
+	var worst_at := 0
+	for i in range(0, 256):
+		var v := float(i) / 255.0
+		var grey := Color(v, v, v)
+		var gap := absf(AssayHud.relative_luminance(grey) - _wcag_luminance(grey))
+		if gap > worst:
+			worst = gap
+			worst_at = i
+	if worst > 1e-5:
+		return _fail(("Color.srgb_to_linear() is not the WCAG transfer function: channel %d is off by "
+				+ "%f. glyph_color's choice is only meaningful if this holds.") % [worst_at, worst])
 	return true
 
 
