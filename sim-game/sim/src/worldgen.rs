@@ -12,7 +12,7 @@ use crate::ladder;
 use crate::mineral::{MineralSpecies, Sheet, SpeciesId};
 use crate::ore::OreDeposit;
 use crate::rng::{Rng, hash_coords, mix};
-use crate::tuning::{MIN_STARTER_RUNGS, PURITY_SPREAD, SPECIES_PER_WORLD, STARTER_MIN_PURITY};
+use crate::tuning::{PURITY_SPREAD, SPECIES_PER_WORLD, STARTER_MIN_PURITY};
 use crate::types::{ChunkPos, DepositId, TilePos};
 use crate::world::CHUNK_SIZE;
 
@@ -118,14 +118,23 @@ pub fn deposit_in_chunk(
 /// letters so the ASCII map can show one letter per species.
 ///
 /// Rosters are rerolled (deterministically) until the starter ladder is
-/// climbable: at least `MIN_STARTER_RUNGS` rungs and a hand-lit fuel.
+/// climbable and the first pick is worth building — the whole list is
+/// [`ladder::starter_roster_ok`].
 pub fn species_roster(seed: u64) -> Vec<MineralSpecies> {
+    species_roster_attempts(seed).0
+}
+
+/// The roster, and how many rolls it took to find it.
+///
+/// **The count is for tests and nothing in the game reads it.** A reroll is
+/// cheap but not free, and every condition added to
+/// [`ladder::starter_roster_ok`] multiplies the attempts; `tests/ladder.rs`
+/// measures the mean so a future condition cannot make worldgen expensive
+/// without CI saying so.
+pub fn species_roster_attempts(seed: u64) -> (Vec<MineralSpecies>, u64) {
     (0u64..)
-        .map(|attempt| roll_roster(seed, attempt))
-        .find(|roster| {
-            ladder::rungs(roster).len() >= MIN_STARTER_RUNGS
-                && ladder::starter_species(roster).is_some()
-        })
+        .map(|attempt| (roll_roster(seed, attempt), attempt + 1))
+        .find(|(roster, _)| ladder::starter_roster_ok(roster))
         .expect("some roster passes the ladder check")
 }
 
