@@ -193,6 +193,83 @@ static func item_echo(text: String) -> String:
 	return String(ClassDB.class_call_static("AssaySim", "item_echo", text))
 
 
+## THE SAME VERDICT FOR A WHOLE `PlayerCommand`, which is what a BUTTON sends (ASSA-37).
+##
+## Every command this client can send is built in GDScript by `AssayActions`, and the only thing that
+## can tell a correct shape from a plausible one is the deserialiser that will actually read it.
+## `tests/test_actions.gd` puts every builder through here. Two of my own mistakes are why: a unit
+## variant written as `{"Stop": {}}`, which a relay drops without a word, and `species: 3.0`, which
+## Godot and serde disagree about.
+static func command_echo(command: Variant) -> String:
+	if not ClassDB.class_exists("AssaySim"):
+		return ""
+	return String(ClassDB.class_call_static("AssaySim", "command_echo", JSON.stringify(command)))
+
+
+## THE SIM'S OWN PART CATALOGUE: `name`, `size` and `tag`, in `PartKind::ALL` order.
+##
+## So the client's "make a part" buttons are the sim's list and not four strings typed in here. ADR
+## 0003's consequence is that a new part kind needs no recipe, and a client with its own copy of the
+## catalogue would be the one place that still had to be edited.
+static func part_kinds() -> Array:
+	if not ClassDB.class_exists("AssaySim"):
+		return []
+	return ClassDB.class_call_static("AssaySim", "part_kinds")
+
+
+## THE SIM'S OWN RECIPE TABLE: `name`, `tag`, `input`, `input_count`, `hand`. A Craft button only
+## belongs on a stack whose kind is some recipe's `input`, and only for a recipe a player's own hands
+## can make -- `Refine` and `Resmelt` happen inside a smelter and are nobody's button.
+static func recipes() -> Array:
+	if not ClassDB.class_exists("AssaySim"):
+		return []
+	return ClassDB.class_call_static("AssaySim", "recipes")
+
+
+## The wire tag for one part kind by name, as serde spells it: `"Head"`, or `{"Frame": "Held"}` for a
+## handle. THE NAME ITSELF when the catalogue has no such kind, so the command is refused by name
+## rather than quietly becoming another part.
+static func part_tag(name: String) -> Variant:
+	return _tag_in(part_kinds(), name)
+
+
+## The wire tag for one recipe by name (`"smelter"` -> `"Smelter"`). The case differs, which is
+## exactly the kind of thing a client should not be guessing at.
+static func recipe_tag(name: String) -> Variant:
+	return _tag_in(recipes(), name)
+
+
+static func _tag_in(catalogue: Array, name: String) -> Variant:
+	for entry in catalogue:
+		var row: Dictionary = entry
+		if String(row.get("name", "")) == name:
+			return row.get("tag", name)
+	return name
+
+
+## HOW MANY TILES A PLACED ITEM WOULD COVER, or (0, 0) for an item that is not placeable. For saying
+## which tiles a click just chose; it decides nothing -- `sim::step` owns whether a placement is legal
+## and this client never asks first (Maren's ruling: never refuse).
+static func footprint_of_item(kind: String, species: int, grade: String) -> Vector2i:
+	if not ClassDB.class_exists("AssaySim"):
+		return Vector2i.ZERO
+	return ClassDB.class_call_static("AssaySim", "footprint_of_item", kind, species, grade)
+
+
+## A RELAY-SHAPED `Welcome` FOR A FRESH WORLD, for tests and offline tools only.
+##
+## Not a second way to play and not a single-player mode: there is no clock behind it, so a caller
+## has to write its own tick bundles, which is exactly what `tools/button_session.gd` does. It exists
+## because the client's headless suite had no world at all -- every HUD test ran against dictionaries
+## I had typed out myself, which is the failure I keep repeating in new costumes: my test agrees with
+## my bug because I wrote both from the same assumption.
+static func fresh_welcome_json(world_seed: String, player_name: String) -> String:
+	if not ClassDB.class_exists("AssaySim"):
+		return ""
+	return String(ClassDB.class_call_static("AssaySim", "fresh_welcome_json", world_seed,
+			player_name))
+
+
 ## EVERY DESIGN ONE PLAYER HOLDS, for the part menu: the tool in hand first (`index` -1), then the
 ## built list in the order `Equip` and `PlaceAssembly` index.
 ##

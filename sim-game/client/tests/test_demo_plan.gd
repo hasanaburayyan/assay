@@ -1,12 +1,12 @@
 extends RefCounted
-## THE DEMO LOOP'S PLAN, AS TESTS. `AssayDemoPlan` is what `lockstep_probe.gd --session` sends and how
-## much of everything it needs; this checks the parts of that which can be wrong without a relay.
+## THE DEMO LOOP'S PLAN, AS TESTS. `AssayDemoPlan` is how much of everything
+## `lockstep_probe.gd --session` needs and where it stands to get it; this checks the parts of that
+## which can be wrong without a relay.
 ##
-## The one thing NOT checked here is the most important: that the item dictionaries below are the
-## shape serde reads. That needs the sim, so it lives in `test_sim_binding.gd`, where the same
-## dictionaries are held against `AssaySim.item_json` -- serde writing them itself. A test of these
-## shapes written from my own reading of the protocol would agree with my own misreading of it, which
-## is exactly how I got the bundle tick convention backwards on 2026-10-01.
+## WHAT A COMMAND LOOKS LIKE MOVED OUT (ASSA-37): the item and part tags live in `AssayActions` now,
+## with the rest of the command shapes, and `test_actions.gd` holds them against serde. They left
+## because the client grew buttons and a second spelling of one command is the one disagreement
+## nobody would notice.
 
 var runner = null
 
@@ -41,43 +41,6 @@ func test_the_ore_it_mines_is_the_ore_it_spends() -> bool:
 				% [AssayDemoPlan.material_ore_needed(), AssayDemoPlan.SMELTER_ORE, parts])
 	if AssayDemoPlan.part_size("gear") != 0:
 		return _fail("a kind the loop does not make should cost 0, not a guess")
-	return true
-
-
-## AN ITEM IS ECHOED, NEVER INVENTED: the kind, species and grade come straight back out of the stack
-## the sim described. A client that re-derived any of them would eventually name an item it is not
-## carrying, and the command would be refused for the wrong reason.
-func test_an_item_is_echoed_out_of_the_stack_the_sim_named() -> bool:
-	var stack := _stack("refined", 4, "B", 9)
-	var item := AssayDemoPlan.item_of_stack(stack)
-	if item != AssayDemoPlan.item("refined", 4, "B"):
-		return _fail("a stack of refined became %s" % [item])
-	if int(item["species"]) != 4 or String(item["grade"]) != "B":
-		return _fail("the species or grade did not survive: %s" % [item])
-	# A lower-case grade off the wire is still a grade; serde spells them upper.
-	if AssayDemoPlan.item("ore", 1, "c") != AssayDemoPlan.item("ore", 1, "C"):
-		return _fail("grade case changed the item")
-	# An unknown kind is passed through UNCHANGED rather than guessed at, so the sim refuses it by
-	# name instead of the client quietly turning it into some other item.
-	if AssayDemoPlan.item("widget", 1, "C")["kind"] != "widget":
-		return _fail("an unknown kind was guessed at: %s" % [AssayDemoPlan.item("widget", 1, "C")])
-	return true
-
-
-## ONE SOURCE FOR WHAT A HANDLE IS. `MakePart` names a PART kind and `Assemble` names an ITEM, so the
-## same thing is spelled two ways on the wire -- and if they ever disagree, a client would make a
-## handle and then assemble something that is not one.
-func test_a_part_item_and_a_part_kind_agree_about_what_a_handle_is() -> bool:
-	for kind in ["head", "handle", "frame", "hopper"]:
-		var item: Variant = AssayDemoPlan.item(kind, 2, "C")["kind"]
-		if typeof(item) != TYPE_DICTIONARY or not (item as Dictionary).has("Part"):
-			return _fail("a %s item is not tagged as a part: %s" % [kind, item])
-		if (item as Dictionary)["Part"] != AssayDemoPlan.part_kind_tag(kind):
-			return _fail("a %s item says %s and MakePart says %s"
-					% [kind, (item as Dictionary)["Part"], AssayDemoPlan.part_kind_tag(kind)])
-	# A handle and a frame are ONE kind with two mounts, which is the catalogue's design.
-	if AssayDemoPlan.part_kind_tag("handle") == AssayDemoPlan.part_kind_tag("frame"):
-		return _fail("a handle and a planted frame must not be the same tag")
 	return true
 
 
