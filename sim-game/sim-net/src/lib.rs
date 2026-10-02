@@ -314,14 +314,20 @@ mod tests {
         let g = greeting(PROTOCOL_6_HELLO.as_bytes());
         assert_eq!(g.protocol, Some(6), "the protocol is the actionable field");
         assert_eq!(g.name.as_deref(), Some("ada"));
-        assert_eq!(g.rules, None, "protocol 6 had no rules field; that is the point");
+        assert_eq!(
+            g.rules, None,
+            "protocol 6 had no rules field; that is the point"
+        );
     }
 
     #[test]
     fn an_unreadable_frame_still_earns_a_sentence() {
         // 1. The real case: an old protocol, no rules field.
         let old = refuse_unreadable(&greeting(PROTOCOL_6_HELLO.as_bytes()));
-        assert!(old.contains("v6") && old.contains(&PROTOCOL_VERSION.to_string()), "{old}");
+        assert!(
+            old.contains("v6") && old.contains(&PROTOCOL_VERSION.to_string()),
+            "{old}"
+        );
         assert!(
             old.contains(RULES_ID),
             "it must name the build to download, like the rules sentence does: {old}"
@@ -340,10 +346,17 @@ mod tests {
 
         // 2. Nothing readable at all: still three things, never a dropped
         //    socket. This is the arm a greeting-shaped test would miss.
-        for junk in [b"not json at all".as_slice(), b"{}".as_slice(), b"".as_slice()] {
+        for junk in [
+            b"not json at all".as_slice(),
+            b"{}".as_slice(),
+            b"".as_slice(),
+        ] {
             let said = refuse_unreadable(&greeting(junk));
             assert!(said.contains(RULES_ID), "{said}");
-            assert!(said.contains("Nothing is wrong with your machine"), "{said}");
+            assert!(
+                said.contains("Nothing is wrong with your machine"),
+                "{said}"
+            );
         }
 
         // 3. **OUR PROTOCOL, NO RULES FIELD.** This arm exists because a

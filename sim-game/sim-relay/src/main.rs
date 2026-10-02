@@ -24,8 +24,7 @@ use auth::{AccountId, Authenticator, DevAuthenticator};
 use sim::{Event, Input, PlayerCommand, PlayerId, SystemCommand, World, step};
 use sim_net::{
     ClientMsg, DEFAULT_PORT, Greeting, HASH_EVERY, PROTOCOL_VERSION, ServerMsg, TickBundle,
-    read_frame,
-    saves_dir, write_msg,
+    read_frame, saves_dir, write_msg,
 };
 
 const AUTOSAVE_EVERY: u64 = 20;
