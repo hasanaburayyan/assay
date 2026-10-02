@@ -1,7 +1,9 @@
 # Tests every push and PR, and builds downloadable Mac + Windows bundles.
 #
 # Each bundle holds BOTH halves of the game: the terminal client and the relay
-# (`sim-cli`, `sim-relay`) and the Godot client (`Assay.app` / `Assay.exe`).
+# (`sim-cli`, `sim-relay`) and the Godot client (`Assay.app` / `Assay.exe`),
+# which carries the `sim-godot` library inside it so it runs the same Rust rules
+# every other peer runs instead of a GDScript guess at them.
 # One download, one run, same commit -- a tester cannot pair a client with a
 # relay from a different build, which is the mistake the split used to invite.
 # The relay is shipped beside the client, not inside it: a host starts the
@@ -59,11 +61,40 @@ jobs:
             "https://github.com/godotengine/godot/releases/download/$GODOT_VERSION/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
           unzip -q godot.zip -d godot
           chmod +x "godot/Godot_v${GODOT_VERSION}_linux.x86_64"
+      # The client loads the real `sim` through a GDExtension, so the engine
+      # cannot even start without it: GODOT ABORTS (exit 134, a C++ stack trace,
+      # no usable message) when a `.gdextension` names a library that is not
+      # there -- measured 2026-10-01.
+      #
+      # Release so this job loads the same configuration the export jobs ship.
+      # (I first used debug to reuse what `cargo test` compiled, saw `--import`
+      # crash, and blamed debug for it in run 36942131128. Wrong: release
+      # crashed identically, and the real cause is the import bug handled in the
+      # next step. Debug would work; release is the better default anyway.)
+      - name: The sim binding the client loads
+        run: |
+          cargo build -p sim-godot --release
+          mkdir -p client/bin
+          cp target/release/libsim_godot.so client/bin/
       - name: Client suite
         working-directory: sim-game/client
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64"
-          "$GODOT" --headless --import
+          # THE FIRST IMPORT OF A PROJECT WITH A GDEXTENSION CRASHES ON EXIT,
+          # and it is Godot's crash, not ours. The backtrace is Main::cleanup ->
+          # CallQueue::flush -> EditorHelp::_gen_extensions_docs ->
+          # DocTools::generate -> signal 11, i.e. the editor generating docs for
+          # extension classes while shutting down -- long after the import work
+          # itself finished. Measured both on this runner (run 36943152626) and
+          # locally on 4.6.1, where deleting `.godot/` reproduces it every time
+          # and the cache it leaves behind is complete.
+          #
+          # SO THE RETRY IS THE GATE, not a `|| true` that swallows everything:
+          # the first run is allowed to die, the SECOND MUST EXIT 0 (measured:
+          # it does, in 2s, because the cache is already there). The two export
+          # jobs below do the same and say less.
+          "$GODOT" --headless --import || "$GODOT" --headless --import
+          grep -q 'sim.gdextension' .godot/extension_list.cfg
           "$GODOT" --headless --script tests/run_tests.gd | tee suite.log
           # GODOT EXITS 0 ON A COMPILE ERROR, so the count the runner prints is
           # the verdict and the exit code is not. Grep the file, never a pipe.
@@ -83,7 +114,7 @@ jobs:
           workspaces: sim-game
       - name: Build for both Mac chips
         run: >
-          cargo build --release -p sim-cli -p sim-relay
+          cargo build --release -p sim-cli -p sim-relay -p sim-godot
           --target aarch64-apple-darwin --target x86_64-apple-darwin
       - name: Bundle (universal binaries)
         run: |
@@ -110,11 +141,34 @@ jobs:
           dest="$HOME/Library/Application Support/Godot/export_templates"
           mkdir -p "$dest"
           mv templates/templates "$dest/$GODOT_TEMPLATE_DIR"
+      # THE SIM, UNIVERSAL, WHERE THE CLIENT LOADS IT FROM. A `TickBundle`
+      # carries inputs, so the world at tick N exists only once something runs
+      # `sim::step`; that something is this library, never GDScript.
+      #
+      # Universal because the .app is (`binary_format/architecture="universal"`
+      # in export_presets.cfg). This runner is Apple Silicon, so an arm64-only
+      # library would load here, pass every check below, and fail on the first
+      # tester with an Intel Mac.
+      - name: The sim binding, for both Mac chips
+        run: |
+          mkdir -p client/bin
+          lipo -create \
+            target/aarch64-apple-darwin/release/libsim_godot.dylib \
+            target/x86_64-apple-darwin/release/libsim_godot.dylib \
+            -output client/bin/libsim_godot.dylib
+          lipo -info client/bin/libsim_godot.dylib
       - name: Export the Godot client
         working-directory: sim-game/client
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot.app/Contents/MacOS/Godot"
-          "$GODOT" --headless --import
+          # Said plainly here because the alternative is Godot aborting mid-export
+          # with a C++ stack trace and no reason (exit 134, measured).
+          test -f bin/libsim_godot.dylib \
+            || { echo "no bin/libsim_godot.dylib: the step above did not run"; exit 1; }
+          # First import crashes on exit in Godot's own doc generation; the
+          # second must not. The long version is in the test job above.
+          "$GODOT" --headless --import || "$GODOT" --headless --import
+          grep -q 'sim.gdextension' .godot/extension_list.cfg
           # Godot DOES NOT CREATE THE OUTPUT FOLDER -- it fails with "Target
           # folder does not exist or is inaccessible" (measured 2026-10-01).
           mkdir -p ../bundle/assay-macos
@@ -124,11 +178,20 @@ jobs:
           # first open is still right-click → Open.
           codesign -s - --force --deep ../bundle/assay-macos/Assay.app
           codesign -dv ../bundle/assay-macos/Assay.app
+          # The exporter copies a .gdextension's libraries into the bundle
+          # (Contents/Frameworks, measured locally). Said out loud because the
+          # selfcheck below would otherwise be the only thing standing between a
+          # silently library-less .app and a tester.
+          find ../bundle/assay-macos/Assay.app -name 'libsim_godot.dylib' | grep .
       - name: The exported client runs
         run: |
           # AN EXPORT CAN SUCCEED AND SHIP A PACK THAT WILL NOT LOAD, and the
           # exit code of a missing or broken binary can still be 0 (measured),
-          # so the marker file this writes LAST is the verdict.
+          # so the marker file this writes LAST is the verdict. It now also
+          # covers the sim binding: the check steps a small world through the
+          # library and through `sim::step` directly and compares the two
+          # hashes, so a library that shipped but will not load is caught here
+          # rather than by the first player who tries to see tick N.
           rm -f selfcheck.txt
           bundle/assay-macos/Assay.app/Contents/MacOS/Assay \
             --headless -- --selfcheck "$PWD/selfcheck.txt"
@@ -153,8 +216,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: sim-game
+      # The sim binding is built in the SAME invocation, with the same flags, on
+      # purpose: it ships to players too, so it must not be the one file in the
+      # zip that needs a VC++ redistributable. Separate invocations with
+      # different RUSTFLAGS would also recompile the whole dependency graph.
       - name: Build (static C runtime, no VC++ redistributable needed)
-        run: cargo build --release -p sim-cli -p sim-relay
+        run: cargo build --release -p sim-cli -p sim-relay -p sim-godot
         env:
           RUSTFLAGS: -C target-feature=+crt-static
       - name: Bundle
@@ -191,8 +258,28 @@ jobs:
           # surfaced two steps later as a missing file. The wrapper is what
           # makes every exit code below mean something.
           $godot = "$($env:GITHUB_WORKSPACE)\sim-game\godot\Godot_v$($env:GODOT_VERSION)_win64_console.exe"
+          # THE SIM BINDING, WHERE sim.gdextension LOOKS FOR IT. A TickBundle
+          # carries inputs, so the world at tick N exists only once something
+          # runs sim::step, and that something is this DLL, never GDScript.
+          # Godot ABORTS mid-export (exit 134, a C++ stack trace, no reason)
+          # when a .gdextension names a library that is not there, so say it
+          # here instead.
+          New-Item -ItemType Directory -Force bin | Out-Null
+          Copy-Item ../target/release/sim_godot.dll bin/
+          if (-not (Test-Path bin/sim_godot.dll)) { throw "no bin/sim_godot.dll to export with" }
+          # First import crashes on exit in Godot's own doc generation for
+          # extension classes; the second must not. The long version is in the
+          # test job above.
           & $godot --headless --import
-          if ($LASTEXITCODE -ne 0) { throw "godot --import exited $LASTEXITCODE" }
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "first --import exited $LASTEXITCODE; retrying once"
+            & $godot --headless --import
+            if ($LASTEXITCODE -ne 0) { throw "godot --import exited $LASTEXITCODE twice" }
+          }
+          if (-not (Select-String -Path .godot/extension_list.cfg `
+              -Pattern 'sim.gdextension' -Quiet)) {
+            throw "the import registered no sim.gdextension"
+          }
           # Godot does not create the output folder (measured on macOS; same
           # exporter). The preset embeds the pack, so this is one .exe.
           New-Item -ItemType Directory -Force ../bundle/assay-windows | Out-Null
@@ -204,12 +291,22 @@ jobs:
             Get-ChildItem ../bundle/assay-windows
             throw "the export reported success but wrote no Assay.exe"
           }
+          # The pack is embedded in the .exe, but a GDExtension library cannot be
+          # -- the OS loads it as a file. Where the exporter puts it is its
+          # business; that it is IN the zip is ours.
+          $lib = Get-ChildItem -Recurse ../bundle/assay-windows -Filter sim_godot.dll
+          if (-not $lib) {
+            Get-ChildItem -Recurse ../bundle/assay-windows | Select-Object -Expand FullName
+            throw "the export shipped no sim_godot.dll, so the client cannot run the sim"
+          }
+          $lib.FullName
       - name: The exported client runs
         shell: pwsh
         run: |
           # The only check the Windows build gets: nobody at the studio has a
           # Windows machine, but the runner can run what it just built. The
-          # marker file is the verdict, for the reasons in selfcheck.gd.
+          # marker file is the verdict, for the reasons in selfcheck.gd. It is
+          # also the only proof that the sim binding loads on Windows at all.
           $marker = Join-Path $pwd 'selfcheck.txt'
           Remove-Item $marker -ErrorAction SilentlyContinue
           # START-PROCESS IGNORES POWERSHELL'S CURRENT DIRECTORY: it resolves a

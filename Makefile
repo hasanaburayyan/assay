@@ -10,6 +10,13 @@
 #   make ip                    print this machine's address to give players
 #   make play                  single-player inspector
 #   make test                  run the test suite
+#   make client-lib            build the sim binding the Godot client loads
+#
+# BEFORE YOU OPEN sim-game/client IN GODOT, RUN `make client-lib`. The client
+# loads the real sim through a GDExtension, and Godot ABORTS (exit 134, a C++
+# stack trace, no usable message) when a `.gdextension` points at a library
+# that is not there -- measured 2026-10-01. CI builds it per platform before
+# every export; from a checkout it is yours to build.
 #   make talk                  spoken design conversation (make talk-text to type)
 #
 # Over the internet, HOST is the host's Tailscale address (100.x.y.z) or
@@ -19,7 +26,7 @@ NAME ?= $(USER)
 HOST ?= localhost:7777
 SEED ?= 42
 
-.PHONY: relay fresh join play plain test ip talk talk-text
+.PHONY: relay fresh join play plain test client-lib ip talk talk-text
 
 relay:
 	cd sim-game && cargo run -p sim-relay -- $(SEED)
@@ -38,6 +45,18 @@ plain:
 
 test:
 	cd sim-game && cargo test
+
+# The library name differs per platform and `sim.gdextension` names all three,
+# so copy whichever one cargo just wrote rather than guessing.
+client-lib:
+	cd sim-game && cargo build -p sim-godot --release
+	mkdir -p sim-game/client/bin
+	cd sim-game && cp target/release/libsim_godot.dylib \
+		target/release/libsim_godot.so \
+		target/release/sim_godot.dll client/bin/ 2>/dev/null || true
+	@ls sim-game/client/bin/*sim_godot* >/dev/null 2>&1 \
+		|| { echo "cargo built no sim-godot library; nothing copied into client/bin/"; exit 1; }
+	@echo "client/bin: $$(ls sim-game/client/bin)"
 
 ip:
 	@ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | cut -d' ' -f1 || echo "Could not find a network address; start the relay and read it there."

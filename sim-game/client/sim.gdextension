@@ -1,0 +1,30 @@
+; How the client loads the real simulation (ASSA-7 / Marlow's ruling A).
+;
+; The library itself is BUILD OUTPUT and is not in git: CI builds `sim-godot`
+; into `client/bin/` before it exports, so the binary ends up inside the .app
+; and the .exe. `bin/` is ignored; see client/.gitignore.
+;
+; `compatibility_minimum` must match the `api-4-*` feature in
+; sim-godot/Cargo.toml, which must match `GODOT_VERSION` in the build
+; workflow. A cdylib built against a different API than the engine loading it
+; fails at load, so all three move together.
+;
+; If you are running the client from a checkout and it cannot find a class,
+; you have not built the library yet:
+;   cargo build -p sim-godot --release
+;   mkdir -p client/bin && cp target/release/libsim_godot.dylib client/bin/
+
+[configuration]
+
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = 4.6
+reloadable = true
+
+[libraries]
+
+macos.debug = "res://bin/libsim_godot.dylib"
+macos.release = "res://bin/libsim_godot.dylib"
+windows.debug.x86_64 = "res://bin/sim_godot.dll"
+windows.release.x86_64 = "res://bin/sim_godot.dll"
+linux.debug.x86_64 = "res://bin/libsim_godot.so"
+linux.release.x86_64 = "res://bin/libsim_godot.so"

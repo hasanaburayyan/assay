@@ -5,6 +5,9 @@
 # Where CI assembles the Mac and Windows zips. Running those steps by hand
 # leaves a 170 MB app bundle here; it is not something to commit.
 /bundle
+# The compiled sim binding that client/sim.gdextension points at. Build
+# output: CI rebuilds it per platform before every export.
+/client/bin
 # Godot editor and export templates, if you run the CI export steps locally.
 /godot
 /templates

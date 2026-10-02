@@ -1,0 +1,22 @@
+[package]
+name = "sim-godot"
+version = "0.1.0"
+edition = "2024"
+description = "GDExtension host: lets the Godot client run the real `sim`, instead of guessing."
+publish = false
+
+[lib]
+# `cdylib` is what Godot loads. `rlib` is so `cargo test` can reach this code
+# at all — the tests below run the binding's logic with no engine present,
+# which is the only way to test it in CI without a Godot process.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Pinned to the same Godot this repo exports with: `GODOT_VERSION` in
+# .github/workflows/build.yml. A cdylib built against a different API than the
+# engine loading it fails at load time, so these two move together or not at
+# all.
+godot = { version = "0.5.5", features = ["api-4-6"] }
+sim = { path = "../sim" }
+sim-net = { path = "../sim-net" }
+serde_json = "1.0.151"
