@@ -353,6 +353,59 @@ version, and it reproduces the engine's own `deposit_color` for all 600 states
 to **1.1e-5** of a code value against `map_disc`'s **0.5**. The two now agree
 exactly, and both match the number Maren derived independently.
 
+## The contract a client needs, and what it gets if nobody ships one
+
+```bash
+art/check_part_contract.py                        # GREEN; in CI
+FAKE_CONTRACT_OFFSET=8,8 art/check_part_contract.py   # module moved, file stale -> RED
+```
+
+The sheets and `manifest.json` tell a renderer how to **slice** frames. Nothing
+in them says how to **combine** frames into a machine, and the two rules that
+do live in `art/part_layout.py`, which only Python can import. So they ship as
+`client/assets/sprites/part_layout.json`, written by `build.py` **from the
+module** — `repeat_offset_px`, `shadow_ceiling`, and the prose a number cannot
+carry (which order repeats count in, what to use instead of `over`).
+
+**A SIBLING FILE, NOT A BLOCK IN THE MANIFEST**, which is what ASSA-54
+originally specified. The manifest's top level is an *asset namespace*:
+`check_client_can_see_art.py` does `man[a]["sheet"]` for every key, and the
+client's `test_sprites.gd` walks it both ways and fails with *"the manifest
+describes `X` and there is no X.png"*. A `part_layout` key would have broken
+both on the commit that added it.
+
+**What the naive client gets, measured rather than argued.** A client handed
+nine sheets and told to draw the parts blits each frame at one position with
+the default operator — which is this pipeline's two red levers
+(`PART_OFFSET=0,0`, `STACK_OVER=1`) switched on together. A drill gaining
+hoppers, at 1×:
+
+| hoppers | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|
+| footprint gained, **rules** | +117 | +108 | +155 | +192 |
+| footprint gained, **naive** | +131 | **+25** | **+17** | **+19** |
+
+| hoppers | 0 | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|---|
+| darkest shadow alpha, **rules** | 122 | 122 | 122 | 122 | 122 |
+| darkest shadow alpha, **naive** | 128 | 145 | 181 | 205 | 221 |
+
+25, 17 and 19 px are antialiased edges hardening, not parts: **hoppers two,
+three and four are invisible**, and capacity is a real number in sim. Meanwhile
+the shadow darkens with every part, which is a gradient nobody chose reporting
+a quantity shadow has no business reporting — the glint rule inverted. Picture
+at 1×: `shared/assay/part-contract-2026-10-02.png`.
+
+**One thing the engine told me that Python would not have.** Godot's JSON
+parser returns every number as a double, so the contract arrives as `14.0`,
+`-6.0`, `34.0`. Harmless here — all three are small and exactly representable —
+but a client must cast, and this is the same hazard `sim-game/CLAUDE.md`
+already records for hashes crossing as hex text. Verified by reading the file
+from a headless engine run, not by reading the file in Python.
+
+**The offset is in the same authoring pixels as `frame_px`**, so a renderer
+scales it by exactly what it scales the frame by: at 1× that is half, `(7, -3)`.
+
 ## Machines are overlaid part sprites, and the seams have to show
 
 A machine is never a sprite. It is whole part frames stacked at one position

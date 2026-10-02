@@ -72,6 +72,19 @@ jobs:
       # would otherwise only meet in a shipped bundle. Stdlib only, ~0.1s.
       - name: The client can reach the art
         run: python3 art/check_client_can_see_art.py
+      # THE RULES THAT TURN PARTS INTO A MACHINE ARE SHIPPED, AND STILL TRUE.
+      # The sheets say how to slice frames and nothing says how to COMBINE
+      # them, so `client/assets/sprites/part_layout.json` carries the repeat
+      # offset and the shadow ceiling out of `art/part_layout.py` (ASSA-54).
+      # A client that instead blits part frames at one position with the
+      # default operator gets both defects this pipeline already measured and
+      # rejected: the second hopper adds 25 px at 1x instead of 108 (that is
+      # antialiasing, not a part) and the darkest contact shadow runs
+      # 128 -> 221 over four hoppers, so shadow darkness reports part count.
+      # This fails if the shipped file and the module ever disagree -- a
+      # constant that ships is a copy, and copies rot. Stdlib only, ~0.1s.
+      - name: The part-layout contract matches its module
+        run: python3 art/check_part_contract.py
       # The client's own GDScript suite gates the bundles below. Editor only:
       # running tests needs no export templates, which is the ~1 GB download.
       - name: Godot (editor only)

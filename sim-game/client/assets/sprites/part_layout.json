@@ -1,0 +1,11 @@
+{
+ "source": "art/part_layout.py",
+ "repeat_offset_px": [
+  14,
+  -6
+ ],
+ "repeat_offset_space": "the same authoring pixels as `frame_px` in manifest.json; scale it by exactly what you scale the frame by",
+ "repeat_rule": "the nth repeat of a part KIND is drawn at n * repeat_offset_px, n counting from 0 in sim's Assembly::parts() order (frame first). Without it, repeats land on each other and a machine cannot show how many of a part it has.",
+ "shadow_ceiling": 34,
+ "shadow_rule": "a pixel whose brightest channel is below shadow_ceiling is contact shadow: composite colour OVER but take alpha MAX, so shadows never accumulate. Plain `over` makes a machine's shadow darken with every part added, which is a gradient reporting part count."
+}
