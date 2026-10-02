@@ -65,6 +65,9 @@ PALETTE = {
     # once. Both measured in art/species_probe.py.
     "ore": "#CCC8C2", "ore_dk": "#7B7872", "ore_hi": "#F6F2EA",
     "line": "#1A1D23",
+    # The grade-A glint EMITS this and nothing else emits it. Neutral by
+    # necessity, not by taste: see GRADE_GLINT_COLOR.
+    "glint": "#FFFFFF",
 }
 
 from species_tints import SPECIES_TINTS  # noqa: F401  (data, see that file)
@@ -141,8 +144,15 @@ from part_layout import PART_REPEAT_OFFSET  # noqa: F401  (rule 5, see that file
 #
 #    ENFORCED by art/loudness.py against the real packed sheets, with the
 #    floor read from art/species_tints.py rather than written down here. It
-#    is RED today on player/* and frame/A; which way that red clears is the
-#    Director's call and is NOT to be painted over by an exemption.
+#    was RED on player/* and frame/A, and Decision #37 cleared both, each the
+#    honest way round: frame/A was a BUG in the glint (see `graded_accent`)
+#    and was fixed; the PLAYER was ruled out of scope, because the budget
+#    covers what a player SCANS -- ground, machines, ground items, UI chrome
+#    -- and an avatar is one humanoid sprite you never search a field for.
+#    That exemption attaches to the SURFACE, never to a palette entry:
+#    `suit` and `orange` are two names for one hex and stay independent
+#    forever, so a machine can never claim the player's exemption by wearing
+#    the player's colour.
 LYING = (0, math.pi / 2, 0)
 PART_TILES = (2, 1)
 PART_AXIS = 0.28
@@ -157,13 +167,19 @@ def srgb(h):
 _mats = {}
 
 
-def mat(color, rough=0.75, metal=0.0, emit=0.0):
-    """Material for a palette name (or hex). Cached per (color, params)."""
-    key = (color, rough, metal, emit)
+def mat(color, rough=0.75, metal=0.0, emit=0.0, emit_color=None):
+    """Material for a palette name (or hex). Cached per (color, params).
+
+    `emit_color` is the colour of the LIGHT, which is not always the colour of
+    the surface. It defaults to the surface's own colour -- right for a lamp,
+    where the hue IS the signal -- but see `graded_accent`: an emissive
+    SATURATED surface does not get brighter, it slides sideways into another
+    hue, because the channels clip one at a time."""
+    key = (color, rough, metal, emit, emit_color)
     if key in _mats:
         return _mats[key]
     hexcol = PALETTE.get(color, color)
-    m = bpy.data.materials.new(f"{color}_{rough}_{metal}_{emit}")
+    m = bpy.data.materials.new(f"{color}_{rough}_{metal}_{emit}_{emit_color}")
     m.use_nodes = True
     b = m.node_tree.nodes["Principled BSDF"]
     b.inputs["Base Color"].default_value = (*srgb(hexcol), 1)
@@ -171,7 +187,8 @@ def mat(color, rough=0.75, metal=0.0, emit=0.0):
     b.inputs["Metallic"].default_value = metal
     b.inputs["Specular IOR Level"].default_value = 0.3
     if emit:
-        b.inputs["Emission Color"].default_value = (*srgb(hexcol), 1)
+        b.inputs["Emission Color"].default_value = (
+            *srgb(PALETTE.get(emit_color, emit_color) if emit_color else hexcol), 1)
         b.inputs["Emission Strength"].default_value = emit
     _mats[key] = m
     return m
@@ -200,6 +217,7 @@ GRADES = ("C", "B", "A")
 GRADE_DULL = (0.45, 0.15, 0.0)      # mixed toward GRADE_SHADE
 GRADE_SHADE = "gun"
 GRADE_GLINT = (0.0, 0.0, 2.5)       # emission on the part's warm accent, A only
+GRADE_GLINT_COLOR = "glint"         # ...and the LIGHT is neutral. See below.
 
 # WHICH PARTS WEAR A WARM MARK, and it is not "all of them".
 #
@@ -241,9 +259,32 @@ def graded(color, g, **kw):
 def graded_accent(color, g, **kw):
     """The one warm mark a part wears, which is where grade is loudest: dulled
     at C, as drawn at B, and glinting at A. The glint is the top step's whole
-    signal at 1x -- a tone difference alone does not survive 32 px."""
+    signal at 1x -- a tone difference alone does not survive 32 px.
+
+    THE GLINT BLOWS OUT TO NEUTRAL, AND THE COLOUR IS NOT A CHOICE (Decision
+    #37, Maren). An emissive SATURATED surface does not get brighter, it
+    slides into a different hue: `orange` #F08A24 at strength 2.5 clips R and
+    G at the ceiling and leaves B behind at 89, so the brightest pixels of
+    frame/A came out rgb(255, 254, 89). That is species3's yellow, dE76 10.9
+    from its grade-C ore, under species_probe's DISTINCT of 12. Nobody picked
+    that hue. The clip picked it, the same way ore.py's `_edge` variant
+    invented a gradient the sim did not have (ASSA-26).
+
+    Which makes it a RULE rather than a repaint, because the cause is general:
+    every saturated hue in this game now belongs to a species (Decision #36),
+    so ANY clipped saturated emitter lands on one of them -- it is only a
+    question of which. Emission is intensity, not hue, so the ladder
+    (dulled -> as drawn -> glinting) is untouched and legal; what is illegal
+    is a saturated hue in the blowout. A neutral blowout clips to white, and
+    no species tint is neutral.
+
+    A LAMP IS NOT A GLINT and keeps its own colour (`lamp`): the cyan of a
+    powered machine IS the information, and it measures clear of all six
+    species on real sprites (drill/idle mark dE 49.5, spawn/pad 53.5).
+    Enforced on the packed sheets by art/loudness.py, measure C."""
     return mat(mix_hex(color, GRADE_SHADE, GRADE_DULL[g]) if GRADE_DULL[g] else color,
-               emit=GRADE_GLINT[g], **kw)
+               emit=GRADE_GLINT[g],
+               emit_color=GRADE_GLINT_COLOR if GRADE_GLINT[g] else None, **kw)
 
 
 def lamp(color="cyan"):
