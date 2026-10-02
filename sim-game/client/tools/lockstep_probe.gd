@@ -736,6 +736,13 @@ func _check_walked() -> bool:
 ##
 ## The stage that got furthest is named in every failure, because "the loop did not finish" is not a
 ## report -- which stage it died in, and what the sim's state was there, is.
+## A session failure, worded and recorded, returning false so `_check_session` can `return
+## _fail_session(...)` in one line where it is checking several things in a row.
+func _fail_session(why: String) -> bool:
+	_finish(false, why)
+	return false
+
+
 func _check_session() -> bool:
 	if _material < 0:
 		_finish(false, "session mode asked for but no material was ever chosen")
@@ -798,10 +805,21 @@ func _check_session() -> bool:
 	# The HUD is what a person would have been looking at while this ran, and it is pure functions of
 	# these same dictionaries -- so the words on the panel are checkable here, against the world that
 	# produced them, without a screen.
+	var verdict := String(tool.get("verdict", ""))
 	var panel := "\n".join(AssayHud.design_lines(tool))
-	if not panel.contains(String(tool.get("verdict", "?"))):
-		_finish(false, "the part menu does not show the sim's verdict for the tool in hand: %s"
-				% panel)
+	# THE VERDICT IS NOT IN THESE LINES, AND I HAD THIS WRONG FIRST: `main.gd` draws it as a word in
+	# its own colour ABOVE the lines, because a verdict that reads as body text is a verdict nobody
+	# reads. So what the lines must carry is the numbers under it, and what the HUD must have for the
+	# verdict is a colour it actually recognises -- an unknown verdict falls to a neutral grey, and a
+	# grey "WILL BREAK" is the failure worth catching.
+	for number in ["mass %d" % int(tool.get("mass_low", -1)),
+			"%d budget" % int(tool.get("budget_low", -1))]:
+		if not panel.contains(number):
+			return _fail_session("the part menu does not show '%s' for the tool in hand: %s"
+					% [number, panel])
+	if AssayHud.verdict_color(verdict) == AssayHud.verdict_color("something else entirely"):
+		_finish(false, ("the HUD has no colour of its own for the verdict '%s', so it would draw it "
+				+ "in the neutral grey it uses for a word it does not know") % verdict)
 		return false
 	print(("  session: mined at %d, exact at %d%s, smelter crafted %d and placed %d, loaded %d, "
 			+ "refined taken %d (%d units), parts %d, pick built %d and equipped %d, drill built %d "
