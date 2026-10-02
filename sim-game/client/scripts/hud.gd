@@ -349,14 +349,34 @@ static func tile_lines(tile: Dictionary) -> PackedStringArray:
 		lines.append("deposit %d · %s · %d ore left%s" % [int(d.get("id", -1)),
 				String(d.get("species_name", "?")), int(d.get("amount", 0)),
 				" · DEPLETED" if bool(d.get("depleted", false)) else ""])
-		# THE UNASSAYED CUE IS A SENTENCE FOR NOW, on purpose. Grade is the sim's word; whether a
-		# rough sheet gets a visual language of its own is Maren's call and I have asked. Until then
-		# the honest version is saying what would settle it, because every number about this species
-		# is still a 25-wide band.
-		lines.append("purity %d (grade %s) · %s" % [int(d.get("purity", 0)),
-				String(d.get("grade", "?")),
-				"assayed: its sheet is exact" if bool(d.get("assayed", false))
-						else "sheet is rough — stand here and assay to be sure"])
+		# REACH COMES BEFORE THE INVITATION (ASSA-47, Marlow's ask). `reach_note` is the SIM's
+		# sentence and is EMPTY when the rock yields, so this line appears only when it has something
+		# to say -- the same shape as a building's `status` two blocks down.
+		var reach := String(d.get("reach_note", ""))
+		if reach != "":
+			lines.append(reach)
+		# AND THEN NO INVITATION AT ALL IF NOTHING CAN MINE IT. `Assay` is not gated on the rock being
+		# workable, so a player can spend the 30 ticks, succeed, and learn a sheet they can never use:
+		# you cannot build with ore you cannot get out. Maren measured 40.7% of deposits like that.
+		# A SOFTENED CUE WOULD STILL BE A CUE, which is why this drops the clause rather than greying
+		# it: "you could" is the bug.
+		#
+		# The purity and grade stay either way, because they are facts about the rock rather than an
+		# offer, and the ASSAYED sentence stays too -- it reports something already done. Only the
+		# invitation is conditional, and when the rock yields this line is byte-for-byte what it was
+		# before ASSA-47 (`test_the_in_reach_tile_line_is_unchanged` holds that).
+		#
+		# NOTHING HERE DECIDES WHETHER IT YIELDS. `hand_minable` arrives decided, from the same
+		# `sim::ladder` function `step` itself asks; this file may not work out what the sim knows.
+		var cue := ""
+		if bool(d.get("assayed", false)):
+			cue = "assayed: its sheet is exact"
+		elif bool(d.get("hand_minable", false)):
+			cue = "sheet is rough — stand here and assay to be sure"
+		else:
+			cue = "sheet is rough"
+		lines.append("purity %d (grade %s) · %s"
+				% [int(d.get("purity", 0)), String(d.get("grade", "?")), cue])
 	elif bool(tile.get("is_spawn", false)):
 		lines.append("spawn")
 	else:
