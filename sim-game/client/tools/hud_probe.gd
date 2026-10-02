@@ -89,10 +89,22 @@ func _on_tick_bundle(_tick: int, _inputs: Array, raw: String) -> void:
 		_events.append("%d · %s" % [_sim.tick(), line])
 	# Walk, so the log has something of ours in it. The sim decides whether it is legal and the
 	# movement system does the walking; nothing here predicts a position.
+	# AND IT WALKS WHICHEVER WAY HAS ROOM, because this probe is run REPEATEDLY against one standing
+	# world. The old version always went 3 tiles east and clamped to the edge, so each run shoved the
+	# player further east until a run found itself already at x = size - 1; the MoveTo then asked for
+	# the tile it was standing on, nothing moved, no event mentioned us, and the probe reported FAIL on
+	# a world that was perfectly healthy. I hit it on the third run against the board's demo world --
+	# the bench check passed and the walk check failed, which is the worst shape for a false alarm,
+	# because the next person to see it is whoever is verifying my claim about the bench.
 	if not _walk_sent and _sim.applied >= 2:
 		var me := _my_tile()
 		var size := _sim.size_tiles()
-		var to := Vector2i(clampi(me.x + 3, 0, size.x - 1), me.y)
+		var step := 3 if me.x + 3 <= size.x - 1 else -3
+		var to := Vector2i(clampi(me.x + step, 0, size.x - 1), me.y)
+		if to == me:
+			_finish(false, ("nowhere to walk from %s in a %d-wide world, so the log check cannot mean "
+					+ "anything") % [me, size.x])
+			return
 		_walk_sent = _client.submit({"MoveTo": {"target": {"x": to.x, "y": to.y}}})
 
 
