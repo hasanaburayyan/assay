@@ -97,6 +97,26 @@ mark. Read B and C together, never B alone.
 wears species3's yellow. That is reported to the Director, not exempted:
 `EXEMPT` in that file is empty and an entry needs a reason and a name.
 
+- **The map and the world are one palette.** The client draws a deposit twice
+  — a tinted tile in the world, a patch on the schematic map — and a player
+  learns the colour from whichever they see first.
+
+```bash
+art/map_palette.py                   # derives the map table from the world
+MAP_PALETTE_EVEN=1 art/map_palette.py   # the scheme in hud.gd -> must FAIL
+```
+
+It prints the table as GDScript constants. Note the tints in
+`species_tints.py` are **multipliers over light rock, not fills**: `#7A29CC`
+painted flat on the dark map sinks, and is only vivid because it multiplies
+over an L\* 84 base. So the map's colours are derived from the *result* — a
+tinted ore tile's mean at 32 px — never retyped from the tints.
+
+This found ASSA-25: `hud.gd` still spaces six hues evenly round the wheel,
+the scheme the probe rejected, which measures protan 3.6. The derived table
+clears every observer at 16.2 or better and clears the map background by
+47.6.
+
 ## Conventions
 
 - 1 Blender unit = 1 tile. +y is north (up on screen). A sprite's footprint
