@@ -8,6 +8,38 @@
 // It is outside `src/` for a second reason: it is not a rule, so changing
 // how the walk works must not change the identity of the rules it walks.
 
+/// Everything the rules identity covers: every `.rs` under `<crate>/src`,
+/// plus the workspace `Cargo.lock`.
+///
+/// **THE LOCK FILE IS IN IT** (ASSA-40 follow-up, Wren's ruling 2026-10-02).
+/// A dependency bump that changes arithmetic is rare, but its failure mode is
+/// the silent desync the identity exists to stop, and the cost of a false
+/// move is only "rebuild both halves from the same commit", which the pairing
+/// rule already requires. The compiler version stays out.
+///
+/// **ONE LIST, TWO CALLERS.** `build.rs` bakes it and
+/// `tests/rules_identity.rs` recomputes it. If they disagreed about what is
+/// in the identity, the agreement test would go red for a reason nobody could
+/// read from the failure.
+///
+/// The lock file is keyed `Cargo.lock`, which no `.rs` path can equal, and it
+/// is appended after the sort rather than mixed into it — both so that adding
+/// it cannot change what any source file contributes, and because the order
+/// only has to be the same everywhere, not alphabetical.
+pub fn identity_inputs(crate_dir: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    let mut files = source_files(&crate_dir.join("src"));
+    let lock = crate_dir.join("..").join("Cargo.lock");
+    let bytes =
+        std::fs::read(&lock).unwrap_or_else(|e| panic!("read {}: {e}", lock.display()));
+    assert!(
+        !bytes.is_empty(),
+        "{} is empty, so it would contribute nothing to the identity",
+        lock.display()
+    );
+    files.push(("Cargo.lock".to_string(), bytes));
+    files
+}
+
 /// Every `.rs` file under `dir`, as (path relative to `dir`, bytes), sorted
 /// by path — a filesystem's own walk order must never move the identity.
 pub fn source_files(dir: &std::path::Path) -> Vec<(String, Vec<u8>)> {

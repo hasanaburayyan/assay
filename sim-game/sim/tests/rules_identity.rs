@@ -14,7 +14,7 @@ use sim::rules_fingerprint::fingerprint;
 include!("../rules_walk.rs");
 
 fn rule_sources() -> Vec<(String, Vec<u8>)> {
-    source_files(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"))
+    identity_inputs(Path::new(env!("CARGO_MANIFEST_DIR")))
 }
 
 /// **THE BAKED VALUE IS THE FINGERPRINT OF THE SOURCE THAT IS HERE NOW.**
@@ -83,6 +83,33 @@ fn changing_one_byte_of_one_rule_changes_the_identity() {
         sim::RULES_ID,
         "one digit changed in {path} and the identity did not move, so a \
          retuned local build would claim to be the host's build"
+    );
+}
+
+/// **A DEPENDENCY BUMP IS A DIFFERENT BUILD** (ASSA-40 follow-up, Wren's
+/// ruling 2026-10-02). The rules live in the source, but they are not the only
+/// thing that decides what a tick does: a dependency whose arithmetic changed
+/// would have kept the old identity, and that failure mode is the silent
+/// desync this whole feature exists to stop.
+///
+/// Non-vacuity matters more than usual here, because the lock file could be
+/// in the list and contribute nothing — so this also checks it is really
+/// present and really has bytes.
+#[test]
+fn changing_the_lock_file_changes_the_identity() {
+    let mut edited = rule_sources();
+    let (_, bytes) = edited
+        .iter_mut()
+        .find(|(path, _)| path == "Cargo.lock")
+        .expect("the lock file is part of the identity");
+    assert!(!bytes.is_empty(), "the lock file contributed no bytes");
+    // How a bump actually arrives: a version string moves.
+    bytes.extend_from_slice(b"\n# a dependency moved\n");
+    assert_ne!(
+        fingerprint(&edited),
+        sim::RULES_ID,
+        "the lock file changed and the identity did not move, so a build with \
+         different dependencies would claim to be the host's build"
     );
 }
 

@@ -18,19 +18,23 @@ include!("src/rules_fingerprint.rs");
 include!("rules_walk.rs");
 
 fn main() {
-    let src = std::path::Path::new("src");
     // Recursive, so a new rule file is covered without anyone remembering to
     // list it here.
     println!("cargo::rerun-if-changed=src");
+    // And the lock file, or a dependency bump would keep the old identity
+    // until something else happened to touch `src`.
+    println!("cargo::rerun-if-changed=../Cargo.lock");
 
-    let files = source_files(src);
+    let files = identity_inputs(std::path::Path::new("."));
+    let sources = files
+        .iter()
+        .filter(|(path, _)| path.ends_with(".rs"))
+        .count();
     assert!(
-        files.len() > 5,
-        "the rules fingerprint found only {} source files under {}. If the \
-         crate were really this small the identity would be worthless, so \
-         read this as a broken walk rather than a small crate.",
-        files.len(),
-        src.display()
+        sources > 5,
+        "the rules fingerprint found only {sources} source files under src. \
+         If the crate were really this small the identity would be worthless, \
+         so read this as a broken walk rather than a small crate."
     );
     println!("cargo::rustc-env=SIM_RULES_ID={}", fingerprint(&files));
 }
