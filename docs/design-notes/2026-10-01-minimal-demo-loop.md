@@ -115,6 +115,42 @@ tolerance usually exceeds the hand spark, so the first fire needs a second
 species fetched from elsewhere. Worldgen guarantees one exists; the player is
 not told which, which is ASSA-58.
 
+### What a drill costs and what it buys (Maren, 2026-10-02)
+
+The milestone is named "parts, picks, drills" and the pick is the half that
+has been measured. Here is the other half, over 500 worlds, for a drill built
+from the best starter species a world affords, at grade B
+(`sim/tests/maren_drill_payback.rs`):
+
+| hoppers | survives placement | unattended run before it stalls |
+|---|---|---|
+| 0 | 76.4% of worlds | 13 ticks (1.3 s) |
+| 1 | 67.8% | 80 ticks (8.0 s) |
+| 2 | 61.8% | 146 ticks (14.6 s) |
+| 3 | 51.8% | 213 ticks (21.3 s) |
+| 4 | 44.6% | 280 ticks (28.0 s) |
+
+A one-hopper drill out-mines bare hands in **87.4%** of worlds (2.67 ticks per
+unit against the hands' 4), and its parts cost **160 ticks of smelter time** —
+the same 49% of the demo clock the table above shows refining already takes,
+before the ore to feed it.
+
+**Read it as a design rather than a tuning complaint, because that is what it
+is.** Every hopper buys runtime and spends survival, about seven points of it,
+and that trade is the drill's whole decision. What the numbers say is that a
+drill is **not** a walk-away machine in the demo: at best it runs 28 seconds
+and typically eight, so its output is gated by how often a player walks back,
+never by its speed. That is the shape of the game before belts exist, and the
+stall is already a named state rather than silence.
+
+**No tuning change is ruled here, and the reason is worth recording so nobody
+re-opens it on feel.** The obvious lever — the planted frame's own buffer —
+costs no mass, so raising it would buy runtime for free and flatten the one
+decision the drill has. A full drill is not starvation: 60 ore in eight
+seconds is roughly four times what the whole demo loop consumes. What would
+change my mind is a player who cannot tell a stalled drill from a broken one;
+that is a message problem, not a capacity one.
+
 ### Resolved: gears do not survive in the demo
 
 The open question below asked whether gears survive as a part kind. They do
