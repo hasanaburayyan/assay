@@ -264,6 +264,7 @@ impl AssaySim {
                 vdict! {
                     "id" => species.id,
                     "name" => &gstring(&species.name).to_variant(),
+                    "symbol" => &gstring(&species.symbol).to_variant(),
                     "assayed" => species.assayed,
                     "readings" => &readings.to_variant(),
                     "hand_minable" => species.hand_minable,
@@ -973,6 +974,13 @@ pub struct DesignFacts {
 pub struct SpeciesFacts {
     pub id: i64,
     pub name: String,
+    /// The species' map letter, from `sim::debug::species_symbol` — the SAME
+    /// call a deposit's `symbol` and a part's come from. A species panel is
+    /// only a legend if it carries the mark the map draws, and the one way to
+    /// guarantee that is to read the same function rather than to agree with
+    /// it. Never the name's first character: a player may rename a species and
+    /// the letter does not follow (ASSA-73, Maren's glyph-and-tint ruling).
+    pub symbol: String,
     pub assayed: bool,
     /// Property name to reading: the exact value once assayed, the sim's band
     /// ("26-50") until then.
@@ -1183,6 +1191,7 @@ impl AssaySim {
             .map(|species| SpeciesFacts {
                 id: species.id.0 as i64,
                 name: species.name().to_string(),
+                symbol: sim::debug::species_symbol(species).to_string(),
                 assayed: species.assayed,
                 readings: Property::ALL
                     .into_iter()
@@ -2341,6 +2350,32 @@ mod tests {
         }
         assert_eq!(exact.readings.len(), Property::ALL.len());
         assert_eq!(exact.name, sim.world().species(first).name());
+    }
+
+    /// THE MAP LETTER IS NOT THE NAME'S FIRST CHARACTER, and a client reaching
+    /// for `name[0]` is the shortcut this field exists to remove. A player may
+    /// rename a species; the mark already drawn on the map does not follow, so
+    /// the two are allowed to disagree and a legend built from the name would
+    /// stop being a key to the map (ASSA-73, Maren's glyph-and-tint ruling).
+    ///
+    /// The other half of that claim -- that the panel's letter is the same one
+    /// a DEPOSIT draws -- is asserted in the client suite, because both of
+    /// those surfaces are Godot dictionaries that `cargo test` cannot build.
+    #[test]
+    fn a_rename_does_not_move_the_species_map_letter() {
+        let mut sim = AssaySim::from_world(fresh());
+        let first = sim.world().species[0].id;
+        let before = sim.species_facts()[0].symbol.clone();
+        assert!(!before.is_empty(), "a species with no map letter");
+
+        sim.world.species_mut(first).player_name = Some("Zzzzqqq".to_string());
+        let after = &sim.species_facts()[0];
+        assert_eq!(after.name, "Zzzzqqq", "the rename did not take");
+        assert_eq!(
+            after.symbol, before,
+            "renaming to Zzzzqqq moved the map letter from {before} to {}",
+            after.symbol
+        );
     }
 
     /// EVENTS ARE SENTENCES, NOT DEBUG DUMPS, and the one about me says "you".
