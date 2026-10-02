@@ -517,9 +517,21 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
                 // reach of everything the game can build — and this sentence
                 // was the only thing the game said about reach at all, which
                 // made our one explanation a promise we break.
+                //
+                // AND IT MUST NOT SAY "YET" EITHER (Game Director's wording
+                // ruling). The first fix read "so nothing reaches it yet",
+                // which is the same promise in one word: "yet" says a later
+                // thing arrives, and decision 7 says none does. The guard in
+                // `tests/reach.rs` now refuses a set of future-tense words
+                // rather than the one phrase we had already deleted.
+                //
+                // THIS IS THE STRONGEST OF THE THREE REACH SENTENCES ON
+                // PURPOSE: it is the only one a player reads at the moment
+                // they acted, so it carries the whole fact rather than the
+                // short form.
                 RejectReason::TooHardForHands => format!(
-                    "that ore is too hard to mine (hardness over {}); a drill lifts throughput, \
-                     not hardness, so nothing reaches it yet",
+                    "nothing can mine that: hardness is over {}, and a drill mines faster, \
+                     not harder",
                     crate::tuning::HAND_MINE_MAX_HARDNESS
                 ),
                 RejectReason::UnknownPlayer => "no such player".to_string(),
@@ -712,8 +724,8 @@ pub fn deposit_reach_note(world: &World, deposit: &OreDeposit) -> Option<String>
     let species = world.species(deposit.species);
     (!crate::ladder::hand_minable(species)).then(|| {
         format!(
-            "{} is too hard for anything we can build: hardness is over \
-             {HAND_MINE_MAX_HARDNESS}, and a drill lifts throughput, not hardness",
+            "{} is too hard for anything you can build: hardness is over \
+             {HAND_MINE_MAX_HARDNESS}, and a drill mines faster, not harder",
             species.name()
         )
     })
@@ -789,7 +801,7 @@ pub fn species_table(world: &World) -> String {
         } else {
             // The absence of a note used to be the only cue, and absence is not
             // a cue: this is the half of the roster nothing can mine.
-            notes.push("too hard for anything we can build".to_string());
+            notes.push("too hard for anything you can build".to_string());
         }
         for grade in Grade::ALL.into_iter().rev() {
             if s.effective(Property::Reactivity, grade) >= FUEL_MIN_REACTIVITY {
