@@ -179,3 +179,37 @@ fn every_species_row_says_whether_it_can_be_mined() {
         }
     }
 }
+
+/// **THE HEADLESS GAME MUST NOT BE THE ONE WITH LESS INFORMATION** (the Game
+/// Director's box 5). `Assay` is not hardness-gated: a player invited to assay
+/// a species nothing can mine spends 30 ticks, succeeds, and learns a sheet
+/// they can never spend. The invitation is the bug, so reach replaces it
+/// rather than sitting next to it.
+#[test]
+fn the_species_table_never_invites_an_assay_it_cannot_pay_for() {
+    let mut invited = 0;
+    let mut withheld = 0;
+    for seed in 1..60 {
+        let w = world(seed);
+        let table = sim::debug::species_table(&w);
+        for s in &w.species {
+            let row = table
+                .lines()
+                .find(|l| l.contains(s.name()))
+                .unwrap_or_else(|| panic!("{} has no row", s.name()));
+            assert!(!s.assayed, "a fresh world has assayed nothing");
+            if sim::ladder::hand_minable(s) {
+                // THE CONTROL: on rock that yields, the cue is untouched.
+                assert!(row.contains("stand on it and `assay`"), "{row}");
+                invited += 1;
+            } else {
+                assert!(
+                    !row.contains("`assay`"),
+                    "invited an assay whose sheet is unspendable: {row}"
+                );
+                withheld += 1;
+            }
+        }
+    }
+    assert!(invited > 100 && withheld > 100, "{invited} / {withheld}");
+}

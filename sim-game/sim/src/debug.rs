@@ -775,21 +775,26 @@ pub fn species_table(world: &World) -> String {
     for s in &world.species {
         let sh = &s.sheet;
         let mut notes = Vec::new();
-        if !s.assayed {
-            notes.push("rough: stand on it and `assay`".to_string());
+        // REACH FIRST, AND NO ASSAY INVITATION ON A SPECIES NOTHING CAN MINE
+        // (ASSA-43). `Assay` is not hardness-gated, so a player invited here
+        // can spend the ticks, succeed, and learn a sheet they can never
+        // spend: you cannot build with ore you cannot mine. The Game
+        // Director's rule for the Godot tile line is that reach comes before
+        // the invitation and replaces it — the headless game must not be the
+        // one with less information, so it holds here too.
+        if crate::ladder::hand_minable(s) {
+            notes.push("hand-minable".to_string());
+            if !s.assayed {
+                notes.push("rough: stand on it and `assay`".to_string());
+            }
+        } else {
+            notes.push("too hard for anything we can build".to_string());
         }
         if let Some(d) = s.discoverer {
             let who = world
                 .player(d)
                 .map_or(format!("player {}", d.0), |p| p.name.clone());
             notes.push(format!("found by {who}"));
-        }
-        if crate::ladder::hand_minable(s) {
-            notes.push("hand-minable".to_string());
-        } else {
-            // The absence of a note used to be the only cue, and absence is not
-            // a cue: this is the half of the roster nothing can mine.
-            notes.push("too hard for anything we can build".to_string());
         }
         for grade in Grade::ALL.into_iter().rev() {
             if s.effective(Property::Reactivity, grade) >= FUEL_MIN_REACTIVITY {
