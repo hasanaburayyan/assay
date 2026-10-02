@@ -122,6 +122,27 @@ from part_layout import PART_REPEAT_OFFSET  # noqa: F401  (rule 5, see that file
 #    (body reaching row 0, measured) while every other part had room to
 #    spare. A per-asset headroom would have hidden that as four frames of
 #    different heights that silently refuse to compose.
+#
+# 6. ORE OWNS SATURATION (Maren, ruling 3 on ASSA-20). Ore is the only fully
+#    saturated thing in Assay. Ground, buildings, parts, items and UI chrome
+#    all stay UNDER the quietest ore surface a player can see -- not under
+#    the average species, under the floor of the shipped table, because a
+#    machine that out-shouts two of six species has beaten ore on the map
+#    where those two species live.
+#
+#    WHY THIS IS A RULE AND NOT A PREFERENCE. Species identity is carried by
+#    TINT ALONE (Decision #36). Shape, outline, pattern and tier are all
+#    already spent on other things, so colour is not ore's best channel, it
+#    is ore's only one. Everything else in the game has shape and position to
+#    spend instead, which is why the budget falls on them and not on ore.
+#    Measured the other way round too: art/species_probe.py shows a muted
+#    species table cannot work, because a low-chroma multiply stays low over
+#    any base -- so ore's loudness is mandatory, not a taste.
+#
+#    ENFORCED by art/loudness.py against the real packed sheets, with the
+#    floor read from art/species_tints.py rather than written down here. It
+#    is RED today on player/* and frame/A; which way that red clears is the
+#    Director's call and is NOT to be painted over by an exemption.
 LYING = (0, math.pi / 2, 0)
 PART_TILES = (2, 1)
 PART_AXIS = 0.28
