@@ -96,6 +96,16 @@ func _ready() -> void:
 	if selfcheck != "":
 		get_tree().quit(AssaySelfCheck.run(selfcheck))
 		return
+	# THE WHOLE SCREEN IS BUILT ONCE, AND THE LINK IS PART OF THE SCREEN. The guard used to sit in
+	# `_build_ui`, which covered the HUD and nothing else -- so a second `_ready` built a SECOND
+	# `AssayNetClient` and left `_client` pointing at it. The first one stayed connected to every
+	# handler here, so the world kept stepping while `_client.stage` read IDLE and
+	# `_client.player_id` read -1: the HUD showed somebody else's empty inventory of a world that was
+	# plainly moving. Found by `tools/button_session.gd` against a real relay, where it looked like a
+	# join that never happened; the suite could not see it because nothing in it joins.
+	if _built:
+		return
+	_built = true
 	_client = AssayNetClient.new()
 	_client.welcomed.connect(_on_welcomed)
 	_client.refused.connect(func(reason): _say("refused: %s" % reason, AssayHud.Say.FAILED))
@@ -112,19 +122,19 @@ func _ready() -> void:
 	_say("enter a host address and join", AssayHud.Say.IDLE)
 
 
-## BUILT ONCE, however many times `_ready` runs. `tests/test_main_screen.gd` calls `_ready()` by hand
-## (the suite works inside `SceneTree._initialize`, before the root window is in the tree) AND adds the
-## node to the tree, so the engine calls it again -- which built the HUD column twice and reparented
-## every label into the second one. Harmless on screen, because the real client's `_ready` runs once,
-## but it filled the suite's output with `Can't add child ... already has a parent` errors, and error
-## spam nobody reads is where a real error goes to hide.
+## WHETHER `_ready` HAS ALREADY RUN. `tests/test_main_screen.gd` and `tools/button_session.gd` both
+## call `_ready()` by hand (a `--script` run works inside `SceneTree._initialize`, before the root
+## window is in the tree, so the engine's own call comes too late to be useful) AND put the node in
+## the tree, so the engine calls it again.
+##
+## The first thing that caught was the HUD column being built twice, with every label reparented into
+## the second one: harmless on screen, but it filled the suite's output with `Can't add child ...
+## already has a parent`, and error spam nobody reads is where a real error goes to hide. The second
+## was worse and is why this guard moved up to `_ready` -- see the note there.
 var _built := false
 
 
 func _build_ui() -> void:
-	if _built:
-		return
-	_built = true
 	var row := HBoxContainer.new()
 	row.position = Vector2(24.0, 20.0)
 	row.add_theme_constant_override("separation", 8)

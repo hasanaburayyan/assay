@@ -76,6 +76,31 @@ func test_the_screen_is_built_once_even_if_ready_runs_twice() -> bool:
 	return ok
 
 
+## AND THE LINK IS PART OF THE SCREEN, which the test above did not cover and should have.
+##
+## A second `_ready` used to build a SECOND `AssayNetClient` and point `_client` at it. The first one
+## stayed connected to every handler, so against a real relay the world kept stepping while
+## `_client.stage` read IDLE and `_client.player_id` read -1 -- the HUD showing an empty inventory
+## belonging to nobody, of a world that was visibly moving. Nothing in this suite joins anything, so
+## the suite could not see it; `tools/button_session.gd` found it against a relay and it looked like a
+## join that never happened. This is the cheap check that would have caught it first.
+func test_a_second_ready_does_not_replace_the_link() -> bool:
+	var screen := _screen()
+	var client: Node = screen._client
+	var links := 0
+	screen._ready()
+	for child in screen.get_children():
+		if child is AssayNetClient:
+			links += 1
+	var ok := true
+	if screen._client != client:
+		ok = _fail("a second _ready replaced the link, so the HUD would read a client nobody joined")
+	elif links != 1:
+		ok = _fail("the screen holds %d links; the extra one still gets every bundle" % links)
+	screen.queue_free()
+	return ok
+
+
 ## EVERY SECTION IS BESIDE THE MAP, including the two that grew buttons (ASSA-37). A button over the
 ## map would be a click that means two things, which is the one thing the right-click target rule
 ## exists to avoid.
