@@ -980,6 +980,30 @@ pub fn reading(species: &MineralSpecies, property: Property) -> String {
     }
 }
 
+/// WHAT A RECIPE'S ROW SAYS WHEN NOTHING IN THE GAME CONSUMES ITS OUTPUT, or
+/// "" when something does. The one place that sentence is written.
+///
+/// DERIVED, NEVER LISTED (ASSA-59). It asks `recipe::is_consumed`, so the day
+/// anything takes this kind as an input the clause disappears on its own and
+/// nobody has to remember to delete it. Nothing here names a gear; the gear is
+/// merely the only kind that answers false today, which `reach.rs` pins.
+///
+/// IT LIVES HERE BECAUSE TWO HOSTS NEED IT. `recipe_table` prints it for the
+/// terminal, and `AssaySim::recipes` carries it to the window, where a BUTTON
+/// is a stronger invitation than a table row and a gear costs 2 refined
+/// (ASSA-84, Maren's ruling 2: one describer, not a second sentence written in
+/// GDScript).
+///
+/// **NO "YET"**: no accepted decision backs a future use for a gear, and
+/// `reach.rs::no_reach_sentence_promises_a_later_unlock` reads these rows.
+pub fn recipe_dead_end(recipe: &crate::recipe::Recipe) -> String {
+    if crate::recipe::is_consumed(recipe.output.0) {
+        String::new()
+    } else {
+        format!("nothing uses a {}", recipe.output.0.name())
+    }
+}
+
 /// Table of every species with its sheet as the players know it (rough
 /// bands until assayed), plus what the sheet means for the rules that
 /// exist today. Notes use the exact values: the ground knows what it is.
@@ -1174,8 +1198,9 @@ pub fn recipe_table() -> String {
         // **NO "YET"**: no accepted decision backs a future use for a gear,
         // and `reach.rs::no_reach_sentence_promises_a_later_unlock` now reads
         // these rows too, so the word cannot creep back in quietly.
-        if !crate::recipe::is_consumed(r.output.0) {
-            needs.push(format!("nothing uses a {}", r.output.0.name()));
+        let dead_end = recipe_dead_end(r);
+        if !dead_end.is_empty() {
+            needs.push(dead_end);
         }
         let _ = writeln!(
             out,

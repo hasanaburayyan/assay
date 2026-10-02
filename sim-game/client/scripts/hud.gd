@@ -260,8 +260,13 @@ static func stack_verbs(stack: Dictionary, recipes: Array, part_kinds: Array,
 		if String(recipe.get("input", "")) != kind:
 			continue
 		if bool(recipe.get("hand", false)):
+			# `dead_end` RIDES ALONG UNREAD. It is the sim's own clause -- empty unless nothing in
+			# the game consumes this recipe's output -- and this file neither writes it nor asks
+			# what it is about. Carrying it is how a BUTTON can warn what only a CLI table warned
+			# before (ASSA-84); deciding when to warn would be a second describer.
 			verbs.append({"label": "Craft %s" % String(recipe.get("name", "?")), "verb": "craft",
-					"recipe": recipe.get("tag")})
+					"recipe": recipe.get("tag"),
+					"dead_end": String(recipe.get("dead_end", ""))})
 		elif not _has_verb(verbs, "insert"):
 			# A recipe that is NOT hand-work happens inside a building, so this kind is something a
 			# smelter eats -- both slots, because which one a species is good for (hot enough fuel, or

@@ -654,9 +654,20 @@ func _stack_button(descriptor: Dictionary, stack: Dictionary, footprint: Vector2
 	match String(descriptor.get("verb", "")):
 		"craft":
 			var recipe: Variant = descriptor.get("recipe")
+			# THE BUTTON STAYS, AND SO DOES THE WARNING (ASSA-84, Maren's ruling 1). A legal action
+			# is always offered and absence is never a cue -- the same call as the unfiltered Fuel
+			# button. What was missing is that at a window a button is a stronger invitation than a
+			# table row, and a gear costs 2 refined for an output nothing consumes.
+			#
+			# THE SENTENCE IS THE SIM'S, APPENDED NOT COMPOSED. `dead_end` is empty unless the sim
+			# says so, and nothing here names a gear: the day something consumes that output the
+			# clause goes away on its own, with no edit to this client. That is the property
+			# ASSA-59 fought for in the sim, and a client-side `if` on the kind would throw it away.
+			var dead_end := String(descriptor.get("dead_end", ""))
 			return _button(label, func() -> void: _act(label,
 					AssayActions.craft(recipe, AssayActions.item_of_stack(stack), 1)),
-					"one batch, from %s" % what)
+					"one batch, from %s" % what
+							+ ("" if dead_end == "" else " — %s" % dead_end))
 		"insert":
 			# THE WHOLE STACK. A button cannot ask for a quantity without growing a field, and
 			# picking a smaller number for the player would be this client deciding how much fuel a
