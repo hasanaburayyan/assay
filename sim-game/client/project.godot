@@ -66,3 +66,22 @@ texture={
 "detect_3d/compress_to": 0,
 "mipmaps/generate": false
 }
+
+[debug]
+
+; GDSCRIPT WARNINGS ARE ON, AND TWO OF THEM ARE ERRORS.
+;
+; Both promoted ones are always bugs, never style, and both are invisible to a
+; green test suite. `unreachable_code` found a real one the day this was turned
+; on: eight lines of `main.gd` that set the world/tick/hash line sat after a
+; `return` (I stranded them inserting a function into the middle of `_refresh`),
+; so that line never updated on a running client and 79 passing tests had no
+; opinion about it. `standalone_expression` is the other shape of the same
+; mistake -- `a == b` written where `a = b` was meant does nothing, loudly.
+;
+; Error level means THE ENGINE REFUSES TO LOAD THE SCRIPT, which is what makes
+; it a gate: Godot exits 0 on a parse error, so `tools/check_every_script.sh`
+; compiles every .gd file and greps, including the ones nothing instantiates.
+gdscript/warnings/enable=true
+gdscript/warnings/unreachable_code=2
+gdscript/warnings/standalone_expression=2

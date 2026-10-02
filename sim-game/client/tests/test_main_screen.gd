@@ -36,6 +36,28 @@ func _screen() -> Node:
 	return node
 
 
+## THE SCREEN IS BUILT ONCE, however many times `_ready` runs. This file calls `_ready()` by hand AND
+## adds the node to the tree, so the engine calls it again -- which used to build the HUD column twice
+## and reparent every label into the second one. Harmless on screen (the real client readies once) but
+## it filled the suite output with `Can't add child ... already has a parent`, and error spam nobody
+## reads is where a real error goes to hide.
+func test_the_screen_is_built_once_even_if_ready_runs_twice() -> bool:
+	var screen := _screen()
+	var column: Node = screen._carrying.get_parent()
+	screen._ready()
+	var ok := true
+	if screen._carrying.get_parent() != column:
+		ok = _fail("a second _ready reparented the HUD into a new column")
+	var columns := 0
+	for child in screen.get_children():
+		if child is VBoxContainer:
+			columns += 1
+	if ok and columns != 1:
+		ok = _fail("a second _ready left %d HUD columns on the screen" % columns)
+	screen.queue_free()
+	return ok
+
+
 func test_the_screen_builds_a_hud_column_beside_the_map() -> bool:
 	var screen := _screen()
 	var ok := true
