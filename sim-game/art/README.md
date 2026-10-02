@@ -238,6 +238,26 @@ ships the imported texture as `.godot/imported/<name>.png-<hash>.ctex`, and
 correct; a pack with no `.ctex` would be the failure. `manifest.json` ships
 verbatim, so the client can read it at runtime.
 
+**The art is in the bundle a player actually gets, not only in a local
+export.** Pulled the `assay-windows` artifact from the CI run on `main` and
+listed the pack *embedded in `Assay.exe`* (the Windows preset sets
+`binary_format/embed_pck=true`, so the pack is appended to the exe with an
+`[u64 size][GDPC]` footer at EOF — find it there, then feed those bytes to
+`list_pck.py`). All nine imported textures are present and **byte-identical to
+a local macOS export**, so the chain Blender → sheet → git → Windows checkout →
+Godot import → embedded pack changes no pixel.
+
+Two things that bundle taught me, neither of which I would have guessed:
+
+- **The shipped `manifest.json` is 4349 bytes, not the 3990 in git.** Not
+  corruption: the Windows runner checks out text with CRLF, the file has 359
+  newlines, and 3990 + 359 = 4349 exactly. Normalised, it is byte-identical to
+  the committed copy. JSON parsing does not care, but **do not byte-compare or
+  hash the manifest across platforms** and expect a match. Measured on the
+  Windows bundle only; I did not check the macOS one.
+- The source `.png`s are absent from the shipped pack too, same as locally —
+  the `.ctex` plus the `.import` remap is the whole story.
+
 **`.import` sidecars are NOT committed, and that is deliberate** — the root
 `.gitignore` ignores them and is right to. Measured three ways on 4.6.1: with
 sidecars + cache, with sidecars and no cache, and with neither (what a fresh
