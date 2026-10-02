@@ -53,6 +53,15 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      # ONE SPECIES PALETTE, WRITTEN DOWN TWICE. The Blender pipeline tints the
+      # ore sprite from `art/species_tints.py`; the Godot client fills a deposit
+      # from a const in `client/scripts/hud.gd`. Neither language can read the
+      # other's list, and the palette may not live in `sim` (principle 1), so
+      # this is the only place the two can be held equal -- and the drift it
+      # catches is invisible on screen: a wrong tint looks like a colour.
+      # Stdlib only, no pip, ~0.1s.
+      - name: The species palette agrees with itself
+        run: python3 art/check_species_tints.py
       # The client's own GDScript suite gates the bundles below. Editor only:
       # running tests needs no export templates, which is the ~1 GB download.
       - name: Godot (editor only)
