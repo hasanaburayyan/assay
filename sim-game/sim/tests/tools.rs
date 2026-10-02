@@ -967,7 +967,33 @@ fn the_panel_names_every_reason_a_drill_is_not_mining() {
         status(&world)
     );
 
+    // ASSA-52: A DRILL ON A ROCK THAT CAN NEVER BE SMELTED IS WORKING, NOT
+    // IDLE, and this is the assertion that keeps it that way. The deposit's own
+    // line says the ore is a dead end, but the machine's line reports what the
+    // machine is doing, and this one is filling its hopper. `machine_status`
+    // therefore reads `deposit_reach_note` and not `deposit_dead_end_note`;
+    // swapping it reddens here, which is the point of asserting on the panel's
+    // text rather than on what it was handed.
     world.species_mut(ROCK).sheet.hardness = 30;
+    world.species_mut(ROCK).sheet.heat_tolerance = 100;
+    assert!(
+        !sim::ladder::usable_from_bare_hands(&world.species, ROCK),
+        "the test's own premise: this ore must be unsmeltable"
+    );
+    run(&mut world, 1);
+    assert!(
+        status(&world).contains("mining ") || status(&world).contains("stalled: full"),
+        "a drill on unsmeltable ore is doing its job: {}",
+        status(&world)
+    );
+    assert!(
+        !status(&world).contains("idle"),
+        "an ore that cannot be smelted is not a reason for the DRILL to be \
+         idle: {}",
+        status(&world)
+    );
+
+    world.species_mut(ROCK).sheet.heat_tolerance = 30;
     world.deposit_mut(DepositId(0)).unwrap().amount = 0;
     assert!(
         status(&world).contains("mined out"),

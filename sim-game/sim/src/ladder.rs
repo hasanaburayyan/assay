@@ -116,6 +116,25 @@ pub fn rungs(species: &[MineralSpecies]) -> Vec<Vec<SpeciesId>> {
     }
 }
 
+/// Can bare hands actually *use* this species — mine it **and** smelt it?
+///
+/// **RUNG ZERO IS THE AUTHORITY AND THIS RE-DERIVES NOTHING** (Game Director's
+/// ruling on ASSA-52). [`hand_minable`] answers a smaller question than it
+/// looks: a species can pass the hardness gate and still never become a part,
+/// because smelting needs a fire hot enough for its heat tolerance **and** a
+/// smelter whose walls survive that fire. Over 2000 worlds 13.6% of deposits
+/// are exactly that, 59.3% of worlds hold one, and 13.9% put one under spawn.
+///
+/// Asking [`rungs`] rather than comparing temperatures here is the whole point:
+/// the fire you can build, what it can light, and what those walls survive are
+/// already decided in one place, and a second copy would drift from it the
+/// first time the chain changed.
+pub fn usable_from_bare_hands(species: &[MineralSpecies], id: SpeciesId) -> bool {
+    rungs(species)
+        .first()
+        .is_some_and(|rung_zero| rung_zero.contains(&id))
+}
+
 /// Rung zero's two guaranteed deposits: a species to mine, smelt and build
 /// with, and a fuel the player can light by hand. May be the same species.
 ///

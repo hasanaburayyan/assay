@@ -835,11 +835,23 @@ pub struct DepositFacts {
     /// field and not a lookup through `species_facts` so that the one line
     /// that must not invite an assay has the fact in its own hand.
     pub hand_minable: bool,
-    /// The sim's sentence for why nothing can mine it, EMPTY when it can.
+    /// The sim's sentence for why this rock is a dead end, EMPTY when it is not.
     ///
     /// Same shape as [`BuildingFacts::status`]: wording the sim owns and a
     /// host only renders, so a planted drill and the rock under it can never
     /// tell a player two different stories about the same gate.
+    ///
+    /// **IT NOW CARRIES TWO KINDS OF DEAD END** (ASSA-52): too hard to break,
+    /// and — the quieter one — minable but impossible to smelt. The name says
+    /// "reach" because reach was the first, and the field is deliberately NOT
+    /// renamed: `hud.gd` coded to the contract "the sim's sentence, empty when
+    /// the rock yields", which is still exactly true, and renaming would churn
+    /// a client file to no player's benefit. `sim::debug::deposit_dead_end_note`
+    /// decides which sentence, hardness first.
+    ///
+    /// **`hand_minable` AND THIS ARE NO LONGER OPPOSITES.** A rock can be
+    /// perfectly minable and still carry a sentence. Anything that treated an
+    /// empty note as "minable" was reading a coincidence.
     pub reach_note: String,
 }
 
@@ -1111,7 +1123,7 @@ impl AssaySim {
                     depleted: deposit.is_depleted(),
                     assayed: self.world.species(deposit.species).assayed,
                     hand_minable: sim::ladder::hand_minable(self.world.species(deposit.species)),
-                    reach_note: sim::debug::deposit_reach_note(&self.world, deposit)
+                    reach_note: sim::debug::deposit_dead_end_note(&self.world, deposit)
                         .unwrap_or_default(),
                 })
             } else {
@@ -2159,11 +2171,17 @@ mod tests {
         let dead = world.deposits[0].clone();
         world.species_mut(dead.species).sheet.hardness =
             sim::tuning::HAND_MINE_MAX_HARDNESS as u8 + 1;
+        // USABLE, NOT MERELY MINABLE (ASSA-52). This asked for `hand_minable`
+        // and then asserted an empty note, which was only true while the note
+        // had one cause. A minable rock can now carry a sentence of its own —
+        // it can be impossible to smelt — so the "nothing to say" case has to
+        // pick a rock that really has nothing to say. It passed by luck on
+        // this seed; luck is not a predicate.
         let live = world
             .deposits
             .iter()
-            .find(|d| sim::ladder::hand_minable(world.species(d.species)))
-            .expect("a world the ladder guarantees has a minable deposit")
+            .find(|d| sim::ladder::usable_from_bare_hands(&world.species, d.species))
+            .expect("a world the ladder guarantees has a usable deposit")
             .clone();
         let sim = AssaySim::from_world(world);
 
