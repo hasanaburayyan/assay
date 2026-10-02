@@ -43,7 +43,37 @@ jobs:
     name: Test and lint
     runs-on: ubuntu-latest
     steps:
+      # `fetch-depth: 0` for the revert guard below: it asks what each changed
+      # file USED to contain, which a depth-1 clone cannot answer. Only this
+      # job needs it; the bundle jobs stay shallow.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # MAIN BEING GREEN AND MAIN STILL CONTAINING WHAT WAS MERGED ARE TWO
+      # CLAIMS, AND ONLY THE FIRST WAS AUTOMATED (ASSA-75, Limpet's words on
+      # ASSA-72). My #97 squashed with `git reset --soft` onto a base my index
+      # did not match, so it carried a byte-exact revert of ten of Limpet's
+      # files -- a CI guard and its own step among them. `git status` and
+      # `git diff` were both clean, and the Rust gate passed because the files
+      # it threw away were GDScript, Python and this workflow.
+      #
+      # Two rules: a file's new content may not equal a blob it already had
+      # before the base, and a deleted path must be named in a commit message
+      # or the PR body. Saying what you did is the escape hatch -- there is no
+      # flag -- which also covers the innocent case of a regenerated art sheet
+      # coming out byte-identical to an older one.
+      #
+      # Measured before wiring it: over main's last 30 merges it flags exactly
+      # one commit, #97, with exactly the ten files Limpet listed by hand.
+      #
+      # Same hole as the check below, and said in the file too: a commit that
+      # takes this script and this step together passes, because CI config
+      # comes from the commit under test. A person reading main's diff after a
+      # merge is still the backstop. Stdlib only, no network, ~1s.
+      - name: Nothing put back as it was, nothing deleted in silence
+        run: python3 ../tools/revert_guard.py
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
