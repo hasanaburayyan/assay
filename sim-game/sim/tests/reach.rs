@@ -581,18 +581,27 @@ const LIGHT_SENTENCES: [&str; 3] = [
     "nothing here burns hot enough to light it",
 ];
 
-/// **EXHAUSTIVE AND THREE-WAY**, the same shape as the dead-end test above:
-/// every fuel row is in exactly one lighting state, and the row has to say
-/// which — and must not say either of the other two. A test that only checked
-/// the cold case would pass while "fuel" promised a fire 35.8% of the time
-/// there is none (measured below over these same worlds).
+/// **EXHAUSTIVE AND FOUR-WAY**, the same shape as the dead-end test above:
+/// every fuel row is in exactly one state, and the row has to say which — and
+/// must not say any of the other three. A test that only checked the cold case
+/// would pass while "fuel" promised a fire 35.8% of the time there is none
+/// (measured below over these same worlds).
 ///
 /// **STATES 2 AND 3 CANNOT BE COLLAPSED PAST THIS.** They are different
 /// sentences on rows this sweep reaches in the hundreds, so a `lighting` that
 /// returned one for both reddens, in either direction.
+///
+/// **THE FOURTH STATE CAME LATER AND SITS BEFORE THE OTHER THREE** (ASSA-68):
+/// on a rock nothing can mine, the light slot answers the prior question
+/// instead, because a lighting state is a promise about a fire the player can
+/// never build out of that rock. It is not a fourth `Lighting` variant — the
+/// enum answers an ignition question, and this row's answer is about mining —
+/// so the branch under test lives in the table, and the expectation here is
+/// re-derived from the sheet rather than from `ladder::hand_minable`, which is
+/// the function the table asks.
 #[test]
 fn every_fuel_row_says_how_that_fuel_could_be_lit() {
-    let (mut cold, mut hotter, mut never, mut not_fuel) = (0, 0, 0, 0);
+    let (mut cold, mut hotter, mut never, mut moot, mut not_fuel) = (0, 0, 0, 0, 0);
     for seed in 1..200 {
         let w = host_world(seed);
         let table = sim::debug::species_table(&w);
@@ -611,6 +620,32 @@ fn every_fuel_row_says_how_that_fuel_could_be_lit() {
                 row.contains(&format!("fuel at {} or better", grade.letter())),
                 "the burn clause must name the CHEAPEST grade that burns ({}): {row}",
                 grade.letter()
+            );
+
+            // State four, and it is decided before the lighting question is
+            // asked at all.
+            let conditional = format!("fuel at {} or better if you could mine it", grade.letter());
+            if u32::from(s.sheet.hardness) > HAND_MINE_MAX_HARDNESS {
+                moot += 1;
+                assert!(
+                    row.contains(&conditional),
+                    "seed {seed}: hardness {} is past anything that mines, so the fuel claim \
+                     must be conditional: {row}",
+                    s.sheet.hardness
+                );
+                for sentence in LIGHT_SENTENCES {
+                    assert!(
+                        !row.contains(sentence),
+                        "seed {seed}: a rock nothing can mine must not be told how it lights: \
+                         {row}"
+                    );
+                }
+                continue;
+            }
+            assert!(
+                !row.contains(&conditional),
+                "seed {seed}: hardness {} is minable, so nothing may hedge its fuel claim: {row}",
+                s.sheet.hardness
             );
 
             let heat = u32::from(s.sheet.heat_tolerance);
@@ -637,12 +672,15 @@ fn every_fuel_row_says_how_that_fuel_could_be_lit() {
             }
         }
     }
-    // Non-vacuity, every arm: the sweep is only exhaustive if it met all
-    // three. Measured over 2000 worlds: cold 41.6%, hotter fire 22.7%,
-    // never 35.8% of 9418 fuel rows.
+    // Non-vacuity, every arm: the sweep is only exhaustive if it met all four.
+    // Measured over 2000 worlds, 9418 fuel rows: **45.6% are moot** (rock
+    // nothing can mine — the arm added last and the largest of the four), and
+    // the remaining 5127 split cold 52.0%, hotter fire 19.6%, never 28.5%.
+    // Seeds 1..200 here reach 943 fuel rows, 423 of them moot.
     assert!(cold > 50, "only {cold} cold-lighting rows");
     assert!(hotter > 50, "only {hotter} needs-a-hotter-fire rows");
     assert!(never > 50, "only {never} nothing-can-light-it rows");
+    assert!(moot > 50, "only {moot} rows whose fuel claim is moot");
     assert!(not_fuel > 50, "only {not_fuel} non-fuel rows");
 }
 
@@ -681,6 +719,89 @@ fn seed_777042_has_a_fuel_no_fire_in_that_world_can_light() {
     assert!(
         row.contains("nothing here burns hot enough to light it"),
         "one degree short must read as a dead end, not as a promise: {row}"
+    );
+}
+
+/// **THE SAME WORLD, THE OTHER HALF OF THE TRAP, AND IT IS THE FIRST FUEL ROW
+/// A PLAYER READS** (ASSA-68). On the board's #38 bench the top row of the
+/// table is Koumdarnine: hardness 42, two past anything that mines, and heat
+/// tolerance 11 — so a hand spark genuinely would light it, and the ASSA-58
+/// wording therefore put the table's strongest buy signal on the one rock in
+/// that world a player can never hold. The fuel that actually lights is three
+/// fuel rows below it.
+///
+/// Pinned by the numbers and by position in the table, not by the generated
+/// names; the names are here for whoever reads a failure.
+#[test]
+fn seed_777042_stops_selling_a_cold_light_in_its_first_fuel_row() {
+    let w = host_world(777042);
+    let table = sim::debug::species_table(&w);
+    let fuel_rows: Vec<&str> = table
+        .lines()
+        .skip(1)
+        .filter(|l| l.contains("fuel at"))
+        .collect();
+    assert_eq!(
+        fuel_rows.len(),
+        5,
+        "777042 offers five of its six rocks as fuel:\n{table}"
+    );
+
+    // Which species owns the top fuel row, asked of the table rather than
+    // assumed to be id 0.
+    let top = w
+        .species
+        .iter()
+        .find(|s| species_row(&table, s) == fuel_rows[0])
+        .expect("the top fuel row belongs to some species");
+    assert_eq!(
+        u32::from(top.sheet.hardness),
+        42,
+        "the trap is an off-by-two over HAND_MINE_MAX_HARDNESS ({HAND_MINE_MAX_HARDNESS}) and \
+         stops being this example if the roster moves: {} is hardness {}",
+        top.name(),
+        top.sheet.hardness
+    );
+    assert!(
+        u32::from(top.sheet.heat_tolerance) <= HAND_SPARK_TEMPERATURE,
+        "a hand spark really would light {}, which is why the old row sold it",
+        top.name()
+    );
+    assert!(
+        fuel_rows[0].contains("fuel at C or better if you could mine it"),
+        "the fuel claim on unminable rock is conditional: {}",
+        fuel_rows[0]
+    );
+    for sentence in LIGHT_SENTENCES {
+        assert!(
+            !fuel_rows[0].contains(sentence),
+            "and it keeps none of the lighting sentences: {}",
+            fuel_rows[0]
+        );
+    }
+
+    // And the promise the player was scanning for is real, further down.
+    let hand_lit: Vec<&sim::MineralSpecies> = w
+        .species
+        .iter()
+        .filter(|s| sim::ladder::hand_lit_fuel(s))
+        .collect();
+    assert_eq!(
+        hand_lit.len(),
+        1,
+        "exactly one rock here is fuel you can both mine and light: {:?}",
+        hand_lit.iter().map(|s| s.name()).collect::<Vec<_>>()
+    );
+    let real = species_row(&table, hand_lit[0]);
+    assert_eq!(
+        fuel_rows.iter().position(|l| *l == real.as_str()),
+        Some(3),
+        "{} is the fourth fuel row, so three fuel rows are read before it:\n{table}",
+        hand_lit[0].name()
+    );
+    assert!(
+        real.contains("lights from cold"),
+        "and that one still says so: {real}"
     );
 }
 
