@@ -79,33 +79,65 @@ static func map_cell(size: Vector2i) -> float:
 ## times the mistake was the same shape: I decided what a colour should be instead of asking what a
 ## player could see. The slot comes from `SPECIES_TINTS` now and nothing here computes a hue.
 ##
-## PURITY IS A MULTIPLIER ON THE SLOT'S OWN VALUE, 0.51 to 1.0 -- a touch under a 2:1 range, where
-## the hue-wheel version spanned 2.7:1. Scaling R, G and B together cannot move hue or saturation,
-## so the ruling holds by construction rather than by my care.
+## PURITY IS A MULTIPLIER ON THE SLOT'S OWN VALUE, 0.62 to 1.0. Scaling R, G and B together cannot
+## move hue or saturation, so the ruling holds by construction rather than by my care.
 ##
-## THE HONEST LIMIT, AND IT IS OPEN WITH COVE: the table's slots do not share one value (purple sits
-## at 0.80, yellow at 1.0) because the derivation needed that room, so brightness now carries purity
-## AND a little species. Within one species it reads cleanly; comparing the purity of two patches of
-## DIFFERENT species by brightness alone it does not. Cove measured the table at full brightness,
-## and the map draws it from 0.51 up, so whether the dim end still clears the floor is a question for
-## their probe, not for a number I invent here.
+## THE DIM END AND THE ALPHA ARE ONE MEASUREMENT, AND THE OPEN QUESTION ABOVE IS NOW ANSWERED -- NO.
+## I left it open ("whether the dim end still clears the floor is a question for their probe") and
+## the answer was that it did not. `art/species_probe.py` reads these two constants out of this
+## function, composites the disc as it is actually drawn, and sweeps purity 1..100. What shipped
+## first -- base 0.5, alpha 0.85 -- bottomed out at dE(a*b*) 10.8 at PURITY 6 against a floor of 12,
+## species 0 against species 5 for a deutan player. Three things in that are worth keeping:
+##   - the worst case is NOT the dimmest disc. The closest PAIR moves with brightness, so sampling
+##     the ends misses the minimum. That is why the probe sweeps.
+##   - the alpha was carrying the failure. 15% of near-black mixes into every disc and costs 1-2 dE
+##     of chroma; the earlier measurement that said "fine" had modelled the disc as opaque.
+##   - neither constant alone fixes it: alpha 1.0 alone scores 12.5, base 0.65 alone 12.9, and 8-bit
+##     rounding jitters this score by about a point, so a margin under 1.0 is noise, not headroom.
+##     I checked that from the other side too, since it is the claim the ruling rests on: the probe's
+##     new `MAP_ALPHA=0.85` lever puts THIS base back on the OLD alpha and scores 11.8 -- under the
+##     floor outright. Base 0.60 was never a fix on its own; it is a fix because the disc is opaque.
+## Maren's ruling (ASSA-7, 2026-10-02) is therefore BOTH: alpha 1.0 and base 0.60, measured at 14.0
+## -- two clear points. 0.60 is the knee of the sweep at alpha 1.0 (0.55 -> 13.6, 0.65 -> 15.0) and
+## keeps 84% of the purity ladder, where 0.65 would spend 26% of it to buy a point nobody needs.
+##
+## WHAT IT COSTS, SAID PLAINLY: the brightness range narrows from 1.90:1 to 1.67:1, so purity is a
+## little harder to read at a glance -- on the axis that already does double duty, because the
+## table's slots do not share one value (purple sits at 0.80, yellow at 1.0) and so brightness
+## carries purity AND a little species. Within one species it reads cleanly; across two species it
+## is the GRADE WORD that compares, never the brightness (Maren's ruling 17, same as the ore tile).
+##
+## AND NOT THE OTHER FIX I OFFERED: letting the glyph carry the dim end was refused, correctly. The
+## letter is redundant BY DESIGN (ruling 16), and a redundant cue promoted to the only cue is no
+## longer redundant -- it is also only decodable beside the menu row that names the species, and
+## `glyph_size` draws nothing at all under 10px. Below about 7px of radius COLOUR IS THE ONLY MAP
+## READ, so the colour has to stand on its own at every purity. The fix belongs on the composite.
 static func deposit_color(species: int, purity: int) -> Color:
 	# The TABLE bounds the index, not the roster: a species id past the end wraps rather than
 	# crashing a frame. `test_sim_binding.gd` is where the sim's roster size and this table's length
 	# are held to each other, so the wrap is a seatbelt and never the normal case.
 	var tint := Color(SPECIES_TINTS[posmod(species, SPECIES_TINTS.size())])
 	# Clamped 0.05 low so a purity-1 patch is still visible, 1.0 high because purity stops at 100.
+	# The clamp is why the dimmest disc is 0.62 and not 0.60.
 	var purity_part := clampf(float(purity) / 100.0, 0.05, 1.0)
-	var dimmed := 0.5 + 0.5 * purity_part
-	return Color(tint.r * dimmed, tint.g * dimmed, tint.b * dimmed, 0.85)
+	var dimmed := 0.60 + 0.40 * purity_part
+	# OPAQUE, and that is half the fix above: nothing is ever drawn under a deposit on this map, so
+	# translucency bought atmosphere and paid for it out of the one read the map exists for.
+	return Color(tint.r * dimmed, tint.g * dimmed, tint.b * dimmed, 1.0)
 
 
 ## THE LETTER ON A DEPOSIT: DARK OR LIGHT, whichever the patch underneath can be read against.
 ##
-## Takes the deposit's colour, composites it over the map so the decision is made against what is
-## actually on screen (the patch is 85% opaque over a near-black map, and a purity-1 patch of a dark
-## species ends up darker than its tint suggests), then picks on luminance. 0.221 is where the two
-## glyph colours are equally readable, so it is the only threshold that does not favour one.
+## Takes the deposit's colour and composites it over the map, so the decision is made against what is
+## actually on screen rather than against the colour that was passed in, then picks on luminance.
+## 0.221 is where the two glyph colours are equally readable, so it is the only threshold that does
+## not favour one.
+##
+## `deposit_color` returns alpha 1.0 now (see its note), so for a deposit this composite is the
+## identity and the lerp costs nothing. IT STAYS ANYWAY, for one reason that is not tidiness: this
+## function's contract is "whatever is drawn there", and it was the only place in the client that had
+## the compositing right while the probe measuring the same disc had it wrong. A function that reads
+## the alpha it is given cannot be made wrong by someone changing that alpha back.
 static func glyph_color(on: Color) -> Color:
 	var lit := MAP_BG.lerp(Color(on.r, on.g, on.b), on.a)
 	return GLYPH_DARK if lit.get_luminance() > 0.221 else GLYPH_LIGHT

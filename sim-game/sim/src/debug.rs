@@ -3,16 +3,629 @@
 
 use std::fmt::Write;
 
-use crate::assembly::{Assembly, BreakVerdict, Built, Mount, PART_SPECS, PartKind, Source};
-use crate::building::{Building, BuildingKind, Machine};
-use crate::item::ItemStack;
-use crate::mineral::{Grade, MineralSpecies, Property, Sheet};
+use crate::assembly::{
+    Assembly, AssemblyError, BreakVerdict, Built, Mount, PART_SPECS, PartKind, Source,
+};
+use crate::building::{Building, BuildingKind, Machine, Slot};
+use crate::command::{Event, PlayerCommand, RejectReason, StopReason};
+use crate::item::{Item, ItemStack};
+use crate::mineral::{Grade, MineralSpecies, NameError, Property, Sheet};
 use crate::recipe::{RECIPES, Station};
 use crate::tuning::{
     FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS, SMELTER_OUTPUT_CAP, YIELD_BY_GRADE,
 };
 use crate::types::{PlayerId, TilePos};
 use crate::world::World;
+
+/// An item as `kind:species:grade`, the form a player types and `inv` prints.
+pub fn item_spec(world: &World, item: Item) -> String {
+    format!(
+        "{}:{}:{}",
+        item.kind.name(),
+        world.species(item.species).name().to_ascii_lowercase(),
+        item.grade.letter().to_ascii_lowercase()
+    )
+}
+
+/// ONE COMMAND AS A PHRASE, for naming what a rejection refused.
+///
+/// MOVED HERE WITH `event_line` RATHER THAN DUPLICATED, and it carries a wart
+/// worth stating: this spells a command the way a player TYPES it in `sim-cli`
+/// (`goto 12 5`), which is not how a player who clicked a tile in the Godot
+/// client did it. Both hosts saying the same thing is still better than two
+/// describers drifting, which is what this move fixes. If a graphical host wants
+/// its own phrasing, the answer is a second function beside this one -- never a
+/// second copy of the event match.
+pub fn command_line(cmd: &PlayerCommand, world: &World) -> String {
+    let spec = |item: &Item| item_spec(world, *item);
+    match cmd {
+        PlayerCommand::Mine => "mine".into(),
+        PlayerCommand::Craft {
+            recipe,
+            item,
+            count,
+        } => format!("craft {} {} {count}", recipe.name(), spec(item)),
+        PlayerCommand::Place { item, pos } => format!("place {} {} {}", spec(item), pos.x, pos.y),
+        PlayerCommand::Insert {
+            building,
+            slot,
+            item,
+            count,
+        } => format!(
+            "insert {} {} {} {count}",
+            building.0,
+            slot_name(*slot),
+            spec(item)
+        ),
+        PlayerCommand::Take { building } => format!("take {}", building.0),
+        PlayerCommand::Pickup { building } => format!("pickup {}", building.0),
+        PlayerCommand::Assay => "assay".into(),
+        PlayerCommand::Rename { species, name } => {
+            format!("rename {} {name}", world.species(*species).name())
+        }
+        PlayerCommand::GrantRename { species, to } => format!(
+            "grant {} {}",
+            world.species(*species).name(),
+            // `None` reader: nobody is "you" in a phrase describing somebody
+            // else's command. The CLI passed an impossible PlayerId for this,
+            // which worked and said nothing about why.
+            player_name(world, None, *to)
+        ),
+        PlayerCommand::MakePart {
+            kind,
+            material,
+            count,
+        } => format!("make {} {} {count}", kind.name(), spec(material)),
+        PlayerCommand::Assemble { frame, mounted } => format!(
+            "assemble {}{}",
+            spec(frame),
+            mounted
+                .iter()
+                .map(|m| format!(" {}", spec(m)))
+                .collect::<String>()
+        ),
+        PlayerCommand::Equip { assembly } => format!("equip {assembly}"),
+        PlayerCommand::Unequip => "unequip".into(),
+        PlayerCommand::PlaceAssembly { assembly, pos } => {
+            format!("plant {assembly} {} {}", pos.x, pos.y)
+        }
+        PlayerCommand::MoveTo { target } => format!("goto {} {}", target.x, target.y),
+        PlayerCommand::Stop => "stop".into(),
+    }
+}
+
+/// A slot by the name a player types, not by its variant.
+fn slot_name(slot: Slot) -> &'static str {
+    match slot {
+        Slot::Input => "ore",
+        Slot::Fuel => "fuel",
+    }
+}
+
+/// Says the bounds as well as the mistake: "off the map" alone leaves a player
+/// guessing which edge they fell off.
+fn off_map(world: &World, pos: TilePos) -> String {
+    format!(
+        "({}, {}) is off the map. The map is {}x{} tiles, from (0, 0) to ({}, {}).",
+        pos.x,
+        pos.y,
+        world.width(),
+        world.height(),
+        world.width() - 1,
+        world.height() - 1
+    )
+}
+
+/// "your" for the reader, "<name>'s" for anybody else.
+///
+/// THIS EXISTS BECAUSE THE POSSESSIVE WAS BUILT FROM THE NAME, so the reader's
+/// own events read "you's design broke" -- in the terminal client, today, on the
+/// one event a player is most likely to read twice. It passed every check for
+/// "does this line say you", which is how it survived: a guard can only catch
+/// what it measures.
+fn player_possessive(world: &World, me: Option<PlayerId>, player: PlayerId) -> String {
+    if me == Some(player) {
+        return "your".into();
+    }
+    format!("{}'s", player_name(world, me, player))
+}
+
+/// A player's name, or "you" for the reader. `None` reader means nobody is "you".
+fn player_name(world: &World, me: Option<PlayerId>, player: PlayerId) -> String {
+    if me == Some(player) {
+        return "you".into();
+    }
+    world
+        .player(player)
+        .map_or_else(|| format!("player {}", player.0), |p| p.name.clone())
+}
+
+/// ONE EVENT AS ONE SENTENCE, FOR EVERY HOST. `me` is written "you"; everyone
+/// else is named. `None` means the caller has no player yet -- a client before
+/// its welcome -- so nobody is "you".
+///
+/// THIS LIVES HERE BECAUSE THERE WERE TWO OF IT. `sim-cli` had this match and
+/// `sim-godot` had another, which meant the terminal and the Godot client could
+/// word the same event differently -- and did: the Godot one had no arm for any
+/// of the eight events the assembly model added, so it showed players raw Rust
+/// `Debug` at the most dramatic moment in the game ("MachineBroke { player:
+/// PlayerId(0), ... }"). Same reason `durability_readout` lives here: a rule
+/// about what a player may know, said once.
+///
+/// AND THE EXHAUSTIVE MATCH BELONGS IN THIS CRATE, NOT IN A HOST. In `sim-godot`
+/// it was a brake: adding an `Event` variant failed to compile the client, so
+/// the sim could not grow without the renderer's permission. Here, adding a
+/// variant fails to compile the crate that added it, which is the author who
+/// knows what it should say.
+pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String {
+    let who = |p: &PlayerId| player_name(world, me, *p);
+    let name = |item: &Item| world.item_name(*item);
+    match event {
+        Event::PlayerJoined { player, name } if me == Some(*player) => {
+            format!("you joined as {name}")
+        }
+        Event::PlayerJoined { name, .. } => format!("{name} joined"),
+        Event::MiningStarted {
+            player,
+            deposit,
+            species,
+        } => format!(
+            "{} started mining {} at deposit {}",
+            who(player),
+            world.species(*species).name(),
+            deposit.0
+        ),
+        Event::OreMined {
+            player,
+            deposit,
+            item,
+            amount,
+        } => {
+            let (left, carrying) = (
+                world.deposit(*deposit).map_or(0, |d| d.amount),
+                world
+                    .player(*player)
+                    .map_or(0, |p| p.inventory.count(*item)),
+            );
+            format!(
+                "{} mined {amount} {} (carrying {carrying}, {left} left in deposit {})",
+                who(player),
+                name(item),
+                deposit.0
+            )
+        }
+        Event::MiningStopped {
+            player,
+            deposit,
+            reason,
+        } => {
+            let why = match reason {
+                StopReason::Stopped => "stopped",
+                StopReason::LeftDeposit => "walked off it",
+                StopReason::Depleted => "mined it out",
+                StopReason::OutOfInputs => "ran out",
+            };
+            format!(
+                "{} stopped mining deposit {}: {why}",
+                who(player),
+                deposit.0
+            )
+        }
+        Event::DepositDepleted { deposit } => format!("deposit {} is now depleted", deposit.0),
+        Event::SpeciesDiscovered { player, species } => format!(
+            "{} discovered {}! `rename {} <name>` to name it",
+            who(player),
+            world.species(*species).name(),
+            world.species(*species).name().to_ascii_lowercase()
+        ),
+        Event::AssayStarted {
+            player,
+            deposit,
+            species,
+        } => format!(
+            "{} started assaying {} at deposit {} ({} ticks)",
+            who(player),
+            world.species(*species).name(),
+            deposit.0,
+            crate::tuning::ASSAY_TICKS
+        ),
+        Event::AssayStopped {
+            player,
+            deposit,
+            reason,
+        } => {
+            let why = match reason {
+                StopReason::LeftDeposit => "walked off it",
+                _ => "stopped",
+            };
+            format!(
+                "{} stopped assaying deposit {}: {why}",
+                who(player),
+                deposit.0
+            )
+        }
+        Event::SpeciesAssayed { player, species } => {
+            let sp = world.species(*species);
+            format!(
+                "{} assayed {}: density {} · strength {} · hardness {} · heat tolerance {} · reactivity {} · conductivity {}",
+                who(player),
+                sp.name(),
+                sp.sheet.density,
+                sp.sheet.strength,
+                sp.sheet.hardness,
+                sp.sheet.heat_tolerance,
+                sp.sheet.reactivity,
+                sp.sheet.conductivity
+            )
+        }
+        Event::SpeciesRenamed {
+            player,
+            species,
+            name,
+        } => format!(
+            "{} named species {} \"{name}\" (was {})",
+            who(player),
+            species.0,
+            world.species(*species).generated_name
+        ),
+        Event::RenameGranted { species, from, to } => format!(
+            "{} let {} rename {}",
+            who(from),
+            who(to),
+            world.species(*species).name()
+        ),
+        Event::CraftStarted {
+            player,
+            recipe,
+            item,
+            count,
+        } => format!(
+            "{} started crafting {count} {} from {} ({} ticks each)",
+            who(player),
+            recipe.name(),
+            name(item),
+            recipe.recipe().ticks
+        ),
+        Event::ItemCrafted {
+            player,
+            item,
+            count,
+            remaining,
+            ..
+        } => {
+            let carrying = world
+                .player(*player)
+                .map_or(0, |p| p.inventory.count(*item));
+            let more = match remaining {
+                0 => String::new(),
+                n => format!(", {n} more to go"),
+            };
+            format!(
+                "{} crafted {count} {} (carrying {carrying}{more})",
+                who(player),
+                name(item)
+            )
+        }
+        Event::CraftingStopped {
+            player,
+            recipe,
+            reason,
+        } => {
+            let why = match reason {
+                StopReason::OutOfInputs => "ran out of inputs",
+                _ => "cancelled, inputs refunded",
+            };
+            format!("{} stopped crafting {}: {why}", who(player), recipe.name())
+        }
+        Event::BuildingPlaced {
+            player,
+            building,
+            item,
+            pos,
+        } => format!(
+            "{} placed {} as building {} at ({}, {}); `insert {} fuel <item>` and `insert {} ore <item>` to run it",
+            who(player),
+            name(item),
+            building.0,
+            pos.x,
+            pos.y,
+            building.0,
+            building.0
+        ),
+        Event::ItemsInserted {
+            player,
+            building,
+            slot,
+            item,
+            count,
+        } => format!(
+            "{} put {count} {} into building {}'s {} slot",
+            who(player),
+            name(item),
+            building.0,
+            slot_name(*slot)
+        ),
+        Event::ItemsTaken {
+            player,
+            building,
+            item,
+            count,
+        } => format!(
+            "{} took {count} {} from building {}",
+            who(player),
+            name(item),
+            building.0
+        ),
+        Event::BuildingRemoved {
+            player,
+            building,
+            item,
+            pos,
+        } => format!(
+            "{} picked up {} (building {}) from ({}, {})",
+            who(player),
+            name(item),
+            building.0,
+            pos.x,
+            pos.y
+        ),
+        Event::ItemSmelted {
+            building,
+            item,
+            count,
+        } => {
+            let waiting = world
+                .building(*building)
+                .map(|b| match &b.kind {
+                    BuildingKind::Smelter(s) => s.output.map_or(0, |o| o.count),
+                    BuildingKind::Machine(_) => 0,
+                })
+                .unwrap_or(0);
+            format!(
+                "building {} smelted {count} {} ({waiting} waiting; `take {}`)",
+                building.0,
+                name(item),
+                building.0
+            )
+        }
+        Event::PartsMade {
+            player,
+            part,
+            count,
+        } => format!("{} made {count} x {}", who(player), name(part)),
+        Event::Assembled { player, assembly } => {
+            // Read the design out of the world, not out of the event: what the
+            // player may see of it is banded until they assay (amendment A5).
+            let readout = world
+                .player(*player)
+                .and_then(|p| p.assemblies.get(*assembly as usize))
+                .map(|b| assembly_readout(world, b));
+            match readout {
+                Some(r) => format!("{} assembled #{assembly}: {r}", who(player)),
+                None => format!("{} assembled #{assembly}", who(player)),
+            }
+        }
+        Event::Equipped { player } => {
+            let readout = world
+                .player(*player)
+                .and_then(|p| p.tool.as_ref())
+                .map(|b| assembly_readout(world, b));
+            match readout {
+                Some(r) => format!("{} equipped a tool: {r}", who(player)),
+                None => format!("{} equipped a tool", who(player)),
+            }
+        }
+        Event::Unequipped { player } => format!("{} put their tool away", who(player)),
+        Event::MachinePlaced {
+            player,
+            building,
+            pos,
+        } => format!(
+            "{} planted machine {} at ({}, {})",
+            who(player),
+            building.0,
+            pos.x,
+            pos.y
+        ),
+        Event::MachineBroke {
+            player,
+            pos,
+            mass,
+            budget,
+            lost,
+            returned,
+        } => {
+            let items = |v: &[Item]| {
+                if v.is_empty() {
+                    "nothing".to_string()
+                } else {
+                    v.iter().map(name).collect::<Vec<_>>().join(", ")
+                }
+            };
+            format!(
+                "{} design broke{}: {mass} mass against a {budget} budget. Lost {}; got back {}",
+                player_possessive(world, me, *player),
+                pos.map_or(String::new(), |p| format!(" at ({}, {})", p.x, p.y)),
+                items(lost),
+                items(returned)
+            )
+        }
+        // Names what was kept, not just what was lost: the player needs to
+        // know the handle came back, because re-heading it costs a third of a
+        // new pick and there is no command that would tell them so.
+        Event::ToolWornOut {
+            player,
+            head,
+            handle,
+        } => format!(
+            "{} {} wore out. The {} is gone; the {} is back in {} inventory — assemble it with a new head to repair it",
+            player_possessive(world, me, *player),
+            name(handle),
+            name(head),
+            name(handle),
+            // "back in YOUR inventory" about somebody else's tool tells the
+            // reader to go looking in their own pack for a part they never had.
+            if me == Some(*player) { "your" } else { "their" }
+        ),
+        Event::MachineMined {
+            building,
+            item,
+            amount,
+            held,
+            ..
+        } => format!(
+            "machine {} mined {amount} {} ({held} waiting inside)",
+            building.0,
+            name(item)
+        ),
+        Event::MachineStalled {
+            building,
+            held,
+            capacity,
+        } => format!(
+            "machine {} is full at {held} of {capacity} and has stopped: take the ore out, or give it a hopper",
+            building.0
+        ),
+        Event::MoveStarted { player, from, to } => format!(
+            "{} started walking from ({}, {}) to ({}, {})",
+            who(player),
+            from.x,
+            from.y,
+            to.x,
+            to.y
+        ),
+        Event::PlayerArrived { player, pos } => {
+            format!("{} arrived at ({}, {})", who(player), pos.x, pos.y)
+        }
+        Event::PlayerStopped { player, pos } => {
+            format!("{} stopped at ({}, {})", who(player), pos.x, pos.y)
+        }
+        Event::CommandRejected {
+            player,
+            command,
+            reason,
+        } => {
+            let why = match reason {
+                RejectReason::NotOnDeposit => {
+                    "you're not standing on a deposit; walk onto one first".to_string()
+                }
+                RejectReason::DepositDepleted => "that deposit is already depleted".to_string(),
+                RejectReason::TooHardForHands => format!(
+                    "that ore is too hard to mine by hand (hardness over {}); drills come later",
+                    crate::tuning::HAND_MINE_MAX_HARDNESS
+                ),
+                RejectReason::UnknownPlayer => "no such player".to_string(),
+                RejectReason::ZeroCount => "the count must be at least 1".to_string(),
+                RejectReason::NotHandCraftable => {
+                    "that needs a machine; `recipes` shows where each is made".to_string()
+                }
+                RejectReason::UnknownSpecies => "no such mineral in this world".to_string(),
+                RejectReason::AlreadyAssayed => {
+                    "that species is already assayed; `species` shows its sheet".to_string()
+                }
+                RejectReason::NotDiscovered => {
+                    "nobody has mined or assayed that species yet, so nobody may name it"
+                        .to_string()
+                }
+                RejectReason::NotDiscoverer => {
+                    "only its discoverer (or someone they granted) may do that".to_string()
+                }
+                RejectReason::BadName(e) => match e {
+                    NameError::Empty => "the name is empty".to_string(),
+                    NameError::TooLong => format!(
+                        "names are at most {} characters",
+                        crate::tuning::SPECIES_NAME_MAX
+                    ),
+                    NameError::BadCharacter => {
+                        "names use letters, digits and hyphens only".to_string()
+                    }
+                },
+                RejectReason::NoSuchPlayer => "no such player; `players` lists them".to_string(),
+                RejectReason::AlreadyGranted => "they can already rename it".to_string(),
+                RejectReason::MissingItems(item) => {
+                    let have = world
+                        .player(*player)
+                        .map_or(0, |p| p.inventory.count(*item));
+                    format!("not enough {} (you have {have})", name(item))
+                }
+                RejectReason::WrongItem => "that's the wrong kind of item for this".to_string(),
+                RejectReason::AlreadyBestGrade => {
+                    "grade A is already the best; refining can't improve it".to_string()
+                }
+                RejectReason::RequirementNotMet(property, min) => format!(
+                    "its {} is below {min} at that grade; `species` shows the sheets",
+                    property.name()
+                ),
+                RejectReason::OutOfBounds => match command {
+                    PlayerCommand::MoveTo { target } => off_map(world, *target),
+                    _ => "that's off the map".to_string(),
+                },
+                RejectReason::UnknownBuilding => {
+                    "no building with that id; `buildings` lists them".to_string()
+                }
+                RejectReason::OutOfReach => format!(
+                    "too far away; get within {} tiles of it",
+                    crate::tuning::REACH
+                ),
+                RejectReason::TileOccupied => "another building is in the way".to_string(),
+                RejectReason::NotPlaceable => "that item is not a building".to_string(),
+                RejectReason::TooHotForWalls => {
+                    "that ore needs more heat than this smelter's walls survive; build one from a more heat-tolerant species".to_string()
+                }
+                RejectReason::NotFuel => format!(
+                    "that doesn't burn well enough to be fuel (reactivity below {} at that grade)",
+                    crate::tuning::FUEL_MIN_REACTIVITY
+                ),
+                RejectReason::SlotFull => {
+                    "that slot is full or holds a different item; `buildings` shows what's inside"
+                        .to_string()
+                }
+                RejectReason::NothingToTake => "it has nothing waiting to be taken".to_string(),
+                RejectReason::BadAssembly(e) => match e {
+                    AssemblyError::FrameIsNotAFrame => {
+                        "the first part must be a frame: a handle for a tool, a frame to plant"
+                            .to_string()
+                    }
+                    AssemblyError::FrameMounted => {
+                        "a frame cannot be mounted on another frame".to_string()
+                    }
+                    AssemblyError::NoSuchSlot(kind) => {
+                        format!("that frame has no {} slot at all", kind.name())
+                    }
+                    AssemblyError::TooFew { kind, have, min } => {
+                        format!("it needs at least {min} {} and has {have}", kind.name())
+                    }
+                    AssemblyError::TooMany { kind, have, max } => {
+                        format!("it takes at most {max} {} and was given {have}", kind.name())
+                    }
+                },
+                RejectReason::NotAPart(item) => {
+                    format!("{} is not a machine part; `parts` lists them", item.code())
+                }
+                RejectReason::NoSuchAssembly => {
+                    "you have not built that; `built` lists what you have".to_string()
+                }
+                RejectReason::WrongMount => {
+                    "a handle is held (`equip`) and a frame is planted (`plant`); you asked for the other one"
+                        .to_string()
+                }
+                RejectReason::NothingEquipped => "you have nothing in hand".to_string(),
+                RejectReason::NotInsertable => {
+                    "that machine takes nothing in; `take` empties it".to_string()
+                }
+            };
+            let whose = if me == Some(*player) {
+                String::new()
+            } else {
+                format!("{}'s ", who(player))
+            };
+            format!(
+                "{whose}`{}` was rejected: {why}",
+                command_line(command, world)
+            )
+        }
+    }
+}
 
 pub const MAP_LEGEND: &str =
     "P player   @ spawn   M smelter   letters = ore by species initial (lowercase = depleted)";
