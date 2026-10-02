@@ -29,6 +29,11 @@ const SHEET_DIR := "res://assets/sprites/"
 ## ground and the item is a thing in a pack, and Cove drew them separately. The four part kinds have a
 ## row per grade. `refined`, `gear` and `smelter` have NO art yet and are listed here as empty on
 ## purpose, so the gap is visible in this file rather than looking like a missing case.
+##
+## THESE EMPTY ENTRIES ARE DOCUMENTATION, NOT THE GUARD, and I checked rather than assuming: pointing
+## `refined` at `items` still draws nothing, because `items` has one row called `ore` and `_row_for`
+## finds no row named for the grade. The row lookup is what actually refuses. Said here so the next
+## person does not trust the wrong line.
 const SHEET_OF := {
 	"ore": "items",
 	"head": "head",
