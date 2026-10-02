@@ -1,17 +1,37 @@
 """Ore deposit tiles, 1x1 and seamless. SPECIES-NEUTRAL: the client tints.
 
-Rows: <grade>_<full|edge>[_v<n>] where grade is C, B or A, plus
-depleted_<full|edge>. 11 rows, and not one mineral name among them. A world
-rolls six species from its seed (ADR 0001) and no rule, recipe or sprite may
-name one, so the old 56 rows of iron / copper / coal / stone were art for a
-design that was withdrawn.
+Rows: <grade>_full_v<n> where grade is C, B or A, plus depleted_full. 7 rows,
+and not one mineral name among them. A world rolls six species from its seed
+(ADR 0001) and no rule, recipe or sprite may name one, so the old 56 rows of
+iron / copper / coal / stone were art for a design that was withdrawn.
 
 - grade C / B / A = the sim's purity bands, read from tuning.rs below. Higher
   grade is more rock, bigger rock, lighter rock, and grade A alone carries
   emissive crystal glints.
-- full = tile surrounded by ore, edge = tile at the patch border (sparser, so
-  the patch outline isn't a hard staircase). Same ground under both.
 - depleted: pitted dark ground with a few dead rocks.
+
+THERE IS NO EDGE TILE, AND THERE MUST NOT BE ONE (Maren, ASSA-20). This file
+used to draw a sparser `_edge` row for border tiles, to soften the patch
+outline. Maren read `ore.rs`: `OreDeposit` is {species, center, radius,
+amount, purity}, `contains()` is a radius test on tile centres, and `amount`
+is ONE number for the WHOLE patch - depletion is whole-deposit. Every tile in
+a deposit is identical in the sim. There is no such thing as an edge tile.
+
+So the 45% density step was a visible mark for a difference that does not
+exist - the same mistake as the quartile ladder below, and the second invented
+gradient in this one file. The square seams I spent a wake-up blaming on the
+shadow catcher were that invention becoming visible; intermediate densities
+would have spent renders making a lie continuous.
+
+The hard boundary is a FEATURE. `contains()` is exactly where mining and
+placing stop working, and a faded rim hides a hard rule. What ships is the
+digital disc the sim describes, which already staircases at tile resolution.
+
+IF IT EVER LOOKS STAMPED-ON, THE LEVER IS MORE ARRANGEMENT VARIANTS, NEVER
+DENSITY: v0/v1 move rocks around without claiming anything about quantity.
+Add v2/v3 before touching coverage again. REOPEN CONDITION, so this is not
+taste: if `amount` ever goes per-tile, or depletion eats a patch from the rim
+inward, the density step earns its mark back.
 
 THE LADDER IS THE SIM'S, NOT ONE I INVENTED. This file used to split purity
 1-25 / 26-50 / 51-75 / 76-100 while the sim splits it <40 / 40-69 / 70+. They
@@ -128,8 +148,11 @@ def glint(r, s, loc):
                verts=5, rot=(random.uniform(-0.4, 0.4), random.uniform(-0.4, 0.4), ang))
 
 
-def tile(step, full, seed):
-    """`step` is the grade index 0..2, or -1 for depleted."""
+def tile(step, seed):
+    """`step` is the grade index 0..2, or -1 for depleted.
+
+    No `full` parameter: every tile in a patch is the same tile, because every
+    tile in a deposit is the same in the sim. See the header."""
     random.seed(seed)
     r = rig.Rig(samples=48)
     # Contact shadow only; the ground itself is NOT drawn.
@@ -137,18 +160,17 @@ def tile(step, full, seed):
     # I took this out for a wake-up on the theory that its baked wash was
     # what drew the square seams at a deposit's border, then measured: the
     # ground inside an ore tile is about 3/255 darker than bare ground, which
-    # is rock antialiasing, not a shadow wash. The seams are a DENSITY step -
-    # `edge` tiles carry 45% of the rocks and `full` tiles carry 100%, so the
-    # patch border jumps in one move. Removing the catcher also made both
-    # measured numbers slightly worse (grade step 8.3 -> 8.0, grade C species
-    # margin 15.8 -> 14.8), so it is back. Noted rather than quietly reverted,
-    # because the hypothesis was confident and wrong.
+    # is rock antialiasing, not a shadow wash. The seams were a DENSITY step,
+    # from the `edge` row that no longer exists. Removing the catcher also
+    # made both measured numbers slightly worse (grade step 8.3 -> 8.0, grade
+    # C species margin 15.8 -> 14.8), so it is back. Noted rather than quietly
+    # reverted, because the hypothesis was confident and wrong.
     r.shadow_catcher()
     if step < 0:  # depleted: a couple of small dark scars and dead rocks
         scar = mat(mix(rig.PALETTE["ground"], "#000000", 0.35))
-        for (x, y, s) in [(-0.18, 0.12, 0.17), (0.22, -0.2, 0.12)][: 2 if full else 1]:
+        for (x, y, s) in [(-0.18, 0.12, 0.17), (0.22, -0.2, 0.12)]:
             r.cyl(s, 0.02, (x, y, -0.005), scar, bev=0, verts=16, env=True)
-        spots = [(random.uniform(-0.45, 0.45), random.uniform(-0.45, 0.45), random.uniform(0.04, 0.07)) for _ in range(3 if full else 2)]
+        spots = [(random.uniform(-0.45, 0.45), random.uniform(-0.45, 0.45), random.uniform(0.04, 0.07)) for _ in range(3)]
         colors = [mix(DARK, rig.PALETTE["ground_dk"], 0.6)] * len(spots)
     else:
         # COVERAGE DOES MOST OF THE WORK (rule 4). More and bigger rock moves
@@ -158,7 +180,7 @@ def tile(step, full, seed):
         # rocks a C tile was 3.9 dE from bare ground - a deposit you cannot
         # see is one you cannot go and mine, whatever its purity. Poor ore
         # should look poor, not absent.
-        count = int((9 + step * 5) * (1.0 if full else 0.45))
+        count = 9 + step * 5
         smin, smax = 0.065 + step * 0.020, 0.115 + step * 0.032
         spots = [(random.uniform(-0.5, 0.5), random.uniform(-0.5, 0.5), random.uniform(smin, smax)) for _ in range(count)]
         colors = [shade(step, random.choice((0.0, 0.20, -0.15))) for _ in spots]
@@ -180,10 +202,7 @@ seed = 1
 for step, (letter, _min_purity) in enumerate(GRADES):
     for v in range(FULL_VARIANTS):
         row = f"{letter}_full_v{v}"
-        tile(step, True, seed).render(asset.path(row)); asset.add(row, 1); seed += 1
-    row = f"{letter}_edge"
-    tile(step, False, seed).render(asset.path(row)); asset.add(row, 1); seed += 1
-for full in (True, False):
-    row = f"depleted_{'full' if full else 'edge'}"
-    tile(-1, full, seed).render(asset.path(row)); asset.add(row, 1); seed += 1
+        tile(step, seed).render(asset.path(row)); asset.add(row, 1); seed += 1
+row = "depleted_full"
+tile(-1, seed).render(asset.path(row)); asset.add(row, 1); seed += 1
 asset.write()
