@@ -216,10 +216,9 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
         }
         Event::DepositDepleted { deposit } => format!("deposit {} is now depleted", deposit.0),
         Event::SpeciesDiscovered { player, species } => format!(
-            "{} discovered {}! `rename {} <name>` to name it",
+            "{} discovered {}! its discoverer may name it",
             who(player),
-            world.species(*species).name(),
-            world.species(*species).name().to_ascii_lowercase()
+            world.species(*species).name()
         ),
         Event::AssayStarted {
             player,
@@ -326,14 +325,12 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
             item,
             pos,
         } => format!(
-            "{} placed {} as building {} at ({}, {}); `insert {} fuel <item>` and `insert {} ore <item>` to run it",
+            "{} placed {} as building {} at ({}, {}); it needs fuel and ore before it will run",
             who(player),
             name(item),
             building.0,
             pos.x,
-            pos.y,
-            building.0,
-            building.0
+            pos.y
         ),
         // A CLAMP THAT DOES NOT SAY WHAT IT REFUSED IS A SILENT PARTIAL
         // SUCCESS (ASSA-48). The leftover is the half a player can act on: it
@@ -395,10 +392,9 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
                 })
                 .unwrap_or(0);
             format!(
-                "building {} smelted {count} {} ({waiting} waiting; `take {}`)",
+                "building {} smelted {count} {} ({waiting} waiting to be taken)",
                 building.0,
-                name(item),
-                building.0
+                name(item)
             )
         }
         Event::PartsMade {
@@ -548,11 +544,11 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
                 RejectReason::UnknownPlayer => "no such player".to_string(),
                 RejectReason::ZeroCount => "the count must be at least 1".to_string(),
                 RejectReason::NotHandCraftable => {
-                    "that needs a machine; `recipes` shows where each is made".to_string()
+                    "that needs a machine, not bare hands".to_string()
                 }
                 RejectReason::UnknownSpecies => "no such mineral in this world".to_string(),
                 RejectReason::AlreadyAssayed => {
-                    "that species is already assayed; `species` shows its sheet".to_string()
+                    "that species is already assayed; its sheet is exact for everyone".to_string()
                 }
                 RejectReason::NotDiscovered => {
                     "nobody has mined or assayed that species yet, so nobody may name it"
@@ -571,7 +567,7 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
                         "names use letters, digits and hyphens only".to_string()
                     }
                 },
-                RejectReason::NoSuchPlayer => "no such player; `players` lists them".to_string(),
+                RejectReason::NoSuchPlayer => "nobody in this world has that name".to_string(),
                 RejectReason::AlreadyGranted => "they can already rename it".to_string(),
                 RejectReason::MissingItems(item) => {
                     let have = world
@@ -584,16 +580,14 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
                     "grade A is already the best; refining can't improve it".to_string()
                 }
                 RejectReason::RequirementNotMet(property, min) => format!(
-                    "its {} is below {min} at that grade; `species` shows the sheets",
+                    "its {} is below {min} at that grade; another species may meet it",
                     property.name()
                 ),
                 RejectReason::OutOfBounds => match command {
                     PlayerCommand::MoveTo { target } => off_map(world, *target),
                     _ => "that's off the map".to_string(),
                 },
-                RejectReason::UnknownBuilding => {
-                    "no building with that id; `buildings` lists them".to_string()
-                }
+                RejectReason::UnknownBuilding => "no building with that id".to_string(),
                 RejectReason::OutOfReach => format!(
                     "too far away; get within {} tiles of it",
                     crate::tuning::REACH
@@ -608,8 +602,7 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
                     crate::tuning::FUEL_MIN_REACTIVITY
                 ),
                 RejectReason::SlotFull => {
-                    "that slot is full or holds a different item; `buildings` shows what's inside"
-                        .to_string()
+                    "that slot is full or holds a different item".to_string()
                 }
                 RejectReason::NothingToTake => "it has nothing waiting to be taken".to_string(),
                 RejectReason::BadAssembly(e) => match e {
@@ -631,18 +624,16 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
                     }
                 },
                 RejectReason::NotAPart(item) => {
-                    format!("{} is not a machine part; `parts` lists them", item.code())
+                    format!("{} is not a machine part", item.code())
                 }
-                RejectReason::NoSuchAssembly => {
-                    "you have not built that; `built` lists what you have".to_string()
-                }
+                RejectReason::NoSuchAssembly => "you have not built that".to_string(),
                 RejectReason::WrongMount => {
-                    "a handle is held (`equip`) and a frame is planted (`plant`); you asked for the other one"
+                    "a handle is held and a frame is planted; you asked for the other one"
                         .to_string()
                 }
                 RejectReason::NothingEquipped => "you have nothing in hand".to_string(),
                 RejectReason::NotInsertable => {
-                    "that machine takes nothing in; `take` empties it".to_string()
+                    "that machine takes nothing in; it can only be emptied".to_string()
                 }
             };
             let whose = if me == Some(*player) {
