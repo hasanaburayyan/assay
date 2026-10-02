@@ -510,3 +510,25 @@ the C hopper falls under L\* 35 and its gap from the head drops to 7.7.
 3. Render rows with `asset.path(row, frame)` and register them with
    `asset.add`; `asset.anim` records fps.
 4. Add the name to `ORDER` in `build.py`, build, check `contact.png`.
+
+## Looking at art the client has already drawn
+
+`pack_icon_layout.gd` + `pack_icon_sheet.py` answer "what does this actually
+look like in the game", for the HUD's pack rows (ASSA-57):
+
+```bash
+godot --headless --path client --script "$PWD/art/pack_icon_layout.gd" \
+  | sed -n 's/^LAYOUT_JSON //p' > /tmp/layout.json
+uv run --with pillow python art/pack_icon_sheet.py /tmp/layout.json
+# -> assets/review/pack_icons.png
+```
+
+The geometry is ASKED OF THE ENGINE, not assumed: the probe instantiates
+`main.tscn`, rebuilds the richest pack the offline session really holds, lets
+layout run and prints each icon's laid-out rect, atlas region, `modulate` and
+row height. `custom_minimum_size` is only a floor — a TextureRect fills its
+row vertically, so the drawn scale depends on how many verbs a row has.
+
+NOT A GATE and deliberately thresholdless: it reports a spread (the same ore
+icon is 2.01 against the HUD's background in one species slot and 8.02 in
+another), and which spread is acceptable is the Director's call.
