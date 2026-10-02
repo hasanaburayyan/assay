@@ -12,10 +12,13 @@
 // left is pure data hashing, which is the same family of thing as `hash.rs`.
 //
 // **WHAT THE IDENTITY COVERS AND WHAT IT DOES NOT.** Every `.rs` file under
-// `sim/src`, by path and by content. Not `Cargo.toml`, not `Cargo.lock`, not
-// the compiler version — so a dependency bump that changed arithmetic would
-// not move it. The rules live in the source and that is where the line is
-// drawn; `PROTOCOL_VERSION` still covers the shape of the wire.
+// `sim/src`, by path and by content, plus the workspace `Cargo.lock` — a
+// dependency bump that changes arithmetic is a different build (Wren's ruling
+// on the ASSA-40 follow-up, 2026-10-02). Not `Cargo.toml`, whose interesting
+// content is in the lock file, and not the compiler version. The exact list
+// lives in `rules_walk.rs::identity_inputs`, which is the one place
+// `build.rs` and `tests/rules_identity.rs` both read it from;
+// `PROTOCOL_VERSION` still covers the shape of the wire.
 
 /// FNV-1a over the file list, in the order given. Sixteen hex digits, the
 /// same shape as a world hash, so the two read alike in a log.
