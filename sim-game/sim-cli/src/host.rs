@@ -859,12 +859,15 @@ fn at(s: &Session, args: &[&str]) -> Result<(), String> {
     }
     match s.world.deposit_at(pos) {
         Some(d) => out!(
-            "({x}, {y}): deposit {} · {} · {} left · purity {} (grade {}) · {place}",
+            "({x}, {y}): deposit {} · {} · {} left · purity {} (grade {}) · {place}{}",
             d.id.0,
             s.world.species(d.species).name(),
             d.amount,
             d.purity,
-            d.grade().letter()
+            d.grade().letter(),
+            sim::debug::deposit_reach_note(&s.world, d)
+                .map(|why| format!(" · {why}"))
+                .unwrap_or_default()
         ),
         None if pos == s.world.spawn_tile() => out!("({x}, {y}): spawn · {place}"),
         None => out!("({x}, {y}): empty ground · {place}"),
@@ -887,10 +890,18 @@ fn where_am_i(s: &Session) -> Result<(), String> {
         None => out!("You are standing at ({x}, {y})."),
     }
     if let Some(d) = s.world.deposit_at(me.pos) {
-        let mining = if me.mining.is_some() {
-            " You're mining it."
-        } else {
-            " `mine` to start mining it."
+        // NEVER INVITE THE IMPOSSIBLE (ASSA-43). This said "`mine` to start
+        // mining it" on every deposit, and 40.7% of them are of a species
+        // nothing in the game can break — so the headless game's standing
+        // advice was an instruction that cannot work. Reach comes from the
+        // sim's own note, so this and the Godot tile line cannot disagree.
+        let mining = match (
+            sim::debug::deposit_reach_note(&s.world, d),
+            me.mining.is_some(),
+        ) {
+            (Some(why), _) => format!(" {why}."),
+            (None, true) => " You're mining it.".to_string(),
+            (None, false) => " `mine` to start mining it.".to_string(),
         };
         out!(
             "You're on deposit {} ({}, grade {}, {} left).{mining}",

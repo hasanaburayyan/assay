@@ -10,6 +10,7 @@ use crate::building::{Building, BuildingKind, Machine, Slot};
 use crate::command::{Event, PlayerCommand, RejectReason, StopReason};
 use crate::item::{Item, ItemStack};
 use crate::mineral::{Grade, MineralSpecies, NameError, Property, Sheet};
+use crate::ore::OreDeposit;
 use crate::recipe::{RECIPES, Station};
 use crate::tuning::{
     FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS, HAND_WORK_PER_TICK, PICK_WEAR_PER_SWING,
@@ -511,8 +512,14 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
                     "you're not standing on a deposit; walk onto one first".to_string()
                 }
                 RejectReason::DepositDepleted => "that deposit is already depleted".to_string(),
+                // "DRILLS COME LATER" WAS FALSE (ASSA-43). Decision 7 holds
+                // `mine_by_machine` to the same gate, so this ore is out of
+                // reach of everything the game can build — and this sentence
+                // was the only thing the game said about reach at all, which
+                // made our one explanation a promise we break.
                 RejectReason::TooHardForHands => format!(
-                    "that ore is too hard to mine by hand (hardness over {}); drills come later",
+                    "that ore is too hard to mine (hardness over {}); a drill lifts throughput, \
+                     not hardness, so nothing reaches it yet",
                     crate::tuning::HAND_MINE_MAX_HARDNESS
                 ),
                 RejectReason::UnknownPlayer => "no such player".to_string(),
@@ -685,24 +692,62 @@ pub fn ascii_map(world: &World) -> String {
     out
 }
 
+/// Why nothing can mine this deposit, if nothing can; `None` when the ore is
+/// within reach and there is nothing to say.
+///
+/// **AN UNREACHABLE ROCK IS A PROMISE; AN UNEXPLAINED ONE IS A BUG** (Game
+/// Director, ASSA-43). Over 2000 worlds, 40.7% of deposits are of a species the
+/// gate refuses and 27.9% of worlds hold one in the spawn chunk, so this is the
+/// common case and not the corner — a player meets one before they meet a
+/// smelter.
+///
+/// It asks [`crate::ladder::hand_minable`], the function `step` itself asks, so
+/// a deposit cannot read as minable and then refuse the swing.
+///
+/// **IT DOES NOT SAY "DRILLS COME LATER".** They do not: decision 7 holds
+/// `mine_by_machine` to the same gate, so a deposit too hard for hands is too
+/// hard for every machine in the game. The old rejection sentence promised the
+/// opposite and that was the only thing the game said about reach at all.
+pub fn deposit_reach_note(world: &World, deposit: &OreDeposit) -> Option<String> {
+    let species = world.species(deposit.species);
+    (!crate::ladder::hand_minable(species)).then(|| {
+        format!(
+            "{} is too hard for anything we can build: hardness is over \
+             {HAND_MINE_MAX_HARDNESS}, and a drill lifts throughput, not hardness",
+            species.name()
+        )
+    })
+}
+
 /// Table of every deposit.
 pub fn deposit_table(world: &World) -> String {
     let mut out = format!(
-        "{:>4}  {:<12} {:>10}  {:>6}  {:>6}  {:>6}  {:>5}\n",
+        "{:>4}  {:<12} {:>10}  {:>6}  {:>6}  {:>6}  {:>5}  notes\n",
         "id", "species", "center", "radius", "amount", "purity", "grade"
     );
     for d in &world.deposits {
         let center = format!("({}, {})", d.center.x, d.center.y);
+        // The listing is where a player compares deposits, so it is the worst
+        // place to leave reach out: four of ten rows here are rock nothing can
+        // break, and before this they looked exactly like the six that yield.
+        let mut notes = Vec::new();
+        if d.is_depleted() {
+            notes.push("mined out".to_string());
+        }
+        if let Some(why) = deposit_reach_note(world, d) {
+            notes.push(why);
+        }
         let _ = writeln!(
             out,
-            "{:>4}  {:<12} {:>10}  {:>6}  {:>6}  {:>6}  {:>5}",
+            "{:>4}  {:<12} {:>10}  {:>6}  {:>6}  {:>6}  {:>5}  {}",
             d.id.0,
             world.species(d.species).name(),
             center,
             d.radius,
             d.amount,
             d.purity,
-            d.grade().letter()
+            d.grade().letter(),
+            notes.join(" · ")
         );
     }
     out
@@ -739,8 +784,12 @@ pub fn species_table(world: &World) -> String {
                 .map_or(format!("player {}", d.0), |p| p.name.clone());
             notes.push(format!("found by {who}"));
         }
-        if u32::from(sh.hardness) <= HAND_MINE_MAX_HARDNESS {
+        if crate::ladder::hand_minable(s) {
             notes.push("hand-minable".to_string());
+        } else {
+            // The absence of a note used to be the only cue, and absence is not
+            // a cue: this is the half of the roster nothing can mine.
+            notes.push("too hard for anything we can build".to_string());
         }
         for grade in Grade::ALL.into_iter().rev() {
             if s.effective(Property::Reactivity, grade) >= FUEL_MIN_REACTIVITY {
@@ -874,22 +923,22 @@ pub fn machine_status(world: &World, b: &Building, m: &Machine) -> String {
         Some(d) if d.is_depleted() => "idle: deposit is mined out".to_string(),
         // Decision 7: a drill is a throughput upgrade, never a hardness
         // unlock, so it refuses exactly what hands refuse. Without this line
-        // that refusal is invisible and reads as a bug.
-        Some(d) if u32::from(world.species(d.species).sheet.hardness) > HAND_MINE_MAX_HARDNESS => {
-            format!(
-                "idle: {} is too hard to mine (hardness above {HAND_MINE_MAX_HARDNESS})",
-                world.species(d.species).name()
-            )
+        // that refusal is invisible and reads as a bug. The sentence is
+        // `deposit_reach_note`'s now, so a drill and the rock it sits on can
+        // never give a player two different stories about the same gate.
+        Some(d) => {
+            if let Some(why) = deposit_reach_note(world, d) {
+                format!("idle: {why}")
+            // The sim stops a machine that has no room for a WHOLE unit, so
+            // the readout has to use the same test or it will call a stopped
+            // drill "mining" for the last few units of its buffer.
+            } else if m.held.map_or(0, |h| h.count) + YIELD_BY_GRADE[d.grade() as usize] > capacity
+            {
+                "stalled: full, take the ore out".to_string()
+            } else {
+                format!("mining {}", world.species(d.species).name())
+            }
         }
-        // The sim stops a machine that has no room for a WHOLE unit, so the
-        // readout has to use the same test or it will call a stopped drill
-        // "mining" for the last few units of its buffer.
-        Some(d)
-            if m.held.map_or(0, |h| h.count) + YIELD_BY_GRADE[d.grade() as usize] > capacity =>
-        {
-            "stalled: full, take the ore out".to_string()
-        }
-        Some(d) => format!("mining {}", world.species(d.species).name()),
     };
     // Same reason as `assembly_readout`: what it is holding and what it is
     // doing come before the design it was built from, because the table line
