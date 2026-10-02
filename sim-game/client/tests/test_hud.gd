@@ -324,7 +324,12 @@ func _design() -> Dictionary:
 	return {
 		"index": -1, "in_hand": true, "verdict": "UNCERTAIN",
 		"mass_low": 26, "mass_high": 50, "budget_low": 40, "budget_high": 40,
-		"mount": "held", "durability": "100% of 2400-3600",
+		# The sim's own wording, copied from `sim::debug::durability_readout` as it stands. A fixture
+		# can say anything, so this one is only ever a SAMPLE OF THE SHAPE: nothing below asserts the
+		# string itself. It said "100% of 2400-3600" until 2026-10-02, which was the percentage form I
+		# filed as a pool leak (ASSA-5) and Maren then reversed to swings -- so for a few hours this
+		# file was the last place in the repo still claiming a wording the sim had abandoned.
+		"mount": "held", "durability": "0 of 120-180 swings used",
 		"unassayed": PackedStringArray(["Korvite"]),
 		"parts": [
 			{"kind": "frame", "species": 0, "species_name": "Korvite", "symbol": "K",
@@ -393,6 +398,13 @@ func test_an_uncertain_design_names_the_material_to_assay() -> bool:
 
 ## DURABILITY IS HELD-ONLY (Maren's ruling, ASSA-5). The binding leaves the key out on a planted
 ## design, and the panel must not print the word anyway.
+##
+## THE SECOND CASE IS THE ONE THAT BITES, and this test did not have it until 2026-10-02. Erasing the
+## key only proves the panel does not invent a line out of nothing; a panel that had stopped checking
+## at all would still pass, because there is no key to print. I mutated the condition in `hud.gd` to
+## `if true:` and the suite stayed green at 81/0 -- so the "anyway" in the sentence above was a claim
+## with nothing behind it. A planted design carrying a durability key is a BINDING REGRESSION, and the
+## panel is the place the ruling has to survive one.
 func test_a_planted_design_shows_no_durability_at_all() -> bool:
 	var planted := _design()
 	planted.erase("durability")
@@ -401,9 +413,24 @@ func test_a_planted_design_shows_no_durability_at_all() -> bool:
 	for line in AssayHud.design_lines(planted):
 		if String(line).contains("durability"):
 			return _fail("a planted design printed a durability line: %s" % line)
-	var held_lines := "\n".join(AssayHud.design_lines(_design()))
-	if not held_lines.contains("durability 100% of 2400-3600"):
-		return _fail("a held design must show its pool, got %s" % held_lines)
+	var regressed := _design()
+	regressed["mount"] = "planted"
+	regressed["in_hand"] = false
+	for line in AssayHud.design_lines(regressed):
+		if String(line).contains("durability"):
+			return _fail(("a planted design was handed a durability key and the panel printed it: %s. "
+					+ "Held-only is Maren's ruling (ASSA-5); the panel must hold it even when the "
+					+ "binding hands it the key.") % line)
+	# THE PANEL'S JOB, NOT THE SIM'S WORDING. This used to assert the literal string, which is how it
+	# came to be the last place in the repo claiming a retired format: an assertion that spells out the
+	# sim's sentence has to be edited every time the sim writes a better one, and until someone does,
+	# it passes while being wrong. So the expectation is built FROM the fixture -- the panel must print
+	# the label and then whatever the sim handed it, verbatim and unparsed.
+	var held := _design()
+	var wanted := "durability %s" % String(held["durability"])
+	var held_lines := "\n".join(AssayHud.design_lines(held))
+	if not held_lines.contains(wanted):
+		return _fail("a held design must show its pool as '%s', got %s" % [wanted, held_lines])
 	return true
 
 

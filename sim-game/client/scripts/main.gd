@@ -330,9 +330,19 @@ func _track_hover(at: Vector2) -> void:
 	queue_redraw()
 
 
-## The world as the sim has it: bounds, every deposit, every player, and spawn. No sprite yet on
-## purpose -- `assets/sprites` is drawn for the old named ores and the species here are generated, so
-## shape-and-colour from the sim's own numbers is the honest picture until the art pipeline catches up.
+## The world as the sim has it: bounds, every deposit, every player, and spawn.
+##
+## NO SPRITES HERE YET, AND THE REASON IS A PATH, NOT THE ART. This comment used to say the art was
+## the problem -- that `assets/sprites` was drawn for the old named ores while the species in a world
+## are generated. That stopped being true at ASSA-19/20: the ore sprite is species-neutral and meant to
+## be tinted, the `_edge` variant is gone (ASSA-26), and the tint table is already in this client
+## (`AssayHud.SPECIES_TINTS`). A tinted ore tile is `modulate` with that slot over `ore.png`.
+##
+## The actual blocker is ASSA-34, Cove's finding: `res://` is the project folder, which is `client/`,
+## and the sheets live in its SIBLING `assets/sprites`, so the engine cannot see them, there is not one
+## `.import` file for them, and neither export preset would pack them. The layout call is Marlow's.
+## Shapes and colours from the sim's own numbers are the honest picture until that path is settled --
+## but nobody should read this and go looking at the art.
 func _draw() -> void:
 	# A self-check run returns out of `_ready` before there is a client, and the engine still calls
 	# `_draw` once. In the editor that is a caught script error; in an EXPORTED RELEASE BUILD it

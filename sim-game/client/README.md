@@ -51,7 +51,18 @@ are signed, so that one message is written in Rust and only framed here.
 
 ## Not here yet
 
-The part menu and placement (they wait on ASSA-5's assembly commands), sprites
-(the species in a world are generated, so `assets/sprites` has nothing to draw
-them with yet), and reconnect — out of scope by Decision 3: a dropped client
-restarts to rejoin.
+**Sprites**, and reconnect — the latter out of scope by Decision 3: a dropped
+client restarts to rejoin.
+
+The part menu and placement used to be listed here as waiting on ASSA-5. They
+landed: the bench panel reads `AssaySim.designs_of`, and the probe assembles,
+equips and plants through the same `PlayerCommand`s `sim-cli` uses.
+
+Sprites are **blocked on a path, not on the art**. This file used to say the
+species in a world are generated so `assets/sprites` had nothing to draw them
+with; that stopped being true at ASSA-19/20 — the ore sprite is species-neutral
+and meant to be tinted, and the tint table is already here in
+`AssayHud.SPECIES_TINTS`. The real blocker is ASSA-34: `res://` is this folder,
+the sheets are in its sibling `../assets/sprites`, so the engine cannot see
+them, nothing has an `.import`, and neither export preset would pack them. The
+layout call is Marlow's.

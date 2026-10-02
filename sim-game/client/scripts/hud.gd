@@ -279,7 +279,19 @@ static func design_lines(design: Dictionary) -> PackedStringArray:
 		lines.append("assay %s to know" % " and ".join(unassayed))
 	# ABSENT, not blank: a planted machine has no durability key, because drill wear is parked and a
 	# number that never moves teaches a mechanic that does not exist.
-	if design.has("durability"):
+	# KEEPING THE "durability" LABEL, which Marlow offered to let me drop now that the sim's string
+	# reads "20 of 144 swings used" and the line is a touch redundant. Two reasons not to. It is a row
+	# in a list of rows, so without the label "20 of 144 swings used" has to be guessed at from
+	# position; and `sim-cli` prints the same label, so dropping mine would make the two hosts say
+	# different things about one number for a cosmetic gain. If the wording wants improving it should
+	# improve in both, and the sentence after the label is the sim's to choose, never this file's.
+	# AND IT IS GATED ON `in_hand`, NOT ONLY ON THE KEY BEING THERE. The docstring under this function
+	# has always claimed the panel must not print the word "anyway" -- i.e. on top of the binding
+	# leaving the key out. It did not: it printed whatever key it was handed. I found that by mutating
+	# this condition to `if true:` and watching the suite stay green at 81/0, because the planted test
+	# erases the key and so could never catch a panel that had stopped checking. Two sim facts read
+	# (`durability`, `in_hand`), nothing derived, and the rule now holds even if the binding regresses.
+	if design.has("durability") and bool(design.get("in_hand", false)):
 		lines.append("durability %s" % String(design["durability"]))
 	# THE LETTER IS HERE TO TEACH THE MAP, not to carry the row. The row already names its species in
 	# words, which is a stronger non-colour read than a glyph -- so on its own I would have left this
