@@ -373,9 +373,10 @@ func _mine_some_ore(screen: Node) -> bool:
 ## The pack row whose first line reads exactly this.
 func _row_for(screen: Node, line: String) -> Node:
 	for row in screen._carrying.get_children():
-		if row.get_child_count() == 0:
-			continue
-		var label: Label = row.get_child(0) as Label
+		# BY NAME, NOT BY POSITION. A pack row is [icon?][VBox: line, verbs] since ASSA-46, so the
+		# sentence is not child 0 and is not at a fixed depth either -- whether the icon exists depends
+		# on whether we have art for that item.
+		var label := row.find_child(screen.STACK_LINE, true, false) as Label
 		if label != null and label.text == line:
 			return row
 	return null
