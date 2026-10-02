@@ -51,10 +51,22 @@ fn a_peer_on_another_protocol_is_refused_for_that_and_not_the_rules() {
             && refusal.contains(&format!("v{}", PROTOCOL_VERSION + 1)),
         "name both protocol versions: {refusal}"
     );
+    // **THE ASSERTION MOVED FROM THE TOKEN TO THE CLAIM** (ASSA-77). It used
+    // to be `!refusal.contains(RULES_ID)`, which was the right intent read
+    // through the wrong thing: the sentence now names this host's rules id as
+    // **the build to download**, because a stranger across a protocol bump has
+    // no other way to tell which zip to fetch. That is not "your rules are
+    // wrong", so the test asks whether the complaint is made rather than
+    // whether the string appears.
     assert!(
-        !refusal.contains(RULES_ID),
+        !refusal.contains("runs game rules"),
         "a protocol mismatch must not be reported as a rules mismatch, or \
          the reader chases the wrong thing: {refusal}"
+    );
+    assert!(
+        refusal.contains(RULES_ID) && refusal.contains("Nothing is wrong with your machine"),
+        "and it must still carry the two things a stranger can act on: which \
+         build to download, and that their machine is fine (ASSA-77): {refusal}"
     );
 }
 
