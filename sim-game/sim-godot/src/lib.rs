@@ -1602,9 +1602,15 @@ mod tests {
             .durability
             .as_ref()
             .expect("a held design has a pool");
+        // A10 is said in SWINGS USED, not as a percentage of the band (the
+        // Game Director reversed that on ASSA-5: a percentage plus the
+        // player's own swing count identifies the exact pool after six
+        // swings). Marlow changed `sim::debug::durability_readout`; this
+        // assertion follows it, which is the point of the menu taking its
+        // wording from the sim.
         assert!(
-            durability.starts_with("100% of "),
-            "a design nobody has used yet is full: {durability}"
+            durability.starts_with("0 of ") && durability.ends_with(" swings used"),
+            "a design nobody has used yet has used no swings: {durability}"
         );
         assert_eq!(
             designs[1].durability, None,
@@ -1623,8 +1629,9 @@ mod tests {
             .clone()
             .expect("a held design has a pool");
         assert!(
-            !exact.contains('%') && exact.contains('/'),
-            "an assayed design reads exact, got {exact}"
+            !exact.contains('%') && !exact.contains('-'),
+            "an assayed design reads against one exact number of swings \
+             rather than a band, got {exact}"
         );
     }
 

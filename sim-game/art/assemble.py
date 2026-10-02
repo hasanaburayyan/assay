@@ -25,6 +25,16 @@ WHAT IT CHECKS
      amount of sim correctness fixes a machine you cannot read.
   3. The grade ladder survives assembly: a C machine and an A machine still
      differ once the parts are overlaid and shrunk to 1x.
+  4. YOU CAN SEE WHERE ONE PART ENDS AND THE NEXT BEGINS. Footprint growth
+     (check 2) only sees the SILHOUETTE, so it is blind to two parts that
+     touch and share a value: the machine is the right shape and still reads
+     as one lump. That is what happened at grade A once the glint began to
+     blow out neutral (ASSA-28) - a white deck under a steel hopper, 13.3 dE
+     apart at 1x where C was 36.9 and B 55.1, and you could not count the
+     hoppers that check 2 had just proved were there.
+  5. The hopper is still an OPEN BOX, which is the one thing its silhouette
+     owes the player. Fixing 4 means darkening the hopper, and far enough
+     down the body falls into its own shadowed well and the hole closes.
   Each is printed as a measurement, and the sheet is there to look at.
 
 The draw order is frame, then hopper(s), then head: the frame is the body and
@@ -44,11 +54,13 @@ import json
 import os
 import re
 import sys
+from statistics import median
 
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from part_layout import PART_REPEAT_OFFSET
+from species_probe import DISTINCT, GRADE_ROWS, dE, lab
 
 # RED LEVER. ASSA-16's lesson was a check that passed on the exact defect it
 # existed to find, so this one has a way to be seen failing: PART_OFFSET=0,0
@@ -58,6 +70,21 @@ if os.environ.get("PART_OFFSET"):
     PART_REPEAT_OFFSET = tuple(int(v) for v in os.environ["PART_OFFSET"].split(","))
     print("[RED RUN] PART_REPEAT_OFFSET forced to %s; the hopper checks MUST fail"
           % (PART_REPEAT_OFFSET,))
+
+# RED LEVERS FOR CHECKS 4 AND 5, one each, because a guard with no way to be
+# seen failing stops guarding silently. Both act on the loaded hopper sheet
+# rather than on hopper.py, so they run without Blender - but each reproduces
+# the CAUSE and not just the symptom:
+#   HOPPER_LIGHT=1  puts the hopper back at the deck's value, which is the
+#                   ASSA-28 defect; the PART SEAM check MUST fail at grade A.
+#   HOPPER_DARK=1   drives the body down into its own well, which is the way
+#                   fixing that breaks the part; the OPEN BOX check MUST fail.
+HOPPER_LIGHT = os.environ.get("HOPPER_LIGHT")
+HOPPER_DARK = os.environ.get("HOPPER_DARK")
+if HOPPER_LIGHT:
+    print("[RED RUN] hopper lightened toward the deck; the part-seam check MUST fail at A")
+if HOPPER_DARK:
+    print("[RED RUN] hopper darkened into its own well; the open-box check MUST fail")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SPR = os.path.join(ROOT, "assets", "sprites")
@@ -79,10 +106,22 @@ def frame_of(asset, row, f=0):
     if row not in names:
         raise SystemExit("%s has no row %r (has %s)" % (asset, row, names))
     y = names.index(row)
-    return sheets[asset].crop((f * fw, y * fh, (f + 1) * fw, (y + 1) * fh))
+    im = sheets[asset].crop((f * fw, y * fh, (f + 1) * fw, (y + 1) * fh))
+    if asset == "hopper" and (HOPPER_LIGHT or HOPPER_DARK):
+        im = im.copy()
+        px = im.load()
+        for yy in range(im.height):
+            for xx in range(im.width):
+                r, g, b, a = px[xx, yy]
+                if not a:
+                    continue
+                px[xx, yy] = ((r + (255 - r) // 2, g + (255 - g) // 2, b + (255 - b) // 2, a)
+                              if HOPPER_LIGHT else
+                              (r * 35 // 100, g * 35 // 100, b * 35 // 100, a))
+    return im
 
 
-def assemble(parts, grade):
+def assemble(parts, grade, owners=False):
     """Stack whole part frames at one position. This is rule 2, executed -
     plus rule 5, the offset rule, for parts that repeat.
 
@@ -104,28 +143,130 @@ def assemble(parts, grade):
             % (list(parts), sizes, anchors))
     w, h = sizes.pop()
     out = Image.new("RGBA", (w, h))
+    # Which part owns each pixel, by index into `parts`, -1 for none. Kept here
+    # rather than recomputed by check 4 so that the thing being measured is
+    # the thing the machine is actually made of: one composite, one draw order.
+    own = [[-1] * w for _ in range(h)]
     seen = {}
-    for p in parts:
+    for i, p in enumerate(parts):
         n = seen.get(p, 0)
         seen[p] = n + 1
-        src = frame_of(p, grade)
-        if n == 0:
-            out.alpha_composite(src)
-            continue
-        # Rule 5: the nth repeat steps by n * PART_REPEAT_OFFSET. Done with a
-        # transform rather than a composite offset because the step goes UP,
-        # and alpha_composite cannot take a negative destination.
-        dx, dy = PART_REPEAT_OFFSET[0] * n, PART_REPEAT_OFFSET[1] * n
         layer = Image.new("RGBA", (w, h))
-        layer.alpha_composite(src)
-        out.alpha_composite(layer.transform((w, h), Image.AFFINE, (1, 0, -dx, 0, 1, -dy)))
-    return out
+        layer.alpha_composite(frame_of(p, grade))
+        if n:
+            # Rule 5: the nth repeat steps by n * PART_REPEAT_OFFSET. Done with
+            # a transform rather than a composite offset because the step goes
+            # UP, and alpha_composite cannot take a negative destination.
+            dx, dy = PART_REPEAT_OFFSET[0] * n, PART_REPEAT_OFFSET[1] * n
+            layer = layer.transform((w, h), Image.AFFINE, (1, 0, -dx, 0, 1, -dy))
+        lp = layer.load()
+        for y in range(h):
+            for x in range(w):
+                if lp[x, y][3] > 128:
+                    own[y][x] = i
+        out.alpha_composite(layer)
+    return (out, own) if owners else out
 
 
 def at_1x(img):
     """The game draws a 2x1-tile part at 32px per tile. Judge there."""
     k = GAME / float(TILE)
     return img.resize((round(img.width * k), round(img.height * k)), Image.LANCZOS)
+
+
+def _coverage(own, want, w, h, size):
+    """One part's pixels as COVERAGE at 1x: an area average, not a sample.
+
+    The masks have to come down from authoring size the same way the picture
+    does, or the boundary I measure is not the boundary the player sees. BOX
+    is area-averaging, so a 1x pixel that is half deck and half hopper reports
+    0.5 and gets thrown away below - which is the point. The colours either
+    side of an edge are only meaningful where a pixel is one part or the
+    other; the blended pixels ON the edge are the thing being judged, not an
+    input to the judgement."""
+    m = Image.new("L", (w, h))
+    mp = m.load()
+    for y in range(h):
+        for x in range(w):
+            if own[y][x] in want:
+                mp[x, y] = 255
+    return m.resize(size, Image.BOX)
+
+
+def boundary(parts, grade, a, b):
+    """How far apart two parts look where they MEET, at 1x.
+
+    Returns (median dE76, median |dL*|, pairs) over every pure-`b` pixel that
+    has a pure-`a` pixel within three, each paired with its nearest.
+
+    WHY A MEDIAN OF PAIRS AND NOT TWO MEANS. A part's mean is a colour that
+    appears nowhere on it - frame/A is a bright deck around a gun-metal plate,
+    and its average is neither. Worse, a mean washes out exactly the case this
+    check exists for: an edge is a local thing, and two parts can average far
+    apart while the places they actually touch are one value. So this walks
+    the seam and asks the question at each point on it.
+
+    BOTH CURRENCIES ARE REPORTED ON PURPOSE. dE76 counts hue, chroma and
+    lightness together; dL* is the lightness step alone. They disagree here in
+    a way worth seeing: a C deck parts from the hopper mostly by HUE (brown
+    against grey-blue), an A deck almost entirely by LIGHTNESS, because the
+    glint blew the deck out to neutral and a neutral has no hue to differ by.
+    Gated on dE76 - ruling 17 and measure D say L* counts between a machine
+    and what it sits on, and this is one machine's own parts - but a pairing
+    that holds in one currency and collapses in the other is a thing to look
+    at rather than to pass."""
+    img, own = assemble(parts, grade, owners=True)
+    w, h = img.size
+    small = at_1x(img)
+    sw, sh = small.size
+    ai = {i for i, p in enumerate(parts) if p == a}
+    bi = {i for i, p in enumerate(parts) if p == b}
+    ma = _coverage(own, ai, w, h, (sw, sh)).load()
+    mb = _coverage(own, bi, w, h, (sw, sh)).load()
+    sp = small.convert("RGBA").load()
+    des, dls = [], []
+    for y in range(sh):
+        for x in range(sw):
+            if mb[x, y] < 230:
+                continue
+            best = None
+            for dy in range(-3, 4):
+                for dx in range(-3, 4):
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < sw and 0 <= ny < sh and ma[nx, ny] >= 230:
+                        d = dx * dx + dy * dy
+                        if best is None or d < best[0]:
+                            best = (d, nx, ny)
+            if best:
+                c1, c2 = sp[x, y][:3], sp[best[1], best[2]][:3]
+                des.append(dE(c1, c2))
+                dls.append(abs(lab(c1)[0] - lab(c2)[0]))
+    if not des:
+        return None
+    return median(des), median(dls), len(des)
+
+
+def open_read(grade):
+    """Is the hopper still a box with a hole in it? Two numbers at 1x.
+
+    `dark` is the share of the part that sits under L* 35 - the shadowed well
+    and the ink round it. `spread` is the lightest tenth's median L* minus the
+    darkest tenth's: the rim against the well.
+
+    The pair is deliberate, because either one alone can be held up by the
+    wrong thing. A specular highlight that survives any amount of darkening
+    keeps `spread` looking healthy while the body sinks; `dark` cannot be
+    fooled that way, because a body that falls under the threshold is counted
+    whatever the highlights do. And `dark` alone would be happy with a flat
+    pale slab that has no well at all, which `spread` catches."""
+    im = at_1x(frame_of("hopper", grade))
+    px = im.convert("RGBA").load()
+    ls = [lab(px[x, y][:3])[0] for y in range(im.height) for x in range(im.width)
+          if px[x, y][3] > 200]
+    ls.sort()
+    k = max(1, len(ls) // 10)
+    return (sum(1 for v in ls if v < 35) / float(len(ls)),
+            median(ls[-k:]) - median(ls[:k]))
 
 
 def differs(a, b):
@@ -271,6 +412,85 @@ def main():
         if n == 0:
             ok = False
             print("  FAIL: %s renders identically at C and A." % name)
+
+    # 3. WHERE DOES THE HOPPER END AND THE DECK BEGIN? (ASSA-28)
+    #
+    # THE BAR IS RELATIVE AND IT IS NOT DISTINCT. Maren, ruling on ASSA-28:
+    # "I am not setting another absolute floor on this palette - three of mine
+    # have now failed on it, and each time the bound was the fault." So the
+    # gate is that NO GRADE IS THE ODD ONE OUT: a grade's seam may not read at
+    # less than HALF the strongest grade's on the same machine. Measured on
+    # main @2a57a20 the drill's deck-to-hopper seam ran C 36.9, B 55.1, A 13.3
+    # at two hoppers, so grade A fails this by 14 and that is the defect.
+    #
+    # HALF IS A CHOSEN PROPORTION AND I WILL NOT PRETEND OTHERWISE. My first
+    # try was "within a JND of the others", which is stricter and wrong: the
+    # three grades of a working machine measure 38/54/41 and a rule that calls
+    # that a defect is a rule that cries wolf on the art it was written to
+    # protect. Half is the same shape as the quarter one check up - the bar is
+    # a RATIO against a sibling, because what makes a seam readable is that it
+    # is about as readable as the seams beside it, and the defect this has to
+    # catch was a QUARTER of its siblings.
+    #
+    # DISTINCT alone would have let it through. 13.3 clears 12, which is the
+    # floor every other check in this pipeline leans on - a sprite can satisfy
+    # every absolute bound in the art and still be a machine you cannot read,
+    # because what makes a seam visible is that it is as visible as the seams
+    # beside it. The absolute floor is kept as a second, weaker gate, and the
+    # head-to-hopper pairing is measured too: darkening the hopper to part it
+    # from a white deck walks it toward the head, which is grey, and a fix
+    # that moves a collision somewhere else is not a fix. At #5F666F it did
+    # exactly that, 10.7 dE, which is how this pairing earned its line here.
+    slots_tested = range(1, max_hopper_slots())
+    print("part seams at 1x, median dE76 / median dL* across the join:")
+    for a, b in (("frame", "hopper"), ("head", "hopper")):
+        for n in slots_tested:
+            parts = ("frame",) + ("hopper",) * n + ("head",)
+            got = {g: boundary(parts, g, a, b) for g in ("C", "B", "A")}
+            got = {g: v for g, v in got.items() if v}
+            if not got:
+                continue
+            print("  %s|%-7s %d hopper(s): %s" % (
+                a, b, n, "  ".join("%s %5.1f/%4.1f" % (g, got[g][0], got[g][1])
+                                   for g in ("C", "B", "A") if g in got)))
+            best = max(v[0] for v in got.values())
+            for g, (de, _dl, _n) in got.items():
+                if de < best / 2:
+                    ok = False
+                    print("  FAIL: at grade %s the %s/%s seam is %.1f dE against %.1f at the\n"
+                          "  machine's best grade. One grade of the same machine reads as\n"
+                          "  one part while the rest read as two."
+                          % (g, a, b, de, best))
+                if de < DISTINCT:
+                    ok = False
+                    print("  FAIL: the %s/%s seam at grade %s is %.1f dE, under DISTINCT %.0f."
+                          % (a, b, g, de, DISTINCT))
+
+    # 4. IS THE HOPPER STILL AN OPEN BOX?
+    #
+    # The cost side of check 3: the hopper parts from a blown-out deck by
+    # going dark, and far enough down its body falls into its own shadowed
+    # well and the hole closes. Then the part is a solid, like every other
+    # part in the set, and the one silhouette difference it owns is gone.
+    #
+    # HALF is not a tuned coefficient, it is the sentence: a box whose dark
+    # interior is most of it is not a box with a hole in it. Shipped, the well
+    # is 14-16% of the part. The control render that killed the grade dulling
+    # (grey, still dulled) sits at 34.7% at C, already halfway to the cliff
+    # with the body only starting to count; the red lever goes past it.
+    print("hopper open read at 1x: share under L*35, and rim-to-well L* spread:")
+    for g in GRADE_ROWS:
+        dark, spread = open_read(g)
+        print("  %s: %4.1f%% dark, spread %4.1f L*" % (g, 100 * dark, spread))
+        if dark >= 0.5:
+            ok = False
+            print("  FAIL: %.0f%% of the hopper is under L*35 at grade %s. The body has\n"
+                  "  joined the well and the part has stopped being an open shape."
+                  % (100 * dark, g))
+        if spread < DISTINCT:
+            ok = False
+            print("  FAIL: rim-to-well spread is %.1f L* at grade %s, under %.0f: the\n"
+                  "  well no longer reads as a hole." % (spread, g, DISTINCT))
 
     # the sheet: 2x authoring on top so you can see what it is made of, and the
     # true 1x row below, which is the verdict.

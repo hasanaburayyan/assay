@@ -2,7 +2,7 @@ extends SceneTree
 ## IS THIS CLIENT A REAL LOCKSTEP PEER? Headless, against a real relay, one line of verdict.
 ##
 ##   godot --headless --path . --script res://tools/lockstep_probe.gd \
-##       -- localhost:7777 limpet [ticks] [walk|session]
+##       -- localhost:7777 limpet [ticks] [walk|session|demo]
 ##
 ## `join_probe.gd` proves the handshake and that bundles arrive. This proves the harder half: that
 ## every bundle is APPLIED through the real Rust sim, that our world stays on the relay's tick, and
@@ -29,6 +29,9 @@ extends SceneTree
 ##  - nothing: we apply bundles and report hashes. A spectator that keeps up.
 ##  - `walk`: one `MoveTo`, and OUR OWN PLAYER MUST HAVE MOVED IN THE STEPPED WORLD. The whole round
 ##    trip -- command out, relay orders it onto a tick, bundle back, sim walks us.
+##  - `demo`: every stage `session` plays, ending in a world SOMEONE CAN JOIN LATER -- the player is
+##    stopped and the drill is left unplaced, so the bench still has rows on it an hour afterwards.
+##    Its product is a standing world, not a verdict about lockstep. See `_check_demo`.
 ##  - `session`: THE WHOLE DEMO LOOP, start to finish. Walk onto a deposit of the material this world
 ##    guarantees, mine it, assay it, craft a smelter, mine fuel, place the smelter, load it, smelt,
 ##    take the refined, make a handle, two heads and a frame, assemble a pick, equip it, assemble a
@@ -119,6 +122,8 @@ var _refined_held := 0
 var _parts_at := -1
 var _pick_at := -1
 var _equipped_at := -1
+## `demo` mode: the same loop, but it leaves the world fit to be joined later. See `_check_demo`.
+var _demo := false
 var _drill_at := -1
 var _drill_spot := Vector2i(-1, -1)
 var _drill_verdict := ""
@@ -137,15 +142,17 @@ var _hashes_sent := 0
 func _initialize() -> void:
 	var argv := OS.get_cmdline_user_args()
 	if argv.size() < 2:
-		print("FAIL  usage: -- host[:port] name [ticks] [walk|session]")
+		print("FAIL  usage: -- host[:port] name [ticks] [walk|session|demo]")
 		quit(1)
 		return
 	_want_ticks = int(argv[2]) if argv.size() > 2 else DEFAULT_TICKS
 	var mode := String(argv[3]) if argv.size() > 3 else ""
 	_walking = mode == "walk"
-	_session = mode == "session"
+	# `demo` plays every stage `session` does, so it IS a session; it only ends differently.
+	_demo = mode == "demo"
+	_session = mode == "session" or _demo
 	if mode != "" and not _walking and not _session:
-		print("FAIL  unknown mode '%s'; expected walk or session" % mode)
+		print("FAIL  unknown mode '%s'; expected walk, session or demo" % mode)
 		quit(1)
 		return
 
@@ -614,6 +621,54 @@ func _pick() -> void:
 			return
 
 
+## DID THE WORLD END UP FIT TO BE LOOKED AT? `demo` mode's product is not a verdict about lockstep --
+## `session` proves that -- it is A WORLD SOMEONE CAN JOIN AN HOUR LATER AND STILL SEE SOMETHING IN.
+##
+## THE BUG THIS MODE EXISTS FOR, and I shipped it before I caught it: I set a demo world up with
+## `session`, left the relay standing, and rejoined 5,600 ticks later to an EMPTY bench. The relay owns
+## the clock and never stops, `Mine` repeats until something stops it, so the player kept swinging for
+## ten minutes; `PICK_WEAR_PER_SWING` (`sim/src/step.rs:810`) wore the pick to nothing and the only
+## design they owned was gone. The inventory had 856 ore in it. A demo world that decays is worse than
+## no demo world, because it looks ready at the moment you build it.
+##
+## So this mode leaves the world INERT on purpose:
+##  - `Stop`, so nothing is mining. Wear only happens on a swing, so a stopped player's tool keeps its
+##    durability for as long as the relay runs.
+##  - THE DRILL IS NEVER PLANTED. An unplaced design sits in `assemblies` and nothing in the sim
+##    consumes it, so it is still on the bench whenever they arrive. Planting would spend it.
+## What is left is two rows that do not rot: a tool IN HAND with durability, and an unplaced PLANTED
+## design -- both mounts, and two different verdicts, which is what Decision #38 asks to be judged.
+func _check_demo() -> bool:
+	if not _sent.has("stop"):
+		_finish(false, "demo mode never sent Stop, so the player is still mining and the tool wears")
+		return false
+	var me := _my_player()
+	if me.get("target") != null:
+		_finish(false, "demo mode: the player is still walking to %s" % [me.get("target")])
+		return false
+	var in_hand := 0
+	var spare := 0
+	for entry in _sim.designs_of(_client.player_id):
+		if bool((entry as Dictionary).get("in_hand", false)):
+			in_hand += 1
+		else:
+			spare += 1
+	if in_hand < 1 or spare < 1:
+		_finish(false, ("demo mode wants a bench that survives the clock: %d design(s) in hand and "
+				+ "%d unplaced, wanted at least one of each. Designs: %s")
+				% [in_hand, spare, _sim.designs_of(_client.player_id)])
+		return false
+	print("  demo: the bench is %d in hand and %d unplaced, the player is stopped at %s."
+			% [in_hand, spare, me.get("pos", Vector2i.ZERO)])
+	for entry in _sim.designs_of(_client.player_id):
+		var design: Dictionary = entry
+		print("    [%s]%s" % [String(design.get("verdict", "?")),
+				" in hand" if bool(design.get("in_hand", false)) else " on the bench"])
+		for line in AssayHud.design_lines(design):
+			print("      %s" % line)
+	return true
+
+
 ## A DRILL: a planted frame with a head on it. Its verdict is read BEFORE it is planted, because that
 ## verdict is a promise the placement has to keep.
 func _drill(at: Vector2i) -> void:
@@ -629,14 +684,25 @@ func _drill(at: Vector2i) -> void:
 		_drill_at = _sim.tick()
 		_drill_verdict = String(design.get("verdict", "?"))
 		_drill_spot = AssayDemoPlan.smelter_spot(at, _sim.size_tiles(), _buildings_near(at))
-		if _drill_spot.x < 0:
+		if _drill_spot.x < 0 and not _demo:
 			_finish(false, "no free 2x2 within reach of %s to plant a drill on" % at)
 			return
 		print(("  session: a drill is built at tick %d, index %d, the sim calls it %s (mass %d-%d "
-				+ "of %d-%d budget). Planting it at %s.") % [_drill_at,
+				+ "of %d-%d budget).%s") % [_drill_at,
 				int(design.get("index", -1)), _drill_verdict, int(design.get("mass_low", 0)),
 				int(design.get("mass_high", 0)), int(design.get("budget_low", 0)),
-				int(design.get("budget_high", 0)), _drill_spot])
+				int(design.get("budget_high", 0)),
+				" LEAVING IT ON THE BENCH (demo)." if _demo else " Planting it at %s." % _drill_spot])
+		# `demo` leaves the design unplaced and stops the player: see `_check_demo`. Planting is what
+		# `session` is for, and it SPENDS the design -- which is the whole reason a demo world built
+		# with `session` is empty by the time anyone opens it.
+		if _demo:
+			# A BARE STRING, like `Mine`. `Stop` is a unit variant, and externally-tagged JSON spells
+			# those as the name alone -- `{"Stop": {}}` is refused, which would have left the player
+			# mining and the bench rotting exactly as before, with the probe reporting success.
+			_once("stop", "Stop")
+			_step = Step.CRUISING
+			return
 		_once("plant", {"PlaceAssembly": {"assembly": int(design.get("index", 0)),
 				"pos": {"x": _drill_spot.x, "y": _drill_spot.y}}})
 		_step = Step.PLANTING
@@ -776,6 +842,8 @@ func _check_session() -> bool:
 		_finish(false, "never got a pick into our hands (designs: %s)"
 				% [_sim.designs_of(_client.player_id)])
 		return false
+	if _demo:
+		return _check_demo()
 	if _planted_at < 0 and _broke_at < 0:
 		_finish(false, ("never planted the drill: verdict %s, spot %s, designs %s"
 				% [_drill_verdict, _drill_spot, _sim.designs_of(_client.player_id)]))

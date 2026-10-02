@@ -31,7 +31,33 @@ def build(g):
     r = rig.Rig(samples=64)
     r.shadow_catcher()
     gun = mat("gun")
-    steel = rig.graded("steel", g, rough=0.45, metal=0.6)
+    # GREY, AND THE SAME GREY AT EVERY GRADE. Two changes, one reason, and
+    # neither is taste; both are gated by the part-seam and open-box checks in
+    # art/assemble.py, which fail on the sheet this replaces.
+    #
+    # WHY DARKER. Since Decision #37 the grade-A glint blows out NEUTRAL, so a
+    # grade-A chassis is a WHITE deck. This part sits on that deck, and in
+    # steel it sat 13.3 dE from it at 1x against 36.9 at C and 55.1 at B -- an
+    # A drill was one pale mass and you could not count its hoppers, which is
+    # the whole job of rule 5. Grey puts that pairing at 36.1, level with the
+    # C pairing we already accept. The mark was not the lever (ASSA-28):
+    # narrowing the glint drops frame's own B->A step to 8.6, under DISTINCT,
+    # and a part whose grade changes a number in sim would then advertise it
+    # about as loudly as this one, whose grade changes nothing.
+    #
+    # WHY FLAT. `graded` mixes toward `gun` by 0.45 at C, and on top of a base
+    # this dark that is a second darkening. I rendered the control to find out
+    # rather than asserting it, having guessed the numbers wrong first: grey
+    # WITH the dulling still on puts 34.7% of the C hopper under L*35 against
+    # 15.9% without, and drops its gap from the head to 7.7 dE, under DISTINCT.
+    # Flat is what buys the darker base. It is also what sim says: a hopper
+    # contributes Mass from Density and a FLAT Capacity (sim/src/assembly.rs,
+    # PART_SPECS), and "density never scales with grade" (part_mass). A grade-A
+    # hopper and a grade-C hopper are the same object to the rules, so they are
+    # the same object here. rig.py already said this part gets no warm mark for
+    # that reason; a tone step is the same promise made more quietly, and it
+    # was false in the same way.
+    body = mat("grey", rough=0.45, metal=0.6)
     brass = rig.graded_accent("brass", g)
 
     # THE MOUTH: a wide, shallow, OPEN funnel. Built as four leaning walls
@@ -40,7 +66,7 @@ def build(g):
     # another solid.
     for sx, sy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
         r.box((0.055 if sx else 0.62, 0.62 if sx else 0.055, 0.42),
-              (CX + sx * 0.28, sy * 0.28, DECK + 0.21), steel,
+              (CX + sx * 0.28, sy * 0.28, DECK + 0.21), body,
               bev=0.02, rot=(sy * 0.32, -sx * 0.32, 0))
     # The dark interior. This is the piece doing the work at 1x: a shadowed
     # well inside a light rim is what says "open" when the walls are two
@@ -64,9 +90,15 @@ def build(g):
     # is that a part wears a visible warm mark IFF its grade changes a number
     # in sim, and a hopper's grade is inert: capacity is flat, mass is size x
     # density, density never scales with grade. A glint here would promise a
-    # difference the sim does not have. So the hopper is tone-only on purpose
-    # -- the same shape of defect as the handle's, one asset over, and the
-    # opposite verdict, for a reason that is about sim and not about pixels.
+    # difference the sim does not have -- the same shape of defect as the
+    # handle's, one asset over, and the opposite verdict, for a reason that is
+    # about sim and not about pixels.
+    #
+    # This used to end "so the hopper is tone-only on purpose". It is now
+    # NOTHING-only: the tone step went too (see the body above), so `g` reaches
+    # no surface the camera can see and the three frames render alike. The row
+    # per grade stays, because the client indexes parts by grade and an asset
+    # that is missing rows is a special case for every reader of the sheet.
     r.box((0.38, 0.38, 0.05), (CX, 0, DECK - 0.16), brass, bev=0.01)
     return r
 

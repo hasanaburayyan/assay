@@ -12,7 +12,8 @@ use crate::item::{Item, ItemStack};
 use crate::mineral::{Grade, MineralSpecies, NameError, Property, Sheet};
 use crate::recipe::{RECIPES, Station};
 use crate::tuning::{
-    FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS, SMELTER_OUTPUT_CAP, YIELD_BY_GRADE,
+    FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS, HAND_WORK_PER_TICK, PICK_WEAR_PER_SWING,
+    SMELTER_OUTPUT_CAP, YIELD_BY_GRADE,
 };
 use crate::types::{PlayerId, TilePos};
 use crate::world::World;
@@ -995,29 +996,50 @@ pub fn part_table() -> String {
     out
 }
 
-/// THE DURABILITY POOL AS A PLAYER MAY READ IT: exact against the exact pool
-/// once every species in the design is assayed, a percentage of the banded
-/// pool while any of them is still rough.
+/// THE PICK'S LIFE AS A PLAYER MAY READ IT: **swings used, out of the swings
+/// its class affords.** `20 of 120-180 swings used` while any species in it is
+/// rough, `20 of 144 swings used` once they are all known.
 ///
 /// **Public and shared on purpose.** The Godot part menu shows this same
 /// number (`sim-godot`'s `designs_of`), and A10 is a rule about what a player
 /// is allowed to know, not a formatting preference — two hosts spelling it
 /// two ways is how the leak comes back in one of them. One wording, one place.
 ///
-/// The denominator is the TRUE max from `stats()`, never a band end: a
-/// percentage over a published band end is the exact pool with extra
-/// arithmetic. `div_ceil` so a pick with swings left never reads 0%.
+/// **Why not a percentage, which is what A10 first said** (the Game Director
+/// reversed it on ASSA-5 after Limpet measured the hole): a pool is always a
+/// multiple of `PICK_WEAR_PER_SWING`, so only 21 values fit the 2400-3600
+/// band, and an integer percent plus the player's own swing count narrows it
+/// to exactly one — after **6 swings** for a 2400 pool, 16 for 3600, worst
+/// case 61 out of a 120-180 life. A leak is measured in *when*, not whether:
+/// the pick's death gives the pool away too, but at swing 120-180, long after
+/// the design decision is dead.
+///
+/// This form leaks nothing by construction. `used` is the player's own count —
+/// they took those swings — and the band ends are the rough sheet's own. It
+/// also retires `1800/2400` points, a unit nothing else in the game uses.
+///
+/// **One narrowing of the ruling's letter, with its reason.** The ruling said
+/// `div_ceil` throughout, and that was right for the percentage, where its
+/// purpose was that a pick with a swing left must never read 0%. Pointed at
+/// `used`, ceiling rounds the *other* way: a pool of 1 point would read
+/// `144 of 144 swings used`, which is a working pick reading as a spent one —
+/// the same defect, inverted. So **capacity ceils and consumption floors**:
+/// `used` is swings completed, the band ends and the max are what a pool of
+/// that size affords (the last swing drains a part-full pool and still
+/// yields). For every state a player can actually reach the two agree, because
+/// wear subtracts exactly `PICK_WEAR_PER_SWING` at a time.
 pub fn durability_readout(world: &World, built: &Built) -> String {
     let range = built.assembly.stat_range(&world.species);
     let max = built.assembly.stats(&world.species).durability;
+    let affords = |pool: u32| pool.div_ceil(PICK_WEAR_PER_SWING);
+    let used = max.saturating_sub(built.durability) / PICK_WEAR_PER_SWING;
     if range.low.durability == range.high.durability {
-        format!("{}/{}", built.durability, max)
+        format!("{used} of {} swings used", affords(max))
     } else {
         format!(
-            "{}% of {}-{}",
-            (100 * built.durability).div_ceil(max.max(1)),
-            range.low.durability,
-            range.high.durability
+            "{used} of {}-{} swings used",
+            affords(range.low.durability),
+            affords(range.high.durability)
         )
     }
 }
@@ -1068,10 +1090,12 @@ pub fn assembly_readout(world: &World, built: &Built) -> String {
             // read exactly while mass and budget were banded, which made a
             // pick a free assay of strength.
             //
-            // The denominator is the TRUE max from `stats()`, never a band
-            // end: a percentage over a published band end is the exact pool
-            // with extra arithmetic. `div_ceil` so a pick with swings left
-            // never reads 0%.
+            // It is now said in SWINGS rather than as a percentage of the
+            // band, which closed the rest of the same hole: see
+            // `durability_readout`.
+            // The label stays, and so does the Godot menu's own: a host may
+            // name the field, but the NUMBER is worded once, here. A label is
+            // not a thing a leak can come back through.
             let _ = write!(out, " · durability {}", durability_readout(world, built));
         }
         _ => {
@@ -1082,9 +1106,22 @@ pub fn assembly_readout(world: &World, built: &Built) -> String {
             );
         }
     }
+    // THE HANDS' RATE, BESIDE THE DESIGN'S (the Game Director's ruling 5 on
+    // ASSA-6). `speed` is work per tick, the same unit bare hands are measured
+    // in, so the comparison needs no arithmetic from the player — but without
+    // the baseline printed, `speed 23` looks like a tool and is in fact slower
+    // than the hands that built it, and nothing in the game said so before
+    // three refined were spent. Measured: at the old factor a grade-C pick
+    // lost to bare hands for EVERY minable species.
+    //
+    // Shown for planted designs too, deliberately. It is not the mirror of
+    // ruling 1 (durability on a drill is a number that never moves): a drill's
+    // rate against your own hands is the live question "is planting this
+    // better than swinging myself", and it moves with the head. One
+    // conditional to narrow it to held designs if that reads wrong on a drill.
     let _ = write!(
         out,
-        " · speed {} · {}",
+        " · speed {} (bare hands {HAND_WORK_PER_TICK}) · {}",
         show(range.low.speed, range.high.speed),
         parts_summary(world, a)
     );
