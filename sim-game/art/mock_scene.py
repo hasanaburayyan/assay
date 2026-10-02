@@ -26,9 +26,11 @@ single parts cannot show, and both are the point of this file:
     the C and B ones have two parts. That is ASSA-28, and it is much more
     obvious here than on the assembly sheet.
 
-`drill.py` is deliberately NOT drawn here any more. It is still rendered and
-still measured by loudness.py; whether it is retired, or kept as the look of
-some future fixed machine, is the Director's call and not this file's.
+`drill.py` is GONE, not merely undrawn (Maren, ruling 5 on ASSA-30). Nothing
+drew it, the game could not build it, and loudness.py gating a dead asset is a
+gate on nothing: it can only give a false alarm or false comfort. A future
+fixed machine arrives the way every machine does -- a frame row with different
+slots (ADR 0003) -- not by keeping a 2x2 drawing "in case".
 """
 import json, os, random, sys
 from PIL import Image
@@ -114,14 +116,38 @@ def assemble(parts, grade):
 def blit_machine(img, parts, grade, tx, ty):
     """A planted machine, anchored like any other sprite.
 
-    FOOTPRINT, HONESTLY: `sim/src/building.rs` gives `BuildingKind::Machine`
-    a footprint of (1, 1) -- "so a drill sits on the deposit tile it works" --
-    while the part frame is 2 tiles wide. The sprite therefore OVERHANGS its
-    occupied tile, the way a tall sprite overhangs in any tile game, and the
-    anchor is what reconciles them. That is drawn here rather than hidden
-    because it is a real question for whoever builds the renderer: an
-    overhanging machine can cover the deposit tile next door, and nothing has
-    ruled on whether that is acceptable. See ASSA-30.
+    FOOTPRINT, RULED (Maren on ASSA-30; the renderer author should read this
+    before inventing anything). `sim/src/building.rs` gives
+    `BuildingKind::Machine` a footprint of (1, 1) -- "so a drill sits on the
+    deposit tile it works" -- while the part frame is 2 tiles wide. The sprite
+    therefore OVERHANGS its occupied tile, and that is allowed:
+
+    1. THE SIM'S (1, 1) STANDS AND THE ART ADAPTS, never the reverse. The
+       footprint is load-bearing: `mine_by_machine` reads
+       `deposit_at(building.pos)`, so a machine works the tile it stands on. A
+       2-wide footprint would immediately need a rule for WHICH tile it mines,
+       and there is no good answer.
+    2. OCCUPANCY IS CARRIED BY THE CONTACT SHADOW, which is rig.py's shadow
+       rule plus one clause: the shadow must fall entirely inside the occupied
+       tile. Overhang then reads as ABOVE the ground plane rather than as
+       ground claimed. (Measured on the shipped art, it does NOT yet: see
+       ASSA-38. This is the rule, not a description of today.)
+    3. COVERING A NEIGHBOURING DEPOSIT TILE IS FINE -- do not build a guard,
+       an anchor rule, a nudge or a no-build margin for it. `amount` is per
+       DEPOSIT; there is no per-tile ore state in `sim`, and a deposit is
+       radius 2-4, so 13 to 50 tiles. Hiding one or two removes no information
+       the game has, because the species read is the whole patch.
+    4. TWO MACHINES MAY OVERLAP. Placement rejects only on footprint collision
+       (`TileOccupied`) and machines are (1, 1), so adjacent machines are
+       reachable. DRAW IN ROW ORDER -- y, then x -- so the nearer machine
+       wins. This is also why ASSA-28's "you must be able to count the
+       hoppers" bar is written for an UNOCCLUDED machine: one half behind
+       another may be half readable.
+
+    `blit` places the footprint's top-left tile at (tx, ty), which is the same
+    convention `sim` uses -- `Building::pos` is documented as "top-left tile of
+    the footprint". So the occupied tile is the WEST half of a part frame and
+    the sprite overhangs EAST.
     """
     ax, ay = man[parts[0]]["anchor_px"]
     img.alpha_composite(assemble(parts, grade), (tx * T - ax, ty * T - ay))

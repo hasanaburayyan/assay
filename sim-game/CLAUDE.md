@@ -85,6 +85,12 @@ works from the inspector or a future graphical client.
   pixel scale) lives in `art/rig.py`, not in asset scripts.
 - After a build, look at `assets/sprites/contact.png` and judge at the 1×
   size, not zoomed in.
+- **Check `git status` after a build.** `art/out/` is git-ignored, so
+  `--pack` repacks from whatever your machine last rendered; a sheet merged
+  from another checkout will be silently overwritten with your stale render.
+  A modified sheet you did not touch means re-render that asset, not commit.
+- A sprite may overhang its tile; its **contact shadow may not** — the
+  shadow is what says which ground a building claims (ASSA-30).
 - Blender 5.x API differences from what you may remember: `scene.node_tree`
   is gone (`scene.compositing_node_group`); render passes were renamed
   (`Z` → `Depth`); the engine is `BLENDER_EEVEE` (not `_NEXT`); set
