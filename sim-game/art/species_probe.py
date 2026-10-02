@@ -34,6 +34,7 @@ import colorsys
 import json
 import math
 import os
+import re
 import sys
 
 from PIL import Image
@@ -69,20 +70,111 @@ POP_C = 5.0
 # whose brightness rides purity CONTINUOUSLY instead of in three steps -- so a
 # tile that passes says nothing about a disc at low purity.
 #
-# hud.gd dims by `MAP_PURITY_FLOOR + (1 - MAP_PURITY_FLOOR) * purity/100`, so
-# the floor is the dimmest disc that can ever be drawn and is the only purity
-# worth gating. 0.55 is MEASURED, not chosen: at 0.55 the shipped table holds
-# 12.5 and at 0.50 it falls to 11.5, under DISTINCT.
+# THE CONSTANTS ARE READ OUT OF hud.gd, NOT WRITTEN DOWN HERE (ASSA-29), and
+# that is the whole correction. The first version of this check retyped them
+# and got all three wrong, each in the direction that makes the measured disc
+# BRIGHTER than the drawn one:
 #
-# RED LEVER: MAP_FLOOR=0.33 dims the disc further, which is the failure this
-# guard exists to catch (a client constant set too low), not a lowered bar.
-MAP_PURITY_FLOOR = float(os.environ.get("MAP_FLOOR", "0.55"))
-if MAP_PURITY_FLOOR != 0.55:
-    print("[RED RUN] map purity floor forced to %.2f; the MAP DISC check MUST fail"
-          % MAP_PURITY_FLOOR)
-# The map background, from client/scripts/main.gd:
-#   draw_rect(..., Color(0.10, 0.11, 0.13), true)
-MAP_BG = (26, 28, 33)
+#   1. It gated at 0.55 and printed "the client's constant: purity multiply
+#      bottoms out at 0.55". hud.gd bottoms out at 0.525 -- `purity_part` is
+#      clamped to 0.05 low, not to 0. Nobody compared the number to the file
+#      it claimed to come from.
+#   2. It modelled the disc as OPAQUE. `deposit_color` returns alpha 0.85 over
+#      a near-black map, which pulls every disc toward the background and costs
+#      1 to 2 dE of a*b* separation. hud.gd's own `glyph_color` composites
+#      exactly this way, so the client always knew; the probe did not.
+#   3. It asserted "the floor is the only purity worth gating ... every
+#      brighter purity is slack". False: the CLOSEST PAIR changes with
+#      brightness, so the minimum is not at an end. At the shipped constants
+#      it sits at purity 6, not purity 1.
+#
+# Same failure as `art/build.py`'s colour-blind block, which went on drawing
+# four empty strips after the row it grepped for was renamed: a number copied
+# out of another file is a number that has stopped being about that file.
+#
+# RED LEVERS, and they reproduce the cause rather than lowering a bar:
+#   MAP_OPAQUE=1  restores the old solid-disc model. The check MUST go GREEN,
+#                 which is what proves the alpha composite is load-bearing and
+#                 that this measure moved because of the art and not the
+#                 arithmetic.
+#   MAP_FLOOR=k   pretends the client shipped base `k` instead of the one in
+#                 hud.gd. At 0.33 the check MUST fail -- a client constant set
+#                 too low is the regression the guard is named after.
+MAP_OPAQUE = bool(os.environ.get("MAP_OPAQUE"))
+
+HUD_GD = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                      "client", "scripts", "hud.gd")
+
+
+def _hud_number(pattern, what, scope=None):
+    """One constant out of hud.gd, or a loud exit.
+
+    Scoped to `deposit_color`'s body where it matters, following
+    art/check_species_tints.py: hud.gd is mostly prose about how these numbers
+    were derived, and the prose quotes them. A docstring is not a constant.
+
+    EXITING IS THE POINT. If the client renames a constant, this check must
+    stop rather than carry on measuring the last shape it understood -- the
+    silent version of that is the bug ASSA-29 is about."""
+    text = open(HUD_GD).read()
+    if scope:
+        body = re.search(scope, text, re.DOTALL)
+        if not body:
+            sys.exit("species_probe: no %s in hud.gd, so the map disc cannot be"
+                     " measured as the client draws it." % what)
+        text = body.group(0)
+    found = re.search(pattern, text)
+    if not found:
+        sys.exit("species_probe: cannot read %s out of hud.gd (pattern: %s).\n"
+                 "  Do not retype it here: this check exists because the last"
+                 " copy of these\n  numbers drifted from the client and kept"
+                 " passing. Fix the pattern." % (what, pattern))
+    return [float(g) for g in found.groups()]
+
+
+DEPOSIT_COLOR = r"static func deposit_color\(.*?\n\n"
+# `dimmed = base + span * purity_part`, and `purity_part` is clamped LOW --
+# which is why the dimmest disc is 0.525 and not 0.50.
+MAP_BASE, MAP_SPAN = _hud_number(
+    r"dimmed\s*:?=\s*([0-9.]+)\s*\+\s*([0-9.]+)\s*\*\s*purity_part",
+    "the purity dim formula", DEPOSIT_COLOR)
+(MAP_PURITY_MIN,) = _hud_number(
+    r"clampf\(float\(purity\)\s*/\s*100\.0,\s*([0-9.]+),", "the purity clamp",
+    DEPOSIT_COLOR)
+(MAP_ALPHA,) = _hud_number(r"tint\.b \* dimmed,\s*([0-9.]+)\)",
+                           "the disc's alpha", DEPOSIT_COLOR)
+_bg = _hud_number(r"MAP_BG\s*:?=\s*Color\(([0-9.]+),\s*([0-9.]+),\s*([0-9.]+)\)",
+                  "MAP_BG")
+MAP_BG = tuple(round(c * 255) for c in _bg)
+
+# The lever overrides the client's base, never the alpha: pretending the client
+# shipped a different base is a question you can ask, and pretending it ships a
+# disc it does not draw is the mistake this file just made.
+if os.environ.get("MAP_FLOOR"):
+    MAP_BASE = float(os.environ["MAP_FLOOR"])
+    MAP_SPAN = 1.0 - MAP_BASE
+    print("[RED LEVER] map purity base forced to %.2f, overriding hud.gd; at"
+          " 0.33 the\n            MAP DISC check MUST fail.\n" % MAP_BASE)
+if MAP_OPAQUE:
+    print("[RED LEVER] map disc modelled as OPAQUE, the way this check had it\n"
+          "            wrong until ASSA-29. It MUST pass that way; the client\n"
+          "            draws it at alpha %.2f over a near-black map.\n"
+          % MAP_ALPHA)
+
+
+def map_disc(hexcolour, purity):
+    """One deposit disc EXACTLY as hud.gd draws it: the species slot, dimmed by
+    purity, then composited over the map at the disc's own alpha.
+
+    Scaling r, g and b together cannot move hue or saturation, which is how
+    hud.gd keeps "purity may never move the hue" by construction. The alpha
+    composite CAN: it mixes toward a near-black background, and that costs
+    chroma. That is the part this check used to miss."""
+    c = dim_v(hex_rgb(hexcolour),
+              MAP_BASE + MAP_SPAN * max(MAP_PURITY_MIN, purity / 100.0))
+    if MAP_OPAQUE:
+        return c
+    return tuple(MAP_BG[i] * (1 - MAP_ALPHA) + c[i] * MAP_ALPHA for i in range(3))
 
 # RED LEVER FOR POP_C. The regression this guard is named after was a COVERAGE
 # one -- a grade-C tile with fewer rocks on it is more terrain, and pop fell to
@@ -472,16 +564,21 @@ def main():
     # nothing about a disc, and the probe was silent about half of what a
     # player looks at.
     #
-    # Measured at the DIMMEST disc the client can draw, because that is the
-    # worst case and every brighter purity is slack. Hue/chroma only: see
-    # dAB() for why L* must not count on this surface.
-    print("\nthe MAP DISC: flat %d-colour discs on the schematic map, dimmed to"
+    # SWEPT ACROSS THE WHOLE PURITY RANGE, not sampled at the floor. The old
+    # version gated one row and said every brighter purity was slack; the
+    # closest PAIR changes with brightness, so the minimum is not at an end.
+    # Hue/chroma only: see dAB() for why L* must not count on this surface.
+    print("\nthe MAP DISC: flat %d-colour discs on the schematic map, as hud.gd"
           % len(SPECIES_TINTS))
-    print("V*%.2f (hud.gd's purity floor). a*b* only, worst of %d observers,"
-          " floor %.0f." % (MAP_PURITY_FLOOR, len(OBSERVERS), DISTINCT))
-    disc_rows = []
-    for k in (1.00, 0.80, 0.70, 0.60, 0.55, 0.50, 0.33):
-        cols = [dim_v(hex_rgb(c), k) for c in SPECIES_TINTS]
+    print("draws them -- dimmed by %.2f + %.2f * clamp(purity/100, %.2f, 1), then"
+          % (MAP_BASE, MAP_SPAN, MAP_PURITY_MIN))
+    print("composited at alpha %.2f over MAP_BG rgb%s. a*b* only, worst of %d"
+          % (MAP_ALPHA, MAP_BG, len(OBSERVERS)))
+    print("observers, floor %.0f. Every constant above is READ from hud.gd."
+          % DISTINCT)
+
+    def closest(purity):
+        cols = [map_disc(c, purity) for c in SPECIES_TINTS]
         worst, who = 99.0, None
         for obs in OBSERVERS:
             s = [seen_flat(c, obs) for c in cols]
@@ -490,31 +587,36 @@ def main():
                     d = dAB(s[i], s[j])
                     if d < worst:
                         worst, who = d, (obs, i, j)
-        bg = min(dE(c, MAP_BG) for c in cols)
-        disc_rows.append((k, worst, bg))
-        print("  V*%.2f: closest pair %d vs %d under %-6s dE(a*b*) %5.1f  %s"
-              "   | dimmest vs background dE %5.1f"
-              % (k, who[1], who[2], who[0], worst,
-                 "OK" if worst >= DISTINCT else "TOO CLOSE", bg))
-    at_floor = [r for r in disc_rows if abs(r[0] - MAP_PURITY_FLOOR) < 1e-9]
-    if at_floor:
-        _, w, bg = at_floor[0]
-        if w < DISTINCT:
-            ok = False
-            print("  FAIL: at the dimmest disc the client can draw, two species"
-                  "\n  are %.1f apart for some observer, under %.0f. Either the"
-                  "\n  table or the client's purity floor has to move." % (w, DISTINCT))
-        if bg < DISTINCT:
-            ok = False
-            print("  FAIL: the dimmest disc sinks into the map background"
-                  " (dE %.1f)." % bg)
-    else:
+        return worst, who, min(dE(c, MAP_BG) for c in cols)
+
+    swept = [(p,) + closest(p) for p in range(1, 101)]
+    for p in (1, 6, 10, 20, 40, 70, 100):
+        _, w, who, bg = next(r for r in swept if r[0] == p)
+        print("  purity %3d (V*%.3f): closest pair %d vs %d under %-6s"
+              " dE(a*b*) %5.1f  %-9s | vs background dE %5.1f"
+              % (p, MAP_BASE + MAP_SPAN * max(MAP_PURITY_MIN, p / 100.0),
+                 who[1], who[2], who[0], w,
+                 "OK" if w >= DISTINCT else "TOO CLOSE", bg))
+    p, w, who, bg = min(swept, key=lambda r: r[1])
+    print("  WORST OVER THE WHOLE RANGE: %.1f at purity %d (species %d vs %d,"
+          " %s)." % (w, p, who[1], who[2], who[0]))
+    if w < DISTINCT:
         ok = False
-        print("  FAIL: no row measured at the configured floor %.2f."
-              % MAP_PURITY_FLOOR)
-    print("  -> the client's constant: purity multiply bottoms out at %.2f."
-          " Below that this\n     table stops being colour-blind safe, so"
-          " 0.55 is a MEASURED floor." % MAP_PURITY_FLOOR)
+        print("  FAIL: two species are %.1f apart for a %s player on the"
+              "\n  surface they use to decide where to walk, under %.0f. It is"
+              "\n  NOT at the dimmest disc -- the closest pair moves with"
+              "\n  brightness, which is why this is swept and not sampled."
+              "\n  The table is measured and shipped, so the lever is hud.gd's"
+              "\n  base: %.2f + %.2f*p fails, 0.65 + 0.35*p holds 12.9. That"
+              "\n  costs purity legibility (range %.2f:1 -> 1.54:1) and is the"
+              "\n  Director's trade to make, not this file's."
+              % (w, who[0], DISTINCT, MAP_BASE, MAP_SPAN,
+                 1.0 / (MAP_BASE + MAP_SPAN * MAP_PURITY_MIN)))
+    pb, _, _, bgw = min(swept, key=lambda r: r[3])
+    if bgw < DISTINCT:
+        ok = False
+        print("  FAIL: a disc sinks into the map background at purity %d"
+              " (dE %.1f)." % (pb, bgw))
 
     # AND THE ONE I GOT WRONG, kept as a reported line because it is the
     # evidence against my own recommendation. I told Limpet (ASSA-25) that
