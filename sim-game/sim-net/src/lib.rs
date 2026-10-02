@@ -210,10 +210,10 @@ pub fn greeting(frame: &[u8]) -> Greeting {
 /// the real answer is its protocol. Passing this host's own id keeps the
 /// rules clause silent so only the true complaint is made.
 pub fn refuse_unreadable(g: &Greeting) -> String {
-    if let Some(protocol) = g.protocol {
-        if let Err(why) = check_join(protocol, g.rules.as_deref().unwrap_or(RULES_ID)) {
-            return why;
-        }
+    if let Some(protocol) = g.protocol
+        && let Err(why) = check_join(protocol, g.rules.as_deref().unwrap_or(RULES_ID))
+    {
+        return why;
     }
     format!(
         "This host could not read your client's first message. Nothing is wrong \
