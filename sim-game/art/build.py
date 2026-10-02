@@ -158,6 +158,52 @@ def contact(manifest):
     out.save(os.path.join(REVIEW, "contact.png"))
 
 
+def write_part_contract():
+    """Ship the two rules that turn part sprites into a machine. (ASSA-54)
+
+    A SEPARATE FILE RATHER THAN A BLOCK IN manifest.json, which is what I
+    first specified and then checked. The manifest's top level is an ASSET
+    NAMESPACE: `check_client_can_see_art.py` does `man[a]["sheet"]` for every
+    key, and the client's own `test_sprites.gd` walks it both ways and fails
+    on "the manifest describes `X` and there is no X.png". A `part_layout`
+    key would have broken both the moment it shipped.
+
+    DERIVED, NOT COPIED: the numbers come from importing `part_layout`, the
+    same module `assemble.py` and the Blender rig use, so there is no second
+    place to edit. `check_part_contract.py` fails if this file and the module
+    ever disagree, which is what a stale manifest looks like.
+
+    WHY IT HAS TO BE SHIPPED AT ALL. The sheets and the manifest tell a client
+    how to slice frames, and nothing tells it how to COMBINE them. A client
+    that blits part frames at one position with the default operator gets both
+    defects this pipeline already measured and rejected: repeats become
+    invisible (a second hopper adds 25 px at 1x instead of 108, which is
+    antialiasing) and contact shadows compound (darkest alpha runs 128 -> 221
+    over four hoppers, so shadow darkness reports part count). Measured
+    2026-10-02, picture in `shared/assay/part-contract-2026-10-02.png`.
+    """
+    import part_layout
+    contract = {
+        "source": "art/part_layout.py",
+        "repeat_offset_px": list(part_layout.PART_REPEAT_OFFSET),
+        "repeat_offset_space": (
+            "the same authoring pixels as `frame_px` in manifest.json; scale it "
+            "by exactly what you scale the frame by"),
+        "repeat_rule": (
+            "the nth repeat of a part KIND is drawn at n * repeat_offset_px, n "
+            "counting from 0 in sim's Assembly::parts() order (frame first). "
+            "Without it, repeats land on each other and a machine cannot show "
+            "how many of a part it has."),
+        "shadow_ceiling": part_layout.SHADOW_CEILING,
+        "shadow_rule": (
+            "a pixel whose brightest channel is below shadow_ceiling is contact "
+            "shadow: composite colour OVER but take alpha MAX, so shadows never "
+            "accumulate. Plain `over` makes a machine's shadow darken with every "
+            "part added, which is a gradient reporting part count."),
+    }
+    json.dump(contract, open(os.path.join(SPRITES, "part_layout.json"), "w"), indent=1)
+
+
 def main(argv):
     names = [a for a in argv if not a.startswith("--")] or ORDER
     os.makedirs(OUT, exist_ok=True)
@@ -171,8 +217,10 @@ def main(argv):
             manifest[n] = pack(n)
     manifest = {k: manifest[k] for k in ORDER if k in manifest}
     json.dump(manifest, open(manifest_path, "w"), indent=1)
+    write_part_contract()
     contact(manifest)
     print(f"wrote {SPRITES}/manifest.json")
+    print(f"wrote {SPRITES}/part_layout.json")
     print(f"wrote {REVIEW}/contact.png")
 
 

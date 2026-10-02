@@ -865,7 +865,7 @@ fn at(s: &Session, args: &[&str]) -> Result<(), String> {
             d.amount,
             d.purity,
             d.grade().letter(),
-            sim::debug::deposit_reach_note(&s.world, d)
+            sim::debug::deposit_dead_end_note(&s.world, d)
                 .map(|why| format!(" · {why}"))
                 .unwrap_or_default()
         ),
@@ -896,7 +896,7 @@ fn where_am_i(s: &Session) -> Result<(), String> {
         // advice was an instruction that cannot work. Reach comes from the
         // sim's own note, so this and the Godot tile line cannot disagree.
         let mining = match (
-            sim::debug::deposit_reach_note(&s.world, d),
+            sim::debug::deposit_dead_end_note(&s.world, d),
             me.mining.is_some(),
         ) {
             (Some(why), _) => format!(" {why}."),

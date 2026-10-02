@@ -59,6 +59,14 @@ var _bench := VBoxContainer.new()
 ## first refresh a no-op and left the sections blank until something was mined. The suite caught it
 ## because `test_main_screen.gd` asserts the empty bench says which kind of empty it is; without that
 ## line the shipped client would have had two headings over nothing on its first screen.
+## HOW BIG A PACK-ROW ICON IS. 32px because that is the size Cove's sheets were drawn to survive: a
+## 64px frame at 1x, halved, is still counting rocks, where the 9px map tile is speckle (ASSA-46).
+## The pack row's sentence, by name. Everything that re-texts or reads a row finds it with this rather
+## than by child index, because the row's shape now depends on whether the item has art.
+const STACK_LINE := "StackLine"
+
+const ICON_PX := 32.0
+
 const UNBUILT := "nothing built yet"
 var _bench_showing := UNBUILT
 var _pack_showing := UNBUILT
@@ -412,7 +420,7 @@ func _refresh_pack() -> void:
 		_rebuild_pack(stacks)
 		return
 	for i in range(stacks.size()):
-		var label: Label = _carrying.get_child(i).get_child(0) as Label
+		var label := _carrying.get_child(i).find_child(STACK_LINE, true, false) as Label
 		if label != null:
 			label.text = AssayHud.stack_line(stacks[i] as Dictionary)
 
@@ -437,12 +445,42 @@ func _rebuild_pack(stacks: Array) -> void:
 	var part_kinds := AssaySimHost.part_kinds()
 	for entry in stacks:
 		var stack: Dictionary = entry
-		var row := VBoxContainer.new()
-		row.add_theme_constant_override("separation", 2)
+		# MAREN'S SHAPE (ASSA-46, ruling B): [32px icon][VBox: the sentence, then the verbs]. The row
+		# was already a container rather than a Label, which is the only reason an icon has anywhere to
+		# live -- that fell out of ASSA-37 giving every row buttons.
+		#
+		# THE ICON IS REDUNDANT AND MOST ROWS DO NOT GET ONE. `items.png` carries ore and nothing else,
+		# so refined, gears and smelters come back null today; the four part kinds have a row per grade.
+		# `stack_line` stays a complete sentence either way, which is Maren's rule and the same one the
+		# species glyph carries: a redundant cue promoted to the only cue is no longer redundant.
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var icon := AssaySprites.icon_for(stack)
+		if icon != null:
+			var art := TextureRect.new()
+			art.texture = icon
+			art.custom_minimum_size = Vector2(ICON_PX, ICON_PX)
+			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			# The species' own slot, from the table CI holds equal to the art pipeline's copy. The
+			# sheets are drawn species-neutral on light rock precisely so this works (ASSA-19/20).
+			art.modulate = AssaySprites.tint_for(stack)
+			# NEAREST, not linear: these are pixel-art frames and the shipped import defaults say so.
+			art.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			row.add_child(art)
+		var body := VBoxContainer.new()
+		body.add_theme_constant_override("separation", 2)
+		row.add_child(body)
 		var label := Label.new()
+		# NAMED, NOT FOUND BY POSITION. `_refresh_pack`'s fast path re-texts this label ten times a
+		# second without rebuilding the row, and it used to reach for `row.get_child(0)`. Adding the
+		# icon made child 0 a TextureRect, so the fast path silently stopped updating the count -- I
+		# broke it doing exactly that and three tests caught it. A name survives the next layout change
+		# too, and Maren's ruling has two more surfaces coming (bench rows, then the spawn marker).
+		label.name = STACK_LINE
 		label.add_theme_font_size_override("font_size", 13)
-		label.custom_minimum_size = Vector2(PANEL, 0.0)
-		row.add_child(label)
+		label.custom_minimum_size = Vector2(PANEL - ICON_PX - 6.0, 0.0)
+		body.add_child(label)
 		# WHETHER AN ITEM CAN BE PLACED IS THE SIM'S ANSWER TOO, by footprint: 2x2 for a smelter, 0x0
 		# for a thing that is not a building.
 		var footprint := AssaySimHost.footprint_of_item(String(stack.get("kind", "")),
@@ -450,7 +488,7 @@ func _rebuild_pack(stacks: Array) -> void:
 		var verbs := AssayHud.stack_verbs(stack, recipes, part_kinds, footprint,
 				not _building.is_empty())
 		if not verbs.is_empty():
-			row.add_child(_verb_row(verbs, func(descriptor: Dictionary) -> Button:
+			body.add_child(_verb_row(verbs, func(descriptor: Dictionary) -> Button:
 					return _stack_button(descriptor, stack, footprint)))
 		_carrying.add_child(row)
 		label.text = AssayHud.stack_line(stack)

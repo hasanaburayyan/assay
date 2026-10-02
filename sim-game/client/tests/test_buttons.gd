@@ -373,9 +373,10 @@ func _mine_some_ore(screen: Node) -> bool:
 ## The pack row whose first line reads exactly this.
 func _row_for(screen: Node, line: String) -> Node:
 	for row in screen._carrying.get_children():
-		if row.get_child_count() == 0:
-			continue
-		var label: Label = row.get_child(0) as Label
+		# BY NAME, NOT BY POSITION. A pack row is [icon?][VBox: line, verbs] since ASSA-46, so the
+		# sentence is not child 0 and is not at a fixed depth either -- whether the icon exists depends
+		# on whether we have art for that item.
+		var label := row.find_child(screen.STACK_LINE, true, false) as Label
 		if label != null and label.text == line:
 			return row
 	return null
@@ -397,6 +398,53 @@ func _labels_of(node: Node) -> PackedStringArray:
 			out.append((child as Button).text)
 		out.append_array(_labels_of(child))
 	return out
+
+
+## THE COUNT KEEPS CLIMBING WITHOUT THE ROW BEING REBUILT, WHICH IS THE BUG I MADE ADDING THE ICON.
+##
+## `_refresh_pack` has a fast path: if the pack's SHAPE is unchanged it re-texts each row's sentence
+## instead of rebuilding, because a count climbs every mining cycle and rebuilding ten times a second
+## would destroy a button under the pointer. That path used to fetch `row.get_child(0)` as the Label.
+## Adding a 32px icon (ASSA-46) made child 0 a TextureRect, so the fast path found null and SILENTLY
+## STOPPED UPDATING THE COUNT -- the number would freeze while mining and only correct itself when some
+## other item appeared and changed the shape.
+##
+## Three unrelated tests happened to catch it because they look rows up by their text. That was luck,
+## so this is the test that is actually about it: mine past one cycle with the shape held constant and
+## require the sentence on screen to have moved.
+func test_the_pack_count_climbs_without_rebuilding_the_row() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_some_ore(screen)
+	if ok:
+		var stacks: Array = screen._sim.inventory_of(screen._client.player_id)
+		if stacks.is_empty():
+			ok = _fail("mined and the pack is empty")
+		else:
+			var first := AssayHud.stack_line(stacks[0] as Dictionary)
+			var row := _row_for(screen, first)
+			if row == null:
+				ok = _fail("no row reads `%s`" % first)
+			else:
+				var shape_before: String = screen._pack_showing
+				# Keep mining: the count climbs and the SHAPE does not change, so the fast path runs.
+				_tick(screen, 40)
+				var after: Array = screen._sim.inventory_of(screen._client.player_id)
+				var wanted := AssayHud.stack_line(after[0] as Dictionary)
+				if wanted == first:
+					ok = _fail("the sim's count did not move in 40 ticks, so this proves nothing")
+				elif screen._pack_showing != shape_before:
+					ok = _fail("the pack shape changed, so the rebuild path ran and the fast path is "
+							+ "still untested")
+				else:
+					var label := row.find_child(screen.STACK_LINE, true, false) as Label
+					if label == null:
+						ok = _fail("the row has no %s label any more" % screen.STACK_LINE)
+					elif label.text != wanted:
+						ok = _fail(("the row still reads `%s` while the sim says `%s`. The fast path "
+								+ "stopped finding its label.") % [label.text, wanted])
+	screen.queue_free()
+	return ok
 
 
 ## ASSA-49: A RUNNING CRAFT SAYS SO ON SCREEN, AND STOPS SAYING SO WHEN IT FINISHES.

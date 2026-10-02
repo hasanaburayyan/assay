@@ -126,7 +126,17 @@ def globs(s):
 def main():
     sprites, manifest_path = find_manifest()
     man = json.load(open(manifest_path))
-    files = sorted({man[a]["sheet"] for a in man} | {"manifest.json"})
+    # `part_layout.json` is here for the same reason the sheets are: it is
+    # something the client must LOAD at runtime, so it has to be inside the
+    # project and survive the export filters. It carries the two rules that
+    # turn part sprites into a machine (ASSA-54) -- without it a client has to
+    # invent them, and the naive invention reproduces two measured defects.
+    #
+    # It is a SIBLING of the manifest rather than a block inside it: the
+    # manifest's top level is an asset namespace, and both this file's own
+    # `man[a]["sheet"]` above and the client's `test_sprites.gd` iterate it
+    # expecting every key to name a PNG.
+    files = sorted({man[a]["sheet"] for a in man} | {"manifest.json", "part_layout.json"})
     print("manifest: %s" % os.path.relpath(manifest_path, ROOT))
     print("Godot project root: %s" % os.path.relpath(CLIENT, ROOT))
     if BOUNDARY != CLIENT:

@@ -9,7 +9,7 @@ use crate::assembly::{
 use crate::building::{Building, BuildingKind, Machine, Slot};
 use crate::command::{Event, PlayerCommand, RejectReason, StopReason};
 use crate::item::{Item, ItemStack};
-use crate::mineral::{Grade, MineralSpecies, NameError, Property, Sheet};
+use crate::mineral::{Grade, MineralSpecies, NameError, Property, Sheet, SpeciesId};
 use crate::ore::OreDeposit;
 use crate::recipe::{RECIPES, Station};
 use crate::tuning::{
@@ -741,6 +741,50 @@ pub fn deposit_reach_note(world: &World, deposit: &OreDeposit) -> Option<String>
     })
 }
 
+/// A species you can mine and can never smelt, said without quoting its sheet.
+///
+/// **THE QUIETER HALF OF ASSA-43** (Game Director, ASSA-52). The hardness gate
+/// *refuses*, so a player learns in one press. This one accepts: you mine it,
+/// `amount` pays out generously, and the first thing that mentions a problem is
+/// `that ore needs more heat than this smelter's walls survive` — which blames
+/// the smelter, after the smelter has been paid for. 13.6% of deposits.
+///
+/// **IT NAMES NO NUMBER ON PURPOSE.** The reach sentence can quote
+/// `HAND_MINE_MAX_HARDNESS` because that is a rule, the same in every world. A
+/// species' heat tolerance is its *sheet*, which reads as a 25-wide band until
+/// somebody assays it — printing it here would hand over a reading the player
+/// has not earned and make the assay pointless for the one rock it matters on.
+///
+/// **AND IT DOES NOT SAY WHICH HALF FAILED.** The blocker may be the fire or
+/// the walls that must survive it ([`crate::ladder::rungs`] weighs both), so a
+/// sentence blaming the fire would be wrong in some worlds. "nothing you can
+/// build and light" is true in all of them.
+fn unsmeltable_note(world: &World, species: SpeciesId) -> Option<String> {
+    let s = world.species(species);
+    (crate::ladder::hand_minable(s)
+        && !crate::ladder::usable_from_bare_hands(&world.species, species))
+    .then(|| {
+        format!(
+            "{} can be mined but not smelted: no smelter you can build and light will refine it",
+            s.name()
+        )
+    })
+}
+
+/// Why this rock is a dead end, if it is: the ONE slot every host reads.
+///
+/// **HARDNESS WINS WHEN BOTH APPLY** (Game Director's ruling on ASSA-52).
+/// Telling a player that a rock they cannot even break also cannot be smelted
+/// is two problems where they have one, and the one they have is the swing that
+/// will not land.
+///
+/// Precedence lives here rather than at five call sites, because a rule that
+/// has to be remembered by each caller is a rule that one caller will get
+/// wrong.
+pub fn deposit_dead_end_note(world: &World, deposit: &OreDeposit) -> Option<String> {
+    deposit_reach_note(world, deposit).or_else(|| unsmeltable_note(world, deposit.species))
+}
+
 /// Table of every deposit.
 pub fn deposit_table(world: &World) -> String {
     let mut out = format!(
@@ -756,7 +800,7 @@ pub fn deposit_table(world: &World) -> String {
         if d.is_depleted() {
             notes.push("mined out".to_string());
         }
-        if let Some(why) = deposit_reach_note(world, d) {
+        if let Some(why) = deposit_dead_end_note(world, d) {
             notes.push(why);
         }
         let _ = writeln!(
@@ -806,12 +850,24 @@ pub fn species_table(world: &World) -> String {
                 .map_or(format!("player {}", d.0), |p| p.name.clone());
             notes.push(format!("found by {who}"));
         }
-        if crate::ladder::hand_minable(s) {
-            notes.push("hand-minable".to_string());
-        } else {
+        if !crate::ladder::hand_minable(s) {
             // The absence of a note used to be the only cue, and absence is not
             // a cue: this is the half of the roster nothing can mine.
             notes.push("too hard for anything you can build".to_string());
+        } else if !crate::ladder::usable_from_bare_hands(&world.species, s.id) {
+            // **BARE "hand-minable" READ AS A PROMISE** (Game Director,
+            // ASSA-52). It is the truth about the swing and says nothing about
+            // the ore, and for 13.6% of deposits the ore is where it ends. The
+            // row still begins "hand-minable" because that part is true and a
+            // player comparing rows is comparing swings.
+            // Terse here on purpose: a table row is read against five other
+            // rows, and the full explanation belongs on the deposit line where
+            // a player is standing on the thing. "hand-minable" still leads,
+            // because that half is true and is what a player comparing swings
+            // is comparing.
+            notes.push("hand-minable, but not smeltable".to_string());
+        } else {
+            notes.push("hand-minable".to_string());
         }
         for grade in Grade::ALL.into_iter().rev() {
             if s.effective(Property::Reactivity, grade) >= FUEL_MIN_REACTIVITY {
@@ -948,6 +1004,12 @@ pub fn machine_status(world: &World, b: &Building, m: &Machine) -> String {
         // that refusal is invisible and reads as a bug. The sentence is
         // `deposit_reach_note`'s now, so a drill and the rock it sits on can
         // never give a player two different stories about the same gate.
+        //
+        // **REACH, NOT `deposit_dead_end_note`, AND THAT IS DELIBERATE**
+        // (ASSA-52). A drill on a rock that can be mined but never smelted
+        // works perfectly: it fills its hopper. Calling it "idle" there would
+        // be false, and the rock's own line already says the ore is a dead
+        // end. A machine reports what the machine is doing.
         Some(d) => {
             if let Some(why) = deposit_reach_note(world, d) {
                 format!("idle: {why}")

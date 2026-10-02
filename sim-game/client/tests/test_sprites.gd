@@ -238,3 +238,74 @@ func _grades_the_sim_has() -> PackedStringArray:
 	var out := PackedStringArray(seen.keys())
 	out.sort()
 	return out
+
+
+## ASSA-46, MAREN'S RULING B: A PACK ROW CARRIES A SPECIES-TINTED ICON WHERE WE HAVE ART, AND READS
+## COMPLETELY WHERE WE DO NOT.
+##
+## `items.png` has one row (ore) and the four part sheets have C/B/A, so refined, gears and smelters
+## have no art today. That is a fact about the sheets, not a failure, and the rule Maren set for both
+## the glyph and the icon is that the redundant cue may never become the only read.
+func test_an_ore_stack_gets_a_frame_and_a_smelter_does_not() -> bool:
+	var ore := {"kind": "ore", "species": 2, "grade": "B", "count": 7, "name": "Kuri ore (B)"}
+	var icon := AssaySprites.icon_for(ore)
+	if icon == null:
+		return _fail("ore has art in items.png and got no frame")
+	if icon.atlas == null:
+		return _fail("the frame has no sheet behind it")
+	if icon.region.size.x <= 0.0 or icon.region.size.y <= 0.0:
+		return _fail("the frame is empty: %s" % icon.region)
+	# AND THE KINDS WITH NO ART GET NOTHING. Worth knowing WHICH mechanism holds this, because I
+	# mutation-tested it and the obvious answer is wrong: mapping `refined` to `items` in `SHEET_OF`
+	# does NOT produce an icon either, because `items` has a single row named `ore` and the row lookup
+	# finds no row named for the grade. So the empty `SHEET_OF` entries are DOCUMENTATION of the gap,
+	# and the row lookup is what actually gates it. This test asserts the outcome, which is what matters
+	# and is true for both reasons -- but nobody should read `SHEET_OF` and think it is the guard.
+	for kind in ["refined", "gear", "smelter"]:
+		var none := AssaySprites.icon_for({"kind": kind, "species": 2, "grade": "B"})
+		if none != null:
+			return _fail(("`%s` got a frame and we have drawn no art for it. Inventing one means "
+					+ "drawing the wrong thing; the row is supposed to read without an icon.") % kind)
+	return true
+
+
+## A PART'S FRAME FOLLOWS THE SIM'S GRADE LETTER, and nothing else picks it.
+func test_a_part_icon_takes_the_row_named_by_its_grade() -> bool:
+	var seen := {}
+	for grade in ["C", "B", "A"]:
+		var icon := AssaySprites.icon_for({"kind": "head", "species": 0, "grade": grade})
+		if icon == null:
+			return _fail("a %s head got no frame" % grade)
+		var key := str(icon.region.position.y)
+		if seen.has(key):
+			return _fail("grade %s drew the same row as %s: %s" % [grade, seen[key], icon.region])
+		seen[key] = grade
+	# AND AN UNKNOWN GRADE DRAWS NOTHING rather than guessing a row.
+	if AssaySprites.icon_for({"kind": "head", "species": 0, "grade": "Z"}) != null:
+		return _fail("an unknown grade picked a frame instead of drawing nothing")
+	return true
+
+
+## THE TINT IS THE SPECIES' OWN SLOT, from the one table CI holds equal to the art pipeline's copy.
+func test_the_icon_tint_is_the_species_slot() -> bool:
+	for species in range(AssayHud.SPECIES_TINTS.size()):
+		var got := AssaySprites.tint_for({"kind": "ore", "species": species, "grade": "B"})
+		var wanted := Color(AssayHud.SPECIES_TINTS[species])
+		if not got.is_equal_approx(wanted):
+			return _fail("species %d tinted %s, not its slot %s" % [species, got, wanted])
+	# A stack with no species (there is no such item, but a frame can be drawn before a Welcome) must
+	# not index the table with -1.
+	if AssaySprites.tint_for({"kind": "ore", "species": -1}) != Color.WHITE:
+		return _fail("a species-less stack should tint white rather than wrap the table")
+	return true
+
+
+## AND THE ROW'S SENTENCE IS STILL COMPLETE WITHOUT THE ICON (Maren's rule, twice stated: for the map
+## glyph on ASSA-39 and for this icon on ASSA-46). The icon is redundancy; `stack_line` names the count,
+## the species and the grade on its own.
+func test_the_row_reads_completely_with_no_icon_at_all() -> bool:
+	var line := AssayHud.stack_line({"count": 7, "name": "Kuri ore (B)"})
+	for wanted in ["7", "Kuri ore (B)"]:
+		if not line.contains(wanted):
+			return _fail("the pack sentence does not carry `%s` on its own: %s" % [wanted, line])
+	return true

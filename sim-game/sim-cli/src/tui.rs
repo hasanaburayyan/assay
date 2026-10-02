@@ -701,7 +701,7 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
                     // Reach, on its own line and from the sim (ASSA-43). The
                     // panel named everything about the rock except whether
                     // anything in the game can break it.
-                    if let Some(why) = debug::deposit_reach_note(world, d) {
+                    if let Some(why) = debug::deposit_dead_end_note(world, d) {
                         lines.push(Line::from(why));
                     }
                 }
