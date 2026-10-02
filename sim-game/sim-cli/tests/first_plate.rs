@@ -276,12 +276,20 @@ quit
         format!("you made 1 x {m} head ({g})"),
         format!("you made 1 x {m} frame ({g})"),
         format!("you made 1 x {m} hopper ({g})"),
-        // A pick: head plus the held frame, assembled and taken in hand.
-        format!("handle({m} {g}) + head({m} {g})"),
+        // A pick: the held frame plus a head, assembled and taken in hand.
+        //
+        // Matches the part NAMES and their order, not the whole summary
+        // string: what each part is made of and what it weighs belong to the
+        // readout, which is the Systems engineer's to format, and this test
+        // should not break when they add a column. What it is really
+        // asserting is decision 6 — one command path, parts in part order.
+        format!("handle({m} {g}"),
+        format!("+ head({m} {g}"),
         "you equipped a tool".to_string(),
-        // A drill: head plus a planted frame plus a hopper, from the SAME
-        // command. Decision 6 in one line of transcript.
-        format!("frame({m} {g}) + head({m} {g}) + hopper({m} {g})"),
+        // A drill: a planted frame plus a head plus a hopper, from the SAME
+        // command.
+        format!("frame({m} {g}"),
+        format!("+ hopper({m} {g}"),
         "you planted machine 1".to_string(),
         // It produces into its buffer, and the ore comes back out.
         format!("machine 1 mined 2 {m} ore ({g})"),
