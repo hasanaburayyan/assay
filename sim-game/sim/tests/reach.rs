@@ -90,7 +90,7 @@ fn the_deposit_listing_names_reach_on_the_dead_rows_and_only_those() {
             .lines()
             .find(|l| l.split_whitespace().next() == Some(&d.id.0.to_string()))
             .unwrap_or_else(|| panic!("deposit {} has no row", d.id.0));
-        let says_reach = row.contains("too hard for anything we can build");
+        let says_reach = row.contains("too hard for anything you can build");
         assert_eq!(
             says_reach,
             !sim::ladder::hand_minable(w.species(d.species)),
@@ -150,14 +150,66 @@ fn a_refused_mine_says_why_and_promises_no_drill() {
         line.contains(&HAND_MINE_MAX_HARDNESS.to_string()),
         "the player is told the gate: {line}"
     );
+    // THE GUARD WATCHES THE CLASS, NOT THE PHRASE WE ALREADY DELETED (Game
+    // Director's wording ruling on ASSA-43). The first fix for "drills come
+    // later" read "so nothing reaches it yet", and a test pinned to the old
+    // five words was green about it: "yet" is the same promise, one word long.
+    // So refuse the whole family. Any of these turns a statement of fact into
+    // a thing to wait for, and decision 7 says nothing arrives.
+    for promise in PROMISES_OF_A_LATER_DRILL {
+        assert!(
+            !line.to_lowercase().contains(promise),
+            "decision 7: no drill ever reaches this, so the sentence may not \
+             hint that one is coming -- found {promise:?} in: {line}"
+        );
+    }
     assert!(
-        !line.contains("drills come later"),
-        "decision 7: no drill reaches this, so do not promise one: {line}"
-    );
-    assert!(
-        line.contains("not hardness"),
+        line.contains("drill"),
         "say what a drill does change, or 'too hard' reads as 'build a drill': {line}"
     );
+}
+
+/// Words that make a flat refusal sound like a wait. Checked case-insensitively
+/// against every reach sentence, because the one thing this family of strings
+/// must never do is imply a later unlock.
+const PROMISES_OF_A_LATER_DRILL: &[&str] = &[
+    "later",
+    "yet",
+    "soon",
+    "eventually",
+    "for now",
+    "until",
+    "once you",
+    "come back",
+];
+
+/// Every reach sentence, not only the rejection, held to the same bar: the
+/// deposit note and the species row are read more often than the refusal is.
+#[test]
+fn no_reach_sentence_promises_a_later_unlock() {
+    let (world, _me) = on_a_rock_nothing_can_mine(9);
+    let d = world.deposit(DepositId(0)).unwrap();
+    let mut sentences = vec![sim::debug::deposit_reach_note(&world, d).expect("out of reach")];
+    for s in &world.species {
+        if !sim::ladder::hand_minable(s) {
+            let table = sim::debug::species_table(&world);
+            if let Some(row) = table.lines().find(|l| l.contains(s.name())) {
+                sentences.push(row.to_string());
+            }
+        }
+    }
+    assert!(
+        sentences.len() > 1,
+        "this test is about nothing without an unmineable species"
+    );
+    for sentence in &sentences {
+        for promise in PROMISES_OF_A_LATER_DRILL {
+            assert!(
+                !sentence.to_lowercase().contains(promise),
+                "found {promise:?}, which reads as a later unlock, in: {sentence}"
+            );
+        }
+    }
 }
 
 /// The species table's only cue used to be the PRESENCE of "hand-minable" on

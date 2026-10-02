@@ -117,7 +117,9 @@ quit
         .find(|l| l.starts_with(&format!("({}, {}): deposit", bad.center.x, bad.center.y)))
         .unwrap_or_else(|| panic!("`at` printed no deposit line\n{transcript}"));
     assert!(
-        at_line.contains(&format!("{bad_name} is too hard for anything we can build")),
+        at_line.contains(&format!(
+            "{bad_name} is too hard for anything you can build"
+        )),
         "`at` on an unreachable deposit must say so: {at_line}\n{transcript}"
     );
 
@@ -130,7 +132,9 @@ quit
     let (on_bad, on_good) = (standing[0], standing[1]);
 
     assert!(
-        on_bad.contains(&format!("{bad_name} is too hard for anything we can build")),
+        on_bad.contains(&format!(
+            "{bad_name} is too hard for anything you can build"
+        )),
         "standing on it must explain it\n{transcript}"
     );
     assert!(
@@ -151,11 +155,18 @@ quit
 
     // And the refusal itself reaches the player, worded, with no drill promise.
     assert!(
-        stdout.contains("too hard to mine"),
+        stdout.contains("nothing can mine that"),
         "a refused swing says why\n{transcript}"
     );
-    assert!(
-        !stdout.contains("drills come later"),
-        "decision 7: no drill reaches this ore\n{transcript}"
-    );
+    // NOT PINNED TO "drills come later" (Game Director's ruling on ASSA-43).
+    // The first fix for that phrase read "so nothing reaches it yet", and a
+    // test watching the five deleted words was green about it. Refuse the
+    // family, so no rewording can smuggle the promise back in.
+    for promise in ["later", " yet", "soon", "eventually", "for now", "until"] {
+        assert!(
+            !stdout.to_lowercase().contains(promise),
+            "decision 7: no drill reaches this ore, so nothing may hint one is \
+             coming -- found {promise:?}\n{transcript}"
+        );
+    }
 }
