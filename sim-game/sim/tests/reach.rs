@@ -701,3 +701,55 @@ fn seed_14247_shows_both_a_cold_light_and_a_hotter_fire() {
          hotter fire: got {said:?}\n{table}"
     );
 }
+
+/// **THE SMELTER ROW SAYS WHERE ITS WALLS COME FROM** (ASSA-61), because it is
+/// the only surface a player reads *before* spending five ore on a body. The
+/// obvious choice — the starter rock you are already standing on — gives worse
+/// walls than the best rock you can mine in 86% of worlds, and in 42% that
+/// costs a species of the player's rung zero without anything saying so.
+///
+/// **THE SENTENCE IS PINNED TO THE BEHAVIOUR, NOT ONLY TO THE STRING.** The
+/// row claims a relationship, so the test checks the relationship holds for
+/// every species in a real roster, at two grades. If walls ever stop coming
+/// from the material, this reddens and the sentence has to be rewritten rather
+/// than quietly becoming false.
+#[test]
+fn the_smelter_row_says_its_walls_come_from_its_material_and_that_is_true() {
+    let table = sim::debug::recipe_table();
+    let clause = "walls = the heat tolerance of the ore you build it from";
+    for r in &sim::RECIPES {
+        let row = table
+            .lines()
+            .find(|l| l.starts_with(r.name))
+            .unwrap_or_else(|| panic!("no row for {}\n{table}", r.name));
+        assert_eq!(
+            row.contains(clause),
+            r.output.0 == sim::ItemKind::Smelter,
+            "only the thing with walls talks about walls: {row}"
+        );
+    }
+
+    let w = host_world(14247);
+    for s in &w.species {
+        let heat = u32::from(s.sheet.heat_tolerance);
+        // Both grades, because heat tolerance is the one property grade never
+        // scales — the same asymmetry ASSA-58's light clause rests on. A grade
+        // in this sentence would be a lie, and this is what makes that true.
+        for grade in [Grade::C, Grade::A] {
+            let b = sim::Building {
+                id: sim::BuildingId(0),
+                pos: w.spawn_tile(),
+                material: sim::Item::new(sim::ItemKind::Smelter, s.id, grade),
+                kind: sim::BuildingKind::for_item(sim::ItemKind::Smelter)
+                    .expect("a smelter item places a smelter"),
+            };
+            assert_eq!(
+                w.max_temperature(&b),
+                heat,
+                "a smelter of {} grade {} must have that rock's walls",
+                s.name(),
+                grade.letter()
+            );
+        }
+    }
+}
