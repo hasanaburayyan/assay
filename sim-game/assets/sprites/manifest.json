@@ -51,227 +51,59 @@
   ],
   "rows": [
    {
-    "name": "iron_t1_full_v0",
+    "name": "t1_full_v0",
     "frames": 1
    },
    {
-    "name": "iron_t1_full_v1",
+    "name": "t1_full_v1",
     "frames": 1
    },
    {
-    "name": "iron_t1_edge",
+    "name": "t1_edge",
     "frames": 1
    },
    {
-    "name": "iron_t2_full_v0",
+    "name": "t2_full_v0",
     "frames": 1
    },
    {
-    "name": "iron_t2_full_v1",
+    "name": "t2_full_v1",
     "frames": 1
    },
    {
-    "name": "iron_t2_edge",
+    "name": "t2_edge",
     "frames": 1
    },
    {
-    "name": "iron_t3_full_v0",
+    "name": "t3_full_v0",
     "frames": 1
    },
    {
-    "name": "iron_t3_full_v1",
+    "name": "t3_full_v1",
     "frames": 1
    },
    {
-    "name": "iron_t3_edge",
+    "name": "t3_edge",
     "frames": 1
    },
    {
-    "name": "iron_t4_full_v0",
+    "name": "t4_full_v0",
     "frames": 1
    },
    {
-    "name": "iron_t4_full_v1",
+    "name": "t4_full_v1",
     "frames": 1
    },
    {
-    "name": "iron_t4_edge",
+    "name": "t4_edge",
     "frames": 1
    },
    {
-    "name": "iron_depleted_full",
+    "name": "depleted_full",
     "frames": 1
    },
    {
-    "name": "iron_depleted_edge",
-    "frames": 1
-   },
-   {
-    "name": "copper_t1_full_v0",
-    "frames": 1
-   },
-   {
-    "name": "copper_t1_full_v1",
-    "frames": 1
-   },
-   {
-    "name": "copper_t1_edge",
-    "frames": 1
-   },
-   {
-    "name": "copper_t2_full_v0",
-    "frames": 1
-   },
-   {
-    "name": "copper_t2_full_v1",
-    "frames": 1
-   },
-   {
-    "name": "copper_t2_edge",
-    "frames": 1
-   },
-   {
-    "name": "copper_t3_full_v0",
-    "frames": 1
-   },
-   {
-    "name": "copper_t3_full_v1",
-    "frames": 1
-   },
-   {
-    "name": "copper_t3_edge",
-    "frames": 1
-   },
-   {
-    "name": "copper_t4_full_v0",
-    "frames": 1
-   },
-   {
-    "name": "copper_t4_full_v1",
-    "frames": 1
-   },
-   {
-    "name": "copper_t4_edge",
-    "frames": 1
-   },
-   {
-    "name": "copper_depleted_full",
-    "frames": 1
-   },
-   {
-    "name": "copper_depleted_edge",
-    "frames": 1
-   },
-   {
-    "name": "coal_t1_full_v0",
-    "frames": 1
-   },
-   {
-    "name": "coal_t1_full_v1",
-    "frames": 1
-   },
-   {
-    "name": "coal_t1_edge",
-    "frames": 1
-   },
-   {
-    "name": "coal_t2_full_v0",
-    "frames": 1
-   },
-   {
-    "name": "coal_t2_full_v1",
-    "frames": 1
-   },
-   {
-    "name": "coal_t2_edge",
-    "frames": 1
-   },
-   {
-    "name": "coal_t3_full_v0",
-    "frames": 1
-   },
-   {
-    "name": "coal_t3_full_v1",
-    "frames": 1
-   },
-   {
-    "name": "coal_t3_edge",
-    "frames": 1
-   },
-   {
-    "name": "coal_t4_full_v0",
-    "frames": 1
-   },
-   {
-    "name": "coal_t4_full_v1",
-    "frames": 1
-   },
-   {
-    "name": "coal_t4_edge",
-    "frames": 1
-   },
-   {
-    "name": "coal_depleted_full",
-    "frames": 1
-   },
-   {
-    "name": "coal_depleted_edge",
-    "frames": 1
-   },
-   {
-    "name": "stone_t1_full_v0",
-    "frames": 1
-   },
-   {
-    "name": "stone_t1_full_v1",
-    "frames": 1
-   },
-   {
-    "name": "stone_t1_edge",
-    "frames": 1
-   },
-   {
-    "name": "stone_t2_full_v0",
-    "frames": 1
-   },
-   {
-    "name": "stone_t2_full_v1",
-    "frames": 1
-   },
-   {
-    "name": "stone_t2_edge",
-    "frames": 1
-   },
-   {
-    "name": "stone_t3_full_v0",
-    "frames": 1
-   },
-   {
-    "name": "stone_t3_full_v1",
-    "frames": 1
-   },
-   {
-    "name": "stone_t3_edge",
-    "frames": 1
-   },
-   {
-    "name": "stone_t4_full_v0",
-    "frames": 1
-   },
-   {
-    "name": "stone_t4_full_v1",
-    "frames": 1
-   },
-   {
-    "name": "stone_t4_edge",
-    "frames": 1
-   },
-   {
-    "name": "stone_depleted_full",
-    "frames": 1
-   },
-   {
-    "name": "stone_depleted_edge",
+    "name": "depleted_edge",
     "frames": 1
    }
   ],
@@ -295,19 +127,7 @@
   ],
   "rows": [
    {
-    "name": "iron",
-    "frames": 1
-   },
-   {
-    "name": "copper",
-    "frames": 1
-   },
-   {
-    "name": "coal",
-    "frames": 1
-   },
-   {
-    "name": "stone",
+    "name": "ore",
     "frames": 1
    }
   ],

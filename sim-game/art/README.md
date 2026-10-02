@@ -26,6 +26,40 @@ on the CPU.
 - `build.py`: runs the asset scripts, downscales 4× to authoring size
   (64 px per tile), packs one sheet per asset into `../assets/sprites/`,
   writes `manifest.json` and `contact.png`.
+- `species_tints.py`: the six per-species tints, as data. Kept out of
+  `rig.py` because the plain-python tools cannot import `rig` (it needs
+  `bpy`). Read that file before changing a colour; the table is derived, not
+  chosen, and the comment says what it is derived against.
+
+## Species are a tint, not a sprite
+
+A world rolls six mineral species from its seed and no rule, recipe or
+sprite may name one, so **the ore and item art is species-neutral and the
+client tints it** with `modulate` (a per-channel multiply). Two consequences
+that are easy to undo by accident:
+
+- **Ore tiles are rock-only, with alpha. Never bake the ground into
+  anything that gets tinted** — a multiply hits the whole texture, so baked
+  terrain gets tinted along with the ore. The client draws the ground tile
+  and composites ore over it.
+- **The neutral base has to be LIGHT and genuinely hueless.** Multiply
+  cannot brighten, so the base's lightness is the budget every species
+  spends, and any hue it carries is added to all six.
+
+Both are checked by `art/species_probe.py`, which also measures species
+separation through protan / deutan / tritan simulation — the old art was
+colour-blind-safe by *shape*, and tinting spends that redundancy. Run it
+after touching ore art, the palette or the tints:
+
+```bash
+uv run --with pillow python art/species_probe.py   # exits non-zero on a regression
+PROBE_SPAN=0.1 uv run --with pillow python art/species_probe.py   # must FAIL
+```
+
+The second line is not decoration. Two guards in this pipeline have silently
+stopped guarding (a colour-blind check grepping for a row name that no
+longer existed; a chroma threshold set looser than the defect it existed to
+catch), so the probe has a lever that makes its verdict go red on purpose.
 
 ## Conventions
 
