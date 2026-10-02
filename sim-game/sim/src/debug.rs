@@ -874,7 +874,8 @@ pub fn species_table(world: &World) -> String {
                 .map_or(format!("player {}", d.0), |p| p.name.clone());
             notes.push(format!("found by {who}"));
         }
-        if !crate::ladder::hand_minable(s) {
+        let minable = crate::ladder::hand_minable(s);
+        if !minable {
             // The absence of a note used to be the only cue, and absence is not
             // a cue: this is the half of the roster nothing can mine.
             notes.push("too hard for anything you can build".to_string());
@@ -898,8 +899,10 @@ pub fn species_table(world: &World) -> String {
         // Over 5000 worlds half of these labels would not light a cold
         // smelter, and of those, 56.3% can never be lit in that world at all:
         // a label naming a use the world does not have. The light state is
-        // therefore on EVERY fuel row — absence is not a cue, the same
-        // argument the hand-minable clause above makes.
+        // therefore on every fuel row a player could ever mine — absence is not
+        // a cue, the same argument the hand-minable clause above makes. (It
+        // used to be every fuel row full stop; ASSA-68 below amended that, and
+        // the slot is still occupied on the rows it took it from.)
         //
         // The grade stays on the burn half and is missing from the light half
         // because reactivity scales with grade and heat tolerance does not.
@@ -914,12 +917,33 @@ pub fn species_table(world: &World) -> String {
             .into_iter()
             .find(|g| s.effective(Property::Reactivity, *g) >= FUEL_MIN_REACTIVITY)
         {
-            let light = match crate::ladder::lighting(&world.species, s.id) {
-                Lighting::FromCold => "lights from cold",
-                Lighting::FromAHotterFire => "needs a hotter fire to light",
-                Lighting::NothingBurnsHotEnough => "nothing here burns hot enough to light it",
+            //
+            // **ON A ROW NOTHING CAN MINE, THE LIGHT SLOT ANSWERS THE PRIOR
+            // QUESTION INSTEAD** (Game Director, ASSA-68). The lighting state of
+            // a rock that can never enter an inventory is physics about
+            // something the player cannot touch, and ASSA-58 is what taught them
+            // to scan for "lights from cold": in 24.6% of worlds the first such
+            // row read top-down is rock nothing can mine (2000 worlds). On the
+            // board's own #38 bench, seed 777042, it is row 0.
+            //
+            // The clause is a conditional on the fuel claim itself and not a
+            // fourth `Lighting` state, because the enum answers an ignition
+            // question nobody is asking here. No comma before the "if": the
+            // conditional binds the whole fuel claim, which is its status.
+            // ASSA-58's "every fuel row says which lighting state it is" is
+            // amended, not broken — the slot is still occupied, so a missing
+            // clause still cannot become the cue for "won't light".
+            let clause = if minable {
+                let light = match crate::ladder::lighting(&world.species, s.id) {
+                    Lighting::FromCold => "lights from cold",
+                    Lighting::FromAHotterFire => "needs a hotter fire to light",
+                    Lighting::NothingBurnsHotEnough => "nothing here burns hot enough to light it",
+                };
+                format!("fuel at {} or better, {light}", grade.letter())
+            } else {
+                format!("fuel at {} or better if you could mine it", grade.letter())
             };
-            notes.push(format!("fuel at {} or better, {light}", grade.letter()));
+            notes.push(clause);
         }
         let _ = sh;
         let _ = writeln!(
