@@ -13,6 +13,12 @@ extends RefCounted
 
 ## Everything fed in that is not a complete message yet.
 var _buffer := PackedByteArray()
+## THE EXACT TEXT OF THE MESSAGE `next_message` JUST RETURNED, which is what the Rust sim has to be
+## given. Not a convenience: by the time you are holding the parsed Dictionary, GODOT HAS ALREADY
+## TURNED EVERY NUMBER INTO A DOUBLE, so a `u64` world seed or a hash in it is already wrong and
+## re-serialising the Dictionary would hand the sim that damage as if it were the host's. The sim is
+## fed this string instead, and the Dictionary is only ever used for drawing.
+var last_text := ""
 ## Set when the stream is no longer trustworthy: a length past `MAX_MESSAGE_BYTES`, or JSON that
 ## will not parse. Both mean "stop reading this connection", not "skip this message".
 var error := ""
@@ -49,6 +55,7 @@ func next_message() -> Variant:
 		# we cannot know where the next length prefix starts if this body was not what it claimed.
 		error = "the host sent %d bytes that are not JSON" % length
 		return null
+	last_text = text
 	return parsed
 
 

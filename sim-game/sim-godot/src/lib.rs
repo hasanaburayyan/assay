@@ -22,8 +22,8 @@
 use godot::prelude::*;
 use sim::command::Input;
 use sim::hash::fnv64;
-use sim::world::{World, WorldConfig};
-use sim_net::TickBundle;
+use sim::world::{CHUNK_SIZE, World, WorldConfig};
+use sim_net::{ClientMsg, HASH_EVERY, TickBundle};
 
 struct SimGodot;
 
@@ -65,21 +65,25 @@ impl AssaySim {
         }
     }
 
-    /// Apply one `Tick` bundle: its inputs, then one `step`.
+    /// Apply one `Tick` message: its inputs, then one `step`.
+    ///
+    /// Takes the WHOLE `ServerMsg` text, exactly as it came off the socket, for
+    /// the same two reasons as `from_welcome_json`: GDScript never has to know
+    /// how serde tags an enum, and a re-serialised Godot Dictionary would have
+    /// been through a double already.
     ///
     /// Returns false and changes nothing unless the bundle is numbered with the
     /// tick we are AT. Applying bundles out of order is precisely how a peer
     /// desyncs, so this refuses rather than guesses.
     #[func]
     pub fn apply_bundle_json(&mut self, text: GString) -> bool {
-        let bundle: TickBundle = match serde_json::from_str(&text.to_string()) {
-            Ok(b) => b,
+        match Self::bundle_from_tick(&text.to_string()) {
+            Ok(bundle) => self.apply_bundle(&bundle),
             Err(why) => {
-                godot_error!("sim-godot: could not read a tick bundle: {why}");
-                return false;
+                godot_error!("sim-godot: could not read a Tick message: {why}");
+                false
             }
-        };
-        self.apply_bundle(&bundle)
+        }
     }
 
     /// The world's tick. Safe as a number: ticks stay far inside 2^53.
@@ -104,14 +108,22 @@ impl AssaySim {
         gstring(&self.seed_hex_string())
     }
 
+    /// The seed in DECIMAL, still text. Players and the relay's command line
+    /// both speak of "world 42", so hex would be a worse thing to put on
+    /// screen; text is what keeps it exact.
+    #[func]
+    pub fn seed_text(&self) -> GString {
+        gstring(&self.seed_decimal_string())
+    }
+
     #[func]
     pub fn width_tiles(&self) -> i64 {
-        self.world.width_chunks as i64 * 16
+        self.world.width_chunks as i64 * CHUNK_SIZE as i64
     }
 
     #[func]
     pub fn height_tiles(&self) -> i64 {
-        self.world.height_chunks as i64 * 16
+        self.world.height_chunks as i64 * CHUNK_SIZE as i64
     }
 
     #[func]
@@ -119,10 +131,105 @@ impl AssaySim {
         self.world.players.len() as i64
     }
 
+    /// The tile players spawn on, which is the centre of the spawn chunk. The
+    /// sim works this out; a client that multiplied chunk by 16 itself would be
+    /// a second opinion about where spawn is.
+    #[func]
+    pub fn spawn_tile(&self) -> Vector2i {
+        let at = self.world.spawn_tile();
+        Vector2i::new(at.x, at.y)
+    }
+
     /// What the last applied bundle caused, as lines a client can show.
     #[func]
     pub fn last_events(&self) -> PackedStringArray {
         self.world_events()
+    }
+
+    /// EVERY PLAYER, FOR DRAWING: id, name, where they are, where they are
+    /// walking. Read out of the stepped world, never predicted — `target` is
+    /// here so a client can draw an intention, not so it can interpolate a
+    /// position the sim has not reached.
+    #[func]
+    pub fn players(&self) -> Array<VarDictionary> {
+        self.world
+            .players
+            .iter()
+            .map(|player| {
+                vdict! {
+                    "id" => player.id.0 as i64,
+                    "name" => &gstring(&player.name).to_variant(),
+                    "pos" => Vector2i::new(player.pos.x, player.pos.y),
+                    "target" => &match player.target {
+                        Some(at) => Vector2i::new(at.x, at.y).to_variant(),
+                        None => Variant::nil(),
+                    },
+                }
+            })
+            .collect()
+    }
+
+    /// EVERY DEPOSIT, FOR DRAWING. Depleted ones are included with `amount` 0,
+    /// because the sim keeps them so `DepositId`s stay stable; what to do with
+    /// an empty patch on screen is the view's business.
+    ///
+    /// `purity` is the number the game is named after and it is reported raw,
+    /// 1-100. The sim's own grade bands are C below 40, B to 69, A from 70 —
+    /// a client that invents its own bands is lying about the item it will get.
+    #[func]
+    pub fn deposits(&self) -> Array<VarDictionary> {
+        self.world
+            .deposits
+            .iter()
+            .map(|deposit| {
+                vdict! {
+                    "id" => deposit.id.0 as i64,
+                    "species" => deposit.species.0 as i64,
+                    "center" => Vector2i::new(deposit.center.x, deposit.center.y),
+                    "radius" => deposit.radius as i64,
+                    "amount" => deposit.amount as i64,
+                    "purity" => deposit.purity as i64,
+                }
+            })
+            .collect()
+    }
+
+    /// Species names in `SpeciesId` order, so a `species` index above can be
+    /// labelled. The sim decides whether that is the generated name or the one
+    /// its discoverer chose.
+    #[func]
+    pub fn species_names(&self) -> PackedStringArray {
+        self.world
+            .species
+            .iter()
+            .map(|species| GString::from(species.name()))
+            .collect()
+    }
+
+    /// IS A HASH DUE THIS TICK? `sim-net::HASH_EVERY`, asked of the world we are
+    /// actually on, so GDScript never has to count ticks itself. The reference
+    /// client tests the same thing in the same place: after stepping.
+    #[func]
+    pub fn hash_due(&self) -> bool {
+        self.world.tick.is_multiple_of(HASH_EVERY)
+    }
+
+    /// A WHOLE `ClientMsg::Hash`, SERIALISED HERE, ready to be framed and sent.
+    ///
+    /// This exists because the hash is a `u64` and GDScript's integers are
+    /// signed: half of all hashes cannot be spelled there, so GDScript cannot
+    /// build this message correctly even with the value in front of it. Writing
+    /// the JSON on this side is not a convenience, it is the only correct route
+    /// — and it is still only the wire shape, with the socket left to the host.
+    #[func]
+    pub fn hash_message_json(&self) -> GString {
+        match self.hash_message_text() {
+            Ok(text) => gstring(&text),
+            Err(why) => {
+                godot_error!("sim-godot: could not write a Hash message: {why}");
+                GString::new()
+            }
+        }
     }
 
     /// Proof, from inside a shipped build, that this library loaded AND runs
@@ -166,6 +273,17 @@ impl AssaySim {
         serde_json::from_value(world.clone()).map_err(|why| why.to_string())
     }
 
+    /// Pull the `TickBundle` out of a `ServerMsg::Tick`.
+    ///
+    /// `Tick` is a NEWTYPE variant -- `Tick(TickBundle)`, not `Tick { .. }` --
+    /// so serde writes `{"Tick": {"tick": 7, "inputs": []}}` and the bundle is
+    /// the value, with no second level of naming.
+    pub fn bundle_from_tick(text: &str) -> Result<TickBundle, String> {
+        let value: serde_json::Value = serde_json::from_str(text).map_err(|why| why.to_string())?;
+        let bundle = value.get("Tick").ok_or("not a Tick message")?;
+        serde_json::from_value(bundle.clone()).map_err(|why| why.to_string())
+    }
+
     /// The real work behind `apply_bundle_json`, callable without Godot.
     pub fn apply_bundle(&mut self, bundle: &TickBundle) -> bool {
         // A BUNDLE IS NUMBERED WITH THE TICK WE ARE AT, NOT THE ONE IT
@@ -199,8 +317,22 @@ impl AssaySim {
         format!("{:016x}", fnv64(&self.world))
     }
 
+    /// `hash_message_json` without Godot in the way, so a test can read the
+    /// message back as a real `ClientMsg` and check the `u64` survived.
+    pub fn hash_message_text(&self) -> Result<String, String> {
+        serde_json::to_string(&ClientMsg::Hash {
+            tick: self.world.tick,
+            hash: self.world.state_hash(),
+        })
+        .map_err(|why| why.to_string())
+    }
+
     pub fn seed_hex_string(&self) -> String {
         format!("{:016x}", self.world.seed)
+    }
+
+    pub fn seed_decimal_string(&self) -> String {
+        self.world.seed.to_string()
     }
 
     /// A small fixed world for the load check. Small on purpose: the check
@@ -293,6 +425,8 @@ mod tests {
         world.seed = u64::MAX - 1;
         let sim = AssaySim::from_world(world);
         assert_eq!(sim.seed_hex_string(), "fffffffffffffffe");
+        // And in decimal, which is what goes on screen.
+        assert_eq!(sim.seed_decimal_string(), "18446744073709551614");
         // What a double would have done to it:
         assert_ne!((u64::MAX - 1) as f64 as u64, u64::MAX - 1);
     }
@@ -363,6 +497,72 @@ mod tests {
         assert_eq!(value, AssaySim::self_check_expected_value());
         assert_eq!(value.len(), 16, "got {value}");
         assert_ne!(value, "0000000000000000", "a zero hash is not evidence");
+    }
+
+    /// THE MESSAGE GDSCRIPT CANNOT BUILD. A `Hash` carries a `u64`; GDScript's
+    /// ints are signed, so half of all hashes cannot be spelled there at all.
+    /// This reads the JSON back as a real `ClientMsg` and checks the number
+    /// against the sim's own, which is the only way to know nothing was rounded
+    /// on the way out.
+    #[test]
+    fn a_hash_message_carries_the_sims_own_u64() {
+        let mut world = fresh();
+        // Forced past 2^53 so a double round-trip could not survive it. The
+        // relay compares this number for equality; near enough is a desync.
+        world.seed = u64::MAX - 12345;
+        let sim = AssaySim::from_world(world);
+        let text = sim.hash_message_text().expect("should serialise");
+        let back: ClientMsg = serde_json::from_str(&text).expect("should parse");
+        let ClientMsg::Hash { tick, hash } = back else {
+            panic!("serialised as something other than a Hash: {text}");
+        };
+        assert_eq!(tick, sim.world().tick);
+        assert_eq!(hash, sim.world().state_hash());
+        assert_eq!(format!("{hash:016x}"), sim.hash_hex_string());
+    }
+
+    /// A hash is due exactly when `sim-net` says, and the host asks after
+    /// stepping — same place `sim-cli` asks.
+    #[test]
+    fn a_hash_is_due_every_hash_every_ticks_and_not_between() {
+        let mut sim = AssaySim::from_world(fresh());
+        assert!(sim.hash_due(), "tick 0 is a multiple of HASH_EVERY");
+        let mut due = 0;
+        for _ in 0..(HASH_EVERY * 2) {
+            let bundle = TickBundle {
+                tick: sim.world().tick,
+                inputs: Vec::new(),
+            };
+            assert!(sim.apply_bundle(&bundle));
+            if sim.hash_due() {
+                due += 1;
+                assert_eq!(sim.world().tick % HASH_EVERY, 0);
+            }
+        }
+        assert_eq!(due, 2, "two hashes due across {} ticks", HASH_EVERY * 2);
+    }
+
+    /// A `Tick` arrives as a whole `ServerMsg`, and `Tick` is a newtype variant,
+    /// so the bundle sits directly under the tag with no second name. Built from
+    /// the real `ServerMsg` type rather than a hand-written string, so a change
+    /// to the wire shape fails here instead of at a relay.
+    #[test]
+    fn a_tick_message_yields_its_bundle() {
+        let bundle = TickBundle {
+            tick: 7,
+            inputs: Vec::new(),
+        };
+        let text = serde_json::to_string(&sim_net::ServerMsg::Tick(bundle.clone())).unwrap();
+        assert_eq!(
+            AssaySim::bundle_from_tick(&text).expect("should parse"),
+            bundle
+        );
+    }
+
+    #[test]
+    fn a_message_that_is_not_a_tick_is_an_error() {
+        assert!(AssaySim::bundle_from_tick(r#"{"Desync":{"tick":5}}"#).is_err());
+        assert!(AssaySim::bundle_from_tick("{").is_err());
     }
 
     #[test]
