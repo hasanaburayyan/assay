@@ -86,6 +86,54 @@ the withdrawn distance rule.
     replaces the plain roll noted in ADR 0001. Test: raising the constant
     raises the mean deposit purity of a fixed seed while deposits still vary.
 
+## What the loop actually costs, measured (Maren, 2026-10-02)
+
+Decision 2's test — "the whole demo loop can be played to completion with
+`--plain`" — now has a number. Played end to end on the pinned friend seed
+14247 (`sim-cli --plain`, `pause` + `tick`): spawn to an equipped pick is
+**326 ticks, about 33 seconds at the relay's 10 ticks/s**, and the pick comes
+out UNCERTAIN, which is the verdict the seed was pinned to show.
+
+Where that time goes is lopsided, and it is worth knowing before anyone
+optimises the wrong surface:
+
+| stage | ticks | share |
+|---|---|---|
+| smelter refining 8 ore at 20 ticks each | 160 | **49%** |
+| walking to a hand-lightable fuel and back | 36 | 11% |
+| hand mining (two deposits) | 40 | 12% |
+| `craft smelter` — the only hand craft in the demo | 20 | 6% |
+| place, insert, take, `make`×3, assemble, equip | ~10 | 3% |
+
+Three things follow. **The waiting in this demo is a building's, not the
+player's**; the longest action a player's own hands perform is 20 ticks, two
+seconds. **`MakePart` is instant** — it takes the material and adds the part
+in the same tick (`step.rs`), so there is no part-crafting progress for any
+host to show, and part sizes are a material cost, never a duration.
+**The walk is structural, not incidental**: the spawn material's heat
+tolerance usually exceeds the hand spark, so the first fire needs a second
+species fetched from elsewhere. Worldgen guarantees one exists; the player is
+not told which, which is ASSA-58.
+
+### Resolved: gears do not survive in the demo
+
+The open question below asked whether gears survive as a part kind. They do
+not, and the answer is stronger than "not a part kind": **nothing in the game
+consumes a gear.** The part catalogue is head, handle, frame and hopper, all
+made from refined; `ItemKind::Gear` appears only as a recipe *output* and in
+tests. No recipe takes one, no part takes one, the client never names one.
+
+That is not harmless, because a gear costs **2 refined** — the same as a
+handle, two thirds of a pick, and 40 ticks of smelter time, which the table
+above shows is the demo's scarcest resource. `recipes` advertises it anyway.
+
+**Ruling: the gear recipe stays in the sim and stops being an unmarked
+invitation.** Deleting it would throw away work the alloys note still wants
+and would move the golden hash for nothing; hiding it would make absence the
+cue again. The recipe table says plainly that nothing uses a gear — and
+*without* "yet", because no accepted decision promises one, and ASSA-43 is
+exactly what it costs to put a promise in a sentence that no decision backs.
+
 ## Open questions
 
 - Which sheet properties beyond hardness, strength and density do parts read
@@ -95,10 +143,16 @@ the withdrawn distance rule.
 - Durability numbers: how many swings a grade B head of middling strength
   should last so a pick feels worth making but not permanent.
 - Does the hopper's own material matter (density only, or capacity too)?
-- The gear's hardness gate and the `requires` field on recipes: the
+- ~~The gear's hardness gate and the `requires` field on recipes: the
   discussion note argued requirements belong on the schematic; this note's
   assembly model makes gears an ordinary part. Decide whether gears survive
-  as a part kind in the demo at all.
+  as a part kind in the demo at all.~~ **Answered 2026-10-02 — see "Resolved:
+  gears do not survive in the demo" above.** Note while checking this: the
+  `requires` field is non-empty for the **gear recipe and nothing else** —
+  the other four are `&[]`, and the smelter's heat gate is enforced in
+  `step.rs`, not through `requires`. So the field has exactly one user and
+  it is the unused recipe. Whoever retires gears retires `requires` with
+  them; neither is load-bearing for anything else in the demo.
 - How the Godot client presents the part catalogue and the frame budget so
   a player can predict a break before placing (sim exposes mass and budget;
   the client decides how to show them).
