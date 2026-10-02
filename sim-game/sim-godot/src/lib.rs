@@ -330,6 +330,42 @@ impl AssaySim {
             .collect()
     }
 
+    /// THE STARTER PAIR THIS WORLD GUARANTEES: the material at rung zero and a
+    /// hand-lit fuel, as `[material, fuel]` species ids. Empty if the roster has
+    /// no such pair, which worldgen rerolls to prevent.
+    ///
+    /// A SCRIPTED SESSION MAY NOT WORK THIS OUT FOR ITSELF. "Does this fuel get
+    /// hot enough to melt that ore" is a rule — effective reactivity against
+    /// heat tolerance, both scaled by grade — and a client that answered it
+    /// would be holding an opinion about whether a smelter will run. Worse, it
+    /// would be answering from the ROUGH sheet before anything is assayed, so it
+    /// would be guessing with a 25-wide band and calling it a plan. `ladder.rs`
+    /// already decides it, and the ladder is what worldgen rerolls the roster
+    /// to guarantee, so this is the one pair a demo can count on in any seed.
+    #[func]
+    pub fn starter_pair(&self) -> PackedInt32Array {
+        PackedInt32Array::from(self.starter_pair_ids().as_slice())
+    }
+
+    /// ONE ITEM, SPELLED BY SERDE RATHER THAN BY GDSCRIPT, as the JSON a command
+    /// carries. `kind` is the sim's own item name (`ore`, `refined`, `smelter`,
+    /// `head`, `handle`, `frame`, `hopper`, or `part:head`), `grade` a letter.
+    /// Empty string if either will not parse.
+    ///
+    /// SAME ARGUMENT AS `hash_message_json`, one step weaker. An `Item` is three
+    /// nested enums and a newtype — `{"kind":{"Part":{"Frame":"Held"}},...}` —
+    /// and nothing on the GDScript side would notice getting that shape wrong
+    /// until a relay silently dropped the command. GDScript still BUILDS the
+    /// commands it sends (the numbers stay integers that way, which matters:
+    /// Godot's JSON parses every number as a double, and serde will not take
+    /// `3.0` for a `u8`). This exists so a test can hold what GDScript built
+    /// against what serde would have written, which is the only check that
+    /// cannot agree with my own misreading.
+    #[func]
+    pub fn item_json(kind: GString, species: i64, grade: GString) -> GString {
+        gstring(&item_text(&kind.to_string(), species, &grade.to_string()))
+    }
+
     /// HOW MANY SPECIES A WORLD ROLLS (`sim::tuning::SPECIES_PER_WORLD`).
     ///
     /// Here so the client's per-species colour table can be checked against the
@@ -494,6 +530,25 @@ fn building_dict(building: &BuildingFacts) -> VarDictionary {
         "pos" => Vector2i::new(building.pos.0, building.pos.1),
         "status" => &gstring(&building.status).to_variant(),
     }
+}
+
+/// AN ITEM AS THE JSON A COMMAND CARRIES, spelled by serde. Empty string if the
+/// kind or the grade will not parse, or if the species cannot be a `SpeciesId`:
+/// a command naming species 300 is a bug, not a request.
+///
+/// Engine-free so `cargo test` can pin the shapes, which is the whole point of
+/// it existing — see `AssaySim::item_json`.
+pub fn item_text(kind: &str, species: i64, grade: &str) -> String {
+    let Some(kind) = sim::item::ItemKind::parse(kind) else {
+        return String::new();
+    };
+    let Some(grade) = sim::Grade::parse(grade) else {
+        return String::new();
+    };
+    let Ok(species) = u8::try_from(species) else {
+        return String::new();
+    };
+    serde_json::to_string(&Item::new(kind, SpeciesId(species), grade)).unwrap_or_default()
 }
 
 /// PLAIN DATA, NO ENGINE TYPES, on purpose: a `Dictionary` cannot be built
@@ -839,6 +894,14 @@ impl AssaySim {
     ///
     /// Empty for a player the world does not have, and for one who has built
     /// nothing — which is every player until the craft chain runs.
+    /// `[material, fuel]`, or empty. Engine-free half of `starter_pair`.
+    pub fn starter_pair_ids(&self) -> Vec<i32> {
+        match sim::ladder::starter_species(&self.world.species) {
+            Some((material, fuel)) => vec![i32::from(material.0), i32::from(fuel.0)],
+            None => Vec::new(),
+        }
+    }
+
     pub fn design_facts(&self, player: Option<PlayerId>) -> Vec<DesignFacts> {
         let Some(p) = player.and_then(|id| self.world.player(id)) else {
             return Vec::new();
@@ -1472,6 +1535,113 @@ mod tests {
             assert!(!part.kind.is_empty() && !part.species_name.is_empty());
             assert!(["C", "B", "A"].contains(&part.grade.as_str()), "{part:?}");
         }
+    }
+
+    /// THE STARTER PAIR IS THE SIM'S, AND IT IS THE PAIR A DEMO CAN COUNT ON.
+    ///
+    /// Worldgen rerolls the roster until the ladder holds, so every world has
+    /// one; a scripted session that picked its own fuel would be guessing from a
+    /// rough sheet about a rule (reactivity against heat tolerance, both scaled
+    /// by grade) that only the sim may decide.
+    #[test]
+    fn the_starter_pair_is_two_different_species_the_sim_chose() {
+        let (sim, _me) = with_a_player("limpet");
+        let pair = sim.starter_pair_ids();
+        assert_eq!(pair.len(), 2, "every world has a starter pair: {pair:?}");
+        let (material, fuel) = (pair[0], pair[1]);
+        for id in [material, fuel] {
+            assert!(
+                (id as usize) < sim.world.species.len(),
+                "{id} is not a species in this world"
+            );
+        }
+        // THE FUEL IS A HAND-LIT FUEL, which is the half a client could not
+        // judge: `hand_lit_fuel` is a rule about reactivity and heat tolerance,
+        // read off the TRUE sheet, and before an assay a client only has a
+        // 25-wide band to guess from.
+        let fuel_species = &sim.world.species[fuel as usize];
+        assert!(
+            sim::ladder::hand_lit_fuel(fuel_species),
+            "the starter fuel cannot be lit by hand: {:?}",
+            fuel_species.sheet
+        );
+        // AND THEY MAY BE THE SAME SPECIES. I asserted they could not be and
+        // this test caught me: `starter_species` takes rung zero's material and
+        // the first hand-lit fuel in the roster, and nothing stops one species
+        // from being both. `first_plate.rs` searches for a seed where they
+        // differ because it wants two deposits; a scripted session must not
+        // assume it, or it fails on perfectly good worlds.
+        if material == fuel {
+            assert!(
+                sim::ladder::hand_lit_fuel(&sim.world.species[material as usize]),
+                "one species serving as both must still be a hand-lit fuel"
+            );
+        }
+    }
+
+    /// AN ITEM'S JSON IS SERDE'S, INCLUDING THE AWKWARD ONE. `handle` is
+    /// `PartKind::Frame(Mount::Held)`, so it nests three deep, and that is the
+    /// shape GDScript would be most likely to get wrong by hand. Pinned here so
+    /// a rename or a serde attribute on any of the three enums shows up as this
+    /// test failing rather than as a relay quietly dropping a command.
+    #[test]
+    fn an_items_json_is_the_shape_serde_writes_and_a_bad_name_is_empty() {
+        for (kind, grade, wanted) in [
+            ("ore", "c", r#"{"kind":"Ore","species":3,"grade":"C"}"#),
+            (
+                "refined",
+                "B",
+                r#"{"kind":"Refined","species":3,"grade":"B"}"#,
+            ),
+            (
+                "smelter",
+                "a",
+                r#"{"kind":"Smelter","species":3,"grade":"A"}"#,
+            ),
+            (
+                "head",
+                "c",
+                r#"{"kind":{"Part":"Head"},"species":3,"grade":"C"}"#,
+            ),
+            (
+                "handle",
+                "c",
+                r#"{"kind":{"Part":{"Frame":"Held"}},"species":3,"grade":"C"}"#,
+            ),
+            (
+                "frame",
+                "c",
+                r#"{"kind":{"Part":{"Frame":"Planted"}},"species":3,"grade":"C"}"#,
+            ),
+            (
+                "hopper",
+                "c",
+                r#"{"kind":{"Part":"Hopper"},"species":3,"grade":"C"}"#,
+            ),
+            // The prefixed spelling `code()` writes must mean the same item.
+            (
+                "part:head",
+                "c",
+                r#"{"kind":{"Part":"Head"},"species":3,"grade":"C"}"#,
+            ),
+        ] {
+            let got = item_text(kind, 3, grade);
+            assert_eq!(got, wanted, "{kind}:{grade}");
+            // And it round-trips: the text the client will send parses back into
+            // the item it claims to be.
+            let back: Item = serde_json::from_str(&got).expect("serde reads it back");
+            assert_eq!(back.species, SpeciesId(3), "{kind}:{grade}");
+        }
+        for (kind, grade) in [("ore", "z"), ("widget", "c"), ("", "c")] {
+            assert_eq!(
+                item_text(kind, 3, grade),
+                "",
+                "'{kind}':'{grade}' should not spell an item"
+            );
+        }
+        // A species id that cannot be a `SpeciesId` is refused rather than
+        // wrapped: a command naming species 300 is a bug, not a request.
+        assert_eq!(item_text("ore", 300, "c"), "");
     }
 
     /// THE SPECIES LETTER IS THE SIM'S, AND IT IS THE *GENERATED* NAME'S.
