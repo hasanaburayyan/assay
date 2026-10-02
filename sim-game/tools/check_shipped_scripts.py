@@ -69,7 +69,12 @@ def excluded_globs() -> list[str]:
         )
     globs: list[str] = []
     for raw in re.findall(r'exclude_filter="([^"]*)"', text):
-        globs += [part.strip() for part in raw.split(",") if part.strip()]
+        for part in raw.split(","):
+            # Deduplicated only so the message reads: the presets normally
+            # carry identical filters, and "tools/*, tools/*" invites the
+            # reader to wonder whether that means something.
+            if part.strip() and part.strip() not in globs:
+                globs.append(part.strip())
     return globs
 
 
