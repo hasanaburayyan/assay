@@ -9,6 +9,7 @@ use crate::assembly::{
 use crate::building::{Building, BuildingKind, Machine, Slot};
 use crate::command::{Event, PlayerCommand, RejectReason, StopReason};
 use crate::item::{Item, ItemStack};
+use crate::ladder::Lighting;
 use crate::mineral::{Grade, MineralSpecies, NameError, Property, Sheet, SpeciesId};
 use crate::ore::OreDeposit;
 use crate::recipe::{RECIPES, Station};
@@ -869,11 +870,33 @@ pub fn species_table(world: &World) -> String {
         } else {
             notes.push("hand-minable".to_string());
         }
-        for grade in Grade::ALL.into_iter().rev() {
-            if s.effective(Property::Reactivity, grade) >= FUEL_MIN_REACTIVITY {
-                notes.push(format!("fuel at {} or better", grade.letter()));
-                break;
-            }
+        // **"FUEL" USED TO BE A PURE REACTIVITY TEST AND NEVER ASKED WHETHER
+        // THE PLAYER COULD SET THE THING ALIGHT** (Game Director, ASSA-58).
+        // Over 5000 worlds half of these labels would not light a cold
+        // smelter, and of those, 56.3% can never be lit in that world at all:
+        // a label naming a use the world does not have. The light state is
+        // therefore on EVERY fuel row — absence is not a cue, the same
+        // argument the hand-minable clause above makes.
+        //
+        // The grade stays on the burn half and is missing from the light half
+        // because reactivity scales with grade and heat tolerance does not.
+        // `ladder` decides both; this only words them.
+        //
+        // Grades ascend (`Grade::ALL` is C, B, A) so the clause names the
+        // CHEAPEST grade that burns. It used to iterate `.rev()` and break on
+        // the first pass, which tested A first — so every fuel row in the game
+        // said "fuel at A or better" even when C would burn, and the clause
+        // sorted nothing. Found while building this; flagged on ASSA-58.
+        if let Some(grade) = Grade::ALL
+            .into_iter()
+            .find(|g| s.effective(Property::Reactivity, *g) >= FUEL_MIN_REACTIVITY)
+        {
+            let light = match crate::ladder::lighting(&world.species, s.id) {
+                Lighting::FromCold => "lights from cold",
+                Lighting::FromAHotterFire => "needs a hotter fire to light",
+                Lighting::NothingBurnsHotEnough => "nothing here burns hot enough to light it",
+            };
+            notes.push(format!("fuel at {} or better, {light}", grade.letter()));
         }
         let _ = sh;
         let _ = writeln!(
