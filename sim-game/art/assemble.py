@@ -60,7 +60,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from part_layout import PART_REPEAT_OFFSET, SHADOW_CEILING, stack
-from species_probe import DISTINCT, GRADE_ROWS, dE, lab
+from species_probe import DISTINCT, GRADE_ROWS, OBSERVERS, dE, lab, seen_flat
 
 # RED LEVER. ASSA-16's lesson was a check that passed on the exact defect it
 # existed to find, so this one has a way to be seen failing: PART_OFFSET=0,0
@@ -82,6 +82,9 @@ if os.environ.get("PART_OFFSET"):
 #   STACK_OVER=1    puts plain `alpha_composite` back in place of
 #                   part_layout.stack, which is the operator that compounded
 #                   the parts' shadows (ASSA-38); CHECK 6 MUST fail.
+#   FAKE_CVD_IDENTITY=1  makes the colour-blind transform a no-op, which is how
+#                   an observer fold DIES: not with an error, but by quietly
+#                   scoring normal vision under four names. Check 3 MUST fail.
 HOPPER_LIGHT = os.environ.get("HOPPER_LIGHT")
 HOPPER_DARK = os.environ.get("HOPPER_DARK")
 STACK_OVER = os.environ.get("STACK_OVER")
@@ -91,6 +94,13 @@ if HOPPER_DARK:
     print("[RED RUN] hopper darkened into its own well; the open-box check MUST fail")
 if STACK_OVER:
     print("[RED RUN] parts stacked with plain `over`; the shadow-compounding check MUST fail")
+if os.environ.get("FAKE_CVD_IDENTITY"):
+    _real_seen_flat = seen_flat
+
+    def seen_flat(rgb, observer):  # noqa: F811  (deliberate, see the lever note)
+        return tuple(int(round(v)) for v in rgb)
+    print("[RED RUN] the colour-blind transform is an identity; the seam check MUST\n"
+          "          notice that every seam's worst observer is now 'normal'")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SPR = os.path.join(ROOT, "assets", "sprites")
@@ -209,8 +219,18 @@ def _coverage(own, want, w, h, size):
 def boundary(parts, grade, a, b):
     """How far apart two parts look where they MEET, at 1x.
 
-    Returns (median dE76, median |dL*|, pairs) over every pure-`b` pixel that
-    has a pure-`a` pixel within three, each paired with its nearest.
+    Returns (worst-observer median dE76, median |dL*|, pairs, which observer,
+    normal-vision median) over every pure-`b` pixel that has a pure-`a` pixel
+    within three, each paired with its nearest.
+
+    SCORED AS THE WORST OF FOUR OBSERVERS (Maren, ruling 2 on ASSA-28), the
+    way `species_probe` scores the map. Not because it fails - it passes, and
+    that is the reason: nothing here would have said WHEN it stopped. The
+    doubt was specific and it was mine, in the paragraph below: a C deck parts
+    from its hopper mostly by HUE, and hue is exactly what a protan or deutan
+    player loses. The median is taken per observer and the worst observer
+    wins, rather than taking the worst observer per pixel, so the number still
+    describes a seam somebody actually sees.
 
     WHY A MEDIAN OF PAIRS AND NOT TWO MEANS. A part's mean is a colour that
     appears nowhere on it - frame/A is a bright deck around a gun-metal plate,
@@ -237,7 +257,9 @@ def boundary(parts, grade, a, b):
     ma = _coverage(own, ai, w, h, (sw, sh)).load()
     mb = _coverage(own, bi, w, h, (sw, sh)).load()
     sp = small.convert("RGBA").load()
-    des, dls = [], []
+    per_obs = {o: [] for o in OBSERVERS}
+    dls = []
+    seen_cache = {}
     for y in range(sh):
         for x in range(sw):
             if mb[x, y] < 230:
@@ -252,11 +274,20 @@ def boundary(parts, grade, a, b):
                             best = (d, nx, ny)
             if best:
                 c1, c2 = sp[x, y][:3], sp[best[1], best[2]][:3]
-                des.append(dE(c1, c2))
+                for o in OBSERVERS:
+                    if o == "normal":
+                        per_obs[o].append(dE(c1, c2))
+                        continue
+                    for c in (c1, c2):
+                        if (c, o) not in seen_cache:
+                            seen_cache[(c, o)] = seen_flat(c, o)
+                    per_obs[o].append(dE(seen_cache[(c1, o)], seen_cache[(c2, o)]))
                 dls.append(abs(lab(c1)[0] - lab(c2)[0]))
-    if not des:
+    if not per_obs["normal"]:
         return None
-    return median(des), median(dls), len(des)
+    scores = {o: median(v) for o, v in per_obs.items()}
+    worst = min(scores, key=lambda o: scores[o])
+    return scores[worst], median(dls), len(dls), worst, scores["normal"]
 
 
 def open_read(grade):
@@ -530,7 +561,10 @@ def main():
     # that moves a collision somewhere else is not a fix. At #5F666F it did
     # exactly that, 10.7 dE, which is how this pairing earned its line here.
     slots_tested = range(1, max_hopper_slots())
-    print("part seams at 1x, median dE76 / median dL* across the join:")
+    seams_scored, seams_by_cvd = 0, 0
+    print("part seams at 1x, median dE76 / median dL* across the join,")
+    print("  scored as the WORST of %d observers (the name after each is which):"
+          % len(OBSERVERS))
     for a, b in (("frame", "hopper"), ("head", "hopper")):
         for n in slots_tested:
             parts = ("frame",) + ("hopper",) * n + ("head",)
@@ -539,10 +573,16 @@ def main():
             if not got:
                 continue
             print("  %s|%-7s %d hopper(s): %s" % (
-                a, b, n, "  ".join("%s %5.1f/%4.1f" % (g, got[g][0], got[g][1])
+                a, b, n, "  ".join("%s %5.1f/%4.1f %s" % (g, got[g][0], got[g][1],
+                                                          got[g][3][:4])
                                    for g in ("C", "B", "A") if g in got)))
             best = max(v[0] for v in got.values())
-            for g, (de, _dl, _n) in got.items():
+            for g, (de, _dl, _n, obs, normal) in got.items():
+                seams_scored += 1
+                if obs != "normal":
+                    seams_by_cvd += 1
+                    print("      %s: %.1f for a %s viewer against %.1f in normal vision"
+                          % (g, de, obs, normal))
                 if de < best / 2:
                     ok = False
                     print("  FAIL: at grade %s the %s/%s seam is %.1f dE against %.1f at the\n"
@@ -553,6 +593,21 @@ def main():
                     ok = False
                     print("  FAIL: the %s/%s seam at grade %s is %.1f dE, under DISTINCT %.0f."
                           % (a, b, g, de, DISTINCT))
+
+    # IS THE OBSERVER FOLD ACTUALLY RUNNING? A simulated deficiency collapses
+    # chroma, so a CVD observer practically always scores a seam at or below
+    # normal vision - today every one of the 15 rows above is won by protan,
+    # deutan or tritan. If normal vision were suddenly the worst EVERYWHERE,
+    # the honest reading is not "the art got more robust", it is "the transform
+    # stopped transforming", which is how FAKE_CVD_IDENTITY=1 makes it fail.
+    # Deliberately loose - one row is enough - so it can never cry wolf about
+    # art that merely changed.
+    print("  observer: %d of %d seams are scored by a colour-blind viewer rather\n"
+          "  than by normal vision" % (seams_by_cvd, seams_scored))
+    if seams_scored and not seams_by_cvd:
+        ok = False
+        print("  FAIL: not one seam is scored by a CVD observer. The fold is not\n"
+              "  running, and four observers are being reported as one.")
 
     # 4. IS THE HOPPER STILL AN OPEN BOX?
     #

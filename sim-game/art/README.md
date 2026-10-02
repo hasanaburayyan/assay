@@ -200,13 +200,27 @@ A machine is never a sprite. It is whole part frames stacked at one position
 what `art/assemble.py` builds and judges, at the size the player sees:
 
 ```bash
-art/assemble.py                   # GREEN; writes assets/sprites/assembled.png
-PART_OFFSET=0,0  art/assemble.py  # repeats back on top of each other -> FAIL
-HOPPER_LIGHT=1   art/assemble.py  # hopper back at the deck's value   -> FAIL
-HOPPER_DARK=1    art/assemble.py  # hopper sunk into its own well     -> FAIL
+art/assemble.py                       # GREEN; writes assets/sprites/assembled.png
+PART_OFFSET=0,0      art/assemble.py  # repeats back on top of each other -> FAIL
+HOPPER_LIGHT=1       art/assemble.py  # hopper back at the deck's value   -> FAIL
+HOPPER_DARK=1        art/assemble.py  # hopper sunk into its own well     -> FAIL
+STACK_OVER=1         art/assemble.py  # parts stacked with plain `over`   -> FAIL
+FAKE_PALETTE_FLOOR=20 art/assemble.py # palette outgrew SHADOW_CEILING    -> FAIL
+FAKE_CVD_IDENTITY=1  art/assemble.py  # colour-blind transform is a no-op -> FAIL
 ```
 
-It checks five things. Three were there already: one assembly path builds a
+**Seams are scored as the WORST of four observers** — normal, protan, deutan,
+tritan, through the same Machado matrices `species_probe` uses, in linear RGB.
+Maren ruled that in after measuring it herself and finding it *passes*: every
+seam clears `DISTINCT` under every observer, worst 16.3 dE for a deutan viewer
+on head|hopper at grade B. The point is that nothing would have said when it
+stopped — a C deck parts from its hopper mostly by HUE, and hue is what a
+red-green deficient player loses. Today 15 of 15 seam rows are scored by a
+colour-blind observer rather than by normal vision, and if that ever became 0
+the honest reading is that the transform died, not that the art got robust;
+`FAKE_CVD_IDENTITY=1` is that failure, on purpose.
+
+It checks six things. Three were there already: one assembly path builds a
 pick and a drill; solid footprint grows with every hopper (a sprite
 composited onto itself cannot grow a footprint, which is why that is the
 measure and "pixels touched" is not); and a C machine still differs from an A
