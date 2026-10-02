@@ -77,18 +77,11 @@ static func part_size(kind: String) -> int:
 
 ## How many of one kind, species and grade a player is carrying, out of `inventory_of`. Grade is
 ## optional: "" counts every grade, which is what matters when ore of two grades is the same input.
+## Moved to `AssayInventory` (ASSA-51): `main.gd` called this, and `tools/` is excluded from both
+## export presets, so the shipped client could not parse `main.gd` at all. Kept as a delegate so the
+## probe and its tests keep one spelling, and so there is exactly one implementation to be wrong.
 static func held(stacks: Array, kind: String, species: int, grade: String = "") -> int:
-	var total := 0
-	for entry in stacks:
-		var stack: Dictionary = entry
-		if String(stack.get("kind", "")) != kind:
-			continue
-		if int(stack.get("species", -1)) != species:
-			continue
-		if grade != "" and String(stack.get("grade", "")).to_upper() != grade.to_upper():
-			continue
-		total += int(stack.get("count", 0))
-	return total
+	return AssayInventory.held(stacks, kind, species, grade)
 
 
 ## The one stack of a kind and species a player holds, or `{}`. Highest grade first, so a chain that

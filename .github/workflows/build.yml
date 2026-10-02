@@ -72,6 +72,18 @@ jobs:
       # would otherwise only meet in a shipped bundle. Stdlib only, ~0.1s.
       - name: The client can reach the art
         run: python3 art/check_client_can_see_art.py
+      # THE SHIPPED CLIENT CAN REACH ITS OWN SCRIPTS. Both export presets
+      # exclude `tests/*` and `tools/*`, and `main.gd` called a class declared
+      # in `tools/` -- so the exported client could not parse its own main
+      # script, never reached `_ready`, never wrote the selfcheck marker and
+      # never exited. The step below that runs the exported client therefore
+      # HUNG rather than failed, for about an hour per commit on six commits,
+      # on runners that bill at 10x (ASSA-51). Every suite we had stayed green
+      # because they all run against the source tree, where `tools/` exists.
+      # This reads the presets, so it fails here in eighty seconds instead.
+      # Stdlib only, well under a second.
+      - name: The shipped client can reach its own scripts
+        run: python3 tools/check_shipped_scripts.py
       # The client's own GDScript suite gates the bundles below. Editor only:
       # running tests needs no export templates, which is the ~1 GB download.
       - name: Godot (editor only)
@@ -150,6 +162,12 @@ jobs:
     name: macOS bundle
     needs: test
     runs-on: macos-latest
+    # A HANG MUST COST MINUTES, NOT SIX HOURS (ASSA-51). The default job
+    # timeout is 360 minutes, and macOS minutes bill at 10x on a personal
+    # account, so an exported client that never exits quietly burns the
+    # board's money until someone notices. Nothing in this job legitimately
+    # takes 45 minutes; the cap is generous against a cold Rust cache.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -230,6 +248,9 @@ jobs:
           # silently library-less .app and a tester.
           find ../bundle/assay-macos/Assay.app -name 'libsim_godot.dylib' | grep .
       - name: The exported client runs
+        # The step cap, tighter than the job's: this is seconds of work, and a
+        # client that will not exit is the exact failure of ASSA-51.
+        timeout-minutes: 5
         run: |
           # AN EXPORT CAN SUCCEED AND SHIP A PACK THAT WILL NOT LOAD, and the
           # exit code of a missing or broken binary can still be 0 (measured),
@@ -270,6 +291,8 @@ jobs:
     name: Windows bundle
     needs: test
     runs-on: windows-latest
+    # Same reason as the macOS job above (ASSA-51).
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -362,6 +385,8 @@ jobs:
           $lib.FullName
       - name: The exported client runs
         shell: pwsh
+        # Same cap as macOS, same reason (ASSA-51).
+        timeout-minutes: 5
         run: |
           # The only check the Windows build gets: nobody at the studio has a
           # Windows machine, but the runner can run what it just built. The

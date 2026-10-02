@@ -572,7 +572,7 @@ func _insert(stack: Dictionary, slot: String) -> void:
 	# HOW MANY WE ARE ACTUALLY CARRYING, ASKED NOW. Grade is part of the question: two grades of one
 	# ore are two stacks and two rows, and inserting the other row's count would be a number from a
 	# different row.
-	var count := AssayDemoPlan.held(_sim.inventory_of(_client.player_id),
+	var count := AssayInventory.held(_sim.inventory_of(_client.player_id),
 			String(stack.get("kind", "")), int(stack.get("species", -1)),
 			String(stack.get("grade", "")))
 	if count <= 0:
