@@ -177,6 +177,13 @@ jobs:
     name: macOS bundle
     needs: test
     runs-on: macos-latest
+    # THE STEP CAPS BELOW ONLY GUARD THE STEP THEY ARE ON (ASSA-51 follow-up).
+    # The selfcheck is capped at 2 minutes because that is the step that hung,
+    # but the export itself, the Godot download and a cold cargo build have no
+    # cap at all, so any of them hanging still runs to the 360-minute default
+    # -- on macOS, which bills at 10x on a personal account. Nothing in this
+    # job honestly takes 45 minutes, so anything past it is a defect.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -305,6 +312,8 @@ jobs:
     name: Windows bundle
     needs: test
     runs-on: windows-latest
+    # Same reason as the macOS job; cheaper minutes, same six-hour tail.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
