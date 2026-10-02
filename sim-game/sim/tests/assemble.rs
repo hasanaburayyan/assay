@@ -6,6 +6,7 @@
 //! early, and that what the player gets back is what the ADR says.
 
 use sim::assembly::{BreakVerdict, spec};
+use sim::debug;
 use sim::tuning::{BREAK_RETURN_PERCENT, PLANTED_FRAME_BUFFER, REACH};
 use sim::{
     Assembly, AssemblyError, Event, Grade, Input, Item, ItemKind, MachineStats, Mount, Part,
@@ -1090,4 +1091,162 @@ fn a_player_starts_with_nothing_built_and_nothing_in_hand() {
     assert!(p.assemblies.is_empty());
     assert!(p.tool.is_none());
     assert_eq!(MachineStats::default().mass, 0);
+}
+
+// ---------------------------------------------------------------------------
+// What a design READS as: `debug::assembly_readout`, which is the inspector
+// panel's one line and the only place the Game Director's rulings on this item
+// (A5, A10, and durability held-only) are visible to a player.
+//
+// The readout lives in `sim` on purpose. Two clients computing a verdict would
+// eventually disagree, and the first time they did the player would see a
+// number the game does not believe.
+// ---------------------------------------------------------------------------
+
+/// The `durability ...` field of a readout, or `None` when there is none.
+///
+/// Resolves the field by its NAME rather than by position: a test that counted
+/// " · " separators would keep passing if the fields were reordered and would
+/// be asserting on a convention instead of on the thing.
+fn durability_field(readout: &str) -> Option<&str> {
+    readout
+        .lines()
+        .next()?
+        .split(" · ")
+        .find(|field| field.starts_with("durability"))
+}
+
+/// A10: while the head's sheet is banded, the pool is a PERCENTAGE of its
+/// class. The exact number may not appear, because the exact number *is* the
+/// head's effective strength: `pool / PICK_DURABILITY_PER_STRENGTH`.
+///
+/// The percentages pin the denominator, which is the whole point of the
+/// amendment. LIGHT is strength 60, so at grade B the true max is
+/// `1 x 48 x 60 = 2880` and the band ends are 2400 and 3600. A half-drained
+/// pool of 1440 therefore reads 50% over the true max, 60% over the low band
+/// end and 40% over the high one — three different answers, so this test can
+/// tell which denominator the code used.
+#[test]
+fn a_banded_pool_reads_as_a_percentage_of_its_class() {
+    let (mut world, me) = world_with_player();
+    let design = pick(LIGHT, LIGHT);
+    let index = assemble(&mut world, me, &design);
+
+    let built = &mut world.player_mut(me).unwrap().assemblies[index as usize];
+    assert_eq!(
+        built.durability, 2880,
+        "the anchor this test reasons about: 1 x (60 x 80%) x 60"
+    );
+    built.durability = 1440;
+    world.species_mut(LIGHT).assayed = false;
+
+    let built = &world.player(me).unwrap().assemblies[index as usize];
+    assert_eq!(
+        durability_field(&debug::assembly_readout(&world, built)),
+        Some("durability 50% of 2400-3600"),
+        "50% is the true max as denominator; 60% would be the low band end \
+         and 40% the high one, and either hands the exact pool back"
+    );
+}
+
+/// Same amendment, the other half: once the sheet is known there is nothing
+/// left to protect, so the pool reads exactly against its true max.
+#[test]
+fn an_assayed_pool_reads_exactly() {
+    let (mut world, me) = world_with_player();
+    let design = pick(LIGHT, LIGHT);
+    let index = assemble(&mut world, me, &design);
+    world.player_mut(me).unwrap().assemblies[index as usize].durability = 1440;
+
+    let built = &world.player(me).unwrap().assemblies[index as usize];
+    assert_eq!(
+        durability_field(&debug::assembly_readout(&world, built)),
+        Some("durability 1440/2880"),
+        "assayed: exact pool over the exact max, no band anywhere"
+    );
+}
+
+/// `div_ceil`, not plain division: a pick that still has a swing in it must
+/// never read 0%, because 0% is what a spent tool reads and the player would
+/// throw away a working one.
+#[test]
+fn a_pool_with_anything_left_in_it_never_reads_zero_percent() {
+    let (mut world, me) = world_with_player();
+    let design = pick(LIGHT, LIGHT);
+    let index = assemble(&mut world, me, &design);
+    world.player_mut(me).unwrap().assemblies[index as usize].durability = 1;
+    world.species_mut(LIGHT).assayed = false;
+
+    let built = &world.player(me).unwrap().assemblies[index as usize];
+    assert_eq!(
+        durability_field(&debug::assembly_readout(&world, built)),
+        Some("durability 1% of 2400-3600"),
+        "1/2880 rounds down to 0% and must not"
+    );
+}
+
+/// The Game Director's ruling 1 on this item, which had no test: a planted
+/// design shows no durability at all. The head contributes a pool whatever
+/// frame it sits on, but decision 12 parks drill wear, so the number would
+/// never move — and a number that never moves teaches a mechanic that does
+/// not exist.
+///
+/// Asserts the capacity field IS there, so the test still proves it is reading
+/// a real planted readout rather than an empty string.
+#[test]
+fn a_planted_design_shows_no_durability_and_shows_what_it_holds() {
+    let (mut world, me) = world_with_player();
+    let design = drill(LIGHT, 1);
+    let index = assemble(&mut world, me, &design);
+
+    let built = &world.player(me).unwrap().assemblies[index as usize];
+    let readout = debug::assembly_readout(&world, built);
+    assert_eq!(
+        durability_field(&readout),
+        None,
+        "drill wear is parked (decision 12), so the pool must not be shown"
+    );
+    assert!(
+        readout.contains(" · holds "),
+        "a planted design shows capacity instead: {readout}"
+    );
+
+    // The pool still EXISTS on the model — the ruling is a display rule, not a
+    // change to the catalogue, which ADR 0003 point 6 forbids.
+    assert!(
+        built.durability > 0,
+        "the head's contribution is unchanged; only the readout hides it"
+    );
+}
+
+/// A MIXED design: one part's species assayed, the other's not. ASSA-17 asks
+/// for a defined reading and this is it — every stat is banded per the species
+/// it actually comes from, so the assayed half of a sum stays exact.
+///
+/// Head is LIGHT (assayed, density 20, size 1) and frame is HEAVY (unassayed,
+/// density 100 -> band 76-100, size 2), so mass reads 172-220. If the code
+/// banded every species whenever any one of them was unknown it would read
+/// 153-225 instead, which is the wider, wronger answer.
+#[test]
+fn a_mixed_design_bands_each_part_by_its_own_species() {
+    let (mut world, me) = world_with_player();
+    let design = pick(HEAVY, LIGHT);
+    let index = assemble(&mut world, me, &design);
+    world.species_mut(HEAVY).assayed = false;
+
+    let built = &world.player(me).unwrap().assemblies[index as usize];
+    let readout = debug::assembly_readout(&world, built);
+    let first = readout.lines().next().unwrap();
+    assert!(
+        first.starts_with("WILL BREAK · mass 172-220 of 6-120 budget"),
+        "mass keeps the assayed head exact (20) and bands only the frame \
+         (152-200); 153-225 would mean the band swallowed the known part: \
+         {first}"
+    );
+    assert_eq!(
+        durability_field(&readout),
+        Some("durability 2880/2880"),
+        "the pool comes from the head alone, and the head's species is \
+         assayed, so this half of the readout is exact while mass is not"
+    );
 }

@@ -569,12 +569,6 @@ impl Assembly {
         self.parts().map(|p| spec(p.kind).size).sum()
     }
 
-    /// The part a break always loses, as an index into [`Assembly::parts`].
-    ///
-    /// **The heaviest part that is not the frame** (ADR 0003 amendment A1),
-    /// ties going to the lowest index so peers agree. With nothing mounted,
-    /// the frame itself is lost. The whole rule is this function, so moving
-    /// it back to "the heaviest part, frame included" is one line.
     /// Every stat as the range a player can read it in, banded per part from
     /// that part's own species — so a mixed-species design is two sheets and
     /// two bands with no special case.
@@ -621,6 +615,12 @@ impl Assembly {
         outcome
     }
 
+    /// The part a break always loses, as an index into [`Assembly::parts`].
+    ///
+    /// **The heaviest part that is not the frame** (ADR 0003 amendment A1),
+    /// ties going to the lowest index so peers agree. With nothing mounted,
+    /// the frame itself is lost. The whole rule is this function, so moving
+    /// it back to "the heaviest part, frame included" is one line.
     pub fn part_always_lost(&self, species: &[MineralSpecies]) -> usize {
         let heaviest = self
             .mounted
