@@ -11,7 +11,7 @@ use std::process::{Command, Stdio};
 
 use sim::tuning::{FRAME_BUDGET_PER_STRENGTH, HEAD_SIZE, HELD_FRAME_SIZE, PLANTED_FRAME_SIZE};
 use sim::worldgen::STARTER_CHUNKS;
-use sim::{ChunkPos, OreDeposit, Property, TilePos, World, WorldConfig};
+use sim::{ChunkPos, OreDeposit, Property, TilePos, World};
 
 fn walk(from: TilePos, to: TilePos) -> i32 {
     (to.x - from.x).abs().max((to.y - from.y).abs())
@@ -19,11 +19,11 @@ fn walk(from: TilePos, to: TilePos) -> i32 {
 
 /// The starter deposits of this seed's world, as the CLI will build it.
 fn starters(seed: u64) -> (World, OreDeposit, OreDeposit) {
-    let world = World::new(WorldConfig {
-        seed,
-        width_chunks: 6,
-        height_chunks: 4,
-    });
+    // `sim_net::fresh_world` and not a `WorldConfig` written out here: the
+    // same seed at `WorldConfig::default()`'s 8x8 is a DIFFERENT world, and
+    // the doc comment above only stays true while one place decides the shape
+    // (ASSA-53).
+    let world = sim_net::fresh_world(seed);
     let at = |i: usize| {
         let (dx, dy) = STARTER_CHUNKS[i];
         let chunk = ChunkPos::new(world.spawn.x + dx, world.spawn.y + dy);

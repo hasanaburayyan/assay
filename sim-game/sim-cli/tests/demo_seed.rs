@@ -104,10 +104,7 @@ fn verdicts_from(world: &World, from: &[SpeciesId]) -> BTreeSet<&'static str> {
             for handle_grade in Grade::ALL {
                 for head_grade in Grade::ALL {
                     let pick = Assembly::new(
-                        Part::of(
-                            PartKind::Frame(Mount::Held),
-                            refined(*handle, handle_grade),
-                        ),
+                        Part::of(PartKind::Frame(Mount::Held), refined(*handle, handle_grade)),
                         vec![Part::of(PartKind::Head, refined(*head, head_grade))],
                     );
                     seen.insert(pick.stat_range(&world.species).verdict().label());
