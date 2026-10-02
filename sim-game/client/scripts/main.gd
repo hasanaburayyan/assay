@@ -50,6 +50,12 @@ var _crafting: Label = null
 ## list changes. Not a Label like the others, because the verdict is a WORD IN ITS OWN COLOUR above
 ## numbers in another (Maren's ruling) and one Label can only be one colour.
 var _bench := VBoxContainer.new()
+## THE SPECIES PANEL: the map's legend (ASSA-73, Maren's ruling). Every species the sim sends, with
+## the same glyph and tint the map draws on its deposits, so a player who reads "lights from cold"
+## next to a letter can go and find that letter on the map. The window player had none of the
+## terminal's reference surfaces; this is the one that turns the map into a search tool.
+var _species := VBoxContainer.new()
+var _species_showing := UNBUILT
 ## What each section was last built from, so ten refreshes a second do not rebuild nodes that have
 ## not changed. The sim's own values are the signature: if they are identical, so is the panel. This
 ## matters more now than it did -- rebuilding a row ten times a second would destroy a button under
@@ -64,6 +70,20 @@ var _bench := VBoxContainer.new()
 ## The pack row's sentence, by name. Everything that re-texts or reads a row finds it with this rather
 ## than by child index, because the row's shape now depends on whether the item has art.
 const STACK_LINE := "StackLine"
+
+## The species row's name-and-state label, by name for the same reason `STACK_LINE` is: tests and
+## probes find it without counting children, and the row's shape is free to change.
+const SPECIES_LINE := "SpeciesLine"
+
+## The six readings on a species row, named separately because it is the ONE part of the row that
+## must be judged on the sim's own spelling -- a band carries a hyphen, an exact reading does not.
+## My first test for that read the whole row and tripped over the `hand-minable` TAG's hyphen, which
+## is the same mistake as measuring a shadow with a statistic the outline also satisfies.
+const SPECIES_READINGS := "SpeciesReadings"
+
+## The map glyph's disc in a species row. Big enough for a 12px letter to sit in, which is above the
+## 10px floor `glyph_size` refuses to draw under.
+const GLYPH_BOX_PX := 18.0
 
 const ICON_PX := 32.0
 
@@ -209,8 +229,8 @@ func _build_ui() -> void:
 	column.custom_minimum_size = Vector2(PANEL, 0.0)
 	column.add_theme_constant_override("separation", 10)
 	scroll.add_child(column)
-	for part in [["you", _carrying], ["do", _actions], ["bench", _bench], ["cursor", _cursor],
-			["last tick", _log]]:
+	for part in [["you", _carrying], ["do", _actions], ["bench", _bench], ["rocks", _species],
+			["cursor", _cursor], ["last tick", _log]]:
 		var heading := Label.new()
 		heading.text = String(part[0])
 		heading.modulate = Color(0.60, 0.64, 0.70)
@@ -223,6 +243,7 @@ func _build_ui() -> void:
 	_refresh_pack()
 	_refresh_actions()
 	_refresh_bench()
+	_refresh_species()
 
 
 func _on_join() -> void:
@@ -318,6 +339,7 @@ func _refresh() -> void:
 	_refresh_pack()
 	_refresh_actions()
 	_refresh_bench()
+	_refresh_species()
 
 
 ## THE PART MENU: every design you hold, verdict first, with the one verb that design affords.
@@ -338,6 +360,85 @@ func _refresh() -> void:
 ## moves every swing, so rebuilding on any change at all would free the Place button under the
 ## pointer four times a second while the player is mining. The rows stay; the numbers in them are
 ## rewritten.
+## THE ROCKS OF THIS WORLD, AS THE SIM DESCRIBES THEM (ASSA-73).
+##
+## The sim has always handed the client every species -- name, the six readings as TEXT, whether the
+## sheet is exact, and the two facts that decide a first fire -- and nothing on screen ever read it.
+## The terminal player had `species`; the window player had nothing, and the milestone's test is a
+## friend with no terminal.
+##
+## REBUILT ON CONTENT, NOT ON A SHAPE. The pack and the bench use a shape signature because their
+## numbers move every tick and rebuilding would destroy a button under the pointer. A species sheet
+## moves about twice a session -- an assay, a rename -- so the signature here is the WHOLE CONTENT
+## and a change rebuilds the rows. That costs nothing at this rate and it cannot leave a stale label
+## behind, which is the bug the fast path has already produced twice in this file.
+func _refresh_species() -> void:
+	var sheets := _sim.species_sheets() if _sim != null else []
+	var signature := JSON.stringify(sheets)
+	if signature == _species_showing:
+		return
+	_species_showing = signature
+	_clear(_species)
+	if sheets.is_empty():
+		_species.add_child(_note("no world yet — join one and its rocks are listed here"))
+		return
+	for entry in sheets:
+		_species.add_child(_species_row(entry as Dictionary))
+
+
+## ONE SPECIES, WEARING THE MARK THE MAP DRAWS ON IT.
+##
+## The glyph is the map's: the letter is `symbol`, which is `sim::debug::species_symbol` -- the same
+## call a deposit's letter comes from, never the name's first character, because a renamed species
+## keeps the mark already drawn. The disc is `AssayHud.species_tint`, the same table and the same
+## lookup `deposit_color` uses, undimmed because purity belongs to a patch and not to a species. The
+## letter's colour is `AssayHud.glyph_color`, the map's own readability rule.
+##
+## So a player reads "lights from cold" beside a letter here and goes looking for that letter out
+## there. That is Maren's whole point: the map was already drawn in a code nobody had the key to.
+func _species_row(species: Dictionary) -> Control:
+	var row := VBoxContainer.new()
+	row.add_theme_constant_override("separation", 1)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 6)
+
+	var tint := AssayHud.species_tint(int(species.get("id", 0)))
+	var disc := Panel.new()
+	disc.custom_minimum_size = Vector2(GLYPH_BOX_PX, GLYPH_BOX_PX)
+	disc.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var style := StyleBoxFlat.new()
+	style.bg_color = tint
+	# A CIRCLE, because that is what the map draws. A square swatch would be a second vocabulary for
+	# the same fact, and the whole value of this row is that the two surfaces match.
+	style.set_corner_radius_all(int(GLYPH_BOX_PX / 2.0))
+	disc.add_theme_stylebox_override("panel", style)
+	var letter := Label.new()
+	letter.text = String(species.get("symbol", ""))
+	letter.add_theme_color_override("font_color", AssayHud.glyph_color(tint))
+	letter.add_theme_font_size_override("font_size", 12)
+	letter.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	letter.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	letter.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	disc.add_child(letter)
+	head.add_child(disc)
+
+	var title := Label.new()
+	title.name = SPECIES_LINE
+	title.text = "%s · %s" % [String(species.get("name", "?")),
+			AssayHud.species_sheet_state(species)]
+	title.add_theme_font_size_override("font_size", 13)
+	head.add_child(title)
+	row.add_child(head)
+
+	var readings := _note(AssayHud.species_readings_line(species))
+	readings.name = SPECIES_READINGS
+	row.add_child(readings)
+	var tags := AssayHud.species_tags(species)
+	if not tags.is_empty():
+		row.add_child(_note("[%s]" % "] [".join(tags)))
+	return row
+
+
 func _refresh_bench() -> void:
 	var designs := _sim.designs_of(_client.player_id) if _client != null else []
 	var signature := _bench_shape(designs)
@@ -493,6 +594,16 @@ func _rebuild_pack(stacks: Array) -> void:
 			# the TextureRect fills it, so the scale ASSA-65 made exact (1/2 for an item, 1/4 for a
 			# part) is untouched -- a container with content margins would have quietly eaten it,
 			# which is the same bug ASSA-65 fixed. `check_pack_icon_scale.py` is the guard.
+			# THE BOX IS SET ONCE, FOR BOTH PATHS. It used to be set inside each arm, and the
+			# no-plate arm set only `custom_minimum_size` -- no `SIZE_SHRINK_CENTER` -- which is
+			# ASSA-65's bug exactly: a TextureRect in an HBox FILLS, so the rect becomes 32 x
+			# whatever the row is and the scale goes back to being decided by how many verbs the
+			# stack affords. Nothing caught it, because `check_pack_icon_scale.py` measures the
+			# shipped build and a plate always ships, so that arm is only reachable when
+			# `ui_theme.json` is missing. Two arms that must agree about a thing is the defect;
+			# one assignment above the branch is the fix.
+			art.custom_minimum_size = ICON_BOX_PX
+			art.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 			var plate := AssaySprites.pack_icon_plate()
 			if plate.a > 0.0:
 				var slot := Panel.new()
@@ -501,11 +612,12 @@ func _rebuild_pack(stacks: Array) -> void:
 				var style := StyleBoxFlat.new()
 				style.bg_color = plate
 				slot.add_theme_stylebox_override("panel", style)
+				# Inside a Panel the rect is placed by anchors, so the two lines above are inert
+				# here -- harmless, and worth more than a branch that has to remember them.
 				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 				slot.add_child(art)
 				row.add_child(slot)
 			else:
-				art.custom_minimum_size = ICON_BOX_PX
 				row.add_child(art)
 		var body := VBoxContainer.new()
 		body.add_theme_constant_override("separation", 2)

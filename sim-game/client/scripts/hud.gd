@@ -115,11 +115,22 @@ static func map_cell(size: Vector2i) -> float:
 ## longer redundant -- it is also only decodable beside the menu row that names the species, and
 ## `glyph_size` draws nothing at all under 10px. Below about 7px of radius COLOUR IS THE ONLY MAP
 ## READ, so the colour has to stand on its own at every purity. The fix belongs on the composite.
-static func deposit_color(species: int, purity: int) -> Color:
+## A SPECIES' OWN SLOT, UNDIMMED -- the identity colour, before any purity is folded in.
+##
+## FACTORED OUT SO THERE IS ONE LOOKUP (ASSA-73). The species panel is the map's LEGEND, and a legend
+## drawn from a second copy of this table would be a key that can stop matching its own map. Maren's
+## ruling is explicit: the panel borrows the map's vocabulary, never a tint it computes for itself.
+## `deposit_color` dims this by purity; the legend does not, because a species' identity is not a
+## property of whichever patch of it you are looking at.
+static func species_tint(species: int) -> Color:
 	# The TABLE bounds the index, not the roster: a species id past the end wraps rather than
 	# crashing a frame. `test_sim_binding.gd` is where the sim's roster size and this table's length
 	# are held to each other, so the wrap is a seatbelt and never the normal case.
-	var tint := Color(SPECIES_TINTS[posmod(species, SPECIES_TINTS.size())])
+	return Color(SPECIES_TINTS[posmod(species, SPECIES_TINTS.size())])
+
+
+static func deposit_color(species: int, purity: int) -> Color:
+	var tint := species_tint(species)
 	# Clamped 0.05 low so a purity-1 patch is still visible, 1.0 high because purity stops at 100.
 	# The clamp is why the dimmest disc is 0.62 and not 0.60.
 	var purity_part := clampf(float(purity) / 100.0, 0.05, 1.0)
@@ -486,3 +497,45 @@ static func design_lines(design: Dictionary) -> PackedStringArray:
 ## runs. A heading over an empty space reads as a bug; this says which it is.
 static func no_designs_line() -> String:
 	return "nothing built yet — mine, smelt and make parts first"
+
+
+## THE TWO FACTS A SPECIES ROW CARRIES AS STATE, NOT AS PROSE (ASSA-73, Maren's ruling 1).
+##
+## `hand_minable` and `hand_lit_fuel` are booleans the sim already sends, and they must render as
+## LABELLED STATE -- a tag -- never as a sentence this client composed. Two describers for one
+## condition is how hosts drift apart, which is the same argument `command_line` and ASSA-58 make.
+## So these are short tags on a row, and the SENTENCES about those conditions stay where the sim
+## writes them (`reach_note`, the stall line).
+##
+## ABSENT RATHER THAN NEGATED. A row says what a rock CAN do; "not hand-minable" would be the client
+## ranking the roster, which ruling 4 refuses. The player compares six rows and decides.
+const TAG_HAND_MINABLE := "hand-minable"
+const TAG_HAND_LIT_FUEL := "lights from cold"
+
+## The tags a species row shows, in a fixed order so six rows read as a column rather than a jumble.
+static func species_tags(species: Dictionary) -> PackedStringArray:
+	var tags := PackedStringArray()
+	if bool(species.get("hand_minable", false)):
+		tags.append(TAG_HAND_MINABLE)
+	if bool(species.get("hand_lit_fuel", false)):
+		tags.append(TAG_HAND_LIT_FUEL)
+	return tags
+
+
+## Whether the sheet is exact yet, as the one word the tile line already uses for it.
+static func species_sheet_state(species: Dictionary) -> String:
+	return "exact" if bool(species.get("assayed", false)) else "rough"
+
+
+## THE SIX READINGS, IN THE SIM'S OWN ORDER AND THE SIM'S OWN STRINGS (ruling 3).
+##
+## Each reading is already text: a 25-wide band like "26-50" until the species is assayed, an exact
+## number after. This client never parses one, never narrows one, and never sorts the properties --
+## the order is whatever `Property::ALL` handed over, so a seventh property appears here with no
+## change to this file.
+static func species_readings_line(species: Dictionary) -> String:
+	var readings: Dictionary = species.get("readings", {})
+	var parts := PackedStringArray()
+	for property in readings:
+		parts.append("%s %s" % [String(property), String(readings[property])])
+	return " · ".join(parts)
