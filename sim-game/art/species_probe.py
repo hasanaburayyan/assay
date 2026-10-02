@@ -54,6 +54,23 @@ GRADE_ROWS = ("C", "B", "A")
 JND = 2.3
 DISTINCT = 12.0     # two species a player must never confuse at a glance
 POP = 10.0          # ore against the terrain it sits on
+# Grade C is deliberately sparse, so it is held to a lower floor than POP --
+# but to a floor. Maren, ruling 2 on ASSA-20: "5.7 is a sentence, not a
+# guard." It measured 3.9 before the ladder was rebuilt on the sim's real
+# boundaries and nothing here would have said a word if it slid back.
+# THRESHOLD SET FROM THE DEFECT: 3.9 is what was wrong, 5.7 is what ships,
+# 5 sits between them, so the guard can actually catch the regression it is
+# named after instead of sitting below it.
+POP_C = 5.0
+
+# RED LEVER FOR POP_C. The regression this guard is named after was a COVERAGE
+# one -- a grade-C tile with fewer rocks on it is more terrain, and pop fell to
+# 3.9 -- so the lever reproduces the cause rather than lowering the bar:
+# PROBE_SPARSE=0.5 keeps half the ore pixels. The C check MUST then fail.
+SPARSE = float(os.environ.get("PROBE_SPARSE", "1.0"))
+if SPARSE < 1.0:
+    print("[RED RUN] ore coverage thinned to %.2f; the grade C pop check MUST fail"
+          % SPARSE)
 
 man = json.load(open(os.path.join(SPR, "manifest.json")))
 
@@ -152,8 +169,26 @@ def over_ground(img, observer="normal", space="linear"):
     cluster from the terrain, so species is a rock question and coverage is a
     tile question, and the probe now asks each of them where it lives."""
     g = at_1x(frame_of("ground", "v0")).convert("RGBA").copy()
-    g.alpha_composite(img if img.size == g.size else at_1x(img))
+    g.alpha_composite(thin(img if img.size == g.size else at_1x(img)))
     return as_seen(g, observer, space) if observer != "normal" else g
+
+
+def thin(img):
+    """Drop ore pixels on a fixed lattice (SPARSE < 1). No RNG: a red lever
+    whose answer moved between runs would be worse than no lever."""
+    if SPARSE >= 1.0:
+        return img
+    img = img.convert("RGBA").copy()
+    px = img.load()
+    keep = max(1, round(1.0 / max(SPARSE, 1e-6)))
+    i = 0
+    for y in range(img.height):
+        for x in range(img.width):
+            if px[x, y][3] > 0:
+                if i % keep:
+                    px[x, y] = px[x, y][:3] + (0,)
+                i += 1
+    return img
 
 
 def at_1x(img):
@@ -345,12 +380,23 @@ def main():
     for g in GRADE_ROWS:
         gt = frame_of("ore", "%s_full_v0" % g)
         ps = [dE(mean_rgb(over_ground(tint(gt, h))), gmean) for h in hues(n)]
-        note = "" if min(ps) >= POP else ("<-- subtle by design (sparse)" if g == "C"
-                                          else "<-- SINKS INTO TERRAIN")
+        floor = POP_C if g == "C" else POP
+        if min(ps) >= POP:
+            note = ""
+        elif g == "C":
+            note = ("<-- subtle by design (sparse), floor %.0f" % POP_C
+                    if min(ps) >= POP_C else "<-- TOO FAINT EVEN FOR C")
+        else:
+            note = "<-- SINKS INTO TERRAIN"
         print("grade %s vs ground: worst species dE %5.1f, best %5.1f  %s"
               % (g, min(ps), max(ps), note))
-        if g != "C" and min(ps) < POP:
+        if min(ps) < floor:
             ok = False
+            if g == "C":
+                print("  FAIL: grade C is allowed to be subtle, not invisible. It"
+                      "\n  measured %.1f against a floor of %.1f. This slid to 3.9"
+                      "\n  once already; a sparse tile is still a tile you have to"
+                      "\n  be able to spot on the map." % (min(ps), POP_C))
     pops = [dE(mean_rgb(over_ground(tint(pop_base, h))), gmean) for h in hues(n)]
 
     # ---- 3. THE AXIS COLLISION
