@@ -484,12 +484,20 @@ the C hopper falls under L\* 35 and its gap from the head drops to 7.7.
   `TileOccupied` on any footprint tile) but adjacent ones overlap on screen;
   draw y then x so the nearer wins.
 - **Overlay part sprites with `part_layout.stack`, never plain `over`.**
-  Colour composites over, alpha takes the max. Each part carries its own
-  contact shadow, so `over` compounds them and a machine's shadow darkens with
-  every part bolted on — measured 122 → 167 from one part to four, a gradient
-  that reports part count and that nobody chose (ASSA-38). Alpha-max applies
-  only below `SHADOW_CEILING`, which is read off the palette's own darkest
-  colour, so geometry composites exactly as it always did.
+  Colour composites over, alpha takes the max. When this rule was written each
+  part carried its own contact shadow, so `over` compounded them and a
+  machine's shadow darkened with every part bolted on — measured 122 → 167 from
+  one part to four, a gradient that reports part count and that nobody chose
+  (ASSA-38). Alpha-max applies only below `SHADOW_CEILING`, which is read off
+  the palette's own darkest colour, so geometry composites exactly as it always
+  did.
+  **ASSA-64 removed the contact shadow from every mounted part**, so today's
+  sheets cannot compound one: a Design has exactly one planted frame and the
+  frame is the only kind that stands on the ground. The operator stays — it is
+  what makes plain `over` correct rather than lucky, and a future
+  ground-standing part kind brings the compounding back. Check 4 of
+  `check_part_contract.py` is what keeps mounted parts shadowless; the client's
+  own witness for this moved for the same reason (see `test_assembly.gd`).
 - Sheets: one row per sprite (direction, variant or state), one column per
   frame. `manifest.json` gives frame size, footprint in tiles, the anchor
   (where the footprint's top-left corner sits in the frame) and animation
