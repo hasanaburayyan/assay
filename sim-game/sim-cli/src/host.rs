@@ -1456,6 +1456,39 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
                 items(returned)
             )
         }
+        // Names what was kept, not just what was lost: the player needs to
+        // know the handle came back, because re-heading it costs a third of a
+        // new pick and there is no command that would tell them so.
+        Event::ToolWornOut {
+            player,
+            head,
+            handle,
+        } => format!(
+            "{}'s {} wore out. The {} is gone; the {} is back in your inventory — assemble it with a new head to repair it",
+            who(player),
+            name(handle),
+            name(head),
+            name(handle)
+        ),
+        Event::MachineMined {
+            building,
+            item,
+            amount,
+            held,
+            ..
+        } => format!(
+            "machine {} mined {amount} {} ({held} waiting inside)",
+            building.0,
+            name(item)
+        ),
+        Event::MachineStalled {
+            building,
+            held,
+            capacity,
+        } => format!(
+            "machine {} is full at {held} of {capacity} and has stopped: take the ore out, or give it a hopper",
+            building.0
+        ),
         Event::MoveStarted { player, from, to } => format!(
             "{} started walking from ({}, {}) to ({}, {})",
             who(player),

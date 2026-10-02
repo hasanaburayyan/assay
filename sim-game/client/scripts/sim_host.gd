@@ -159,6 +159,40 @@ func species_sheets() -> Array:
 	return _sim.species_sheets() if _sim != null else []
 
 
+## `[material, fuel]` species ids: the pair this world GUARANTEES can be mined and smelted, from
+## `sim::ladder::starter_species`. Empty if the roster has none, which worldgen rerolls to prevent.
+##
+## A SCRIPTED SESSION MAY NOT CHOOSE ITS OWN FUEL. Whether a fuel gets hot enough to melt an ore is a
+## rule in reactivity and heat tolerance, and before an assay the only sheet a client has is a
+## 25-wide band -- so choosing would be guessing and calling it a plan. THE TWO MAY BE THE SAME
+## SPECIES; nothing in the sim stops one species being both.
+func starter_pair() -> PackedInt32Array:
+	return _sim.starter_pair() if _sim != null else PackedInt32Array()
+
+
+## ONE ITEM AS THE JSON A COMMAND CARRIES, spelled by serde. `kind` is the sim's own item name
+## (`ore`, `refined`, `smelter`, `head`, `handle`, `frame`, `hopper`); `grade` a letter. Empty string
+## if either will not parse.
+##
+## Static on the Rust side, so this does not need a world -- and this file stays the only one that
+## names `AssaySim`. Used by a TEST, to hold the dictionaries `AssayDemoPlan` builds against what
+## serde would have written; the probe sends the dictionaries, because parsing this text in GDScript
+## would turn every number into a double and serde will not take `3.0` for a `u8`.
+static func item_json(kind: String, species: int, grade: String) -> String:
+	if not ClassDB.class_exists("AssaySim"):
+		return ""
+	return String(ClassDB.class_call_static("AssaySim", "item_json", kind, species, grade))
+
+
+## SERDE'S VERDICT ON JSON A CLIENT WROTE FOR AN ITEM: its own spelling of what it read, or "" if it
+## refuses. For the test above -- comparing the two as PARSED values is not enough, because Godot
+## parses `3` and `3.0` back to the same double and serde refuses the second.
+static func item_echo(text: String) -> String:
+	if not ClassDB.class_exists("AssaySim"):
+		return ""
+	return String(ClassDB.class_call_static("AssaySim", "item_echo", text))
+
+
 ## EVERY DESIGN ONE PLAYER HOLDS, for the part menu: the tool in hand first (`index` -1), then the
 ## built list in the order `Equip` and `PlaceAssembly` index.
 ##
