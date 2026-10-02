@@ -85,6 +85,17 @@ jobs:
           cargo build -p sim-godot --release
           mkdir -p client/bin
           cp target/release/libsim_godot.so client/bin/
+      # EVERY .gd FILE COMPILES, INCLUDING THE ONES NOTHING INSTANTIATES. The
+      # suite below is a strong guard for loaded code and no guard at all for a
+      # probe in `tools/`, which nobody loads until the moment they need it --
+      # and Godot exits 0 on a parse error, so a file that cannot compile costs
+      # nothing to ship. `project.godot` also makes unreachable code and
+      # discarded expressions errors, so this gates those too. ~20s.
+      - name: Every GDScript file compiles
+        working-directory: sim-game/client
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
+            tools/check_every_script.sh
       - name: Client suite
         working-directory: sim-game/client
         run: |
