@@ -224,6 +224,25 @@ grade B an unassayed design reads 50.0% SAFE, 12.5% WILL BREAK and 37.5%
 UNCERTAIN, and 0.125 + 0.375 × 0.50 = 31.25% recovers the same-species pick
 break rate of A1 exactly.
 
+**Measured 2026-10-02, and A8's arithmetic survives real worldgen — but its
+reachability does not.** Over 2000 worlds (6×4 chunks, unassayed readings, every
+pick and drill buildable from the species a world actually lets you mine, and
+only at grades its deposits can reach — `sort` and `resmelt` raise a grade,
+nothing lowers one) picks read **50.7% SAFE, 36.9% UNCERTAIN, 12.5% WILL
+BREAK** against the 50.0/37.5/12.5 predicted above. The thing that does not
+follow is availability. `HAND_MINE_MAX_HARDNESS` gates hands and planted
+machines alike, so a world offers only the species it lets you mine: one in
+2.8% of worlds, two in 33.1%. **No pick can be made to read UNCERTAIN in 12.2%
+of worlds, and no design at all in 4.3%** — the two minable species are at
+opposite ends of the density/strength trade and every design is certainly safe
+or certainly doomed. Seed 777042, the world used as the #38 bench, is one of
+them: 6 of its 13 deposits are inert, and all 100 designs buildable there are
+SAFE or WILL BREAK. In those worlds the "assay *X* to know" line never appears
+and the advertisement for assaying never runs. Not something to fix in the
+demo — the tail is small and ASSA-35's rung-zero guarantee narrows it — but it
+is the reason UNCERTAIN's colour cannot be judged on an arbitrary seed.
+Script: `shared/assay/maren_uncertain_2026-10-02.rs`.
+
 Two things this fixes that are easy to get wrong:
 
 - **Map each band *end* through `effective()`**, which integer-divides and then
