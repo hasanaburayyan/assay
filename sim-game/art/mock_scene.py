@@ -58,18 +58,19 @@ for y in range(H):
         blit(img, "ground", f"v{random.randrange(4)}", x, y)
 # two deposits, drawn the way the client will: a tile is "edge" if any
 # 4-neighbour is outside the circle
-# A deposit is a SPECIES INDEX plus a tier, not a named ore: the art is one
+# A deposit is a SPECIES INDEX plus a GRADE (C/B/A, the sim's own purity
+# bands), not a named ore: the art is one
 # neutral rock set and the index picks the tint. Three different species here
 # so the sheet answers "can I tell these apart on a map" and not just "does
 # the tile look nice".
-deposits = [(0, 4, 4, 3, 4), (1, 11, 5, 2, 2), (4, 10, 1, 1, 1)]
-for species, cx, cy, r, tier in deposits:
+deposits = [(0, 4, 4, 3, "A"), (1, 11, 5, 2, "B"), (4, 10, 1, 1, "C")]
+for species, cx, cy, r, grade in deposits:
     inside = lambda x, y: (x - cx) ** 2 + (y - cy) ** 2 <= r * r
     for y in range(H):
         for x in range(W):
             if not inside(x, y): continue
             edge = not all(inside(x + dx, y + dy) for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))
-            row = f"t{tier}_edge" if edge else f"t{tier}_full_v{random.randrange(2)}"
+            row = f"{grade}_edge" if edge else f"{grade}_full_v{random.randrange(2)}"
             blit(img, "ore", row, x, y, tint=SPECIES_TINTS[species])
 blit(img, "ore", "depleted_full", 1, 7, tint=SPECIES_TINTS[2])
 blit(img, "ore", "depleted_edge", 2, 7, tint=SPECIES_TINTS[2])
