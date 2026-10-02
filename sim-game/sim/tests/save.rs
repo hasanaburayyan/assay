@@ -211,3 +211,67 @@ fn assemblies_and_machines_survive_a_round_trip() {
     assert_eq!(loaded, original);
     assert_eq!(loaded.state_hash(), original.state_hash());
 }
+
+/// **A MIGRATION THAT NO LAYOUT CHANGE WOULD HAVE ASKED FOR.**
+/// `Mining::progress` counted ticks in v11 and accumulates work in v12 — same
+/// field, same type, different unit. A v11 save therefore loads without a
+/// single serde complaint and quietly tells a player mid-swing that they have
+/// barely started. Nothing but this test notices.
+///
+/// Builds the fixture by ticking a real world into a mid-mine state and then
+/// writing the progress back down to the tick count a v11 writer would have
+/// emitted, so the numbers are the ones the old rule actually produced.
+#[test]
+fn a_v11_save_rescales_mining_progress_from_ticks_to_work() {
+    use sim::tuning::{HAND_WORK_PER_TICK, WORK_PER_UNIT};
+
+    let mut w = world_on_deposit(7, 0);
+    let me = PlayerId(0);
+    step(
+        &mut w,
+        &[Input::player(me, PlayerCommand::Mine)],
+        &mut Vec::new(),
+    );
+    step(&mut w, &[], &mut Vec::new());
+    let work = w.player(me).unwrap().mining.expect("mid-mine").progress;
+    assert_eq!(
+        work,
+        2 * HAND_WORK_PER_TICK,
+        "two ticks of hand work, so the fixture is really mid-swing"
+    );
+    assert!(work < WORK_PER_UNIT, "and has not yet yielded");
+
+    // What a v11 writer would have put on disk for this same moment: 2.
+    let v11 = w
+        .to_json()
+        .unwrap()
+        .replacen(
+            &format!("\"version\": {SAVE_VERSION}"),
+            "\"version\": 11",
+            1,
+        )
+        .replace(
+            &format!("\"progress\": {work}"),
+            &format!("\"progress\": {}", work / HAND_WORK_PER_TICK),
+        );
+    assert!(
+        v11.contains("\"progress\": 2"),
+        "the fixture must carry the v11 tick count, not the v12 work count"
+    );
+
+    let loaded = World::from_json(&v11).expect("a v11 save must still load");
+    assert_eq!(
+        loaded.player(me).unwrap().mining.unwrap().progress,
+        work,
+        "the migration must put the player back where they were, not where \
+         the number happened to read"
+    );
+
+    // And it is version-gated: a current save is not rescaled a second time.
+    let current = World::from_json(&w.to_json().unwrap()).expect("v12 loads");
+    assert_eq!(
+        current.player(me).unwrap().mining.unwrap().progress,
+        work,
+        "a v12 save must pass through the migration untouched"
+    );
+}
