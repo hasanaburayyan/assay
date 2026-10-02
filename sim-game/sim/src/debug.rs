@@ -942,6 +942,25 @@ pub fn recipe_table() -> String {
         if r.station == Station::Smelter {
             needs.push("fire ≥ the ore's heat tolerance".into());
         }
+        // **THE MOST EXPENSIVE DEAD END IN THE GAME WAS ADVERTISED UNMARKED**
+        // (Game Director, ASSA-59). A gear costs 2 refined — a whole handle,
+        // two thirds of a pick, 40 ticks of smelter time, and smelting is 49%
+        // of the demo's clock — and nothing consumes one. The recipe stays,
+        // because the alloys note still wants gears and deleting it would move
+        // the golden hash for nothing; what stops is the silence.
+        //
+        // On the row and not in the footer, per her ruling: the footer states
+        // things true of several recipes, this is true of one, and a reader
+        // scanning for their row never reaches a footer. In `needs` because it
+        // is the last column and has free width — `makes` is `{:<16}` with six
+        // characters used and would push every column right.
+        //
+        // **NO "YET"**: no accepted decision backs a future use for a gear,
+        // and `reach.rs::no_reach_sentence_promises_a_later_unlock` now reads
+        // these rows too, so the word cannot creep back in quietly.
+        if !crate::recipe::is_consumed(r.output.0) {
+            needs.push(format!("nothing uses a {}", r.output.0.name()));
+        }
         let _ = writeln!(
             out,
             "{:<8} {makes:<16} {from:<12} {:>5}  {station:<16} {}",

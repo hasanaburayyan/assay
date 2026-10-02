@@ -104,6 +104,35 @@ pub const RECIPES: [Recipe; 5] = [
     },
 ];
 
+/// Whether anything in the game turns this kind of item into something else.
+///
+/// **DERIVED AND NOT WRITTEN DOWN, because a sentence built on it has to stop
+/// being printed the moment it stops being true.** The Game Director's ruling
+/// on ASSA-59 is that `recipes` says plainly that nothing uses a gear; a
+/// hardcoded "if this is the gear row" would keep saying it after the day
+/// something consumes one, with nothing red. That is the ASSA-51/53/58 shape
+/// and it has cost us enough.
+///
+/// The recipe half is read off [`RECIPES`]. The four consumers outside the
+/// table are each keyed to one kind **by construction** rather than by a
+/// check someone could edit, which is why this can be a total answer:
+///
+/// - a part's material is always `Refined` — `Part::of` rebuilds the item that
+///   way whatever it is handed;
+/// - a smelter's two slots take `Ore` and refuse anything else
+///   (`smelter.rs::inserting_is_validated` pins a gear's refusal in both);
+/// - `Place` takes a `Smelter`; `Assemble` takes `Part(_)`.
+///
+/// So the question is only ever open for `Gear`, and `reach.rs` asserts that
+/// it is the one kind this returns false for.
+pub fn is_consumed(kind: ItemKind) -> bool {
+    RECIPES.iter().any(|r| r.input.0 == kind)
+        || matches!(
+            kind,
+            ItemKind::Ore | ItemKind::Refined | ItemKind::Smelter | ItemKind::Part(_)
+        )
+}
+
 impl RecipeId {
     pub const ALL: [RecipeId; 5] = [
         RecipeId::Smelter,
