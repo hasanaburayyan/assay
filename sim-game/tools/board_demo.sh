@@ -84,4 +84,59 @@ echo "=== accounts ==="
 cat "$R2TS_SAVES_DIR/world-$SEED.accounts.json" 2>/dev/null
 echo "=== RELAY STILL UP: pid $RELAY_PID on port $PORT ==="
 lsof -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 && echo "listening OK" || echo "NOT LISTENING"
+
+# --- WHICH CLIENT CAN JOIN THIS BENCH. ---------------------------------------
+# A bench outlives the commit that built it, and a client from any other commit
+# is REFUSED: `RULES_ID` is an FNV over every `.rs` under `sim/src`, so a
+# one-word change to a sim sentence moves it (ASSA-40). That is correct -- the
+# alternative is two peers quietly playing different games -- but it means
+# "download a recent build" is never the instruction. It has to be THIS commit.
+#
+# This bit the live #38 bench. It was rebuilt at 15:30 UTC from a commit that
+# five merges then overtook, and its own log shows it refusing a client an hour
+# later. The relay knew exactly what it wanted; nobody was writing it down, so
+# the answer lived in a shared doc that went stale instead.
+#
+# So the bench carries its own joining card now, and the rules id is read out of
+# the RELAY'S OWN FIRST LINE rather than computed here -- a second opinion about
+# which rules this process is running is exactly the thing that would drift.
+RULES_LINE=$(grep -m1 '^Rules ' "$OUT/relay.log" 2>/dev/null || echo "Rules UNKNOWN")
+REPO=$(dirname "$0")/..
+COMMIT=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo UNKNOWN)
+DIRTY=""
+git -C "$REPO" diff --quiet 2>/dev/null || DIRTY=" (built with uncommitted changes)"
+{
+  echo "# How to join this bench"
+  echo
+  echo "Built $(date -u '+%Y-%m-%d %H:%M UTC') · seed $SEED · port $PORT · account \`$ACCOUNT\`"
+  echo
+  echo "- Host box: \`localhost:$PORT\` on this machine; the relay's start line lists the LAN address."
+  echo "- Name box: leave it alone. It prefills from \$USER, and \`$ACCOUNT\` owns the bench. Any"
+  echo "  other name lands you on a fresh player with an empty one."
+  echo
+  echo "## The client must come from THIS commit"
+  echo
+  echo "    commit  $COMMIT$DIRTY"
+  echo "    $RULES_LINE"
+  echo
+  echo "Not \"a recent build\" -- the same commit. A mismatched client is refused on join, and the"
+  echo "refusal names the rules id it needs. Take \`assay-macos\` / \`assay-windows\` from the CI run"
+  echo "for that commit, or build locally from it."
+  echo
+  echo "If this file is older than the bench you are looking at, the bench was restarted without it"
+  echo "and nothing here is trustworthy."
+} > "$OUT/JOIN.md"
+echo "=== JOIN CARD: $OUT/JOIN.md ==="
+echo "    commit  $COMMIT$DIRTY"
+echo "    $RULES_LINE"
+# Only when there IS an `origin/main` to compare against: a failed lookup must
+# not become a warning, or this reports a stale bench on any clone that has not
+# fetched.
+if [ "$COMMIT" != "UNKNOWN" ] \
+   && git -C "$REPO" rev-parse --verify --quiet origin/main >/dev/null 2>&1 \
+   && ! git -C "$REPO" merge-base --is-ancestor origin/main "$COMMIT" 2>/dev/null; then
+  echo "    NOTE: this commit is behind origin/main, so anyone downloading the NEWEST CI"
+  echo "          artifact will be refused by this bench. Rebuild from current main if the"
+  echo "          people joining will be using CI builds."
+fi
 echo "=== DONE ==="
