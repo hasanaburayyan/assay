@@ -23,44 +23,113 @@ func _fail(reason: String) -> bool:
 ## PURITY IS BRIGHTNESS, SPECIES IS HUE, NEVER BOTH ON ONE CHANNEL (Maren's ruling, 2026-10-02).
 ## Purity must not move the hue at all: hue is the channel species needs, and six species plus purity
 ## are two variables that need two channels.
+## I AM NO LONGER ASSERTING THE CROSS-SPECIES HALF OF THIS, and that is a correction rather than a
+## weakening. The old version also required a grade-A patch of ANY species to outshine an impure patch
+## of any other, which was true only because every hue was mixed at one fixed value. Cove's table
+## does not share one value by design, so the claim is now false in general (yellow at purity 70
+## outshines purple at 100) and a test asserting it would be a test of a scheme we no longer ship.
+## What survives is the rule Maren actually gave: WITHIN a species, purity is brightness and nothing
+## else, and it never touches hue.
 func test_purity_is_brightness_and_never_touches_hue() -> bool:
-	var last_value := -1.0
-	var hue := AssayHud.deposit_color(2, 6, 1).h
-	for purity in [1, 20, 40, 60, 80, 100]:
-		var colour := AssayHud.deposit_color(2, 6, purity)
-		if absf(colour.h - hue) > 0.001:
-			return _fail(("purity %d moved the hue to %f, from %f. Purity may only move brightness; "
-					+ "hue is species.") % [purity, colour.h, hue])
-		if colour.v <= last_value:
-			return _fail("purity %d is no brighter than the purity below it (%f after %f)"
-					% [purity, colour.v, last_value])
-		if colour.s < 0.4:
-			return _fail(("saturation fell to %f at purity %d. A washed-out patch is the hardest "
-					+ "thing on the map to see; that was the bug.") % [colour.s, purity])
-		last_value = colour.v
-	# A grade-A patch of any species is the brightest thing on screen -- the game is named after it.
-	if AssayHud.deposit_color(0, 6, 100).v <= AssayHud.deposit_color(5, 6, 39).v:
-		return _fail("a pure patch is not brighter than an impure one of another species")
+	for species in range(AssayHud.SPECIES_TINTS.size()):
+		var last_value := -1.0
+		var first := AssayHud.deposit_color(species, 1)
+		for purity in [1, 20, 40, 60, 80, 100]:
+			var colour := AssayHud.deposit_color(species, purity)
+			if absf(colour.h - first.h) > 0.001:
+				return _fail(("species %d: purity %d moved the hue to %f, from %f. Purity may only "
+						+ "move brightness.") % [species, purity, colour.h, first.h])
+			if absf(colour.s - first.s) > 0.001:
+				return _fail("species %d: purity %d moved saturation to %f, from %f"
+						% [species, purity, colour.s, first.s])
+			if colour.v <= last_value:
+				return _fail("species %d: purity %d is no brighter than the purity below it: %f, after %f"
+						% [species, purity, colour.v, last_value])
+			if colour.s < 0.4:
+				return _fail(("species %d: saturation is %f. A washed-out patch is the hardest "
+						+ "thing on the map to see; that was the first bug.") % [species, colour.s])
+			last_value = colour.v
 	return true
 
 
-## Six species land far enough apart to be told apart. Maren's bar for body hue is 30 degrees; evenly
-## spaced sixths are 60 apart, and this fails if anyone crowds them.
-func test_every_species_gets_its_own_hue() -> bool:
-	var hues := []
-	for species in range(6):
-		hues.append(AssayHud.deposit_color(species, 6, 50).h * 360.0)
-	for i in range(hues.size()):
-		for j in range(i + 1, hues.size()):
-			var apart: float = absf(hues[i] - hues[j])
-			apart = minf(apart, 360.0 - apart)
-			if apart < 30.0:
-				return _fail("species %d and %d are %f degrees apart, under the 30 degree bar"
-						% [i, j, apart])
-	# One species, or a species id past the end of the roster, must still produce a colour rather than
-	# divide by zero: a client may draw a frame before it has counted the roster.
-	if AssayHud.deposit_color(9, 0, 50).v <= 0.0:
-		return _fail("a species count of 0 produced no colour")
+## EVERY SPECIES GETS THE TABLE'S SLOT, AND NOTHING COMPUTES A HUE. This replaces
+## `test_every_species_gets_its_own_hue`, which asserted six evenly spaced hues: that was Maren's
+## 30-degree bar, Cove measured the scheme at dE 5.7 for a protan viewer against a floor of 12, and
+## Decision #36 retired both the scheme and the bar. The slot table cannot satisfy the old bar and
+## must not be bent to -- two of Okabe-Ito's survivors are the SAME hue.
+##
+## The separation itself is measured in Python, at true size, against real terrain, under three kinds
+## of colour blindness (`art/species_probe.py`). It is not reimplemented here: a second instrument in
+## GDScript would be a second opinion about the one number that matters, and a weaker one.
+func test_every_species_gets_the_tables_slot() -> bool:
+	for species in range(AssayHud.SPECIES_TINTS.size()):
+		var wanted := Color(AssayHud.SPECIES_TINTS[species])
+		var got := AssayHud.deposit_color(species, 100)
+		# Purity 100 is the undimmed slot, so the colour on screen is the table's, not near it.
+		for channel in [[wanted.r, got.r], [wanted.g, got.g], [wanted.b, got.b]]:
+			if absf(channel[0] - channel[1]) > 0.002:
+				return _fail("species %d at full purity drew %s, not its slot %s"
+						% [species, got, wanted])
+	# A species id past the end of the table must still produce a colour rather than index out of
+	# bounds: a client can draw a frame before it has the roster, and a crashed frame is worse than
+	# a repeated colour. The roster never actually exceeds the table -- `test_sim_binding.gd` holds
+	# the sim's own count to this length -- so this is the seatbelt, not the mechanism.
+	if AssayHud.deposit_color(9, 50) != AssayHud.deposit_color(3, 50):
+		return _fail("a species id past the table did not wrap onto a slot")
+	return true
+
+
+## A LETTER ON A PATCH HAS TO BE READABLE ON EVERY PATCH, which is the whole point of having it: the
+## tints clear the colour-blindness floor by single digits, so the glyph is what a protan player
+## actually reads. Measured as a contrast ratio against the deposit colour composited over the map,
+## at the purities the map really draws, for all six slots. The floor is 3.0, WCAG's bar for large
+## text.
+##
+## This is an INSTRUMENT, not an echo of `glyph_color`: it computes contrast, where the function
+## decides a threshold. A tint added later that no letter can sit on fails here instead of shipping.
+## (Godot's `get_luminance` is a weighted sum of sRGB values, not linearised, so these numbers are a
+## consistent measure rather than a certified WCAG figure -- the comparison is what is load-bearing.)
+func test_the_species_letter_is_readable_on_every_patch() -> bool:
+	var worst := 99.0
+	var worst_at := ""
+	for species in range(AssayHud.SPECIES_TINTS.size()):
+		for purity in [1, 25, 50, 75, 100]:
+			var patch := AssayHud.deposit_color(species, purity)
+			var lit := AssayHud.MAP_BG.lerp(Color(patch.r, patch.g, patch.b), patch.a)
+			var glyph := AssayHud.glyph_color(patch)
+			var high: float = maxf(lit.get_luminance(), glyph.get_luminance()) + 0.05
+			var low: float = minf(lit.get_luminance(), glyph.get_luminance()) + 0.05
+			var ratio := high / low
+			if ratio < worst:
+				worst = ratio
+				worst_at = "species %d at purity %d (%s on %s)" % [species, purity, glyph, lit]
+	if worst < 3.0:
+		return _fail("the worst species letter makes a contrast ratio of %f, under 3.0: %s"
+				% [worst, worst_at])
+	return true
+
+
+## A GLYPH THAT DOES NOT FIT ITS OWN PATCH IS WORSE THAN NO GLYPH -- it reads as a label for the tile
+## next door. So `glyph_size` returns 0 rather than something tiny, and a one-tile deposit on a huge
+## world is a colour only.
+func test_a_letter_too_big_for_its_patch_is_not_drawn() -> bool:
+	for radius in [0.0, 1.0, 3.0, 7.0]:
+		if AssayHud.glyph_size(radius) != 0:
+			return _fail("a patch of radius %f was given a %d px letter, which cannot fit"
+					% [radius, AssayHud.glyph_size(radius)])
+	var last := 0
+	for radius in [8.0, 12.0, 20.0, 40.0, 400.0]:
+		var size := AssayHud.glyph_size(radius)
+		if size < 10:
+			return _fail("a patch of radius %f got a %d px letter, under the legible floor"
+					% [radius, size])
+		if float(size) > radius * 1.5:
+			return _fail("a %d px letter overflows a patch of radius %f" % [size, radius])
+		if size < last:
+			return _fail("a bigger patch got a smaller letter (%d after %d)" % [size, last])
+		last = size
+	if AssayHud.glyph_size(400.0) != 32:
+		return _fail("a huge patch is mostly typography: %d px" % AssayHud.glyph_size(400.0))
 	return true
 
 
@@ -222,10 +291,10 @@ func _design() -> Dictionary:
 		"mount": "held", "durability": "100% of 2400-3600",
 		"unassayed": PackedStringArray(["Korvite"]),
 		"parts": [
-			{"kind": "frame", "species": 0, "species_name": "Korvite", "grade": "B",
-					"mass_low": 18, "mass_high": 34},
-			{"kind": "head", "species": 0, "species_name": "Korvite", "grade": "B",
-					"mass_low": 8, "mass_high": 16},
+			{"kind": "frame", "species": 0, "species_name": "Korvite", "symbol": "K",
+					"grade": "B", "mass_low": 18, "mass_high": 34},
+			{"kind": "head", "species": 0, "species_name": "Korvite", "symbol": "K",
+					"grade": "B", "mass_low": 8, "mass_high": 16},
 		],
 	}
 
@@ -303,7 +372,9 @@ func test_a_planted_design_shows_no_durability_at_all() -> bool:
 
 
 ## A PART ROW CARRIES KIND, SPECIES, GRADE AND MASS. Nothing else -- every other sheet property
-## belongs to the assay panel, and over-showing is how this becomes a spreadsheet.
+## belongs to the assay panel, and over-showing is how this becomes a spreadsheet. The species comes
+## as letter AND name: the name is the row's own non-colour read, and the letter is the only place a
+## player learns which glyph on the map that name stands for (Maren's ruling, Decision #36).
 func test_a_part_row_carries_four_things_and_the_rows_sum_to_the_headline() -> bool:
 	var lines := AssayHud.design_lines(_design())
 	var rows := PackedStringArray()
@@ -312,7 +383,7 @@ func test_a_part_row_carries_four_things_and_the_rows_sum_to_the_headline() -> b
 			rows.append(String(line))
 	if rows.size() != 2:
 		return _fail("two parts must give two rows, got %s" % [rows])
-	if rows[0] != "  frame · Korvite B · mass 18-34":
+	if rows[0] != "  frame · K Korvite B · mass 18-34":
 		return _fail("unexpected part row: '%s'" % rows[0])
 	# The sim guarantees the rows add up to the headline; the panel must not lose that by rounding
 	# or by showing one end. Checked here because a reader compares them with their eyes.

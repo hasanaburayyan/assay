@@ -302,6 +302,12 @@ impl AssaySim {
     /// `purity` is the number the game is named after and it is reported raw,
     /// 1-100. The sim's own grade bands are C below 40, B to 69, A from 70 —
     /// a client that invents its own bands is lying about the item it will get.
+    ///
+    /// `symbol` is the species' map letter, from `sim::debug::species_symbol`,
+    /// so colour is not the only thing distinguishing two deposits (Decision
+    /// #36). It comes from there rather than from the first character of
+    /// `species_names()`: that name is the discoverer's once a species is
+    /// claimed, and only the GENERATED name is distinct per world.
     #[func]
     pub fn deposits(&self) -> Array<VarDictionary> {
         self.world
@@ -315,9 +321,28 @@ impl AssaySim {
                     "radius" => deposit.radius as i64,
                     "amount" => deposit.amount as i64,
                     "purity" => deposit.purity as i64,
+                    "symbol" => &gstring(
+                        &sim::debug::species_symbol(self.world.species(deposit.species))
+                            .to_string(),
+                    ).to_variant(),
                 }
             })
             .collect()
+    }
+
+    /// HOW MANY SPECIES A WORLD ROLLS (`sim::tuning::SPECIES_PER_WORLD`).
+    ///
+    /// Here so the client's per-species colour table can be checked against the
+    /// sim's own count instead of against the number six written down a second
+    /// time. A table shorter than the roster would alias two species onto one
+    /// colour, and the player it misleads is the one who cannot use colour
+    /// anyway.
+    ///
+    /// STATIC on purpose: it is a tuning constant, not a fact about one world,
+    /// and the test that uses it should not need a `Welcome` to ask.
+    #[func]
+    pub fn species_per_world() -> i64 {
+        sim::tuning::SPECIES_PER_WORLD as i64
     }
 
     /// Species names in `SpeciesId` order, so a `species` index above can be
@@ -431,6 +456,7 @@ fn part_dict(part: &PartFacts) -> VarDictionary {
         "kind" => &gstring(&part.kind).to_variant(),
         "species" => part.species,
         "species_name" => &gstring(&part.species_name).to_variant(),
+        "symbol" => &gstring(&part.symbol).to_variant(),
         "grade" => &gstring(&part.grade).to_variant(),
         "mass_low" => part.mass_low,
         "mass_high" => part.mass_high,
@@ -533,6 +559,12 @@ pub struct PartFacts {
     pub kind: String,
     pub species: i64,
     pub species_name: String,
+    /// The species' map letter, same source as a deposit's (`species_symbol`).
+    /// A menu row already names its species in words, so this is not the row's
+    /// non-colour read — it is how a player learns which letter on the map that
+    /// name belongs to. Maren's ruling, 2026-10-02: once per deposit and once
+    /// per row, never once per tile.
+    pub symbol: String,
     pub grade: String,
     pub mass_low: i64,
     pub mass_high: i64,
@@ -866,6 +898,7 @@ impl AssaySim {
                         kind: part.kind.name().to_string(),
                         species: part.material.species.0 as i64,
                         species_name: species.name().to_string(),
+                        symbol: sim::debug::species_symbol(species).to_string(),
                         grade: part.material.grade.letter().to_string(),
                         mass_low: low as i64,
                         mass_high: high as i64,
@@ -1439,6 +1472,65 @@ mod tests {
             assert!(!part.kind.is_empty() && !part.species_name.is_empty());
             assert!(["C", "B", "A"].contains(&part.grade.as_str()), "{part:?}");
         }
+    }
+
+    /// THE SPECIES LETTER IS THE SIM'S, AND IT IS THE *GENERATED* NAME'S.
+    ///
+    /// A deposit on the map carries it so that colour is not the only thing
+    /// telling two species apart (Decision #36), and a menu row carries it so a
+    /// player can learn which letter goes with which name. Both must be the
+    /// letter `worldgen` guarantees is distinct per world, which is the
+    /// GENERATED name's — not `species_names()`'s first character, because that
+    /// name becomes the discoverer's as soon as someone renames a species and
+    /// nothing stops two renames from starting with the same letter.
+    ///
+    /// So this renames two species to collide on purpose and checks the letters
+    /// do not follow.
+    #[test]
+    fn the_species_letter_survives_a_rename_that_would_collide() {
+        let (mut sim, me) = with_a_player("limpet");
+        let built = design(&sim, Mount::Held, &[0, 1], sim::Grade::B);
+        sim.world
+            .player_mut(me)
+            .expect("the player exists")
+            .assemblies = vec![built];
+
+        let generated: Vec<char> = sim
+            .world
+            .species
+            .iter()
+            .map(sim::debug::species_symbol)
+            .collect();
+        let distinct: std::collections::BTreeSet<char> = generated.iter().copied().collect();
+        assert_eq!(
+            distinct.len(),
+            generated.len(),
+            "worldgen is supposed to guarantee distinct initials: {generated:?}"
+        );
+
+        // Both species in the design answer to the same name from here on, which
+        // is a player's right. The letter is not a player's to collide.
+        for id in [0usize, 1] {
+            sim.world.species[id].player_name = Some("Zed".to_string());
+        }
+
+        let facts = &sim.design_facts(Some(me))[0];
+        for part in &facts.parts {
+            assert_eq!(
+                part.species_name, "Zed",
+                "the row should show the chosen name: {part:?}"
+            );
+            let wanted = generated[part.species as usize].to_string();
+            assert_eq!(
+                part.symbol, wanted,
+                "the letter followed the rename instead of the generated name: {part:?}"
+            );
+        }
+        assert_ne!(
+            facts.parts[0].symbol, facts.parts[1].symbol,
+            "two species collapsed onto one letter: {:?}",
+            facts.parts
+        );
     }
 
     /// `unassayed` IS WHAT LETS "UNCERTAIN" NAME ITS OWN RESOLUTION. Each rough

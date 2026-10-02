@@ -333,23 +333,39 @@ func _draw() -> void:
 	_cell = AssayHud.map_cell(size)
 	if _cell <= 0.0:
 		return
-	draw_rect(Rect2(MARGIN, Vector2(size) * _cell), Color(0.10, 0.11, 0.13), true)
+	draw_rect(Rect2(MARGIN, Vector2(size) * _cell), AssayHud.MAP_BG, true)
 
 	var spawn := _sim.spawn_tile()
 	draw_rect(Rect2(MARGIN + Vector2(spawn) * _cell - Vector2(_cell, _cell) * 2.0,
 			Vector2(_cell, _cell) * 4.0), Color(0.35, 0.33, 0.20), true)
 
-	# SPECIES IS HUE, PURITY IS BRIGHTNESS, and the rule plus why my first version was wrong is in
-	# `AssayHud.deposit_color`. Grade bands (C < 40, B 40-69, A >= 70) are the sim's, not invented.
-	var species_count := _sim.species_names().size()
+	# SPECIES IS A DESIGNED SLOT, PURITY IS BRIGHTNESS, and the rule plus the two versions of this I
+	# got wrong are in `AssayHud.deposit_color`. Grade bands (C < 40, B 40-69, A >= 70) are the
+	# sim's, not invented.
+	#
+	# AND COLOUR IS NOT THE ONLY READ: the species' letter goes on the patch, once per deposit
+	# (Decision #36). The tints clear the colour-blindness floor by single digits, so for the ~8% of
+	# men with a red-green deficiency the glyph is the read and the colour is the hint. `symbol`
+	# comes from the sim -- a generated name's initial, distinct per world -- never from the first
+	# character of a name a player may have renamed.
+	var font := ThemeDB.fallback_font
 	for entry in _sim.deposits():
 		var deposit: Dictionary = entry
 		if int(deposit.get("amount", 0)) <= 0:
 			continue
 		var at := MARGIN + Vector2(deposit.get("center", Vector2i.ZERO) as Vector2i) * _cell
-		draw_circle(at, maxf(_cell, float(int(deposit.get("radius", 1))) * _cell),
-				AssayHud.deposit_color(int(deposit.get("species", 0)), species_count,
-						int(deposit.get("purity", 1))))
+		var radius := maxf(_cell, float(int(deposit.get("radius", 1))) * _cell)
+		var colour := AssayHud.deposit_color(int(deposit.get("species", 0)),
+				int(deposit.get("purity", 1)))
+		draw_circle(at, radius, colour)
+		var symbol := String(deposit.get("symbol", ""))
+		var glyph := AssayHud.glyph_size(radius)
+		if glyph > 0 and not symbol.is_empty() and font != null:
+			# Centred by measurement, not by a guessed offset: the width is the font's and the
+			# vertical nudge is the usual "half the cap height" for a baseline-drawn capital.
+			var wide := font.get_string_size(symbol, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph).x
+			draw_string(font, at + Vector2(-wide * 0.5, float(glyph) * 0.36), symbol,
+					HORIZONTAL_ALIGNMENT_LEFT, -1, glyph, AssayHud.glyph_color(colour))
 
 	for entry in _sim.players():
 		var player: Dictionary = entry
