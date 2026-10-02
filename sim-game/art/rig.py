@@ -68,6 +68,7 @@ PALETTE = {
 }
 
 from species_tints import SPECIES_TINTS  # noqa: F401  (data, see that file)
+from part_layout import PART_REPEAT_OFFSET  # noqa: F401  (rule 5, see that file)
 
 # ---------------------------------------------------------------- parts
 #
@@ -91,6 +92,19 @@ from species_tints import SPECIES_TINTS  # noqa: F401  (data, see that file)
 #    collar straddles it and its bit runs east; a frame (held or planted)
 #    straddles it and its body runs west. Compose by overlaying frames, never
 #    by rendering a per-machine sprite.
+#
+# 5. REPEATED PARTS STEP ALONG THE FRAME (the offset rule). Rule 2 is right
+#    for parts that DIFFER and cannot express a COUNT: two hopper sprites
+#    stacked at one position are one hopper. Measured on ASSA-16, a drill's
+#    solid footprint at 1x went 1258 -> 1376 -> 1389 px for zero, one and two
+#    hoppers - the second added 13 px, which is antialiased edge hardening,
+#    not a part. Capacity is a real number in sim (MAX_HOPPER_SLOTS x
+#    HOPPER_CAPACITY) and the grade-glint rule below says a real difference
+#    owes the picture a visible one, so the nth repeat of a part kind is drawn
+#    at n * PART_REPEAT_OFFSET, in Assembly::parts() order. The offset and the
+#    reasoning behind its value live in art/part_layout.py, which is importable
+#    without Blender; art/assemble.py executes the rule and judges it at a FULL
+#    machine rather than at the two hoppers the demo happens to use.
 #
 # Part frames are PART_TILES wide so both halves of a join fit one frame.
 # 3. ONE JOIN HEIGHT FOR EVERY PIECE. Overlaying frames only assembles a

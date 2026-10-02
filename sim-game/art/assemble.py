@@ -31,18 +31,33 @@ The draw order is frame, then hopper(s), then head: the frame is the body and
 the thing behind, the head is the working end and must never be occluded, and
 hoppers ride on the frame between the two.
 
-STATUS: THIS EXITS NONZERO TODAY, ON PURPOSE. Check 2 fails - a second hopper
-is invisible - and that is an open design question for the Director and the
-Lead, not a bug in a sprite I should quietly paint around. CI never runs the
-art scripts (they need Blender and Pillow), so a red check here breaks no
-build; it is the honest record of a known hole, and it goes green by itself
-the day repeated parts are given a position rule. Checks 1 and 3 pass.
+STATUS: GREEN. It exited nonzero for two days because a second hopper was
+invisible, which was an open design question for the Director rather than a
+bug in a sprite I should quietly paint around. Maren ruled the offset rule
+(Decision #36 follow-up, ASSA-22) and it is implemented in `assemble()` and
+documented in art/part_layout.py, so the check now passes BECAUSE THE ART
+CHANGED - the second hopper adds 109 px of new shape against the first's 118.
+It was never loosened. CI still never runs the art scripts (they need Blender
+and Pillow), so a red check here breaks no build either way.
 """
 import json
 import os
+import re
 import sys
 
 from PIL import Image
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from part_layout import PART_REPEAT_OFFSET
+
+# RED LEVER. ASSA-16's lesson was a check that passed on the exact defect it
+# existed to find, so this one has a way to be seen failing: PART_OFFSET=0,0
+# puts every repeat back on top of the first, which is the bug this rule was
+# written to fix and must report FAIL.
+if os.environ.get("PART_OFFSET"):
+    PART_REPEAT_OFFSET = tuple(int(v) for v in os.environ["PART_OFFSET"].split(","))
+    print("[RED RUN] PART_REPEAT_OFFSET forced to %s; the hopper checks MUST fail"
+          % (PART_REPEAT_OFFSET,))
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SPR = os.path.join(ROOT, "assets", "sprites")
@@ -68,11 +83,17 @@ def frame_of(asset, row, f=0):
 
 
 def assemble(parts, grade):
-    """Stack whole part frames at one position. This is rule 2, executed.
+    """Stack whole part frames at one position. This is rule 2, executed -
+    plus rule 5, the offset rule, for parts that repeat.
 
     Every part must agree on frame size and anchor or the stack is meaningless,
     so that is asserted here rather than assumed: it is the invariant the whole
     part set is built on and the cheapest possible place to catch it breaking.
+
+    `parts` arrives in Assembly::parts() order - frame first, then the mounted
+    parts. Sim calls that "the one canonical order" and every rule that has to
+    pick a part walks it, so taking repeat positions from this sequence is what
+    stops two peers drawing the same machine differently.
     """
     sizes = {tuple(man[p]["frame_px"]) for p in parts}
     anchors = {tuple(man[p]["anchor_px"]) for p in parts}
@@ -83,8 +104,21 @@ def assemble(parts, grade):
             % (list(parts), sizes, anchors))
     w, h = sizes.pop()
     out = Image.new("RGBA", (w, h))
+    seen = {}
     for p in parts:
-        out.alpha_composite(frame_of(p, grade))
+        n = seen.get(p, 0)
+        seen[p] = n + 1
+        src = frame_of(p, grade)
+        if n == 0:
+            out.alpha_composite(src)
+            continue
+        # Rule 5: the nth repeat steps by n * PART_REPEAT_OFFSET. Done with a
+        # transform rather than a composite offset because the step goes UP,
+        # and alpha_composite cannot take a negative destination.
+        dx, dy = PART_REPEAT_OFFSET[0] * n, PART_REPEAT_OFFSET[1] * n
+        layer = Image.new("RGBA", (w, h))
+        layer.alpha_composite(src)
+        out.alpha_composite(layer.transform((w, h), Image.AFFINE, (1, 0, -dx, 0, 1, -dy)))
     return out
 
 
@@ -107,6 +141,32 @@ def differs(a, b):
                 n += 1
                 worst = max(worst, d)
     return n, worst
+
+
+def max_hopper_slots():
+    """Read from sim rather than retyped, same reason ore.py reads the grade
+    boundaries: a copy of a sim number in the art is a drift waiting to
+    happen, and a wrong one here would have the check judge a machine no
+    player can build."""
+    src = open(os.path.join(ROOT, "sim", "src", "tuning.rs")).read()
+    m = re.search(r"pub const MAX_HOPPER_SLOTS: u32 = (\d+);", src)
+    if not m:
+        raise SystemExit("assemble.py: could not read MAX_HOPPER_SLOTS from sim/src/tuning.rs")
+    return int(m.group(1))
+
+
+def clipped_pixels(part, n):
+    """Solid pixels of the nth repeat that fall outside the frame rectangle.
+
+    A repeat that runs off the frame stops adding shape, so the footprint test
+    would start passing for the wrong reason. This is the bound that rejected
+    the offset which scored best on two hoppers."""
+    img = frame_of(part, "A")
+    w, h = img.size
+    px = img.load()
+    dx, dy = PART_REPEAT_OFFSET[0] * n, PART_REPEAT_OFFSET[1] * n
+    return sum(1 for y in range(h) for x in range(w)
+               if px[x, y][3] > 128 and not (0 <= x + dx < w and 0 <= y + dy < h))
 
 
 def footprint(img):
@@ -151,6 +211,33 @@ def main():
     #   - adding the second hopper against the CONTROL of adding the first.
     # If the first hopper changes the machine a lot and the second changes it
     # by an edge-alpha rounding error, the machine is not countable.
+    # Judged at MAX_HOPPER_SLOTS, not at the two the demo happens to use: the
+    # rule has to hold for a machine a player can actually build, and the
+    # offset that scored best on two hoppers lost 122 px of the fourth off the
+    # top of the frame. Read from sim so it tracks the slot count.
+    slots = max_hopper_slots()
+    full = [at_1x(assemble(("frame",) + ("hopper",) * n + ("head",), "A"))
+            for n in range(slots + 1)]
+    foots = [footprint(im) for im in full]
+    growth = [foots[i + 1] - foots[i] for i in range(slots)]
+    print("hopper count at 1x, all %d slots: footprint %s"
+          % (slots, " -> ".join(str(f) for f in foots)))
+    print("                    new shape per hopper: %s px"
+          % ", ".join("+%d" % g for g in growth))
+    if min(growth[1:]) < growth[0] * 0.25:
+        ok = False
+        print("  FAIL: a repeat hopper adds only %d px against the first's %d."
+              % (min(growth[1:]), growth[0]))
+    # And nothing may fall off the frame rectangle, which is what makes a
+    # repeat silently stop counting at the far end.
+    lost = clipped_pixels("hopper", slots - 1)
+    print("                    pixels of hopper #%d lost off the frame: %d" % (slots, lost))
+    if lost:
+        ok = False
+        print("  FAIL: hopper #%d is clipped by the frame rectangle. Cap the\n"
+              "  visible count and put the number in UI rather than shrinking\n"
+              "  the offset until repeats are invisible again." % slots)
+
     zero = at_1x(assemble(("frame", "head"), "A"))
     one = at_1x(assemble(("frame", "hopper", "head"), "A"))
     two = at_1x(assemble(("frame", "hopper", "hopper", "head"), "A"))
@@ -196,6 +283,24 @@ def main():
         sheet.alpha_composite(im, (pad + i * (cw + pad), pad))
         small = at_1x(im)
         sheet.alpha_composite(small, (pad + i * (cw + pad), ch + pad * 2))
+    # THE COUNT LADDER, at true 1x, zero hoppers to a full machine. The
+    # footprint numbers say the repeats add shape; this is where I check that
+    # the shape reads as A COUNT and not as a chunkier hopper. It is the
+    # picture that settled it - the per-column view above is too thin to
+    # judge, and I nearly talked myself out of a working rule by squinting at
+    # it instead of putting zero-to-full side by side.
+    lz = 4
+    lw, lh = full[0].size
+    ladder = Image.new("RGBA", (pad + len(full) * (lw * lz + pad), lh * lz + pad * 2),
+                       (24, 26, 24, 255))
+    for i, im in enumerate(full):
+        ladder.alpha_composite(im.resize((lw * lz, lh * lz), Image.NEAREST),
+                               (pad + i * (lw * lz + pad), pad))
+    stacked = Image.new("RGBA", (max(sheet.width, ladder.width),
+                                 sheet.height + ladder.height + pad), (30, 32, 30, 255))
+    stacked.alpha_composite(sheet, (0, 0))
+    stacked.alpha_composite(ladder, (0, sheet.height + pad))
+    sheet = stacked
     sheet.save(os.path.join(SPR, "assembled.png"))
     print("wrote assets/sprites/assembled.png  (%d machines, top row authoring size, bottom row true 1x)"
           % len(shots))
