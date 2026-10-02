@@ -484,9 +484,14 @@ func _press_on_stack(kind: String, species: int, label: String) -> bool:
 		return false
 	var wanted := AssayHud.stack_line(stack)
 	for row in screen._carrying.get_children():
-		if row.get_child_count() == 0:
-			continue
-		var line: Label = row.get_child(0) as Label
+		# BY NAME, NOT BY POSITION, and the name is READ FROM `main.gd` rather than retyped here.
+		# A pack row is [icon?][VBox: sentence, verbs] since ASSA-46 (#81), so child 0 is a
+		# TextureRect on a row with art and a VBoxContainer on one without. This read
+		# `get_child(0) as Label`, matched nothing on any row, and every press on a pack row failed
+		# silently -- the whole loop stopped at `Craft smelter` (ASSA-62). `tests/test_buttons.gd`
+		# was fixed in the same PR and this copy was not, which is exactly why the suite could not
+		# see it: that file has its own row finder, so the two can disagree.
+		var line: Label = row.find_child(screen.STACK_LINE, true, false) as Label
 		if line == null or line.text != wanted:
 			continue
 		var button := _find_button(row, label)
