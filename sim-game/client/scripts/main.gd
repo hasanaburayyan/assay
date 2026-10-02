@@ -75,7 +75,19 @@ func _ready() -> void:
 	_say("enter a host address and join", AssayHud.Say.IDLE)
 
 
+## BUILT ONCE, however many times `_ready` runs. `tests/test_main_screen.gd` calls `_ready()` by hand
+## (the suite works inside `SceneTree._initialize`, before the root window is in the tree) AND adds the
+## node to the tree, so the engine calls it again -- which built the HUD column twice and reparented
+## every label into the second one. Harmless on screen, because the real client's `_ready` runs once,
+## but it filled the suite's output with `Can't add child ... already has a parent` errors, and error
+## spam nobody reads is where a real error goes to hide.
+var _built := false
+
+
 func _build_ui() -> void:
+	if _built:
+		return
+	_built = true
 	var row := HBoxContainer.new()
 	row.position = Vector2(24.0, 20.0)
 	row.add_theme_constant_override("separation", 8)
@@ -201,6 +213,14 @@ func _refresh() -> void:
 		source = "where you stand"
 	_cursor.text = "%s\n%s" % [source, "\n".join(AssayHud.tile_lines(_sim.tile_at(at)))]
 	_log.text = "\n".join(_events)
+	# WHICH WORLD, WHICH TICK, WHICH HASH. The seed and the hash are TEXT, because a u64 cannot
+	# survive a GDScript number -- that is not caution, it is measured. The bundle and hash counts are
+	# here because a client that has stopped applying bundles looks exactly like one that is idle.
+	var size := _sim.size_tiles()
+	_detail.text = ("world seed %s, %d x %d tiles, %d species, %d players · tick %d, hash %s · "
+			+ "%d bundles applied, %d hashes reported") % [
+			_sim.seed_text(), size.x, size.y, _sim.species_names().size(), _sim.players().size(),
+			_sim.tick(), _sim.hash_hex(), _sim.applied, _hashes_sent]
 	_refresh_bench()
 
 
@@ -259,13 +279,6 @@ func _my_tile() -> Vector2i:
 		if int(player.get("id", -1)) == _client.player_id:
 			return player.get("pos", Vector2i.ZERO) as Vector2i
 	return _sim.spawn_tile()
-	# Everything on this line comes out of the sim. The seed and the hash are TEXT, because a u64
-	# cannot survive a GDScript number -- that is not caution, it is measured.
-	var size := _sim.size_tiles()
-	_detail.text = ("world seed %s, %d x %d tiles, %d species, %d players · tick %d, hash %s · "
-			+ "%d bundles applied, %d hashes reported") % [
-			_sim.seed_text(), size.x, size.y, _sim.species_names().size(), _sim.players().size(),
-			_sim.tick(), _sim.hash_hex(), _sim.applied, _hashes_sent]
 
 
 ## Click a tile to walk there. The command is the same `PlayerCommand::MoveTo` `sim-cli` sends; the
