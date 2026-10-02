@@ -5,6 +5,12 @@ conversation after the ADR 0001 cut-over landed on `minerals-cutover`, to
 seed a spoken session. Nothing here is decided; the proposals in
 `sim-game/design/properties.md` remain the reference for part rules.
 
+**Amended 2026-10-02 (Maren).** One section below — "Measured 2026-10-02" —
+*is* decided: it records the ruling on `HEAD_SPEED_PER_HARDNESS` and the two
+worldgen lines that go with it (ASSA-32, taken whole by Wren 08:10). It sits
+here rather than in a new note because it answers this note's own point 1.
+The rest of the file is still the undecided conversation it was.
+
 ## What prompted it
 
 Two implementation calls in the cut-over exposed design gaps:
@@ -22,6 +28,59 @@ Two implementation calls in the cut-over exposed design gaps:
    (a drill head needs hardness X, a burner needs heat tolerance Y). This
    matches the "requirements apply at the point of use" principle in
    `properties.md`.
+
+## Measured 2026-10-02: rung zero is the problem, not the rungs above it
+
+Point 1 above asks how the ladder climbs *past* rung zero. Measuring
+`HEAD_SPEED_PER_HARDNESS` on ASSA-6 turned up something narrower and worse:
+in a large fraction of worlds the demo's **first** pick is slower than bare
+hands, so the first thing the player builds is a downgrade. The number
+everyone was about to approve — raising the factor from 1 to 2 — does not
+fix that, because it is a tail, not a mean. Hands run 4.00 ticks/unit
+(`WORK_PER_UNIT` 100 / `HAND_WORK_PER_TICK` 25). A head's rate is its
+*effective* hardness × the factor, and the demo's first head is made of the
+**starter** species, which `ladder::starter_species` picks as
+`rungs(species)[0].first()` — roster order, so effectively at random among
+the hand-minable species. Over 2000 seeds at factor 2, that species' grade-B
+head loses to hands in **40% of worlds** (worst case 50 ticks/unit, twelve
+times slower). Scaling the factor shifts every world together; it cannot
+reach the soft tail without making the good worlds trivial.
+
+The fix is in worldgen, not in the rate. Two lines, both measured over the
+same 2000 seeds: **(a)** pick the starter as the *hardest* species in rung
+zero rather than the first — alone this only drops the loss to 23.9%, so it
+is necessary and not sufficient; **(b)** add to the existing starter-ladder
+reroll the condition that the starter's grade-B head beats hands **and** the
+roster holds at least two hand-minable species (9.2% of rosters hold exactly
+one, which makes the assay action decoration in the demo — nothing to
+compare). Together they accept 70.9% of seeds: **1.41 attempts on average,
+i.e. 0.41 rerolls**, and the first pick then beats hands in *every* world,
+worst case 3.85 against the hands' 4.00. Rerolling 29% of seeds re-maps seed
+→ world, so the golden determinism hash moves and existing saves describe
+different worlds; that is the cost and it is worth paying once, now, while
+the only saved world that matters is a test world.
+
+Two guards fall out of the measurement and belong in CI. The rate is capped
+by `mine_by_hand`/`mine_by_machine` yielding **at most one unit per tick**,
+so work above `WORK_PER_UNIT` in a tick is discarded: fail the build if the
+maximum *reachable* effective hardness × the factor exceeds `WORK_PER_UNIT`
+(the reachable maximum is a grade-**A** head of a base-hardness-40 species,
+so effective 40: at factor 2 that is 80, inside the cap; at 3 it is 120 and
+the game silently discards a fifth of the head's work. That is why the
+ruling is 2 and not 3, and why the guard must read the real reachable
+maximum rather than a number someone types). And **reach is never speed**:
+`HAND_MINE_MAX_HARDNESS` 40 gates machines as well as hands (`step.rs`), so
+nothing in the game mines hardness above 40 regardless of what it is made
+of. `ladder.rs`'s comment that "drill heads mine up to their hardness" is a
+model the sim does not implement; it is harmless only because
+`MIN_STARTER_RUNGS` is 1. Gate a future drill on **effective hardness**, not
+on the factor.
+
+Method: 2000 seeds of the standard 6×4-chunk test world, scored in a scratch
+`sim` integration test against `rungs()` and `effective(Hardness, Grade::B)`.
+Figures above replace the first pass quoted on ASSA-6 (39%, "1.39 rerolls"),
+which sampled fewer seeds and, in the reroll figure, counted attempts and
+called them rerolls.
 
 ## Where grades stand (built, open to retuning)
 
