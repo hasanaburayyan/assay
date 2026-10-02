@@ -111,11 +111,19 @@ from part_layout import PART_REPEAT_OFFSET  # noqa: F401  (rule 5, see that file
 #    by rendering a per-machine sprite.
 #
 #    OVERLAY WITH `part_layout.stack`, NOT WITH PLAIN `over`: colour composites
-#    over, alpha takes the MAX. Every part sprite carries its own contact
-#    shadow, so the obvious operator compounds them and a machine's shadow
-#    darkens with each part bolted on -- measured, 122 to 167 from one part to
-#    four, a gradient reporting part count that nobody chose (ASSA-38). A
-#    renderer drawing these sprites has to do the same thing.
+#    over, alpha takes the MAX. When this was written every part sprite carried
+#    its own contact shadow, so the obvious operator compounded them and a
+#    machine's shadow darkened with each part bolted on -- measured, 122 to 167
+#    from one part to four, a gradient reporting part count that nobody chose
+#    (ASSA-38). A renderer drawing these sprites has to do the same thing.
+#
+#    ASSA-64 TOOK THAT SHADOW OFF EVERY MOUNTED PART, so the sheets shipping
+#    today cannot compound one: only a planted frame stands on the ground, and
+#    a Design has exactly one frame. The operator is still the rule, because it
+#    is what makes `over` correct rather than lucky and the next ground-standing
+#    part kind brings the compounding back with it. Do not read "take the MAX"
+#    as evidence that these sheets still stack shadows -- they do not, and the
+#    guard that keeps it that way is check 4 of check_part_contract.py.
 #
 # 5. REPEATED PARTS STEP ALONG THE FRAME (the offset rule). Rule 2 is right
 #    for parts that DIFFER and cannot express a COUNT: two hopper sprites
