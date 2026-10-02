@@ -35,3 +35,34 @@ textures/canvas_textures/default_texture_filter=0
 ; texture format is disabled"). The client has no textures yet, so this costs
 ; nothing today; it has to be on before the first sprite arrives anyway.
 textures/vram_compression/import_etc2_astc=true
+
+[importer_defaults]
+
+; PIXEL ART IMPORT DEFAULTS. These decide whether the sprites arrive crisp or
+; mush, so they are pinned here rather than left to whatever each texture is
+; imported with.
+;
+; Measured, not assumed: I imported head.png into this project with the stock
+; settings and read the generated .import back. Two of the three were already
+; right (compress/mode=0 lossless, mipmaps/generate=false). The third was not.
+;
+; detect_3d/compress_to defaults to 1. That is Godot's "detect 3D" feature:
+; the first time a texture is touched in a 3D context, Godot SILENTLY
+; re-imports it with VRAM block compression and turns mipmaps on, and
+; rewrites the .import file behind you. Block compression on flat colours
+; with hard edges is exactly the thing that ruins pixel art, and because it
+; fires on use rather than on import it would show up as "the sprites went
+; blurry at some point" long after whoever caused it moved on. 0 disables it.
+;
+; The other two are already stock, pinned so they cannot drift.
+;
+; Verified: with this block, a fresh import of head.png yields
+; compress/mode=0, mipmaps/generate=false, detect_3d/compress_to=0.
+;
+; This pairs with default_texture_filter=0 above. That one makes a sprite
+; sample crisply; these make sure the pixels are still there to sample.
+texture={
+"compress/mode": 0,
+"detect_3d/compress_to": 0,
+"mipmaps/generate": false
+}
