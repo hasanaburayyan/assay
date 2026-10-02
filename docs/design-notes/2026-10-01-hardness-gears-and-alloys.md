@@ -55,10 +55,20 @@ roster holds at least two hand-minable species (9.2% of rosters hold exactly
 one, which makes the assay action decoration in the demo — nothing to
 compare). Together they accept 70.9% of seeds: **1.41 attempts on average,
 i.e. 0.41 rerolls**, and the first pick then beats hands in *every* world,
-worst case 3.85 against the hands' 4.00. Rerolling 29% of seeds re-maps seed
-→ world, so the golden determinism hash moves and existing saves describe
-different worlds; that is the cost and it is worth paying once, now, while
-the only saved world that matters is a test world.
+worst case 3.85 against the hands' 4.00. Rerolling re-maps seed → world, so
+existing saves describe different worlds; that is the cost and it is worth
+paying once, now, while the only saved world that matters is a test world.
+
+**What that cost turned out to be, measured when ASSA-35 shipped** (this
+paragraph predicted a golden hash move, and that half was wrong): 571 of
+1000 seeds do get a different world — 278 a different roster, and 293 the
+same roster with the starter species moved, which relocates the two deposits
+beside spawn. But **neither golden hash moved.** Seed 42 is one of the 429
+unchanged worlds: it already passed both new conditions on the same attempt,
+and the first species in its rung zero was already its hardest. No
+`SAVE_VERSION` or `PROTOCOL_VERSION` bump either, because no field moved and
+a save carries its own roster. "This must move the hash" is a claim to
+measure like any other.
 
 Two guards fall out of the measurement and belong in CI. The rate is capped
 by `mine_by_hand`/`mine_by_machine` yielding **at most one unit per tick**,
@@ -80,16 +90,34 @@ Method: 2000 seeds of the standard 6×4-chunk test world, built through
 `World::new` and scored in a scratch `sim` integration test against
 `rungs()` and `effective(Hardness, Grade::B)`.
 
-These figures replace the first pass quoted on ASSA-6 (39%, 72.0% accepted,
-"1.39 rerolls"). The reroll figure there was simply mislabelled — 1.39 was
-the expected number of *attempts*, which is 0.39 rerolls, and the same
-quantity here is 1.41 attempts / 0.41 rerolls. The percentages differ for a
-reason worth keeping: that pass drew **4000 rosters straight from
-`worldgen::species_roster`**, i.e. more samples than this one, while this
-pass builds **2000 whole worlds**. `World::new` already rerolls the roster
-until the starter ladder holds, so the two are not sampling the same
-population, and it is the second one — rosters that survive the existing
-reroll — that the proposed condition actually filters. Prefer these.
+These figures and the first pass quoted on ASSA-6 (39%, 72.0% accepted,
+"1.39 rerolls") differ in two ways, and only one of them is a mistake.
+
+The reroll figure was mislabelled: 1.39 was the expected number of
+*attempts*, i.e. 0.39 rerolls, and the same quantity here is 1.41 attempts /
+0.41 rerolls. **And 1.41 is the multiplier on the reroll loop that already
+existed, not the total cost.** Measured through the real loop when ASSA-35
+landed: 2.47 attempts per world before the two new conditions, **3.44
+after**, worst seed 17 → 30 rolls. 2.47 × 1.41 = 3.48, so the figure is
+right about what it measures and wrong about what it sounds like.
+
+**The percentages differ by sample size alone.** An earlier revision of this
+paragraph blamed the population — 4000 rosters from `worldgen::species_roster`
+against 2000 worlds from `World::new` — but those are the same population by
+construction: `World::new` *calls* `species_roster` (`world.rs:68`), which is
+itself the reroll loop, and the roster does not depend on world size. Checked
+rather than argued: the rosters are byte-identical for all of seeds 0..1000,
+and scoring the same code by either path gives
+
+| seeds | loses to hands | hardest alone | one minable | both accept |
+|---|---|---|---|---|
+| 2000 | 40.0% | 23.9% | 9.2% | 70.9% |
+| 4000 | 38.9% | 22.4% | 9.5% | 72.0% |
+
+So these figures carry about a point of sampling noise and **should be quoted
+as "about 40%", never to a decimal**. What is stable across both samples is
+the part the ruling rests on: worst accepted pick **3.85 ticks/unit against
+the hands' 4.00**, best 1.56, median 2.08. Neither pass was wrong.
 
 ## Where grades stand (built, open to retuning)
 
