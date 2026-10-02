@@ -145,6 +145,33 @@ jobs:
           # GODOT EXITS 0 ON A COMPILE ERROR, so the count the runner prints is
           # the verdict and the exit code is not. Grep the file, never a pipe.
           grep -qE '^[0-9]+ passed, 0 failed' suite.log
+      # THE LETTER ON A MAP DISC IS READABLE. Runs the client and scores what
+      # `AssayHud.glyph_color` actually returned for all 600 species x purity
+      # states (ASSA-39/44), rather than reimplementing the rule -- computing
+      # both ratios here and asserting the better one is better would pass by
+      # construction.
+      #
+      # OPTIMALITY IS DELIBERATELY DOUBLE-COVERED and I am saying so rather than
+      # implying this step is load-bearing for it: `test_hud.gd` in the suite
+      # above already asserts the same property in GDScript. Two independent
+      # implementations in two languages agreeing is worth a few seconds on a
+      # runner that already has Godot warm, but it is not why this step exists.
+      #
+      # WHAT ONLY THIS STEP GUARDS is the TINT TABLE, which is the art's problem
+      # and mine: the worst letter available on any disc -- max(dark, light),
+      # the ceiling of any possible picker -- must clear WCAG AA for normal text
+      # (4.5, not large text's 3.0; `glyph_size` draws down to 10px). Today that
+      # is 4.5152 at #FF80BF purity 24, a margin of ONE PART IN 300. If a tint
+      # ever drops it under, no picking rule can rescue the glyph and the fix is
+      # a design conversation about the tint. Nothing else in CI would notice.
+      #
+      # Exit codes are three-valued on purpose: 0 green, 1 the client or the
+      # table is wrong, 2 NO VERDICT (engine unreachable) -- which fails the job
+      # rather than passing quietly.
+      - name: The letter on a map disc is readable
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
+            python3 art/check_glyph_contrast.py
 
   macos:
     name: macOS bundle

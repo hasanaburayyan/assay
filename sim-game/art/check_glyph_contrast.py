@@ -4,9 +4,16 @@
 
     art/check_glyph_contrast.py
 
-RED ON MAIN TODAY, ON PURPOSE: 226 of 600 disc states are given the glyph with
-LESS contrast than the other option would have had. That is ASSA-39, Limpet's
-fix in `hud.gd`. This check needs no edit from me to go green when it lands.
+GREEN SINCE 2026-10-02, AND IT WENT GREEN WITHOUT BEING TOUCHED. It was written
+red: 226 of 600 disc states were given the glyph with LESS contrast than the
+other option would have had. Limpet landed option A in `hud.gd` (#69) and this
+flipped to 0 with no edit from either of us, which is the only kind of evidence
+a check of someone else's code can offer about itself.
+
+IN CI, and the honest division of labour: `test_hud.gd` now asserts the same
+OPTIMALITY property in GDScript, so that half is deliberately double-covered.
+What only this file guards is the TINT TABLE -- the worst letter AVAILABLE on
+any disc, which is the art's problem and mine. See claim 2 below.
 
 WHY THIS FILE EXISTS AND `species_probe.py` WAS NOT ENOUGH
   The probe measures disc against disc and disc against map background. It had
@@ -72,15 +79,29 @@ Needs Godot and the gdextension built (`make client-lib`), because opening the
 project aborts without the library the `.gdextension` names.
 """
 import os
-import re
 import subprocess
 import sys
 import tempfile
+
+
+class CannotCheck(Exception):
+    """Could not get an answer out of the engine.
+
+    Deliberately a DIFFERENT exit code from a failed check: 2 means "no
+    verdict", 1 means "the client is wrong". CI must be able to tell those
+    apart, and for a long time this file raised `SystemExit("...exit 2...")`,
+    which prints that text and then exits 1. The message was lying about its
+    own exit code, which is exactly the class of thing this file exists to
+    catch in other people's code."""
 
 ART = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(ART)
 CLIENT = os.path.join(ROOT, "client")
 GODOT = os.environ.get("GODOT", "/Applications/Godot_mono.app/Contents/MacOS/Godot")
+
+# How long the engine gets. Generous for a cold import on a slow runner, and
+# finite because an unbounded wait is not a check -- see `ask_the_engine`.
+TIMEOUT = int(os.environ.get("GLYPH_GODOT_TIMEOUT", "300"))
 
 FAKE_THRESHOLD = os.environ.get("GLYPH_FAKE_THRESHOLD") == "1"
 FAKE_LINEAR = os.environ.get("GLYPH_FAKE_LINEAR") == "1"
@@ -153,16 +174,28 @@ def self_test():
 def ask_the_engine():
     """Run the client headless and collect what it really returns."""
     if not os.path.exists(GODOT):
-        raise SystemExit(
-            "CANNOT CHECK (exit 2): no Godot at %r. Set GODOT=<path>.\n"
+        raise CannotCheck(
+            "no Godot at %r. Set GODOT=<path>.\n"
             "This is deliberately not a pass: the one thing this file exists to\n"
             "avoid is a verdict about a rule nobody asked the engine for." % GODOT)
     with tempfile.NamedTemporaryFile("w", suffix=".gd", delete=False) as f:
         f.write(DUMP)
         script = f.name
     try:
+        # BOUNDED, because an unbounded wait is not a check. I hung this script
+        # for five minutes against a project directory that already had two
+        # stale headless Godots sitting on it, and an unbounded `subprocess.run`
+        # in CI is a job that burns its whole limit and then reports nothing.
+        # A timeout is a FAILURE, never a pass.
         p = subprocess.run([GODOT, "--headless", "--path", CLIENT, "--script", script],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise CannotCheck(
+            "Godot did not finish in %ds.\n"
+            "Most likely another headless Godot is already sitting on %s --\n"
+            "check with `pgrep -f MacOS/Godot` -- or the import is mid-flight.\n"
+            "Raise it with GLYPH_GODOT_TIMEOUT=<seconds> if the machine is slow."
+            % (TIMEOUT, os.path.relpath(CLIENT, ROOT)))
     finally:
         os.unlink(script)
     rows, consts = [], {}
@@ -176,11 +209,25 @@ def ask_the_engine():
             f = line.split()
             consts[f[1]] = tuple(float(x) for x in f[2:5])
     if len(rows) != 600 or len(consts) != 2:
-        raise SystemExit(
-            "CANNOT CHECK (exit 2): expected 600 states and 2 constants from the\n"
-            "engine, got %d and %d. Build the binding first (`make client-lib`):\n"
-            "opening the project aborts without it.\n--- godot said ---\n%s"
-            % (len(rows), len(consts), (p.stdout + p.stderr)[-1500:]))
+        blob = p.stdout + p.stderr
+        # Name the two causes I have actually hit, because the raw output is a
+        # wall of identical parse errors that says nothing about the fix.
+        why = ""
+        if "AssayHud" in blob and "not declared" in blob:
+            why = ("\nTHE LIKELY CAUSE: `.godot/global_script_class_cache.cfg` is\n"
+                   "missing, so the engine does not know the name `AssayHud` yet.\n"
+                   "A class cache is only written by a full import. Run\n"
+                   "`godot --headless --import` TWICE in client/ first -- twice\n"
+                   "because the first one after `.godot/` is gone crashes on exit\n"
+                   "having already written the cache (see sim-game/CLAUDE.md).\n")
+        elif "gdextension" in blob.lower() or "libsim_godot" in blob:
+            why = ("\nTHE LIKELY CAUSE: the binding is missing. `make client-lib`;\n"
+                   "the engine aborts when the .gdextension names a library that\n"
+                   "is not there.\n")
+        raise CannotCheck(
+            "expected 600 states and 2 constants from the\n"
+            "engine, got %d and %d.\n%s--- godot said ---\n%s"
+            % (len(rows), len(consts), why, blob[-1200:]))
     return rows, consts["DARK"], consts["LIGHT"]
 
 
@@ -274,4 +321,11 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except CannotCheck as e:
+        print("\nCANNOT CHECK: %s" % e)
+        print("\nVERDICT: NO VERDICT (exit 2). This is not a pass: the one thing\n"
+              "this file exists to avoid is a claim about a rule nobody asked the\n"
+              "engine for.")
+        sys.exit(2)
