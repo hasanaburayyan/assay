@@ -1101,6 +1101,17 @@ fn who(world: &World, me: PlayerId, player: PlayerId) -> String {
         .map_or_else(|| format!("player {}", player.0), |p| p.name.clone())
 }
 
+/// The possessive of [`who`]: "your", not "you's". Every event about a thing
+/// somebody owns goes through this, because in co-op the owner is usually
+/// somebody else and "back in your inventory" is then a lie as well as bad
+/// English. Found by the three-peer play-through, not by reading the code.
+fn whose(world: &World, me: PlayerId, player: PlayerId) -> String {
+    if player == me {
+        return "your".into();
+    }
+    format!("{}'s", who(world, me, player))
+}
+
 fn describe_command(cmd: &PlayerCommand, world: &World) -> String {
     let spec = |item: &Item| item_spec(world, *item);
     match cmd {
@@ -1165,6 +1176,7 @@ fn slot_name(slot: Slot) -> &'static str {
 
 fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
     let who = |p: &PlayerId| who(world, me, *p);
+    let whose = |p: &PlayerId| whose(world, me, *p);
     let name = |item: &Item| world.item_name(*item);
     match event {
         Event::PlayerJoined { player, name } if *player == me => {
@@ -1449,8 +1461,8 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
                 }
             };
             format!(
-                "{}'s design broke{}: {mass} mass against a {budget} budget. Lost {}; got back {}",
-                who(player),
+                "{} design broke{}: {mass} mass against a {budget} budget. Lost {}; got back {}",
+                whose(player),
                 pos.map_or(String::new(), |p| format!(" at ({}, {})", p.x, p.y)),
                 items(lost),
                 items(returned)
@@ -1463,13 +1475,23 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
             player,
             head,
             handle,
-        } => format!(
-            "{}'s {} wore out. The {} is gone; the {} is back in your inventory — assemble it with a new head to repair it",
-            who(player),
-            name(handle),
-            name(head),
-            name(handle)
-        ),
+        } => {
+            // The repair hint belongs to whoever can act on it. Telling me to
+            // re-head somebody else's handle is an instruction I cannot follow.
+            let hint = if *player == me {
+                " — assemble it with a new head to repair it"
+            } else {
+                ""
+            };
+            format!(
+                "{} {} wore out. The {} is gone; the {} is back in {} inventory{hint}",
+                whose(player),
+                name(handle),
+                name(head),
+                name(handle),
+                whose(player)
+            )
+        }
         Event::MachineMined {
             building,
             item,

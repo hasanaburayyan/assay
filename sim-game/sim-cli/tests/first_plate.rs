@@ -12,75 +12,27 @@
 //! There is no victory state anywhere in this, deliberately. "Completion" is
 //! a test condition; the world keeps running.
 
+mod common;
+
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+use common::walk;
 use sim::ladder::starter_species;
-use sim::tuning::{
-    FRAME_BUDGET_PER_STRENGTH, GEAR_MIN_HARDNESS, HEAD_SIZE, HOPPER_SIZE, PLANTED_FRAME_SIZE,
-};
-use sim::worldgen::STARTER_CHUNKS;
-use sim::{ChunkPos, OreDeposit, Property, TilePos, World, WorldConfig};
-
-/// Chebyshev distance: ticks it takes to walk between two tiles.
-fn walk(from: TilePos, to: TilePos) -> i32 {
-    (to.x - from.x).abs().max((to.y - from.y).abs())
-}
-
-/// The starter deposits of this seed's world, as the CLI will build it.
-fn starters(seed: u64) -> (World, OreDeposit, OreDeposit) {
-    let world = World::new(WorldConfig {
-        seed,
-        width_chunks: 6,
-        height_chunks: 4,
-    });
-    let at = |i: usize| {
-        let (dx, dy) = STARTER_CHUNKS[i];
-        let chunk = ChunkPos::new(world.spawn.x + dx, world.spawn.y + dy);
-        world
-            .deposits
-            .iter()
-            .find(|d| d.center.chunk() == chunk)
-            .cloned()
-            .expect("starter deposit")
-    };
-    let (material, fuel) = (at(0), at(1));
-    (world, material, fuel)
-}
 
 #[test]
 fn fresh_world_through_the_whole_demo_loop_on_the_plain_prompt() {
-    // Any seed starts climbable, but gears also need the starter material to
-    // be hard enough at its rolled grade, and the fuel to burn hot enough
-    // for it. Pick the first seed where that holds; most do.
-    //
-    // ASSA-6 adds one more condition, and it is a REAL one rather than a
-    // convenience: the loop now ends in a planted drill, and decision 11 says
-    // placement is the test, so the seed's material must make a drill that
-    // fits its own frame's budget. Same species throughout, that is
-    // `8 x density <= 15 x effective strength` (sizes 5 + 1 + 2 against
-    // `PLANTED_FRAME_SIZE x FRAME_BUDGET_PER_STRENGTH`). On a seed where it
-    // fails, the honest outcome is a drill that breaks when planted — which
-    // is a correct sim and a useless play-through.
-    let (seed, world, material, fuel) = (1..400)
-        .map(|seed| {
-            let (w, m, f) = starters(seed);
-            (seed, w, m, f)
-        })
-        .find(|(_, w, m, f)| {
-            let (ms, fs) = (w.species(m.species), w.species(f.species));
-            let drill_mass =
-                (PLANTED_FRAME_SIZE + HEAD_SIZE + HOPPER_SIZE) * u32::from(ms.sheet.density);
-            let frame_budget = PLANTED_FRAME_SIZE
-                * FRAME_BUDGET_PER_STRENGTH
-                * ms.effective(Property::Strength, m.grade());
-            ms.effective(Property::Hardness, m.grade()) >= GEAR_MIN_HARDNESS
-                && fs.effective(Property::Reactivity, f.grade())
-                    >= u32::from(ms.sheet.heat_tolerance)
-                && m.species != f.species
-                && drill_mass <= frame_budget
-        })
-        .expect("some seed supports the full loop");
+    // Which seed, and why, is `common::supports_the_loop`: the three-peer
+    // session on ASSA-8 needs the same four conditions, and two tests that
+    // choose their own worlds are two tests of two different games.
+    let starter = common::demo_seed(|_, _, _| true);
+    let common::Starter {
+        seed,
+        world,
+        material,
+        fuel,
+    } = &starter;
+    let (seed, world, material, fuel) = (*seed, world, material, fuel);
     let (ms, fs) = (world.species(material.species), world.species(fuel.species));
     assert_eq!(
         starter_species(&world.species),
