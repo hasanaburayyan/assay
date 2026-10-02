@@ -56,24 +56,26 @@ img = Image.new("RGBA", (W * T, H * T))
 for y in range(H):
     for x in range(W):
         blit(img, "ground", f"v{random.randrange(4)}", x, y)
-# two deposits, drawn the way the client will: a tile is "edge" if any
-# 4-neighbour is outside the circle
+# Deposits, drawn the way the client will: EVERY TILE INSIDE `contains()` IS
+# THE SAME TILE. There is no border variant - the sim's `amount` is one number
+# for the whole patch, so a sparser rim would be a visible mark for a
+# difference that does not exist (Maren, ASSA-20). The hard edge is the point:
+# it is exactly where mining and placing stop working. Variation comes from
+# v0/v1, which move rocks without claiming anything about quantity.
+#
 # A deposit is a SPECIES INDEX plus a GRADE (C/B/A, the sim's own purity
-# bands), not a named ore: the art is one
-# neutral rock set and the index picks the tint. Three different species here
-# so the sheet answers "can I tell these apart on a map" and not just "does
-# the tile look nice".
+# bands), not a named ore: the art is one neutral rock set and the index picks
+# the tint. Three different species here so the sheet answers "can I tell
+# these apart on a map" and not just "does the tile look nice".
 deposits = [(0, 4, 4, 3, "A"), (1, 11, 5, 2, "B"), (4, 10, 1, 1, "C")]
 for species, cx, cy, r, grade in deposits:
     inside = lambda x, y: (x - cx) ** 2 + (y - cy) ** 2 <= r * r
     for y in range(H):
         for x in range(W):
             if not inside(x, y): continue
-            edge = not all(inside(x + dx, y + dy) for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))
-            row = f"{grade}_edge" if edge else f"{grade}_full_v{random.randrange(2)}"
+            row = f"{grade}_full_v{random.randrange(2)}"
             blit(img, "ore", row, x, y, tint=SPECIES_TINTS[species])
 blit(img, "ore", "depleted_full", 1, 7, tint=SPECIES_TINTS[2])
-blit(img, "ore", "depleted_edge", 2, 7, tint=SPECIES_TINTS[2])
 # entities, sorted by their bottom edge so nearer things draw on top
 ents = [("spawn", "pad", 6, 1, 0), ("drill", "work", 3, 3, 2), ("drill", "idle", 10, 4, 0),
         ("player", "walk_SE", 8, 5, 3), ("player", "idle_S", 5, 7, 0)]

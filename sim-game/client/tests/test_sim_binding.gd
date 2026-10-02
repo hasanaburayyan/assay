@@ -26,6 +26,8 @@ const REQUIRED_METHODS := [
 	"event_lines", "inventory_of", "tile_at", "species_sheets",
 	# The wire's own number, so no GDScript file has to keep a copy of it.
 	"protocol_version",
+	# The roster size, so the client's species colour table is checked against the sim's own count.
+	"species_per_world",
 ]
 
 
@@ -59,6 +61,27 @@ func test_every_method_the_client_calls_exists() -> bool:
 			missing.append(wanted)
 	if not missing.is_empty():
 		return _fail("the binding is missing %s; it has %s" % [missing, have])
+	return true
+
+
+## THE SPECIES COLOUR TABLE IS AS LONG AS THE SIM'S ROSTER, and the sim is the one that says so.
+##
+## `AssayHud.SPECIES_TINTS` is one slot per species, derived by `art/species_probe.py` for exactly
+## this many species. A roster longer than the table does not crash -- `deposit_color` wraps -- it
+## quietly gives two species the same colour, which is the failure that hurts the player who cannot
+## use colour anyway and shows up on no screen as wrong. So the number is asked of the sim here
+## instead of being written down a third time. (`art/check_species_tints.py` holds the Python half
+## of the table to the same constant, from the other side.)
+func test_the_species_colour_table_is_as_long_as_the_sims_roster() -> bool:
+	if not ClassDB.class_exists("AssaySim"):
+		return _fail("no AssaySim class; see the failure above")
+	var roster: Variant = ClassDB.class_call_static("AssaySim", "species_per_world")
+	if typeof(roster) != TYPE_INT:
+		return _fail("species_per_world is a %s, not an int" % typeof(roster))
+	if int(roster) != AssayHud.SPECIES_TINTS.size():
+		return _fail(("the sim rolls %d species and the client has %d tints. Rerun "
+				+ "art/species_probe.py for %d slots; do not pad the table by hand.")
+				% [roster, AssayHud.SPECIES_TINTS.size(), roster])
 	return true
 
 

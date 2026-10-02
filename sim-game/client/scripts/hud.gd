@@ -21,6 +21,43 @@ const VIEW := Vector2(1280.0, 720.0)
 const MARGIN := Vector2(24.0, 96.0)
 const PANEL := 320.0
 
+## What the map is drawn on. Here rather than in `main.gd` because `glyph_color` has to composite a
+## deposit's colour against it to decide whether a letter on top should be dark or light.
+const MAP_BG := Color(0.10, 0.11, 0.13)
+
+## THE SIX SPECIES TINTS, SLOT BY SLOT, AND THE CLIENT MAY NOT WORK THEM OUT.
+##
+## Decision #36 and Maren's ruling (ASSA-7, 2026-10-02). What I shipped first was Decision #35's
+## option A -- `species / count` round the hue wheel -- and Cove MEASURED it: the closest pair is
+## dE 5.7 for a protan viewer against a floor of 12, because even spacing optimises for normal
+## vision and walks species straight along the red-green confusion axis. This table is derived
+## (`art/species_probe.py`) and scores 18.3 for the worst observer, 15.8 at the darkest grade.
+##
+## DO NOT "IMPROVE" THE SPACING. Okabe-Ito's sky blue and blue are the same hue to a tenth of a
+## degree and survive colour blindness precisely because they differ in lightness and saturation
+## instead; hue distance in HSV is not perceptual distance, which is why Maren retired the old
+## 30-degree bar along with my test of it.
+##
+## ONE TABLE, and there is no elegant home for it. The same six strings are in
+## `art/species_tints.py`, which the Blender pipeline multiplies over the species-neutral ore
+## sprite, and `art/check_species_tints.py` fails CI if the two ever differ or stop being as long
+## as the sim's roster. A palette cannot live in `sim` (repo `CLAUDE.md` principle 1: the sim knows
+## nothing of a renderer) and the client has no asset pipeline yet, so two files and a check is the
+## honest version rather than the tidy one.
+## (A plain typed Array, not a `PackedStringArray`: a packed array's constructor is not a constant
+## expression, so `const` refuses it -- and refuses it as a PARSE ERROR, which takes the whole file
+## and every file that references it down with it. Godot still exits 0 on that, so it is
+## `test_main_screen.gd` loading the real scene that turns it into a failing test.)
+const SPECIES_TINTS: Array[String] = ["#7A29CC", "#FF3333", "#FF80BF", "#FFFF33", "#3333FF",
+		"#509BE6"]
+
+## A glyph on a deposit is one of these two, never the tint's own colour at another brightness.
+## Near-black and pure white, which is not fussiness: the crossover luminance where they are equally
+## readable is 0.221, and at that point this pair still clears a contrast ratio of 3.8 while
+## (0.08, 0.97) would fall to 2.8 -- under the 3.0 that large text has to make.
+const GLYPH_DARK := Color(0.02, 0.02, 0.03)
+const GLYPH_LIGHT := Color(1.0, 1.0, 1.0)
+
 
 ## The tile size the map is drawn at. THE PANEL'S WIDTH COMES OUT OF THE MAP'S WIDTH TERM, which is
 ## what makes the map shrink instead of hiding under the HUD (Maren's ruling, ASSA-7). Floored to a
@@ -33,19 +70,54 @@ static func map_cell(size: Vector2i) -> float:
 			(VIEW.y - MARGIN.y - 24.0) / float(size.y))))
 
 
-## A DEPOSIT'S COLOUR: SPECIES IS HUE, PURITY IS BRIGHTNESS, never both on one channel.
+## A DEPOSIT'S COLOUR: THE SPECIES' SLOT, DIMMED BY PURITY. Purity may never move the hue.
 ##
-## Maren's ruling, and a correction of what I shipped: my first version rode purity on R and G, which
-## swung the HUE 130 degrees across the purity range and collapsed saturation to 0.19 in the middle,
-## so a mid-purity patch was the hardest thing on the map to see and two species were the same
-## picture. Six species land evenly round the wheel; a grade-A patch of any species is the brightest
-## thing on screen, which is what the game is named after.
-static func deposit_color(species: int, species_count: int, purity: int) -> Color:
-	var count := maxi(1, species_count)
-	var hue := float(posmod(species, count)) / float(count)
+## Second correction of this function, and the first one is worth keeping in view. Version one rode
+## purity on R and G, which swung the hue 130 degrees across the purity range and collapsed
+## saturation in the middle, so a mid-purity patch was the hardest thing on the map to see. Version
+## two fixed that with evenly spaced hues, which is the scheme Cove then measured and rejected. Both
+## times the mistake was the same shape: I decided what a colour should be instead of asking what a
+## player could see. The slot comes from `SPECIES_TINTS` now and nothing here computes a hue.
+##
+## PURITY IS A MULTIPLIER ON THE SLOT'S OWN VALUE, 0.51 to 1.0 -- a touch under a 2:1 range, where
+## the hue-wheel version spanned 2.7:1. Scaling R, G and B together cannot move hue or saturation,
+## so the ruling holds by construction rather than by my care.
+##
+## THE HONEST LIMIT, AND IT IS OPEN WITH COVE: the table's slots do not share one value (purple sits
+## at 0.80, yellow at 1.0) because the derivation needed that room, so brightness now carries purity
+## AND a little species. Within one species it reads cleanly; comparing the purity of two patches of
+## DIFFERENT species by brightness alone it does not. Cove measured the table at full brightness,
+## and the map draws it from 0.51 up, so whether the dim end still clears the floor is a question for
+## their probe, not for a number I invent here.
+static func deposit_color(species: int, purity: int) -> Color:
+	# The TABLE bounds the index, not the roster: a species id past the end wraps rather than
+	# crashing a frame. `test_sim_binding.gd` is where the sim's roster size and this table's length
+	# are held to each other, so the wrap is a seatbelt and never the normal case.
+	var tint := Color(SPECIES_TINTS[posmod(species, SPECIES_TINTS.size())])
 	# Clamped 0.05 low so a purity-1 patch is still visible, 1.0 high because purity stops at 100.
 	var purity_part := clampf(float(purity) / 100.0, 0.05, 1.0)
-	return Color.from_hsv(hue, 0.55, 0.30 + 0.60 * purity_part, 0.85)
+	var dimmed := 0.5 + 0.5 * purity_part
+	return Color(tint.r * dimmed, tint.g * dimmed, tint.b * dimmed, 0.85)
+
+
+## THE LETTER ON A DEPOSIT: DARK OR LIGHT, whichever the patch underneath can be read against.
+##
+## Takes the deposit's colour, composites it over the map so the decision is made against what is
+## actually on screen (the patch is 85% opaque over a near-black map, and a purity-1 patch of a dark
+## species ends up darker than its tint suggests), then picks on luminance. 0.221 is where the two
+## glyph colours are equally readable, so it is the only threshold that does not favour one.
+static func glyph_color(on: Color) -> Color:
+	var lit := MAP_BG.lerp(Color(on.r, on.g, on.b), on.a)
+	return GLYPH_DARK if lit.get_luminance() > 0.221 else GLYPH_LIGHT
+
+
+## HOW BIG THE LETTER IS, or 0 FOR DON'T DRAW IT. A glyph that does not fit inside its own patch is
+## worse than no glyph: it reads as a label for the tile next door. 1.4 x radius keeps a capital
+## inside the circle with margin, 10px is the floor where a letter is still a letter rather than a
+## smudge, and 32 stops a huge deposit from being mostly typography.
+static func glyph_size(drawn_radius: float) -> int:
+	var size := int(floorf(drawn_radius * 1.4))
+	return 0 if size < 10 else mini(size, 32)
 
 
 ## The status line's colour for a state. Neutral idle, amber connecting, red failed, green joined.
@@ -177,10 +249,16 @@ static func design_lines(design: Dictionary) -> PackedStringArray:
 	# number that never moves teaches a mechanic that does not exist.
 	if design.has("durability"):
 		lines.append("durability %s" % String(design["durability"]))
+	# THE LETTER IS HERE TO TEACH THE MAP, not to carry the row. The row already names its species in
+	# words, which is a stronger non-colour read than a glyph -- so on its own I would have left this
+	# out. Maren's ruling is right for a reason I missed: the letter stamped on a deposit is only
+	# decodable if something, somewhere, says which name it stands for, and this row is the only place
+	# a player sees both. Once per deposit, once per row, never once per tile.
 	for entry in design.get("parts", []):
 		var part: Dictionary = entry
-		lines.append("  %s · %s %s · mass %s" % [String(part.get("kind", "?")),
-				String(part.get("species_name", "?")), String(part.get("grade", "?")),
+		lines.append("  %s · %s %s %s · mass %s" % [String(part.get("kind", "?")),
+				String(part.get("symbol", "?")), String(part.get("species_name", "?")),
+				String(part.get("grade", "?")),
 				span(int(part.get("mass_low", 0)), int(part.get("mass_high", 0)))])
 	return lines
 
