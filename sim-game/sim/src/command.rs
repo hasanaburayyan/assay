@@ -16,7 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::assembly::{AssemblyError, PartKind};
-use crate::building::{BuildingId, Slot};
+use crate::building::{BuildingId, Slot, SmelterStall};
 use crate::item::Item;
 use crate::mineral::{NameError, Property, SpeciesId};
 use crate::recipe::RecipeId;
@@ -308,6 +308,18 @@ pub enum Event {
         building: BuildingId,
         held: u32,
         capacity: u32,
+    },
+    /// A smelter stopped, and why.
+    ///
+    /// **ON THE EDGE INTO A STALL, ONCE** — like [`Event::MachineStalled`] for
+    /// a drill, and for the same reason: a stall is a thing that happens, not
+    /// a state that shouts. Before this the smelter was the one machine that
+    /// said nothing at all, and it is 49% of the demo's measured clock
+    /// (ASSA-80). `idle: nothing to refine` is deliberately NOT announced: it
+    /// follows every finished batch and is not something to fix.
+    SmelterStalled {
+        building: BuildingId,
+        why: SmelterStall,
     },
     MoveStarted {
         player: PlayerId,

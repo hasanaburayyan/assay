@@ -1,6 +1,6 @@
 //! The world: every piece of simulation state lives in here.
 
-use crate::building::{Building, BuildingId};
+use crate::building::{Building, BuildingId, BuildingKind, SmelterStall, SmelterState};
 use crate::hash::fnv64;
 use crate::item::Item;
 use crate::mineral::{MineralSpecies, SpeciesId};
@@ -171,6 +171,47 @@ impl World {
     /// tolerance, which does not scale with grade.
     pub fn max_temperature(&self, b: &Building) -> u32 {
         u32::from(self.species(b.material.species).sheet.heat_tolerance)
+    }
+
+    /// What this smelter is doing, and why if it has stopped.
+    ///
+    /// **THE ONE PLACE THAT DECIDES** (ASSA-80). This chain used to live in
+    /// `debug::building_status`, which meant the only way for `step` to know a
+    /// smelter had stalled was to re-derive it — and a second copy of a
+    /// decision is how ASSA-43 and ASSA-52 happened. The order of the arms is
+    /// the order of the old status line, unchanged, because it is also the
+    /// order a player fixes things in.
+    ///
+    /// Returns [`SmelterState::Idle`] for anything that is not a smelter, so
+    /// callers do not have to match the kind twice.
+    pub fn smelter_state(&self, b: &Building) -> SmelterState {
+        let BuildingKind::Smelter(s) = &b.kind else {
+            return SmelterState::Idle;
+        };
+        let walls = self.max_temperature(b);
+        let fire = s.burn_temperature.min(walls);
+        let needs = s
+            .input
+            .map(|i| u32::from(self.species(i.item.species).sheet.heat_tolerance));
+        if s.input.is_none() {
+            SmelterState::Idle
+        } else if s
+            .output
+            .is_some_and(|o| o.count >= crate::tuning::SMELTER_OUTPUT_CAP)
+        {
+            SmelterState::Stalled(SmelterStall::OutputFull)
+        } else if s.burn_left == 0 && s.fuel.is_none() {
+            SmelterState::Stalled(SmelterStall::NoFuel)
+        } else if s.burn_left == 0 {
+            SmelterState::Stalled(SmelterStall::FuelWontLight)
+        } else if needs.is_some_and(|n| fire < n) {
+            SmelterState::Stalled(SmelterStall::FireTooCool {
+                fire,
+                needs: needs.unwrap_or(0),
+            })
+        } else {
+            SmelterState::Working { at: fire }
+        }
     }
 
     /// The deposit covering `pos`, if any.

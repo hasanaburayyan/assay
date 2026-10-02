@@ -6,7 +6,7 @@ use std::fmt::Write;
 use crate::assembly::{
     Assembly, AssemblyError, BreakVerdict, Built, Mount, PART_SPECS, PartKind, Source,
 };
-use crate::building::{Building, BuildingKind, Machine, Slot};
+use crate::building::{Building, BuildingKind, Machine, Slot, SmelterStall, SmelterState};
 use crate::command::{Event, PlayerCommand, RejectReason, StopReason};
 use crate::item::{Item, ItemKind, ItemStack};
 use crate::ladder::Lighting;
@@ -15,7 +15,7 @@ use crate::ore::OreDeposit;
 use crate::recipe::{RECIPES, Station};
 use crate::tuning::{
     FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS, HAND_WORK_PER_TICK, PICK_WEAR_PER_SWING,
-    SMELTER_OUTPUT_CAP, YIELD_BY_GRADE,
+    YIELD_BY_GRADE,
 };
 use crate::types::{PlayerId, TilePos};
 use crate::world::World;
@@ -630,6 +630,9 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
             "machine {} is full at {held} of {capacity} and has stopped: take the ore out, or give it a hopper",
             building.0
         ),
+        Event::SmelterStalled { building, why } => {
+            format!("smelter {} stopped: {}", building.0, stall_reason(*why))
+        }
         Event::MoveStarted { player, from, to } => format!(
             "{} started walking from ({}, {}) to ({}, {})",
             who(player),
@@ -1293,6 +1296,24 @@ pub fn machine_status(world: &World, b: &Building, m: &Machine) -> String {
     )
 }
 
+/// Why a smelter stopped, in the words it has always used.
+///
+/// **ONE VOCABULARY PER CONDITION** (Game Director, ASSA-80, and the rule she
+/// has now applied on ASSA-58, ASSA-61 and ASSA-70). The status line and the
+/// event log are two surfaces and this is one sentence, so a player who reads
+/// the log and then hovers the building is told the same thing twice rather
+/// than two things once.
+pub fn stall_reason(why: SmelterStall) -> String {
+    match why {
+        SmelterStall::OutputFull => "output full".to_string(),
+        SmelterStall::NoFuel => "no fuel".to_string(),
+        SmelterStall::FuelWontLight => "fuel won't light from cold".to_string(),
+        SmelterStall::FireTooCool { fire, needs } => {
+            format!("fire {fire} too cool for ore needing {needs}")
+        }
+    }
+}
+
 /// One line describing what a building holds and whether it is working.
 pub fn building_status(world: &World, b: &Building) -> String {
     let s = match &b.kind {
@@ -1300,25 +1321,15 @@ pub fn building_status(world: &World, b: &Building) -> String {
         BuildingKind::Machine(m) => return machine_status(world, b, m),
     };
     let walls = world.max_temperature(b);
-    let needs = s
-        .input
-        .map(|i| u32::from(world.species(i.item.species).sheet.heat_tolerance));
-    let state = if s.input.is_none() {
-        "idle: nothing to refine".to_string()
-    } else if s.output.is_some_and(|o| o.count >= SMELTER_OUTPUT_CAP) {
-        "stalled: output full".to_string()
-    } else if s.burn_left == 0 && s.fuel.is_none() {
-        "stalled: no fuel".to_string()
-    } else if s.burn_left == 0 {
-        "stalled: fuel won't light from cold".to_string()
-    } else if needs.is_some_and(|n| s.burn_temperature.min(walls) < n) {
-        format!(
-            "stalled: fire {} too cool for ore needing {}",
-            s.burn_temperature.min(walls),
-            needs.unwrap_or(0)
-        )
-    } else {
-        format!("working at {}", s.burn_temperature.min(walls))
+    // **THE DECISION IS `World::smelter_state`'S AND THE WORDS ARE MINE**
+    // (ASSA-80). This chain used to live here, which left `step` no way to
+    // know a smelter had stalled except by re-deriving it -- and a second copy
+    // of a decision is how ASSA-43 and ASSA-52 happened. Same sentences,
+    // same order, decided once.
+    let state = match world.smelter_state(b) {
+        SmelterState::Idle => "idle: nothing to refine".to_string(),
+        SmelterState::Stalled(why) => format!("stalled: {}", stall_reason(why)),
+        SmelterState::Working { at } => format!("working at {at}"),
     };
     format!(
         "walls {walls} · in {} · fuel {} ({} ticks burning at {}) · out {} · {state}",
