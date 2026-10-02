@@ -47,11 +47,64 @@ pub fn burn_temperature(s: &MineralSpecies) -> Option<u32> {
     (t >= FUEL_MIN_REACTIVITY).then_some(t)
 }
 
+/// Whether a hand spark alone sets this species alight.
+///
+/// **NO GRADE ANYWHERE IN HERE** (Game Director's ruling on ASSA-58). Heat
+/// tolerance is the one property grade never scales (`mineral.rs`), so
+/// lightability is a per-species constant and a grade on the clause would be
+/// a lie. Reactivity *does* scale, which is why the "fuel at X or better"
+/// half of the same sentence keeps its grade. The asymmetry is real.
+pub fn lights_from_cold(s: &MineralSpecies) -> bool {
+    u32::from(s.sheet.heat_tolerance) <= HAND_SPARK_TEMPERATURE
+}
+
 /// Fuel a player can mine and light with no machine at all.
 pub fn hand_lit_fuel(s: &MineralSpecies) -> bool {
-    hand_minable(s)
-        && burn_temperature(s).is_some()
-        && u32::from(s.sheet.heat_tolerance) <= HAND_SPARK_TEMPERATURE
+    hand_minable(s) && burn_temperature(s).is_some() && lights_from_cold(s)
+}
+
+/// How a player could ever get this species burning **in this world**.
+///
+/// Three states and not two, because the two ways of collapsing them are both
+/// a lie we have already paid for: folding "needs a hotter fire" into "cannot
+/// be lit" is ASSA-43's trap in reverse, and folding it the other way promises
+/// a fire that does not exist — 56.3% of the time, over 5000 worlds (Game
+/// Director's measurement on ASSA-58).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Lighting {
+    /// A hand spark is enough.
+    FromCold,
+    /// Not from cold, but this world can build a fire that hot.
+    FromAHotterFire,
+    /// Nothing this world can keep burning reaches it.
+    NothingBurnsHotEnough,
+}
+
+/// Which of the three [`Lighting`] states a species is in, for a roster.
+///
+/// **THIS IS THE EXPORT AND [`best_fire`] STAYS PRIVATE, on purpose.** A
+/// caller handed the hottest-fire number has to re-derive "heat tolerance ≤
+/// that", and a second copy of a comparison is exactly how ASSA-43 and
+/// ASSA-52 happened: the note and the rule drifted because each did its own
+/// arithmetic. Hosts get the question answered, never the inputs to answer it
+/// with.
+///
+/// One conservatism inherited from [`best_fire`] and deliberately not changed
+/// here: the chain counts a species as fuel only at [`JUDGED_AT`], so a
+/// species that burns only at grade A is invisible to it. That same function
+/// feeds [`starter_roster_ok`], so widening it would re-roll every world in
+/// the game — a worldgen decision, not a wording one.
+pub fn lighting(species: &[MineralSpecies], id: SpeciesId) -> Lighting {
+    let s = &species[usize::from(id.0)];
+    if lights_from_cold(s) {
+        return Lighting::FromCold;
+    }
+    let minable: Vec<&MineralSpecies> = species.iter().filter(|s| hand_minable(s)).collect();
+    if u32::from(s.sheet.heat_tolerance) <= best_fire(&minable) {
+        Lighting::FromAHotterFire
+    } else {
+        Lighting::NothingBurnsHotEnough
+    }
 }
 
 /// The hottest fire you can keep going with these minable species: light

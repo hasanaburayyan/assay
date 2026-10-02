@@ -15,10 +15,10 @@
 //! also the reason the old sentence was wrong: it promised a machine two
 //! green tests say cannot exist.
 
-use sim::tuning::HAND_MINE_MAX_HARDNESS;
+use sim::tuning::{FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS, HAND_SPARK_TEMPERATURE};
 use sim::{
-    DepositId, Event, Input, PlayerCommand, PlayerId, RejectReason, SystemCommand, World,
-    WorldConfig, step,
+    DepositId, Event, Grade, Input, PlayerCommand, PlayerId, Property, RejectReason, SystemCommand,
+    World, WorldConfig, step,
 };
 
 fn world(seed: u64) -> World {
@@ -430,5 +430,188 @@ fn a_drill_on_an_unsmeltable_rock_does_not_claim_to_be_idle() {
         None,
         "and reach has nothing to say, which is what keeps a working drill out \
          of the idle branch"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ASSA-58: "fuel" is a reactivity test; lighting the thing is another question
+// ---------------------------------------------------------------------------
+
+/// The hottest fire a roster can keep going, **re-derived here on purpose and
+/// in a different shape from `ladder`'s**.
+///
+/// A test that asked `ladder::lighting` what it expected would follow the code
+/// it is checking: swap two arms and it stays green. So the expectation is
+/// built from the primitives instead — the hand spark, heat tolerance, and
+/// `burn_temperature`, which is not what is under test. `ladder` grows one
+/// temperature; this grows the SET of species actually alight and reads the
+/// temperature off it at the end. Same answer by a different route, which is
+/// the only kind of duplication worth having.
+fn hottest_fire(species: &[sim::MineralSpecies]) -> u32 {
+    let mut lit: Vec<&sim::MineralSpecies> = Vec::new();
+    loop {
+        let fire = lit
+            .iter()
+            .filter_map(|s| sim::ladder::burn_temperature(s))
+            .max()
+            .unwrap_or(0);
+        let reach = HAND_SPARK_TEMPERATURE.max(fire);
+        let next: Vec<&sim::MineralSpecies> = species
+            .iter()
+            .filter(|s| sim::ladder::hand_minable(s))
+            .filter(|s| sim::ladder::burn_temperature(s).is_some())
+            .filter(|s| u32::from(s.sheet.heat_tolerance) <= reach)
+            .collect();
+        if next.len() == lit.len() {
+            return fire;
+        }
+        lit = next;
+    }
+}
+
+/// The cheapest grade at which a species counts as fuel at all, or `None` if
+/// none does. Independent of the table's own loop, which iterated the grades
+/// the wrong way round until this item.
+fn cheapest_fuel_grade(s: &sim::MineralSpecies) -> Option<Grade> {
+    Grade::ALL
+        .into_iter()
+        .find(|g| s.effective(Property::Reactivity, *g) >= FUEL_MIN_REACTIVITY)
+}
+
+/// The row of `species_table` for one species, found by its id column so a
+/// generated name that happens to contain another cannot match the wrong row.
+fn species_row(table: &str, s: &sim::MineralSpecies) -> String {
+    let prefix = format!("{:>2}  {:<12}", s.id.0, s.name());
+    table
+        .lines()
+        .find(|l| l.starts_with(&prefix))
+        .unwrap_or_else(|| panic!("no row for {} in\n{table}", s.name()))
+        .to_string()
+}
+
+const LIGHT_SENTENCES: [&str; 3] = [
+    "lights from cold",
+    "needs a hotter fire to light",
+    "nothing here burns hot enough to light it",
+];
+
+/// **EXHAUSTIVE AND THREE-WAY**, the same shape as the dead-end test above:
+/// every fuel row is in exactly one lighting state, and the row has to say
+/// which — and must not say either of the other two. A test that only checked
+/// the cold case would pass while "fuel" promised a fire 35.8% of the time
+/// there is none (measured below over these same worlds).
+///
+/// **STATES 2 AND 3 CANNOT BE COLLAPSED PAST THIS.** They are different
+/// sentences on rows this sweep reaches in the hundreds, so a `lighting` that
+/// returned one for both reddens, in either direction.
+#[test]
+fn every_fuel_row_says_how_that_fuel_could_be_lit() {
+    let (mut cold, mut hotter, mut never, mut not_fuel) = (0, 0, 0, 0);
+    for seed in 1..200 {
+        let w = host_world(seed);
+        let table = sim::debug::species_table(&w);
+        let fire = hottest_fire(&w.species);
+        for s in &w.species {
+            let row = species_row(&table, s);
+            let Some(grade) = cheapest_fuel_grade(s) else {
+                not_fuel += 1;
+                assert!(
+                    !row.contains("fuel") && LIGHT_SENTENCES.iter().all(|t| !row.contains(t)),
+                    "a species nothing would burn must not be offered as fuel: {row}"
+                );
+                continue;
+            };
+            assert!(
+                row.contains(&format!("fuel at {} or better", grade.letter())),
+                "the burn clause must name the CHEAPEST grade that burns ({}): {row}",
+                grade.letter()
+            );
+
+            let heat = u32::from(s.sheet.heat_tolerance);
+            let (want, i) = if heat <= HAND_SPARK_TEMPERATURE {
+                cold += 1;
+                (LIGHT_SENTENCES[0], 0)
+            } else if heat <= fire {
+                hotter += 1;
+                (LIGHT_SENTENCES[1], 1)
+            } else {
+                never += 1;
+                (LIGHT_SENTENCES[2], 2)
+            };
+            assert!(
+                row.contains(want),
+                "seed {seed}: heat {heat} against this world's best fire {fire} means \
+                 \"{want}\": {row}"
+            );
+            for (j, other) in LIGHT_SENTENCES.iter().enumerate() {
+                assert!(
+                    j == i || !row.contains(other),
+                    "seed {seed}: one state per row, and this one claims two: {row}"
+                );
+            }
+        }
+    }
+    // Non-vacuity, every arm: the sweep is only exhaustive if it met all
+    // three. Measured over 2000 worlds: cold 41.6%, hotter fire 22.7%,
+    // never 35.8% of 9418 fuel rows.
+    assert!(cold > 50, "only {cold} cold-lighting rows");
+    assert!(hotter > 50, "only {hotter} needs-a-hotter-fire rows");
+    assert!(never > 50, "only {never} nothing-can-light-it rows");
+    assert!(not_fuel > 50, "only {not_fuel} non-fuel rows");
+}
+
+/// **THE GAME DIRECTOR'S LIVE EXAMPLE, AND IT IS OFF BY ONE.** Seed 777042 is
+/// the world on the board's own #38 bench. Naersernium there is hand-minable,
+/// reactive enough to be called fuel, and has a heat tolerance of 77 — one
+/// degree above the hottest fire that world can build. The old table said
+/// "fuel" and sent you hauling.
+///
+/// Pinned by the numbers and not by the name, so this still means something if
+/// the generated roster is renamed; the name is here for whoever reads a
+/// failure.
+#[test]
+fn seed_777042_has_a_fuel_no_fire_in_that_world_can_light() {
+    let w = host_world(777042);
+    let fire = hottest_fire(&w.species);
+    assert_eq!(
+        fire, 76,
+        "the example is an off-by-one and stops being one if the chain moves"
+    );
+    let table = sim::debug::species_table(&w);
+    let naersernium = w
+        .species
+        .iter()
+        .find(|s| u32::from(s.sheet.heat_tolerance) == 77)
+        .expect("seed 777042 holds a species of heat tolerance 77 (Naersernium)");
+    assert!(
+        cheapest_fuel_grade(naersernium).is_some(),
+        "and it is reactive enough to be called fuel, which is the whole trap"
+    );
+    assert!(
+        sim::ladder::hand_minable(naersernium),
+        "and you can mine it, so the label is reachable in the fiction"
+    );
+    let row = species_row(&table, naersernium);
+    assert!(
+        row.contains("nothing here burns hot enough to light it"),
+        "one degree short must read as a dead end, not as a promise: {row}"
+    );
+}
+
+/// The other two states, on the seed the friend playtest is pinned to
+/// (ASSA-45). Both appear in 14247's roster, which is why it is the seed a
+/// stranger meets: the lesson is readable from the rocks beside spawn.
+#[test]
+fn seed_14247_shows_both_a_cold_light_and_a_hotter_fire() {
+    let w = host_world(14247);
+    let table = sim::debug::species_table(&w);
+    let said: Vec<&str> = LIGHT_SENTENCES
+        .into_iter()
+        .filter(|t| table.contains(t))
+        .collect();
+    assert!(
+        said.contains(&LIGHT_SENTENCES[0]) && said.contains(&LIGHT_SENTENCES[1]),
+        "the pinned world must show a fuel that lights from cold AND one that needs a \
+         hotter fire: got {said:?}\n{table}"
     );
 }
