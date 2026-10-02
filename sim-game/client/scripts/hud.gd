@@ -52,9 +52,12 @@ const SPECIES_TINTS: Array[String] = ["#7A29CC", "#FF3333", "#FF80BF", "#FFFF33"
 		"#509BE6"]
 
 ## A glyph on a deposit is one of these two, never the tint's own colour at another brightness.
-## Near-black and pure white, which is not fussiness: the crossover luminance where they are equally
-## readable is 0.221, and at that point this pair still clears a contrast ratio of 3.8 while
-## (0.08, 0.97) would fall to 2.8 -- under the 3.0 that large text has to make.
+## Near-black and pure white, which is not fussiness: pushing either end inward costs contrast at the
+## purity where that end is the one being chosen, and this pair is what makes the worst case over all
+## six species and all 100 purities 4.52 (`art/check_glyph_contrast.py`).
+##
+## The old note here claimed a "crossover luminance of 0.221". There is no such crossover and the
+## number came from a luminance that is not one -- see `glyph_color`.
 const GLYPH_DARK := Color(0.02, 0.02, 0.03)
 const GLYPH_LIGHT := Color(1.0, 1.0, 1.0)
 
@@ -126,21 +129,54 @@ static func deposit_color(species: int, purity: int) -> Color:
 	return Color(tint.r * dimmed, tint.g * dimmed, tint.b * dimmed, 1.0)
 
 
-## THE LETTER ON A DEPOSIT: DARK OR LIGHT, whichever the patch underneath can be read against.
+## RELATIVE LUMINANCE, WCAG 2.1: linearise each channel, then weight. `Color.get_luminance()` applies
+## those same weights to the sRGB-ENCODED channels and skips the linearisation, which is why it must
+## never be used to compare readability. Measured rather than taken from the docs: Godot's
+## `srgb_to_linear()` agrees with the piecewise formula to 1.3e-7 across 1001 samples, so the engine
+## call is the exact transfer function and not an approximation of it.
+static func relative_luminance(c: Color) -> float:
+	var lin := c.srgb_to_linear()
+	return 0.2126 * lin.r + 0.7152 * lin.g + 0.0722 * lin.b
+
+
+## WCAG CONTRAST RATIO between two opaque colours, 1.0 (identical) to 21.0 (black on white).
+static func contrast_ratio(a: Color, b: Color) -> float:
+	var x := relative_luminance(a) + 0.05
+	var y := relative_luminance(b) + 0.05
+	return x / y if x > y else y / x
+
+
+## THE LETTER ON A DEPOSIT: DARK OR LIGHT, WHICHEVER IS ACTUALLY EASIER TO READ ON THAT PATCH.
 ##
-## Takes the deposit's colour and composites it over the map, so the decision is made against what is
-## actually on screen rather than against the colour that was passed in, then picks on luminance.
-## 0.221 is where the two glyph colours are equally readable, so it is the only threshold that does
-## not favour one.
+## It computes both contrast ratios and keeps the better one. There is no threshold, which is the
+## point: Decision #36 (option A on this item, Maren's ruling) picks the measurement over a constant
+## precisely because a constant is tuned to the six tints that happen to ship today, and the tints have
+## already moved twice this week.
 ##
-## `deposit_color` returns alpha 1.0 now (see its note), so for a deposit this composite is the
-## identity and the lerp costs nothing. IT STAYS ANYWAY, for one reason that is not tidiness: this
-## function's contract is "whatever is drawn there", and it was the only place in the client that had
-## the compositing right while the probe measuring the same disc had it wrong. A function that reads
-## the alpha it is given cannot be made wrong by someone changing that alpha back.
+## WHAT WAS WRONG, because it is worth knowing how confident a wrong comment can sound. This picked
+## `GLYPH_DARK` when `lit.get_luminance() > 0.221`, and said 0.221 was "where the two glyph colours are
+## equally readable". `Color.get_luminance()` weights the sRGB-ENCODED channels without linearising
+## them, so it is not a perceptual luminance and that crossover does not exist. Cove swept all six
+## tints x purity 1..100 and found **226 of 600 states were given the glyph with LESS contrast than the
+## other option would have had** -- worst, the purple species at purity 52, which took 2.22 where 9.18
+## was on the table. I reproduced that in the engine before changing anything: `get_luminance()` there
+## reads 0.22177 while the true relative luminance is 0.0643, a factor of 3.4 apart.
+##
+## THE INVARIANT THIS NOW HOLDS, and why there is no floor in the test: picking the better of two is
+## optimal by construction, so the right assertion is "the chosen glyph is the higher-ratio one at
+## every state", not "every state clears 3.0". 4.5152 (species 2, purity 24) is the worst case of the
+## best possible picker -- the ceiling of this two-colour family, not a target to be met. A floor would
+## rot the moment a tint moves; the invariant cannot. That is Maren's sharpening of acceptance 2.
+##
+## `deposit_color` returns alpha 1.0 now, so for a deposit this composite is the identity and the lerp
+## costs nothing. IT STAYS ANYWAY: this function's contract is "whatever is drawn there", and it was
+## the only place in the client that had the compositing right while the probe measuring the same disc
+## had it wrong. A function that reads the alpha it is given cannot be made wrong by someone changing
+## that alpha back.
 static func glyph_color(on: Color) -> Color:
 	var lit := MAP_BG.lerp(Color(on.r, on.g, on.b), on.a)
-	return GLYPH_DARK if lit.get_luminance() > 0.221 else GLYPH_LIGHT
+	return GLYPH_DARK if contrast_ratio(lit, GLYPH_DARK) >= contrast_ratio(lit, GLYPH_LIGHT) \
+			else GLYPH_LIGHT
 
 
 ## HOW BIG THE LETTER IS, or 0 FOR DON'T DRAW IT. A glyph that does not fit inside its own patch is
