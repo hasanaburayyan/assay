@@ -227,12 +227,19 @@ fn three_peers_on_one_relay_close_the_demo_loop_once_between_them() {
     // Nothing was refused. A rejected command would leave a later stage
     // waiting, but it can also pass silently (a `stop` nobody needed), and a
     // session with a refusal in it is not the session this test describes.
+    //
+    // **BOTH WORDINGS, SO THIS CANNOT GO BLIND THE NEXT TIME THE SENTENCE IS
+    // REWORDED.** ASSA-70 moved it from "`insert ...` was rejected" to "putting
+    // ... was refused", and a check for the old phrase alone would have gone on
+    // passing while covering nothing.
     for (i, lines) in [&ada, &bo, &cy].iter().enumerate() {
-        assert!(
-            !says(lines, "was rejected"),
-            "{} had a command refused\n{diagnostics}",
-            NAMES[i]
-        );
+        for phrase in ["was refused", "was rejected"] {
+            assert!(
+                !says(lines, phrase),
+                "{} had a command refused ({phrase})\n{diagnostics}",
+                NAMES[i]
+            );
+        }
     }
 
     // --- LOCKSTEP, peer against peer.
