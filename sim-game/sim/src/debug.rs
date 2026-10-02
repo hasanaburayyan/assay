@@ -8,7 +8,7 @@ use crate::assembly::{
 };
 use crate::building::{Building, BuildingKind, Machine, Slot};
 use crate::command::{Event, PlayerCommand, RejectReason, StopReason};
-use crate::item::{Item, ItemStack};
+use crate::item::{Item, ItemKind, ItemStack};
 use crate::ladder::Lighting;
 use crate::mineral::{Grade, MineralSpecies, NameError, Property, Sheet, SpeciesId};
 use crate::ore::OreDeposit;
@@ -941,6 +941,53 @@ pub fn recipe_table() -> String {
             .collect();
         if r.station == Station::Smelter {
             needs.push("fire ≥ the ore's heat tolerance".into());
+        }
+        // **WHICH ROCK YOU SPEND ON THE SMELTER BODY IS A REAL DECISION AND
+        // NOTHING SAID SO** (Game Director, ASSA-61). The walls are their
+        // material's heat tolerance (`World::max_temperature`) and the fire
+        // runs at `burn_temperature.min(walls)`, so the obvious choice - the
+        // starter rock you are already carrying - gives worse walls than the
+        // best rock you can mine in 86% of worlds, and in 42% that quietly
+        // costs the player a species of their rung zero. It never costs them
+        // the demo, which is why this is P2: the starter rock always smelts
+        // itself, measured over 20000 worlds with no exception.
+        //
+        // **THE RULE HERE, THE NUMBERS ELSEWHERE.** The species table already
+        // prints heat tolerance and `building_status` prints the realised
+        // `walls N`; two wordings for one condition is how hosts drift. This
+        // states a relationship, which is why it escapes the no-figures rule
+        // ASSA-52 and ASSA-58 wrote their sentences under. And because heat
+        // tolerance reads as a band until the species is assayed, a player can
+        // only predict their walls to within a band - a third reason to assay,
+        // on a decision taken in the first two minutes of play.
+        //
+        // Keyed on the smelter and NOT derived from `BuildingKind::for_item`,
+        // on purpose: every building's material sets its `max_temperature`,
+        // but only a smelter melts anything with it, so a future placeable
+        // recipe output wants its own sentence rather than inheriting this
+        // one. What keeps this sentence true is behavioural - `reach.rs`
+        // builds a smelter and reads its walls back off the world.
+        if r.output.0 == ItemKind::Smelter {
+            needs.push("walls = the heat tolerance of the ore you build it from".into());
+        }
+        // **THE MOST EXPENSIVE DEAD END IN THE GAME WAS ADVERTISED UNMARKED**
+        // (Game Director, ASSA-59). A gear costs 2 refined — a whole handle,
+        // two thirds of a pick, 40 ticks of smelter time, and smelting is 49%
+        // of the demo's clock — and nothing consumes one. The recipe stays,
+        // because the alloys note still wants gears and deleting it would move
+        // the golden hash for nothing; what stops is the silence.
+        //
+        // On the row and not in the footer, per her ruling: the footer states
+        // things true of several recipes, this is true of one, and a reader
+        // scanning for their row never reaches a footer. In `needs` because it
+        // is the last column and has free width — `makes` is `{:<16}` with six
+        // characters used and would push every column right.
+        //
+        // **NO "YET"**: no accepted decision backs a future use for a gear,
+        // and `reach.rs::no_reach_sentence_promises_a_later_unlock` now reads
+        // these rows too, so the word cannot creep back in quietly.
+        if !crate::recipe::is_consumed(r.output.0) {
+            needs.push(format!("nothing uses a {}", r.output.0.name()));
         }
         let _ = writeln!(
             out,

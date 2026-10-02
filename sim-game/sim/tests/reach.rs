@@ -230,6 +230,21 @@ fn no_reach_sentence_promises_a_later_unlock() {
         dead_ends > 20,
         "the ASSA-52 half of this guard saw only {dead_ends} dead ends"
     );
+    // ASSA-58 AND ASSA-59 PUT THREE MORE IN THE FAMILY. The fuel rows say what
+    // a player cannot light today and the gear row says what nothing consumes
+    // today, which is the same kind of sentence and the same temptation: "needs
+    // a hotter fire" is one word away from promising one, and "nothing uses a
+    // gear" is one word away from promising a use the alloys note only
+    // discusses. The whole recipe table goes in, not the gear row alone — a
+    // guard that watched one row would miss the next sentence like it.
+    let w = host_world(14247);
+    for row in sim::debug::species_table(&w).lines() {
+        if LIGHT_SENTENCES.iter().any(|t| row.contains(t)) {
+            sentences.push(row.to_string());
+        }
+    }
+    sentences.extend(sim::debug::recipe_table().lines().map(str::to_string));
+
     for sentence in &sentences {
         for promise in PROMISES_OF_A_LATER_DRILL {
             assert!(
@@ -237,6 +252,77 @@ fn no_reach_sentence_promises_a_later_unlock() {
                 "found {promise:?}, which reads as a later unlock, in: {sentence}"
             );
         }
+    }
+}
+
+/// **A RECIPE WHOSE OUTPUT NOTHING CONSUMES SAYS SO** (ASSA-59). A gear costs
+/// 2 refined — a whole handle, two thirds of a pick, 40 ticks of the demo's
+/// scarcest resource — and the table advertised it with a hardness gate that
+/// read like a gated reward.
+///
+/// **PINNED AS A DERIVATION, NOT AS A ROW.** The clause has to appear exactly
+/// where `recipe::is_consumed` is false, so that the day something consumes a
+/// gear the sentence disappears on its own; a test that only checked the gear
+/// row would be green for a lie.
+#[test]
+fn a_recipe_output_nothing_consumes_says_so() {
+    let table = sim::debug::recipe_table();
+    let mut unconsumed = 0;
+    for r in &sim::RECIPES {
+        let row = table
+            .lines()
+            .find(|l| l.starts_with(r.name))
+            .unwrap_or_else(|| panic!("no row for {}\n{table}", r.name));
+        let clause = format!("nothing uses a {}", r.output.0.name());
+        if sim::recipe::is_consumed(r.output.0) {
+            assert!(
+                !row.contains("nothing uses"),
+                "something does consume a {}, so the row must not say otherwise: {row}",
+                r.output.0.name()
+            );
+        } else {
+            unconsumed += 1;
+            assert!(
+                row.contains(&clause),
+                "nothing consumes a {}, and the row has to say it: {row}",
+                r.output.0.name()
+            );
+        }
+    }
+    // Non-vacuity, and the shape of the claim: exactly one output in the game
+    // is a dead end today, and it is the gear.
+    assert_eq!(
+        unconsumed, 1,
+        "one recipe output is consumed by nothing; if that changed, say which in the commit"
+    );
+    assert!(
+        table.contains("nothing uses a gear"),
+        "and it is the gear:\n{table}"
+    );
+}
+
+/// `is_consumed` is a claim about the whole item roster, so it is checked
+/// against the whole roster rather than against the one kind the sentence is
+/// about. Parts are covered by kind, because `Part::of` makes every part's
+/// material `Refined` whatever item it is handed.
+#[test]
+fn the_gear_is_the_only_item_kind_nothing_consumes() {
+    let kinds = [
+        sim::ItemKind::Ore,
+        sim::ItemKind::Refined,
+        sim::ItemKind::Smelter,
+        sim::ItemKind::Gear,
+        sim::ItemKind::Part(sim::PartKind::Head),
+        sim::ItemKind::Part(sim::PartKind::Hopper),
+        sim::ItemKind::Part(sim::PartKind::Frame(sim::Mount::Held)),
+        sim::ItemKind::Part(sim::PartKind::Frame(sim::Mount::Planted)),
+    ];
+    for kind in kinds {
+        assert_eq!(
+            sim::recipe::is_consumed(kind),
+            kind != sim::ItemKind::Gear,
+            "{kind:?}"
+        );
     }
 }
 
@@ -614,4 +700,56 @@ fn seed_14247_shows_both_a_cold_light_and_a_hotter_fire() {
         "the pinned world must show a fuel that lights from cold AND one that needs a \
          hotter fire: got {said:?}\n{table}"
     );
+}
+
+/// **THE SMELTER ROW SAYS WHERE ITS WALLS COME FROM** (ASSA-61), because it is
+/// the only surface a player reads *before* spending five ore on a body. The
+/// obvious choice — the starter rock you are already standing on — gives worse
+/// walls than the best rock you can mine in 86% of worlds, and in 42% that
+/// costs a species of the player's rung zero without anything saying so.
+///
+/// **THE SENTENCE IS PINNED TO THE BEHAVIOUR, NOT ONLY TO THE STRING.** The
+/// row claims a relationship, so the test checks the relationship holds for
+/// every species in a real roster, at two grades. If walls ever stop coming
+/// from the material, this reddens and the sentence has to be rewritten rather
+/// than quietly becoming false.
+#[test]
+fn the_smelter_row_says_its_walls_come_from_its_material_and_that_is_true() {
+    let table = sim::debug::recipe_table();
+    let clause = "walls = the heat tolerance of the ore you build it from";
+    for r in &sim::RECIPES {
+        let row = table
+            .lines()
+            .find(|l| l.starts_with(r.name))
+            .unwrap_or_else(|| panic!("no row for {}\n{table}", r.name));
+        assert_eq!(
+            row.contains(clause),
+            r.output.0 == sim::ItemKind::Smelter,
+            "only the thing with walls talks about walls: {row}"
+        );
+    }
+
+    let w = host_world(14247);
+    for s in &w.species {
+        let heat = u32::from(s.sheet.heat_tolerance);
+        // Both grades, because heat tolerance is the one property grade never
+        // scales — the same asymmetry ASSA-58's light clause rests on. A grade
+        // in this sentence would be a lie, and this is what makes that true.
+        for grade in [Grade::C, Grade::A] {
+            let b = sim::Building {
+                id: sim::BuildingId(0),
+                pos: w.spawn_tile(),
+                material: sim::Item::new(sim::ItemKind::Smelter, s.id, grade),
+                kind: sim::BuildingKind::for_item(sim::ItemKind::Smelter)
+                    .expect("a smelter item places a smelter"),
+            };
+            assert_eq!(
+                w.max_temperature(&b),
+                heat,
+                "a smelter of {} grade {} must have that rock's walls",
+                s.name(),
+                grade.letter()
+            );
+        }
+    }
 }
