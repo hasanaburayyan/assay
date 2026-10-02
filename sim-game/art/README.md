@@ -268,6 +268,66 @@ regenerated `uid://`s — does not occur either: deleting every sidecar and the
 whole `.godot/` cache and re-importing at a different absolute path reproduces
 all nine uids exactly.
 
+## The letter on the disc, and the two things that are not the same question
+
+```bash
+art/species_probe.py          # GREEN; gates that a readable letter EXISTS
+art/check_glyph_contrast.py   # RED today on purpose (ASSA-39); asks the ENGINE
+```
+
+The probe measured disc against disc and disc against map background for two
+days and never once measured the **glyph against the disc it sits on**, so "the
+map is green" was green about two of the three things on the map. A letter at
+contrast ratio 2.22 shipped under a passing check (**ASSA-39**, **ASSA-44**).
+
+These are two different claims and only one of them is the art's:
+
+- **Can a letter be read here at all?** Mine, because the tints are mine. If
+  both glyph colours are unreadable on some disc, no picking rule can rescue
+  it. `species_probe.py` gates `max(dark, light)` — the ceiling of any possible
+  picker — against **WCAG AA for normal text, 4.5**. Not large text's 3.0:
+  `glyph_size` draws down to 10px, so `hud.gd`'s own comment is wrong about its
+  own glyph (Maren, ASSA-39). **Worst state is 4.5152, at `#FF80BF` purity 24 —
+  a margin of 0.0152, one part in 300.** Said out loud rather than buried: a
+  tint change that drops this below 4.5 is a design conversation about the
+  tint, never a bound to raise in the file.
+- **Does the client PICK the better of the two?** Not mine, and not measurable
+  in Python. `check_glyph_contrast.py` runs the client headless, calls
+  `AssayHud.deposit_color` and `AssayHud.glyph_color` for all 600 states, and
+  scores **what the engine actually returned**. RED today: 226 of 600 states get
+  the glyph with less contrast than the other option would have had.
+
+**Why it is built that way, and it is the trap I keep falling into.** The easy
+version computes both ratios in Python, takes the better, and asserts that
+taking the better takes the better. That passes by construction, measures
+nothing, and would stay green if `hud.gd` reverted tomorrow — the same shape as
+my map-disc check certifying a disc the client never draws. A tautology is
+worse than no check, because it occupies the place where a check should be.
+So the optimality claim is only ever made about an answer the engine gave.
+
+```bash
+GLYPH_FAKE_THRESHOLD=1 art/check_glyph_contrast.py  # replay the old rule -> FAIL
+GLYPH_ONE_SPECIES=3    art/check_glyph_contrast.py  # narrowed sweep -> PASSES
+GLYPH_FAKE_LINEAR=1    art/check_glyph_contrast.py  # dead transform -> caught
+```
+
+`GLYPH_ONE_SPECIES=3` is there because **a lever that makes a check pass is
+worth having explicitly**: `#FFFF33` is 0 of 100 suboptimal, the one tint the
+broken threshold gets right everywhere, so grading only it reports GREEN while
+226 states are wrong. And the lever is per-species rather than per-purity
+because I guessed wrong first — ASSA-39 found the worst *ratio* mid-range, so I
+assumed end-sampling would hide the defect, and wrote that down before
+measuring. Purity 1 is suboptimal for three species and purity 100 for two.
+
+**Two instruments that disagree.** The probe first said 4.5120 at `#509BE6`
+purity 46 while the engine check said 4.5152 at `#FF80BF` purity 24. Cause:
+`dim_v` rounds the disc to 8-bit, which is right everywhere else in that file
+(dE cannot see half a code value) and decisive here, where three species sit
+within 0.015 of each other at their flip points. `disc_exact` is the float
+version, and it reproduces the engine's own `deposit_color` for all 600 states
+to **1.1e-5** of a code value against `map_disc`'s **0.5**. The two now agree
+exactly, and both match the number Maren derived independently.
+
 ## Machines are overlaid part sprites, and the seams have to show
 
 A machine is never a sprite. It is whole part frames stacked at one position

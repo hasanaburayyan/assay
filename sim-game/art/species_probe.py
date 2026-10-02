@@ -37,7 +37,7 @@ import os
 import re
 import sys
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from species_tints import SPECIES_TINTS
@@ -159,6 +159,25 @@ _bg = _hud_number(r"MAP_BG\s*:?=\s*Color\(([0-9.]+),\s*([0-9.]+),\s*([0-9.]+)\)"
                   "MAP_BG")
 MAP_BG = tuple(round(c * 255) for c in _bg)
 
+# THE LETTER ON THE DISC (ASSA-44). Read from hud.gd for the same reason as
+# everything above it: a retyped pair of glyph colours is a copy that can drift.
+#
+# NOT ROUNDED to 8-bit, unlike MAP_BG above, and the difference is not academic.
+# `Color(0.02, 0.02, 0.03)` is 5.1/5.1/7.65 out of 255; rounding it to (5, 5, 8)
+# moved my worst state from species2 purity 24 to species5 purity 46 and the
+# worst ratio by 0.003. Harmless anywhere else in this file, decisive here,
+# because three species sit within 0.015 of each other at their flip points. The
+# client computes this in float and so does this check now. `_lin` divides by
+# 255 itself, so a float scaled to 255 is the right thing to hand it.
+GLYPH_DARK = tuple(c * 255.0 for c in _hud_number(
+    r"GLYPH_DARK\s*:?=\s*Color\(([0-9.]+),\s*([0-9.]+),\s*([0-9.]+)\)", "GLYPH_DARK"))
+GLYPH_LIGHT = tuple(c * 255.0 for c in _hud_number(
+    r"GLYPH_LIGHT\s*:?=\s*Color\(([0-9.]+),\s*([0-9.]+),\s*([0-9.]+)\)", "GLYPH_LIGHT"))
+# WCAG AA for normal text. Not large text's 3.0, even though hud.gd's own
+# comment claims that bar: `glyph_size` draws a letter down to 10px, which is
+# not large text (Maren, ASSA-39).
+GLYPH_AA = 4.5
+
 # The lever overrides the client's base, never the alpha: pretending the client
 # shipped a different base is a question you can ask, and pretending it ships a
 # disc it does not draw is the mistake this file just made.
@@ -242,6 +261,22 @@ def lab(rgb):
 def dE(a, b):
     la, lb = lab(a), lab(b)
     return math.sqrt(sum((la[i] - lb[i]) ** 2 for i in range(3)))
+
+
+def wcag_ratio(a, b):
+    """Contrast ratio between two colours, the WCAG way: LINEARISED relative
+    luminance, which is the step `Color.get_luminance()` in Godot does not take.
+
+    That omission is the whole of ASSA-39 -- a crossover picked in the encoded
+    space says nothing about what a reader can see -- so this reuses `_lin`
+    rather than carrying a second copy of the transfer curve. dE is the wrong
+    instrument here and every other number in this file is dE: contrast is a
+    LUMINANCE relation and a letter on a disc either has it or does not,
+    regardless of how far apart their hues are."""
+    ya = 0.2126 * _lin(a[0]) + 0.7152 * _lin(a[1]) + 0.0722 * _lin(a[2])
+    yb = 0.2126 * _lin(b[0]) + 0.7152 * _lin(b[1]) + 0.0722 * _lin(b[2])
+    hi, lo = max(ya, yb), min(ya, yb)
+    return (hi + 0.05) / (lo + 0.05)
 
 
 def mean_rgb(img):
@@ -403,6 +438,34 @@ def dim_v(rgb, k):
     or it is certifying a surface nobody draws."""
     h, s, v = colorsys.rgb_to_hsv(*[c / 255.0 for c in rgb])
     return tuple(round(c * 255) for c in colorsys.hsv_to_rgb(h, s, v * k))
+
+
+def disc_exact(hexcolour, purity):
+    """The disc as a FLOAT, for the one check whose margin is smaller than a
+    rounding step. (ASSA-44)
+
+    `map_disc` goes through `dim_v`, which ROUNDS to 8-bit. Everywhere else in
+    this file that is correct and I am not touching it: dE cannot see half a
+    code value, and every existing number here was measured with it.
+
+    The glyph gate can see it. Three species sit within 0.015 of each other at
+    their flip points, so rounding moved my worst state from species2 purity 24
+    to species5 purity 46 and the worst ratio by 0.022 -- larger than the whole
+    margin the gate has. I found that by disagreeing with my OWN other check
+    rather than by thinking about it.
+
+    Verified against the engine: this reproduces `AssayHud.deposit_color`'s own
+    output for all 600 states to within 1.1e-5 of a code value, where `map_disc`
+    is off by up to 0.5. Scaling r, g and b together is identical to scaling
+    HSV's V -- V is just max(r, g, b) -- so this is the same operation as
+    `dim_v` without the quantisation, and it is also literally the line
+    `deposit_color` runs."""
+    part = min(1.0, max(MAP_PURITY_MIN, purity / 100.0))
+    dimmed = MAP_BASE + MAP_SPAN * part
+    c = tuple(v * dimmed for v in hex_rgb(hexcolour))
+    if MAP_OPAQUE or MAP_ALPHA >= 1.0:
+        return c
+    return tuple(_bg[i] * 255.0 * (1 - MAP_ALPHA) + c[i] * MAP_ALPHA for i in range(3))
 
 
 def dAB(a, b):
@@ -662,6 +725,71 @@ def main():
         print("    species%d  map %s  world #%02X%02X%02X  dE(a*b*) %5.1f"
               % (i, c, round(world[0]), round(world[1]), round(world[2]),
                  dAB(hex_rgb(c), world)))
+
+    # ---- 2c. THE LETTER ON THE DISC (ASSA-44, acceptance 4 of ASSA-39).
+    #
+    # This file measured disc against disc and disc against map background for
+    # two days and never once measured the GLYPH against the disc it sits on.
+    # So "the map is green" was green about two of the three things on the map,
+    # and a letter at contrast ratio 2.22 went out under my own passing check.
+    # The map disc is the cue colourblind players lose; the letter is what they
+    # are supposed to read instead, which makes it the least optional thing here.
+    #
+    # WHAT THIS GATES AND WHAT IT DELIBERATELY DOES NOT.
+    #   MINE: that the tint table admits a readable letter AT ALL. If both glyph
+    #   colours are unreadable on some disc, no picking rule can rescue it, and
+    #   the tints are mine. So the gate is on max(dark, light) -- the ceiling of
+    #   any possible picker -- against WCAG AA for normal text.
+    #
+    #   NOT MINE, AND NOT MEASURABLE HERE: whether `glyph_color` actually PICKS
+    #   the better of the two. That is a property of a GDScript function, and
+    #   the honest way to check it is to run the client and ask -- which is
+    #   `art/check_glyph_contrast.py`, and which is RED today for the 226 states
+    #   ASSA-39 is about. It would be very easy to compute both ratios here,
+    #   take the better, and assert that taking the better takes the better.
+    #   That passes by construction, measures nothing, and would stay green if
+    #   the client reverted tomorrow. A tautology is worse than no check,
+    #   because it occupies the place where a check should be.
+    print("\nthe LETTER ON THE DISC: %d species x purity 1-100, true WCAG"
+          % len(SPECIES_TINTS))
+    print("contrast (LINEARISED, which is the step get_luminance() skips).")
+    print("dark %s / light %s (of 255, unrounded), both READ from hud.gd."
+          % (tuple(round(c, 2) for c in GLYPH_DARK),
+             tuple(round(c, 2) for c in GLYPH_LIGHT)))
+    print("Gate is on the")
+    print("BEST AVAILABLE letter, floor %.1f = WCAG AA normal text." % GLYPH_AA)
+
+    glyph_worst = (99.0, None)
+    glyph_cases = []
+    for i, c in enumerate(SPECIES_TINTS):
+        per = (99.0, None)
+        for p in range(1, 101):
+            disc = disc_exact(c, p)
+            best = max(wcag_ratio(disc, GLYPH_DARK), wcag_ratio(disc, GLYPH_LIGHT))
+            if best < per[0]:
+                per = (best, p)
+            if best < glyph_worst[0]:
+                glyph_worst = (best, (i, p))
+        d_at, l_at = (wcag_ratio(disc_exact(c, per[1]), g) for g in (GLYPH_DARK, GLYPH_LIGHT))
+        print("    species%d %s  best letter %5.2f at purity %3d  (dark %5.2f,"
+              " light %5.2f)" % (i, c, per[0], per[1], d_at, l_at))
+        glyph_cases.append((i, c, per[1], d_at, l_at))
+    gw, (gs, gp) = glyph_worst
+    print("  worst available over %d states: %.4f at species%d purity %d,"
+          % (6 * 100, gw, gs, gp))
+    print("  margin %+.4f on AA normal text (%.1f), %+.4f on large text (3.0)."
+          % (gw - GLYPH_AA, GLYPH_AA, gw - 3.0))
+    # Said out loud because 0.0152 is one part in 300 and I would rather the
+    # team knew it than discovered it. The worst state sits exactly where the
+    # two glyph colours are equally readable -- the flip point -- so this is a
+    # property of the tint ramp and not of any picker.
+    if gw < GLYPH_AA:
+        ok = False
+        print("\n  FAIL: the tint table no longer admits a letter that meets AA"
+              "\n  for normal text at every state, and NO picking rule can fix"
+              "\n  it -- %.4f is the ceiling. The letter is the accessibility"
+              "\n  read, so this is a conversation about the TINT (the"
+              "\n  Director's call), never a bound to raise in this file." % gw)
 
     # ---- 3. THE AXIS COLLISION
     # An ore tile already spends a visual axis on TIER, and parts spend one on
@@ -1112,10 +1240,48 @@ def main():
             for s, c in enumerate(colours):
                 tile = over_ground(tint(base, c), observer)
                 sheet_img.alpha_composite(tile, (gap + s * (cell + gap), y0 + i * (cell + gap)))
+    # ---- block 4: THE LETTER ON THE DISC, at map size (ASSA-44)
+    #
+    # The numbers in section 2c are a luminance relation and I do not trust
+    # myself to imagine one. Each species at its OWN worst purity, the disc
+    # drawn the size the map draws it, with the dark letter on the left of the
+    # pair and the light one on the right. The point of the picture is that at
+    # these states the two are nearly equal, so neither looks obviously wrong --
+    # which is exactly why a threshold that picks the worse one went unnoticed.
+    # The slot is wider than the two discs because the label under it is wider
+    # than the two discs; at 2*GAME they ran into each other and "6.96p72" is
+    # not a number anyone can read.
+    pair, pad, slot = GAME, 3, 2 * GAME + 16
+    gw_ = len(glyph_cases) * slot + pad
+    strip = Image.new("RGBA", (gw_, pair + 2 * pad + 12), tuple(MAP_BG) + (255,))
+    gd = ImageDraw.Draw(strip)
+    letters = ImageFont.load_default(size=int(pair * 0.7))
+    for n, (i, c, p, d_at, l_at) in enumerate(glyph_cases):
+        x0 = pad + n * slot
+        disc = tuple(int(round(v)) for v in disc_exact(c, p))
+        for k, glyph in enumerate((GLYPH_DARK, GLYPH_LIGHT)):
+            x = x0 + k * pair
+            gd.ellipse([x, pad, x + pair - 1, pad + pair - 1], fill=disc + (255,))
+            gd.text((x + pair / 2, pad + pair / 2), chr(ord("A") + i),
+                    fill=tuple(int(round(v)) for v in glyph) + (255,),
+                    font=letters, anchor="mm")
+        gd.text((x0, pad + pair + 1), "p%d %.2f/%.2f" % (p, d_at, l_at),
+                fill=(200, 200, 200, 255))
+    full = Image.new("RGBA", (max(sheet_img.width, strip.width),
+                              sheet_img.height + strip.height + bar),
+                     (30, 32, 30, 255))
+    full.alpha_composite(sheet_img, (0, 0))
+    full.alpha_composite(strip, (0, sheet_img.height + bar))
+    sheet_img = full
+
     sheet_img.save(os.path.join(REVIEW, "species_probe.png"))
     print("\nwrote assets/review/species_probe.png: 6 species x 3 grades, then the")
     print("same six through normal/protan/deutan/tritan twice - EVEN HUE first,")
     print("then the DESIGNED SLOTS. Compare the protan row of each block.")
+    print("Last strip is THE LETTER ON THE DISC at map size: each species at its")
+    print("own worst purity, dark letter then light letter, labelled p<purity>")
+    print("<dark>/<light>. At these states the pair is near-equal, which is how a")
+    print("threshold picking the worse one stayed invisible for two days.")
     return 0 if ok else 1
 
 
