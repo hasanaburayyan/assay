@@ -40,12 +40,49 @@ pub fn identity_inputs(crate_dir: &std::path::Path) -> Vec<(String, Vec<u8>)> {
     files
 }
 
-/// Every `.rs` file under `dir`, as (path relative to `dir`, bytes), sorted
-/// by path — a filesystem's own walk order must never move the identity.
+/// Files under `src` that CANNOT change what a tick computes, and so are not
+/// part of the rules identity (ASSA-85).
+///
+/// **THE ID ANSWERS ONE QUESTION: would these two peers compute different
+/// worlds from the same inputs?** That is what `check_join` asks and the only
+/// thing a refusal can honestly defend. `debug.rs` is pure readout — every
+/// function in it takes `&World` and returns a `String` — so prose in it
+/// cannot desync anybody, and before this it did: four identity moves in one
+/// afternoon, all from wording changes, with both golden hashes unmoved
+/// through every one. The Decision #38 bench spent hours refusing clients
+/// built from current main because of it, which would have turned the board
+/// away on an open hard gate.
+///
+/// **EXCLUDING A FILE IS A CLAIM THAT ROTS**, so it is checked rather than
+/// trusted: `tests/rules_identity.rs::nothing_in_the_identity_reaches_the_
+/// excluded_files` fails if anything still in the identity references one of
+/// these modules. Move a rule into `debug.rs` and that test tells you the id
+/// has stopped covering it, instead of a player finding out as a desync.
+///
+/// Exact relative paths, not patterns: a `debug.rs` that moved or split would
+/// fall back INTO the identity, which is the safe direction, and the
+/// assertion below catches the list going stale either way.
+pub const NOT_RULES: &[&str] = &["debug.rs"];
+
+/// Every `.rs` file under `dir` that is a rule, as (path relative to `dir`,
+/// bytes), sorted by path — a filesystem's own walk order must never move the
+/// identity.
 pub fn source_files(dir: &std::path::Path) -> Vec<(String, Vec<u8>)> {
     let mut out = Vec::new();
     walk(dir, dir, &mut out);
     out.sort_by(|a, b| a.0.cmp(&b.0));
+    for name in NOT_RULES {
+        let before = out.len();
+        out.retain(|(path, _)| path != name);
+        // A LYING EXCLUSION LIST IS WORSE THAN NO LIST. If the file it names
+        // is gone, the list was written for a tree that no longer exists and
+        // the next reader would believe a claim nobody is checking.
+        assert!(
+            out.len() < before,
+            "{name} is excluded from the rules identity and no such file is              under {}. Either it moved — in which case it is back IN the              identity and this list must say so — or the exclusion is stale.",
+            dir.display()
+        );
+    }
     out
 }
 
