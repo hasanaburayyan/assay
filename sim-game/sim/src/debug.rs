@@ -1138,7 +1138,22 @@ pub fn recipe_table() -> String {
         // one. What keeps this sentence true is behavioural - `reach.rs`
         // builds a smelter and reads its walls back off the world.
         if r.output.0 == ItemKind::Smelter {
-            needs.push("walls = the heat tolerance of the ore you build it from".into());
+            // **CONSEQUENCE FIRST, DEFINITION SECOND** (Game Director,
+            // ASSA-76). What shipped on ASSA-61 defined `walls` and never said
+            // what walls DO -- and "walls" is jargon introduced in this very
+            // cell, so a player read a definition with no consequence and had
+            // no reason to care which rock they spent. The same defect ASSA-52
+            // fixed one slot over: "hand-minable" was true and stopped.
+            //
+            // Until this, the consequence only reached them through the
+            // `TooHotForWalls` refusal, which fires after five ore are already
+            // spent on the wrong rock. The point of the clause is to speak at
+            // the moment of choice.
+            needs.push(
+                "melts ore up to its walls; walls = the heat tolerance of the ore you build \
+                 it from"
+                    .into(),
+            );
         }
         // **THE MOST EXPENSIVE DEAD END IN THE GAME WAS ADVERTISED UNMARKED**
         // (Game Director, ASSA-59). A gear costs 2 refined — a whole handle,
