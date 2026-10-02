@@ -393,6 +393,12 @@ fn the_species_row_never_says_bare_hand_minable_for_a_dead_end() {
 /// `deposit_reach_note` and not the dead-end note. The hopper fills; the ore
 /// is a dead end; the rock's own line says so. A machine reports what the
 /// machine is doing.
+///
+/// **THIS PINS THE MECHANISM, NOT THE PANEL.** It asserts what
+/// `machine_status` is handed, which is not the same as asserting what it
+/// prints — a caller could stop asking and this would stay green. The panel's
+/// own text is asserted in `tools.rs::the_panel_names_every_reason_a_drill_is_
+/// not_mining`, which has a real planted drill to read it from.
 #[test]
 fn a_drill_on_an_unsmeltable_rock_does_not_claim_to_be_idle() {
     let mut world = host_world(9);
