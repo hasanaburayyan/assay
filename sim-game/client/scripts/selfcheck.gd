@@ -11,8 +11,10 @@ extends RefCounted
 ## This is also the only way the Windows artifact gets checked at all: nobody here has a Windows
 ## machine, but the Windows runner can run what it just built.
 ##
-## IT CHECKS THIS CLIENT'S OWN WIRING ONLY -- framing, address parsing, the net node constructing.
-## No game rule is evaluated: rules live in the `sim` crate and this stays a view.
+## IT CHECKS THIS CLIENT'S OWN WIRING -- framing, address parsing, the net node constructing, and
+## that the `sim-godot` library loaded and can step the real sim. No game rule is evaluated HERE:
+## rules live in the `sim` crate, this stays a view, and the hash it compares is computed by that
+## crate at runtime and never written down in GDScript.
 
 const MARKER := "CLIENT SELFCHECK OK"
 const FAILED := "CLIENT SELFCHECK FAILED"
@@ -87,4 +89,46 @@ static func check() -> Array[String]:
 	else:
 		client.free()
 
+	failures.append_array(binding_failures())
+	return failures
+
+
+## DID THE SIM BINDING LOAD, AND DOES IT STEP THE REAL RULES?
+##
+## A `TickBundle` carries inputs, not state, so the world at tick N exists only once something runs
+## `sim::step`. That something is the `sim-godot` cdylib (`sim.gdextension`), never GDScript. If the
+## library is missing the client is a picture of a game: it can draw tick 0 and nothing after. So
+## this is a failure, not a warning.
+##
+## Reached through `ClassDB` ON PURPOSE. Naming `AssaySim` as an identifier when the extension did
+## not load is a PARSE error, which kills this whole script, and Godot exits 0 on that -- the run
+## would leave no marker and no reason. This way a missing library prints which line it was.
+static func binding_failures() -> Array[String]:
+	var failures: Array[String] = []
+	if not ClassDB.class_exists("AssaySim"):
+		failures.append(
+			"the sim binding did not load: no AssaySim class. Build it first -- "
+			+ "`cargo build -p sim-godot --release` then copy the library into client/bin/ "
+			+ "(see sim.gdextension). CI builds it per platform before every export."
+		)
+		return failures
+
+	# TWO ROUTES TO ONE NUMBER. `binding_self_check` steps a small world through the binding's own
+	# class; `binding_self_check_expected` calls `sim::step` directly with no class in the way. Both
+	# compute it from the sim at runtime -- NOTHING HERE IS PINNED, because the golden hash moved
+	# twice on 2026-10-01 and a constant in GDScript would have to be chased every time the rules
+	# change. What this proves is the library loaded, registered, generated a world and stepped it.
+	var got := String(ClassDB.class_call_static("AssaySim", "binding_self_check"))
+	var want := String(ClassDB.class_call_static("AssaySim", "binding_self_check_expected"))
+	if got != want:
+		failures.append("the binding stepped to %s, the sim to %s" % [got, want])
+	# A hash crosses as HEX TEXT and never as a number: Godot parses every JSON number as a double
+	# and a u64 hash cannot be spelled in GDScript at all. An empty or zero string is what a failed
+	# call looks like, so the shape is checked too rather than trusting the comparison above.
+	if got.length() != 16 or not got.is_valid_hex_number():
+		failures.append("the binding's hash is not 16 hex digits: '%s'" % got)
+	# Built, not written out: a 16-hex-digit literal in a `.gd` file is what a pinned golden hash
+	# looks like, and `test_sim_binding.gd` fails the suite on any of them, this one included.
+	elif got == "0".repeat(16):
+		failures.append("the binding returned a zero hash, which is not evidence")
 	return failures

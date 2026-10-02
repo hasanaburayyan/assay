@@ -1,3 +1,3 @@
 [workspace]
-members = ["sim", "sim-cli", "sim-net", "sim-relay"]
+members = ["sim", "sim-cli", "sim-godot", "sim-net", "sim-relay"]
 resolver = "3"

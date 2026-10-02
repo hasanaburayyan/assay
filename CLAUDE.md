@@ -97,6 +97,11 @@ why determinism rules are non-negotiable.
   autosaves every 20 ticks, maps accounts → `PlayerId` in
   `world-<seed>.accounts.json`. `auth.rs` has `DevAuthenticator` (trusts the
   name); a Steam ticket verifier goes in the same trait later.
+- **`sim-godot`**: GDExtension host (`cdylib` + `rlib`), over `sim` + `sim-net`.
+  Exposes one class, `AssaySim`: build a world from a relay `Welcome`, apply a
+  `TickBundle` (refused unless it is the next tick), read tick / hash / seed /
+  size. Hashes and seeds cross as **hex text**, never numbers. GDScript submits
+  and reads; the only way this crate changes a world is `sim::step`.
 - **`sim-cli`**: `host.rs` (session, command handlers, local clock/queue or
   online link), `tui.rs` (ratatui inspector: half-block map, world/players/
   inventory/tile/buildings/deposits/inputs panels, scrollable console,
@@ -184,7 +189,8 @@ why determinism rules are non-negotiable.
   the run's Artifacts (login needed) or push a `v*` tag for a public
   GitHub Release.
 - Each zip holds `sim-cli`, `sim-relay` **and the Godot client**
-  (`Assay.app` / `Assay.exe`), exported by the version of Godot pinned in
+  (`Assay.app` / `Assay.exe`, carrying the `sim-godot` library so it runs the
+  real rules), exported by the version of Godot pinned in
   `GODOT_VERSION` in the workflow, from `client/export_presets.cfg`. The
   editor and its export templates are anonymous downloads from the public
   godotengine/godot releases: no account, nothing bought. Every exported
