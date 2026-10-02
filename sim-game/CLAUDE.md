@@ -14,7 +14,10 @@ game design and art direction. This file is the code and art rulebook.
   **hex text**, because Godot parses every JSON number as a double and a `u64`
   hash cannot be spelled in GDScript at all. Build it before opening
   `client/` in Godot (`make client-lib`): the engine aborts with a C++ stack
-  trace if the library the `.gdextension` names is missing.
+  trace if the library the `.gdextension` names is missing. Separately, the
+  FIRST `godot --headless --import` after `.godot/` is gone crashes on exit
+  (signal 11 in `EditorHelp::_gen_extensions_docs`, a Godot bug) having already
+  written a complete cache — run it twice, which is what CI does.
 - `sim-cli/`: terminal client. Default is the ratatui inspector (`tui.rs`);
   `--plain` (or piped stdin) gives the line prompt. `host.rs` holds the
   session and every typed command; add new commands there and they work in

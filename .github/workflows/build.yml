@@ -66,11 +66,11 @@ jobs:
       # no usable message) when a `.gdextension` names a library that is not
       # there -- measured 2026-10-01.
       #
-      # RELEASE, NOT DEBUG, AND NOT AN OPTIMISATION TO UNDO. Building debug here
-      # would reuse what `cargo test` just compiled, and I tried it: the library
-      # loaded ("Initialize godot-rust ... safeguards strict") and then Godot
-      # crashed with signal 11 inside `--import`, before a single test ran (run
-      # 36942131128). Release also matches what the export jobs ship.
+      # Release so this job loads the same configuration the export jobs ship.
+      # (I first used debug to reuse what `cargo test` compiled, saw `--import`
+      # crash, and blamed debug for it in run 36942131128. Wrong: release
+      # crashed identically, and the real cause is the import bug handled in the
+      # next step. Debug would work; release is the better default anyway.)
       - name: The sim binding the client loads
         run: |
           cargo build -p sim-godot --release
@@ -80,7 +80,21 @@ jobs:
         working-directory: sim-game/client
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64"
-          "$GODOT" --headless --import
+          # THE FIRST IMPORT OF A PROJECT WITH A GDEXTENSION CRASHES ON EXIT,
+          # and it is Godot's crash, not ours. The backtrace is Main::cleanup ->
+          # CallQueue::flush -> EditorHelp::_gen_extensions_docs ->
+          # DocTools::generate -> signal 11, i.e. the editor generating docs for
+          # extension classes while shutting down -- long after the import work
+          # itself finished. Measured both on this runner (run 36943152626) and
+          # locally on 4.6.1, where deleting `.godot/` reproduces it every time
+          # and the cache it leaves behind is complete.
+          #
+          # SO THE RETRY IS THE GATE, not a `|| true` that swallows everything:
+          # the first run is allowed to die, the SECOND MUST EXIT 0 (measured:
+          # it does, in 2s, because the cache is already there). The two export
+          # jobs below do the same and say less.
+          "$GODOT" --headless --import || "$GODOT" --headless --import
+          grep -q 'sim.gdextension' .godot/extension_list.cfg
           "$GODOT" --headless --script tests/run_tests.gd | tee suite.log
           # GODOT EXITS 0 ON A COMPILE ERROR, so the count the runner prints is
           # the verdict and the exit code is not. Grep the file, never a pipe.
@@ -151,7 +165,10 @@ jobs:
           # with a C++ stack trace and no reason (exit 134, measured).
           test -f bin/libsim_godot.dylib \
             || { echo "no bin/libsim_godot.dylib: the step above did not run"; exit 1; }
-          "$GODOT" --headless --import
+          # First import crashes on exit in Godot's own doc generation; the
+          # second must not. The long version is in the test job above.
+          "$GODOT" --headless --import || "$GODOT" --headless --import
+          grep -q 'sim.gdextension' .godot/extension_list.cfg
           # Godot DOES NOT CREATE THE OUTPUT FOLDER -- it fails with "Target
           # folder does not exist or is inaccessible" (measured 2026-10-01).
           mkdir -p ../bundle/assay-macos
@@ -250,8 +267,19 @@ jobs:
           New-Item -ItemType Directory -Force bin | Out-Null
           Copy-Item ../target/release/sim_godot.dll bin/
           if (-not (Test-Path bin/sim_godot.dll)) { throw "no bin/sim_godot.dll to export with" }
+          # First import crashes on exit in Godot's own doc generation for
+          # extension classes; the second must not. The long version is in the
+          # test job above.
           & $godot --headless --import
-          if ($LASTEXITCODE -ne 0) { throw "godot --import exited $LASTEXITCODE" }
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "first --import exited $LASTEXITCODE; retrying once"
+            & $godot --headless --import
+            if ($LASTEXITCODE -ne 0) { throw "godot --import exited $LASTEXITCODE twice" }
+          }
+          if (-not (Select-String -Path .godot/extension_list.cfg `
+              -Pattern 'sim.gdextension' -Quiet)) {
+            throw "the import registered no sim.gdextension"
+          }
           # Godot does not create the output folder (measured on macOS; same
           # exporter). The preset embeds the pack, so this is one .exe.
           New-Item -ItemType Directory -Force ../bundle/assay-windows | Out-Null
