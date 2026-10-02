@@ -32,8 +32,32 @@ func test_a_message_survives_its_own_framing() -> bool:
 		return _fail("the name did not survive: %s" % back)
 	if int(body.get("protocol", -1)) != AssayProtocol.protocol_version():
 		return _fail("the protocol number did not survive: %s" % back)
+	# ASSA-40: the relay compares this for equality, so a character lost in framing would be refused
+	# by every host -- the least debuggable failure on offer.
+	if String(body.get("rules", "")) != AssayProtocol.rules_id():
+		return _fail("the rules identity did not survive: %s" % back)
 	if reader.pending_bytes() != 0:
 		return _fail("%d bytes left over after one message" % reader.pending_bytes())
+	return true
+
+
+## WHICH RULES THIS BUILD RUNS, AND WHY IT IS TEXT (ASSA-40).
+##
+## Sixteen hex digits, from Rust, never a number: `0123456789abcdef` through a GDScript double comes
+## back as something else entirely, and a mangled identity is refused by every relay with a message
+## blaming the rules rather than the parsing. The check that it is not `UNKNOWN_RULES` is the one
+## that matters in a shipped build -- that value means the library did not load, and `join()` stops
+## before saying hello in that case.
+func test_the_rules_identity_is_hex_text_from_rust() -> bool:
+	var id := AssayProtocol.rules_id()
+	if id == AssayProtocol.UNKNOWN_RULES:
+		return _fail("the sim binding did not load, so this client has no rules identity")
+	if id.length() != 16:
+		return _fail("expected 16 hex digits, got %d: %s" % [id.length(), id])
+	if not id.is_valid_hex_number(false):
+		return _fail("not hex text: %s" % id)
+	if id != String(ClassDB.class_call_static("AssaySim", "rules_id")):
+		return _fail("protocol.gd disagreed with the binding: %s" % id)
 	return true
 
 

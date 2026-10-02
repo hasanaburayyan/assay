@@ -10,6 +10,24 @@
 //! - iterate in a stable order (`Vec`, not `HashMap`)
 //! - integers for anything that affects the rules
 
+/// **WHICH RULES THIS BINARY WAS BUILT FROM** (ASSA-40): a fingerprint of
+/// this crate's source, computed by `build.rs` and baked in. Sixteen hex
+/// digits, like a world hash.
+///
+/// It exists because `PROTOCOL_VERSION` answers a different question. That
+/// tracks the shape of the wire; this tracks the rules, and the rules change
+/// without the wire changing — #47 moved one constant, every stat derived
+/// from it moved, and a relay built an hour earlier spoke the same protocol
+/// while playing a different game. Hosts compare this at join time
+/// (`sim_net::check_join`) so the first symptom is a sentence a stranger can
+/// act on, instead of a desync twenty ticks in.
+///
+/// **NOTHING IN THE RULES MAY READ THIS.** It is not world state, it is not
+/// in the state hash, and a `step` that branched on it would make two builds
+/// disagree on purpose. It is for hosts deciding whether to talk to each
+/// other, and for a log line.
+pub const RULES_ID: &str = env!("SIM_RULES_ID");
+
 pub mod assembly;
 pub mod building;
 pub mod command;
@@ -23,6 +41,7 @@ pub mod ore;
 pub mod player;
 pub mod recipe;
 pub mod rng;
+pub mod rules_fingerprint;
 pub mod save;
 pub mod step;
 pub mod tuning;
