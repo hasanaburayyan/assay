@@ -139,6 +139,32 @@ func _report() -> void:
 	for line in AssayHud.tile_lines(tile):
 		print("    %s" % line)
 
+	# 2b. THE BENCH, AS THE PANEL WOULD SHOW IT. Built by the same `AssayHud` calls `main.gd`'s
+	# `_refresh_bench` uses, on the designs the sim says THIS player owns, so what prints here is the
+	# text that would be on screen -- which is the thing Decision #38 asks the board to judge.
+	#
+	# It is a READOUT, not a check, with one exception below: how many designs a player has is a fact
+	# about the world, not a rule, so "no designs" is the honest answer on a fresh world and must not
+	# be a failure. `BENCH_MUST_HAVE_ROWS=1` turns it into one, which is how the demo setup proves the
+	# board will not open an empty panel -- the claim "the bench is already full" then has to survive
+	# a join under their own account instead of being something I watched happen once.
+	var designs := _sim.designs_of(_client.player_id)
+	print("  the bench, as the panel builds it (%d design(s) for player %d):"
+			% [designs.size(), _client.player_id])
+	if designs.is_empty():
+		print("    %s" % AssayHud.no_designs_line())
+	for entry in designs:
+		var design: Dictionary = entry
+		print("    [%s]" % String(design.get("verdict", "?")))
+		for line in AssayHud.design_lines(design):
+			print("      %s" % line)
+	if OS.get_environment("BENCH_MUST_HAVE_ROWS") != "" and designs.is_empty():
+		_finish(false, ("the bench is empty for player %d, and this run required rows. The board "
+				+ "would open the panel on '%s'. Either the session probe did not play under this "
+				+ "account, or it is still holding it open and we landed on a fresh player.")
+				% [_client.player_id, AssayHud.no_designs_line()])
+		return
+
 	# 3. EVERY UNASSAYED READING IS A BAND. The sim decides; this fails if a single number ever
 	# arrives for a species nobody has assayed.
 	for entry in _sim.species_sheets():
