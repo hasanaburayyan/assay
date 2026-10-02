@@ -59,7 +59,7 @@ from statistics import median
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from part_layout import PART_REPEAT_OFFSET
+from part_layout import PART_REPEAT_OFFSET, SHADOW_CEILING, stack
 from species_probe import DISTINCT, GRADE_ROWS, dE, lab
 
 # RED LEVER. ASSA-16's lesson was a check that passed on the exact defect it
@@ -79,12 +79,18 @@ if os.environ.get("PART_OFFSET"):
 #                   ASSA-28 defect; the PART SEAM check MUST fail at grade A.
 #   HOPPER_DARK=1   drives the body down into its own well, which is the way
 #                   fixing that breaks the part; the OPEN BOX check MUST fail.
+#   STACK_OVER=1    puts plain `alpha_composite` back in place of
+#                   part_layout.stack, which is the operator that compounded
+#                   the parts' shadows (ASSA-38); CHECK 6 MUST fail.
 HOPPER_LIGHT = os.environ.get("HOPPER_LIGHT")
 HOPPER_DARK = os.environ.get("HOPPER_DARK")
+STACK_OVER = os.environ.get("STACK_OVER")
 if HOPPER_LIGHT:
     print("[RED RUN] hopper lightened toward the deck; the part-seam check MUST fail at A")
 if HOPPER_DARK:
     print("[RED RUN] hopper darkened into its own well; the open-box check MUST fail")
+if STACK_OVER:
+    print("[RED RUN] parts stacked with plain `over`; the shadow-compounding check MUST fail")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SPR = os.path.join(ROOT, "assets", "sprites")
@@ -164,7 +170,14 @@ def assemble(parts, grade, owners=False):
             for x in range(w):
                 if lp[x, y][3] > 128:
                     own[y][x] = i
-        out.alpha_composite(layer)
+        # Colour OVER, alpha MAX (part_layout.stack): every part carries its
+        # own contact shadow and `over` compounds them, so a machine's shadow
+        # darkened with each part bolted on. STACK_OVER=1 puts the old
+        # operator back, which is check 6's red lever.
+        if STACK_OVER:
+            out.alpha_composite(layer)
+        else:
+            out = stack(out, layer)
     return (out, own) if owners else out
 
 
@@ -316,6 +329,81 @@ def footprint(img):
     px = img.convert("RGBA").load()
     return sum(1 for y in range(img.height) for x in range(img.width)
                if px[x, y][3] > 128)
+
+
+def palette_floor():
+    """The brightest channel of the DARKEST colour rig.py can draw.
+
+    `part_layout.SHADOW_CEILING` is derived from this - below it, a pixel is
+    darker than any surface the game owns, so it is shadow. Re-derived here on
+    every run instead of trusted, because a constant copied out of another file
+    has stopped being about that file: add one darker palette entry and that
+    surface would start being composited as if it were shadow, silently.
+    Scoped to the PALETTE assignment so the prose around it cannot vote.
+    """
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "rig.py")).read()
+    block = re.search(r"^PALETTE\s*=\s*\{(.*?)^\}", src, re.S | re.M)
+    if not block:
+        raise SystemExit("assemble.py: no PALETTE assignment in rig.py, so the\n"
+                         "    shadow/surface boundary cannot be checked.")
+    hexes = re.findall(r'"(#[0-9A-Fa-f]{6})"', block.group(1))
+    if not hexes:
+        raise SystemExit("assemble.py: PALETTE parsed but held no colours.")
+    floor = min(max(int(h[i:i + 2], 16) for i in (1, 3, 5)) for h in hexes)
+    # RED LEVER for this guard, reproducing its cause rather than its symptom:
+    # a palette that gains a colour darker than the shadow boundary.
+    return int(os.environ.get("FAKE_PALETTE_FLOOR") or floor)
+
+
+def darkest_black_alpha(img):
+    """Strongest alpha among EXACTLY BLACK, part-transparent pixels, or None.
+
+    Deliberately stricter than `part_layout.SHADOW_CEILING`, which is the
+    boundary the OPERATOR uses, and the difference is the point. The operator
+    wants every pixel that is shadow-ish, including shadow with a trace of ink
+    mixed in, so that none of them compound. A MEASURE wants the opposite: a
+    set of pixels that cannot change membership as parts are added. I tried the
+    palette boundary here first and it reported a machine getting darker and
+    darker - 217, 226, 254 - because compositing ink over shadow pushes a pixel
+    that was too colourful to count INTO the counted set, carrying its own high
+    alpha with it. The composite and the parts were then being scored on
+    different sets of pixels, which is not a comparison at all.
+
+    RGB exactly 0 is the catcher's own output and nothing else: it is the
+    conservative core of the shadow, it is stable under compositing, and it is
+    the quantity that ran 122 -> 167 when the defect was live.
+
+    Opaque pixels are excluded: nothing in the palette is pure black (`line`
+    is #1A1D23), so an alpha-255 black pixel would be a surface I do not know
+    about, and letting it in would peg the measure at 255 and pass everything.
+    """
+    px = img.convert("RGBA").load()
+    best = None
+    for y in range(img.height):
+        for x in range(img.width):
+            r, g, b, a = px[x, y]
+            if r == 0 and g == 0 and b == 0 and 0 < a < 255:
+                best = a if best is None else max(best, a)
+    return best
+
+
+def _assemble_over(parts, grade):
+    """The same stack with plain `over`, as the control check 6 measures its
+    edge cost against. Deliberately not routed through STACK_OVER: a control
+    that moves when the lever moves is not a control."""
+    w, h = man[parts[0]]["frame_px"]
+    out = Image.new("RGBA", (w, h))
+    seen = {}
+    for p in parts:
+        n = seen.get(p, 0)
+        seen[p] = n + 1
+        layer = Image.new("RGBA", (w, h))
+        layer.alpha_composite(frame_of(p, grade))
+        if n:
+            dx, dy = PART_REPEAT_OFFSET[0] * n, PART_REPEAT_OFFSET[1] * n
+            layer = layer.transform((w, h), Image.AFFINE, (1, 0, -dx, 0, 1, -dy))
+        out.alpha_composite(layer)
+    return out
 
 
 # The machines the minimal demo defines (2026-10-01-minimal-demo-loop.md).
@@ -491,6 +579,115 @@ def main():
             ok = False
             print("  FAIL: rim-to-well spread is %.1f L* at grade %s, under %.0f: the\n"
                   "  well no longer reads as a hole." % (spread, g, DISTINCT))
+
+    # 6. DOES A MACHINE'S SHADOW GET DARKER AS IT GAINS PARTS? (ASSA-38)
+    #
+    # Every part sprite carries its own contact shadow, so stacking parts with
+    # plain `over` compounds them: a machine's darkest shadow ran 122 -> 128 ->
+    # 145 -> 167 from one part to four. That is a gradient nobody chose, read
+    # off a quantity - part count - that the shadow has no business reporting,
+    # and it is the mirror image of what the glint rule forbids. Maren ruled
+    # the cheap fix: colour over, ALPHA MAX (`part_layout.stack`).
+    #
+    # MEASURED AS A PROPERTY OF THE OPERATOR, not of a shadow I have to
+    # recognise. My own shadow classifier ("pure black with partial alpha")
+    # also catches the thin rim where a dark outline antialiases against
+    # transparency - I only found that by looking at the picture - so a bound
+    # that depended on it would be a bound resting on a thing I had got wrong
+    # once already. Under alpha-max the composite's alpha at any pixel IS the
+    # max of its layers', so the claim is exact and the classifier only has to
+    # pick a SET OF PIXELS to look at, not identify shadow correctly: whatever
+    # it selects, the composite may not exceed the parts that made it.
+    floor = palette_floor()
+    print("shadow/surface boundary: palette's darkest colour peaks at %d, "
+          "SHADOW_CEILING is %d" % (floor, SHADOW_CEILING))
+    if floor != SHADOW_CEILING:
+        ok = False
+        print("  FAIL: rig.py's palette now reaches %d, so SHADOW_CEILING (%d) is\n"
+              "  no longer the boundary it was derived from. Below it, a real\n"
+              "  surface would be composited as if it were shadow." % (floor, SHADOW_CEILING))
+
+    print("shadow compounding: darkest black-pixel alpha, 1 part to %d" % (slots + 2))
+    worst_alpha, parts_so_far, compounded = [], [], False
+    for n in range(slots + 1):
+        parts = ("frame",) + ("hopper",) * n + ("head",)
+        comp = assemble(parts, "C")
+        m_comp = darkest_black_alpha(comp)
+        m_parts = max(darkest_black_alpha(frame_of(p, "C")) for p in parts)
+        worst_alpha.append(m_comp)
+        parts_so_far.append(m_parts)
+        if m_comp is None or m_parts is None:
+            ok = False
+            print("  FAIL: no black pixels found at all with %d hoppers, so this\n"
+                  "  check measured nothing and would pass on anything." % n)
+            continue
+        print("  %d part%s: composite %3d, darkest single part %3d"
+              % (len(parts), " " if len(parts) == 1 else "s", m_comp, m_parts))
+        if m_comp > m_parts:
+            ok = False
+            compounded = True
+            print("  FAIL: the assembly is darker (%d) than any part it is made of\n"
+                  "  (%d). The parts' shadows are compounding, so shadow darkness\n"
+                  "  is reporting part count." % (m_comp, m_parts))
+    if not compounded and worst_alpha[0] is not None:
+        print("  flat: %s - a machine's darkest shadow is one part's, however many it has."
+              % " -> ".join(str(a) for a in worst_alpha))
+
+    # THE COST, AND THE GATE I HAD TO WRITE TWICE.
+    #
+    # The first `stack` took the max everywhere, which also stops two parts'
+    # antialiased edges adding their coverage: 232 px of a six-part machine
+    # came out thinner, worst by 80/255, enough to drop one under the 128 this
+    # file calls solid. Invisible at 4x, but a silhouette paying for a
+    # shadow's problem, so the operator now applies alpha-max ONLY where the
+    # pixel comes out black.
+    #
+    # MY FIRST GATE FOR THAT WAS "the solid footprint must equal `over`'s",
+    # and it failed by 170 px - because `over`'s footprint INCLUDED THE
+    # DEFECT. The compounded shadow reached alpha 167, past the 128 threshold,
+    # so 170 px of ground shadow were being counted as part of the machine's
+    # solid shape. A gate that demands the fix reproduce the number the defect
+    # produced is a gate pointed the wrong way round.
+    #
+    # So the gate states the design claim instead, exactly and with no
+    # tolerance: GEOMETRY COMPOSITES AS IT ALWAYS DID. Every pixel that is not
+    # black must have the same alpha under both operators. If the colour test
+    # inside `stack` ever misfires on a geometry pixel, this is what catches
+    # it.
+    full_parts = ("frame",) + ("hopper",) * slots + ("head",)
+    a_max, a_over = assemble(full_parts, "C"), _assemble_over(full_parts, "C")
+    pm, po = a_max.load(), a_over.load()
+    moved, worst_move, shadow_over_solid = 0, 0, 0
+    for y in range(a_max.height):
+        for x in range(a_max.width):
+            r, g, b, a_o = po[x, y]
+            a_m = pm[x, y][3]
+            if max(r, g, b) < SHADOW_CEILING:
+                if a_o > 128 >= a_m:
+                    shadow_over_solid += 1
+                continue
+            if a_m != a_o:
+                worst_move = max(worst_move, abs(a_m - a_o))
+                # Only a pixel that CHANGES SIDES of the solid threshold has
+                # changed the machine's shape. Exact equality is not available
+                # here and chasing it would be dishonest: `stack` decides
+                # shadow-or-surface on the colour it computes, `over` on the
+                # colour PIL computes, and a handful of pixels sit right on
+                # that boundary. 62 of them differ, by at most 10/255. What
+                # must not happen is one of them joining or leaving the
+                # silhouette, and THAT has no tolerance to argue about.
+                if (a_m > 128) != (a_o > 128):
+                    moved += 1
+    print("  silhouette: %d surface px change side of the solid threshold vs plain\n"
+          "  `over` (worst alpha move anywhere on a surface pixel: %d/255)"
+          % (moved, worst_move))
+    print("  and %d px of compounded shadow were dark enough to count as SOLID\n"
+          "  under `over`, which is the defect inflating the machine's own shape"
+          % shadow_over_solid)
+    if moved:
+        ok = False
+        print("  FAIL: the shadow fix moved %d pixels into or out of the machine's\n"
+              "  silhouette. Alpha-max is meant to touch shadow only." % moved)
 
     # the sheet: 2x authoring on top so you can see what it is made of, and the
     # true 1x row below, which is the verdict.

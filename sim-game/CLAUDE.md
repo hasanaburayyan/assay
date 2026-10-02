@@ -89,8 +89,11 @@ works from the inspector or a future graphical client.
   `--pack` repacks from whatever your machine last rendered; a sheet merged
   from another checkout will be silently overwritten with your stale render.
   A modified sheet you did not touch means re-render that asset, not commit.
-- A sprite may overhang its tile; its **contact shadow may not** — the
-  shadow is what says which ground a building claims (ASSA-30).
+- A sprite may overhang its tile, and says nothing about which tile it stands
+  on: occupancy is sim state and the **client** draws it (ASSA-30/38).
+- Overlay part sprites with `part_layout.stack` (colour over, alpha max), or
+  their contact shadows compound and a machine's shadow reports its part
+  count (ASSA-38).
 - Blender 5.x API differences from what you may remember: `scene.node_tree`
   is gone (`scene.compositing_node_group`); render passes were renamed
   (`Z` → `Depth`); the engine is `BLENDER_EEVEE` (not `_NEXT`); set

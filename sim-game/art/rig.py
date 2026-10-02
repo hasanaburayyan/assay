@@ -44,16 +44,19 @@ COS = math.cos(TILT)
 #                 fill 0.9 -> 2.6 moved the handle's peak alpha 249 -> 249.
 # SUN_SOFTNESS is the third: a hard edge is what made it read as geometry.
 #
-# AND ONE CLAUSE MORE (Maren, ruling 2 on ASSA-30): THE CONTACT SHADOW MUST
-# FALL ENTIRELY INSIDE THE OCCUPIED TILE. A sprite is allowed to overhang the
-# tile it stands on -- `sim` gives a machine a (1, 1) footprint while a part
-# frame is 2 tiles wide, and the art adapts to the sim rather than the other
-# way round -- but the shadow is what tells a player which ground the thing
-# actually claims. Body above the ground plane: fine. Shadow on a tile the
-# building does not occupy: a lie about the world, and the renderer cannot
-# undo it. This is the rule going forward; measured on the shipped art it does
-# not hold yet (an assembled machine's shadow leaves its tile to the east,
-# under the head), which is ASSA-38 and NOT a reason to weaken the clause.
+# A CLAUSE THAT LIVED HERE FOR AN HOUR AND WAS WITHDRAWN, kept as a note
+# because the next person will have the same idea. "The contact shadow must
+# fall entirely inside the occupied tile" (Maren, ASSA-30) sounds right and is
+# UNSATISFIABLE: a machine's body is two tiles wide and sits ON the ground, so
+# its contact shadow is two tiles wide too, and no render obeys the rule. I
+# measured the shipped art against it and it failed by most of a tile, which is
+# how the clause got withdrawn rather than how the art got fixed (ASSA-38).
+#
+# A sprite MAY overhang the tile it stands on -- that part stands. What a
+# shadow may not do is CARRY OCCUPANCY: which tile a building claims is sim
+# state the snapshot already has, so the client draws it (placement cursor,
+# `building_at` in the tile readout) and the sprite says nothing about it. A
+# renderer reading the sim beats a rule baked into a picture.
 SUN_TILT = math.radians(9)
 SUN_SOFTNESS = math.radians(30)
 SHADOW_ENERGY = 0.9
@@ -106,6 +109,13 @@ from part_layout import PART_REPEAT_OFFSET  # noqa: F401  (rule 5, see that file
 #    collar straddles it and its bit runs east; a frame (held or planted)
 #    straddles it and its body runs west. Compose by overlaying frames, never
 #    by rendering a per-machine sprite.
+#
+#    OVERLAY WITH `part_layout.stack`, NOT WITH PLAIN `over`: colour composites
+#    over, alpha takes the MAX. Every part sprite carries its own contact
+#    shadow, so the obvious operator compounds them and a machine's shadow
+#    darkens with each part bolted on -- measured, 122 to 167 from one part to
+#    four, a gradient reporting part count that nobody chose (ASSA-38). A
+#    renderer drawing these sprites has to do the same thing.
 #
 # 5. REPEATED PARTS STEP ALONG THE FRAME (the offset rule). Rule 2 is right
 #    for parts that DIFFER and cannot express a COUNT: two hopper sprites
