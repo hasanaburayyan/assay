@@ -39,6 +39,43 @@ TWO MEASURES, AND NEITHER THRESHOLD IS INVENTED HERE
      surface's most saturated TENTH -- the pixels that actually carry its
      colour -- against the same tenth of each ore surface.
 
+  D. THE SAME CONFUSION WITH L* DROPPED, through four observers. REPORTED,
+     NEVER A GATE, and the reason it is not a gate is the whole of what D is
+     for. Maren measured flat #F08A24 against the six tints on hue and
+     chroma alone and found it 0.5 to 10.0 from species1 red -- under
+     DISTINCT -- while this file's measure C put the same orange 46 to 53
+     clear. Both numbers are right. The difference is not flat swatches
+     versus rendered pixels (D reproduces their result on the rendered
+     sprites: 0.3 to 6.5, worst observer); it is whether LIGHTNESS COUNTS.
+
+     IT COUNTS HERE AND IT DOES NOT COUNT BETWEEN TWO SPECIES. `dAB` exists
+     because species may not be told apart by brightness -- GRADE already
+     spends brightness, so two species separated only by L* are one species
+     at two purities. A MACHINE is not a grade of ore. Nothing is using
+     lightness to mean something else between a drill and a deposit, so
+     lightness is a channel they are entitled to be told apart by, and dE76
+     is the honest measure of that pair.
+
+     D'S PAIR IS NOT C'S PAIR, and the first version of this comment got
+     that wrong by subtracting one column from the other. C's nearest
+     deposit to frame/C is species1 at grade C, 51.4 away and mostly in hue
+     (dAB 50.7, dL* 8.3). D's nearest is species1 at grade A through a
+     protan eye, where the two are the SAME hue and chroma (dAB 0.3) and
+     10.4 of L* apart. Both are true of the same sprite. What D adds is:
+     for a colour-blind player the machine orange has no hue advantage over
+     a deposit left at all, and lightness is carrying the whole read.
+
+     WHY IT IS STILL NOT A GATE. Turning D into one means a rule about what
+     VALUE a machine may take, and nobody has written that rule. Worse, the
+     obvious upgrade -- re-running measure C's dE76 THROUGH the observer --
+     is not sound as the mark is defined: the mark is the most saturated
+     TENTH, and a CVD transform collapses chroma, so after it the ordering
+     that picks those pixels is noise. Run that way, hopper/B (a grey part
+     with a hidden band, mean C 8.1) scores 5.0 against species2's pink,
+     which is an answer about the method and not about the art. A sound
+     version needs a mark defined by something the transform does not
+     destroy. Recorded so it is not re-derived; see ASSA-27.
+
      C EXISTS BECAUSE B LIED. B passes every row today with 15 dE to spare,
      and I nearly shipped it alone. Checked instead of trusted: frame/A is a
      dark deck inside a bright rim, so its MEAN sits 35.7 from the nearest
@@ -82,10 +119,23 @@ leaves B as prose with a number next to it:
                         so this is the run that proves B can fail: every row
                         is then literally ore and every row MUST be reported
                         as reading like it.
+  LOUDNESS_NO_EXEMPT=1  drops every exemption. The run MUST then go red on
+                        player/*, which is what proves those rows are passing
+                        BECAUSE a Director ruled on them and not because the
+                        numbers quietly changed under the exemption. An
+                        exemption is the one mechanism here that can swallow a
+                        real failure, so it gets a lever like the measures do.
 Any mute value in 0..1 works (1.0 = untouched).
 
-STATUS: RED, on purpose, and reported rather than painted over. See the
-verdict at the bottom of a run for which rows and by how much.
+STATUS: GREEN, and it got there by being believed when it was red.
+  Measure C was written because B lied, and the first thing C found on real
+  art was frame/A's twenty brightest pixels sitting at rgb(255,254,89), dE
+  10.9 from species3's ore -- a hue nobody chose, produced by an emissive
+  ORANGE clipping R and G at the ceiling and leaving B behind. Decision #37
+  fixed the cause rather than the row: the grade-A glint now emits NEUTRAL
+  (rig.graded_accent), so the blowout clips to white and no species tint is
+  neutral. The other red, player/*, was ruled out of scope rather than
+  painted over, with the reason written into EXEMPT below.
 """
 import json
 import math
@@ -96,17 +146,53 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from species_tints import SPECIES_TINTS
-from species_probe import DISTINCT, GRADE_ROWS, GAME, dE, lab
+from species_probe import DISTINCT, GRADE_ROWS, GAME, dE, dAB, lab, seen_flat
+
+OBSERVERS = ("normal", "protan", "deutan", "tritan")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SPR = os.path.join(ROOT, "assets", "sprites")
 man = json.load(open(os.path.join(SPR, "manifest.json")))
 
-# A surface is exempt only with a reason and a name on it. Empty on purpose:
-# the two rows this check fails on today are the Director's call, not mine to
-# wave through, and an exemption I granted myself would make the guard a
-# record of my own opinion.
-EXEMPT = {}
+# A surface is exempt only with a reason and a name on it.
+#
+# KEYED BY ASSET, NOT BY ROW, and the keys are checked against the manifest
+# below. Sixteen row names spelled out here would be sixteen chances to go
+# quietly stale, which is exactly how build.py's colour-blind block went on
+# drawing four empty strips after the row it grepped for was renamed.
+EXEMPT = {
+    "player": ("Maren, Decision #37", """
+        THE BUDGET COVERS WHAT THE PLAYER SCANS: ground, machines, ground
+        items, UI chrome. The avatar is not in that set. There is one of it
+        (three in co-op), it is humanoid rather than a tile, and it moves
+        when you press a key -- you never search a field for it, so it is
+        not competing with ore for the attention ore's budget is protecting.
+        Self-location is its own claim on loudness.
+
+        THE EXEMPTION ATTACHES TO THIS SURFACE AND NEVER TO A PALETTE ENTRY.
+        rig.py has `suit` and `orange` as two names for one hex (#F08A24).
+        They stay independent forever: if `orange` has to move, `suit` does
+        not follow, and a MACHINE may never claim the player's exemption on
+        the grounds that it wears the player's colour. The exemption is
+        about what the thing is, not about what colour it happens to be."""),
+}
+
+
+NO_EXEMPT = os.environ.get("LOUDNESS_NO_EXEMPT")
+
+
+def exempt(name):
+    """`asset/row` -> the exemption on its asset, or None."""
+    if NO_EXEMPT:
+        return None
+    return EXEMPT.get(name.split("/")[0])
+
+
+_missing = [a for a in EXEMPT if a not in man]
+if _missing:
+    sys.exit("loudness.py: EXEMPT names an asset that is not in the manifest: "
+             + ", ".join(_missing) + ".\nAn exemption that matches nothing is a"
+             " surface going unchecked in silence. Fix the name or delete it.")
 
 
 def frame_of(asset, row, f=0):
@@ -285,6 +371,11 @@ def main():
             print("%-26s %7s %7.1f %7.1f %7.1f"
                   % ("species%d %s %s" % (i, t, g), hue_s(m), m["mean_c"],
                      m["med_c"], m["max_c"]))
+    # Measure D's ore side, computed once: every ore mark through every
+    # observer. (18 surfaces x 4 observers; the per-row cost is 4.)
+    ore_seen = [(n, {o: seen_flat(m["mark"], o) for o in OBSERVERS})
+                for n, m in ore_surfaces]
+
     floor_name, floor_m = min(ore_surfaces, key=lambda s: s[1]["mean_c"])
     floor = floor_m["mean_c"]
     print("\nFLOOR: the quietest ore surface in the game is %s at mean C %.1f."
@@ -292,9 +383,9 @@ def main():
     print("That is the budget. Nothing else may be louder.\n")
 
     # ---- everything else
-    print("%-26s %7s %7s %7s %7s %8s %8s" %
+    print("%-26s %7s %7s %7s %7s %8s %8s %8s" %
           ("every other surface", "hue", "mean C", "med", "max",
-           "dE whole", "dE mark"))
+           "dE whole", "dE mark", "D: dAB"))
     rows = []
     for asset, e in sorted(man.items()):
         if asset == "ore":
@@ -312,10 +403,13 @@ def main():
             name = "%s/%s" % (asset, row)
             near_d, near_n = min((dE(m["rgb"], o["rgb"]), n) for n, o in ore_surfaces)
             mark_d, mark_n = min((dE(m["mark"], o["mark"]), n) for n, o in ore_surfaces)
+            seen = {o: seen_flat(m["mark"], o) for o in OBSERVERS}
+            ab_d, ab_n, ab_o = min((dAB(seen[o], s[o]), n, o)
+                                   for n, s in ore_seen for o in OBSERVERS)
             over = m["mean_c"] - floor
             flag = ""
-            if name in EXEMPT:
-                flag = " [exempt]"
+            if exempt(name):
+                flag = " [exempt: %s]" % exempt(name)[0]
             else:
                 if over > 0:
                     flag += " LOUDER THAN ORE"
@@ -323,23 +417,34 @@ def main():
                     flag += " READS AS ORE"
                 if mark_d < DISTINCT:
                     flag += " MARK READS AS ORE"
-            rows.append((name, m, over, near_d, near_n, mark_d, mark_n, flag))
-            print("%-26s %7s %7.1f %7.1f %7.1f %8.1f %8.1f%s"
+            rows.append((name, m, over, near_d, near_n, mark_d, mark_n, flag,
+                         ab_d, ab_n, ab_o))
+            print("%-26s %7s %7.1f %7.1f %7.1f %8.1f %8.1f %8.1f%s"
                   % (name, hue_s(m), m["mean_c"], m["med_c"], m["max_c"],
-                     near_d, mark_d, flag))
+                     near_d, mark_d, ab_d, flag))
 
-    loud = [r for r in rows if r[2] > 0 and r[0] not in EXEMPT]
-    conf = [r for r in rows if r[3] < DISTINCT and r[0] not in EXEMPT]
-    mconf = [r for r in rows if r[5] < DISTINCT and r[0] not in EXEMPT]
+    loud = [r for r in rows if r[2] > 0 and not exempt(r[0])]
+    conf = [r for r in rows if r[3] < DISTINCT and not exempt(r[0])]
+    mconf = [r for r in rows if r[5] < DISTINCT and not exempt(r[0])]
 
     print("\n" + "=" * 72)
+    # Printed BEFORE the verdict, every run, loudly. An exemption that only
+    # shows up as a quiet flag in one column is an exemption nobody re-reads.
+    for asset, (who, why) in sorted(EXEMPT.items()):
+        n = sum(1 for r in rows if r[0].split("/")[0] == asset)
+        worst = max((r[2] for r in rows if r[0].split("/")[0] == asset),
+                    default=0.0)
+        print("EXEMPT: %s/* (%d rows, worst +%.1f over the floor) -- %s"
+              % (asset, n, worst, who))
+        print("\n".join("        " + l.strip() for l in why.strip().splitlines()))
+        print()
     print("A. THE BUDGET: mean C must not exceed %.1f (%s)" % (floor, floor_name))
     if not loud:
         print("   PASS: every non-ore surface sits under the quietest species.")
     else:
         print("   FAIL: %d rows out-loud the quietest ore in the game."
               % len(loud))
-        for name, m, over, _, _, _, _, _ in sorted(loud, key=lambda r: -r[2]):
+        for name, m, over, _, _, _, _, _, _, _, _ in sorted(loud, key=lambda r: -r[2]):
             print("     %-24s mean C %5.1f  (+%4.1f over), hue %s, median %4.1f"
                   % (name, m["mean_c"], over, hue_s(m), m["med_c"]))
         worst = max(loud, key=lambda r: r[2])
@@ -353,7 +458,7 @@ def main():
               "\n   is why C exists. Read it with C, never on its own.)")
     else:
         print("   FAIL: %d rows land inside a species' colour." % len(conf))
-        for name, m, _, d, n, _, _, _ in sorted(conf, key=lambda r: r[3]):
+        for name, m, _, d, n, _, _, _, _, _, _ in sorted(conf, key=lambda r: r[3]):
             print("     %-24s dE %5.1f to %s" % (name, d, n))
 
     print("\nC. THE CONFUSION, AT THE MARK: dE76 between the most saturated"
@@ -363,12 +468,27 @@ def main():
         print("   PASS: no surface's own colour lands on a species' colour.")
     else:
         print("   FAIL: %d rows wear a species' colour." % len(mconf))
-        for name, m, _, _, _, d, n, _ in sorted(mconf, key=lambda r: r[5]):
+        for name, m, _, _, _, d, n, _, _, _, _ in sorted(mconf, key=lambda r: r[5]):
             print("     %-24s dE %5.1f to %s" % (name, d, n))
             print("       its %d most saturated pixels are rgb(%.0f, %.0f, %.0f);"
                   " the whole-surface measure scores this row %.1f and misses it."
                   % (m["mark_n"], m["mark"][0], m["mark"][1], m["mark"][2],
                      [r[3] for r in rows if r[0] == name][0]))
+
+    print("\nD. THE SAME CONFUSION WITH L* DROPPED, worst of %d observers."
+          "\n   REPORTED, NOT A GATE -- see the header for why lightness is a"
+          "\n   channel a machine is entitled to be told from a deposit by."
+          % len(OBSERVERS))
+    for name, m, _, _, _, mark_d, _, _, ab_d, ab_n, ab_o in sorted(
+            rows, key=lambda r: r[8])[:6]:
+        print("     %-24s dAB %5.1f to %s (%s), where measure C scores it %.1f"
+              % (name, ab_d, ab_n, ab_o, mark_d))
+    print("   These are NOT the pairs measure C found; read the two columns as"
+          "\n   two questions, not as a subtraction. C asks whether any deposit"
+          "\n   is this colour. D asks whether any deposit is this HUE to a"
+          "\n   colour-blind eye, and the answer is yes for every orange surface"
+          "\n   in the game -- so lightness, shape and grid position are carrying"
+          "\n   that read on their own. See the header for why it is not a gate.")
 
     sheet(loud, conf + mconf, ore_surfaces, floor_name)
 
