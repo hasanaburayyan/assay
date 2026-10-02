@@ -200,16 +200,30 @@ fn slot(world: &World, stack: Option<ItemStack>) -> String {
     })
 }
 
-/// The parts a design is made of, as `handle(Korvite B) + head(Adaite A)`.
+/// The parts a design is made of, as `handle(Korvite B 150) + head(Adaite A
+/// 26-50)`.
+///
+/// **The mass is per part and banded like every other sheet reading**, because
+/// a player looking at an over-budget design picks which part to change out of
+/// this line, and the heaviest non-frame part is also the one a break always
+/// loses. Last on the line on purpose: the inspector's side panel truncates it
+/// and the kinds and species must survive that.
 pub fn parts_summary(world: &World, assembly: &Assembly) -> String {
     assembly
         .parts()
         .map(|p| {
+            let species = world.species(p.material.species);
+            let (low, high) = Assembly::part_mass_range(p, species);
             format!(
-                "{}({} {})",
+                "{}({} {} {})",
                 p.kind.name(),
-                world.species(p.material.species).name(),
-                p.material.grade.letter()
+                species.name(),
+                p.material.grade.letter(),
+                if low == high {
+                    low.to_string()
+                } else {
+                    format!("{low}-{high}")
+                }
             )
         })
         .collect::<Vec<_>>()
