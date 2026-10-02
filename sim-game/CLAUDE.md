@@ -97,7 +97,12 @@ works from the inspector or a future graphical client.
   on: occupancy is sim state and the **client** draws it (ASSA-30/38).
 - Overlay part sprites with `part_layout.stack` (colour over, alpha max), or
   their contact shadows compound and a machine's shadow reports its part
-  count (ASSA-38).
+  count (ASSA-38). Since ASSA-64 only a planted frame carries a contact
+  shadow, so today's sheets cannot compound one; the operator is still the
+  rule, because it is what makes plain `over` correct rather than lucky.
+- A contact shadow means the part STANDS ON THE GROUND. Mounted kinds (read
+  out of `sim/src/assembly.rs`: anything whose `PartKind` is not a frame) are
+  rendered off the ground with `rig.bounce()`, and CI enforces it (ASSA-64).
 - Blender 5.x API differences from what you may remember: `scene.node_tree`
   is gone (`scene.compositing_node_group`); render passes were renamed
   (`Z` → `Depth`); the engine is `BLENDER_EEVEE` (not `_NEXT`); set
