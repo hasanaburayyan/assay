@@ -20,7 +20,7 @@
 //! text. There is deliberately no method here that returns a hash as a number.
 
 use godot::prelude::*;
-use sim::assembly::{Assembly, Built, Mount};
+use sim::assembly::{Assembly, Built, Mount, PartKind};
 use sim::command::{Event, Input};
 use sim::hash::fnv64;
 use sim::item::Item;
@@ -381,6 +381,130 @@ impl AssaySim {
         gstring(&item_echo_text(&text.to_string()))
     }
 
+    /// DOES SERDE ACCEPT THIS AS A `PlayerCommand`? Serde's own spelling of
+    /// whatever it read back, or "" if it refuses.
+    ///
+    /// `item_echo` for whole commands, and it exists because the client now has
+    /// BUTTONS (ASSA-37). Every button builds a command in GDScript, and the
+    /// only thing that can tell a correct shape from a plausible one is the
+    /// deserialiser that will actually read it on the other side. Two mistakes
+    /// of mine are the reason this is not paranoia: `{"Stop": {}}` for a unit
+    /// variant, which a relay drops in silence while the probe reports success,
+    /// and `species: 3.0`, which parses fine in Godot and not at all in serde.
+    ///
+    /// THIS IS THE SAME TYPE `sim-cli` CONSTRUCTS. There is one
+    /// `PlayerCommand` in the repo; the reference client builds it with Rust
+    /// constructors and this client builds JSON that becomes it. "The same
+    /// command" means serde lands on the same variant with the same fields,
+    /// which is exactly what the echo shows.
+    #[func]
+    pub fn command_echo(text: GString) -> GString {
+        gstring(&command_echo_text(&text.to_string()))
+    }
+
+    /// A WORLD TO TEST AGAINST, SHAPED LIKE THE RELAY'S: the whole
+    /// `ServerMsg::Welcome` text for a fresh world with one player in it.
+    ///
+    /// Not a convenience and not a second way to play. Before this, nothing in
+    /// the client's headless suite had a world at all — every HUD test ran
+    /// against dictionaries I had typed out myself, which is the failure I keep
+    /// repeating: my test agrees with my bug because I wrote both. A real world
+    /// means the button tests press buttons against the sim's own inventory,
+    /// designs and tiles.
+    ///
+    /// IT MIRRORS `sim-relay/src/main.rs` DELIBERATELY: the same 6x4 chunks,
+    /// `SystemCommand::AddPlayer` applied through `step` (never by reaching into
+    /// `World`), and the player's slot in the `Welcome` beside the world. A
+    /// client fed this is in exactly the state a welcomed client is in, so the
+    /// suite cannot pass on a world no relay would ever send.
+    ///
+    /// The seed is TEXT for the usual reason: a full-width `u64` does not
+    /// survive a GDScript number. "" on a seed that will not parse.
+    #[func]
+    pub fn fresh_welcome_json(seed: GString, name: GString) -> GString {
+        gstring(&fresh_welcome_text(&seed.to_string(), &name.to_string()))
+    }
+
+    /// EVERY PART THE CATALOGUE HOLDS: `name`, `size`, and `tag`.
+    ///
+    /// So the client's "make a part" buttons are the sim's list rather than four
+    /// strings typed into GDScript. ADR 0003's consequence is that a new part
+    /// kind needs no recipe — add a `PartSpec` and it is makeable — and a client
+    /// with its own copy of the catalogue would be the one place that still had
+    /// to be edited. It asks instead.
+    ///
+    /// `tag` IS SERDE'S OWN SPELLING, handed over as the Variant a `MakePart`
+    /// carries: a bare `"Head"`, or `{"Frame": "Held"}` for a handle, because
+    /// `PartKind::Frame(Mount)` is an enum inside an enum. GDScript neither
+    /// builds that nor parses it — parsing would be the double trap again — it
+    /// passes this value straight into the command.
+    #[func]
+    pub fn part_kinds() -> Array<VarDictionary> {
+        PartKind::ALL
+            .iter()
+            .filter_map(|kind| {
+                let tag = tag_variant(&serde_json::to_value(kind).ok()?)?;
+                Some(vdict! {
+                    "name" => &gstring(kind.name()).to_variant(),
+                    "size" => &(sim::assembly::spec(*kind).size as i64).to_variant(),
+                    "tag" => &tag,
+                })
+            })
+            .collect()
+    }
+
+    /// EVERY RECIPE THE SIM HAS: `name`, `tag`, `input`, `input_count`, `hand`.
+    ///
+    /// Same argument as `part_kinds`, and the client needs two of these fields
+    /// to put a Craft button on the right row: `input` is the item kind a batch
+    /// consumes, so a button only appears on a stack that could feed it, and
+    /// `hand` says whether a player can make it at all — `Refine` and `Resmelt`
+    /// happen inside a smelter and are nobody's button.
+    ///
+    /// `name` is what a player types in `sim-cli`; `tag` is what the wire
+    /// carries. They differ in case, which is exactly the kind of thing a client
+    /// should not be guessing at.
+    #[func]
+    pub fn recipes() -> Array<VarDictionary> {
+        sim::RecipeId::ALL
+            .iter()
+            .filter_map(|id| {
+                let tag = tag_variant(&serde_json::to_value(id).ok()?)?;
+                let recipe = id.recipe();
+                Some(vdict! {
+                    "name" => &gstring(recipe.name).to_variant(),
+                    "tag" => &tag,
+                    "input" => &gstring(recipe.input.0.name()).to_variant(),
+                    "input_count" => &(recipe.input.1 as i64).to_variant(),
+                    "hand" => &id.is_hand_craftable().to_variant(),
+                })
+            })
+            .collect()
+    }
+
+    /// HOW MANY TILES A BUILDING OF THIS ITEM WOULD STAND ON, or 0 for an item
+    /// that is not placeable.
+    ///
+    /// The client needs this for one honest sentence and nothing else: a
+    /// placement target is a TOP-LEFT tile, so a player clicking a tile for a
+    /// 2x2 smelter should be told which four tiles they just chose. It does not
+    /// decide whether the placement is legal — `step` does, and the client never
+    /// asks first (Maren's ruling: never refuse).
+    #[func]
+    pub fn footprint_of_item(kind: GString, species: i64, grade: GString) -> Vector2i {
+        let text = item_text(&kind.to_string(), species, &grade.to_string());
+        let Ok(item) = serde_json::from_str::<Item>(&text) else {
+            return Vector2i::ZERO;
+        };
+        match sim::building::BuildingKind::for_item(item.kind) {
+            Some(kind) => {
+                let (w, h) = kind.footprint();
+                Vector2i::new(w, h)
+            }
+            None => Vector2i::ZERO,
+        }
+    }
+
     /// HOW MANY SPECIES A WORLD ROLLS (`sim::tuning::SPECIES_PER_WORLD`).
     ///
     /// Here so the client's per-species colour table can be checked against the
@@ -572,6 +696,80 @@ pub fn item_echo_text(text: &str) -> String {
     match serde_json::from_str::<Item>(text) {
         Ok(item) => serde_json::to_string(&item).unwrap_or_default(),
         Err(_) => String::new(),
+    }
+}
+
+/// THE SAME VERDICT FOR A WHOLE `PlayerCommand`. Empty if serde refuses it.
+/// Engine-free so `cargo test` pins what it accepts — see `AssaySim::command_echo`.
+pub fn command_echo_text(text: &str) -> String {
+    match serde_json::from_str::<sim::PlayerCommand>(text) {
+        Ok(command) => serde_json::to_string(&command).unwrap_or_default(),
+        Err(_) => String::new(),
+    }
+}
+
+/// A `ServerMsg::Welcome` for a fresh world with one player in it, exactly as
+/// the relay writes one. Empty string if the seed will not parse.
+///
+/// Engine-free, and the relay's own shape: 6x4 chunks, and the player added by
+/// `step` through `SystemCommand::AddPlayer` rather than pushed onto
+/// `World::players`. See `AssaySim::fresh_welcome_json`.
+pub fn fresh_welcome_text(seed: &str, name: &str) -> String {
+    let Ok(seed) = seed.trim().parse::<u64>() else {
+        return String::new();
+    };
+    let mut world = World::new(WorldConfig {
+        seed,
+        width_chunks: 6,
+        height_chunks: 4,
+    });
+    let joining = [Input::System(sim::SystemCommand::AddPlayer {
+        name: name.to_string(),
+    })];
+    let mut events = Vec::new();
+    sim::step::step(&mut world, &joining, &mut events);
+    let welcomed = world
+        .players
+        .first()
+        .map(|player| player.id)
+        .unwrap_or(PlayerId(0));
+    serde_json::to_string(&sim_net::ServerMsg::Welcome {
+        player: welcomed,
+        world,
+    })
+    .unwrap_or_default()
+}
+
+/// A `serde_json::Value` as the Variant GDScript can hand straight back to a
+/// command — or `None` if it holds a NUMBER anywhere.
+///
+/// REFUSING NUMBERS IS THE WHOLE SAFETY OF THIS FUNCTION, and it is why there
+/// is no general json-to-Variant helper in this crate. Godot parses every JSON
+/// number as a double and serde will not take `3.0` for a `u8`, so a number
+/// that crossed here would come back as a command the sim drops in silence.
+/// The only callers are enum TAGS (`PartKind`, `RecipeId`), which hold no
+/// numbers at all — so the refusal costs nothing here and makes the trap
+/// unreachable for whoever reaches for this next.
+fn tag_variant(value: &serde_json::Value) -> Option<Variant> {
+    match value {
+        serde_json::Value::Null => Some(Variant::nil()),
+        serde_json::Value::Bool(flag) => Some(flag.to_variant()),
+        serde_json::Value::Number(_) => None,
+        serde_json::Value::String(text) => Some(gstring(text).to_variant()),
+        serde_json::Value::Array(items) => {
+            let mut out = Array::<Variant>::new();
+            for item in items {
+                out.push(&tag_variant(item)?);
+            }
+            Some(out.to_variant())
+        }
+        serde_json::Value::Object(fields) => {
+            let mut out = VarDictionary::new();
+            for (key, item) in fields {
+                out.set(&gstring(key).to_variant(), &tag_variant(item)?);
+            }
+            Some(out.to_variant())
+        }
     }
 }
 
@@ -1482,6 +1680,139 @@ mod tests {
             item_echo_text(r#"{"grade":"C","species":3,"kind":"Ore"}"#),
             good
         );
+    }
+
+    /// EVERY COMMAND A BUTTON SENDS, AGAINST THE DESERIALISER THAT READS IT.
+    ///
+    /// The client's buttons (ASSA-37) build these in GDScript, so this pins both
+    /// halves: the shapes serde accepts, and the three near-misses that would
+    /// have reached a relay and been dropped without a word. `{"Stop": {}}` is
+    /// the one I actually shipped — a unit variant written as an object — and it
+    /// left a demo world mining itself to death while the probe said OK.
+    #[test]
+    fn serde_reads_every_command_a_button_sends_and_refuses_the_near_misses() {
+        let item = r#"{"kind":"Ore","species":0,"grade":"C"}"#;
+        let refined = r#"{"kind":"Refined","species":0,"grade":"C"}"#;
+        for good in [
+            r#""Mine""#.to_string(),
+            r#""Stop""#.to_string(),
+            r#""Assay""#.to_string(),
+            r#""Unequip""#.to_string(),
+            r#"{"MoveTo":{"target":{"x":4,"y":5}}}"#.to_string(),
+            format!(r#"{{"Craft":{{"recipe":"Smelter","item":{item},"count":1}}}}"#),
+            format!(r#"{{"Place":{{"item":{item},"pos":{{"x":4,"y":5}}}}}}"#),
+            format!(r#"{{"Insert":{{"building":1,"slot":"Fuel","item":{item},"count":2}}}}"#),
+            r#"{"Take":{"building":1}}"#.to_string(),
+            r#"{"Pickup":{"building":1}}"#.to_string(),
+            format!(r#"{{"MakePart":{{"kind":"Head","material":{refined},"count":1}}}}"#),
+            format!(
+                r#"{{"MakePart":{{"kind":{{"Frame":"Held"}},"material":{refined},"count":1}}}}"#
+            ),
+            format!(r#"{{"Assemble":{{"frame":{refined},"mounted":[{refined}]}}}}"#),
+            r#"{"Equip":{"assembly":0}}"#.to_string(),
+            r#"{"PlaceAssembly":{"assembly":0,"pos":{"x":4,"y":5}}}"#.to_string(),
+        ] {
+            assert_ne!(
+                command_echo_text(&good),
+                "",
+                "serde should have read {good}"
+            );
+        }
+        for bad in [
+            // A unit variant written as an object. Shipped once; dropped silently.
+            r#"{"Mine":{}}"#.to_string(),
+            r#"{"Stop":{}}"#.to_string(),
+            // Godot's JSON would write these if a client ever round-tripped its
+            // own command text.
+            r#"{"Equip":{"assembly":0.5}}"#.to_string(),
+            r#"{"MoveTo":{"target":{"x":4.5,"y":5}}}"#.to_string(),
+            // A `SystemCommand` is not a player's to send, and the relay's
+            // refusal should not be the first thing that notices.
+            r#"{"AddPlayer":{"name":"limpet"}}"#.to_string(),
+            r#""Walk""#.to_string(),
+            "not json at all".to_string(),
+        ] {
+            assert_eq!(
+                command_echo_text(&bad),
+                "",
+                "serde should have refused {bad}"
+            );
+        }
+    }
+
+    /// THE CATALOGUE AND THE RECIPE TABLE, as the client is handed them. Only
+    /// the number-free part is checked here, because `tag_variant` needs no
+    /// engine but a `Dictionary` does — the GDScript side holds the tags against
+    /// `command_echo`.
+    #[test]
+    fn the_part_and_recipe_tags_handed_to_the_client_are_serdes_own() {
+        let tags: Vec<String> = PartKind::ALL
+            .iter()
+            .map(|kind| serde_json::to_string(kind).expect("a part kind serialises"))
+            .collect();
+        assert_eq!(
+            tags,
+            vec![
+                "\"Head\"",
+                "{\"Frame\":\"Held\"}",
+                "{\"Frame\":\"Planted\"}",
+                "\"Hopper\""
+            ],
+            "the catalogue's wire tags moved; the client's buttons carry them"
+        );
+        // And nothing in a tag is a number, which is what lets them cross as
+        // Variants at all.
+        for kind in PartKind::ALL {
+            let value = serde_json::to_value(kind).expect("a part kind serialises");
+            assert!(
+                !has_a_number(&value),
+                "{value} holds a number, so it cannot cross as a Variant"
+            );
+        }
+        for id in sim::RecipeId::ALL {
+            let value = serde_json::to_value(id).expect("a recipe id serialises");
+            assert!(!has_a_number(&value), "{value} holds a number");
+        }
+    }
+
+    fn has_a_number(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Number(_) => true,
+            serde_json::Value::Array(items) => items.iter().any(has_a_number),
+            serde_json::Value::Object(fields) => fields.values().any(has_a_number),
+            _ => false,
+        }
+    }
+
+    /// A FRESH WELCOME IS A WELCOME, and the client's own reader is what says
+    /// so: `world_from_welcome` is the function a real relay's message goes
+    /// through, so a test world that only `serde_json` could read would prove
+    /// nothing about the client.
+    ///
+    /// AND THE PLAYER IS IN IT. The relay adds a joiner with
+    /// `SystemCommand::AddPlayer` on a tick and only then welcomes them; a world
+    /// with an empty `players` list would leave every button in the suite acting
+    /// as a player who does not exist.
+    #[test]
+    fn a_fresh_welcome_carries_a_world_with_the_joining_player_in_it() {
+        let text = fresh_welcome_text("777042", "limpet");
+        let world = AssaySim::world_from_welcome(&text).expect("the client can read it");
+        assert_eq!(world.seed, 777042);
+        assert_eq!(
+            (world.width_chunks, world.height_chunks),
+            (6, 4),
+            "a test world should be the relay's size"
+        );
+        assert_eq!(world.players.len(), 1, "the joining player is missing");
+        assert_eq!(world.players[0].name, "limpet");
+        assert_eq!(
+            world.players[0].pos,
+            world.spawn_tile(),
+            "a joiner starts at spawn"
+        );
+        // Added THROUGH `step`, which is why the world has moved a tick.
+        assert_eq!(world.tick, 1);
+        assert_eq!(fresh_welcome_text("not a seed", "limpet"), "");
     }
 
     /// THE SPECIES LETTER IS THE SIM'S, AND IT IS THE *GENERATED* NAME'S.
