@@ -62,13 +62,40 @@ after touching ore art, the palette or the tints:
 
 ```bash
 uv run --with pillow python art/species_probe.py   # exits non-zero on a regression
-PROBE_SPAN=0.1 uv run --with pillow python art/species_probe.py   # must FAIL
+PROBE_SPAN=0.1   art/species_probe.py   # crowds the hues     -> must FAIL
+PROBE_SPARSE=0.5 art/species_probe.py   # thins ore coverage  -> must FAIL
 ```
 
-The second line is not decoration. Two guards in this pipeline have silently
-stopped guarding (a colour-blind check grepping for a row name that no
-longer existed; a chroma threshold set looser than the defect it existed to
-catch), so the probe has a lever that makes its verdict go red on purpose.
+The second and third lines are not decoration. Two guards in this pipeline
+have silently stopped guarding (a colour-blind check grepping for a row name
+that no longer existed; a chroma threshold set looser than the defect it
+existed to catch), so every check here has a lever that makes its verdict go
+red on purpose, and the lever reproduces the CAUSE rather than lowering the
+bar — `PROBE_SPARSE` thins coverage, which is how grade C's pop fell to 3.9
+in the first place.
+
+- **Ore owns saturation** (rig.py rule 6). Ore is the only fully saturated
+  thing in the game; ground, buildings, parts, items and UI chrome all stay
+  under the *quietest* shipped species, not under the average of them. This
+  is forced rather than chosen: species identity is tint alone, and a muted
+  species table is measurably impossible under a multiply, so ore's loudness
+  is mandatory and the budget has to fall on everything else.
+
+```bash
+art/loudness.py                      # RED today, on purpose: see below
+LOUDNESS_MUTE=0     art/loudness.py  # greys everything but ore -> must PASS
+LOUDNESS_FAKE_ORE=3 art/loudness.py  # everything IS ore        -> must FAIL
+```
+
+It measures three things, and the third exists because the second lied: a
+surface's *mean* can clear every ore colour while the pixels it actually
+wears sit on top of one. `frame/A` scores 35.7 whole-surface and 10.9 at the
+mark. Read B and C together, never B alone.
+
+`loudness.py` exits non-zero on the art as it ships — `player/*` and
+`frame/A` are louder than the quietest species, and `frame/A`'s grade glint
+wears species3's yellow. That is reported to the Director, not exempted:
+`EXEMPT` in that file is empty and an entry needs a reason and a name.
 
 ## Conventions
 
