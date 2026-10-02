@@ -271,6 +271,26 @@ jobs:
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
             python3 art/check_pack_icon_scale.py
+      # THE SLOT PLATE IS STILL THE GROUND'S OWN COLOUR (ASSA-71, Maren's ruling).
+      # The plate is not "a colour that tested well": it is ground.png's median, so a
+      # stack in the pack row and a rock on the map are the same object. A hex that
+      # merely equals today's ground passes every contrast ratio and is wrong the
+      # morning the ground is re-rendered, so nothing in that check names a colour.
+      #
+      # It holds three sources identical -- the SHEET (median recomputed now), the
+      # PIPELINE (what the last build wrote to ui_theme.json) and the ENGINE (the
+      # StyleBoxFlat the client really painted, read out of the live scene). Each pair
+      # catches its own failure: a ground re-rendered without a rebuild, and a client
+      # that stopped reading the file. It also fails if any GDScript spells the colour
+      # as a literal, which is the constraint the ruling states.
+      #
+      # Measured by mutation, because a check that has only ever been green has only
+      # ever been an opinion: editing the shipped hex, typing Color8(136,152,108) into
+      # sprites.gd, and pointing the client's path at a missing file each turn it red.
+      - name: The pack icon's slot plate is the ground's own colour
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
+            python3 art/check_pack_icon_plate.py
 
   macos:
     name: macOS bundle

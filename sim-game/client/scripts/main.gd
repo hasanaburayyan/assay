@@ -474,7 +474,6 @@ func _rebuild_pack(stacks: Array) -> void:
 		if icon != null:
 			var art := TextureRect.new()
 			art.texture = icon
-			art.custom_minimum_size = ICON_BOX_PX
 			# SHRINK_CENTER, or the row's height is still half of the scale: FILL stretches this rect
 			# to whatever the buttons beside it need, and the ratio is nobody's decision again.
 			art.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -485,7 +484,29 @@ func _rebuild_pack(stacks: Array) -> void:
 			art.modulate = AssaySprites.tint_for(stack)
 			# NEAREST, not linear: these are pixel-art frames and the shipped import defaults say so.
 			art.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-			row.add_child(art)
+			# THE SLOT PLATE (ASSA-71, Maren's ruling). The ground's own median, so a stack in the
+			# pack and a rock on the map read as the same object -- the panel is the one surface this
+			# art was never judged on. One colour for every species and grade; it never carries
+			# information. The colour comes from the pipeline (`ui_theme.json`), never a hex here.
+			#
+			# A PANEL AROUND THE RECT, NOT A RESIZE OF IT. The box stays exactly `ICON_BOX_PX` and
+			# the TextureRect fills it, so the scale ASSA-65 made exact (1/2 for an item, 1/4 for a
+			# part) is untouched -- a container with content margins would have quietly eaten it,
+			# which is the same bug ASSA-65 fixed. `check_pack_icon_scale.py` is the guard.
+			var plate := AssaySprites.pack_icon_plate()
+			if plate.a > 0.0:
+				var slot := Panel.new()
+				slot.custom_minimum_size = ICON_BOX_PX
+				slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+				var style := StyleBoxFlat.new()
+				style.bg_color = plate
+				slot.add_theme_stylebox_override("panel", style)
+				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+				slot.add_child(art)
+				row.add_child(slot)
+			else:
+				art.custom_minimum_size = ICON_BOX_PX
+				row.add_child(art)
 		var body := VBoxContainer.new()
 		body.add_theme_constant_override("separation", 2)
 		row.add_child(body)
