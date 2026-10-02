@@ -260,6 +260,45 @@ pub enum Event {
         lost: Vec<Item>,
         returned: Vec<Item>,
     },
+    /// A held tool's durability pool ran out (decision 12).
+    ///
+    /// **Names both halves, because they have different fates** (Game
+    /// Director's ruling on ASSA-6): the `head` is consumed — it is the part
+    /// whose number ran out — and the `handle` comes back as an
+    /// `ItemKind::Part`, intact and worth re-heading. A player who cannot see
+    /// which half they kept cannot learn that the repair is cheap.
+    ToolWornOut {
+        player: PlayerId,
+        /// The head, gone. Carried so the readout can name what it cost.
+        head: Item,
+        /// The handle, back in the inventory as a part.
+        handle: Item,
+    },
+    /// A placed machine finished a unit; it went into the machine's buffer,
+    /// not into anybody's inventory.
+    ///
+    /// Separate from [`Event::OreMined`] rather than given an optional
+    /// player: a machine has no player, and an `Option<PlayerId>` on the
+    /// hand-mining event would make every reader of it handle a case that
+    /// hand mining cannot produce.
+    MachineMined {
+        building: BuildingId,
+        deposit: DepositId,
+        item: Item,
+        amount: u32,
+        /// What the buffer holds after this unit, so a client can draw the
+        /// fill without re-reading the world.
+        held: u32,
+    },
+    /// A placed machine stopped because its buffer is full (decision 9).
+    ///
+    /// Emitted **once, on the tick it fills**, not every tick it sits full: a
+    /// stall is a thing that happens, not a state that shouts.
+    MachineStalled {
+        building: BuildingId,
+        held: u32,
+        capacity: u32,
+    },
     MoveStarted {
         player: PlayerId,
         from: TilePos,

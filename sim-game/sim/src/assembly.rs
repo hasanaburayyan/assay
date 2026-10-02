@@ -159,7 +159,11 @@ pub const PART_SPECS: [PartSpec; 4] = [
         // the other: a hard but weak species is fast and fragile.
         contributions: &[
             from_property(Stat::Mass, Property::Density, 1),
-            from_property(Stat::Speed, Property::Hardness, 1),
+            from_property(
+                Stat::Speed,
+                Property::Hardness,
+                tuning::HEAD_SPEED_PER_HARDNESS,
+            ),
             from_property(
                 Stat::Durability,
                 Property::Strength,

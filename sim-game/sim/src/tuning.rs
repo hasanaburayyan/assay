@@ -61,8 +61,31 @@ pub const GRADE_MULTIPLIER_PERCENT: [u32; 3] = [60, 80, 100];
 /// The deposit loses one unit per cycle either way: purer ore wastes less.
 pub const YIELD_BY_GRADE: [u32; 3] = [1, 2, 3];
 
-/// Ticks of standing on a deposit per hand-mining cycle.
+/// Ticks of standing on a deposit per hand-mining cycle. Now a derived
+/// anchor rather than the rule: mining accumulates work, and
+/// `WORK_PER_UNIT / HAND_WORK_PER_TICK` is exactly this. `tests/mining.rs`
+/// pins the identity, so changing either constant without the other fails
+/// loudly instead of quietly retuning hand mining.
 pub const HAND_MINE_TICKS: u32 = 4;
+
+/// Work one unit of ore costs, whoever is doing the digging.
+///
+/// MINING ACCUMULATES WORK PER TICK AGAINST THIS, rather than counting ticks
+/// (ADR 0003 amendment A3). Counting ticks offered only 4/3/2/1 ticks per
+/// unit, and decision 8 needs a grade-C head and a grade-A head of the SAME
+/// species to differ — 60% and 100% of one hardness land in the same integer
+/// tick count more often than not. Accumulating makes the average rate
+/// exactly monotone in effective hardness. **The remainder carries**, so no
+/// work in progress is ever lost.
+pub const WORK_PER_UNIT: u32 = 100;
+
+/// Work bare hands do per tick. Chosen so hand mining is unchanged by the
+/// curve: 4 ticks × 25 = one unit, exactly `HAND_MINE_TICKS`.
+///
+/// It is also the bar a pick has to clear, and it is a real bar: a head
+/// contributes its effective hardness as `Speed`, so a head below 25 is a
+/// tool slower than the hands holding it.
+pub const HAND_WORK_PER_TICK: u32 = 25;
 
 /// Ticks of standing on a deposit to assay its species: afterwards the
 /// exact sheet shows instead of rough bands.
@@ -128,6 +151,21 @@ pub const HOPPER_CAPACITY: u32 = 50;
 /// Hopper slots a planted frame offers. Generous on purpose, so that **mass**
 /// is what stops you stacking hoppers rather than a slot count.
 pub const MAX_HOPPER_SLOTS: u32 = 4;
+
+/// Work per tick per point of the head's effective hardness. The head's
+/// `Speed` contribution is `effective hardness × this`.
+///
+/// **1 IS WHAT A3 IMPLIED AND IT IS PROBABLY TOO LOW. MEASURED, ON ASSA-6.**
+/// The hand gate (`HAND_MINE_MAX_HARDNESS` 40) is read off BASE hardness, so
+/// every species the demo can reach has hardness ≤ 40 and no head can exceed
+/// 40 effective. Against bare hands at `HAND_WORK_PER_TICK` 25, that makes a
+/// grade-C pick slower than hands for **every** minable species, and a pick
+/// repay its own build for only 10% of them at grade B. At 2 a middling head
+/// (base 20, grade B) runs 3.12 ticks/unit against the hands' 4.00 and the
+/// grade ladder still bites. Left at 1 because the rate is a design number
+/// and the Game Director rules it; the numbers are on ASSA-6 and this is the
+/// one line that changes.
+pub const HEAD_SPEED_PER_HARDNESS: u32 = 1;
 
 /// Durability pool per point of the head's effective strength, per point of
 /// head size. Pool = head size × effective head strength × this.
