@@ -213,6 +213,21 @@ def write_part_contract():
     json.dump(contract, open(os.path.join(SPRITES, "part_layout.json"), "w"), indent=1)
 
 
+def write_ui_theme():
+    """Ship the colours the client draws that are in no sprite. (ASSA-71)
+
+    One so far: the plate behind a pack-row icon, which is the ground's own
+    median so that a stack in the pack and a rock on the map read as the same
+    object. Derived from the SHIPPED `ground.png` on every build, for the same
+    reason the part contract is derived rather than copied -- the day the
+    ground is re-rendered, a hex written down anywhere stops being the ground's
+    colour and nobody finds out. Rationale in `art/ui_theme.py`, including why
+    this is a sibling of the manifest and not a key inside it.
+    """
+    import ui_theme
+    json.dump(ui_theme.contract(SPRITES), open(os.path.join(SPRITES, "ui_theme.json"), "w"), indent=1)
+
+
 def main(argv):
     names = [a for a in argv if not a.startswith("--")] or ORDER
     os.makedirs(OUT, exist_ok=True)
@@ -227,9 +242,11 @@ def main(argv):
     manifest = {k: manifest[k] for k in ORDER if k in manifest}
     json.dump(manifest, open(manifest_path, "w"), indent=1)
     write_part_contract()
+    write_ui_theme()
     contact(manifest)
     print(f"wrote {SPRITES}/manifest.json")
     print(f"wrote {SPRITES}/part_layout.json")
+    print(f"wrote {SPRITES}/ui_theme.json")
     print(f"wrote {REVIEW}/contact.png")
 
 

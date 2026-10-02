@@ -33,10 +33,13 @@ func _process(_d: float) -> bool:
 		if not (child is Control):
 			continue
 		var row: Control = child
-		var art: TextureRect = null
-		for g in row.get_children():
-			if g is TextureRect:
-				art = g
+		# RECURSIVELY, because the icon is not a direct child any more: ASSA-71 put it inside a Panel
+		# that paints the slot plate behind it. This loop used to walk `row.get_children()` only, and
+		# the day the plate landed it stopped finding the icon at all -- the probe reported rows with
+		# no `icon` key and `check_pack_icon_scale.py` had nothing to score, which is a check going
+		# quiet rather than red. Same lesson as `find_child("StackLine")` on the line below: look for
+		# the thing, not for where it used to sit.
+		var art: TextureRect = _icon_in(row)
 		var label: Label = row.find_child("StackLine", true, false) as Label
 		var verbs := PackedStringArray()
 		for b in _buttons_in(row):
@@ -62,6 +65,13 @@ func _process(_d: float) -> bool:
 				"drawn": [fw * s, fh * s],
 				"modulate": art.modulate.to_html(false),
 				"filter": art.texture_filter,
+				# THE PLATE THE ENGINE ACTUALLY PAINTED, not the colour the pipeline computed.
+				# `pack_icon_sheet.py` used to read `ground.png` and work the median out for itself,
+				# which measured a plate nobody had drawn yet. Taking it from here keeps that script
+				# honest the same way every other number in it is: it reports what the client did.
+				# "" when there is no plate behind this icon.
+				"plate": _plate_behind(art),
+				"plate_rect": _plate_rect(art),
 			}
 		rows.append(entry)
 	print("LAYOUT_JSON ", JSON.stringify({"rows": rows,
@@ -69,6 +79,38 @@ func _process(_d: float) -> bool:
 				"rendering/environment/defaults/default_clear_color", "UNSET")),
 			"panel_px": _screen.PANEL, "icon_px": _screen.ICON_PX}))
 	return true
+
+## The icon anywhere under a row, however it is wrapped.
+func _icon_in(node: Node) -> TextureRect:
+	for child in node.get_children():
+		if child is TextureRect:
+			return child
+		var deeper: TextureRect = _icon_in(child)
+		if deeper != null:
+			return deeper
+	return null
+
+
+## The slot plate's colour as the engine holds it, read off the StyleBoxFlat of the icon's parent.
+## "" when the icon has no plate behind it, which is what a client with no `ui_theme.json` draws.
+func _plate_behind(art: TextureRect) -> String:
+	var parent := art.get_parent()
+	if not (parent is Panel):
+		return ""
+	var style: StyleBox = (parent as Panel).get_theme_stylebox("panel")
+	if not (style is StyleBoxFlat):
+		return ""
+	return (style as StyleBoxFlat).bg_color.to_html(false)
+
+
+## How big that plate is. The point of ASSA-71 is that the plate is the icon's BOX, so if these two
+## ever disagree the icon is sitting on something other than its own slot.
+func _plate_rect(art: TextureRect) -> Array:
+	var parent := art.get_parent()
+	if not (parent is Panel):
+		return []
+	return [(parent as Panel).size.x, (parent as Panel).size.y]
+
 
 func _buttons_in(node: Node) -> Array:
 	var found: Array = []

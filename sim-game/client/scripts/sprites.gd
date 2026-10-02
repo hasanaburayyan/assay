@@ -23,6 +23,12 @@ extends RefCounted
 const MANIFEST := "res://assets/sprites/manifest.json"
 const SHEET_DIR := "res://assets/sprites/"
 
+## COLOURS THE CLIENT DRAWS THAT ARE IN NO SPRITE, beside the manifest and read the same way.
+## A sibling file rather than a manifest key because the manifest's top level is an asset namespace:
+## every key there is expected to have a sheet, and `build.py` drops anything that is not an asset on
+## its next run. Same reason `part_layout.json` is its own file (ASSA-54/71).
+const UI_THEME := "res://assets/sprites/ui_theme.json"
+
 ## WHICH SHEET AND ROW AN ITEM KIND USES, and the honest gaps.
 ##
 ## `ore` as an ITEM is `items.png`'s own row, not the `ore.png` world tile: the tile is a rock on the
@@ -56,6 +62,36 @@ static func manifest() -> Dictionary:
 		return {}
 	var parsed: Variant = JSON.parse_string(text)
 	return parsed if parsed is Dictionary else {}
+
+
+## THE PACK-ROW ICON'S SLOT PLATE, or TRANSPARENT when the pipeline has not shipped one.
+##
+## The colour is the ground sheet's own median, computed by `art/ui_theme.py` on every build. It is
+## not written down here, and it must not be: Maren's ruling (ASSA-71) is that the plate is "the
+## ground's own colour", which is a claim about `ground.png`. A hex in this file would stop being
+## true the day the ground is re-rendered and nobody would find out.
+##
+## ONE COLOUR FOR EVERY SPECIES AND EVERY GRADE. The plate never carries information. A tinted plate
+## would be a second colour channel competing with the icon, which is the ASSA-39 mistake, and it
+## would also undo the point: the spread between species closes BECAUSE they all sit on one surface.
+##
+## TRANSPARENT, NOT A GUESSED COLOUR, when the file is missing. Unlike the geometry in
+## `part_layout.json` -- where a client inventing its own numbers draws a wrong picture confidently
+## (ASSA-54) -- a plate that is not there is simply not there, and the panel underneath is what
+## shipped before ASSA-71. Drawing a grey I made up would be the invention.
+static func pack_icon_plate() -> Color:
+	var text := FileAccess.get_file_as_string(UI_THEME)
+	if text.is_empty():
+		return Color.TRANSPARENT
+	var parsed: Variant = JSON.parse_string(text)
+	if not parsed is Dictionary:
+		return Color.TRANSPARENT
+	var rgb: Array = (parsed as Dictionary).get("pack_icon_plate_rgb", [])
+	if rgb.size() != 3:
+		return Color.TRANSPARENT
+	# Godot parses every JSON number as a double, so these arrive as 136.0. Cast at the one visible
+	# place rather than letting Color8 truncate silently -- the same note as the part contract's.
+	return Color8(int(rgb[0]), int(rgb[1]), int(rgb[2]))
 
 
 ## THE FRAME FOR ONE PACK STACK, or null when we have no art for it.
