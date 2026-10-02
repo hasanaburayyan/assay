@@ -403,6 +403,40 @@ but a client must cast, and this is the same hazard `sim-game/CLAUDE.md`
 already records for hashes crossing as hex text. Verified by reading the file
 from a headless engine run, not by reading the file in Python.
 
+## The third contract: `ui_theme.json` (ASSA-71)
+
+```bash
+art/check_pack_icon_plate.py      # GREEN; in CI (needs Godot)
+```
+
+Colours the **client draws that are in no sprite**. One so far: the plate
+behind a pack-row icon, `#88986C`, written by `build.py` from `art/ui_theme.py`
+as the per-channel median of `ground.png`'s opaque pixels.
+
+**It is derived every build, not written down.** Maren's ruling is that the
+plate is *the ground's own colour* — so a stack in the pack row and a rock on
+the map are the same object. That is a claim about `ground.png`, not about a
+hex: a hex typed anywhere stops being true the morning the ground is
+re-rendered, and nobody finds out. A sibling file rather than a manifest key
+for exactly the reason `part_layout.json` is one (above).
+
+`check_pack_icon_plate.py` holds **three** sources identical — the sheet's
+median recomputed now, the shipped `ui_theme.json`, and the `StyleBoxFlat` the
+client really painted (read out of the live scene by `pack_icon_layout.gd`) —
+and fails if any GDScript spells the colour as a literal. **Nothing in it names
+a colour**, so it goes red the day the ground changes rather than passing
+forever. `ui_theme.py` is stdlib-only (the vendored `png_stdlib`) because CI
+runs the checks on plain `python3`: one derivation shared by the build and the
+check beats a Pillow one and a hand-rolled one that can disagree.
+
+Each arm was proved by mutation rather than assumed:
+
+| mutation | result |
+|---|---|
+| edit the shipped hex to `#88986D` | RED — *and the engine painted `88986D`*, which is how we know the client reads the file and not a constant |
+| `Color8(136, 152, 108)` in `sprites.gd` | RED, with file and line |
+| point `UI_THEME` at a missing file | RED — "the client painted NO plate" |
+
 **The offset is in the same authoring pixels as `frame_px`**, so a renderer
 scales it by exactly what it scales the frame by: at 1× that is half, `(7, -3)`.
 
