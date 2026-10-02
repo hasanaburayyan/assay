@@ -350,10 +350,19 @@ fn golden_hash_covers_a_held_tool_and_a_planted_machine() {
     let mut world = new_world();
     let mut events = Vec::new();
     // Every sheet set on purpose, not clamped from the seed: strength 90 so
-    // the pool outlasts 500 ticks of swinging (it must have WORN, not run
-    // out), hardness 30 so the ore is hand-mineable, density 10 so the drill
-    // is well inside its frame's budget. A seed-dependent anchor would be an
-    // anchor to nothing.
+    // the pool outlasts the swinging below (it must have WORN, not run out),
+    // hardness 30 so the ore is hand-mineable, density 10 so the drill is well
+    // inside its frame's budget. A seed-dependent anchor would be an anchor to
+    // nothing.
+    //
+    // THE MARGIN, WRITTEN DOWN BECAUSE IT HAS ALREADY BEEN SPENT ONCE. At
+    // grade B this head is effective hardness 24 and effective strength 72, so
+    // the pool is 72 × 60 = 4320 = 216 swings, and the rate is
+    // 24 × HEAD_SPEED_PER_HARDNESS work per tick. The original 500 ticks left
+    // 96 swings spare at factor 1 and overran by 24 at factor 2 — the pick
+    // wore out and the reach assertion below caught it, which is the whole
+    // reason that assertion exists. 300 ticks is 144 swings of 216 at factor
+    // 2. If the factor rises again, check this arithmetic before the hash.
     for s in &mut world.species {
         s.sheet = Sheet {
             density: 10,
@@ -416,7 +425,7 @@ fn golden_hash_covers_a_held_tool_and_a_planted_machine() {
     for command in script {
         step(&mut world, &[Input::player(me, command)], &mut events);
     }
-    for _ in 0..500 {
+    for _ in 0..300 {
         step(&mut world, &[], &mut events);
     }
 
@@ -439,7 +448,7 @@ fn golden_hash_covers_a_held_tool_and_a_planted_machine() {
 
     assert_eq!(
         format!("{:016x}", world.state_hash()),
-        "080e462339ce57b5",
+        "9afde5135ca07119",
         "world hash changed; see the comment on this test"
     );
 }

@@ -8,14 +8,14 @@
 
 use sim::assembly::Assembly;
 use sim::tuning::{
-    HAND_MINE_MAX_HARDNESS, HAND_MINE_TICKS, HAND_WORK_PER_TICK, HOPPER_CAPACITY,
-    PICK_DURABILITY_PER_STRENGTH, PICK_WEAR_PER_SWING, PLANTED_FRAME_BUFFER, WORK_PER_UNIT,
-    YIELD_BY_GRADE,
+    HAND_MINE_MAX_HARDNESS, HAND_MINE_TICKS, HAND_WORK_PER_TICK, HEAD_SPEED_PER_HARDNESS,
+    HOPPER_CAPACITY, PICK_DURABILITY_PER_STRENGTH, PICK_WEAR_PER_SWING, PLANTED_FRAME_BUFFER,
+    WORK_PER_UNIT, YIELD_BY_GRADE,
 };
 use sim::{
     BuildingId, DepositId, Event, Grade, Input, Item, ItemKind, Mount, Part, PartKind,
-    PlayerCommand, PlayerId, RejectReason, Sheet, SpeciesId, SystemCommand, TilePos, World,
-    WorldConfig, step,
+    PlayerCommand, PlayerId, Property, RejectReason, Sheet, SpeciesId, SystemCommand, TilePos,
+    World, WorldConfig, step,
 };
 
 /// The species every test here digs and builds from, so a rate can be
@@ -196,17 +196,19 @@ fn the_remainder_carries_so_the_rate_is_not_a_ceiling() {
     let design = pick(Grade::A);
     assert_eq!(
         design.stats(&world.species).speed,
-        30,
-        "the anchor this test reasons about"
+        30 * HEAD_SPEED_PER_HARDNESS,
+        "the anchor this test reasons about: effective hardness 30 at grade A, \
+         times the factor"
     );
     equip_and_mine(&mut world, me, &design);
 
     run(&mut world, 30);
     assert_eq!(
         ore_held(&world, me, Grade::C),
-        9 * YIELD_BY_GRADE[Grade::C as usize],
-        "30 ticks at 30 work/tick is 900 work = 9 units; a ceiling or a reset \
-         would both give 7"
+        18 * YIELD_BY_GRADE[Grade::C as usize],
+        "30 ticks at 60 work/tick is 1800 work = 18 units; a ceiling (2 ticks \
+         a unit) or a reset would both give 15. These numbers are the factor's \
+         to move: at `HEAD_SPEED_PER_HARDNESS` 1 it was 9 against a ceiling's 7"
     );
 }
 
@@ -345,7 +347,8 @@ fn a_pick_does_not_unlock_ore_too_hard_for_hands() {
 /// and for a drill, because decision 8 says "picks and drills alike".
 ///
 /// This is the test the continuous curve exists for: at hardness 30 the three
-/// grades give 18, 24 and 30 work per tick, which under a tick-counting rule
+/// grades give effective hardness 18, 24 and 30 — so 36, 48 and 60 work per
+/// tick at `HEAD_SPEED_PER_HARDNESS` 2 — which under a tick-counting rule
 /// would all have landed on the same integer tick count.
 #[test]
 fn a_better_grade_head_mines_more_of_the_same_species() {
@@ -385,6 +388,101 @@ fn a_better_grade_head_mines_more_of_the_same_species() {
         machine_by_grade[0] < machine_by_grade[1] && machine_by_grade[1] < machine_by_grade[2],
         "and so must a drill's, from the same row: {machine_by_grade:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The guard the Game Director asked for, and what it is guarding
+// ---------------------------------------------------------------------------
+
+/// **IF MINING'S REACH EVER RISES, THIS FAILS INSTEAD OF THE RATE CURVE GOING
+/// QUIETLY FLAT.** `mine_by_hand` takes at most one unit per tick, so work
+/// above `WORK_PER_UNIT` is thrown away and the rate stops being monotone in
+/// hardness — which is the entire reason A3 carries the remainder. Nothing
+/// detects that; the game simply stops rewarding a better head.
+///
+/// At `HEAD_SPEED_PER_HARDNESS` 2 the best head anybody can reach makes 80 of
+/// 100, so there is headroom. At 3 it would be 120 and the top of the ladder
+/// would flatten; the day somebody lifts the hardness gate, the same thing
+/// happens at 2.
+///
+/// **THE REACHABLE MAXIMUM IS MINED FOR, NOT TYPED.** A guard whose bound came
+/// from me reading `HAND_MINE_MAX_HARDNESS` would guard my reading. So this
+/// tries every base hardness through the real mining rule and asks what came
+/// out, which also keeps it honest if hand mining and machine mining ever stop
+/// sharing a gate.
+#[test]
+fn the_rate_curve_cannot_flatten_without_ci_saying_so() {
+    let mut hardest_minable = 0u32;
+    let mut refused_something = false;
+    for base in 1..=100u8 {
+        let (mut world, me) = world_with_player();
+        world.species_mut(ROCK).sheet.hardness = base;
+        deposit_under_player(&mut world, me, Grade::A);
+        send(&mut world, me, PlayerCommand::Mine);
+        run(&mut world, HAND_MINE_TICKS * 2);
+        if ore_held(&world, me, Grade::A) > 0 {
+            // Grade A scales hardness by 100%, so A is this species' best head
+            // and `effective` is the number a head would actually contribute.
+            hardest_minable =
+                hardest_minable.max(world.species(ROCK).effective(Property::Hardness, Grade::A));
+        } else {
+            refused_something = true;
+        }
+    }
+    // The loop must have found the boundary, not just run. A world where
+    // nothing was minable would pass the real assertion below vacuously.
+    assert!(
+        hardest_minable > 0 && refused_something,
+        "this must span the gate: hardest minable {hardest_minable}, and \
+         something must have been refused"
+    );
+    assert_eq!(
+        hardest_minable, HAND_MINE_MAX_HARDNESS,
+        "the gate the sim applies is no longer the constant this test's \
+         message talks about; read `mine_by_hand` and `mine_by_machine` again"
+    );
+    assert!(
+        hardest_minable * HEAD_SPEED_PER_HARDNESS <= WORK_PER_UNIT,
+        "THE RATE CURVE HAS FLATTENED AT THE TOP. The best reachable head now \
+         contributes {} work per tick against a {WORK_PER_UNIT} unit, so work \
+         is discarded and a harder head stops mining faster. Two ways out: put \
+         `HEAD_SPEED_PER_HARDNESS` back to 1, or raise `WORK_PER_UNIT` to 200 \
+         with `HAND_WORK_PER_TICK` 50 — that identity keeps hand mining at \
+         exactly {HAND_MINE_TICKS} ticks per unit.",
+        hardest_minable * HEAD_SPEED_PER_HARDNESS
+    );
+}
+
+/// **THE FACTOR CANNOT CHANGE HOW GRADE FEELS**, and that is worth a test
+/// because it is the thing people will expect it to do. A head's `Speed` is
+/// `effective hardness x HEAD_SPEED_PER_HARDNESS`, so the within-species C:A
+/// ratio is `floor(0.6 x base) / base` and the factor cancels out of it. All 2
+/// moved was the whole ladder, relative to bare hands.
+///
+/// Cross-multiplied rather than divided, so it is exact, and read off the real
+/// `PART_SPECS` row rather than recomputed here: a flat bonus on the speed row,
+/// or a row that started reading strength, breaks this even though both would
+/// leave `a_better_grade_head_mines_more_of_the_same_species` green.
+#[test]
+fn grade_scales_the_rate_by_a_ratio_the_factor_cannot_move() {
+    for base in [7u8, 20, 30, HAND_MINE_MAX_HARDNESS as u8] {
+        let (mut world, me) = world_with_player();
+        world.species_mut(ROCK).sheet.hardness = base;
+        let _ = me;
+        let speed = |grade| pick(grade).stats(&world.species).speed;
+        let eff = |grade| world.species(ROCK).effective(Property::Hardness, grade);
+        assert_eq!(
+            speed(Grade::A) * eff(Grade::C),
+            speed(Grade::C) * eff(Grade::A),
+            "at base hardness {base} the C:A rate ratio must be the C:A \
+             effective-hardness ratio, with no factor left in it: speeds {}/{} \
+             against effective {}/{}",
+            speed(Grade::C),
+            speed(Grade::A),
+            eff(Grade::C),
+            eff(Grade::A)
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -522,8 +620,10 @@ fn a_picks_pool_drops_one_swing_per_unit_mined() {
         "the pool anchor: head size x effective strength x per-strength"
     );
 
-    // Speed 24 at grade B, so 100 work takes five ticks and change.
-    run(&mut world, 5);
+    // Speed 48 at grade B (effective hardness 24 x the factor), so 100 work
+    // lands on the third tick: 48, 96, 144. The window is one unit wide on
+    // purpose — run it longer and a second unit hides what this is about.
+    run(&mut world, 3);
     assert_eq!(ore_held(&world, me, Grade::C), 1, "exactly one unit so far");
     assert_eq!(
         world.player(me).unwrap().tool.as_ref().unwrap().durability,
@@ -601,11 +701,11 @@ fn the_swing_that_empties_the_pool_still_yields_its_ore() {
         .durability = PICK_WEAR_PER_SWING;
     let before = ore_held(&world, me, Grade::C);
 
-    // Speed 24, so 100 work lands on the fifth tick and not before. The
+    // Speed 48, so 100 work lands on the third tick and not before. The
     // window is exactly one unit wide on purpose: run it longer and the
     // player's bare hands mine a second unit, which is correct behaviour but
     // would hide the thing this test is about.
-    let events = run(&mut world, 5);
+    let events = run(&mut world, 3);
     assert!(
         events.iter().any(|e| matches!(e, Event::OreMined { .. })),
         "the last swing yields"

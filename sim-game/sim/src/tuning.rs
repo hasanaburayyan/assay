@@ -155,17 +155,30 @@ pub const MAX_HOPPER_SLOTS: u32 = 4;
 /// Work per tick per point of the head's effective hardness. The head's
 /// `Speed` contribution is `effective hardness × this`.
 ///
-/// **1 IS WHAT A3 IMPLIED AND IT IS PROBABLY TOO LOW. MEASURED, ON ASSA-6.**
-/// The hand gate (`HAND_MINE_MAX_HARDNESS` 40) is read off BASE hardness, so
-/// every species the demo can reach has hardness ≤ 40 and no head can exceed
-/// 40 effective. Against bare hands at `HAND_WORK_PER_TICK` 25, that makes a
-/// grade-C pick slower than hands for **every** minable species, and a pick
-/// repay its own build for only 10% of them at grade B. At 2 a middling head
-/// (base 20, grade B) runs 3.12 ticks/unit against the hands' 4.00 and the
-/// grade ladder still bites. Left at 1 because the rate is a design number
-/// and the Game Director rules it; the numbers are on ASSA-6 and this is the
-/// one line that changes.
-pub const HEAD_SPEED_PER_HARDNESS: u32 = 1;
+/// **RAISED 1 → 2 (the Game Director's ruling on ASSA-6).** At 1 the demo's
+/// first assembly was slower than the hands that built it: the hand gate
+/// (`HAND_MINE_MAX_HARDNESS` 40) is read off BASE hardness, so no head can
+/// exceed 40 effective, and against bare hands at `HAND_WORK_PER_TICK` 25 a
+/// grade-C pick lost to bare hands for **every** minable species, repaying its
+/// own build for 10% of them at grade B. A loop whose first tool is a downgrade
+/// teaches "do not build".
+///
+/// **WHAT 2 DOES AND DOES NOT BUY.** It moves the whole ladder relative to the
+/// hands (47/60/70% of minable species beat bare hands at C/B/A, from 0/23/40),
+/// and it changes how grade FEELS by exactly nothing: the within-species C:A
+/// rate ratio is `floor(0.6 × base) / base`, in which this factor cancels. It
+/// also does not close the tail — the first pick is built from the STARTER
+/// species, and at 2 that still loses to bare hands in 39% of worlds, because a
+/// linear factor cannot fix a starter of hardness 5. That is worldgen's to fix.
+///
+/// **NOT 3, and the reason is a cap rather than taste.** `mine_by_hand` mines
+/// at most one unit per tick, so work above `WORK_PER_UNIT` 100 is discarded
+/// and the rate stops being monotone in hardness, which is the whole point of
+/// A3's carried remainder. At 2 the best reachable head tops out at 80 with
+/// headroom; at 3 it is 120 and the top of the ladder flattens.
+/// `tests/tools.rs::the_rate_curve_cannot_flatten_without_ci_saying_so` is the
+/// guard, and it names the two ways out if mining's reach ever rises.
+pub const HEAD_SPEED_PER_HARDNESS: u32 = 2;
 
 /// Durability pool per point of the head's effective strength, per point of
 /// head size. Pool = head size × effective head strength × this.
