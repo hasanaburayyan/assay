@@ -79,6 +79,42 @@ func test_every_species_gets_the_tables_slot() -> bool:
 	return true
 
 
+## THE DISC THE PROBE CERTIFIED IS THE DISC WE DRAW. This is the only test here that pins a constant,
+## and the reason is that the measurement lives somewhere CI never goes: `art/species_probe.py` is not
+## in the workflow, so the two numbers Maren ruled on (ASSA-7, 2026-10-02) are guarded by a script
+## nobody runs unless they are already thinking about colour.
+##
+## It does NOT re-measure colour separation, and it must never grow into that -- the dE figure belongs
+## to one instrument, in Python, against real terrain, under four observers. What it guards is the
+## thing that actually went wrong twice: the instrument was pointed at a surface the client did not
+## draw. Cove's probe scored a disc it modelled as opaque while we shipped alpha 0.85, and Maren's
+## 0.55 was measured flat for the same reason; both read "fine" for a disc that was really 10.8 at
+## purity 6, under the floor of 12. So:
+##   - ALPHA 1.0, because the certified number is only true of an opaque disc. Nothing is ever drawn
+##     under a deposit on this map, so there is nothing to see through it.
+##   - THE DIMMEST DISC AT 0.62 of its slot (base 0.60, purity clamped to 0.05). Measured at 14.0;
+##     putting this base back on the old alpha scores 11.8 and 0.33 scores 8.8.
+## Either one drifting invalidates the measurement rather than merely changing a look, and a failure
+## here means: re-run the probe, do not retune the number.
+func test_the_map_disc_is_the_surface_the_probe_measured() -> bool:
+	for species in range(AssayHud.SPECIES_TINTS.size()):
+		var dimmest := AssayHud.deposit_color(species, 1)
+		if dimmest.a < 1.0:
+			return _fail(("species %d draws its patch at alpha %f. The colour-blindness floor was "
+					+ "measured on an OPAQUE disc; anything less mixes the near-black map into every "
+					+ "patch and costs 1-2 dE of chroma, which is the whole of ASSA-29.")
+					% [species, dimmest.a])
+		# `v` is max(r, g, b) and the dim is one multiplier on all three, so this ratio IS the
+		# multiplier -- no need to know which channel the slot peaks in.
+		var slot := Color(AssayHud.SPECIES_TINTS[species])
+		var multiplier := dimmest.v / slot.v
+		if multiplier < 0.615:
+			return _fail(("species %d's dimmest patch is %f of its slot, under the measured 0.62. "
+					+ "Re-run art/species_probe.py rather than lowering this: at 0.525 the worst pair "
+					+ "was 11.6 and the floor is 12.") % [species, multiplier])
+	return true
+
+
 ## A LETTER ON A PATCH HAS TO BE READABLE ON EVERY PATCH, which is the whole point of having it: the
 ## tints clear the colour-blindness floor by single digits, so the glyph is what a protan player
 ## actually reads. Measured as a contrast ratio against the deposit colour composited over the map,
