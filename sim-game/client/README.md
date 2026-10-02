@@ -58,11 +58,16 @@ The part menu and placement used to be listed here as waiting on ASSA-5. They
 landed: the bench panel reads `AssaySim.designs_of`, and the probe assembles,
 equips and plants through the same `PlayerCommand`s `sim-cli` uses.
 
-Sprites are **blocked on a path, not on the art**. This file used to say the
-species in a world are generated so `assets/sprites` had nothing to draw them
-with; that stopped being true at ASSA-19/20 — the ore sprite is species-neutral
-and meant to be tinted, and the tint table is already here in
-`AssayHud.SPECIES_TINTS`. The real blocker is ASSA-34: `res://` is this folder,
-the sheets are in its sibling `../assets/sprites`, so the engine cannot see
-them, nothing has an `.import`, and neither export preset would pack them. The
-layout call is Marlow's.
+Sprites are **blocked on a scale**, and this file has named the wrong blocker
+twice. Not the art: that stopped being true at ASSA-19/20, when ore art became
+species-neutral and tintable with `AssayHud.SPECIES_TINTS`. Not the path
+either: that was ASSA-34, and `art/build.py` writes to `assets/sprites/` inside
+this project now, with `tests/test_sprites.gd` proving from inside the engine
+that all nine images load through `res://` and match the grid `manifest.json`
+claims, and `art/check_client_can_see_art.py` holding the path in CI.
+
+What is in the way is ASSA-46: `AssayHud.map_cell` draws the whole 96×64 world
+beside the HUD, so a tile is **9 px** while a frame of art is **64 px**.
+Drawing today's images on today's map is a 7× downscale, which the art
+direction rules out. Either the client gets a camera at 1× or sprites go only
+where the scale suits them — a design call, not an engineering one.

@@ -738,17 +738,27 @@ func _track_hover(at: Vector2) -> void:
 
 ## The world as the sim has it: bounds, every deposit, every player, and spawn.
 ##
-## NO SPRITES HERE YET, AND THE REASON IS A PATH, NOT THE ART. This comment used to say the art was
-## the problem -- that `assets/sprites` was drawn for the old named ores while the species in a world
-## are generated. That stopped being true at ASSA-19/20: the ore sprite is species-neutral and meant to
-## be tinted, the `_edge` variant is gone (ASSA-26), and the tint table is already in this client
-## (`AssayHud.SPECIES_TINTS`). A tinted ore tile is `modulate` with that slot over `ore.png`.
+## NO SPRITES HERE YET, AND THE REASON IS A SCALE. Two earlier reasons are gone and both are worth
+## naming, because this comment has been wrong twice and someone reading it goes looking in the wrong
+## place each time.
 ##
-## The actual blocker is ASSA-34, Cove's finding: `res://` is the project folder, which is `client/`,
-## and the sheets live in its SIBLING `assets/sprites`, so the engine cannot see them, there is not one
-## `.import` file for them, and neither export preset would pack them. The layout call is Marlow's.
-## Shapes and colours from the sim's own numbers are the honest picture until that path is settled --
-## but nobody should read this and go looking at the art.
+## IT IS NOT THE ART. That claim -- `assets/sprites` drawn for the old named ores while a world's
+## species are generated -- stopped being true at ASSA-19/20: the ore art is species-neutral and meant
+## to be tinted, the `_edge` variant is gone (ASSA-26), and the tint table is already in this client
+## (`AssayHud.SPECIES_TINTS`), checked against the pipeline's own copy in CI.
+##
+## IT IS NO LONGER A PATH EITHER. That was ASSA-34, Cove's finding: `res://` is `client/` and the
+## images were in its sibling, so nothing had an `.import` and no preset packed them. Marlow ruled and
+## `art/build.py` writes to `client/assets/sprites/` now. `tests/test_sprites.gd` holds the engine's
+## half of that from inside the engine -- all nine load through `res://` with pixels in them and match
+## the grid the manifest claims -- and `art/check_client_can_see_art.py` holds the path half in CI.
+##
+## WHAT IS ACTUALLY IN THE WAY (ASSA-46): `AssayHud.map_cell` draws the WHOLE 96x64 world beside the
+## HUD, so a tile is 9 px (measured; 18 px on a 32x32 world) and a frame of art is 64 px. Drawing the
+## images on this map is a 7x downscale, which is the one thing the art direction says not to do. The
+## way out is either a camera at 1x or sprites only where the scale suits them, and that is a design
+## call rather than mine. So the shapes and colours below are still the honest picture, and they are a
+## measured one: the discs clear a colour-blindness floor of 12 with the glyph as a second read.
 func _draw() -> void:
 	# A self-check run returns out of `_ready` before there is a client, and the engine still calls
 	# `_draw` once. In the editor that is a caught script error; in an EXPORTED RELEASE BUILD it
