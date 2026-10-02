@@ -59,19 +59,11 @@
     "frames": 1
    },
    {
-    "name": "C_edge",
-    "frames": 1
-   },
-   {
     "name": "B_full_v0",
     "frames": 1
    },
    {
     "name": "B_full_v1",
-    "frames": 1
-   },
-   {
-    "name": "B_edge",
     "frames": 1
    },
    {
@@ -83,15 +75,7 @@
     "frames": 1
    },
    {
-    "name": "A_edge",
-    "frames": 1
-   },
-   {
     "name": "depleted_full",
-    "frames": 1
-   },
-   {
-    "name": "depleted_edge",
     "frames": 1
    }
   ],

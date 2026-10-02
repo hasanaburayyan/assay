@@ -63,6 +63,27 @@ POP = 10.0          # ore against the terrain it sits on
 # named after instead of sitting below it.
 POP_C = 5.0
 
+# THE MAP DISC IS A SECOND SURFACE AND IT HAS ITS OWN FLOOR (ASSA-24, Maren).
+# The probe certified the ORE TILE at three grades and nothing else. The client
+# also draws each deposit as a flat ~9px disc on the schematic map, one colour,
+# whose brightness rides purity CONTINUOUSLY instead of in three steps -- so a
+# tile that passes says nothing about a disc at low purity.
+#
+# hud.gd dims by `MAP_PURITY_FLOOR + (1 - MAP_PURITY_FLOOR) * purity/100`, so
+# the floor is the dimmest disc that can ever be drawn and is the only purity
+# worth gating. 0.55 is MEASURED, not chosen: at 0.55 the shipped table holds
+# 12.5 and at 0.50 it falls to 11.5, under DISTINCT.
+#
+# RED LEVER: MAP_FLOOR=0.33 dims the disc further, which is the failure this
+# guard exists to catch (a client constant set too low), not a lowered bar.
+MAP_PURITY_FLOOR = float(os.environ.get("MAP_FLOOR", "0.55"))
+if MAP_PURITY_FLOOR != 0.55:
+    print("[RED RUN] map purity floor forced to %.2f; the MAP DISC check MUST fail"
+          % MAP_PURITY_FLOOR)
+# The map background, from client/scripts/main.gd:
+#   draw_rect(..., Color(0.10, 0.11, 0.13), true)
+MAP_BG = (26, 28, 33)
+
 # RED LEVER FOR POP_C. The regression this guard is named after was a COVERAGE
 # one -- a grade-C tile with fewer rocks on it is more terrain, and pop fell to
 # 3.9 -- so the lever reproduces the cause rather than lowering the bar:
@@ -258,6 +279,35 @@ def mute(rgb, keep):
     return (c(rgb[0]), c(rgb[1]), c(rgb[2]))
 
 
+def dim_v(rgb, k):
+    """Scale HSV VALUE by k, which is what the client's purity multiply does.
+    Not a multiply toward black and not a blend toward the background: V is
+    the channel hud.gd actually rides, so the probe has to ride the same one
+    or it is certifying a surface nobody draws."""
+    h, s, v = colorsys.rgb_to_hsv(*[c / 255.0 for c in rgb])
+    return tuple(round(c * 255) for c in colorsys.hsv_to_rgb(h, s, v * k))
+
+
+def dAB(a, b):
+    """dE on HUE AND CHROMA ONLY (a*, b*), with L* dropped.
+
+    This is the right measure for the map disc and the wrong one for most
+    things, so it is worth being explicit. On the map, BRIGHTNESS ALREADY
+    MEANS PURITY. If L* counted here, two discs of the same species at
+    different purity would score as "distinct" and a palette could pass by
+    being a brightness ramp -- which is exactly how a muted table fooled me
+    once already, scoring 16.3 while being one hue at six brightnesses."""
+    la, lb = lab(a), lab(b)
+    return math.hypot(la[1] - lb[1], la[2] - lb[2])
+
+
+def seen_flat(rgb, observer):
+    """One flat colour through one observer, reusing the pipeline's matrices."""
+    px = tuple(int(round(v)) for v in rgb)
+    return as_seen(Image.new("RGBA", (1, 1), px + (255,)), observer,
+                   "linear").convert("RGBA").getpixel((0, 0))[:3]
+
+
 def slots():
     """The designed table, or a deliberately crowded stand-in for the RED run."""
     if SPAN == 1.0:
@@ -375,29 +425,116 @@ def main():
     # overlay, so a sparse tile is mostly terrain and a patch of it reads as
     # terrain however vivid its few rocks are. Measuring the rocks alone would
     # score coverage as if it were free.
+    # TWO TABLES, TWO LINES, AND ONLY ONE OF THEM GATES. Maren caught this on
+    # ASSA-24: I put the grade-C floor on `hues(n)`, the EVEN-SPACED STAND-IN,
+    # which is a palette we do not ship and check 5 rejects. One number was
+    # doing two jobs.
+    #   STAND-IN  answers "can ANY id-derived hue scheme pop off our terrain" -
+    #             the right instrument for that question, so it is reported.
+    #   SHIPPED   answers "does the ore we actually ship pop" - the only one
+    #             that can block, because it is the only one a player sees.
     print()
     n = 6
+    stand_in = hues(n)
     for g in GRADE_ROWS:
         gt = frame_of("ore", "%s_full_v0" % g)
-        ps = [dE(mean_rgb(over_ground(tint(gt, h))), gmean) for h in hues(n)]
         floor = POP_C if g == "C" else POP
-        if min(ps) >= POP:
+        shipped = [dE(mean_rgb(over_ground(tint(gt, hex_rgb(c)))), gmean)
+                   for c in SPECIES_TINTS]
+        generic = [dE(mean_rgb(over_ground(tint(gt, h))), gmean) for h in stand_in]
+        if min(shipped) >= POP:
             note = ""
         elif g == "C":
-            note = ("<-- subtle by design (sparse), floor %.0f" % POP_C
-                    if min(ps) >= POP_C else "<-- TOO FAINT EVEN FOR C")
+            note = ("<-- subtle by design, floor %.0f" % POP_C
+                    if min(shipped) >= POP_C else "<-- TOO FAINT EVEN FOR C")
         else:
             note = "<-- SINKS INTO TERRAIN"
-        print("grade %s vs ground: worst species dE %5.1f, best %5.1f  %s"
-              % (g, min(ps), max(ps), note))
-        if min(ps) < floor:
+        print("grade %s vs ground: SHIPPED table worst %5.1f, best %5.1f  %s"
+              % (g, min(shipped), max(shipped), note))
+        print("                    stand-in (even hues) worst %5.1f  [reported,"
+              " does not gate]" % min(generic))
+        if min(shipped) < floor:
             ok = False
             if g == "C":
                 print("  FAIL: grade C is allowed to be subtle, not invisible. It"
                       "\n  measured %.1f against a floor of %.1f. This slid to 3.9"
                       "\n  once already; a sparse tile is still a tile you have to"
-                      "\n  be able to spot on the map." % (min(ps), POP_C))
-    pops = [dE(mean_rgb(over_ground(tint(pop_base, h))), gmean) for h in hues(n)]
+                      "\n  be able to spot on the map." % (min(shipped), POP_C))
+    pops = [dE(mean_rgb(over_ground(tint(pop_base, h))), gmean) for h in stand_in]
+
+    # ---- 2b. THE MAP DISC, a second surface with its own floor (ASSA-24).
+    #
+    # Everything above certifies the ORE TILE: textured rock, over olive
+    # terrain, at three discrete grades. The client draws the same deposit a
+    # SECOND way -- a flat ~9px disc on the schematic map, one colour, over a
+    # near-black background, with brightness riding purity CONTINUOUSLY. None
+    # of those four differences is cosmetic, so a tile that passes says
+    # nothing about a disc, and the probe was silent about half of what a
+    # player looks at.
+    #
+    # Measured at the DIMMEST disc the client can draw, because that is the
+    # worst case and every brighter purity is slack. Hue/chroma only: see
+    # dAB() for why L* must not count on this surface.
+    print("\nthe MAP DISC: flat %d-colour discs on the schematic map, dimmed to"
+          % len(SPECIES_TINTS))
+    print("V*%.2f (hud.gd's purity floor). a*b* only, worst of %d observers,"
+          " floor %.0f." % (MAP_PURITY_FLOOR, len(OBSERVERS), DISTINCT))
+    disc_rows = []
+    for k in (1.00, 0.80, 0.70, 0.60, 0.55, 0.50, 0.33):
+        cols = [dim_v(hex_rgb(c), k) for c in SPECIES_TINTS]
+        worst, who = 99.0, None
+        for obs in OBSERVERS:
+            s = [seen_flat(c, obs) for c in cols]
+            for i in range(len(cols)):
+                for j in range(i + 1, len(cols)):
+                    d = dAB(s[i], s[j])
+                    if d < worst:
+                        worst, who = d, (obs, i, j)
+        bg = min(dE(c, MAP_BG) for c in cols)
+        disc_rows.append((k, worst, bg))
+        print("  V*%.2f: closest pair %d vs %d under %-6s dE(a*b*) %5.1f  %s"
+              "   | dimmest vs background dE %5.1f"
+              % (k, who[1], who[2], who[0], worst,
+                 "OK" if worst >= DISTINCT else "TOO CLOSE", bg))
+    at_floor = [r for r in disc_rows if abs(r[0] - MAP_PURITY_FLOOR) < 1e-9]
+    if at_floor:
+        _, w, bg = at_floor[0]
+        if w < DISTINCT:
+            ok = False
+            print("  FAIL: at the dimmest disc the client can draw, two species"
+                  "\n  are %.1f apart for some observer, under %.0f. Either the"
+                  "\n  table or the client's purity floor has to move." % (w, DISTINCT))
+        if bg < DISTINCT:
+            ok = False
+            print("  FAIL: the dimmest disc sinks into the map background"
+                  " (dE %.1f)." % bg)
+    else:
+        ok = False
+        print("  FAIL: no row measured at the configured floor %.2f."
+              % MAP_PURITY_FLOOR)
+    print("  -> the client's constant: purity multiply bottoms out at %.2f."
+          " Below that this\n     table stops being colour-blind safe, so"
+          " 0.55 is a MEASURED floor." % MAP_PURITY_FLOOR)
+
+    # AND THE ONE I GOT WRONG, kept as a reported line because it is the
+    # evidence against my own recommendation. I told Limpet (ASSA-25) that
+    # SPECIES_TINTS are multipliers rather than fills, that a flat #7A29CC
+    # would SINK into the dark map, and that the map should use a table
+    # derived from the tinted ore tile instead. I never measured any of it.
+    #   - nothing sinks: the dimmest disc clears the background by 34.7
+    #   - and the derived table is WORSE, because the ore tile's mean carries
+    #     the rock's dark outline and shading, so it starts with less chroma
+    #     and has less to spend on the dimming the map applies.
+    # Maren's ruling (use the tints) is the one with the margin. The gap below
+    # is real and does not gate: the map is deliberately more chromatic than
+    # the world because it is a flat disc on near-black rather than textured
+    # rock on olive, and it needs the chroma to survive being dimmed.
+    print("\n  map table vs the world tile it stands for (reported, does not gate):")
+    for i, c in enumerate(SPECIES_TINTS):
+        world = mean_rgb(at_1x(tint(frame_of("ore", "C_full_v0"), hex_rgb(c))))
+        print("    species%d  map %s  world #%02X%02X%02X  dE(a*b*) %5.1f"
+              % (i, c, round(world[0]), round(world[1]), round(world[2]),
+                 dAB(hex_rgb(c), world)))
 
     # ---- 3. THE AXIS COLLISION
     # An ore tile already spends a visual axis on TIER, and parts spend one on
