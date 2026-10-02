@@ -53,14 +53,21 @@ PALETTE = {
     "steel": "#B9C2CC", "cyan": "#3FD8FF", "brass": "#E2B04A", "rubber": "#1B1D22",
     "ground": "#6E7A4E", "ground_dk": "#5F6B43", "ground_ore": "#57603F",
     "skin": "#E0B48C", "suit": "#F08A24", "visor": "#3FD8FF",
-    # ore kinds: base / dark / accent (accent is the high-purity glint)
-    "iron": "#8FA7C4", "iron_dk": "#4C5C73", "iron_hi": "#DCEBFF",
-    "copper": "#D9772E", "copper_dk": "#8A4517", "copper_hi": "#5FE0B0",
-    "coal": "#33363D", "coal_dk": "#1B1D22", "coal_hi": "#FF8A3C",
-    "stone": "#B8AE94", "stone_dk": "#7B7461", "stone_hi": "#FFF2C0",
+    # ORE: one species-neutral set, base / dark / accent (accent is the
+    # high-purity glint). There is deliberately no iron, copper, coal or
+    # stone here and there must never be again - a world rolls six species
+    # from its seed (ADR 0001) and nothing may name one.
+    #
+    # LIGHT ON PURPOSE. The client multiplies a species colour over these
+    # pixels and a multiply cannot brighten, so this lightness is the budget
+    # the tint spends; a mid-grey base makes every species mud. Near-neutral
+    # on purpose too: whatever hue sits here is added to all six species at
+    # once. Both measured in art/species_probe.py.
+    "ore": "#CCC8C2", "ore_dk": "#7B7872", "ore_hi": "#F6F2EA",
     "line": "#1A1D23",
 }
-ORE_KINDS = ["iron", "copper", "coal", "stone"]
+
+from species_tints import SPECIES_TINTS  # noqa: F401  (data, see that file)
 
 # ---------------------------------------------------------------- parts
 #

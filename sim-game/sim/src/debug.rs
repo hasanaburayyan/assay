@@ -374,6 +374,11 @@ pub fn part_table() -> String {
 /// **Durability only for a held frame** (same ruling): the head contributes a
 /// pool whatever frame it sits on, but drill wear is parked, so showing it on a
 /// planted design would teach a mechanic that does not exist.
+///
+/// **The pool itself is banded like everything else** (amendment A10): exact
+/// against its true max once the sheet is known, a percentage of the pool's
+/// *class* while it is not. See the held branch for why a number there was a
+/// leak.
 pub fn assembly_readout(world: &World, built: &Built) -> String {
     let a = &built.assembly;
     let range = a.stat_range(&world.species);
@@ -395,12 +400,31 @@ pub fn assembly_readout(world: &World, built: &Built) -> String {
     );
     match a.mount() {
         Some(Mount::Held) => {
-            let _ = write!(
-                out,
-                " · durability {}/{}",
-                built.durability,
-                show(range.low.durability, range.high.durability)
-            );
+            // THE POOL IS NEVER PRINTED AS A NUMBER WHILE THE SHEET IS BANDED
+            // (ADR 0003 amendment A10). `pool_max = HEAD_SIZE x eff strength x
+            // PICK_DURABILITY_PER_STRENGTH`, and both constants are published,
+            // so an exact pool divided by 60 *is* the head's effective
+            // strength -- and `(pool + 20 x swings) / 60` recovers it at any
+            // moment, not only at full. It was the one `Source::Property` stat
+            // read exactly while mass and budget were banded, which made a
+            // pick a free assay of strength.
+            //
+            // The denominator is the TRUE max from `stats()`, never a band
+            // end: a percentage over a published band end is the exact pool
+            // with extra arithmetic. `div_ceil` so a pick with swings left
+            // never reads 0%.
+            let max = a.stats(&world.species).durability;
+            let _ = if range.low.durability == range.high.durability {
+                write!(out, " · durability {}/{}", built.durability, max)
+            } else {
+                write!(
+                    out,
+                    " · durability {}% of {}-{}",
+                    (100 * built.durability).div_ceil(max.max(1)),
+                    range.low.durability,
+                    range.high.durability
+                )
+            };
         }
         _ => {
             let _ = write!(
