@@ -21,7 +21,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use auth::{AccountId, Authenticator, DevAuthenticator};
-use sim::{Event, Input, PlayerCommand, PlayerId, SystemCommand, World, WorldConfig, step};
+use sim::{Event, Input, PlayerCommand, PlayerId, SystemCommand, World, step};
 use sim_net::{
     ClientMsg, DEFAULT_PORT, HASH_EVERY, PROTOCOL_VERSION, ServerMsg, TickBundle, read_msg,
     saves_dir, write_msg,
@@ -457,12 +457,10 @@ fn open_world(opts: &Options) -> (World, BTreeMap<AccountId, PlayerId>) {
         println!("Loaded {}", world_path.display());
         return (world, load_accounts(&accounts_path));
     }
-    let world = World::new(WorldConfig {
-        seed: opts.seed,
-        width_chunks: 6,
-        height_chunks: 4,
-    });
-    (world, BTreeMap::new())
+    // ONE PLACE DECIDES A SESSION'S WORLD (ASSA-53). This used to write the
+    // chunk counts out here, and `sim-godot` wrote them out again for the
+    // client's headless suite; two copies of a number that must match.
+    (sim_net::fresh_world(opts.seed), BTreeMap::new())
 }
 
 fn load_accounts(path: &Path) -> BTreeMap<AccountId, PlayerId> {

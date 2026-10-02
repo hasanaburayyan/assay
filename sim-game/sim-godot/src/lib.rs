@@ -776,11 +776,11 @@ pub fn fresh_welcome_text(seed: &str, name: &str) -> String {
     let Ok(seed) = seed.trim().parse::<u64>() else {
         return String::new();
     };
-    let mut world = World::new(WorldConfig {
-        seed,
-        width_chunks: 6,
-        height_chunks: 4,
-    });
+    // THE RELAY'S OWN CONSTRUCTOR, NOT A COPY OF ITS NUMBERS (ASSA-53). The
+    // chunk counts were written out here as well as in `sim-relay`, so a change
+    // to one would have left every client test passing against a world no relay
+    // would send — and nothing would have gone red.
+    let mut world = sim_net::fresh_world(seed);
     let joining = [Input::System(sim::SystemCommand::AddPlayer {
         name: name.to_string(),
     })];
@@ -1324,12 +1324,10 @@ mod tests {
     use sim::building::Slot;
     use sim::command::StopReason;
 
+    /// The relay's own world, so these tests exercise the shape a client is
+    /// actually sent rather than a copy of it that can drift (ASSA-53).
     fn fresh() -> World {
-        World::new(WorldConfig {
-            seed: 4242,
-            width_chunks: 6,
-            height_chunks: 4,
-        })
+        sim_net::fresh_world(4242)
     }
 
     /// THE WHOLE POINT OF THE CRATE: stepping here must land on the same hash
@@ -1420,6 +1418,70 @@ mod tests {
         };
         assert!(sim.apply_bundle(&after));
         assert_eq!(sim.tick(), start + 2);
+    }
+
+    /// **THE BINDING'S WELCOME IS THE RELAY'S WELCOME, PROVED RATHER THAN
+    /// READ** (ASSA-53, from the Systems engineer's own flag on ASSA-37).
+    ///
+    /// `fresh_welcome_text` exists so the client's headless suite has a real
+    /// world instead of a hand-built dictionary, and its whole value rests on
+    /// being what a relay would send. Reading the two side by side proves that
+    /// for today only: the person who makes them differ will be whoever next
+    /// edits `sim-relay`, who has no reason to open this file. If they drift,
+    /// **every client test keeps passing against a world no relay would send**
+    /// and nothing goes red.
+    ///
+    /// So it is compared on the world's own **state hash**, not field by field.
+    /// A hand-written field list is a third spelling that can drift too, and it
+    /// would silently stop covering anything added to `World` later.
+    ///
+    /// Both halves matter: the world must be the relay's `fresh_world`, and the
+    /// joining player must arrive through `step` as `SystemCommand::AddPlayer`
+    /// rather than being pushed onto `World::players`, because only `step`
+    /// makes the join part of the tick every peer replays.
+    #[test]
+    fn the_fresh_welcome_is_the_world_a_relay_would_send() {
+        let welcome = fresh_welcome_text("4242", "ada");
+        let from_binding =
+            AssaySim::world_from_welcome(&welcome).expect("the binding writes a valid Welcome");
+
+        // The relay's path, spelled out here on purpose: its own constructor,
+        // then the joiner added by `step`.
+        let mut expected = sim_net::fresh_world(4242);
+        sim::step::step(
+            &mut expected,
+            &[Input::System(sim::SystemCommand::AddPlayer {
+                name: "ada".to_string(),
+            })],
+            &mut Vec::new(),
+        );
+
+        assert_eq!(
+            from_binding.state_hash(),
+            expected.state_hash(),
+            "the binding's Welcome is not the world a relay would send: \
+             {} chunks vs {} chunks, {} players vs {} players",
+            from_binding.width_chunks,
+            expected.width_chunks,
+            from_binding.players.len(),
+            expected.players.len()
+        );
+
+        // NON-VACUITY: a different seed must NOT match, or this test would pass
+        // against any two worlds that happen to be the same shape.
+        let mut other = sim_net::fresh_world(4243);
+        sim::step::step(
+            &mut other,
+            &[Input::System(sim::SystemCommand::AddPlayer {
+                name: "ada".to_string(),
+            })],
+            &mut Vec::new(),
+        );
+        assert_ne!(
+            from_binding.state_hash(),
+            other.state_hash(),
+            "a state hash that ignores the seed would make the check above empty"
+        );
     }
 
     /// A Welcome is read out of the real message shape, tag and all.

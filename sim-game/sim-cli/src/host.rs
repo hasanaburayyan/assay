@@ -799,8 +799,14 @@ fn local_session(mut world: World, path: PathBuf, saved_at: Option<u64>, name: &
 fn new_world(args: &[&str], name: &str) -> Result<Session, String> {
     let usage = "Usage: new <seed> [width height], e.g. new 42 or new 42 8 8";
     let seed: u64 = parse_arg(args, 1, "seed").map_err(|e| format!("{e}\n{usage}"))?;
-    let width = optional_arg(args, 2, "width", 6)?;
-    let height = optional_arg(args, 3, "height", 4)?;
+    // THE DEFAULT IS THE RELAY'S SHAPE, NAMED ONCE (ASSA-53). These were `6`
+    // and `4` written out here, a third copy of a number that has to match the
+    // relay's or a local session is a different game from a hosted one — and
+    // every scripted test that starts with `new <seed>` would be testing that
+    // different game. An explicit size is still allowed: this is an inspector.
+    let (default_width, default_height) = sim_net::SESSION_CHUNKS;
+    let width = optional_arg(args, 2, "width", default_width)?;
+    let height = optional_arg(args, 3, "height", default_height)?;
     if !(1..=64).contains(&width) || !(1..=64).contains(&height) {
         return Err("Width and height are in chunks and must be between 1 and 64.".into());
     }
