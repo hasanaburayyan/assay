@@ -272,7 +272,7 @@ all nine uids exactly.
 
 ```bash
 art/species_probe.py          # GREEN; gates that a readable letter EXISTS
-art/check_glyph_contrast.py   # RED today on purpose (ASSA-39); asks the ENGINE
+art/check_glyph_contrast.py   # GREEN since ASSA-39 landed; in CI; asks the ENGINE
 ```
 
 The probe measured disc against disc and disc against map background for two
@@ -294,8 +294,15 @@ These are two different claims and only one of them is the art's:
 - **Does the client PICK the better of the two?** Not mine, and not measurable
   in Python. `check_glyph_contrast.py` runs the client headless, calls
   `AssayHud.deposit_color` and `AssayHud.glyph_color` for all 600 states, and
-  scores **what the engine actually returned**. RED today: 226 of 600 states get
-  the glyph with less contrast than the other option would have had.
+  scores **what the engine actually returned**. It was written RED -- 226 of 600
+  states got the glyph with less contrast than the other option would have had
+  -- and **went GREEN without being touched** when Limpet landed option A (#69).
+  A check of someone else's code flipping on their change, with no edit of mine,
+  is the only self-evidence that kind of check can offer.
+
+  `test_hud.gd` now asserts the same optimality property in GDScript, so that
+  half is **deliberately double-covered** and this step is not load-bearing for
+  it. Both are in CI. What only this file guards is the readability floor above.
 
 **Why it is built that way, and it is the trap I keep falling into.** The easy
 version computes both ratios in Python, takes the better, and asserts that
@@ -309,7 +316,25 @@ So the optimality claim is only ever made about an answer the engine gave.
 GLYPH_FAKE_THRESHOLD=1 art/check_glyph_contrast.py  # replay the old rule -> FAIL
 GLYPH_ONE_SPECIES=3    art/check_glyph_contrast.py  # narrowed sweep -> PASSES
 GLYPH_FAKE_LINEAR=1    art/check_glyph_contrast.py  # dead transform -> caught
+GLYPH_GODOT_TIMEOUT=0  art/check_glyph_contrast.py  # no answer -> exit 2
 ```
+
+**Three exit codes, and the third is the point.** `0` green, `1` the client or
+the tint table is wrong, `2` **NO VERDICT** -- the engine could not be reached,
+so the file refuses to say anything. That is a CI failure, never a quiet pass:
+a check that cannot run must not look like a check that ran. It also names the
+two causes I have actually hit rather than dumping Godot's output: a missing
+`.godot/global_script_class_cache.cfg` (the `class_name AssayHud` is not a
+global identifier until a full import writes it -- run `--headless --import`
+twice) and a missing binding (`make client-lib`).
+
+The Godot call is **time-bounded**, which it was not at first: I hung this
+script for five minutes against a project directory that two stale headless
+Godots were already sitting on, and an unbounded `subprocess.run` in CI is a job
+that burns its limit and reports nothing. The old code also raised
+`SystemExit("...exit 2...")`, which prints that text and exits **1** -- the
+message was lying about its own exit code, which is the exact class of thing
+this file exists to catch in other people's work.
 
 `GLYPH_ONE_SPECIES=3` is there because **a lever that makes a check pass is
 worth having explicitly**: `#FFFF33` is 0 of 100 suboptimal, the one tint the
