@@ -141,6 +141,17 @@ pub const PICK_DURABILITY_PER_STRENGTH: u32 = 60;
 /// Durability drained per swing. The one knob that retunes a pick's life.
 pub const PICK_WEAR_PER_SWING: u32 = 20;
 
+/// Chance in 100 that a part other than the always-lost one comes back when a
+/// design breaks (ADR 0003 point 10).
+///
+/// **STILL THE WORKING DEFAULT, NOT A BOARD ANSWER.** The demo-loop note left
+/// "what fraction of parts come back on a break, and is it per part or a
+/// roll?" open; the CEO set 50% per part on 2026-10-01 to unblock, the Game
+/// Director backed it, and the board has not spoken. Changing it is this one
+/// line: which part is always lost is `Assembly::part_always_lost`, and the
+/// roll is `Assembly::break_apart`.
+pub const BREAK_RETURN_PERCENT: u32 = 50;
+
 /// Most ore a smelter's input slot holds.
 pub const SMELTER_INPUT_CAP: u32 = 50;
 /// Most fuel units a smelter holds in reserve.

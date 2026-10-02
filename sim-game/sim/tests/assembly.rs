@@ -447,3 +447,55 @@ fn the_adr_anchors_hold_exactly() {
     assert_eq!(middling.durability, 2400);
     assert_eq!(middling.durability / tuning::PICK_WEAR_PER_SWING, 120);
 }
+
+/// ADR 0003 amendment A6: a hopper's **grade** changes nothing about it, and
+/// that is intended rather than an oversight.
+///
+/// Capacity is flat from the kind and mass is size × density, which never
+/// scales with grade, so the only material decision a hopper carries is its
+/// species: make it light. That is what makes hoppers the sink for grade-C
+/// refined, which is otherwise near-dead. If this test ever fails because
+/// someone scaled `HOPPER_CAPACITY` with grade, the junk sink dies with it and
+/// a four-hopper drill becomes a grade-A tax.
+#[test]
+fn a_hoppers_grade_changes_nothing() {
+    let species = roster();
+    let readings: Vec<MachineStats> = Grade::ALL
+        .into_iter()
+        .map(|grade| {
+            let mut stats = MachineStats::default();
+            let hopper = part(PartKind::Hopper, 0, grade);
+            contribute(
+                spec(PartKind::Hopper),
+                hopper.material,
+                &species[0],
+                &mut stats,
+            );
+            stats
+        })
+        .collect();
+
+    assert_eq!(
+        readings[0], readings[1],
+        "grade C and B hoppers must be identical"
+    );
+    assert_eq!(
+        readings[1], readings[2],
+        "grade B and A hoppers must be identical"
+    );
+    // And the reason: a hopper reads no grade-scaling property. Density is
+    // fixed per species, capacity is flat from the kind.
+    for c in spec(PartKind::Hopper).contributions {
+        if let Source::Property(p) = c.source {
+            assert!(
+                !p.scales_with_grade(),
+                "a hopper reading {} would make its grade matter",
+                p.name()
+            );
+        }
+    }
+    // Species, by contrast, is a real choice: index 1 is denser than index 0.
+    let light = Assembly::part_mass(&part(PartKind::Hopper, 0, Grade::B), &species[0]);
+    let heavy = Assembly::part_mass(&part(PartKind::Hopper, 1, Grade::B), &species[1]);
+    assert!(heavy > light, "a denser species must make a heavier hopper");
+}

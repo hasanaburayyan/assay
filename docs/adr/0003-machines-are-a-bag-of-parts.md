@@ -184,6 +184,56 @@ banded before an assay, exact after** — and the inspector panel ASSA-5 adds
 is where that lands first. This is also why `FRAME_BUDGET_PER_STRENGTH` stays
 3: breaking is the teeth behind assaying.
 
+## Further amendments, 2026-10-01 (while ASSA-5 part 2 was built)
+
+Three more rulings from the Game Director, on ASSA-5. All three settle how the
+model is *shown* rather than what it is, which is why none of them touches
+`PART_SPECS`: special-casing the catalogue is what point 6 forbids.
+
+**A6. A hopper's grade is inert, and that is intended.** Capacity is flat from
+the kind (point 8) and mass is size × density, which never scales with grade, so
+C/B/A change a hopper by nothing at all. Its only material decision is
+**species: make it light.** That makes hoppers the sink for grade-C refined,
+which is otherwise near-dead content. Recorded rather than fixed: if anyone
+later scales `HOPPER_CAPACITY` with grade, the junk sink dies and a four-hopper
+drill becomes a grade-A tax. Pinned by `a_hoppers_grade_changes_nothing` so it
+is not read later as an oversight.
+
+**A7. A planted assembly must not show durability.** The head contributes
+`Durability(Strength)` whatever frame it sits on, but decision 12 parks drill
+wear, so on a planted machine that number never moves — and **a number that
+never moves teaches a mechanic that does not exist**, which is A5's mirror
+image. This is one conditional at the display layer, held frames only
+(`debug::assembly_readout` and `debug::machine_status`); the catalogue row is
+untouched. Reverse by deleting the conditional.
+
+**A8. Mass against budget is shown as a three-state verdict, computed in
+`sim`.** A5 said the bad case must be visible; this is what visible means. Two
+banded numbers ("mass 153–225, budget 120–240") would leave the player doing
+interval arithmetic, which is the same discovery A5 forbids one step removed.
+So: **SAFE** when `mass_hi ≤ budget_lo`, **WILL BREAK** when
+`mass_lo > budget_hi`, **UNCERTAIN** when they overlap, with the numbers
+underneath for anyone who wants them.
+
+Three states and not a percentage because the verdict is then never wrong —
+SAFE breaks 0% of the time, WILL BREAK 100% — so a player learns to trust it in
+one session, where "62%" is not actionable and invites them to re-derive it.
+UNCERTAIN is a real coin flip (50% at grade B) and its only resolution is 30
+ticks of assaying, which is what makes this the advertisement for assaying: at
+grade B an unassayed design reads 50.0% SAFE, 12.5% WILL BREAK and 37.5%
+UNCERTAIN, and 0.125 + 0.375 × 0.50 = 31.25% recovers the same-species pick
+break rate of A1 exactly.
+
+Two things this fixes that are easy to get wrong:
+
+- **Map each band *end* through `effective()`**, which integer-divides and then
+  floors at 1; scaling a band afterwards disagrees with the sim's own numbers at
+  low values. `Property::effective_value` is now the single home of that
+  arithmetic and `Sheet::effective` calls it.
+- **It lives in `sim`, in the snapshot, not in either client** (repo `CLAUDE.md`
+  principle 1: renderers read rules, they do not own them). Two clients
+  computing it would eventually disagree.
+
 ## Consequences
 
 - **ASSA-5 moves `SAVE_VERSION` 10 → 11 (with a migration) and
@@ -207,10 +257,57 @@ is where that lands first. This is also why `FRAME_BUDGET_PER_STRENGTH` stays
   frame *is* the heaviest part of a drill, so this is likely to fire — hence
   the one-line escape in point 10.
 - Explicitly left open: the mining-speed curve from the `Speed` stat (ASSA-6,
-  with decision 8's test); drill wear, parked by decision 12; whether an
-  assembly's home on `World` is its own `Vec` with an id or an embedding in
-  `Building` (ASSA-5's call, and the only part of this shape it may settle);
-  how a client shows mass against budget so a break is predictable.
+  with decision 8's test); drill wear, parked by decision 12. The other two
+  open questions are now answered: A8 settles how a client shows mass against
+  budget, and the assembly's home is settled below.
+
+### An assembly's home on `World` (settled by ASSA-5, as point 10 allowed)
+
+**Neither of the two shapes the ADR offered. An assembly lives wherever it
+*is*, and that is three places, because an assembly is not one thing over its
+life:**
+
+- **Built and not yet used:** `Player::assemblies: Vec<Built>`, where
+  `Built { assembly, durability }`. Not an item, so not in the inventory
+  (point 1: it holds several species at once).
+- **In hand:** `Player::tool: Option<Built>`, the same type. `Equip` and
+  `Unequip` **move** the `Built`, they do not rebuild it.
+- **Planted:** `BuildingKind::Machine(Machine)`, embedded in `Building`, 1×1 so
+  a drill sits on the deposit tile it works.
+
+A separate `Vec<Assembly>` with ids was rejected: nothing needs to name an
+assembly that is not in one of those three places, and an id would be a second
+identity to keep in step with `BuildingId`. `Equip` and `PlaceAssembly` address
+the built list **by index**, resolved when the command is applied, so two
+commands in one tick see the list as the earlier one left it — deterministic,
+and identical on every peer.
+
+**Durability is established when a machine is *built*, not when it is
+equipped.** This is the one non-obvious consequence and it is load-bearing: if
+the pool were filled on `Equip`, putting a worn pick down and taking it up again
+would refill it, which is a free repair. Pinned by
+`putting_a_tool_down_and_taking_it_up_again_keeps_its_wear`. Planting drops the
+pool, which is the same rule read from the other side: decision 12 says planted
+machines do not wear.
+
+### Two narrowings ASSA-5 made, named rather than left to be found
+
+- **Making a part is instantaneous.** `MakePart` takes `size` refined material
+  and returns the part on the same tick. The cost is the material, and the time
+  already went into smelting it: this is what makes A2's published arithmetic
+  (re-head = 1 refined = 1 ore + 20 ticks, against 3 refined / 60 ticks for a
+  fresh pick) true as written. Adding a forging duration would move every one of
+  those numbers. If parts should take time, that is a tuning constant and a
+  `Player` field, and A2's upkeep ratio needs restating.
+- **A held tool's remaining durability is shown exactly, against a banded
+  maximum** (`durability 3240/2400-3600`). The pool is live state that visibly
+  drains, so banding it would be worse than showing it. But it is
+  `size × effective strength × 60`, so an exact pool **leaks the head
+  material's effective strength** even before an assay — a hole in A5 of the
+  same kind as the one A8 closes. It is not an exploit at today's numbers:
+  learning strength this way costs 3 refined (3 ore plus 60 ticks of smelting),
+  where an assay costs 30 ticks and reveals the whole sheet. Named here so it is
+  a decision and not an oversight.
 
 ## Note on status
 

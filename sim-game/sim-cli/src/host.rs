@@ -53,6 +53,16 @@ Player
                               species then shows exact numbers, not bands
   rename <species> <name>     name a species you discovered (letters, digits, -)
   grant <species> <player>    let another player rename it too
+  make <part> [item] [n]      make a part from refined material, e.g.
+                              make head refined:kel:b  (`parts` lists them)
+  assemble <frame> <part>...  build a machine; the first part is the frame.
+                              A handle is held (a pick), a frame is planted
+                              (a drill): assemble handle:kel head:kel
+  built                       what you have built, with mass against budget
+  equip [n]                   take a held design in hand (default 0)
+  unequip                     put your tool away, keeping its wear
+  plant <n> [x y]             put a planted design on the map. If it is over
+                              its frame's budget it breaks here instead
   stop                        stop walking, mining, crafting and assaying
   where                       your position
   inv                         what you're carrying, with the names to type
@@ -67,6 +77,7 @@ Look
   species                     this world's minerals and their property sheets
   deposits                    list every deposit
   recipes                     what can be made, from what
+  parts                       the part catalogue: cost, mount, contributions
   buildings                   every placed building and what it's doing
   at <x> <y>                  what's on a tile
   events [n]                  the last n events (default 20)
@@ -626,6 +637,79 @@ impl Host {
                     },
                 )?;
             }
+            "parts" => out!("{}", debug::part_table()),
+            "built" | "machines" => {
+                let me = s.me()?.id;
+                out!("{}", debug::built_table(&s.world, me));
+            }
+            "make" => {
+                let usage = "Usage: make <part> [refined item] [count], e.g. make head refined:kel:b. `parts` lists the catalogue.";
+                let name = args.get(1).ok_or(format!("Missing part.\n{usage}"))?;
+                let kind = sim::PartKind::parse(name)
+                    .ok_or(format!("There is no `{name}` part.\n{usage}"))?;
+                let (spec, next) = match args.get(2) {
+                    Some(a) if a.parse::<u32>().is_err() => (Some(*a), 3),
+                    _ => (None, 2),
+                };
+                let material = resolve_item(s, spec, Some(ItemKind::Refined))?;
+                let count: u32 = optional_arg(args, next, "count", 1)?;
+                submit(
+                    s,
+                    paused,
+                    PlayerCommand::MakePart {
+                        kind,
+                        material,
+                        count,
+                    },
+                )?;
+            }
+            "assemble" | "build" => {
+                let usage = "Usage: assemble <frame> <part>..., e.g. assemble handle:kel head:kel. The first part is the frame. `inv` lists your parts.";
+                if args.len() < 2 {
+                    return Err(format!("Missing the frame.\n{usage}"));
+                }
+                // Every argument is an item spec, resolved against what the
+                // player actually carries - the same path `place` uses.
+                let mut items = Vec::new();
+                for arg in &args[1..] {
+                    items.push(resolve_item(s, Some(*arg), None)?);
+                }
+                let (frame, mounted) = items.split_first().expect("checked above");
+                submit(
+                    s,
+                    paused,
+                    PlayerCommand::Assemble {
+                        frame: *frame,
+                        mounted: mounted.to_vec(),
+                    },
+                )?;
+            }
+            "equip" | "hold" => {
+                let assembly: u32 = optional_arg(args, 1, "number", 0).map_err(|e| {
+                    format!("{e}\nUsage: equip [n], e.g. equip 0. `built` lists them.")
+                })?;
+                submit(s, paused, PlayerCommand::Equip { assembly })?;
+            }
+            "unequip" => submit(s, paused, PlayerCommand::Unequip)?,
+            "plant" => {
+                let usage =
+                    "Usage: plant <n> [x y], e.g. plant 0. `built` lists what you have built.";
+                let assembly: u32 =
+                    parse_arg(args, 1, "number").map_err(|e| format!("{e}\n{usage}"))?;
+                let me = s.me()?.pos;
+                let x: i32 =
+                    optional_arg(args, 2, "x", me.x + 1).map_err(|e| format!("{e}\n{usage}"))?;
+                let y: i32 =
+                    optional_arg(args, 3, "y", me.y).map_err(|e| format!("{e}\n{usage}"))?;
+                submit(
+                    s,
+                    paused,
+                    PlayerCommand::PlaceAssembly {
+                        assembly,
+                        pos: TilePos::new(x, y),
+                    },
+                )?;
+            }
             other => {
                 return Err(format!(
                     "Unknown command `{other}`. Type `help` to see commands."
@@ -1049,6 +1133,24 @@ fn describe_command(cmd: &PlayerCommand, world: &World) -> String {
             world.species(*species).name(),
             who(world, PlayerId(u32::MAX), *to)
         ),
+        PlayerCommand::MakePart {
+            kind,
+            material,
+            count,
+        } => format!("make {} {} {count}", kind.name(), spec(material)),
+        PlayerCommand::Assemble { frame, mounted } => format!(
+            "assemble {}{}",
+            spec(frame),
+            mounted
+                .iter()
+                .map(|m| format!(" {}", spec(m)))
+                .collect::<String>()
+        ),
+        PlayerCommand::Equip { assembly } => format!("equip {assembly}"),
+        PlayerCommand::Unequip => "unequip".into(),
+        PlayerCommand::PlaceAssembly { assembly, pos } => {
+            format!("plant {assembly} {} {}", pos.x, pos.y)
+        }
         PlayerCommand::MoveTo { target } => format!("goto {} {}", target.x, target.y),
         PlayerCommand::Stop => "stop".into(),
     }
@@ -1280,9 +1382,9 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
         } => {
             let waiting = world
                 .building(*building)
-                .map(|b| {
-                    let sim::BuildingKind::Smelter(s) = &b.kind;
-                    s.output.map_or(0, |o| o.count)
+                .map(|b| match &b.kind {
+                    sim::BuildingKind::Smelter(s) => s.output.map_or(0, |o| o.count),
+                    sim::BuildingKind::Machine(_) => 0,
                 })
                 .unwrap_or(0);
             format!(
@@ -1290,6 +1392,68 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
                 building.0,
                 name(item),
                 building.0
+            )
+        }
+        Event::PartsMade {
+            player,
+            part,
+            count,
+        } => format!("{} made {count} x {}", who(player), name(part)),
+        Event::Assembled { player, assembly } => {
+            // Read the design out of the world, not out of the event: what the
+            // player may see of it is banded until they assay (amendment A5).
+            let readout = world
+                .player(*player)
+                .and_then(|p| p.assemblies.get(*assembly as usize))
+                .map(|b| debug::assembly_readout(world, b));
+            match readout {
+                Some(r) => format!("{} assembled #{assembly}: {r}", who(player)),
+                None => format!("{} assembled #{assembly}", who(player)),
+            }
+        }
+        Event::Equipped { player } => {
+            let readout = world
+                .player(*player)
+                .and_then(|p| p.tool.as_ref())
+                .map(|b| debug::assembly_readout(world, b));
+            match readout {
+                Some(r) => format!("{} equipped a tool: {r}", who(player)),
+                None => format!("{} equipped a tool", who(player)),
+            }
+        }
+        Event::Unequipped { player } => format!("{} put their tool away", who(player)),
+        Event::MachinePlaced {
+            player,
+            building,
+            pos,
+        } => format!(
+            "{} planted machine {} at ({}, {})",
+            who(player),
+            building.0,
+            pos.x,
+            pos.y
+        ),
+        Event::MachineBroke {
+            player,
+            pos,
+            mass,
+            budget,
+            lost,
+            returned,
+        } => {
+            let items = |v: &[Item]| {
+                if v.is_empty() {
+                    "nothing".to_string()
+                } else {
+                    v.iter().map(name).collect::<Vec<_>>().join(", ")
+                }
+            };
+            format!(
+                "{}'s design broke{}: {mass} mass against a {budget} budget. Lost {}; got back {}",
+                who(player),
+                pos.map_or(String::new(), |p| format!(" at ({}, {})", p.x, p.y)),
+                items(lost),
+                items(returned)
             )
         }
         Event::MoveStarted { player, from, to } => format!(
@@ -1386,7 +1550,39 @@ fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
                     "that slot is full or holds a different item; `buildings` shows what's inside"
                         .to_string()
                 }
-                RejectReason::NothingToTake => "its output slot is empty".to_string(),
+                RejectReason::NothingToTake => "it has nothing waiting to be taken".to_string(),
+                RejectReason::BadAssembly(e) => match e {
+                    sim::AssemblyError::FrameIsNotAFrame => {
+                        "the first part must be a frame: a handle for a tool, a frame to plant"
+                            .to_string()
+                    }
+                    sim::AssemblyError::FrameMounted => {
+                        "a frame cannot be mounted on another frame".to_string()
+                    }
+                    sim::AssemblyError::NoSuchSlot(kind) => {
+                        format!("that frame has no {} slot at all", kind.name())
+                    }
+                    sim::AssemblyError::TooFew { kind, have, min } => {
+                        format!("it needs at least {min} {} and has {have}", kind.name())
+                    }
+                    sim::AssemblyError::TooMany { kind, have, max } => {
+                        format!("it takes at most {max} {} and was given {have}", kind.name())
+                    }
+                },
+                RejectReason::NotAPart(item) => {
+                    format!("{} is not a machine part; `parts` lists them", item.code())
+                }
+                RejectReason::NoSuchAssembly => {
+                    "you have not built that; `built` lists what you have".to_string()
+                }
+                RejectReason::WrongMount => {
+                    "a handle is held (`equip`) and a frame is planted (`plant`); you asked for the other one"
+                        .to_string()
+                }
+                RejectReason::NothingEquipped => "you have nothing in hand".to_string(),
+                RejectReason::NotInsertable => {
+                    "that machine takes nothing in; `take` empties it".to_string()
+                }
             };
             let whose = if *player == me {
                 String::new()

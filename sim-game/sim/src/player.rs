@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::assembly::Built;
 use crate::inventory::Inventory;
 use crate::item::Item;
 use crate::recipe::RecipeId;
@@ -26,6 +27,27 @@ pub struct Player {
     /// Assaying the deposit underfoot. Ends like mining: walking off it or
     /// `Stop` cancels, finishing reveals the species' exact sheet.
     pub assaying: Option<Assaying>,
+    /// Machines this player has built and not yet used. An assembly is not an
+    /// item (ADR 0003 point 1) — it holds several species at once — so it
+    /// cannot stack and lives here instead of in the inventory.
+    ///
+    /// `Equip` and `PlaceAssembly` address these **by index**, resolved when
+    /// the command is applied, so two commands in one tick see the list as the
+    /// earlier one left it. Deterministic, and the same on every peer.
+    ///
+    /// **This `default` is what migrates a v10 save**, where the field does not
+    /// exist at all: nobody could build anything then. Removing it makes every
+    /// v10 world fail to load, which `tests/save.rs` catches.
+    #[serde(default)]
+    pub assemblies: Vec<Built>,
+    /// The tool in hand, if any. Only a held frame can be here.
+    ///
+    /// The `default` here is documentation, not load-bearing: serde already
+    /// treats a missing `Option` field as `None`, so removing it changes
+    /// nothing and no test can see the difference. Kept for symmetry with
+    /// `assemblies`, whose default *is* what makes a v10 save load.
+    #[serde(default)]
+    pub tool: Option<Built>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -63,6 +85,8 @@ impl Player {
             mining: None,
             crafting: None,
             assaying: None,
+            assemblies: Vec::new(),
+            tool: None,
         }
     }
 }

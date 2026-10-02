@@ -3,12 +3,13 @@
 
 use std::fmt::Write;
 
-use crate::building::{Building, BuildingKind};
+use crate::assembly::{Assembly, BreakVerdict, Built, Mount, PART_SPECS, PartKind, Source};
+use crate::building::{Building, BuildingKind, Machine};
 use crate::item::ItemStack;
 use crate::mineral::{Grade, MineralSpecies, Property, Sheet};
 use crate::recipe::{RECIPES, Station};
 use crate::tuning::{FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS, SMELTER_OUTPUT_CAP};
-use crate::types::TilePos;
+use crate::types::{PlayerId, TilePos};
 use crate::world::World;
 
 pub const MAP_LEGEND: &str =
@@ -199,9 +200,70 @@ fn slot(world: &World, stack: Option<ItemStack>) -> String {
     })
 }
 
+/// The parts a design is made of, as `handle(Korvite B) + head(Adaite A)`.
+pub fn parts_summary(world: &World, assembly: &Assembly) -> String {
+    assembly
+        .parts()
+        .map(|p| {
+            format!(
+                "{}({} {})",
+                p.kind.name(),
+                world.species(p.material.species).name(),
+                p.material.grade.letter()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" + ")
+}
+
+/// One line describing a planted machine.
+///
+/// **No durability here, on purpose** (Game Director's ruling on ASSA-5):
+/// the head contributes a durability pool whatever frame it sits on, but
+/// decision 12 parks drill wear, so on a planted machine that number would
+/// never move — and a number that never moves teaches a mechanic that does not
+/// exist. The catalogue row is untouched; this is a display rule.
+pub fn machine_status(world: &World, b: &Building, m: &Machine) -> String {
+    let range = m.assembly.stat_range(&world.species);
+    let show = |low: u32, high: u32| {
+        if low == high {
+            low.to_string()
+        } else {
+            format!("{low}-{high}")
+        }
+    };
+    // Capacity is flat from the kind, so it is exact whether or not anyone has
+    // assayed anything; mass and speed are read off sheets and are not.
+    let capacity = range.low.capacity;
+    let state = match world.deposit_at(b.pos) {
+        None => "idle: no deposit underneath".to_string(),
+        Some(_) if m.held.is_some_and(|h| h.count >= capacity) => "stalled: full".to_string(),
+        // Deliberately not "working": decision 12 parks drill wear and the
+        // mining system is ASSA-6, so today a planted machine sits on its
+        // deposit and does nothing. Saying otherwise would be a lie in the
+        // one place a player looks to find out.
+        Some(d) => format!("on {}", world.species(d.species).name()),
+    };
+    // Same reason as `assembly_readout`: what it is holding and what it is
+    // doing come before the design it was built from, because the table line
+    // is truncated in the inspector's side panel.
+    format!(
+        "holding {} of {} · {state} · mass {} of {} budget · speed {} · {}",
+        m.held.map_or(0, |h| h.count),
+        capacity,
+        show(range.low.mass, range.high.mass),
+        show(range.low.budget, range.high.budget),
+        show(range.low.speed, range.high.speed),
+        parts_summary(world, &m.assembly),
+    )
+}
+
 /// One line describing what a building holds and whether it is working.
 pub fn building_status(world: &World, b: &Building) -> String {
-    let BuildingKind::Smelter(s) = &b.kind;
+    let s = match &b.kind {
+        BuildingKind::Smelter(s) => s,
+        BuildingKind::Machine(m) => return machine_status(world, b, m),
+    };
     let walls = world.max_temperature(b);
     let needs = s
         .input
@@ -250,5 +312,136 @@ pub fn building_table(world: &World) -> String {
             building_status(world, b)
         );
     }
+    out
+}
+
+/// The part catalogue: every row, what it costs, and what it contributes.
+///
+/// Generated from `PART_SPECS` and naming no kind, so a row added to the
+/// catalogue appears here without this function being touched.
+pub fn part_table() -> String {
+    let mut out = format!("{:<8} {:<9} {:>5}  contributes\n", "name", "mount", "size");
+    for s in &PART_SPECS {
+        let mount = match s.kind {
+            PartKind::Frame(Mount::Held) => "held",
+            PartKind::Frame(Mount::Planted) => "planted",
+            _ => "mounted",
+        };
+        let gives = s
+            .contributions
+            .iter()
+            .map(|c| match c.source {
+                Source::Property(p) => format!("{:?} from {}", c.stat, p.name()),
+                Source::Flat(n) => format!("{:?} {n}", c.stat),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let _ = writeln!(out, "{:<8} {mount:<9} {:>5}  {gives}", s.name, s.size);
+    }
+    let _ = write!(
+        out,
+        "\nsize is both the refined cost and how much stuff the part is made of for\n\
+         mass. A frame carries mass = size x strength x {}; over that, the design\n\
+         breaks when it is planted or first used. `make <part> <refined>` then\n\
+         `assemble <frame> <part>...`.\n",
+        crate::tuning::FRAME_BUDGET_PER_STRENGTH
+    );
+    out
+}
+
+/// One line for a design the player has built: what it is, what it weighs
+/// against its budget, and the verdict.
+///
+/// The verdict and the numbers come from `sim` (the Game Director's ruling on
+/// ASSA-5): two clients computing this would eventually disagree, and a
+/// renderer does not own rules. Banded while any part's species is unassayed,
+/// exact once they are all known.
+///
+/// **Durability only for a held frame** (same ruling): the head contributes a
+/// pool whatever frame it sits on, but drill wear is parked, so showing it on a
+/// planted design would teach a mechanic that does not exist.
+pub fn assembly_readout(world: &World, built: &Built) -> String {
+    let a = &built.assembly;
+    let range = a.stat_range(&world.species);
+    let show = |low: u32, high: u32| {
+        if low == high {
+            low.to_string()
+        } else {
+            format!("{low}-{high}")
+        }
+    };
+    // Verdict first, then the numbers, then the parts. Deliberate: a side
+    // panel is narrow and the line gets truncated, so the thing the player
+    // needs before spending parts must not be the thing that is cut.
+    let mut out = format!(
+        "{} · mass {} of {} budget",
+        range.verdict().label(),
+        show(range.low.mass, range.high.mass),
+        show(range.low.budget, range.high.budget),
+    );
+    match a.mount() {
+        Some(Mount::Held) => {
+            let _ = write!(
+                out,
+                " · durability {}/{}",
+                built.durability,
+                show(range.low.durability, range.high.durability)
+            );
+        }
+        _ => {
+            let _ = write!(
+                out,
+                " · holds {}",
+                show(range.low.capacity, range.high.capacity)
+            );
+        }
+    }
+    let _ = write!(
+        out,
+        " · speed {} · {}",
+        show(range.low.speed, range.high.speed),
+        parts_summary(world, a)
+    );
+    if range.verdict() != BreakVerdict::Safe {
+        let _ = write!(
+            out,
+            "\n      {}",
+            match range.verdict() {
+                BreakVerdict::WillBreak =>
+                    "this is over budget: it will break when planted or first used",
+                _ => "assay every species in it to know whether it will hold",
+            }
+        );
+    }
+    out
+}
+
+/// What the player has built but not placed, and what is in their hand.
+pub fn built_table(world: &World, player: PlayerId) -> String {
+    let Some(p) = world.player(player) else {
+        return "No such player.\n".into();
+    };
+    let mut out = String::new();
+    match &p.tool {
+        Some(t) => {
+            let _ = writeln!(out, "in hand  {}", assembly_readout(world, t));
+        }
+        None => out.push_str("in hand  nothing (bare hands)\n"),
+    }
+    if p.assemblies.is_empty() {
+        out.push_str(
+            "built    nothing. `parts` lists the catalogue; `make <part> <refined>`\n\
+             \x20        then `assemble <frame> <part>...`.\n",
+        );
+        return out;
+    }
+    for (i, built) in p.assemblies.iter().enumerate() {
+        let _ = writeln!(out, "{i:>5}    {}", assembly_readout(world, built));
+    }
+    let _ = write!(
+        out,
+        "\n`equip <n>` takes a held design in hand; `plant <n> [x y]` puts a planted\n\
+         one on the map.\n"
+    );
     out
 }

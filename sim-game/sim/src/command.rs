@@ -15,6 +15,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::assembly::{AssemblyError, PartKind};
 use crate::building::{BuildingId, Slot};
 use crate::item::Item;
 use crate::mineral::{NameError, Property, SpeciesId};
@@ -56,6 +57,32 @@ pub enum PlayerCommand {
     Rename { species: SpeciesId, name: String },
     /// Let another player rename a species you discovered.
     GrantRename { species: SpeciesId, to: PlayerId },
+    /// Make `count` parts of one kind from refined material in your
+    /// inventory. The cost is the part's `size` in refined material of
+    /// `material`'s species and grade, read from the catalogue — so a new part
+    /// kind needs no recipe (ADR 0003 consequences).
+    MakePart {
+        kind: PartKind,
+        material: Item,
+        count: u32,
+    },
+    /// Build a machine from part items you are carrying: a frame, plus the
+    /// parts mounted on it. Rejected only if the parts do not fit the frame's
+    /// slots — **never for being overweight** (decision 11).
+    ///
+    /// One path for a pick and a drill alike; the frame's mount is the only
+    /// thing that differs, and it decides which of `Equip` and `PlaceAssembly`
+    /// the result can go to.
+    Assemble { frame: Item, mounted: Vec<Item> },
+    /// Take a held assembly into your hands. Anything already in hand goes
+    /// back to the built list. Indexes `Player::assemblies`.
+    Equip { assembly: u32 },
+    /// Put the tool in hand back on the built list.
+    Unequip,
+    /// Plant an assembly on the map at `pos`. Indexes `Player::assemblies`.
+    /// **This is where mass is tested** (decision 11): an overweight design
+    /// breaks here instead of being placed.
+    PlaceAssembly { assembly: u32, pos: TilePos },
     /// Start walking toward `target`, one tile per tick.
     MoveTo { target: TilePos },
     /// Stop walking, mining, crafting and assaying (the current craft batch
@@ -194,6 +221,45 @@ pub enum Event {
         item: Item,
         count: u32,
     },
+    /// Parts went into the inventory, one item at a time.
+    PartsMade {
+        player: PlayerId,
+        part: Item,
+        count: u32,
+    },
+    /// A machine was built and added to the player's built list at `assembly`.
+    ///
+    /// **No stats here on purpose.** They are derived from the parts' sheets,
+    /// and what a player may *read* of a sheet is banded until they assay it
+    /// (amendment A5). An event carrying the exact mass and budget would hand
+    /// over for free what the verdict is careful to band, and 30 ticks of
+    /// assaying would buy nothing. Hosts read the design out of the world.
+    Assembled {
+        player: PlayerId,
+        assembly: u32,
+    },
+    Equipped {
+        player: PlayerId,
+    },
+    Unequipped {
+        player: PlayerId,
+    },
+    MachinePlaced {
+        player: PlayerId,
+        building: BuildingId,
+        pos: TilePos,
+    },
+    /// A design broke under its own mass (decision 11). **Names the parts
+    /// lost**, because a loss the player cannot attribute teaches nothing.
+    MachineBroke {
+        player: PlayerId,
+        /// Where it was being planted, or `None` for a tool in hand.
+        pos: Option<TilePos>,
+        mass: u32,
+        budget: u32,
+        lost: Vec<Item>,
+        returned: Vec<Item>,
+    },
     MoveStarted {
         player: PlayerId,
         from: TilePos,
@@ -275,4 +341,19 @@ pub enum RejectReason {
     /// The slot is full, or holds something else.
     SlotFull,
     NothingToTake,
+    /// The parts do not fit the frame's slots. **Never because of mass**:
+    /// `AssemblyError` has no overweight variant (decision 11).
+    BadAssembly(AssemblyError),
+    /// An item given to `Assemble` is not a part at all.
+    NotAPart(Item),
+    /// No built assembly at that index.
+    NoSuchAssembly,
+    /// A held frame was planted, or a planted frame equipped. The mount is
+    /// the only thing that separates a tool from a machine (decision 6).
+    WrongMount,
+    /// Nothing in hand to put down.
+    NothingEquipped,
+    /// This building has no slot to insert into. `Slot` names the smelter's
+    /// two; a machine takes nothing in and gives ore out through `Take`.
+    NotInsertable,
 }

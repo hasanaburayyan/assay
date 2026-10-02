@@ -62,6 +62,21 @@ impl Property {
     pub const fn scales_with_grade(self) -> bool {
         !matches!(self, Property::Density | Property::HeatTolerance)
     }
+
+    /// The effective value a raw reading of `base` has at `grade`.
+    ///
+    /// The one place this arithmetic lives: [`Sheet::effective`] calls it, and
+    /// so does anything mapping the *ends of a rough band* through it. Scaling
+    /// a band after the fact instead would disagree with the sim at low
+    /// values, because this divides and then floors at 1.
+    pub const fn effective_value(self, base: u32, grade: Grade) -> u32 {
+        if self.scales_with_grade() {
+            let scaled = base * grade.multiplier_percent() / 100;
+            if scaled < 1 { 1 } else { scaled }
+        } else {
+            base
+        }
+    }
 }
 
 impl Sheet {
@@ -85,12 +100,7 @@ impl Sheet {
 
     /// The value an item of this species has at `grade`.
     pub fn effective(&self, property: Property, grade: Grade) -> u32 {
-        let base = u32::from(self.get(property));
-        if property.scales_with_grade() {
-            (base * grade.multiplier_percent() / 100).max(1)
-        } else {
-            base
-        }
+        property.effective_value(u32::from(self.get(property)), grade)
     }
 }
 

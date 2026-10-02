@@ -12,8 +12,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::item::Item;
-use crate::mineral::{MineralSpecies, Property};
+use crate::item::{Item, ItemKind};
+use crate::mineral::{Grade, MineralSpecies, Property, Sheet};
+use crate::rng::Rng;
 use crate::tuning;
 
 /// Whether a frame is carried in the hand or planted on the map. The only
@@ -50,6 +51,16 @@ impl PartKind {
 
     pub fn name(self) -> &'static str {
         spec(self).name
+    }
+
+    /// What players type. Names come from the catalogue, so a new row is
+    /// parseable without touching this.
+    pub fn parse(s: &str) -> Option<PartKind> {
+        let s = s.to_ascii_lowercase();
+        PART_SPECS
+            .iter()
+            .find(|spec| spec.name == s)
+            .map(|spec| spec.kind)
     }
 }
 
@@ -239,6 +250,40 @@ impl Part {
     pub const fn new(kind: PartKind, material: Item) -> Self {
         Self { kind, material }
     }
+
+    /// A part made of `material`'s species and grade. The material of a part
+    /// is always refined, whatever kind of item it was named by.
+    pub const fn of(kind: PartKind, material: Item) -> Self {
+        Self::new(
+            kind,
+            Item::new(ItemKind::Refined, material.species, material.grade),
+        )
+    }
+
+    /// This part as an inventory item. Round-trips with [`Part::from_item`].
+    pub const fn as_item(&self) -> Item {
+        Item::new(
+            ItemKind::Part(self.kind),
+            self.material.species,
+            self.material.grade,
+        )
+    }
+
+    /// The part an item is, or `None` if the item is not a part.
+    pub fn from_item(item: Item) -> Option<Part> {
+        item.kind.part().map(|kind| Part::of(kind, item))
+    }
+
+    /// What this part costs in refined material, which is also how much
+    /// stuff it is made of for mass.
+    pub fn size(&self) -> u32 {
+        spec(self.kind).size
+    }
+
+    /// The refined material one of these is made from.
+    pub const fn refined(&self) -> Item {
+        self.material
+    }
 }
 
 /// Every stat of one assembly.
@@ -292,13 +337,98 @@ pub fn contribute(
     species: &MineralSpecies,
     stats: &mut MachineStats,
 ) {
+    contribute_reading(spec, &|p| species.effective(p, material.grade), stats);
+}
+
+/// [`contribute`] over an arbitrary way of reading a property, which is what
+/// lets the same arithmetic produce both exact stats and the ends of a banded
+/// one. The only reader of [`Source`], and it still never sees a [`PartKind`].
+fn contribute_reading(spec: &PartSpec, read: &dyn Fn(Property) -> u32, stats: &mut MachineStats) {
     for c in spec.contributions {
         let amount = match c.source {
-            Source::Property(p) => spec.size * species.effective(p, material.grade) * c.factor,
+            Source::Property(p) => spec.size * read(p) * c.factor,
             Source::Flat(n) => n,
         };
         stats.add(c.stat, amount);
     }
+}
+
+/// What a player can actually read of a material's property, as (low, high):
+/// exact once the species has been assayed, and the two ends of its
+/// `SHEET_BAND` band before that.
+///
+/// Both ends go through [`Property::effective_value`], per the Game Director's
+/// ruling on ASSA-5: scaling a band afterwards disagrees with the sim's own
+/// numbers at low values.
+pub fn reading(species: &MineralSpecies, property: Property, grade: Grade) -> (u32, u32) {
+    if species.assayed {
+        let exact = species.effective(property, grade);
+        return (exact, exact);
+    }
+    let (low, high) = Sheet::band(species.sheet.get(property));
+    (
+        property.effective_value(u32::from(low), grade),
+        property.effective_value(u32::from(high), grade),
+    )
+}
+
+/// Every stat of an assembly as the range a player can read it in. Exact
+/// species give `low == high`.
+///
+/// Sound because every contribution is non-decreasing in its reading: reading
+/// each property at the low end of its band therefore bounds every stat from
+/// below, and the high end bounds every stat from above.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StatRange {
+    pub low: MachineStats,
+    pub high: MachineStats,
+}
+
+/// Whether a design will break when it is placed, as far as the player can
+/// tell from what they have read so far.
+///
+/// Three states and not a percentage (Game Director's ruling on ASSA-5): this
+/// verdict is never wrong, so a player learns to trust it in one session,
+/// where "62%" is not actionable and invites them to re-derive it. The
+/// numbers are shown underneath for anyone who wants them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum BreakVerdict {
+    /// The heaviest this can be still fits the smallest budget it can have.
+    Safe,
+    /// The ranges overlap. Only an assay resolves it.
+    Uncertain,
+    /// The lightest this can be already exceeds the largest budget.
+    WillBreak,
+}
+
+impl BreakVerdict {
+    pub const fn label(self) -> &'static str {
+        match self {
+            BreakVerdict::Safe => "SAFE",
+            BreakVerdict::Uncertain => "UNCERTAIN",
+            BreakVerdict::WillBreak => "WILL BREAK",
+        }
+    }
+}
+
+impl StatRange {
+    pub const fn verdict(&self) -> BreakVerdict {
+        if self.high.mass <= self.low.budget {
+            BreakVerdict::Safe
+        } else if self.low.mass > self.high.budget {
+            BreakVerdict::WillBreak
+        } else {
+            BreakVerdict::Uncertain
+        }
+    }
+}
+
+/// What is left of a design that broke: the parts handed back, and the parts
+/// gone for good. Both in the assembly's part order.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BreakOutcome {
+    pub returned: Vec<Item>,
+    pub lost: Vec<Item>,
 }
 
 /// A machine: a frame and the parts mounted on it.
@@ -310,6 +440,31 @@ pub fn contribute(
 pub struct Assembly {
     pub frame: Part,
     pub mounted: Vec<Part>,
+}
+
+/// A machine a player has built: the assembly plus the state that follows it
+/// around whether it is in hand or on the built list.
+///
+/// `durability` is established **when the machine is built**, not when it is
+/// equipped, so putting a worn tool down and taking it up again cannot refill
+/// its pool. Only a held frame ever drains it (decision 12 parks drill wear),
+/// and planting a machine drops it for the same reason.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Built {
+    pub assembly: Assembly,
+    /// Durability left. ASSA-6 drains it per swing.
+    pub durability: u32,
+}
+
+impl Built {
+    /// A machine fresh off the assembly, with a full pool.
+    pub fn new(assembly: Assembly, species: &[MineralSpecies]) -> Self {
+        let durability = assembly.stats(species).durability;
+        Self {
+            assembly,
+            durability,
+        }
+    }
 }
 
 /// Why an assembly was refused. **There is no overweight variant**: the sim
@@ -420,6 +575,52 @@ impl Assembly {
     /// ties going to the lowest index so peers agree. With nothing mounted,
     /// the frame itself is lost. The whole rule is this function, so moving
     /// it back to "the heaviest part, frame included" is one line.
+    /// Every stat as the range a player can read it in, banded per part from
+    /// that part's own species — so a mixed-species design is two sheets and
+    /// two bands with no special case.
+    pub fn stat_range(&self, species: &[MineralSpecies]) -> StatRange {
+        let mut range = StatRange {
+            low: MachineStats::default(),
+            high: MachineStats::default(),
+        };
+        for part in self.parts() {
+            let s = &species[part.material.species.0 as usize];
+            let grade = part.material.grade;
+            let spec = spec(part.kind);
+            contribute_reading(spec, &|p| reading(s, p, grade).0, &mut range.low);
+            contribute_reading(spec, &|p| reading(s, p, grade).1, &mut range.high);
+        }
+        range
+    }
+
+    /// Every part as an inventory item, in part order.
+    pub fn part_items(&self) -> Vec<Item> {
+        self.parts().map(Part::as_item).collect()
+    }
+
+    /// Take this design apart after it broke: the always-lost part goes, and
+    /// every other part comes back on a `BREAK_RETURN_PERCENT` roll
+    /// (ADR 0003 point 10, amended by A1).
+    ///
+    /// **Exactly one `rng` call per part, in part order, on every path** —
+    /// including for the part that was always going to be lost. Rolling only
+    /// for the parts whose fate is undecided would make the number of draws
+    /// depend on which part happened to be heaviest, and two peers would
+    /// walk the rng stream at different rates and desync.
+    pub fn break_apart(&self, species: &[MineralSpecies], rng: &mut Rng) -> BreakOutcome {
+        let always_lost = self.part_always_lost(species);
+        let mut outcome = BreakOutcome::default();
+        for (i, part) in self.parts().enumerate() {
+            let returns = rng.range(0, 100) < tuning::BREAK_RETURN_PERCENT;
+            if i == always_lost || !returns {
+                outcome.lost.push(part.as_item());
+            } else {
+                outcome.returned.push(part.as_item());
+            }
+        }
+        outcome
+    }
+
     pub fn part_always_lost(&self, species: &[MineralSpecies]) -> usize {
         let heaviest = self
             .mounted
