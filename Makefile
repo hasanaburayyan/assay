@@ -48,9 +48,24 @@ test:
 
 # The library name differs per platform and `sim.gdextension` names all three,
 # so copy whichever one cargo just wrote rather than guessing.
+#
+# THE `rm -f` IS LOAD-BEARING ON macOS AND COST ME AN HOUR (ASSA-72, measured
+# 2026-10-02). `cp` over an existing file rewrites THE SAME INODE. If any Godot
+# process still has the old library mapped -- a relay bench someone left up, an
+# editor, a probe -- the kernel's cached code signature for that inode no longer
+# matches its contents, and from then on EVERY process that maps it is SIGKILLed.
+# What you see is `Killed: 9` / exit 137 from `godot --script`, with no message
+# and an empty log, on a library that `codesign -v` calls "valid on disk"; even
+# `lipo -archs` on it dies. It reads exactly like a hang or an out-of-memory kill
+# and it is neither, so the hours go into the wrong hypothesis: I lost three
+# verification runs to it and had already blamed machine load. Deleting first
+# gives the new library a NEW inode, which nothing has mapped.
 client-lib:
 	cd sim-game && cargo build -p sim-godot --release
 	mkdir -p sim-game/client/bin
+	cd sim-game && rm -f client/bin/libsim_godot.dylib \
+		client/bin/libsim_godot.so \
+		client/bin/sim_godot.dll
 	cd sim-game && cp target/release/libsim_godot.dylib \
 		target/release/libsim_godot.so \
 		target/release/sim_godot.dll client/bin/ 2>/dev/null || true
