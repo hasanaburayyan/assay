@@ -230,6 +230,21 @@ fn no_reach_sentence_promises_a_later_unlock() {
         dead_ends > 20,
         "the ASSA-52 half of this guard saw only {dead_ends} dead ends"
     );
+    // ASSA-58 AND ASSA-59 PUT THREE MORE IN THE FAMILY. The fuel rows say what
+    // a player cannot light today and the gear row says what nothing consumes
+    // today, which is the same kind of sentence and the same temptation: "needs
+    // a hotter fire" is one word away from promising one, and "nothing uses a
+    // gear" is one word away from promising a use the alloys note only
+    // discusses. The whole recipe table goes in, not the gear row alone — a
+    // guard that watched one row would miss the next sentence like it.
+    let w = host_world(14247);
+    for row in sim::debug::species_table(&w).lines() {
+        if LIGHT_SENTENCES.iter().any(|t| row.contains(t)) {
+            sentences.push(row.to_string());
+        }
+    }
+    sentences.extend(sim::debug::recipe_table().lines().map(str::to_string));
+
     for sentence in &sentences {
         for promise in PROMISES_OF_A_LATER_DRILL {
             assert!(
@@ -237,6 +252,77 @@ fn no_reach_sentence_promises_a_later_unlock() {
                 "found {promise:?}, which reads as a later unlock, in: {sentence}"
             );
         }
+    }
+}
+
+/// **A RECIPE WHOSE OUTPUT NOTHING CONSUMES SAYS SO** (ASSA-59). A gear costs
+/// 2 refined — a whole handle, two thirds of a pick, 40 ticks of the demo's
+/// scarcest resource — and the table advertised it with a hardness gate that
+/// read like a gated reward.
+///
+/// **PINNED AS A DERIVATION, NOT AS A ROW.** The clause has to appear exactly
+/// where `recipe::is_consumed` is false, so that the day something consumes a
+/// gear the sentence disappears on its own; a test that only checked the gear
+/// row would be green for a lie.
+#[test]
+fn a_recipe_output_nothing_consumes_says_so() {
+    let table = sim::debug::recipe_table();
+    let mut unconsumed = 0;
+    for r in &sim::RECIPES {
+        let row = table
+            .lines()
+            .find(|l| l.starts_with(r.name))
+            .unwrap_or_else(|| panic!("no row for {}\n{table}", r.name));
+        let clause = format!("nothing uses a {}", r.output.0.name());
+        if sim::recipe::is_consumed(r.output.0) {
+            assert!(
+                !row.contains("nothing uses"),
+                "something does consume a {}, so the row must not say otherwise: {row}",
+                r.output.0.name()
+            );
+        } else {
+            unconsumed += 1;
+            assert!(
+                row.contains(&clause),
+                "nothing consumes a {}, and the row has to say it: {row}",
+                r.output.0.name()
+            );
+        }
+    }
+    // Non-vacuity, and the shape of the claim: exactly one output in the game
+    // is a dead end today, and it is the gear.
+    assert_eq!(
+        unconsumed, 1,
+        "one recipe output is consumed by nothing; if that changed, say which in the commit"
+    );
+    assert!(
+        table.contains("nothing uses a gear"),
+        "and it is the gear:\n{table}"
+    );
+}
+
+/// `is_consumed` is a claim about the whole item roster, so it is checked
+/// against the whole roster rather than against the one kind the sentence is
+/// about. Parts are covered by kind, because `Part::of` makes every part's
+/// material `Refined` whatever item it is handed.
+#[test]
+fn the_gear_is_the_only_item_kind_nothing_consumes() {
+    let kinds = [
+        sim::ItemKind::Ore,
+        sim::ItemKind::Refined,
+        sim::ItemKind::Smelter,
+        sim::ItemKind::Gear,
+        sim::ItemKind::Part(sim::PartKind::Head),
+        sim::ItemKind::Part(sim::PartKind::Hopper),
+        sim::ItemKind::Part(sim::PartKind::Frame(sim::Mount::Held)),
+        sim::ItemKind::Part(sim::PartKind::Frame(sim::Mount::Planted)),
+    ];
+    for kind in kinds {
+        assert_eq!(
+            sim::recipe::is_consumed(kind),
+            kind != sim::ItemKind::Gear,
+            "{kind:?}"
+        );
     }
 }
 
