@@ -104,6 +104,39 @@ func test_an_unknown_message_is_a_failure_not_noise() -> bool:
 	return true
 
 
+## NO GDSCRIPT FILE READS A SPECIES SHEET. Maren's line, ASSA-7 01:40, and it is sharper than it
+## looks: `MineralSpecies.sheet` is `Serialize`, so the EXACT sheet crosses the wire in the Welcome
+## whether the species has been assayed or not -- lockstep needs that, because every peer runs the real
+## sim. So "hidden until assayed" is a display convention, not something the wire protects, and a
+## renderer that read `joined_world["species"][n]["sheet"]` would quietly show numbers no player has
+## paid 30 ticks for. The band rule lives in `sim::debug::reading` and arrives through the binding
+## (`AssaySimHost.species_sheets`). She asked for a test rather than a habit; this is it.
+func test_no_gdscript_file_reads_a_species_sheet() -> bool:
+	var offenders := []
+	# SPELT IN PIECES SO THIS LINE IS NOT ITS OWN FIRST OFFENDER. It was, on the first run.
+	var word := "sh" + "eet"
+	var key := RegEx.create_from_string('"%s"|\\.%s\\b' % [word, word])
+	for folder in ["res://scripts", "res://tests", "res://tools"]:
+		var dir := DirAccess.open(folder)
+		if dir == null:
+			continue
+		for name in dir.get_files():
+			var file := String(name).trim_suffix(".remap")
+			if not file.ends_with(".gd"):
+				continue
+			for line in FileAccess.get_file_as_string("%s/%s" % [folder, file]).split("\n"):
+				var code := String(line).strip_edges()
+				if code.begins_with("#"):
+					continue
+				if key.search(code) != null:
+					offenders.append("%s: %s" % [file, code])
+	if not offenders.is_empty():
+		return _fail(("a sheet is being read in GDScript: %s. The exact sheet is in the Welcome for "
+				+ "every species, assayed or not, so reading it there shows numbers the player has "
+				+ "not assayed. Go through the binding, which bands them.") % [offenders])
+	return true
+
+
 ## Nothing may be submitted before the relay has stamped us a player.
 func test_nothing_is_submitted_before_the_welcome() -> bool:
 	var client := AssayNetClient.new()
