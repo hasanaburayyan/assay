@@ -11,6 +11,8 @@ size (64 px per tile), packs one sheet per asset into assets/sprites/, writes
 manifest.json, and renders assets/sprites/contact.png for review.
 """
 import json, os, subprocess, sys, time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from PIL import Image, ImageDraw
 
 ART = os.path.dirname(os.path.abspath(__file__))
@@ -91,19 +93,45 @@ def contact(manifest):
                     line.alpha_composite(fr.resize((fw // 2, fh // 2), Image.LANCZOS), (x, fh // 2)); x += fw // 2 + pad
             blocks.append(line)
         if name == "ore":
-            # colour-blind check: tier-4 full tile of each kind, side by side
-            picks = [r for r in rows if r["name"].endswith("_t4_full_v0")]
-            for cvd in ("normal", "protan", "deutan", "tritan"):
-                line = Image.new("RGBA", (label_w + len(picks) * (fw + pad) * 2, fh + pad), bg)
-                ImageDraw.Draw(line).text((4, 4), f"ore/cvd {cvd}", fill=(220, 220, 220, 255))
-                x = label_w
-                for r in picks:
-                    ry = rows.index(r) * fh
-                    fr = sheet.crop((0, ry, fw, ry + fh))
-                    if cvd != "normal": fr = simulate_cvd(fr, cvd)
-                    line.alpha_composite(fr, (x, 0)); x += fw + pad
-                    line.alpha_composite(fr.resize((fw // 2, fh // 2), Image.LANCZOS), (x, fh // 2)); x += fw // 2 + pad
-                blocks.append(line)
+            # COLOUR-BLIND CHECK. This used to put the tier-4 tile of each of
+            # the four named ores side by side, which stopped checking
+            # anything the moment the ore art went species-neutral: there are
+            # no kinds left to tell apart, the row it grepped for stopped
+            # existing, and it quietly drew four empty strips.
+            #
+            # What needs checking now is the thing that REPLACED shape: the
+            # six species tints, multiplied over one neutral tile, over the
+            # ground, through each observer. If two of these six ever stop
+            # being six, this is where it shows.
+            from species_tints import SPECIES_TINTS as tints
+            t4 = next((r for r in rows if r["name"] == "t4_full_v0"), None)
+            gm = manifest.get("ground")
+            if t4 is not None and tints:
+                ry = rows.index(t4) * fh
+                tile = sheet.crop((0, ry, fw, ry + fh))
+                under = None
+                if gm:
+                    gsheet = Image.open(os.path.join(SPRITES, gm["sheet"])).convert("RGBA")
+                    gw, gh = gm["frame_px"]
+                    under = gsheet.crop((0, 0, gw, gh)).resize((fw, fh), Image.LANCZOS)
+                for cvd in ("normal", "protan", "deutan", "tritan"):
+                    line = Image.new("RGBA", (label_w + len(tints) * (fw + fw // 2 + 2 * pad), fh + pad), bg)
+                    ImageDraw.Draw(line).text((4, 4), f"ore/species {cvd}", fill=(220, 220, 220, 255))
+                    x = label_w
+                    for hexc in tints:
+                        c = [int(hexc[i:i + 2], 16) for i in (1, 3, 5)]
+                        tinted = Image.new("RGBA", tile.size)
+                        tp, op = tile.load(), tinted.load()
+                        for yy in range(fh):
+                            for xx in range(fw):
+                                r_, g_, b_, a_ = tp[xx, yy]
+                                op[xx, yy] = (r_ * c[0] // 255, g_ * c[1] // 255, b_ * c[2] // 255, a_)
+                        fr = under.copy() if under else Image.new("RGBA", tile.size, (0, 0, 0, 0))
+                        fr.alpha_composite(tinted)
+                        if cvd != "normal": fr = simulate_cvd(fr, cvd)
+                        line.alpha_composite(fr, (x, 0)); x += fw + pad
+                        line.alpha_composite(fr.resize((fw // 2, fh // 2), Image.LANCZOS), (x, fh // 2)); x += fw // 2 + pad
+                    blocks.append(line)
     W = max(b.width for b in blocks); H = sum(b.height for b in blocks)
     out = Image.new("RGBA", (W, H), bg); y = 0
     for b in blocks:
