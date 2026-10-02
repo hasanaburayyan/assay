@@ -4,8 +4,8 @@ use sim::tuning::{
 };
 use sim::{
     BuildingId, BuildingKind, Event, Grade, Input, Item, ItemKind, PlayerCommand, PlayerId,
-    RecipeId, RejectReason, Sheet, Slot, SpeciesId, SystemCommand, TilePos, World, WorldConfig,
-    step,
+    RecipeId, RejectReason, Sheet, Slot, SmelterStall, SpeciesId, SystemCommand, TilePos, World,
+    WorldConfig, step,
 };
 
 /// Species used by these tests, with sheets set explicitly so the rules are
@@ -318,7 +318,21 @@ fn walls_cap_which_ore_a_smelter_accepts() {
         )],
         1,
     );
-    assert!(matches!(events[..], [Event::ItemsInserted { .. }]));
+    // The ore went in; this smelter has no fuel, so ASSA-80's stall follows in
+    // the same tick. What this test is about is that nothing was REFUSED, so
+    // it asks that rather than pinning the exact list.
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::ItemsInserted { .. })),
+        "{events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::CommandRejected { .. })),
+        "nothing was refused: {events:?}"
+    );
 }
 
 #[test]
@@ -761,16 +775,28 @@ fn inserting_takes_what_fits_and_says_what_stayed_behind() {
         )],
         1,
     );
+    // THE SECOND EVENT IS ASSA-80 AND IT IS KEPT EXACT ON PURPOSE. Ore went
+    // into a smelter with no fuel, so it entered a stall on this very tick and
+    // now says so. Asserting the pair rather than filtering the new one keeps
+    // this test pinning something it did not before: the stall arrives in the
+    // same tick as the insert that caused it, which is the whole point of
+    // taking the "before" state at the top of `step`.
     assert_eq!(
         events,
-        vec![Event::ItemsInserted {
-            player: me,
-            building: id,
-            slot: Slot::Input,
-            item: ore(WALLS),
-            count: SMELTER_INPUT_CAP,
-            left: 7,
-        }],
+        vec![
+            Event::ItemsInserted {
+                player: me,
+                building: id,
+                slot: Slot::Input,
+                item: ore(WALLS),
+                count: SMELTER_INPUT_CAP,
+                left: 7,
+            },
+            Event::SmelterStalled {
+                building: id,
+                why: sim::SmelterStall::NoFuel,
+            }
+        ],
         "the offer is clamped to the room, and the leftover is reported"
     );
     assert_eq!(
@@ -860,4 +886,178 @@ fn the_insert_line_names_the_leftover_only_when_there_is_one() {
         !line.contains("would not fit"),
         "a clean insert must not mention a leftover: {line}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// ASSA-80: the machine that is half the demo's clock says when it stops.
+// ---------------------------------------------------------------------------
+
+/// Every `SmelterStalled` in `events`, as its reason.
+fn stalls(events: &[Event]) -> Vec<SmelterStall> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::SmelterStalled { why, .. } => Some(*why),
+            _ => None,
+        })
+        .collect()
+}
+
+/// **THE GAME DIRECTOR'S REPRODUCTION, AS A TEST.** She inserted fuel and ore
+/// on the pinned seed and watched 120 ticks with zero events while
+/// `buildings` said `stalled: fuel won't light from cold` the whole time. The
+/// player had done everything the buttons offer and the log was empty.
+///
+/// **THE EDGE IS ENTERING A STALL, NOT WORKING -> STALLED**, and that
+/// difference is the test: here the smelter goes from `idle: nothing to
+/// refine` straight into a stall without ever working, so a guard written to
+/// the ruling's letter would have stayed green through exactly the silence she
+/// measured. Her rule 2 is the load-bearing half and it holds below: once
+/// stalled, it says nothing more.
+#[test]
+fn a_smelter_entering_a_stall_says_so_once_and_then_stops_talking() {
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(WALLS), 10);
+
+    // Ore in, no fuel: idle -> stalled on this tick.
+    let events = run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Input, ore(WALLS), 5))],
+        1,
+    );
+    assert_eq!(
+        stalls(&events),
+        vec![SmelterStall::NoFuel],
+        "entering a stall is announced once: {events:?}"
+    );
+
+    // **AND THEN SILENCE.** This is the arm a per-tick emitter fails: fifty
+    // ticks of a smelter sitting in the same stall must add nothing to a log
+    // the player is supposed to keep reading.
+    let later = run(&mut world, &[], 50);
+    assert_eq!(
+        stalls(&later),
+        vec![],
+        "a smelter that sits stalled must not shout: {later:?}"
+    );
+
+    // The status line agrees with what the event said, because both read
+    // `World::smelter_state`.
+    let status = sim::debug::building_status(&world, world.building(id).unwrap());
+    assert!(status.contains("stalled: no fuel"), "{status}");
+}
+
+/// **ALL FOUR STALLS, EACH BY ITS OWN SENTENCE, AND THE TWO SURFACES HELD
+/// EQUAL.** A state-to-words mapping test: the slots are set directly rather
+/// than driven, because what is under test is that one decision reaches both
+/// the log and the status line saying the same thing — not the rules that get
+/// a smelter into each state, which the tests above already pin.
+#[test]
+fn every_stall_reason_says_the_same_thing_in_the_log_and_on_the_status_line() {
+    let cases: [(SmelterStall, &str); 4] = [
+        (SmelterStall::OutputFull, "output full"),
+        (SmelterStall::NoFuel, "no fuel"),
+        (SmelterStall::FuelWontLight, "fuel won't light from cold"),
+        (
+            SmelterStall::FireTooCool {
+                fire: 60,
+                needs: 90,
+            },
+            "fire 60 too cool for ore needing 90",
+        ),
+    ];
+    for (why, sentence) in cases {
+        let (mut world, me, id, _) = world_with_smelter();
+        // Walls hot enough that the fire, not the walls, is the limit in the
+        // FireTooCool case; harmless for the others.
+        world.species_mut(WALLS).sheet.heat_tolerance = 100;
+        let ore_for = match why {
+            SmelterStall::FireTooCool { .. } => ore(HOT_FUEL),
+            _ => ore(WALLS),
+        };
+        {
+            let b = world.building_mut(id).unwrap();
+            let BuildingKind::Smelter(s) = &mut b.kind else {
+                panic!("the fixture places a smelter")
+            };
+            s.input = Some(sim::ItemStack::new(ore_for, 5));
+            match why {
+                SmelterStall::OutputFull => {
+                    s.output = Some(sim::ItemStack::new(
+                        Item::new(ItemKind::Refined, WALLS, Grade::A),
+                        SMELTER_OUTPUT_CAP,
+                    ));
+                    s.burn_left = 10;
+                    s.burn_temperature = 60;
+                }
+                SmelterStall::NoFuel => {
+                    s.fuel = None;
+                    s.burn_left = 0;
+                }
+                SmelterStall::FuelWontLight => {
+                    s.fuel = Some(sim::ItemStack::new(ore(HOT_FUEL), 1));
+                    s.burn_left = 0;
+                }
+                SmelterStall::FireTooCool { .. } => {
+                    s.burn_left = 10;
+                    s.burn_temperature = 60;
+                }
+            }
+        }
+        let b = world.building(id).unwrap();
+        assert_eq!(
+            world.smelter_state(b).stall(),
+            Some(why),
+            "the state this test set up is not the one it is about"
+        );
+
+        let status = sim::debug::building_status(&world, b);
+        assert!(
+            status.contains(&format!("stalled: {sentence}")),
+            "the status line's own words: {status}"
+        );
+        let line = sim::debug::event_line(
+            &world,
+            Some(me),
+            &Event::SmelterStalled { building: id, why },
+        );
+        assert!(
+            line.contains(sentence),
+            "and the log must say the same thing, not a second wording: {line}"
+        );
+    }
+}
+
+/// **IDLE IS NOT A STALL AND IS NEVER ANNOUNCED** (Game Director's rule 2). A
+/// finished batch empties the input slot, and announcing that would fire after
+/// every batch -- noise that teaches a player to stop reading the log.
+#[test]
+fn a_smelter_that_runs_dry_is_silent_because_idle_is_not_a_stall() {
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(WALLS), 60);
+    give(&mut world, me, ore(FUEL), 60);
+    // One unit of ore and plenty of fuel: it smelts, finishes, and goes idle.
+    let events = run(
+        &mut world,
+        &[
+            Input::player(me, insert(id, Slot::Fuel, ore(FUEL), 10)),
+            Input::player(me, insert(id, Slot::Input, ore(WALLS), 1)),
+        ],
+        60,
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::ItemSmelted { .. })),
+        "premise: it has to actually smelt something: {events:?}"
+    );
+    let smelter = smelter_of(&world, id);
+    assert!(smelter.input.is_none(), "premise: the input ran out");
+    assert_eq!(
+        stalls(&events),
+        vec![],
+        "running dry is idle, not a stall: {events:?}"
+    );
+    let status = sim::debug::building_status(&world, world.building(id).unwrap());
+    assert!(status.contains("idle: nothing to refine"), "{status}");
 }

@@ -53,7 +53,9 @@ pub use assembly::{
     Assembly, AssemblyError, BreakOutcome, BreakVerdict, Built, Contribution, MachineStats, Mount,
     PART_SPECS, Part, PartKind, PartSpec, SlotLimit, Source, Stat, StatRange,
 };
-pub use building::{Building, BuildingId, BuildingKind, Machine, Slot, Smelter};
+pub use building::{
+    Building, BuildingId, BuildingKind, Machine, Slot, Smelter, SmelterStall, SmelterState,
+};
 pub use command::{Event, Input, PlayerCommand, RejectReason, StopReason, SystemCommand};
 pub use inventory::Inventory;
 pub use item::{Item, ItemKind, ItemStack};

@@ -81,6 +81,52 @@ pub struct Smelter {
     pub progress: u32,
 }
 
+/// Why a smelter has stopped. **One of these per `stalled:` line
+/// `building_status` already printed**, and the reason an event can carry.
+///
+/// Structured and not a string, because `sim` holds rules and `debug` holds
+/// prose: the event says *which* stall, and one wording function turns that
+/// into the sentence both the status line and the log read (ASSA-80).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SmelterStall {
+    /// Refined material is waiting and there is no room for more.
+    OutputFull,
+    /// Ore to smelt, nothing to burn.
+    NoFuel,
+    /// Fuel in the slot, and no fire a player can start from cold.
+    FuelWontLight,
+    /// Burning, and not hot enough for this ore. `fire` is already capped by
+    /// the walls, which is what makes the smelter's own material matter.
+    FireTooCool { fire: u32, needs: u32 },
+}
+
+/// What a smelter is doing. **DECIDED IN ONE PLACE** (`World::smelter_state`):
+/// the status line, the stall event and any future host all read the same
+/// answer, so none of them can invent a fifth state or disagree about which
+/// of the four this is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SmelterState {
+    /// Nothing to refine. **Not a stall**: it is something the player has not
+    /// fed yet, not something they must fix (Game Director, ASSA-80), and it
+    /// happens after every finished batch.
+    Idle,
+    Stalled(SmelterStall),
+    /// Making progress, at this temperature.
+    Working {
+        at: u32,
+    },
+}
+
+impl SmelterState {
+    /// The stall, if this is one. The event edge asks this and nothing else.
+    pub const fn stall(self) -> Option<SmelterStall> {
+        match self {
+            SmelterState::Stalled(why) => Some(why),
+            _ => None,
+        }
+    }
+}
+
 impl BuildingKind {
     /// The building an item kind turns into when placed, if any. A machine is
     /// never here: it is placed from an assembly, not from an item.

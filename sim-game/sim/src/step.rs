@@ -21,6 +21,22 @@ use crate::world::World;
 /// `inputs` are everything scheduled for this tick, in the order every peer
 /// agreed on. Anything that happened is appended to `events`.
 pub fn step(world: &mut World, inputs: &[Input], events: &mut Vec<Event>) {
+    // **THE STATE A PLAYER LAST SAW**, captured before this tick's commands
+    // are applied, so the edge compared below is the one they would notice
+    // (ASSA-80). Taken here rather than inside `run_smelters` because the
+    // insert that causes a stall lands in the command phase of the same tick:
+    // by the time the smelter system runs, a stall that began this tick looks
+    // exactly like one that began an hour ago.
+    //
+    // A `Vec` in `world.buildings` order, which is stable, because every peer
+    // must compute the same events in the same order.
+    let before: Vec<(BuildingId, bool)> = world
+        .buildings
+        .iter()
+        .filter(|b| matches!(b.kind, BuildingKind::Smelter(_)))
+        .map(|b| (b.id, world.smelter_state(b).stall().is_some()))
+        .collect();
+
     for input in inputs {
         match input {
             Input::System(command) => apply_system(world, command, events),
@@ -40,6 +56,7 @@ pub fn step(world: &mut World, inputs: &[Input], events: &mut Vec<Event>) {
     assay(world, events);
     craft_by_hand(world, events);
     run_smelters(world, events);
+    announce_new_stalls(world, &before, events);
 
     world.tick += 1;
 }
@@ -942,6 +959,39 @@ fn mine_by_machine(world: &mut World, events: &mut Vec<Event>) {
     }
 }
 
+/// Say so, once, when a smelter has just stopped.
+///
+/// **THE EDGE IS INTO A STALL FROM ANYTHING THAT IS NOT ONE**, which is wider
+/// than the ruling's letter and narrower than its fear. The Game Director
+/// ruled "working -> stalled"; her own reproduction is **idle -> stalled** —
+/// insert ore and fuel that will not light into an empty smelter and it goes
+/// from `idle: nothing to refine` straight to `stalled: fuel won't light from
+/// cold` without ever working. A guard that only watched working -> stalled
+/// would have stayed green through the exact 120 silent ticks she measured.
+///
+/// Her rule 2 is what is actually load-bearing and it holds: becoming **idle**
+/// is never announced, so a finished batch is silent, and a smelter that sits
+/// stalled says nothing after the first tick.
+fn announce_new_stalls(world: &World, before: &[(BuildingId, bool)], events: &mut Vec<Event>) {
+    for b in &world.buildings {
+        let Some(why) = world.smelter_state(b).stall() else {
+            continue;
+        };
+        // A building with no entry is one placed this tick: it is placed empty,
+        // so it is idle, and an unknown past counts as not stalled.
+        let was = before
+            .iter()
+            .find(|(id, _)| *id == b.id)
+            .is_some_and(|(_, stalled)| *stalled);
+        if !was {
+            events.push(Event::SmelterStalled {
+                building: b.id,
+                why,
+            });
+        }
+    }
+}
+
 /// Assay system: a player standing on the deposit they are assaying makes
 /// progress; after `ASSAY_TICKS` the species' sheet is known exactly.
 fn assay(world: &mut World, events: &mut Vec<Event>) {
@@ -1023,8 +1073,12 @@ fn craft_by_hand(world: &mut World, events: &mut Vec<Event>) {
 
 /// Smelting system. A smelter with ore, a fire hot enough for it, and room
 /// in its output slot makes progress; each finished unit goes to the output
-/// slot. Stalls (no fuel, fuel too cool, fuel that won't light, output full)
-/// are silent here; inspect the building to see why.
+/// slot. The four stalls (no fuel, fuel too cool, fuel that won't light,
+/// output full) are decided by `World::smelter_state` and announced ONCE by
+/// `announce_new_stalls` on the tick a smelter enters one (ASSA-80). They used
+/// to be silent here, with "inspect the building to see why" as the only
+/// recourse -- true at a prompt, and at the window it meant hovering an 18x18
+/// building on a 9-px map.
 ///
 /// Fire rules: the running temperature is the lower of the walls' heat
 /// tolerance and the burning fuel's effective reactivity, and must reach the
