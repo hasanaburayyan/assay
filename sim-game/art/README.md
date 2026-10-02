@@ -154,6 +154,30 @@ it may, because nothing else is spending it.
   the same dimming. The map is deliberately more chromatic than the world
   because it needs that chroma to survive being dimmed.
 
+## The engine cannot reach any of this yet, and that is measured now
+
+```bash
+art/check_client_can_see_art.py                  # RED today, on purpose
+CLIENT_ROOT=<other dir>  art/…can_see_art.py     # moves the project root -> RED
+CLIENT_EXCLUDE='assets/*' art/…can_see_art.py    # filters it out of the bundle -> RED
+```
+
+A Godot project's `res://` is its project folder and nothing above it. The
+project is `client/`; `build.py` writes sheets to `assets/sprites/`, its
+sibling. So no client script can name a sheet, there is not one `.import` file
+in the project, and an export would not pack them either. Eleven sheets and
+four measured checks, and the game has never drawn a pixel of it.
+
+This check is the finding (**ASSA-34**) kept where it cannot be forgotten, and
+it becomes the guard once the layout is fixed. It reads the manifest from
+wherever it is — inside the project wins if both exist — so the move needs no
+edit here. It is deliberately **not** in CI while it is red.
+
+Note the shape of the mistake, because it is the one this whole folder keeps
+making: `[importer_defaults]` in `project.godot` (ASSA-14) is correct and is
+waiting for a texture that cannot arrive, and I verified that work by copying a
+sprite in **by hand**, which is precisely how I did not notice.
+
 ## Machines are overlaid part sprites, and the seams have to show
 
 A machine is never a sprite. It is whole part frames stacked at one position
