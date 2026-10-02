@@ -24,6 +24,8 @@ const REQUIRED_METHODS := [
 	# The HUD's reads. All four are called every frame, so a rename that only showed up at runtime
 	# would show up as an empty panel in a shipped build.
 	"event_lines", "inventory_of", "tile_at", "species_sheets",
+	# The wire's own number, so no GDScript file has to keep a copy of it.
+	"protocol_version",
 ]
 
 

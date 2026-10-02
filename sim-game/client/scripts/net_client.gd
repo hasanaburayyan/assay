@@ -56,6 +56,13 @@ func _ready() -> void:
 ## Start joining. `address` is "host", "host:port" or "[v6]:port"; a bare address takes 7777.
 func join(address: String, player_name: String) -> void:
 	_name = player_name
+	# THE WIRE'S NUMBER COMES FROM RUST, so a client that cannot ask does not join. Saying hello with
+	# an invented protocol number gets refused by the relay with a message that blames neither side,
+	# and this client could not have simulated a tick anyway -- the same missing library is why.
+	if AssayProtocol.protocol_version() == AssayProtocol.UNKNOWN_PROTOCOL:
+		_fail(("the sim binding did not load, so this client does not know which protocol it speaks "
+				+ "or how to run a tick. Build it with `make client-lib`."))
+		return
 	var split := AssayProtocol.split_address(address)
 	var host: String = split[0]
 	var port: int = split[1]
@@ -119,7 +126,7 @@ func _process(_delta: float) -> void:
 		if not _write(AssayProtocol.hello(_name)):
 			return
 		stage = Stage.GREETED
-		note.emit("said hello on protocol %d" % AssayProtocol.PROTOCOL_VERSION)
+		note.emit("said hello on protocol %d" % AssayProtocol.protocol_version())
 
 	var available := _socket.get_available_bytes()
 	if available > 0:
