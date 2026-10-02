@@ -363,6 +363,33 @@ pub fn part_table() -> String {
     out
 }
 
+/// THE DURABILITY POOL AS A PLAYER MAY READ IT: exact against the exact pool
+/// once every species in the design is assayed, a percentage of the banded
+/// pool while any of them is still rough.
+///
+/// **Public and shared on purpose.** The Godot part menu shows this same
+/// number (`sim-godot`'s `designs_of`), and A10 is a rule about what a player
+/// is allowed to know, not a formatting preference — two hosts spelling it
+/// two ways is how the leak comes back in one of them. One wording, one place.
+///
+/// The denominator is the TRUE max from `stats()`, never a band end: a
+/// percentage over a published band end is the exact pool with extra
+/// arithmetic. `div_ceil` so a pick with swings left never reads 0%.
+pub fn durability_readout(world: &World, built: &Built) -> String {
+    let range = built.assembly.stat_range(&world.species);
+    let max = built.assembly.stats(&world.species).durability;
+    if range.low.durability == range.high.durability {
+        format!("{}/{}", built.durability, max)
+    } else {
+        format!(
+            "{}% of {}-{}",
+            (100 * built.durability).div_ceil(max.max(1)),
+            range.low.durability,
+            range.high.durability
+        )
+    }
+}
+
 /// One line for a design the player has built: what it is, what it weighs
 /// against its budget, and the verdict.
 ///
@@ -413,18 +440,7 @@ pub fn assembly_readout(world: &World, built: &Built) -> String {
             // end: a percentage over a published band end is the exact pool
             // with extra arithmetic. `div_ceil` so a pick with swings left
             // never reads 0%.
-            let max = a.stats(&world.species).durability;
-            let _ = if range.low.durability == range.high.durability {
-                write!(out, " · durability {}/{}", built.durability, max)
-            } else {
-                write!(
-                    out,
-                    " · durability {}% of {}-{}",
-                    (100 * built.durability).div_ceil(max.max(1)),
-                    range.low.durability,
-                    range.high.durability
-                )
-            };
+            let _ = write!(out, " · durability {}", durability_readout(world, built));
         }
         _ => {
             let _ = write!(

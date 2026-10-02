@@ -31,6 +31,13 @@ var _detail := Label.new()
 var _carrying := Label.new()
 var _cursor := Label.new()
 var _log := Label.new()
+## THE PART MENU'S HOME: one headline label plus one body label per design, rebuilt only when the
+## list changes. Not a Label like the others, because the verdict is a WORD IN ITS OWN COLOUR above
+## numbers in another (Maren's ruling) and one Label can only be one colour.
+var _bench := VBoxContainer.new()
+## What the bench was last built from, so ten refreshes a second do not rebuild nodes that have not
+## changed. The designs themselves are the signature: if they are identical, so is the panel.
+var _bench_showing := ""
 ## Tile size last drawn at, so a click can be turned back into a tile. Set by `_draw`, which is the
 ## only place that decides it; 0 means nothing has been drawn yet and a click means nothing.
 var _cell := 0.0
@@ -106,15 +113,17 @@ func _build_ui() -> void:
 	column.custom_minimum_size = Vector2(PANEL, 0.0)
 	column.add_theme_constant_override("separation", 10)
 	add_child(column)
-	for part in [["you", _carrying], ["cursor", _cursor], ["last tick", _log]]:
+	for part in [["you", _carrying], ["bench", _bench], ["cursor", _cursor], ["last tick", _log]]:
 		var heading := Label.new()
 		heading.text = String(part[0])
 		heading.modulate = Color(0.60, 0.64, 0.70)
 		column.add_child(heading)
-		var body: Label = part[1]
+		var body: Control = part[1]
 		body.custom_minimum_size = Vector2(PANEL, 0.0)
-		body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		if body is Label:
+			(body as Label).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		column.add_child(body)
+	_refresh_bench()
 
 
 func _on_join() -> void:
@@ -192,6 +201,54 @@ func _refresh() -> void:
 		source = "where you stand"
 	_cursor.text = "%s\n%s" % [source, "\n".join(AssayHud.tile_lines(_sim.tile_at(at)))]
 	_log.text = "\n".join(_events)
+	_refresh_bench()
+
+
+## THE PART MENU: every design you hold, verdict first.
+##
+## Maren's ruling, and the reason this is nodes rather than one Label: THE VERDICT IS THE HEADLINE
+## AND THE NUMBERS ARE THE SMALL PRINT. A player predicting a break should read one word, not
+## compare two integers -- so the word is its own label, in the verdict's own colour and larger,
+## with the spans under it in grey.
+##
+## NOTHING HERE DECIDES ANYTHING. The verdict, the spans, the durability wording and the list of
+## species still reading rough all arrive from `sim` through the binding. The one thing this client
+## adds is the arrangement.
+##
+## NO PLACE BUTTON YET, and that is deliberate rather than an oversight: the ruling is that place is
+## never disabled, and a button that cannot work is a disabled one with extra steps. Placement lands
+## with the command path that can be driven end to end.
+func _refresh_bench() -> void:
+	var designs := _sim.designs_of(_client.player_id) if _client != null else []
+	var signature := str(designs)
+	if signature == _bench_showing:
+		return
+	_bench_showing = signature
+	for child in _bench.get_children():
+		child.queue_free()
+		_bench.remove_child(child)
+	if designs.is_empty():
+		var empty := Label.new()
+		empty.text = AssayHud.no_designs_line()
+		empty.modulate = Color(0.55, 0.58, 0.64)
+		empty.custom_minimum_size = Vector2(PANEL, 0.0)
+		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_bench.add_child(empty)
+		return
+	for entry in designs:
+		var design: Dictionary = entry
+		var verdict := Label.new()
+		verdict.text = String(design.get("verdict", "?"))
+		verdict.modulate = AssayHud.verdict_color(verdict.text)
+		verdict.add_theme_font_size_override("font_size", 19)
+		_bench.add_child(verdict)
+		var body := Label.new()
+		body.text = "\n".join(AssayHud.design_lines(design))
+		body.modulate = Color(0.78, 0.80, 0.85)
+		body.add_theme_font_size_override("font_size", 13)
+		body.custom_minimum_size = Vector2(PANEL, 0.0)
+		body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_bench.add_child(body)
 
 
 ## The tile my own player is on, as the sim has them. Spawn before there is a player of mine to find:

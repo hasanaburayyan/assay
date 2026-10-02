@@ -426,19 +426,6 @@ fn deposit_dict(deposit: &DepositFacts) -> VarDictionary {
     }
 }
 
-/// "2400-3600", or "2400" when the two ends have met.
-///
-/// The same rule as the closure in `sim::debug::assembly_readout`, which is a
-/// duplication worth naming: if a third place ever needs it, the home is one
-/// function in `sim::debug` and not a third copy.
-fn band(low: u32, high: u32) -> String {
-    if low == high {
-        low.to_string()
-    } else {
-        format!("{low}-{high}")
-    }
-}
-
 fn part_dict(part: &PartFacts) -> VarDictionary {
     vdict! {
         "kind" => &gstring(&part.kind).to_variant(),
@@ -837,11 +824,7 @@ impl AssaySim {
     fn design(&self, index: i64, in_hand: bool, built: &Built) -> DesignFacts {
         let a = &built.assembly;
         let range = a.stat_range(&self.world.species);
-        // The pool the sim actually gave this machine when it was built, which
-        // is what `built.durability` is a remainder of. Shown as a percentage
-        // so the band underneath stays the only absolute on screen.
-        let full = a.stats(&self.world.species).durability;
-        let percent = (built.durability * 100).checked_div(full).unwrap_or(0);
+
         let mut unassayed: Vec<String> = Vec::new();
         for part in a.parts() {
             let species = self.world.species(part.material.species);
@@ -864,11 +847,13 @@ impl AssaySim {
                 // unreachable rather than a state to design for.
                 None => "unmountable".to_string(),
             },
+            // THE SIM'S OWN WORDING, not a second one. ADR 0003 A10 is a rule
+            // about what a player may know -- the exact pool divided by a
+            // published constant IS the head's effective strength -- so a menu
+            // spelling it its own way is how the leak comes back in one host
+            // and not the other.
             durability: match a.mount() {
-                Some(Mount::Held) => Some(format!(
-                    "{percent}% of {}",
-                    band(range.low.durability, range.high.durability)
-                )),
+                Some(Mount::Held) => Some(sim::debug::durability_readout(&self.world, built)),
                 _ => None,
             },
             unassayed,
@@ -1522,6 +1507,22 @@ mod tests {
         assert_eq!(
             designs[1].durability, None,
             "a planted design must not report a pool at all"
+        );
+
+        // ONCE THE SPECIES IS ASSAYED the pool is exact and may be shown as
+        // one — A10's rule is about what a ROUGH sheet gives away, and this is
+        // the branch that proves the menu takes its wording from the sim
+        // rather than always printing a percentage.
+        for species in &mut sim.world.species {
+            species.assayed = true;
+        }
+        let exact = sim.design_facts(Some(me))[0]
+            .durability
+            .clone()
+            .expect("a held design has a pool");
+        assert!(
+            !exact.contains('%') && exact.contains('/'),
+            "an assayed design reads exact, got {exact}"
         );
     }
 

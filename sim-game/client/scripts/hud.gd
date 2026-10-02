@@ -125,3 +125,67 @@ static func trimmed_log(lines: PackedStringArray, limit: int) -> PackedStringArr
 	if limit <= 0 or lines.size() <= limit:
 		return lines
 	return lines.slice(lines.size() - limit)
+
+
+## A SPAN THE SIM GAVE US, as words: "26-50" while a species reads rough, "38" once it is assayed.
+##
+## Formatting, not arithmetic. Both ends are the sim's (`Assembly::stat_range`,
+## `Assembly::part_mass_range`); this file may not average them, round them or pick one.
+static func span(low: int, high: int) -> String:
+	return str(low) if low == high else "%d-%d" % [low, high]
+
+
+## THE VERDICT'S COLOUR. Three states, and the interesting one is UNCERTAIN.
+##
+## Maren's ruling (ASSA-7): UNCERTAIN MUST NOT LOOK LIKE A WARNING. It is exactly half of all designs
+## at grade B and it is the advertisement for assaying, so it gets an informational COOL colour, not
+## the amber a client reaches for by habit. WILL BREAK is warm but not alarm red -- the charter's
+## feel is "calm, never punishing", and a break is a soft reset that hands parts back.
+static func verdict_color(verdict: String) -> Color:
+	match verdict:
+		"SAFE":
+			return Color(0.55, 0.82, 0.60)
+		"UNCERTAIN":
+			return Color(0.52, 0.74, 0.92)
+		"WILL BREAK":
+			return Color(0.93, 0.63, 0.42)
+		_:
+			return Color(0.80, 0.82, 0.86)
+
+
+## ONE DESIGN, UNDER ITS VERDICT: what it weighs against its budget, what resolves the doubt, what
+## it is made of. The verdict word itself is NOT here -- it is its own label in its own colour, and
+## these are the small print under it (Maren's ruling: the verdict is the headline, the numbers are
+## the small print).
+##
+## NOTHING IS DERIVED. The verdict, both spans, the durability string and the rough-species list all
+## arrive decided by the sim through `designs_of`; a client comparing mass to budget itself would be
+## a second opinion about whether a machine breaks.
+static func design_lines(design: Dictionary) -> PackedStringArray:
+	var lines := PackedStringArray()
+	var mass := span(int(design.get("mass_low", 0)), int(design.get("mass_high", 0)))
+	var budget := span(int(design.get("budget_low", 0)), int(design.get("budget_high", 0)))
+	var mount := String(design.get("mount", "?"))
+	lines.append("%s · mass %s of %s budget" % [
+			"in hand" if bool(design.get("in_hand", false)) else mount, mass, budget])
+	# THE ONLY AD ASSAYING GETS. An UNCERTAIN design that could only say "assay something" would read
+	# as danger; naming the material turns the doubt into the next thing to do.
+	var unassayed := design.get("unassayed", PackedStringArray()) as PackedStringArray
+	if unassayed.size() > 0:
+		lines.append("assay %s to know" % " and ".join(unassayed))
+	# ABSENT, not blank: a planted machine has no durability key, because drill wear is parked and a
+	# number that never moves teaches a mechanic that does not exist.
+	if design.has("durability"):
+		lines.append("durability %s" % String(design["durability"]))
+	for entry in design.get("parts", []):
+		var part: Dictionary = entry
+		lines.append("  %s · %s %s · mass %s" % [String(part.get("kind", "?")),
+				String(part.get("species_name", "?")), String(part.get("grade", "?")),
+				span(int(part.get("mass_low", 0)), int(part.get("mass_high", 0)))])
+	return lines
+
+
+## WHAT THE PANEL SAYS WHEN THERE IS NOTHING TO SHOW, which is every player until the craft chain
+## runs. A heading over an empty space reads as a bug; this says which it is.
+static func no_designs_line() -> String:
+	return "nothing built yet — mine, smelt and make parts first"
