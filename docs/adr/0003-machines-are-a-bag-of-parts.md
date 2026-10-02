@@ -299,15 +299,45 @@ machines do not wear.
   fresh pick) true as written. Adding a forging duration would move every one of
   those numbers. If parts should take time, that is a tuning constant and a
   `Player` field, and A2's upkeep ratio needs restating.
-- **A held tool's remaining durability is shown exactly, against a banded
-  maximum** (`durability 3240/2400-3600`). The pool is live state that visibly
-  drains, so banding it would be worse than showing it. But it is
-  `size × effective strength × 60`, so an exact pool **leaks the head
-  material's effective strength** even before an assay — a hole in A5 of the
-  same kind as the one A8 closes. It is not an exploit at today's numbers:
-  learning strength this way costs 3 refined (3 ore plus 60 ticks of smelting),
-  where an assay costs 30 ticks and reveals the whole sheet. Named here so it is
-  a decision and not an oversight.
+- **A held tool's life is shown as swings used out of what its class affords**
+  (`durability 20 of 120-180 swings used` while any species in it is rough,
+  `20 of 144 swings used` once they are all assayed). It took three goes to get
+  here and the two wrong answers are worth keeping, because both were leaks of
+  the same fact and only the third is closed *by construction*.
+
+  The pool is `size × effective strength × 60`, so **any reading of the pool
+  itself leaks the head material's effective strength**, which A5 says may not
+  be known before an assay.
+
+  1. *Exact against a banded maximum* (`3240/2400-3600`), the narrowing
+     originally recorded here, on the argument that the pool is live state that
+     visibly drains so banding it would be worse than showing it. Wrong:
+     3240/60 = 54, where the band only said strength ∈ [40, 60]. It was the one
+     `Source::Property` stat read exactly while mass and budget were banded,
+     which made building a pick a free assay of strength.
+  2. *A percentage of the band* (`50% of 2400-3600`, ASSA-5 #27). Still a leak,
+     measured: a pool is always a multiple of `PICK_WEAR_PER_SWING`, so only 21
+     values fit that band, and an integer percent plus the player's own swing
+     count identifies exactly one — after **6 swings** for a 2400 pool, 16 for
+     3600, worst case 61 out of a 120–180 life.
+  3. *Swings used* (this). `used` is the player's own count — they took those
+     swings — and the band ends are the rough sheet's own. Nothing in the string
+     is derived from the true max, so there is nothing to recover. It also
+     retires points, a unit nothing else in the game uses.
+
+  **A leak is measured in *when*, not whether.** The pick's death gives the pool
+  away too, and that was the defence of (1) and (2): it was the wrong
+  measurement, because death comes at swing 120–180, long after the design
+  decision it would have informed is dead.
+
+  **Capacity ceils, consumption floors.** The ruling said `div_ceil` throughout,
+  which was right for the percentage, where its purpose was that a pick with a
+  swing left must never read 0%. Pointed at swings used it rounds the other way:
+  a pool of 1 point would read `144 of 144 swings used`, a working pick reading
+  as a spent one. So `used` is swings completed and the band ends are what a
+  pool affords, the last swing draining a part-full pool and still yielding its
+  ore. Today every pool is a multiple of the wear per swing, so the two agree
+  for every reachable state; a test guards the retune that would change that.
 
 ## Note on status
 

@@ -7,7 +7,10 @@
 
 use sim::assembly::{BreakVerdict, spec};
 use sim::debug;
-use sim::tuning::{BREAK_RETURN_PERCENT, PLANTED_FRAME_BUFFER, REACH};
+use sim::tuning::{
+    BREAK_RETURN_PERCENT, HAND_WORK_PER_TICK, PICK_DURABILITY_PER_STRENGTH, PICK_WEAR_PER_SWING,
+    PLANTED_FRAME_BUFFER, REACH,
+};
 use sim::{
     Assembly, AssemblyError, Event, Grade, Input, Item, ItemKind, MachineStats, Mount, Part,
     PartKind, PlayerCommand, PlayerId, RejectReason, Rng, Sheet, SpeciesId, SystemCommand, TilePos,
@@ -1116,18 +1119,20 @@ fn durability_field(readout: &str) -> Option<&str> {
         .find(|field| field.starts_with("durability"))
 }
 
-/// A10: while the head's sheet is banded, the pool is a PERCENTAGE of its
-/// class. The exact number may not appear, because the exact number *is* the
-/// head's effective strength: `pool / PICK_DURABILITY_PER_STRENGTH`.
+/// A10 as the Game Director re-ruled it: while the head's sheet is banded, the
+/// pick's life is **swings used out of what its class affords**, and no
+/// percentage appears anywhere. A percentage was the leak with extra steps —
+/// a pool is always a multiple of `PICK_WEAR_PER_SWING`, so an integer percent
+/// plus the player's own swing count identifies it after six swings.
 ///
-/// The percentages pin the denominator, which is the whole point of the
-/// amendment. LIGHT is strength 60, so at grade B the true max is
-/// `1 x 48 x 60 = 2880` and the band ends are 2400 and 3600. A half-drained
-/// pool of 1440 therefore reads 50% over the true max, 60% over the low band
-/// end and 40% over the high one — three different answers, so this test can
-/// tell which denominator the code used.
+/// The numbers pin that nothing here is computed from the TRUE max, which is
+/// the whole point. LIGHT is strength 60, so at grade B the true max is
+/// `1 x 48 x 60 = 2880` = 144 swings, and the band ends are 2400 and 3600 =
+/// 120 and 180 swings. A half-drained pool therefore reads `72 of 120-180`:
+/// 72 is the player's own count, and 144 — the one number that would hand back
+/// the head's strength — is nowhere in the string.
 #[test]
-fn a_banded_pool_reads_as_a_percentage_of_its_class() {
+fn a_banded_pool_reads_as_swings_used_out_of_its_class() {
     let (mut world, me) = world_with_player();
     let design = pick(LIGHT, LIGHT);
     let index = assemble(&mut world, me, &design);
@@ -1141,11 +1146,16 @@ fn a_banded_pool_reads_as_a_percentage_of_its_class() {
     world.species_mut(LIGHT).assayed = false;
 
     let built = &world.player(me).unwrap().assemblies[index as usize];
+    let readout = debug::assembly_readout(&world, built);
+    let field = durability_field(&readout);
     assert_eq!(
-        durability_field(&debug::assembly_readout(&world, built)),
-        Some("durability 50% of 2400-3600"),
-        "50% is the true max as denominator; 60% would be the low band end \
-         and 40% the high one, and either hands the exact pool back"
+        field,
+        Some("durability 72 of 120-180 swings used"),
+        "swings used against the band the rough sheet already published"
+    );
+    assert!(
+        !field.unwrap().contains("144") && !field.unwrap().contains('%'),
+        "neither the true max nor a percentage of it may appear: {field:?}"
     );
 }
 
@@ -1161,16 +1171,29 @@ fn an_assayed_pool_reads_exactly() {
     let built = &world.player(me).unwrap().assemblies[index as usize];
     assert_eq!(
         durability_field(&debug::assembly_readout(&world, built)),
-        Some("durability 1440/2880"),
-        "assayed: exact pool over the exact max, no band anywhere"
+        Some("durability 72 of 144 swings used"),
+        "assayed: there is nothing left to protect, so the max is exact — and \
+         it is still said in swings, because points are a unit nothing else \
+         in the game uses"
     );
 }
 
-/// `div_ceil`, not plain division: a pick that still has a swing in it must
-/// never read 0%, because 0% is what a spent tool reads and the player would
-/// throw away a working one.
+/// CAPACITY CEILS, CONSUMPTION FLOORS, and this is the case that decides it.
+///
+/// The ruling said `div_ceil` throughout, which was right for the percentage:
+/// there, its purpose was that a pick with a swing left must never read 0%,
+/// because 0% is what a spent tool reads and the player would throw a working
+/// one away. Pointed at *swings used*, ceiling rounds the other way — a pool
+/// of 1 point would read `144 of 144 swings used`, a working pick reading as a
+/// spent one. Same defect, inverted. So `used` is swings COMPLETED (floor) and
+/// the band ends are what a pool AFFORDS (ceil, because the last swing drains
+/// a part-full pool and still yields its ore).
+///
+/// A pool of 1 is not reachable by swinging — wear subtracts exactly 20 — so
+/// for every real state the two agree, which is why only a test can tell them
+/// apart, and why one should.
 #[test]
-fn a_pool_with_anything_left_in_it_never_reads_zero_percent() {
+fn a_pick_with_a_swing_left_does_not_read_as_a_spent_one() {
     let (mut world, me) = world_with_player();
     let design = pick(LIGHT, LIGHT);
     let index = assemble(&mut world, me, &design);
@@ -1180,8 +1203,82 @@ fn a_pool_with_anything_left_in_it_never_reads_zero_percent() {
     let built = &world.player(me).unwrap().assemblies[index as usize];
     assert_eq!(
         durability_field(&debug::assembly_readout(&world, built)),
-        Some("durability 1% of 2400-3600"),
-        "1/2880 rounds down to 0% and must not"
+        Some("durability 143 of 120-180 swings used"),
+        "143 swings are done and one is not; `144 of ...` would say the pick \
+         is finished while it can still mine"
+    );
+}
+
+/// The other half of that decision — capacity CEILS — is invisible today, and
+/// this is a guard against the retune that would reveal it rather than a test
+/// of behaviour, which is a difference worth being honest about.
+///
+/// Every pool and every band end is `size x eff strength x
+/// PICK_DURABILITY_PER_STRENGTH`, and 60 is a multiple of 20, so floor and
+/// ceiling agree on all of them: there is no world, species or grade that can
+/// tell the two apart through the readout. The day somebody retunes either
+/// constant so that stops holding, the rounding starts showing — and this test
+/// says which way it must go, instead of a comment nobody reads.
+///
+/// I first wrote this as `assert_eq!(2410u32.div_ceil(30), 81)`, which asserts
+/// a fact about `div_ceil` and would have passed with the readout rounding
+/// either way. A test that cannot fail for the reason it exists is not a test.
+#[test]
+fn todays_constants_hide_the_rounding_and_a_retune_would_not() {
+    assert_eq!(
+        PICK_DURABILITY_PER_STRENGTH % PICK_WEAR_PER_SWING,
+        0,
+        "pools and band ends are no longer all multiples of the wear per \
+         swing, so `durability_readout`'s rounding is now visible to players: \
+         capacity must CEIL (a part-full pool still buys a swing, and that \
+         swing still yields its ore) and consumption must FLOOR (a pick with a \
+         swing left must never read as a spent one). Check both branches of \
+         the readout against this before changing these constants."
+    );
+}
+
+/// THE HANDS' RATE IS IN THE READOUT, and it is the real constant rather than
+/// a number somebody typed (the Game Director's ruling 5 on ASSA-6).
+///
+/// `speed` is work per tick, the unit bare hands are measured in, so printing
+/// the baseline costs the player no arithmetic. Without it, `speed 23` looks
+/// like a tool and is slower than the hands that built it — and nothing says
+/// so until three refined are spent.
+///
+/// WHAT IT CANNOT SEE, said plainly: while `HAND_WORK_PER_TICK` is 25, a typed
+/// `25` in the readout is the same program as the constant, and no test can
+/// tell them apart. What this does catch is the moment that stops being true —
+/// verified, not assumed: with a literal in the readout and the constant moved
+/// to 50, this test fails and names the stale number.
+#[test]
+fn a_designs_speed_is_shown_against_bare_hands() {
+    let (mut world, me) = world_with_player();
+    let design = pick(LIGHT, LIGHT);
+    let index = assemble(&mut world, me, &design);
+    let built = &world.player(me).unwrap().assemblies[index as usize];
+    let readout = debug::assembly_readout(&world, built);
+    let speed = readout
+        .lines()
+        .next()
+        .unwrap()
+        .split(" · ")
+        .find(|f| f.starts_with("speed "))
+        .expect("a speed field");
+    assert!(
+        speed.contains(&format!("bare hands {HAND_WORK_PER_TICK}")),
+        "the baseline must come from the constant, so a retune moves both: \
+         {speed}"
+    );
+
+    // And it is there for a planted design too: "is planting this better than
+    // swinging myself" is a live question that moves with the head. Narrow to
+    // held if the Game Director rules the other way.
+    let drill = drill(LIGHT, 1);
+    let index = assemble(&mut world, me, &drill);
+    let built = &world.player(me).unwrap().assemblies[index as usize];
+    assert!(
+        debug::assembly_readout(&world, built).contains("bare hands"),
+        "a drill's rate against your own hands is a real decision"
     );
 }
 
@@ -1245,8 +1342,9 @@ fn a_mixed_design_bands_each_part_by_its_own_species() {
     );
     assert_eq!(
         durability_field(&readout),
-        Some("durability 2880/2880"),
+        Some("durability 0 of 144 swings used"),
         "the pool comes from the head alone, and the head's species is \
-         assayed, so this half of the readout is exact while mass is not"
+         assayed, so this half of the readout is exact (one number, not a \
+         band) while mass is not"
     );
 }
