@@ -43,10 +43,27 @@ direction has to live with:
     earthy species palette is not available while the tint is a multiply over
     a light base. Ore will be the most saturated thing on screen.
 
-PENDING DECISION #36, which picks the scheme: index -> slot, with or without
-the species initial drawn as a redundant non-colour read. The numbers argue
-for the glyph - even this table only just clears the floor for a protan
-viewer, so colour alone is a marginal read for ~8% of men.
+DECISION #36 IS RESOLVED: option A. Colour is a slot from the species index,
+AND the client draws the species INITIAL on the deposit as a redundant
+non-colour read. The glyph is not optional decoration - this table clears the
+protan floor by a margin measured in single digits, so colour alone would be
+a marginal read for the ~8% of men with a red-green deficiency. The initial
+already exists in sim (`debug::species_symbol`, the generated name's first
+letter) and `worldgen::generate_name` enforces one distinct initial per
+species per world, so the glyph costs no new art and no new sim.
+
+Maren also retired the old "30 degrees apart on the hue wheel" bar with this
+decision: Okabe-Ito's sky blue and blue are the SAME hue to 0.1 degrees and
+survive CVD precisely because they differ in lightness and saturation
+instead. Hue separation in HSV is not perceptual separation. The bar is dE76
+under protan/deutan/tritan at true 32px, floor 12.
+
+AND THE LADDER IS CHECKED AGAINST THIS TABLE. `species_probe.py` measures the
+closest pair at EVERY grade, because the ore ladder is partly lightness and a
+multiply scales species differences by its own factor - so the darkest tile,
+grade C, is the worst case. It currently reads 15.8 (protan) at C, 18.0 at B,
+19.1 at A. If a future ladder goes darker at the bottom, that check fails
+before the art ships.
 """
 
 SPECIES_TINTS = ["#7A29CC", "#FF3333", "#FF80BF", "#FFFF33", "#3333FF", "#509BE6"]

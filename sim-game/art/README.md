@@ -46,8 +46,17 @@ that are easy to undo by accident:
   cannot brighten, so the base's lightness is the budget every species
   spends, and any hue it carries is added to all six.
 
-Both are checked by `art/species_probe.py`, which also measures species
-separation through protan / deutan / tritan simulation — the old art was
+- **The purity ladder is the sim's: C / B / A**, read out of
+  `sim/src/tuning.rs` at build time rather than retyped. The art used to
+  split purity into quartiles that crossed no real boundary, putting a
+  visible step at purity 50 where nothing happens. A visible mark must
+  correspond to a real difference.
+- **Grade is carried mostly by COVERAGE, not by value.** Darkening the rock
+  to show low purity also shrinks the gap between two species, because the
+  tint is a multiply. Count and size are free.
+
+All of these are checked by `art/species_probe.py`, which also measures
+species separation through protan / deutan / tritan simulation — the old art was
 colour-blind-safe by *shape*, and tinting spends that redundancy. Run it
 after touching ore art, the palette or the tints:
 
