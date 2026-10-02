@@ -122,9 +122,17 @@ pub struct TickBundle {
 /// need to know what a lockstep peer is.
 pub fn check_join(protocol: u32, rules: &str) -> Result<(), String> {
     if protocol != PROTOCOL_VERSION {
+        // **THE SAME THREE THINGS THE RULES SENTENCE SAYS** (Game Director,
+        // ASSA-77): which build the host is, which build to fetch, and that
+        // nothing is wrong with the player's machine. A stranger meeting this
+        // across a protocol bump has no terminal and no way to tell "the host
+        // is newer" from "the host is down" or "my wifi is broken", and the
+        // build identity is the one thing they can act on.
         return Err(format!(
-            "This host speaks protocol v{PROTOCOL_VERSION} but your client sent \
-             v{protocol}. Download the build that matches this host."
+            "This host speaks protocol v{PROTOCOL_VERSION} and your client speaks \
+             v{protocol}, so the two builds cannot talk to each other at all. \
+             Nothing is wrong with your machine or your network. Download the \
+             build that matches this host: {RULES_ID}"
         ));
     }
     if rules != RULES_ID {
@@ -136,6 +144,82 @@ pub fn check_join(protocol: u32, rules: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// What can be read out of a connection's first frame **without knowing which
+/// protocol wrote it**.
+///
+/// **THIS SHAPE IS FROZEN AND MUST STAY PARSEABLE FOR EVERY BUILD THAT EVER
+/// SHIPPED** (ASSA-77). The Game Director pointed the board's own downloaded
+/// build at the host the decision record names and got
+/// `failed to fill whole buffer`: a protocol-6 `Hello` carries no `rules`
+/// field, so today's relay could not deserialise it into [`ClientMsg`], the
+/// reader thread ended, and the socket closed **with nothing sent**. The
+/// sentence we are proud of only worked between builds that could already
+/// talk.
+///
+/// Every field is optional and nothing is required, which is the whole point:
+/// a frame from the future may carry fields this struct has never heard of and
+/// a frame from the past may be missing all of them. The only contract is the
+/// one every build has kept since protocol 1 — *the first frame is a
+/// length-prefixed JSON object with a `Hello` member* — and
+/// `a_protocol_6_hello_is_still_readable` pins it against a hand-written
+/// historical frame rather than against anything today's code can produce.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Greeting {
+    pub protocol: Option<u32>,
+    pub rules: Option<String>,
+    pub name: Option<String>,
+}
+
+/// Read a first frame for whatever it will give up. Never fails: a frame this
+/// cannot read at all becomes an empty [`Greeting`], which still earns the
+/// player a sentence.
+pub fn greeting(frame: &[u8]) -> Greeting {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(frame) else {
+        return Greeting::default();
+    };
+    // Externally tagged: `{"Hello": {...}}`. A future build could rename the
+    // variant, so fall back to the object itself rather than giving up.
+    let body = value.get("Hello").unwrap_or(&value);
+    Greeting {
+        protocol: body
+            .get("protocol")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok()),
+        rules: body
+            .get("rules")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        name: body
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+    }
+}
+
+/// The sentence for a first frame this build cannot read as a [`ClientMsg`].
+///
+/// **ALWAYS A SENTENCE, NEVER A DROPPED SOCKET.** Where the greeting explains
+/// itself — a protocol we do not speak, rules we do not share — the wording is
+/// [`check_join`]'s, because two wordings for one condition is how hosts
+/// drift. Where it does not, the player still gets the three things they need.
+///
+/// A greeting with no `rules` is NOT accused of a rules mismatch: an old build
+/// that never had the field would otherwise be told its rules are wrong when
+/// the real answer is its protocol. Passing this host's own id keeps the
+/// rules clause silent so only the true complaint is made.
+pub fn refuse_unreadable(g: &Greeting) -> String {
+    if let Some(protocol) = g.protocol
+        && let Err(why) = check_join(protocol, g.rules.as_deref().unwrap_or(RULES_ID))
+    {
+        return why;
+    }
+    format!(
+        "This host could not read your client's first message. Nothing is wrong \
+         with your machine or your network: the two builds disagree about how to \
+         talk to each other. Download the build that matches this host: {RULES_ID}"
+    )
 }
 
 /// Where host programs (relay and client) keep world saves.
@@ -174,8 +258,13 @@ pub fn write_msg<W: Write, T: Serialize>(w: &mut W, msg: &T) -> io::Result<()> {
     w.flush()
 }
 
-/// Read one length-prefixed JSON message. Blocks until it arrives.
-pub fn read_msg<R: Read, T: DeserializeOwned>(r: &mut R) -> io::Result<T> {
+/// Read one length-prefixed frame as bytes, without deciding what it means.
+///
+/// Separate from [`read_msg`] so a host can answer a frame it cannot parse
+/// (ASSA-77): the framing is the one part of this protocol that has never
+/// changed, so bytes are readable across any version gap even when their
+/// contents are not.
+pub fn read_frame<R: Read>(r: &mut R) -> io::Result<Vec<u8>> {
     let mut len = [0u8; 4];
     r.read_exact(&mut len)?;
     let len = u32::from_be_bytes(len);
@@ -187,6 +276,12 @@ pub fn read_msg<R: Read, T: DeserializeOwned>(r: &mut R) -> io::Result<T> {
     }
     let mut body = vec![0u8; len as usize];
     r.read_exact(&mut body)?;
+    Ok(body)
+}
+
+/// Read one length-prefixed JSON message. Blocks until it arrives.
+pub fn read_msg<R: Read, T: DeserializeOwned>(r: &mut R) -> io::Result<T> {
+    let body = read_frame(r)?;
     serde_json::from_slice(&body).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
@@ -194,6 +289,112 @@ pub fn read_msg<R: Read, T: DeserializeOwned>(r: &mut R) -> io::Result<T> {
 mod tests {
     use super::*;
     use sim::{SystemCommand, TilePos};
+
+    /// **A FRAME FROM A BUILD THAT SHIPPED, WRITTEN BY HAND.** This is a
+    /// protocol-6 `Hello` exactly as `sim-net` serialised it before ASSA-40
+    /// added `rules` — copied out of the source at `2ff1466^`, not generated by
+    /// anything in this tree, because a frame today's code can produce is not
+    /// evidence about a build that is already on someone's disk.
+    ///
+    /// It is the frame the Game Director actually sent at the #38 bench, and
+    /// the one today's `ClientMsg` cannot deserialise.
+    const PROTOCOL_6_HELLO: &str = r#"{"Hello":{"name":"ada","protocol":6}}"#;
+
+    #[test]
+    fn a_protocol_6_hello_is_still_readable_as_a_greeting() {
+        // The premise, so this test says why it exists: today's ClientMsg
+        // genuinely cannot read it. If that ever stops being true, the bug is
+        // gone and this test should be read again rather than kept green.
+        assert!(
+            serde_json::from_str::<ClientMsg>(PROTOCOL_6_HELLO).is_err(),
+            "a protocol-6 hello is supposed to be unparseable as a ClientMsg; \
+             that is the whole reason `greeting` exists"
+        );
+
+        let g = greeting(PROTOCOL_6_HELLO.as_bytes());
+        assert_eq!(g.protocol, Some(6), "the protocol is the actionable field");
+        assert_eq!(g.name.as_deref(), Some("ada"));
+        assert_eq!(
+            g.rules, None,
+            "protocol 6 had no rules field; that is the point"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_frame_still_earns_a_sentence() {
+        // 1. The real case: an old protocol, no rules field.
+        let old = refuse_unreadable(&greeting(PROTOCOL_6_HELLO.as_bytes()));
+        assert!(
+            old.contains("v6") && old.contains(&PROTOCOL_VERSION.to_string()),
+            "{old}"
+        );
+        assert!(
+            old.contains(RULES_ID),
+            "it must name the build to download, like the rules sentence does: {old}"
+        );
+        assert!(
+            old.contains("Nothing is wrong with your machine"),
+            "a stranger cannot tell this from a dead host or bad wifi: {old}"
+        );
+        // AND IT MUST NOT ACCUSE THEM OF A RULES MISMATCH. A build that never
+        // had the field would otherwise be told its rules are wrong when the
+        // real answer is its protocol.
+        assert!(
+            !old.contains("runs game rules"),
+            "the complaint must be the true one: {old}"
+        );
+
+        // 2. Nothing readable at all: still three things, never a dropped
+        //    socket. This is the arm a greeting-shaped test would miss.
+        for junk in [
+            b"not json at all".as_slice(),
+            b"{}".as_slice(),
+            b"".as_slice(),
+        ] {
+            let said = refuse_unreadable(&greeting(junk));
+            assert!(said.contains(RULES_ID), "{said}");
+            assert!(
+                said.contains("Nothing is wrong with your machine"),
+                "{said}"
+            );
+        }
+
+        // 3. **OUR PROTOCOL, NO RULES FIELD.** This arm exists because a
+        //    mutation found it: swapping `unwrap_or(RULES_ID)` for
+        //    `unwrap_or("")` reddened NOTHING, since `check_join` answers the
+        //    protocol question first and never reads the rules argument when
+        //    the protocol already disagrees. The two arms were mutually
+        //    exclusive by construction and my tests only reached one of them.
+        //    Reachable for real: a build on this protocol that renames a field,
+        //    or a frame damaged after its protocol number. It must be told the
+        //    truth -- "I could not read it" -- not that its rules are wrong.
+        let ours_no_rules = refuse_unreadable(&Greeting {
+            protocol: Some(PROTOCOL_VERSION),
+            rules: None,
+            name: Some("ada".into()),
+        });
+        assert!(
+            !ours_no_rules.contains("runs game rules"),
+            "a missing rules field is not a rules mismatch: {ours_no_rules}"
+        );
+        assert!(
+            ours_no_rules.contains("could not read your client's first message"),
+            "{ours_no_rules}"
+        );
+
+        // 4. NON-VACUITY: a greeting that agrees about everything reaches the
+        //    fallback rather than borrowing check_join's complaint, so this
+        //    function cannot be passing arm 1 by accident.
+        let same = refuse_unreadable(&Greeting {
+            protocol: Some(PROTOCOL_VERSION),
+            rules: Some(RULES_ID.to_string()),
+            name: Some("ada".into()),
+        });
+        assert!(
+            same.contains("could not read your client's first message"),
+            "{same}"
+        );
+    }
 
     #[test]
     fn messages_round_trip_through_the_framing() {

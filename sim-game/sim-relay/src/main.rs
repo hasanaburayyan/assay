@@ -23,8 +23,8 @@ use std::time::{Duration, Instant};
 use auth::{AccountId, Authenticator, DevAuthenticator};
 use sim::{Event, Input, PlayerCommand, PlayerId, SystemCommand, World, step};
 use sim_net::{
-    ClientMsg, DEFAULT_PORT, HASH_EVERY, PROTOCOL_VERSION, ServerMsg, TickBundle, read_msg,
-    saves_dir, write_msg,
+    ClientMsg, DEFAULT_PORT, Greeting, HASH_EVERY, PROTOCOL_VERSION, ServerMsg, TickBundle,
+    read_frame, saves_dir, write_msg,
 };
 
 const AUTOSAVE_EVERY: u64 = 20;
@@ -38,6 +38,10 @@ type ConnId = u64;
 enum NetEvent {
     Connected(ConnId, Sender<ServerMsg>, String),
     Message(ConnId, ClientMsg),
+    /// A frame this build cannot read as a [`ClientMsg`], plus whatever the
+    /// greeting gave up. **A connection we cannot understand is still a person
+    /// waiting** (ASSA-77), so it is refused in words instead of dropped.
+    Unreadable(ConnId, Greeting),
     Disconnected(ConnId),
 }
 
@@ -173,6 +177,12 @@ impl Relay {
                     }
                 }
                 NetEvent::Message(id, msg) => self.handle(id, msg, &mut commands, &mut pending),
+                NetEvent::Unreadable(id, greeting) => {
+                    // The wording is sim-net's, not the relay's: this host,
+                    // sim-cli and the Godot client must not each invent their
+                    // own sentence for one condition (ASSA-40's law).
+                    self.refuse(id, sim_net::refuse_unreadable(&greeting));
+                }
             }
         }
 
@@ -383,9 +393,27 @@ fn spawn_listener(listener: TcpListener, events: Sender<NetEvent>) {
             let events = events.clone();
             thread::spawn(move || {
                 let mut r = BufReader::new(stream);
-                while let Ok(msg) = read_msg::<_, ClientMsg>(&mut r) {
-                    if events.send(NetEvent::Message(id, msg)).is_err() {
-                        return;
+                // FRAMES FIRST, MEANING SECOND (ASSA-77). The framing is the
+                // one part of this protocol that has never changed, so a frame
+                // from any build arrives readable even when its contents are
+                // not. Parsing used to happen inside the read, and a `Hello`
+                // from an older protocol therefore ended this loop silently:
+                // the player saw `failed to fill whole buffer` where the
+                // refusal should have been.
+                while let Ok(frame) = read_frame(&mut r) {
+                    match serde_json::from_slice::<ClientMsg>(&frame) {
+                        Ok(msg) => {
+                            if events.send(NetEvent::Message(id, msg)).is_err() {
+                                return;
+                            }
+                        }
+                        Err(_) => {
+                            let g = sim_net::greeting(&frame);
+                            let _ = events.send(NetEvent::Unreadable(id, g));
+                            // Refused: stop reading rather than spin on a
+                            // stream we cannot interpret.
+                            break;
+                        }
                     }
                 }
                 let _ = events.send(NetEvent::Disconnected(id));
