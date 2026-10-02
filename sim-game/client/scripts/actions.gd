@@ -139,36 +139,6 @@ static func item_of_stack(stack: Dictionary) -> Dictionary:
 			String(stack.get("grade", "C")))
 
 
-## HOW MANY OF ONE ITEM A PLAYER IS CARRYING, summed over the stacks `inventory_of` handed back.
-##
-## It lives here rather than in `hud.gd` because the number is a COMMAND ARGUMENT -- `insert`, `craft`
-## and `make_part` all take a count, and the stack it is counted from is the same stack
-## `item_of_stack` is reading one function above. `hud.gd`'s charter is words and colours, and a bare
-## integer is neither.
-##
-## It decides nothing, which is this file's rule: it sums a column the sim gave us. Grade is part of
-## the question on purpose -- two grades of one ore are two stacks and two rows on screen, so counting
-## without it would send the other row's number.
-##
-## IT USED TO LIVE IN `tools/demo_plan.gd`, AND THAT IS WHAT BROKE MAIN. `main.gd` called
-## `AssayDemoPlan.held`, the export preset excludes `tools/*`, so the shipped `main.gd` referenced a
-## class that was not in the pack: it failed to PARSE, `_ready` never ran, the self-check never fired,
-## nothing ever called `quit()`, and the exported client sat in the platform event loop until CI's
-## timeout. `tools/demo_plan.gd` now calls this, so there is still one definition.
-static func held_count(stacks: Array, kind: String, species: int, grade: String = "") -> int:
-	var total := 0
-	for entry in stacks:
-		var stack: Dictionary = entry
-		if String(stack.get("kind", "")) != kind:
-			continue
-		if int(stack.get("species", -1)) != species:
-			continue
-		if grade != "" and String(stack.get("grade", "")).to_upper() != grade.to_upper():
-			continue
-		total += int(stack.get("count", 0))
-	return total
-
-
 ## `ItemKind` as serde tags it: a bare string for the plain kinds, and a nest for a part, because
 ## `ItemKind::Part(PartKind)` and `PartKind::Frame(Mount)` are each an enum carrying an enum.
 ##

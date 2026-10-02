@@ -204,6 +204,24 @@ jobs:
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
             python3 art/check_glyph_contrast.py
+      # A PACK ICON IS DRAWN AT A SCALE SOMEONE CHOSE (ASSA-65). `custom_minimum_size`
+      # is a floor, so the icon's rect used to be 32 x WHATEVER THE ROW WAS and an ore
+      # item came out at 15/32 -- 30 of 64 source columns surviving, unevenly spaced.
+      # Nobody picked that; it fell out of how many buttons the row afforded.
+      #
+      # It drives Cove's `art/pack_icon_layout.gd`, which instantiates the real scene
+      # and prints what the engine LAID OUT, rather than reading the two properties
+      # `main.gd` sets and checking they are the two values `main.gd` sets. The second
+      # would pass by construction and would survive Godot changing its layout rules.
+      #
+      # Measured: red at 0.46875 on the code before #92, green at 1/2 and 1/4 after.
+      # Same three-valued exits as the glyph check -- and it really does use the 2: if
+      # the measured rows ever stop affording different verbs there is nothing left
+      # for the scale to be invariant against, and it says so instead of passing.
+      - name: A pack icon is drawn at a scale someone chose
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
+            python3 art/check_pack_icon_scale.py
 
   macos:
     name: macOS bundle
