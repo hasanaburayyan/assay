@@ -330,3 +330,116 @@ fn stocked_world() -> World {
     }
     world
 }
+
+/// **A SECOND GOLDEN ANCHOR, BECAUSE THE FIRST ONE IS BLIND TO TOOLS.**
+///
+/// `golden_hash_is_stable_across_machines` hashes only the FINAL world after
+/// 2000 random ticks, and I probed that world: every player ends with
+/// `mining: None` and nothing in hand. So a change to how a held tool or a
+/// planted machine mines cannot move that hash, and its passing says nothing
+/// about this code. It did not move when ASSA-6 landed, and that was luck.
+///
+/// This one is scripted rather than random, so it ends in exactly the state
+/// the random script never reaches: a worn pick in hand, mid-swing, beside a
+/// drill that has mined into its hopper. Update the constant only for an
+/// intentional rule change, and say so in the commit.
+#[test]
+fn golden_hash_covers_a_held_tool_and_a_planted_machine() {
+    use sim::{Mount, Part, PartKind, Sheet};
+
+    let mut world = new_world();
+    let mut events = Vec::new();
+    // Every sheet set on purpose, not clamped from the seed: strength 90 so
+    // the pool outlasts 500 ticks of swinging (it must have WORN, not run
+    // out), hardness 30 so the ore is hand-mineable, density 10 so the drill
+    // is well inside its frame's budget. A seed-dependent anchor would be an
+    // anchor to nothing.
+    for s in &mut world.species {
+        s.sheet = Sheet {
+            density: 10,
+            strength: 90,
+            hardness: 30,
+            heat_tolerance: 50,
+            reactivity: 50,
+            conductivity: 50,
+        };
+    }
+    step(
+        &mut world,
+        &[Input::System(SystemCommand::AddPlayer {
+            name: "ada".into(),
+        })],
+        &mut events,
+    );
+    let me = PlayerId(0);
+
+    // Stand on a deposit, and make the species one a design can be built from
+    // without the test having to mine and smelt its way there.
+    let d = world.deposits[0].clone();
+    world.player_mut(me).unwrap().pos = d.center;
+    let refined = Item::new(ItemKind::Refined, d.species, Grade::B);
+    let pick = (
+        Part::of(PartKind::Frame(Mount::Held), refined),
+        Part::of(PartKind::Head, refined),
+    );
+    let drill = (
+        Part::of(PartKind::Frame(Mount::Planted), refined),
+        Part::of(PartKind::Head, refined),
+        Part::of(PartKind::Hopper, refined),
+    );
+    for item in [
+        pick.0.as_item(),
+        pick.1.as_item(),
+        drill.0.as_item(),
+        drill.1.as_item(),
+        drill.2.as_item(),
+    ] {
+        world.player_mut(me).unwrap().inventory.add(item, 1);
+    }
+
+    let script = [
+        PlayerCommand::Assemble {
+            frame: pick.0.as_item(),
+            mounted: vec![pick.1.as_item()],
+        },
+        PlayerCommand::Equip { assembly: 0 },
+        PlayerCommand::Mine,
+        PlayerCommand::Assemble {
+            frame: drill.0.as_item(),
+            mounted: vec![drill.1.as_item(), drill.2.as_item()],
+        },
+        PlayerCommand::PlaceAssembly {
+            assembly: 0,
+            pos: TilePos::new(d.center.x + 1, d.center.y),
+        },
+    ];
+    for command in script {
+        step(&mut world, &[Input::player(me, command)], &mut events);
+    }
+    for _ in 0..500 {
+        step(&mut world, &[], &mut events);
+    }
+
+    // The scenario must still REACH the state it exists to hash. A green
+    // golden assertion over a world where nothing was built would be the
+    // first test all over again.
+    let p = world.player(me).unwrap();
+    assert!(p.tool.is_some(), "a tool must be in hand");
+    assert!(p.mining.is_some(), "mid-swing");
+    let worn = p.tool.as_ref().unwrap();
+    assert!(
+        worn.durability < worn.assembly.stats(&world.species).durability,
+        "and it must have worn, or the pool is not in the hash in any useful way"
+    );
+    let held = world.buildings.iter().any(|b| match &b.kind {
+        sim::BuildingKind::Machine(m) => m.held.is_some_and(|s| s.count > 0),
+        _ => false,
+    });
+    assert!(held, "and the drill must have mined into its buffer");
+
+    assert_eq!(
+        format!("{:016x}", world.state_hash()),
+        "080e462339ce57b5",
+        "world hash changed; see the comment on this test"
+    );
+}

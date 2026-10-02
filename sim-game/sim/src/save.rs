@@ -24,10 +24,11 @@ use std::{fmt, fs, io};
 
 use serde::{Deserialize, Serialize};
 
+use crate::tuning::HAND_WORK_PER_TICK;
 use crate::world::World;
 
 /// Current save format version.
-pub const SAVE_VERSION: u32 = 11;
+pub const SAVE_VERSION: u32 = 12;
 
 /// Oldest version `from_json` can still load and migrate forward.
 pub const OLDEST_SAVE_VERSION: u32 = 10;
@@ -129,4 +130,20 @@ impl World {
 /// loads with an empty built list and nothing in hand, which is exactly the
 /// world it described. The founders' v10 test world therefore keeps loading;
 /// `tests/save.rs` pins that.
-fn migrate(_world: &mut World, _from_version: u32) {}
+///
+/// **v11 → v12 CHANGES NO LAYOUT AND STILL NEEDS A MIGRATION**, which is the
+/// case this function exists for and the easy one to miss. `Mining::progress`
+/// used to count TICKS toward `HAND_MINE_TICKS`; it now accumulates WORK
+/// toward `WORK_PER_UNIT` (ADR 0003 amendment A3). Same field, same type,
+/// different unit — so a v11 save loads without complaint and a player caught
+/// mid-swing silently loses most of their progress. One multiply fixes it,
+/// and bumping the version is what makes the multiply reachable.
+fn migrate(world: &mut World, from_version: u32) {
+    if from_version < 12 {
+        for p in &mut world.players {
+            if let Some(m) = &mut p.mining {
+                m.progress *= HAND_WORK_PER_TICK;
+            }
+        }
+    }
+}

@@ -1,6 +1,6 @@
 //! Advancing the world one tick.
 
-use crate::assembly::{Assembly, Built, Mount, Part, spec};
+use crate::assembly::{Assembly, Built, Mount, Part, PartKind, spec};
 use crate::building::{Building, BuildingId, BuildingKind, Machine, Slot, footprint_tiles};
 use crate::command::{Event, Input, PlayerCommand, RejectReason, StopReason, SystemCommand};
 use crate::inventory::Inventory;
@@ -10,8 +10,8 @@ use crate::player::{Assaying, Crafting, Mining, Player};
 use crate::recipe::{Recipe, smelter_recipe_for};
 use crate::tuning::{
     ASSAY_TICKS, BURN_TICKS_PER_REACTIVITY, FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS,
-    HAND_MINE_TICKS, HAND_SPARK_TEMPERATURE, REACH, SMELTER_FUEL_CAP, SMELTER_INPUT_CAP,
-    SMELTER_OUTPUT_CAP, YIELD_BY_GRADE,
+    HAND_SPARK_TEMPERATURE, HAND_WORK_PER_TICK, PICK_WEAR_PER_SWING, REACH, SMELTER_FUEL_CAP,
+    SMELTER_INPUT_CAP, SMELTER_OUTPUT_CAP, WORK_PER_UNIT, YIELD_BY_GRADE,
 };
 use crate::types::{PlayerId, TilePos};
 use crate::world::World;
@@ -28,10 +28,15 @@ pub fn step(world: &mut World, inputs: &[Input], events: &mut Vec<Event>) {
         }
     }
 
-    // Systems run here in a fixed order. Later: drills, belts, inserters,
-    // machines, drones.
+    // Systems run here in a fixed order. Later: belts, inserters, drones.
+    //
+    // `mine_by_machine` sits immediately after `mine_by_hand` because all
+    // mining belongs together, and because the position is part of the state
+    // hash: moving it changes what every peer computes, so it moves once,
+    // deliberately, or not at all.
     move_players(world, events);
     mine_by_hand(world, events);
+    mine_by_machine(world, events);
     assay(world, events);
     craft_by_hand(world, events);
     run_smelters(world, events);
@@ -701,9 +706,23 @@ fn move_players(world: &mut World, events: &mut Vec<Event>) {
     }
 }
 
-/// Hand-mining system: every player standing on the deposit they are mining
-/// makes progress; each `HAND_MINE_TICKS` the deposit loses one unit and the
-/// player gains the grade's yield.
+/// Player mining system: every player standing on the deposit they are mining
+/// accumulates work, and each `WORK_PER_UNIT` of it the deposit loses one unit
+/// and the player gains the grade's yield.
+///
+/// **BARE HANDS AND A PICK ARE THE SAME CODE** (decision 6). The only thing a
+/// tool changes is how much work a tick is worth — `HAND_WORK_PER_TICK`
+/// without one, the design's `Speed` stat with one — and whether anything
+/// drains afterwards. A tool is not a second way to mine.
+///
+/// **THE REMAINDER CARRIES.** Progress is reduced by `WORK_PER_UNIT`, never
+/// reset, so the long-run rate is exactly `WORK_PER_UNIT / work` rather than
+/// its ceiling: that is what makes the rate monotone in effective hardness
+/// (A3) and what makes decision 8's grade comparison measurable.
+///
+/// **A PICK DOES NOT UNLOCK HARDER ORE** (decision 7). The hand hardness gate
+/// is on the `Mine` command and this system never revisits it, so a tool buys
+/// throughput and nothing else.
 fn mine_by_hand(world: &mut World, events: &mut Vec<Event>) {
     for i in 0..world.players.len() {
         let Some(m) = world.players[i].mining else {
@@ -724,8 +743,12 @@ fn mine_by_hand(world: &mut World, events: &mut Vec<Event>) {
             continue;
         }
 
-        let progress = m.progress + 1;
-        if progress < HAND_MINE_TICKS {
+        let work = match &world.players[i].tool {
+            Some(built) => built.assembly.stats(&world.species).speed,
+            None => HAND_WORK_PER_TICK,
+        };
+        let progress = m.progress + work;
+        if progress < WORK_PER_UNIT {
             world.players[i].mining = Some(Mining { progress, ..m });
             continue;
         }
@@ -744,6 +767,12 @@ fn mine_by_hand(world: &mut World, events: &mut Vec<Event>) {
             amount,
         });
         discover(world, item.species, player, events);
+
+        // ORE FIRST, THEN THE TOOL (A4 and the ruling on this item): the swing
+        // that empties the pool still yields what it dug. Never lose work in
+        // progress.
+        wear_tool(world, i, events);
+
         if depleted {
             world.players[i].mining = None;
             events.push(Event::DepositDepleted { deposit: m.deposit });
@@ -753,7 +782,143 @@ fn mine_by_hand(world: &mut World, events: &mut Vec<Event>) {
                 reason: StopReason::Depleted,
             });
         } else {
-            world.players[i].mining = Some(Mining { progress: 0, ..m });
+            world.players[i].mining = Some(Mining {
+                progress: progress - WORK_PER_UNIT,
+                ..m
+            });
+        }
+    }
+}
+
+/// Drain one swing from the tool player `i` is holding, and dispose of it if
+/// the pool is now empty. Does nothing to a player with empty hands.
+///
+/// **NO `rng` ON THIS PATH, EVER.** The mass break at placement rolls per
+/// part; wearing out is certain. Keeping it deterministic also keeps the hash
+/// path identical whether or not anyone is holding a pick.
+///
+/// **WHAT A WORN-OUT PICK LOSES** (Game Director's ruling on ASSA-6): the
+/// **head** is consumed and the **handle** returns as an `ItemKind::Part`.
+/// Durability is sourced from the head's strength, so the part whose number
+/// ran out is the part that is gone — legible with no tutorial. Re-heading is
+/// `Assemble` with the handle out of the inventory, which is why there is no
+/// repair command anywhere in this crate.
+fn wear_tool(world: &mut World, i: usize, events: &mut Vec<Event>) {
+    let Some(built) = &world.players[i].tool else {
+        return;
+    };
+    let remaining = built.durability.saturating_sub(PICK_WEAR_PER_SWING);
+    if remaining > 0 {
+        world.players[i]
+            .tool
+            .as_mut()
+            .expect("checked above")
+            .durability = remaining;
+        return;
+    }
+
+    // Spent. `expect` rather than a fallback: a held frame always has a head,
+    // because `Assemble` refuses a handle without one (min 1, max 1) and no
+    // other path builds a tool.
+    let worn = world.players[i].tool.take().expect("checked above");
+    let head = worn
+        .assembly
+        .mounted
+        .iter()
+        .find(|p| p.kind == PartKind::Head)
+        .expect("a held frame always carries a head")
+        .as_item();
+    let handle = worn.assembly.frame.as_item();
+    world.players[i].inventory.add(handle, 1);
+    events.push(Event::ToolWornOut {
+        player: world.players[i].id,
+        head,
+        handle,
+    });
+}
+
+/// Machine mining system: every placed machine sitting on a deposit it can
+/// work accumulates its own `Speed` into its own buffer.
+///
+/// **THE SAME CURVE AS A PAIR OF HANDS** (decision 8: picks and drills alike).
+/// It reads `Speed` off the same catalogue row and carries its remainder the
+/// same way; a drill is a machine whose frame happens to be planted.
+///
+/// **A DRILL IS A THROUGHPUT UPGRADE, NOT A HARDNESS UNLOCK** (decision 7).
+/// It is held to `HAND_MINE_MAX_HARDNESS` exactly as hands are, so a deposit
+/// too hard to dig by hand is too hard to drill. The hardness ladder above
+/// rung zero stays parked, and this is the line that parks it.
+///
+/// **NO WEAR** (decision 12): nothing here touches durability, so a planted
+/// machine runs forever. That asymmetry is the decision's, not the model's —
+/// the head still contributes a pool, and nothing drains it.
+fn mine_by_machine(world: &mut World, events: &mut Vec<Event>) {
+    for i in 0..world.buildings.len() {
+        let BuildingKind::Machine(machine) = &world.buildings[i].kind else {
+            continue;
+        };
+        let building = world.buildings[i].id;
+        let Some(d) = world.deposit_at(world.buildings[i].pos) else {
+            continue;
+        };
+        if d.is_depleted() {
+            continue;
+        }
+        let (deposit, grade) = (d.id, d.grade());
+        let item = Item::new(ItemKind::Ore, d.species, grade);
+        let amount = YIELD_BY_GRADE[grade as usize];
+        if u32::from(world.species(item.species).sheet.hardness) > HAND_MINE_MAX_HARDNESS {
+            continue;
+        }
+
+        let stats = machine.assembly.stats(&world.species);
+        let held = machine.held.map_or(0, |s| s.count);
+
+        // DECISION 9: it stops AT the cap, so it never starts a unit it has
+        // no room for. Nothing is mined and thrown away, and `progress` keeps
+        // whatever it had — emptying the buffer resumes mid-unit.
+        if held + amount > stats.capacity {
+            continue;
+        }
+
+        let progress = machine.progress + stats.speed;
+        let Some(left) = progress.checked_sub(WORK_PER_UNIT) else {
+            let BuildingKind::Machine(m) = &mut world.buildings[i].kind else {
+                unreachable!("matched above")
+            };
+            m.progress = progress;
+            continue;
+        };
+
+        world.deposit_mut(deposit).expect("checked above").amount -= 1;
+        let depleted = world.deposit(deposit).expect("checked above").is_depleted();
+        let BuildingKind::Machine(m) = &mut world.buildings[i].kind else {
+            unreachable!("matched above")
+        };
+        m.progress = left;
+        m.held = Some(match m.held {
+            Some(stack) => ItemStack::new(stack.item, stack.count + amount),
+            None => ItemStack::new(item, amount),
+        });
+        let now = held + amount;
+        events.push(Event::MachineMined {
+            building,
+            deposit,
+            item,
+            amount,
+            held: now,
+        });
+        // The stall is announced on the tick it fills, not on every tick it
+        // sits full.
+        if now + amount > stats.capacity {
+            events.push(Event::MachineStalled {
+                building,
+                held: now,
+                capacity: stats.capacity,
+            });
+        }
+        if depleted {
+            events.push(Event::DepositDepleted { deposit });
         }
     }
 }
