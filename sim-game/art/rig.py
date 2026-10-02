@@ -159,6 +159,30 @@ GRADE_DULL = (0.45, 0.15, 0.0)      # mixed toward GRADE_SHADE
 GRADE_SHADE = "gun"
 GRADE_GLINT = (0.0, 0.0, 2.5)       # emission on the part's warm accent, A only
 
+# WHICH PARTS WEAR A WARM MARK, and it is not "all of them".
+#
+#   A PART WEARS A VISIBLE WARM MARK IF AND ONLY IF ITS GRADE CHANGES A NUMBER
+#   IN SIM.
+#
+# Both halves of that are load-bearing. The "only if" is the half I got wrong
+# first: I had generalised to "every part needs a warm mark", because I had
+# just found the handle rendering grade as tone alone -- mean luminance apart,
+# but the peak clipped at 255 for both B and A, so the top two steps were
+# indistinguishable at 32 px. That part did need one. The fix is not a rule
+# about parts, it is a rule about what the glint PROMISES.
+#
+# The head, the handle (which is the held frame) and the planted frame all have
+# grade setting strength, and so budget and durability. Their glint is a promise
+# the sim keeps: this grade does something. A hopper's grade is inert --
+# capacity is flat, mass is size x density, and density never scales with grade
+# -- so a glint on a hopper would advertise a difference that does not exist.
+# See hopper.py, where the band is deliberately left where the camera cannot
+# see it.
+#
+# A tone step alone is NOT a visible mark: it does not survive 32 px once the
+# highlight clips. If a part's grade matters, give it a surface the glint can
+# land on; if it does not, give it nothing and say so where the part is built.
+
 
 def mix_hex(a, b, t):
     a, b = PALETTE.get(a, a), PALETTE.get(b, b)

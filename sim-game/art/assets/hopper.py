@@ -50,9 +50,23 @@ def build(g):
     # THE THROAT below the mouth, down to the deck: narrow, dark and square so
     # the piece reads as mouth-over-neck rather than as one tapered lump.
     r.box((0.34, 0.34, 0.2), (CX, 0, DECK - 0.07), gun, bev=0.03)
-    # A brass band at the throat, the same mark the head wears at its collar:
-    # one warm accent per part, in the place the part attaches -- and so the
-    # same place grade glints.
+    # A brass band at the throat. THIS BAND IS DELIBERATELY NOT VISIBLE, and
+    # that is the point of it -- do not helpfully expose it.
+    #
+    # The comment here used to claim it was "the same mark the head wears at
+    # its collar". It is not. Maren decoded all three hopper frames: every body
+    # pixel is hue 210-225, zero warm pixels in any of them. At this camera the
+    # throat is occluded by the mouth above it, so graded_accent runs and the
+    # result never reaches the sheet. I wrote the intent and then cited it as
+    # if it were the render.
+    #
+    # Left in anyway, because the accident is the right answer. rig.py's rule
+    # is that a part wears a visible warm mark IFF its grade changes a number
+    # in sim, and a hopper's grade is inert: capacity is flat, mass is size x
+    # density, density never scales with grade. A glint here would promise a
+    # difference the sim does not have. So the hopper is tone-only on purpose
+    # -- the same shape of defect as the handle's, one asset over, and the
+    # opposite verdict, for a reason that is about sim and not about pixels.
     r.box((0.38, 0.38, 0.05), (CX, 0, DECK - 0.16), brass, bev=0.01)
     return r
 
