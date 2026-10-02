@@ -177,6 +177,31 @@ func test_a_left_click_walks_and_a_right_click_chooses_the_target() -> bool:
 	return ok
 
 
+## THE SESSION TOOL'S OWN ROW FINDER, PRESSED THROUGH, because `_row_for` below is a SECOND
+## IMPLEMENTATION of the same lookup and the two have already disagreed. #81 moved the pack sentence
+## out of child 0; `_row_for` was fixed in that PR and `tools/button_play.gd` was not, so
+## `tools/button_session.gd -- offline` could no longer press anything on a pack row and stopped at
+## `Craft smelter` -- while every test in this file still passed, because they all ask `_row_for`
+## (ASSA-62). Nothing in CI runs the session, so this is the only cheap witness: the one assertion
+## here that fails when the TOOL rots rather than when the screen does.
+func test_the_session_tool_can_press_a_pack_row() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_some_ore(screen)
+	if ok:
+		var stack: Dictionary = screen._sim.inventory_of(screen._client.player_id)[0]
+		var play := AssayButtonPlay.new(screen, 0)
+		_asked.clear()
+		if not play._press_on_stack(String(stack.get("kind", "")),
+				int(stack.get("species", -1)), "Craft smelter"):
+			ok = _fail("AssayButtonPlay found no `Craft smelter` on the row reading `%s`; the pack "
+					% AssayHud.stack_line(stack) + "shows %s" % _text_of(screen._carrying))
+		elif _asked.size() != 1:
+			ok = _fail("the tool's press submitted %s, not one command" % [_asked])
+	screen.queue_free()
+	return ok
+
+
 ## BOX TWO AND THE PACK: a row describes one stack the sim reports, and its buttons act on THAT item.
 ##
 ## The command's item is compared against the sim's own stack, so a row wired to the wrong stack --

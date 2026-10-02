@@ -158,6 +158,25 @@ jobs:
           # GODOT EXITS 0 ON A COMPILE ERROR, so the count the runner prints is
           # the verdict and the exit code is not. Grep the file, never a pipe.
           grep -qE '^[0-9]+ passed, 0 failed' suite.log
+      # THE WHOLE DEMO LOOP, PRESSED THROUGH THE SCREEN'S OWN BUTTONS. ASSA-37's
+      # claim is REACHABILITY, and the only thing that plays it end to end is
+      # `tools/button_session.gd`; until now nothing ran it, so #81 broke every
+      # pack-row press (child 0 stopped being the sentence) and CI stayed green
+      # (ASSA-62). The suite has its own row finder, so it cannot witness the
+      # tool's.
+      #
+      # MEASURED, 1.1s on my Mac: offline mode has no clock and no socket -- this
+      # script writes the tick bundles itself -- so it is deterministic and ends
+      # on the same world hash every run, not a timing-sensitive integration test.
+      # The marker is printed LAST and only on success, which is the only thing a
+      # grep can trust when Godot exits 0 on a failed script.
+      - name: The demo loop is reachable through the buttons
+        working-directory: sim-game/client
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64"
+          "$GODOT" --headless --path . --script res://tools/button_session.gd \
+            -- offline | tee session.log
+          grep -q '^BUTTON SESSION OK' session.log
       # THE LETTER ON A MAP DISC IS READABLE. Runs the client and scores what
       # `AssayHud.glyph_color` actually returned for all 600 species x purity
       # states (ASSA-39/44), rather than reimplementing the rule -- computing
