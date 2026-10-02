@@ -316,3 +316,100 @@ fn grade_a_cannot_be_sorted_further() {
     );
     assert_eq!(world.player(me).unwrap().inventory.count(ore(Grade::A)), 3);
 }
+
+/// ASSA-49: a running craft has to be describable, because eight seconds of a
+/// button saying nothing is read as a broken button.
+///
+/// The sentence is asserted whole rather than by substring: it is the thing
+/// both hosts print, so if it changes shape that is a decision and not an
+/// accident.
+#[test]
+fn a_running_craft_says_what_it_is_making_and_how_long_is_left() {
+    let (mut world, me) = world_with_player();
+    assert_eq!(
+        sim::debug::crafting_readout(&world, me),
+        None,
+        "an idle player is making nothing, and None is how the host knows not to print a line"
+    );
+
+    world
+        .player_mut(me)
+        .unwrap()
+        .inventory
+        .add(ore(Grade::C), 15);
+    let ticks = RecipeId::Smelter.recipe().ticks;
+
+    // THREE BATCHES, because the batch is the part that makes this worth saying.
+    // One smelter is 20 ticks; three is 60, and nothing on screen said so.
+    run(
+        &mut world,
+        &[Input::player(
+            me,
+            craft(RecipeId::Smelter, ore(Grade::C), 3),
+        )],
+        1,
+    );
+    let name = world.item_name(Item::new(ItemKind::Smelter, X, Grade::C));
+    assert_eq!(
+        sim::debug::crafting_readout(&world, me).unwrap(),
+        format!(
+            "making {name}: {} ticks left on this one, 2 to go after it",
+            ticks - 1
+        )
+    );
+
+    // Partway through the first batch the ticks come down and the count does not.
+    run(&mut world, &[], 5);
+    assert_eq!(
+        sim::debug::crafting_readout(&world, me).unwrap(),
+        format!(
+            "making {name}: {} ticks left on this one, 2 to go after it",
+            ticks - 6
+        )
+    );
+
+    // The last batch drops the "to go" clause rather than saying "0 to go".
+    run(&mut world, &[], ticks * 2);
+    let line = sim::debug::crafting_readout(&world, me).unwrap();
+    assert!(
+        !line.contains("to go"),
+        "the final batch should not advertise an empty queue: {line}"
+    );
+    assert!(line.starts_with(&format!("making {name}: ")), "{line}");
+
+    // And when it finishes there is nothing to say again.
+    run(&mut world, &[], ticks);
+    assert_eq!(sim::debug::crafting_readout(&world, me), None);
+}
+
+/// AND `MakePart` IS INSTANT, which matters because ASSA-49 was filed believing
+/// a part took ~79 ticks. It takes none: `MakePart` removes the material and
+/// adds the part inside the same tick and never touches `Player::crafting`, so
+/// there is no progress for any host to show. Pinned here so the next person to
+/// go looking for a part's progress finds the answer instead of the question.
+#[test]
+fn making_a_part_finishes_in_the_tick_it_is_asked_for() {
+    let (mut world, me) = world_with_player();
+    world
+        .player_mut(me)
+        .unwrap()
+        .inventory
+        .add(Item::new(ItemKind::Refined, X, Grade::B), 60);
+    run(
+        &mut world,
+        &[Input::player(
+            me,
+            PlayerCommand::MakePart {
+                kind: sim::assembly::PartKind::Head,
+                material: Item::new(ItemKind::Refined, X, Grade::B),
+                count: 1,
+            },
+        )],
+        1,
+    );
+    assert!(
+        world.player(me).unwrap().crafting.is_none(),
+        "MakePart must not start a timed craft"
+    );
+    assert_eq!(sim::debug::crafting_readout(&world, me), None);
+}
