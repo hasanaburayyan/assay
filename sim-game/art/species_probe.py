@@ -3,7 +3,7 @@
 
     art/species_probe.py
 
-Writes assets/sprites/species_probe.png and prints the numbers.
+Writes assets/review/species_probe.png and prints the numbers.
 
 WHY
   A world rolls six mineral species from its seed and no rule may name one,
@@ -43,7 +43,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from species_tints import SPECIES_TINTS
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SPR = os.path.join(ROOT, "assets", "sprites")
+# The sheets live inside the Godot project: res:// does not go up (ASSA-34).
+SPR = os.path.join(ROOT, "client", "assets", "sprites")
+# Review output stays out of the project, so an export never packs it.
+REVIEW = os.path.join(ROOT, "assets", "review")
+os.makedirs(REVIEW, exist_ok=True)
 GAME = 32
 SPECIES = 6        # sim/src/tuning.rs SPECIES_PER_WORLD
 # The sim's grades, worst first. Keyed to Grade::letter(); the art no longer
@@ -1108,8 +1112,8 @@ def main():
             for s, c in enumerate(colours):
                 tile = over_ground(tint(base, c), observer)
                 sheet_img.alpha_composite(tile, (gap + s * (cell + gap), y0 + i * (cell + gap)))
-    sheet_img.save(os.path.join(SPR, "species_probe.png"))
-    print("\nwrote assets/sprites/species_probe.png: 6 species x 3 grades, then the")
+    sheet_img.save(os.path.join(REVIEW, "species_probe.png"))
+    print("\nwrote assets/review/species_probe.png: 6 species x 3 grades, then the")
     print("same six through normal/protan/deutan/tritan twice - EVEN HUE first,")
     print("then the DESIGNED SLOTS. Compare the protan row of each block.")
     return 0 if ok else 1

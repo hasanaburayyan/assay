@@ -151,7 +151,11 @@ from species_probe import DISTINCT, GRADE_ROWS, GAME, dE, dAB, lab, seen_flat
 OBSERVERS = ("normal", "protan", "deutan", "tritan")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SPR = os.path.join(ROOT, "assets", "sprites")
+# The sheets live inside the Godot project: res:// does not go up (ASSA-34).
+SPR = os.path.join(ROOT, "client", "assets", "sprites")
+# Review output stays out of the project, so an export never packs it.
+REVIEW = os.path.join(ROOT, "assets", "review")
+os.makedirs(REVIEW, exist_ok=True)
 man = json.load(open(os.path.join(SPR, "manifest.json")))
 
 # A surface is exempt only with a reason and a name on it.
@@ -347,8 +351,8 @@ def sheet(loud, conf, ore_surfaces, floor_name):
             s = tile.resize((32 * scale, 32 * scale), Image.NEAREST)
             out.alpha_composite(s, (x + ox, pad + (96 - 32 * scale)))
         x += cellw + pad
-    out.save(os.path.join(SPR, "loudness.png"))
-    print("\nwrote assets/sprites/loudness.png: the quietest and loudest ore in")
+    out.save(os.path.join(REVIEW, "loudness.png"))
+    print("\nwrote assets/review/loudness.png: the quietest and loudest ore in")
     print("the game, then every surface that beat the quiet one, each on the")
     print("real ground at 3x and at 1x. Judge it at the 1x column.")
     print("  order: %s" % ", ".join(p[0] for p in panels))

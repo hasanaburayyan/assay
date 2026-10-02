@@ -1,5 +1,5 @@
 #!/usr/bin/env -S uv run --quiet --with pillow python
-"""Can the engine actually reach the art? Today: no. (ASSA-34)
+"""Can the engine actually reach the art? Now: yes, and this is what holds it. (ASSA-34)
 
     art/check_client_can_see_art.py
 
@@ -7,40 +7,53 @@ Every other check in this folder judges what a sprite LOOKS like. This one
 asks the question underneath all of them, which nobody had asked: whether the
 game can load the file at all.
 
-WHY THIS IS RED, AND WHY THAT IS THE POINT
+WHAT IT FOUND, AND WHY IT WAS RED FOR A DAY
   A Godot project's `res://` is its project folder and nothing above it. The
-  project is `client/`; `build.py` writes sheets to `assets/sprites/`, which is
-  its sibling. So no script in the client CAN name a sheet, no texture has ever
-  been imported there (there is not one `.import` file in the project), and an
-  export packs what is under the project folder, so a bundle would not carry
-  them either.
+  project is `client/`; `build.py` used to write sheets to `assets/sprites/`,
+  which is its SIBLING. So no script in the client COULD name a sheet, no
+  texture had ever been imported there (not one `.import` file existed), and
+  an export packs what is under the project folder, so a bundle carried none
+  of it either.
 
-  That is eleven sheets, a manifest and four measured checks, and the game has
-  never drawn a pixel of any of it. It is not a failure of ordering - graphics
-  come last by this repo's rules and the client is still on step 6 of the demo
-  loop - but "we will wire the art up later" had a wall in front of it that
-  nobody had priced, including me. I shipped `[importer_defaults]` into
-  `project.godot` (ASSA-14) for textures that cannot arrive, and I verified
-  that work by copying a sprite in BY HAND, which is exactly how I managed not
-  to notice.
+  That was eleven files, a manifest and four measured checks, and the game had
+  never drawn a pixel of any of it. Not a failure of ordering - graphics come
+  last by this repo's rules - but "we will wire the art up later" had a wall
+  in front of it that nobody had priced, including me. I shipped
+  `[importer_defaults]` into `project.godot` (ASSA-14) for textures that could
+  not arrive, and I verified that work by copying a sprite in BY HAND, which
+  is exactly how I managed not to notice.
 
-  So this file is the finding, kept where it cannot be forgotten, and it stays
-  as the guard once the layout question (ASSA-34) is answered either way. It is
-  deliberately NOT in CI while it is red.
+  Marlow ruled option A and `build.py` now writes to `client/assets/sprites/`.
+  This file stops being the finding and becomes the guard: it is in CI, and it
+  is what fails if the sheets ever drift back out of the project.
 
 WHAT IT CHECKS, and both halves have a lever that reproduces their own cause:
   1. REACHABLE. Every sheet named by `manifest.json` resolves to a path under
-     the Godot project root. Lever: `CLIENT_ROOT=<other dir>` moves the root,
-     which is the cause, and every sheet must then be reported unreachable.
+     the Godot project root. Lever: `CLIENT_ROOT=<other dir>` moves the
+     boundary the sheets are measured against, which is the cause, and every
+     sheet must then be reported unreachable.
   2. PACKED. No export preset's `exclude_filter` catches it, and if a preset
      sets a non-empty `include_filter`, the sheet matches it. A file that lives
      in the project and is filtered out of the bundle is the same failure one
      step later, and it fails silently in a build rather than in the editor.
      Lever: `CLIENT_EXCLUDE=assets/*` adds that pattern to every preset.
 
-It reads the manifest from wherever it is - next to `art/` today, under the
-client if ASSA-34 moves it - and says which one it used, so the move does not
-need a second edit here.
+ONE THING THE MOVE BROKE IN THIS FILE, which is worth writing down because the
+lever still exited non-zero and I nearly ticked it off. `CLIENT_ROOT` used to
+be the project directory for EVERY purpose: the boundary, the manifest search
+and where `export_presets.cfg` is read from. That was harmless while the
+manifest lived outside the client, because forcing the root elsewhere left the
+manifest exactly where it was. After the move the manifest lives INSIDE the
+client, so `CLIENT_ROOT=/tmp` made the search miss it entirely and the check
+died with "no manifest.json" - red, but for a missing file rather than for an
+unreachable sheet. A lever that reproduces the wrong cause is not a lever.
+So the project directory and the BOUNDARY are now two separate things: the
+manifest and the presets always come from the real `client/`, and `CLIENT_ROOT`
+moves only the line that sheets are judged against.
+
+It reads the manifest from wherever it is - inside the client since the move,
+beside `art/` before it - and says which one it used. The inside copy wins, so
+if someone restores the old directory the check still grades what ships.
 """
 import fnmatch
 import json
@@ -49,12 +62,17 @@ import sys
 
 ART = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(ART)
-CLIENT = os.environ.get("CLIENT_ROOT") or os.path.join(ROOT, "client")
+# The project itself: where the manifest and the export presets are read from.
+# Not lever-controlled, see the docstring's last paragraph.
+CLIENT = os.path.join(ROOT, "client")
+# The line sheets are judged against. This is what the lever moves.
+BOUNDARY = os.environ.get("CLIENT_ROOT") or CLIENT
 EXTRA_EXCLUDE = os.environ.get("CLIENT_EXCLUDE")
 
 if os.environ.get("CLIENT_ROOT"):
-    print("[RED LEVER] Godot project root forced to %r; every sheet MUST be\n"
-          "            reported unreachable." % CLIENT)
+    print("[RED LEVER] boundary forced to %r while the project stays %r; every\n"
+          "            sheet MUST be reported unreachable."
+          % (BOUNDARY, os.path.relpath(CLIENT, ROOT)))
 if EXTRA_EXCLUDE:
     print("[RED LEVER] %r added to every preset's exclude_filter; any sheet it\n"
           "            matches MUST be reported as not packed." % EXTRA_EXCLUDE)
@@ -111,15 +129,17 @@ def main():
     files = sorted({man[a]["sheet"] for a in man} | {"manifest.json"})
     print("manifest: %s" % os.path.relpath(manifest_path, ROOT))
     print("Godot project root: %s" % os.path.relpath(CLIENT, ROOT))
+    if BOUNDARY != CLIENT:
+        print("boundary (lever):   %s" % BOUNDARY)
     print("%d files the client would need:" % len(files))
 
     ok = True
     reachable = []
     for f in files:
         full = os.path.abspath(os.path.join(sprites, f))
-        inside = os.path.commonpath([full, os.path.abspath(CLIENT)]) == os.path.abspath(CLIENT)
+        inside = os.path.commonpath([full, os.path.abspath(BOUNDARY)]) == os.path.abspath(BOUNDARY)
         if inside:
-            rel = os.path.relpath(full, CLIENT)
+            rel = os.path.relpath(full, BOUNDARY)
             reachable.append((f, rel))
             print("  %-18s res://%s" % (f, rel))
         else:
@@ -129,9 +149,11 @@ def main():
 
     if not reachable:
         print("\n  FAIL: nothing the manifest names is inside the Godot project, so\n"
-              "  no script can load it and no export can pack it. See ASSA-34: the\n"
-              "  sheets have to live under the project folder, because res:// does\n"
-              "  not go up. This is the state the check was written against.")
+              "  no script can load it and no export can pack it. The sheets have to\n"
+              "  live under the project folder, because res:// does not go up. This\n"
+              "  was the state ASSA-34 found and fixed; if you are seeing it for real\n"
+              "  rather than through the CLIENT_ROOT lever, the output has drifted\n"
+              "  back out of client/assets/sprites/.")
         return 1
 
     for p in presets():

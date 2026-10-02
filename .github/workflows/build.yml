@@ -62,6 +62,16 @@ jobs:
       # Stdlib only, no pip, ~0.1s.
       - name: The species palette agrees with itself
         run: python3 art/check_species_tints.py
+      # THE ENGINE CAN REACH THE ART. For the pipeline's whole life the sheets
+      # sat in `assets/sprites/`, the Godot project's SIBLING -- and `res://` is
+      # the project folder and nothing above it, so no client script could load
+      # one and no export packed one. Eleven files and four measured checks, and
+      # the game had never drawn a pixel of any of it (ASSA-34). The sheets now
+      # live in `client/assets/sprites/` and this is what fails if they drift
+      # back out, or if an export filter starts excluding them -- a failure you
+      # would otherwise only meet in a shipped bundle. Stdlib only, ~0.1s.
+      - name: The client can reach the art
+        run: python3 art/check_client_can_see_art.py
       # The client's own GDScript suite gates the bundles below. Editor only:
       # running tests needs no export templates, which is the ~1 GB download.
       - name: Godot (editor only)

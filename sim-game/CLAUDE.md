@@ -23,8 +23,12 @@ game design and art direction. This file is the code and art rulebook.
   session and every typed command; add new commands there and they work in
   both modes.
 - `packaging/`: README files shipped inside the CI bundles.
-- `art/`: Blender scripts that render every sprite. `art/build.py` writes
-  `assets/sprites/`. `art/out/` is raw render output (git-ignored).
+- `art/`: Blender scripts that render every sprite. `art/build.py` writes the
+  shipped sheets to `client/assets/sprites/` — INSIDE the Godot project,
+  because `res://` does not go up and a sheet outside it can neither be loaded
+  nor packed (ASSA-34) — and review sheets to `assets/review/`, which stays
+  outside the project so an export never packs them. `art/out/` is raw render
+  output (git-ignored).
 - `saves/`: world saves (git-ignored).
 
 ## Rules for the `sim` crate
@@ -83,7 +87,7 @@ works from the inspector or a future graphical client.
 - Sprites are generated, never hand-edited. Change the script, rebuild.
 - Anything that must match across assets (palette, camera, light, outline,
   pixel scale) lives in `art/rig.py`, not in asset scripts.
-- After a build, look at `assets/sprites/contact.png` and judge at the 1×
+- After a build, look at `assets/review/contact.png` and judge at the 1×
   size, not zoomed in.
 - **Check `git status` after a build.** `art/out/` is git-ignored, so
   `--pack` repacks from whatever your machine last rendered; a sheet merged

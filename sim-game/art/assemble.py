@@ -3,7 +3,7 @@
 
     art/assemble.py
 
-Writes assets/sprites/assembled.png: every machine the minimal demo defines,
+Writes assets/review/assembled.png: every machine the minimal demo defines,
 built the way the client must build it, at the size the player sees.
 
 WHY THIS EXISTS
@@ -103,7 +103,11 @@ if os.environ.get("FAKE_CVD_IDENTITY"):
           "          notice that every seam's worst observer is now 'normal'")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SPR = os.path.join(ROOT, "assets", "sprites")
+# The sheets live inside the Godot project: res:// does not go up (ASSA-34).
+SPR = os.path.join(ROOT, "client", "assets", "sprites")
+# Review output stays out of the project, so an export never packs it.
+REVIEW = os.path.join(ROOT, "assets", "review")
+os.makedirs(REVIEW, exist_ok=True)
 TILE = 64                       # authoring size; the game shows 32 at 1x
 GAME = 32
 
@@ -773,8 +777,8 @@ def main():
     stacked.alpha_composite(sheet, (0, 0))
     stacked.alpha_composite(ladder, (0, sheet.height + pad))
     sheet = stacked
-    sheet.save(os.path.join(SPR, "assembled.png"))
-    print("wrote assets/sprites/assembled.png  (%d machines, top row authoring size, bottom row true 1x)"
+    sheet.save(os.path.join(REVIEW, "assembled.png"))
+    print("wrote assets/review/assembled.png  (%d machines, top row authoring size, bottom row true 1x)"
           % len(shots))
     return 0 if ok else 1
 

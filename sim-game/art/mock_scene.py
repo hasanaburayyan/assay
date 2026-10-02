@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --quiet --with pillow python
 """Compose a fake game view from the packed sheets, to check that the assets
 fit together the way the client will draw them. Writes
-assets/sprites/mock_scene.png (2x authoring size on top, 1x game size below).
+assets/review/mock_scene.png (2x authoring size on top, 1x game size below).
 
 Usage: art/mock_scene.py
 
@@ -40,7 +40,11 @@ from species_tints import SPECIES_TINTS
 from part_layout import PART_REPEAT_OFFSET, stack
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SPR = os.path.join(ROOT, "assets", "sprites")
+# The sheets live inside the Godot project: res:// does not go up (ASSA-34).
+SPR = os.path.join(ROOT, "client", "assets", "sprites")
+# Review output stays out of the project, so an export never packs it.
+REVIEW = os.path.join(ROOT, "assets", "review")
+os.makedirs(REVIEW, exist_ok=True)
 T = 64
 W, H = 14, 9
 random.seed(3)
@@ -202,5 +206,5 @@ for asset, row, x, y, f in sorted(ents, key=lambda e: e[3] + man[e[0]]["tiles"][
 out = Image.new("RGBA", (W * T, H * T + H * T // 2 + 8), (30, 32, 30, 255))
 out.alpha_composite(img, (0, 0))
 out.alpha_composite(img.resize((W * T // 2, H * T // 2), Image.LANCZOS), (0, H * T + 8))
-out.save(os.path.join(SPR, "mock_scene.png"))
-print("wrote assets/sprites/mock_scene.png")
+out.save(os.path.join(REVIEW, "mock_scene.png"))
+print("wrote assets/review/mock_scene.png")
