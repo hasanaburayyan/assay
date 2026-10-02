@@ -164,3 +164,88 @@ fn line_endings_and_path_separators_do_not_change_the_identity() {
     let different = vec![("src/step.rs".to_string(), b"fn a() {}\n".to_vec())];
     assert_ne!(fingerprint(&unix), fingerprint(&different));
 }
+
+/// **AN EXCLUSION IS A CLAIM, AND THIS IS THE CHECK ON IT** (ASSA-85).
+///
+/// `debug.rs` is out of the identity because prose cannot desync anybody.
+/// That is true exactly while nothing which *does* decide behaviour reaches
+/// it. Move a rule into `debug.rs`, or have `step` call one of its functions,
+/// and the identity silently stops covering a rule — the same shape as
+/// ASSA-51 and ASSA-53, where one of two spellings was exercised only where
+/// it happened to work.
+///
+/// Comments are stripped first, because the rules path legitimately *mentions*
+/// `debug.rs` in doc comments (`World::smelter_state` explains that the stall
+/// chain used to live there). Stripping from the first `//` also truncates a
+/// line holding a `//` inside a string literal, which can only make this less
+/// sensitive on that line, never more.
+#[test]
+fn nothing_in_the_identity_reaches_the_excluded_files() {
+    let mut checked = 0;
+    for (path, bytes) in rule_sources() {
+        if path == "Cargo.lock" {
+            continue;
+        }
+        checked += 1;
+        let text = String::from_utf8_lossy(&bytes);
+        let code: String = text
+            .lines()
+            .map(|line| line.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for excluded in NOT_RULES {
+            let module = excluded.trim_end_matches(".rs");
+            // **THE NEEDLE IS `debug::`, NOT `debug`.** `lib.rs` has to say
+            // `pub mod debug;` for the module to exist at all, and declaring
+            // it is not depending on it. Every way of reaching into it from
+            // rules code spells the path — `debug::f()`, `crate::debug::f()`,
+            // `use crate::debug::f` — so the separator is the discriminator.
+            // An aliased import (`use crate::debug as d`) would slip past;
+            // noted rather than guarded, because the alias would also have to
+            // survive review.
+            assert!(
+                !code.contains(&format!("{module}::")),
+                "{path} references `{module}`, which is EXCLUDED from the rules \
+                 identity on the grounds that it cannot change what a tick \
+                 computes. One of two things is now true: the reference is \
+                 harmless and `{module}` should be read again to confirm it is \
+                 still pure readout, or a rule has moved into it and the \
+                 identity has stopped covering a rule. Do not silence this by \
+                 renaming the call — take `{excluded}` back into NOT_RULES's \
+                 opposite, the identity itself."
+            );
+        }
+    }
+    // Non-vacuity: the sweep is worthless if the walk handed it nothing.
+    assert!(checked > 15, "only {checked} source files swept");
+}
+
+/// The exclusion must not have taken the whole crate with it, and the files
+/// that decide behaviour must still be there to be fingerprinted.
+#[test]
+fn the_identity_still_covers_the_files_that_decide_behaviour() {
+    let paths: Vec<String> = rule_sources().into_iter().map(|(p, _)| p).collect();
+    for rule in [
+        "step.rs",
+        "tuning.rs",
+        "worldgen.rs",
+        "ladder.rs",
+        "recipe.rs",
+        "assembly.rs",
+        "world.rs",
+        "hash.rs",
+        "save.rs",
+        "Cargo.lock",
+    ] {
+        assert!(
+            paths.iter().any(|p| p == rule),
+            "{rule} is not in the rules identity: {paths:?}"
+        );
+    }
+    for excluded in NOT_RULES {
+        assert!(
+            !paths.iter().any(|p| p == excluded),
+            "{excluded} was supposed to be out of the identity: {paths:?}"
+        );
+    }
+}
