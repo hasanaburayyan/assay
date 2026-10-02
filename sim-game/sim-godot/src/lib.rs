@@ -20,6 +20,7 @@
 //! text. There is deliberately no method here that returns a hash as a number.
 
 use godot::prelude::*;
+use sim::assembly::{Assembly, Built, Mount};
 use sim::building::Slot;
 use sim::command::{Event, Input, StopReason};
 use sim::hash::fnv64;
@@ -249,6 +250,28 @@ impl AssaySim {
             .collect()
     }
 
+    /// EVERY DESIGN ONE PLAYER HOLDS, for the part menu. The tool in hand
+    /// first, then the built list in the order `Equip` and `PlaceAssembly`
+    /// index.
+    ///
+    /// THE VERDICT IS THE SIM'S WORD AND THE CLIENT MAY NOT DERIVE IT. A
+    /// renderer holding `mass_low..mass_high` and `budget_low..budget_high`
+    /// could compare them itself; two renderers doing that will eventually
+    /// disagree, and this one is specifically forbidden from trying (repo
+    /// `CLAUDE.md` principle 1, ADR 0003 A8). The numbers are here to be
+    /// SHOWN under the verdict, not to produce it.
+    ///
+    /// `durability` is MISSING on a planted design rather than empty, and
+    /// `unassayed` names the species a design is still guessing about so that
+    /// "UNCERTAIN" can say what resolves it.
+    #[func]
+    pub fn designs_of(&self, player: i64) -> Array<VarDictionary> {
+        self.design_facts(player_id_of(player))
+            .iter()
+            .map(design_dict)
+            .collect()
+    }
+
     /// EVERY PLAYER, FOR DRAWING: id, name, where they are, where they are
     /// walking. Read out of the stepped world, never predicted — `target` is
     /// here so a client can draw an intention, not so it can interpolate a
@@ -403,6 +426,41 @@ fn deposit_dict(deposit: &DepositFacts) -> VarDictionary {
     }
 }
 
+fn part_dict(part: &PartFacts) -> VarDictionary {
+    vdict! {
+        "kind" => &gstring(&part.kind).to_variant(),
+        "species" => part.species,
+        "species_name" => &gstring(&part.species_name).to_variant(),
+        "grade" => &gstring(&part.grade).to_variant(),
+        "mass_low" => part.mass_low,
+        "mass_high" => part.mass_high,
+    }
+}
+
+fn design_dict(design: &DesignFacts) -> VarDictionary {
+    let mut out = vdict! {
+        "index" => design.index,
+        "in_hand" => design.in_hand,
+        "verdict" => &gstring(&design.verdict).to_variant(),
+        "mass_low" => design.mass_low,
+        "mass_high" => design.mass_high,
+        "budget_low" => design.budget_low,
+        "budget_high" => design.budget_high,
+        "mount" => &gstring(&design.mount).to_variant(),
+        "unassayed" => &design.unassayed.iter().map(|n| gstring(n))
+            .collect::<PackedStringArray>().to_variant(),
+        "parts" => &design.parts.iter().map(part_dict)
+            .collect::<Array<VarDictionary>>().to_variant(),
+    };
+    // ABSENT, not null, on a planted design. A key that is there but empty
+    // invites a panel to print "durability: " and a blank, which is the
+    // mechanic-that-does-not-exist shown anyway.
+    if let Some(durability) = &design.durability {
+        out.set("durability", &gstring(durability).to_variant());
+    }
+    out
+}
+
 fn building_dict(building: &BuildingFacts) -> VarDictionary {
     vdict! {
         "id" => building.id,
@@ -460,6 +518,60 @@ pub struct StackFacts {
     pub grade: String,
     pub count: i64,
     pub name: String,
+}
+
+/// ONE PART OF A DESIGN, as a menu row: kind, species, grade and mass, and
+/// nothing else (Game Director's ruling on ASSA-7). Mass is the only number
+/// that moves the verdict; every other sheet property belongs to the assay
+/// panel, and over-showing is how a part menu becomes a spreadsheet.
+///
+/// `mass_low`/`mass_high` and not one number, for the same reason the headline
+/// is a range: density is read off a sheet that bands until the species is
+/// assayed. They are equal once it is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PartFacts {
+    pub kind: String,
+    pub species: i64,
+    pub species_name: String,
+    pub grade: String,
+    pub mass_low: i64,
+    pub mass_high: i64,
+}
+
+/// ONE DESIGN A PLAYER HAS BUILT, as the part menu needs it.
+///
+/// EVERY JUDGEMENT IN HERE IS THE SIM'S. `verdict` is `BreakVerdict::label()`
+/// off `Assembly::stat_range`, not three integers for a client to compare;
+/// the masses and budgets are the sim's banded arithmetic; `durability` is the
+/// pool the sim gave this machine. A second implementation of any of it would
+/// be a second opinion, and two peers holding different opinions about whether
+/// a design breaks is the one disagreement lockstep cannot absorb.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DesignFacts {
+    /// Index into `Player::assemblies`, which is what `Equip` and
+    /// `PlaceAssembly` take. -1 for the tool in hand, which has no index.
+    pub index: i64,
+    pub in_hand: bool,
+    /// "SAFE" / "UNCERTAIN" / "WILL BREAK", the sim's own words.
+    pub verdict: String,
+    pub mass_low: i64,
+    pub mass_high: i64,
+    pub budget_low: i64,
+    pub budget_high: i64,
+    /// "held" or "planted", from the frame alone.
+    pub mount: String,
+    /// "90% of 2400-3600", or None on a planted design — the head contributes
+    /// a pool whatever frame it sits on, but drill wear is parked, so on a
+    /// planted machine the number would never move and would teach a mechanic
+    /// that does not exist (Game Director's ruling on ASSA-5).
+    pub durability: Option<String>,
+    /// Species in this design whose sheet still reads rough, by name. THIS IS
+    /// WHAT LETS "UNCERTAIN" NAME ITS OWN RESOLUTION — "assay Korvite to know"
+    /// rather than a yellow border that reads as danger. Without it the state
+    /// can only say "assay something", and half of all designs at grade B are
+    /// UNCERTAIN.
+    pub unassayed: Vec<String>,
+    pub parts: Vec<PartFacts>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -687,6 +799,80 @@ impl AssaySim {
                 hand_lit_fuel: sim::ladder::hand_lit_fuel(species),
             })
             .collect()
+    }
+
+    /// EVERY DESIGN ONE PLAYER HOLDS: the tool in hand first, then the built
+    /// list in its own order, because `Equip` and `PlaceAssembly` index that
+    /// order and a menu that reordered it would send the wrong one.
+    ///
+    /// Empty for a player the world does not have, and for one who has built
+    /// nothing — which is every player until the craft chain runs.
+    pub fn design_facts(&self, player: Option<PlayerId>) -> Vec<DesignFacts> {
+        let Some(p) = player.and_then(|id| self.world.player(id)) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if let Some(tool) = &p.tool {
+            out.push(self.design(-1, true, tool));
+        }
+        for (i, built) in p.assemblies.iter().enumerate() {
+            out.push(self.design(i as i64, false, built));
+        }
+        out
+    }
+
+    fn design(&self, index: i64, in_hand: bool, built: &Built) -> DesignFacts {
+        let a = &built.assembly;
+        let range = a.stat_range(&self.world.species);
+
+        let mut unassayed: Vec<String> = Vec::new();
+        for part in a.parts() {
+            let species = self.world.species(part.material.species);
+            if !species.assayed && !unassayed.iter().any(|n| n == species.name()) {
+                unassayed.push(species.name().to_string());
+            }
+        }
+        DesignFacts {
+            index,
+            in_hand,
+            verdict: range.verdict().label().to_string(),
+            mass_low: range.low.mass as i64,
+            mass_high: range.high.mass as i64,
+            budget_low: range.low.budget as i64,
+            budget_high: range.high.budget as i64,
+            mount: match a.mount() {
+                Some(Mount::Held) => "held".to_string(),
+                Some(Mount::Planted) => "planted".to_string(),
+                // A frame that is not a frame cannot be assembled, so this is
+                // unreachable rather than a state to design for.
+                None => "unmountable".to_string(),
+            },
+            // THE SIM'S OWN WORDING, not a second one. ADR 0003 A10 is a rule
+            // about what a player may know -- the exact pool divided by a
+            // published constant IS the head's effective strength -- so a menu
+            // spelling it its own way is how the leak comes back in one host
+            // and not the other.
+            durability: match a.mount() {
+                Some(Mount::Held) => Some(sim::debug::durability_readout(&self.world, built)),
+                _ => None,
+            },
+            unassayed,
+            parts: a
+                .parts()
+                .map(|part| {
+                    let species = self.world.species(part.material.species);
+                    let (low, high) = Assembly::part_mass_range(part, species);
+                    PartFacts {
+                        kind: part.kind.name().to_string(),
+                        species: part.material.species.0 as i64,
+                        species_name: species.name().to_string(),
+                        grade: part.material.grade.letter().to_string(),
+                        mass_low: low as i64,
+                        mass_high: high as i64,
+                    }
+                })
+                .collect(),
+        }
     }
 
     /// One event as a sentence. `me` is written "you"; everyone else is named.
@@ -1153,6 +1339,205 @@ mod tests {
         assert_eq!(stack.grade, "B");
         assert_eq!(stack.count, 7);
         assert_eq!(stack.name, sim.world().item_name(ore));
+    }
+
+    /// A design, built straight onto the player: this file tests what the menu
+    /// READS, and the craft chain that produces one has its own tests in `sim`.
+    fn design(sim: &AssaySim, mount: Mount, species: &[usize], grade: sim::Grade) -> Built {
+        let item = |i: usize| Item::new(sim::ItemKind::Refined, sim.world().species[i].id, grade);
+        let assembly = Assembly::new(
+            sim::Part::new(sim::PartKind::Frame(mount), item(species[0])),
+            vec![sim::Part::new(
+                sim::PartKind::Head,
+                item(species[species.len() - 1]),
+            )],
+        );
+        Built::new(assembly, &sim.world().species)
+    }
+
+    /// THE INDEX IS THE COMMAND'S ARGUMENT, so the order is not cosmetic:
+    /// `Equip` and `PlaceAssembly` take a position in `Player::assemblies`, and
+    /// a menu that sorted the list would equip the wrong machine. The tool in
+    /// hand has no index of its own and says so with -1.
+    #[test]
+    fn the_held_tool_comes_first_and_the_built_list_keeps_its_own_index() {
+        let (mut sim, me) = with_a_player("limpet");
+        let hand = design(&sim, Mount::Held, &[0], sim::Grade::B);
+        let first = design(&sim, Mount::Planted, &[1], sim::Grade::B);
+        let second = design(&sim, Mount::Planted, &[2], sim::Grade::C);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.tool = Some(hand);
+            p.assemblies = vec![first, second];
+        }
+
+        let designs = sim.design_facts(Some(me));
+        assert_eq!(designs.len(), 3, "got {designs:?}");
+        assert_eq!((designs[0].index, designs[0].in_hand), (-1, true));
+        assert_eq!((designs[1].index, designs[1].in_hand), (0, false));
+        assert_eq!((designs[2].index, designs[2].in_hand), (1, false));
+        assert_eq!(designs[0].mount, "held");
+        assert_eq!(designs[1].mount, "planted");
+    }
+
+    /// THE VERDICT IS THE SIM'S WORD, NEVER THIS CRATE'S ARITHMETIC. Checked
+    /// against `stat_range().verdict()` on every design rather than against a
+    /// string I expected, because the failure worth catching is this host
+    /// quietly growing its own opinion about whether a machine breaks.
+    #[test]
+    fn the_verdict_and_the_numbers_are_the_sims_own() {
+        let (mut sim, me) = with_a_player("limpet");
+        let mut built = Vec::new();
+        for i in 0..sim.world().species.len() {
+            built.push(design(&sim, Mount::Planted, &[i], sim::Grade::B));
+        }
+        sim.world
+            .player_mut(me)
+            .expect("the player exists")
+            .assemblies = built.clone();
+
+        let designs = sim.design_facts(Some(me));
+        assert_eq!(designs.len(), built.len());
+        let mut seen = std::collections::HashSet::new();
+        for (facts, b) in designs.iter().zip(built.iter()) {
+            let range = b.assembly.stat_range(&sim.world().species);
+            assert_eq!(facts.verdict, range.verdict().label());
+            assert_eq!(facts.mass_low, range.low.mass as i64);
+            assert_eq!(facts.mass_high, range.high.mass as i64);
+            assert_eq!(facts.budget_low, range.low.budget as i64);
+            assert_eq!(facts.budget_high, range.high.budget as i64);
+            seen.insert(facts.verdict.clone());
+            assert!(
+                ["SAFE", "UNCERTAIN", "WILL BREAK"].contains(&facts.verdict.as_str()),
+                "{} is not one of the sim's three states",
+                facts.verdict
+            );
+        }
+        assert!(!seen.is_empty());
+    }
+
+    /// A ROW MUST ADD UP TO THE HEADLINE IT SITS UNDER. A player looking at an
+    /// over-budget design picks the part to change out of these rows, and rows
+    /// that do not sum to the mass the verdict was formed on would send them
+    /// after the wrong one.
+    #[test]
+    fn the_part_rows_sum_to_the_designs_own_mass() {
+        let (mut sim, me) = with_a_player("limpet");
+        let built = design(&sim, Mount::Planted, &[0, 1], sim::Grade::B);
+        sim.world
+            .player_mut(me)
+            .expect("the player exists")
+            .assemblies = vec![built];
+
+        let facts = &sim.design_facts(Some(me))[0];
+        assert_eq!(facts.parts.len(), 2, "a frame and a head: {facts:?}");
+        let low: i64 = facts.parts.iter().map(|p| p.mass_low).sum();
+        let high: i64 = facts.parts.iter().map(|p| p.mass_high).sum();
+        assert_eq!(low, facts.mass_low, "part rows must sum to the low mass");
+        assert_eq!(high, facts.mass_high, "part rows must sum to the high mass");
+        for part in &facts.parts {
+            assert!(!part.kind.is_empty() && !part.species_name.is_empty());
+            assert!(["C", "B", "A"].contains(&part.grade.as_str()), "{part:?}");
+        }
+    }
+
+    /// `unassayed` IS WHAT LETS "UNCERTAIN" NAME ITS OWN RESOLUTION. Each rough
+    /// species once, by name; nothing at all once they are known. Without it
+    /// the state can only advise "assay something", and the ruling is that
+    /// UNCERTAIN must not read as danger.
+    #[test]
+    fn unassayed_names_each_rough_species_once_and_goes_quiet_when_known() {
+        let (mut sim, me) = with_a_player("limpet");
+        for species in &mut sim.world.species {
+            species.assayed = false;
+        }
+        let one_species = design(&sim, Mount::Planted, &[1, 1], sim::Grade::B);
+        let two_species = design(&sim, Mount::Planted, &[0, 1], sim::Grade::B);
+        sim.world
+            .player_mut(me)
+            .expect("the player exists")
+            .assemblies = vec![one_species, two_species];
+
+        let designs = sim.design_facts(Some(me));
+        assert_eq!(
+            designs[0].unassayed,
+            vec![sim.world().species[1].name().to_string()],
+            "a design of one rough species must name it once, not twice"
+        );
+        assert_eq!(designs[1].unassayed.len(), 2, "got {:?}", designs[1]);
+
+        for species in &mut sim.world.species {
+            species.assayed = true;
+        }
+        for facts in sim.design_facts(Some(me)) {
+            assert!(
+                facts.unassayed.is_empty(),
+                "nothing is rough any more: {facts:?}"
+            );
+            assert_eq!(
+                facts.mass_low, facts.mass_high,
+                "an assayed design reads exact"
+            );
+        }
+    }
+
+    /// DURABILITY IS HELD-ONLY, and absent rather than empty when it does not
+    /// apply: the head contributes a pool whatever frame it sits on, but drill
+    /// wear is parked, so on a planted machine the number would never move.
+    #[test]
+    fn only_a_held_design_reports_durability() {
+        let (mut sim, me) = with_a_player("limpet");
+        let held = design(&sim, Mount::Held, &[0], sim::Grade::B);
+        let planted = design(&sim, Mount::Planted, &[0], sim::Grade::B);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.tool = Some(held);
+            p.assemblies = vec![planted];
+        }
+
+        let designs = sim.design_facts(Some(me));
+        let durability = designs[0]
+            .durability
+            .as_ref()
+            .expect("a held design has a pool");
+        assert!(
+            durability.starts_with("100% of "),
+            "a design nobody has used yet is full: {durability}"
+        );
+        assert_eq!(
+            designs[1].durability, None,
+            "a planted design must not report a pool at all"
+        );
+
+        // ONCE THE SPECIES IS ASSAYED the pool is exact and may be shown as
+        // one — A10's rule is about what a ROUGH sheet gives away, and this is
+        // the branch that proves the menu takes its wording from the sim
+        // rather than always printing a percentage.
+        for species in &mut sim.world.species {
+            species.assayed = true;
+        }
+        let exact = sim.design_facts(Some(me))[0]
+            .durability
+            .clone()
+            .expect("a held design has a pool");
+        assert!(
+            !exact.contains('%') && exact.contains('/'),
+            "an assayed design reads exact, got {exact}"
+        );
+    }
+
+    /// A client asks for its designs every frame, with no player id before the
+    /// relay welcomes it and none at all before anyone builds anything.
+    #[test]
+    fn designs_for_nobody_are_empty_rather_than_a_crash() {
+        let (sim, me) = with_a_player("limpet");
+        assert!(sim.design_facts(None).is_empty());
+        assert!(sim.design_facts(player_id_of(-1)).is_empty());
+        assert!(sim.design_facts(Some(PlayerId(9999))).is_empty());
+        assert!(
+            sim.design_facts(Some(me)).is_empty(),
+            "a player who has built nothing has no designs"
+        );
     }
 
     /// A client asks for its inventory every frame and has no player id until
