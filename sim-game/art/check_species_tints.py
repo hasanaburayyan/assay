@@ -70,7 +70,12 @@ def species_per_world() -> int:
 
 def main() -> None:
     art = one_list(TINTS, r"^SPECIES_TINTS\s*=\s*\[(.*?)\]")
-    hud = one_list(HUD, r"const SPECIES_TINTS\s*:=\s*PackedStringArray\(\[(.*?)\]\)")
+    # `[^=\n]*` so the pattern survives the const's TYPE changing without
+    # silently matching something else: it crosses `: Array[String] ` to reach
+    # the `=` and cannot cross a line or a second `=`. It was pinned to
+    # `PackedStringArray(` and CI caught me the first time I changed the const
+    # and re-ran this check against the file as it had been, not as it was.
+    hud = one_list(HUD, r"const SPECIES_TINTS[^=\n]*=\s*\[(.*?)\]")
     roster = species_per_world()
 
     if art != hud:
