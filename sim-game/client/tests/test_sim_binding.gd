@@ -21,6 +21,9 @@ var runner = null
 const REQUIRED_METHODS := [
 	"from_welcome_json", "apply_bundle_json", "tick", "hash_hex", "seed_hex",
 	"width_tiles", "height_tiles", "player_count", "last_events",
+	# The HUD's reads. All four are called every frame, so a rename that only showed up at runtime
+	# would show up as an empty panel in a shipped build.
+	"event_lines", "inventory_of", "tile_at", "species_sheets",
 ]
 
 

@@ -128,6 +128,32 @@ func species_names() -> PackedStringArray:
 	return _sim.species_names() if _sim != null else PackedStringArray()
 
 
-## What the last applied bundle caused, as lines a person can read.
+## What the last applied bundle caused, as the sim's own `Debug` text. For a log, not a player.
 func last_events() -> PackedStringArray:
 	return _sim.last_events() if _sim != null else PackedStringArray()
+
+
+## The same events as sentences, with `me` written as "you". -1 before the relay has stamped us a
+## player, which is what `AssayNetClient.player_id` holds until the Welcome.
+func event_lines(me: int) -> PackedStringArray:
+	return _sim.event_lines(me) if _sim != null else PackedStringArray()
+
+
+## One player's stacks: `kind`, `species`, `species_name`, `grade` (a LETTER), `count`, and `name`,
+## which is the sim's own wording for the item. Empty for a player the world does not have.
+func inventory_of(player: int) -> Array:
+	return _sim.inventory_of(player) if _sim != null else []
+
+
+## Everything on one tile: `in_bounds`, `pos`, `chunk`, `chunks_from_spawn`, `is_spawn`, `deposit`
+## (null or a dictionary), `building` (null or a dictionary), `players_here`.
+##
+## THE SIM DECIDES ALL OF IT, including which deposit covers the tile and what grade a purity is.
+func tile_at(at: Vector2i) -> Dictionary:
+	return _sim.tile_at(at) if _sim != null else {}
+
+
+## Every species as the players know it: `id`, `name`, `assayed`, `readings` (property name to the
+## exact value or the sim's band, as TEXT), `hand_minable`, `hand_lit_fuel`.
+func species_sheets() -> Array:
+	return _sim.species_sheets() if _sim != null else []
