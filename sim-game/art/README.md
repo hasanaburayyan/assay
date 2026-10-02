@@ -64,6 +64,7 @@ after touching ore art, the palette or the tints:
 uv run --with pillow python art/species_probe.py   # exits non-zero on a regression
 PROBE_SPAN=0.1   art/species_probe.py   # crowds the hues     -> must FAIL
 PROBE_SPARSE=0.5 art/species_probe.py   # thins ore coverage  -> must FAIL
+MAP_FLOOR=0.33   art/species_probe.py   # over-dims the disc  -> must FAIL
 ```
 
 The second and third lines are not decoration. Two guards in this pipeline
@@ -97,25 +98,32 @@ mark. Read B and C together, never B alone.
 wears species3's yellow. That is reported to the Director, not exempted:
 `EXEMPT` in that file is empty and an entry needs a reason and a name.
 
-- **The map and the world are one palette.** The client draws a deposit twice
-  — a tinted tile in the world, a patch on the schematic map — and a player
-  learns the colour from whichever they see first.
+- **The map disc is a second surface with its own floor.** The client draws a
+  deposit twice: a textured tile over olive terrain in the world, and a flat
+  ~9 px disc over near-black on the schematic map, dimmed continuously by
+  purity rather than in three grades. A tile that passes says nothing about a
+  disc, so `species_probe.py` now certifies both (check 2b).
 
-```bash
-art/map_palette.py                   # derives the map table from the world
-MAP_PALETTE_EVEN=1 art/map_palette.py   # the scheme in hud.gd -> must FAIL
-```
+  The disc is scored on **hue and chroma only** — on the map, brightness
+  *already* means purity, so letting L\* count would let a pure brightness
+  ramp pass as six species. Measured at the dimmest disc the client can draw,
+  because every brighter purity is slack:
 
-It prints the table as GDScript constants. Note the tints in
-`species_tints.py` are **multipliers over light rock, not fills**: `#7A29CC`
-painted flat on the dark map sinks, and is only vivid because it multiplies
-over an L\* 84 base. So the map's colours are derived from the *result* — a
-tinted ore tile's mean at 32 px — never retyped from the tints.
+  | purity multiply | 1.00 | 0.80 | 0.70 | 0.60 | **0.55** | 0.50 | 0.33 |
+  |---|---|---|---|---|---|---|---|
+  | worst pair, 4 observers | 18.5 | 17.5 | 16.0 | 14.0 | **12.5** | 11.5 | 8.0 |
 
-This found ASSA-25: `hud.gd` still spaces six hues evenly round the wheel,
-the scheme the probe rejected, which measures protan 3.6. The derived table
-clears every observer at 16.2 or better and clears the map background by
-47.6.
+  **0.55 is a measured floor, not a taste** — 0.50 falls under 12. Red lever
+  `MAP_FLOOR=0.33` makes the check fail.
+
+  The map uses `species_tints.py` **directly**, as fills. I argued the
+  opposite and was wrong: I claimed the tints were multipliers that would
+  sink on a dark background, and never measured it. Nothing sinks (the
+  dimmest disc clears the background by 34.7), and a table derived from the
+  tinted ore tile is *worse* — the tile's mean carries the rock's dark
+  outline and shading, so it starts with less chroma and drops to 10.0 under
+  the same dimming. The map is deliberately more chromatic than the world
+  because it needs that chroma to survive being dimmed.
 
 ## Conventions
 
