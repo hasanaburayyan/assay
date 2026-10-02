@@ -2,7 +2,7 @@
 """Render sprites with Blender and pack them for the client.
 
     art/build.py            # everything
-    art/build.py ore drill  # only these assets
+    art/build.py ore head   # only these assets
     art/build.py --pack     # skip rendering, just repack art/out
 
 Pipeline: assets/<name>.py runs inside Blender and writes raw SSx frames to
@@ -22,7 +22,7 @@ SPRITES = os.path.join(ROOT, "assets", "sprites")
 BLENDER = os.environ.get("BLENDER", "/Applications/Blender.app/Contents/MacOS/Blender")
 SS = 4
 # render order = contact sheet order
-ORDER = ["ground", "ore", "items", "head", "handle", "frame", "hopper", "drill", "spawn", "player"]
+ORDER = ["ground", "ore", "items", "head", "handle", "frame", "hopper", "spawn", "player"]
 
 
 def render(name):

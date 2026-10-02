@@ -43,6 +43,17 @@ COS = math.cos(TILT)
 #                 instead does NOT work -- measured: lifting the downward
 #                 fill 0.9 -> 2.6 moved the handle's peak alpha 249 -> 249.
 # SUN_SOFTNESS is the third: a hard edge is what made it read as geometry.
+#
+# AND ONE CLAUSE MORE (Maren, ruling 2 on ASSA-30): THE CONTACT SHADOW MUST
+# FALL ENTIRELY INSIDE THE OCCUPIED TILE. A sprite is allowed to overhang the
+# tile it stands on -- `sim` gives a machine a (1, 1) footprint while a part
+# frame is 2 tiles wide, and the art adapts to the sim rather than the other
+# way round -- but the shadow is what tells a player which ground the thing
+# actually claims. Body above the ground plane: fine. Shadow on a tile the
+# building does not occupy: a lie about the world, and the renderer cannot
+# undo it. This is the rule going forward; measured on the shipped art it does
+# not hold yet (an assembled machine's shadow leaves its tile to the east,
+# under the head), which is ASSA-38 and NOT a reason to weaken the clause.
 SUN_TILT = math.radians(9)
 SUN_SOFTNESS = math.radians(30)
 SHADOW_ENERGY = 0.9

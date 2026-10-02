@@ -235,39 +235,6 @@
   "sheet": "hopper.png",
   "columns": 1
  },
- "drill": {
-  "name": "drill",
-  "tiles": [
-   2,
-   2
-  ],
-  "frame_px": [
-   128,
-   192
-  ],
-  "anchor_px": [
-   0,
-   64
-  ],
-  "rows": [
-   {
-    "name": "idle",
-    "frames": 1
-   },
-   {
-    "name": "work",
-    "frames": 8
-   }
-  ],
-  "animations": {
-   "work": {
-    "frames": 8,
-    "fps": 12
-   }
-  },
-  "sheet": "drill.png",
-  "columns": 8
- },
  "spawn": {
   "name": "spawn",
   "tiles": [

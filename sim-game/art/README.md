@@ -7,13 +7,27 @@ No image is edited by hand. To change the look, edit the script and rebuild.
 
 ```bash
 art/build.py             # render everything, pack, write the contact sheet
-art/build.py ore drill   # only these assets
+art/build.py ore head    # only these assets
 art/build.py --pack      # skip Blender, repack art/out
 ```
 
 Needs Blender 5.1+ at `/Applications/Blender.app` (or `BLENDER=/path`), and
 `uv` (the script pulls in Pillow itself). A full build takes a few minutes
 on the CPU.
+
+**`--pack` REPACKS FROM A LOCAL CACHE, AND THE CACHE CAN BE OLDER THAN THE
+ART.** `art/out/` is git-ignored, so it holds whatever *your* machine last
+rendered — and a sheet merged from someone else's checkout (or your own
+worktree) was never rendered into *this* `out/`. Running `--pack` then
+silently rewrites that sheet from the stale render. It happened on 2026-10-02:
+a plain `--pack` reverted `frame.png`'s grade-A row to the pre-ASSA-27 yellow
+glint, a decision the Director had ruled on, inside a PR about deleting an
+unrelated asset. `git status` after a build is not a formality — **if a sheet
+you did not touch comes back modified, do not commit it; re-render that asset
+(`rm -rf art/out/<name> && art/build.py <name>`) and look again.** Re-rendering
+`frame` from the committed scripts reproduced the merged sheet byte for byte,
+which is the other half of the story: the pipeline is reproducible, so a
+diff you cannot explain is a stale cache, not noise.
 
 ## Layout
 
@@ -228,6 +242,17 @@ the C hopper falls under L\* 35 and its gap from the head drops to 7.7.
 
 - 1 Blender unit = 1 tile. +y is north (up on screen). A sprite's footprint
   is centred on the origin.
+- **A sprite may overhang its tile; its shadow may not.** `sim` gives a
+  machine a (1, 1) footprint while a part frame is 2 tiles wide, so the
+  sprite overhangs east, and that is fine — the art adapts to the sim, never
+  the reverse. What a player reads as *ground claimed* is the contact shadow,
+  so the shadow must fall entirely inside the occupied tile (Maren, ASSA-30;
+  the clause lives with the shadow rig in `rig.py`). Covering a neighbouring
+  deposit tile is explicitly fine and wants no guard: ore `amount` is per
+  deposit, not per tile. Overlapping machines are legal; draw y then x so the
+  nearer one wins. Measured on today's art the clause does **not** hold — an
+  assembled machine's shadow runs a whole tile east, under the head — which is
+  ASSA-38 and a thing to fix, not a reason to soften the rule.
 - Sheets: one row per sprite (direction, variant or state), one column per
   frame. `manifest.json` gives frame size, footprint in tiles, the anchor
   (where the footprint's top-left corner sits in the frame) and animation
