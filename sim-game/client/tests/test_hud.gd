@@ -370,15 +370,142 @@ func test_each_status_state_has_its_own_colour() -> bool:
 
 
 ## One deposit tile, with `extra` overriding any field. Shaped exactly like `AssaySim::tile_at`.
+##
+## `hand_minable` true and an empty `reach_note` is the YIELDING rock, which is what the sim sends for
+## one: the note is empty exactly when the rock can be worked (ASSA-47). The keys are held to the real
+## binding by `test_the_deposit_fixture_still_matches_a_real_deposit`, because a fixture I typed is a
+## claim about the sim and not a reading of it.
 func _tile_with(extra: Dictionary) -> Dictionary:
 	var deposit := {"id": 4, "species": 1, "species_name": "kuri", "center": Vector2i(10, 9),
 			"radius": 3, "amount": 37, "purity": 62, "grade": "B", "depleted": false,
-			"assayed": false}
+			"assayed": false, "hand_minable": true, "reach_note": ""}
 	for key in extra:
 		deposit[key] = extra[key]
 	return {"in_bounds": true, "pos": Vector2i(10, 9), "chunk": Vector2i(0, 0),
 			"chunks_from_spawn": 3, "is_spawn": false, "deposit": deposit, "building": null,
 			"players_here": PackedStringArray()}
+
+
+## REACH IS STATED BEFORE ANY ASSAY CUE, AND A ROCK NOTHING CAN MINE IS NEVER INVITED TO BE ASSAYED.
+## ASSA-47, Marlow's ask. `Assay` is not gated on the rock being workable, so a player can spend the
+## 30 ticks, succeed, and learn a sheet they can never use -- you cannot build with ore you cannot get
+## out. Maren measured 40.7% of deposits like that.
+func test_an_unworkable_deposit_states_reach_and_offers_no_assay() -> bool:
+	var note := "Noxore is too hard for anything we can build"
+	var lines := AssayHud.tile_lines(_tile_with({"hand_minable": false, "reach_note": note}))
+	var joined := "\n".join(lines)
+	if not joined.contains(note):
+		return _fail("the sim's reach note is missing from the tile line: %s" % joined)
+	if joined.contains("assay to be sure"):
+		return _fail(("a rock nothing can mine still invited an assay: %s. A softened cue would still "
+				+ "be a cue; the clause has to go.") % joined)
+	# ORDER IS PART OF THE ASK: reach before the invitation, not after it.
+	var note_at := -1
+	var purity_at := -1
+	for i in range(lines.size()):
+		if String(lines[i]).contains(note):
+			note_at = i
+		if String(lines[i]).begins_with("purity "):
+			purity_at = i
+	if note_at < 0 or purity_at < 0 or note_at > purity_at:
+		return _fail("reach must be stated before the purity line; note at %d, purity at %d, in %s"
+				% [note_at, purity_at, joined])
+	# The facts stay. Only the offer is conditional.
+	if not joined.contains("purity 62 (grade B)"):
+		return _fail("purity and grade are facts about the rock and must survive: %s" % joined)
+	return true
+
+
+## AND THE IN-REACH LINE IS BYTE-FOR-BYTE WHAT IT WAS BEFORE ASSA-47, which is the other half of the
+## ask: the change may not cost a single character on the deposits a player can actually work. Spelled
+## out as a literal rather than rebuilt from the fixture, because a literal is the only version that
+## can disagree with me.
+func test_the_in_reach_tile_line_is_unchanged() -> bool:
+	var lines := AssayHud.tile_lines(_tile_with({}))
+	var joined := "\n".join(lines)
+	var wanted := ("(10, 9) · chunk (0, 0) · 3 from spawn\ndeposit 4 · kuri · 37 ore left\n"
+			+ "purity 62 (grade B) · sheet is rough — stand here and assay to be sure")
+	if joined != wanted:
+		return _fail("the in-reach tile line changed.\n  wanted: %s\n  got:    %s" % [wanted, joined])
+	var assayed := "\n".join(AssayHud.tile_lines(_tile_with({"assayed": true})))
+	if not assayed.contains("purity 62 (grade B) · assayed: its sheet is exact"):
+		return _fail("an assayed deposit must report it, not invite one: %s" % assayed)
+	return true
+
+
+## AND AN UNWORKABLE ROCK THAT IS ALREADY ASSAYED STILL REPORTS IT. "Assayed" is a statement about
+## something already done, not an offer, so the rule about invitations does not reach it. Without this
+## the obvious implementation -- one `if hand_minable` around the whole cue -- passes the test above
+## while silently dropping a fact from every unworkable rock a player did assay before learning better.
+func test_an_unworkable_deposit_that_was_assayed_still_says_so() -> bool:
+	var joined := "\n".join(AssayHud.tile_lines(_tile_with({
+			"hand_minable": false, "reach_note": "too hard for anything we can build",
+			"assayed": true})))
+	if not joined.contains("assayed: its sheet is exact"):
+		return _fail("an assayed unworkable deposit stopped reporting its own assay: %s" % joined)
+	if joined.contains("assay to be sure"):
+		return _fail("it invited a second assay: %s" % joined)
+	return true
+
+
+## THE CLIENT DECIDES NOTHING ABOUT WORKABILITY, STATED AS BEHAVIOUR RATHER THAN AS A GREP.
+##
+## Marlow's third box is `grep -nE '\b40\b|hardness' client/scripts` finding no comparison. I would
+## rather not rest a rule on a text search: that grep matches a colour component (`0.40`), the grade
+## bands in a comment, and every mention of ASSA-40, so a human has to read the hits and decide, which
+## is exactly the judgement a test should be making.
+##
+## So this asserts the property the grep is a proxy for. The invitation must follow `hand_minable` and
+## NOTHING ELSE: sweep purity 1..100 and every grade with the flag held fixed, and the answer may not
+## move. If the client ever started working out for itself whether a rock yields -- from a hardness, a
+## grade, a purity threshold -- one of these would flip.
+func test_the_invitation_follows_the_sims_flag_and_nothing_else() -> bool:
+	for minable in [true, false]:
+		for grade in ["C", "B", "A"]:
+			for purity in range(1, 101):
+				var joined := "\n".join(AssayHud.tile_lines(_tile_with({
+						"hand_minable": minable, "grade": grade, "purity": purity,
+						"reach_note": "" if minable else "nothing we can build will work it"})))
+				var invited := joined.contains("assay to be sure")
+				if invited != minable:
+					return _fail(("hand_minable=%s at grade %s purity %d %s an assay. The invitation "
+							+ "must follow the sim's flag and nothing else -- a grade or purity "
+							+ "changing the answer means this client is deciding workability.")
+							% [minable, grade, purity, "invited" if invited else "did not invite"])
+	return true
+
+
+## THE FIXTURE ABOVE IS A CLAIM ABOUT THE SIM; THIS CHECKS IT AGAINST ONE. Every other test in this
+## file reads dictionaries I typed, and a fixture that drifts from the binding is how I have shipped
+## wrong readouts twice. `fresh_welcome_json` gives a real world, so a real deposit can answer.
+##
+## It asserts the KEYS and their types, never the values: which species a seed rolls is worldgen's
+## business and moved under us once already today (ASSA-35 re-mapped 571 of 1000 seeds).
+func test_the_deposit_fixture_still_matches_a_real_deposit() -> bool:
+	var host := AssaySimHost.new()
+	if not host.start(AssaySimHost.fresh_welcome_json("777042", "limpet")):
+		return _fail("could not build a world from fresh_welcome_json: %s" % host.fail_reason)
+	var real := {}
+	for entry in host.deposits():
+		var found: Variant = host.tile_at((entry as Dictionary).get("center", Vector2i.ZERO) as Vector2i).get("deposit")
+		if found != null:
+			real = found
+			break
+	if real.is_empty():
+		return _fail("a fresh world had no deposit to read")
+	for key in _tile_with({}).get("deposit", {}):
+		if not real.has(key):
+			return _fail(("the fixture carries `%s` and a real deposit does not. Either the binding "
+					+ "dropped it or the fixture invented it; either way the HUD tests are measuring "
+					+ "a shape the sim does not send. Real keys: %s") % [key, real.keys()])
+	for key in ["hand_minable", "reach_note"]:
+		if not real.has(key):
+			return _fail("a real deposit has no `%s`, which ASSA-47's rule depends on" % key)
+	if typeof(real["hand_minable"]) != TYPE_BOOL:
+		return _fail("`hand_minable` is not a bool: %s" % [real["hand_minable"]])
+	if typeof(real["reach_note"]) != TYPE_STRING:
+		return _fail("`reach_note` is not a String: %s" % [real["reach_note"]])
+	return true
 
 
 ## A design as `AssaySim.designs_of` hands it over: an UNCERTAIN held pick of one rough species.
