@@ -22,7 +22,7 @@ use sim::{Input, PlayerCommand, PlayerId, World};
 /// **THIS IS NOT THE RULES.** It answers "can we understand each other's
 /// messages", and two builds can understand each other perfectly while
 /// playing different games — see [`sim::RULES_ID`] and [`check_join`].
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// The rules this build runs, re-exported so a host has one place to look.
 pub const RULES_ID: &str = sim::RULES_ID;

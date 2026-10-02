@@ -334,18 +334,28 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
             building.0,
             building.0
         ),
+        // A CLAMP THAT DOES NOT SAY WHAT IT REFUSED IS A SILENT PARTIAL
+        // SUCCESS (ASSA-48). The leftover is the half a player can act on: it
+        // is the difference between "the slot took what it could" and "I still
+        // have 167 of these and I do not know why".
         Event::ItemsInserted {
             player,
             building,
             slot,
             item,
             count,
+            left,
         } => format!(
-            "{} put {count} {} into building {}'s {} slot",
+            "{} put {count} {} into building {}'s {} slot{}",
             who(player),
             name(item),
             building.0,
-            slot_name(*slot)
+            slot_name(*slot),
+            if *left > 0 {
+                format!("; {left} would not fit, still in hand")
+            } else {
+                String::new()
+            }
         ),
         Event::ItemsTaken {
             player,

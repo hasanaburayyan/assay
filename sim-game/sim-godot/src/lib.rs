@@ -2353,6 +2353,7 @@ mod tests {
                 slot: Slot::Fuel,
                 item,
                 count: 3,
+                left: 0,
             },
             Event::ItemsTaken {
                 player: me,

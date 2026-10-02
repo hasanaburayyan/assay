@@ -303,22 +303,36 @@ fn apply_player(
                 Some(stack) if stack.item == item => stack.count,
                 Some(_) => return reject(RejectReason::SlotFull, events),
             };
-            if have + count > cap {
+            // TAKE WHAT FITS (ASSA-48, Game Director's ruling). This used to
+            // reject the whole offer when `have + count > cap`, so a player who
+            // had mined for thirty seconds and pressed one button was told
+            // "that slot is full" about an EMPTY slot. One press is the client's
+            // whole interface, and a client choosing a smaller number would be
+            // deciding how much fuel a fire wants — a sheet reading it does not
+            // have. The sim owns the cap, so the sim owns the clamp.
+            //
+            // Rejection survives for the one case that is not a clamp: no room
+            // at all. "Nothing happened" is then true, and the player needs to
+            // empty the slot rather than offer less.
+            let room = cap.saturating_sub(have);
+            if room == 0 {
                 return reject(RejectReason::SlotFull, events);
             }
-            *target = Some(ItemStack::new(item, have + count));
+            let fits = count.min(room);
+            *target = Some(ItemStack::new(item, have + fits));
             let taken = world
                 .player_mut(player)
                 .expect("checked above")
                 .inventory
-                .remove(item, count);
+                .remove(item, fits);
             debug_assert!(taken);
             events.push(Event::ItemsInserted {
                 player,
                 building,
                 slot,
                 item,
-                count,
+                count: fits,
+                left: count - fits,
             });
         }
         PlayerCommand::Take { building } => {
