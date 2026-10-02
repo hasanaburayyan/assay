@@ -118,13 +118,20 @@ func test_every_image_loads_and_the_manifest_covers_exactly_those() -> bool:
 	return true
 
 
-## THE IMAGE ON DISK IS THE ONE THE MANIFEST DESCRIBES: `frame_px` times `columns` wide by `frame_px`
-## times the number of rows tall, exactly.
+## THE IMAGE THE ENGINE DECODED IS THE ONE THE MANIFEST DESCRIBES: `frame_px` times `columns` wide by
+## `frame_px` times the number of rows tall, exactly.
 ##
 ## This is the arithmetic a renderer will slice with, so a disagreement is an off-by-a-sliver in every
 ## frame after the first and nothing anywhere errors. Measured against the texture GODOT decoded
 ## rather than the PNG header, because the importer is allowed to change dimensions -- it does not
 ## today, and this is what would notice if a preset ever turned on resizing, or mipmaps that padded.
+##
+## WHICH IS WHY THE FAILURE MAY NOT BE ABOUT THE ART AT ALL, and the message says so (ASSA-72). It
+## used to report the decoded size as the size "on disk". That is the one thing it is not: when a
+## teammate's new sheet is pulled and `.godot/` is not re-imported, the engine hands back the size of
+## the PREVIOUS import and this test fails against a PNG whose header is perfectly correct. It cost me
+## twenty minutes on main at 8d2b4b0 -- `items.png` is 64x192 on disk, the cache still held 64x96, and
+## I went looking for a bad sheet. Naming the number for what it is turns that into one re-import.
 func test_each_images_pixels_match_the_grid_the_manifest_claims() -> bool:
 	var manifest := _manifest()
 	if manifest.is_empty():
@@ -148,9 +155,13 @@ func test_each_images_pixels_match_the_grid_the_manifest_claims() -> bool:
 		var want := Vector2i(int(frame[0]) * columns, int(frame[1]) * rows.size())
 		var got := Vector2i(texture.get_width(), texture.get_height())
 		if got != want:
-			return _fail(("`%s` is %s on disk and the manifest describes %s (%dx%d frames, %d rows, "
-					+ "%d columns). Every frame after the first would be sliced wrong.")
-					% [stem, got, want, int(frame[0]), int(frame[1]), rows.size(), columns])
+			return _fail(("Godot decoded `%s` as %s and the manifest describes %s (%dx%d frames, "
+					+ "%d rows, %d columns). Every frame after the first would be sliced wrong. "
+					+ "That size is what the ENGINE loaded, not the PNG header: if %s.png on disk "
+					+ "is already %s, this is a stale import cache, not bad art -- re-run "
+					+ "`godot --headless --import` and this test again.")
+					% [stem, got, want, int(frame[0]), int(frame[1]), rows.size(), columns, stem,
+					want])
 		# And no row may claim more frames than the image is wide, which is the same disagreement
 		# read along the other axis.
 		for entry in rows:
