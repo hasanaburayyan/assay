@@ -83,9 +83,14 @@ static func icon_for(stack: Dictionary) -> AtlasTexture:
 		return null
 	var atlas := AtlasTexture.new()
 	atlas.atlas = texture
-	# A ROW IS A ROW OF THE SHEET, so y is the row index times the frame height. Column 0: every row we
-	# use here is one frame wide for an item, and a part's second column is its planted variant, which
-	# is not what a pack row is showing.
+	# A ROW IS A ROW OF THE SHEET, so y is the row index times the frame height. Column 0 because
+	# column 0 is ALL THERE IS: every sheet this file reads is `"columns": 1` in the manifest and
+	# every row is one frame. This comment used to say a part's second column was its planted
+	# variant; that is not true of any sheet we ship and it sent a reader looking for a choice they
+	# do not have (ASSA-66). "Held" and "planted" are a property of a DESIGN in the sim -- `mount`,
+	# which `hud.gd` reads -- not two drawings of a part. A frame sprite is drawn with feet, and the
+	# feet are the whole of standing up, so the part art is already the planted one. A held machine
+	# that wanted to look different would be new art, not another column.
 	atlas.region = Rect2(0.0, float(row) * float(frame[1]), float(frame[0]), float(frame[1]))
 	return atlas
 
