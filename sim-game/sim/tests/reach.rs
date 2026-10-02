@@ -325,6 +325,17 @@ fn a_deposit_says_when_it_can_be_mined_but_never_smelted() {
 /// ruling). One world, one variable: the same species is made unsmeltable and
 /// then its hardness is moved across the gate, so the test cannot pass by
 /// having only one sentence implemented.
+///
+/// **THE PRECEDENCE ITSELF IS NOT WHAT THIS PROVES, AND I MEASURED THAT.**
+/// Reversing the two arms in `deposit_dead_end_note` reddens nothing, because
+/// they are mutually exclusive by construction: "unsmeltable" is only defined
+/// for rock you can mine, so a rock over the hardness gate never matches the
+/// second arm whatever order they are tried in. The ordering reads as the
+/// ruling and costs nothing, but it is belt-and-braces rather than
+/// load-bearing — and a player can therefore never be handed both sentences,
+/// which is the thing the ruling was actually protecting. What this test does
+/// prove is that each arm fires on its own case and neither leaks into the
+/// other's.
 #[test]
 fn hardness_wins_when_a_rock_is_both_too_hard_and_unsmeltable() {
     let mut world = host_world(9);
