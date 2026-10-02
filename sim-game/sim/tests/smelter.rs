@@ -207,14 +207,16 @@ fn smelter_refines_ore_using_hand_lit_fuel() {
                 building: id,
                 slot: Slot::Input,
                 item: ore(WALLS),
-                count: 3
+                count: 3,
+                left: 0,
             },
             Event::ItemsInserted {
                 player: me,
                 building: id,
                 slot: Slot::Fuel,
                 item: ore(FUEL),
-                count: 1
+                count: 1,
+                left: 0,
             },
         ]
     );
@@ -505,16 +507,15 @@ fn inserting_is_validated() {
             insert(id, Slot::Input, ore(WALLS), 0),
             RejectReason::ZeroCount,
         ),
-        (
-            insert(id, Slot::Input, ore(WALLS), 41),
-            RejectReason::SlotFull,
-        ),
+        // OFFERING MORE THAN FITS IS NO LONGER A REJECTION (ASSA-48): it was
+        // `(..., ore(WALLS), 41) => SlotFull` and `(..., ore(FUEL), 51) =>
+        // SlotFull` here, and the Game Director ruled that Insert takes what
+        // fits. Both cases moved to
+        // `inserting_takes_what_fits_and_says_what_stayed_behind`, which
+        // asserts the clamp AND that a slot with no room at all still refuses.
+        // The one SlotFull a clamp cannot absorb stays right here:
         (
             insert(id, Slot::Input, ore(INERT), 1),
-            RejectReason::SlotFull,
-        ),
-        (
-            insert(id, Slot::Fuel, ore(FUEL), 51),
             RejectReason::SlotFull,
         ),
         (
@@ -728,5 +729,135 @@ fn c_grade_ore_becomes_b_grade_material_through_the_chain() {
         world.player(me).unwrap().inventory.total(),
         1,
         "3 units in, 1 out"
+    );
+}
+
+/// **INSERT TAKES WHAT FITS AND SAYS WHAT STAYED BEHIND** (ASSA-48, Game
+/// Director's ruling off ASSA-37).
+///
+/// The measured failure: a player mined 222 ore on the pinned friend seed,
+/// pressed the client's one Smelt button, and was told *"that slot is full or
+/// holds a different item"* about an **empty** slot. One press is the whole
+/// interface, and a client that offered a smaller number would be deciding how
+/// much fuel a fire wants — a sheet reading it does not have. So the sim owns
+/// the clamp, because the sim owns the cap.
+///
+/// Three things, and the third is why this is not just a clamp: a partial
+/// success that does not say what it refused leaves the player holding 167 of
+/// something for no stated reason, which is the same silence the item was
+/// filed about.
+#[test]
+fn inserting_takes_what_fits_and_says_what_stayed_behind() {
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(WALLS), SMELTER_INPUT_CAP + 7);
+
+    // 1. MORE THAN FITS: the slot fills to the cap, the rest stays in hand,
+    //    and the event names both halves.
+    let events = run(
+        &mut world,
+        &[Input::player(
+            me,
+            insert(id, Slot::Input, ore(WALLS), SMELTER_INPUT_CAP + 7),
+        )],
+        1,
+    );
+    assert_eq!(
+        events,
+        vec![Event::ItemsInserted {
+            player: me,
+            building: id,
+            slot: Slot::Input,
+            item: ore(WALLS),
+            count: SMELTER_INPUT_CAP,
+            left: 7,
+        }],
+        "the offer is clamped to the room, and the leftover is reported"
+    );
+    assert_eq!(
+        smelter_of(&world, id).input.unwrap().count,
+        SMELTER_INPUT_CAP
+    );
+    assert_eq!(
+        count(&world, me, ore(WALLS)),
+        7,
+        "what would not fit is still the player's, not destroyed"
+    );
+
+    // 2. NO ROOM AT ALL still refuses. "Nothing happened" is true here, and
+    //    the player's move is to empty the slot rather than offer less — so a
+    //    clamp to zero would be a silent no-op, which is worse.
+    let events = run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Input, ore(WALLS), 7))],
+        1,
+    );
+    assert_eq!(
+        events,
+        vec![Event::CommandRejected {
+            player: me,
+            command: insert(id, Slot::Input, ore(WALLS), 7),
+            reason: RejectReason::SlotFull,
+        }]
+    );
+    assert_eq!(count(&world, me, ore(WALLS)), 7, "a refusal takes nothing");
+
+    // 3. THE CONTROL. An offer that fits exactly reports no leftover, so the
+    //    extra clause can never appear on a clean insert. Without this a
+    //    `left` that was always non-zero would pass the test above.
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(FUEL), 4);
+    let events = run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Fuel, ore(FUEL), 4))],
+        1,
+    );
+    assert_eq!(
+        events,
+        vec![Event::ItemsInserted {
+            player: me,
+            building: id,
+            slot: Slot::Fuel,
+            item: ore(FUEL),
+            count: 4,
+            left: 0,
+        }]
+    );
+    assert_eq!(count(&world, me, ore(FUEL)), 0);
+}
+
+/// The sentence a player actually reads, for both halves of the clamp. The
+/// event carrying `left` is useless if nothing says it out loud, and
+/// `event_line` is what both hosts render.
+#[test]
+fn the_insert_line_names_the_leftover_only_when_there_is_one() {
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(WALLS), SMELTER_INPUT_CAP + 7);
+    let events = run(
+        &mut world,
+        &[Input::player(
+            me,
+            insert(id, Slot::Input, ore(WALLS), SMELTER_INPUT_CAP + 7),
+        )],
+        1,
+    );
+    let line = sim::debug::event_line(&world, Some(me), &events[0]);
+    assert!(
+        line.contains(&format!("put {SMELTER_INPUT_CAP} ")),
+        "{line}"
+    );
+    assert!(line.contains("7 would not fit"), "{line}");
+
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(FUEL), 4);
+    let events = run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Fuel, ore(FUEL), 4))],
+        1,
+    );
+    let line = sim::debug::event_line(&world, Some(me), &events[0]);
+    assert!(line.contains("put 4 "), "{line}");
+    assert!(
+        !line.contains("would not fit"),
+        "a clean insert must not mention a leftover: {line}"
     );
 }

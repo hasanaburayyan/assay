@@ -201,7 +201,17 @@ pub enum Event {
         building: BuildingId,
         slot: Slot,
         item: Item,
+        /// How many actually went in, which may be fewer than were offered:
+        /// `Insert` takes what fits (ASSA-48).
         count: u32,
+        /// How many of the offered stack would not fit and stayed in the
+        /// player's hands. Zero when the whole offer went in.
+        ///
+        /// **THE LEFTOVER IS THE ACTIONABLE HALF.** "put 50 in" tells a player
+        /// nothing about why they still have 167; a clamp that does not say
+        /// what it refused is a silent partial success, which is the failure
+        /// mode this item was filed about wearing different clothes.
+        left: u32,
     },
     ItemsTaken {
         player: PlayerId,
