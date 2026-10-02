@@ -104,6 +104,7 @@ goto {} {}
 tick {}
 mine
 tick 60
+stop
 built
 make frame {refined}
 make head {refined}
@@ -253,6 +254,16 @@ quit
         );
     }
 
+    // NOTE THE `stop` IN THE SCRIPT, which is not cosmetic. A mining session
+    // runs until it is stopped, so without it the pick keeps swinging through
+    // every later `tick` — the 200 for the drill's parts, the 200 for the
+    // drill's own mining — and the window this test reasons about is really the
+    // whole rest of the script. At `HEAD_SPEED_PER_HARDNESS` 1 that happened to
+    // stay about four swings inside the pool; at 2 it ran out, and the last
+    // assertion in this test caught it. The pick now wears during the window it
+    // is meant to, and the margin is a property of the script rather than a
+    // coincidence of the rate.
+    //
     // The pick WORE while it was in hand: the readout's SWINGS USED is higher
     // the second time it is printed. This is the only part of decision 12 the
     // play-through can show without running 120 swings, and asserting the
