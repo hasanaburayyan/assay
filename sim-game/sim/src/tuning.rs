@@ -13,6 +13,15 @@ pub const SPECIES_PER_WORLD: usize = 6;
 /// (and a decision on the step factor) let hardness progress, so this is 1.
 pub const MIN_STARTER_RUNGS: usize = 1;
 
+/// Rosters are also rerolled until at least this many species are minable by
+/// hand (see `ladder::starter_roster_ok`).
+///
+/// **Two, because one makes assaying decoration.** With a single hand-minable
+/// species there is nothing to compare a property sheet against and no
+/// material decision anywhere in the demo. 9.2% of rosters that pass the rung
+/// check hold exactly one (2000 seeds, ASSA-35).
+pub const MIN_HAND_MINABLE_SPECIES: usize = 2;
+
 /// The world's **core quality**: the baseline every deposit's purity is
 /// rolled around (ADR 0002, from decision 13 of the 2026-10-01 demo-loop
 /// note). Raising it shifts the whole world toward higher purity without
@@ -168,8 +177,10 @@ pub const MAX_HOPPER_SLOTS: u32 = 4;
 /// and it changes how grade FEELS by exactly nothing: the within-species C:A
 /// rate ratio is `floor(0.6 × base) / base`, in which this factor cancels. It
 /// also does not close the tail — the first pick is built from the STARTER
-/// species, and at 2 that still loses to bare hands in 39% of worlds, because a
-/// linear factor cannot fix a starter of hardness 5. That is worldgen's to fix.
+/// species, and at 2 that still lost to bare hands in **40%** of worlds (2000
+/// seeds; 38.9% over 4000, so quote it as "about 40%" and not to a decimal),
+/// because a linear factor cannot fix a starter of hardness 5. **Worldgen
+/// fixed it, not this number** — `ladder::starter_roster_ok` and ASSA-35.
 ///
 /// **NOT 3, and the reason is a cap rather than taste.** `mine_by_hand` mines
 /// at most one unit per tick, so work above `WORK_PER_UNIT` 100 is discarded

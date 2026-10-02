@@ -410,36 +410,36 @@ fn a_better_grade_head_mines_more_of_the_same_species() {
 /// tries every base hardness through the real mining rule and asks what came
 /// out, which also keeps it honest if hand mining and machine mining ever stop
 /// sharing a gate.
+///
+/// **AND IT PROBES BOTH GATES** (Game Director, on ASSA-32). The gate is
+/// written twice, in `mine_by_hand` and `mine_by_machine`, against the same
+/// constant. A head is on a drill at least as often as in a hand, so a
+/// version of this that only swung by hand would stay green while somebody
+/// lifted reach for machines alone — exactly the change that flattens a
+/// *head's* curve. Max over both, and each loop must span its own gate.
 #[test]
 fn the_rate_curve_cannot_flatten_without_ci_saying_so() {
-    let mut hardest_minable = 0u32;
-    let mut refused_something = false;
-    for base in 1..=100u8 {
-        let (mut world, me) = world_with_player();
-        world.species_mut(ROCK).sheet.hardness = base;
-        deposit_under_player(&mut world, me, Grade::A);
-        send(&mut world, me, PlayerCommand::Mine);
-        run(&mut world, HAND_MINE_TICKS * 2);
-        if ore_held(&world, me, Grade::A) > 0 {
-            // Grade A scales hardness by 100%, so A is this species' best head
-            // and `effective` is the number a head would actually contribute.
-            hardest_minable =
-                hardest_minable.max(world.species(ROCK).effective(Property::Hardness, Grade::A));
-        } else {
-            refused_something = true;
-        }
-    }
-    // The loop must have found the boundary, not just run. A world where
-    // nothing was minable would pass the real assertion below vacuously.
+    let (by_hand, hand_refused) = hardest_minable_by_hand();
+    let (by_machine, machine_refused) = hardest_minable_by_drill();
+    // Each loop must have mined SOMETHING, or the assertions below pass
+    // vacuously about a world nobody can dig. Whether each loop was also
+    // refused something is reported rather than asserted: "refused nothing"
+    // means the gate has gone, and that is what the next assertion is for —
+    // it would mask the diagnosis to fail here first.
     assert!(
-        hardest_minable > 0 && refused_something,
-        "this must span the gate: hardest minable {hardest_minable}, and \
-         something must have been refused"
+        by_hand > 0 && by_machine > 0,
+        "neither loop may come up empty: hands reached {by_hand}, a drill \
+         reached {by_machine}"
     );
+    let hardest_minable = by_hand.max(by_machine);
     assert_eq!(
         hardest_minable, HAND_MINE_MAX_HARDNESS,
         "the gate the sim applies is no longer the constant this test's \
-         message talks about; read `mine_by_hand` and `mine_by_machine` again"
+         message talks about; read `mine_by_hand` and `mine_by_machine` \
+         again. Hands reached {by_hand} and a drill reached {by_machine} \
+         effective hardness (refused something: hands {hand_refused}, drill \
+         {machine_refused}) — if those two differ, reach was lifted for one \
+         of them only."
     );
     assert!(
         hardest_minable * HEAD_SPEED_PER_HARDNESS <= WORK_PER_UNIT,
@@ -451,6 +451,65 @@ fn the_rate_curve_cannot_flatten_without_ci_saying_so() {
          exactly {HAND_MINE_TICKS} ticks per unit.",
         hardest_minable * HEAD_SPEED_PER_HARDNESS
     );
+}
+
+/// The hardest effective head the bare hands can reach, and whether anything
+/// was refused. Grade A scales hardness by 100%, so A is a species' best head
+/// and `effective` is the number that head would really contribute.
+fn hardest_minable_by_hand() -> (u32, bool) {
+    let mut hardest = 0u32;
+    let mut refused = false;
+    for base in 1..=100u8 {
+        let (mut world, me) = world_with_player();
+        world.species_mut(ROCK).sheet.hardness = base;
+        deposit_under_player(&mut world, me, Grade::A);
+        send(&mut world, me, PlayerCommand::Mine);
+        run(&mut world, HAND_MINE_TICKS * 2);
+        if ore_held(&world, me, Grade::A) > 0 {
+            hardest = hardest.max(world.species(ROCK).effective(Property::Hardness, Grade::A));
+        } else {
+            refused = true;
+        }
+    }
+    (hardest, refused)
+}
+
+/// The same sweep through `mine_by_machine`: a planted drill with a grade-A
+/// head of the species it is standing on.
+///
+/// `WORK_PER_UNIT` ticks, because the softest species makes the slowest drill
+/// (effective hardness 1 is 2 work a tick), and that is still one whole unit
+/// inside the window — so "mined nothing" always means refused and never
+/// means "not finished yet".
+fn hardest_minable_by_drill() -> (u32, bool) {
+    let mut hardest = 0u32;
+    let mut refused = false;
+    for base in 1..=100u8 {
+        let (mut world, me) = world_with_player();
+        world.species_mut(ROCK).sheet.hardness = base;
+        let (_, center) = deposit_under_player(&mut world, me, Grade::A);
+        let index = assemble(&mut world, me, &drill(Grade::A, 4));
+        let events = send(
+            &mut world,
+            me,
+            PlayerCommand::PlaceAssembly {
+                assembly: index,
+                pos: center,
+            },
+        );
+        assert_eq!(rejection(&events), None, "placing the drill was rejected");
+        run(&mut world, WORK_PER_UNIT);
+        let mined = match &world.buildings[0].kind {
+            sim::BuildingKind::Machine(m) => m.held.map_or(0, |s| s.count),
+            other => panic!("expected a machine, got {other:?}"),
+        };
+        if mined > 0 {
+            hardest = hardest.max(world.species(ROCK).effective(Property::Hardness, Grade::A));
+        } else {
+            refused = true;
+        }
+    }
+    (hardest, refused)
 }
 
 /// **THE FACTOR CANNOT CHANGE HOW GRADE FEELS**, and that is worth a test
