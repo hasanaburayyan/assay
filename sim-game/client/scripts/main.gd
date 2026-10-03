@@ -311,14 +311,15 @@ func _build_ui() -> void:
 	# line already is and already has a job (refusals).
 	var make_heading := Label.new()
 	make_heading.text = "make"
-	make_heading.modulate = Color(0.60, 0.64, 0.70)
+	make_heading.theme_type_variation = &"Heading"
 	column.add_child(make_heading)
 	_crafting = _note("")
 	column.add_child(_crafting)
 	_assembling.custom_minimum_size = Vector2(PANEL, 0.0)
 	column.add_child(_assembling)
 	_make_toggle.custom_minimum_size = Vector2(PANEL, 0.0)
-	_make_toggle.add_theme_font_size_override("font_size", 12)
+	# NO FONT SIZE HERE. It is a Button, and how big a Button's label is now comes from the one
+	# theme (ASSA-116) rather than from the eight call sites that used to decide it by hand.
 	_make_toggle.pressed.connect(func(): _show_make(not _make_shown))
 	column.add_child(_make_toggle)
 	_make.custom_minimum_size = Vector2(PANEL, 0.0)
@@ -327,7 +328,7 @@ func _build_ui() -> void:
 			["cursor", _cursor], ["last tick", _log]]:
 		var heading := Label.new()
 		heading.text = String(part[0])
-		heading.modulate = Color(0.60, 0.64, 0.70)
+		heading.theme_type_variation = &"Heading"
 		column.add_child(heading)
 		# HELD, BECAUSE A HIDDEN SECTION WITH A VISIBLE HEADING IS A LABELLED EMPTY GAP. The headings
 		# are otherwise anonymous on purpose; this is the only one anything else has to reach.
