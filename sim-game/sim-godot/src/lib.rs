@@ -196,6 +196,47 @@ impl AssaySim {
             .collect()
     }
 
+    /// **EVERYTHING THAT HAS STOPPED AND NEEDS A PERSON**, one worded line per
+    /// building, in the sim's own placement order (ASSA-94).
+    ///
+    /// `sim::debug::halt_lines` verbatim — the same sentences `halted` prints
+    /// in `sim-cli`, which is the point: the window and the terminal report a
+    /// stall in one vocabulary or they are two vocabularies (ASSA-43/52).
+    ///
+    /// **LINES AND NOT ROWS, AND THE SYSTEMS ENGINEER'S REASON IS THE RIGHT
+    /// ONE.** I had written this as an array of building dictionaries — id,
+    /// kind, pos, state, halted — so that a map marker could have the tile. He
+    /// asked for lines instead: the moment a host is handed an address and a
+    /// condition separately, something in `hud.gd` starts composing a sentence
+    /// out of them, which is exactly how `design_lines` grew the defect ASSA-90
+    /// had to fix. A future panel that wants to put the camera on a halted
+    /// building can ask for the tile then, as a field somebody actually reads.
+    ///
+    /// The rows version was also unguardable from here. A Variant field is
+    /// invisible to Rust — inverting `is_frame` in `part_kinds()` left all 40
+    /// tests in this crate green (ASSA-105) — so `pos` and `halted` would have
+    /// shipped unchecked until a `.gd` test read them, and a host that rendered
+    /// only `state` would never have read them at all.
+    ///
+    /// **THE COUNT IS `size()` AND THERE IS NO SECOND COPY OF IT.** The Game
+    /// Director ruled that the total never truncates while the reasons are
+    /// bounded by the column's height; a `halted_count()` beside this would be
+    /// the same quantity twice, free to disagree the moment one was filtered.
+    ///
+    /// **EMPTY IS THE NORMAL STATE OF A WORKING FACTORY.** Nothing here says
+    /// "0 stopped" — that is the cry-wolf failure one step removed — and a
+    /// smelter's `idle: nothing to refine` is absent by the same rule, because
+    /// it follows every finished batch and asks nobody for anything.
+    ///
+    /// **ORDER IS THE SIM'S AND MUST NOT BE SORTED.** Which stopped machine
+    /// matters most depends on what the player is doing next, which no host
+    /// knows; placement order is stable, so a line does not reshuffle itself as
+    /// states change underneath it.
+    #[func]
+    pub fn halt_lines(&self) -> PackedStringArray {
+        packed(&self.halt_line_texts())
+    }
+
     /// WHAT THIS PLAYER IS CRAFTING RIGHT NOW, in the sim's own sentence, or ""
     /// when nothing is being made (ASSA-49).
     ///
@@ -1314,6 +1355,20 @@ impl AssaySim {
                 name: self.world.item_name(stack.item),
             })
             .collect()
+    }
+
+    /// Engine-free half of [`AssaySim::halt_lines`], so the rule it carries can
+    /// be tested without an engine: a `PackedStringArray` cannot be built in a
+    /// unit test at all (godot-ffi panics with "Godot engine not available"),
+    /// which is why every readout in this crate is split this way.
+    ///
+    /// What is worth testing here is not the conversion — it is that the lines
+    /// come from `World::halted` and so inherit its judgement about which
+    /// standing states need a person. The Variant side is guarded from
+    /// GDScript, in `tests/test_sim_binding.gd`, because that is the only side
+    /// that can see it (ASSA-105).
+    pub fn halt_line_texts(&self) -> Vec<String> {
+        sim::debug::halt_lines(&self.world)
     }
 
     /// What is on a tile. Out of bounds is reported, not hidden: a cursor is
@@ -2967,5 +3022,88 @@ mod tests {
                 "{name} as the first part disagrees with is_frame()"
             );
         }
+    }
+
+    /// **THE WINDOW'S HALTED SURFACE IS THE SIM'S `halted()`, NOT A SECOND
+    /// OPINION** (ASSA-94): same count, same order, same sentences.
+    ///
+    /// The stall is driven through `step` -- a smelter placed, ore in, nothing
+    /// to burn -- rather than built by hand out of a `BuildingState`. The thing
+    /// under test is whether this binding ASKS THE SIM, so a stall I assembled
+    /// myself would be the fixture agreeing with me rather than with the rules.
+    ///
+    /// **THE EMPTY ASSERTION COMES FIRST AND IS NOT A WARM-UP.** A smelter with
+    /// nothing in it reads `idle: nothing to refine`, which follows every
+    /// successful batch and asks nobody for anything; if that reached this
+    /// surface the panel would cry wolf after every smelt, which is the Game
+    /// Director's standing constraint on this item.
+    #[test]
+    fn the_halt_lines_are_the_sims_own_in_its_own_order() {
+        let (mut sim, me) = with_a_player("limpet");
+        let species = sim.world().species[0].id;
+        let smelter = Item::new(sim::ItemKind::Smelter, species, sim::Grade::B);
+        let ore = Item::new(sim::ItemKind::Ore, species, sim::Grade::B);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.inventory.add(smelter, 1);
+            p.inventory.add(ore, 4);
+        }
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 1, at.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place {
+                item: smelter,
+                pos: spot,
+            },
+        )]);
+        let id = sim
+            .world()
+            .building_at(spot)
+            .expect("the smelter was placed")
+            .id;
+        assert!(
+            sim.halt_line_texts().is_empty(),
+            "an empty smelter is idle, not halted, or this surface cries wolf \
+             after every finished batch: {:?}",
+            sim.halt_line_texts()
+        );
+
+        // Ore in, nothing that will burn: the sim's own stall, on its own edge.
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Insert {
+                building: id,
+                slot: sim::building::Slot::Input,
+                item: ore,
+                count: 1,
+            },
+        )]);
+
+        let lines = sim.halt_line_texts();
+        let expected = sim::debug::halt_lines(sim.world());
+        assert!(
+            !expected.is_empty(),
+            "the fixture stalled nothing, so this test proves nothing"
+        );
+        assert_eq!(
+            lines.len(),
+            expected.len(),
+            "the binding and the sim disagree about how many have stopped"
+        );
+        for (i, want) in expected.iter().enumerate() {
+            assert_eq!(
+                lines[i], *want,
+                "line {i} is not the sim's own sentence, in the sim's own order"
+            );
+        }
+        // AND THE SENTENCE IS THE TERMINAL'S. `halted` in sim-cli prints a
+        // block built from these same lines, so a stall worded one way on
+        // screen and another in text would show up right here.
+        assert!(
+            sim::debug::halted_table(sim.world()).contains(&expected[0]),
+            "the window's line is absent from the terminal's table: {}",
+            sim::debug::halted_table(sim.world())
+        );
     }
 }

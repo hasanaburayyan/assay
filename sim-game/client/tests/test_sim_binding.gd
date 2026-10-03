@@ -39,6 +39,10 @@ const REQUIRED_METHODS := [
 	# fails open in the worst direction: the window would go back to confirming a press the sim
 	# refuses, in the positive colour, with the refusal arriving at `Assemble`.
 	"part_press_refusal",
+	# WHETHER ANYTHING THE FACTORY OWNS HAS STOPPED (ASSA-94). A rename here fails silently in the
+	# worst way this surface can: the panel that exists to say "something has stopped" would say
+	# nothing, which is indistinguishable from a factory that is working.
+	"halt_lines",
 ]
 
 
@@ -252,4 +256,34 @@ func test_no_gdscript_file_pins_a_hash() -> bool:
 	if not offenders.is_empty():
 		return _fail(("a state hash looks pinned in GDScript: %s. Read it from the sim at runtime "
 				+ "instead -- the golden hash changes whenever the rules do.") % [offenders])
+	return true
+
+
+## NOTHING HAS STOPPED IN A WORLD WITH NOTHING IN IT (ASSA-94), asked from the side that can see it.
+##
+## The Rust half proves the lines come from `World::halted` and that an idle smelter is absent. What
+## it cannot prove is any of this: that `halt_lines` survived as a `#[func]` under that name, that it
+## crosses as a `PackedStringArray` rather than an Array of something, and that a host which draws
+## `size()` lines draws none on a healthy factory. A `PackedStringArray` cannot even be constructed
+## in a Rust unit test -- godot-ffi panics with "Godot engine not available" -- so this side is the
+## only side.
+##
+## AND THE EMPTY CASE IS THE ONE WORTH PINNING. The Game Director ruled that a count of zero is never
+## drawn, because a surface announcing health cries wolf by the same mechanism `idle: nothing to
+## refine` would. The client renders `size()` lines, so "draws nothing" and "the array is empty" are
+## the same claim, and this is where it is checked.
+func test_a_world_with_nothing_built_reports_nothing_stopped() -> bool:
+	if not ClassDB.class_exists("AssaySim"):
+		return _fail("no AssaySim class; see the failure above")
+	var sim := AssaySimHost.new()
+	if not sim.start(AssaySimHost.fresh_welcome_json("777042", "marlow")):
+		return _fail("could not make a world to ask: %s" % sim.fail_reason)
+	var stopped: Variant = sim.halt_lines()
+	if typeof(stopped) != TYPE_PACKED_STRING_ARRAY:
+		return _fail(("halt_lines crossed as %s, not a PackedStringArray; a host rendering it "
+				+ "verbatim would draw something else") % type_string(typeof(stopped)))
+	if not (stopped as PackedStringArray).is_empty():
+		return _fail(("a world with nothing built reports %s stopped: %s. A surface that speaks "
+				+ "when the factory is healthy is the cry-wolf failure one step removed.")
+				% [(stopped as PackedStringArray).size(), stopped])
 	return true
