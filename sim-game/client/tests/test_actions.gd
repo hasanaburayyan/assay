@@ -213,17 +213,24 @@ func test_the_recipe_table_says_which_recipes_are_a_players_to_make() -> bool:
 
 ## WHICH VERBS A STACK OFFERS IS READ OUT OF THOSE TWO CATALOGUES, never written down here.
 ##
-## The rule being tested: a Craft button appears because some HAND recipe eats this kind; an Insert
-## pair appears because some recipe eats it inside a BUILDING; Place appears because the item has a
-## footprint; Frame/Mount appears because the kind is in the part catalogue. Nothing about whether it
-## is affordable, in reach or hard enough -- `sim::step` owns all of that.
+## The rule being tested: an Insert pair appears because some recipe eats this kind inside a
+## BUILDING; Place appears because the item has a footprint; Frame/Mount appears because the kind is
+## in the part catalogue. Nothing about whether it is affordable, in reach or hard enough --
+## `sim::step` owns all of that.
+##
+## **AND NO `craft` OR `make`, WHICH IS THE ASSERTION THAT FLIPPED (ASSA-86, Maren's ruling.)** A
+## pack row keeps the verbs that MOVE an item; everything that MAKES something is in the crafting
+## menu, because a make-verb belongs to a recipe and a stack cannot say which species a shared
+## label would make -- the board's pack drew two buttons both labelled exactly `Craft smelter`
+## building smelters with different walls. The hand half of the recipe table is still READ here (it
+## is how the Insert pair is derived at all); it just stops producing a button.
 func test_a_stacks_verbs_come_from_the_sims_recipes_and_catalogue() -> bool:
 	var recipes := AssaySimHost.recipes()
 	var part_kinds := AssaySimHost.part_kinds()
 	var ore := AssayHud.stack_verbs(_stack("ore", 2, "C", 9), recipes, part_kinds,
 			Vector2i.ZERO, false)
-	if not _has(ore, "craft"):
-		return _fail("ore offers no Craft, though a hand recipe eats it: %s" % [ore])
+	if _has(ore, "craft"):
+		return _fail("ore offers a Craft; making something belongs to the menu: %s" % [ore])
 	if not _has(ore, "insert"):
 		return _fail("ore offers no Insert, though a smelter refines it: %s" % [ore])
 	if _has(ore, "place"):
@@ -262,6 +269,21 @@ func test_a_stacks_verbs_come_from_the_sims_recipes_and_catalogue() -> bool:
 	for entry in gear:
 		if String((entry as Dictionary).get("verb", "")) in ["craft", "place", "build"]:
 			return _fail("a gear is not craftable, placeable or a part: %s" % [gear])
+
+	# NO KIND THE SIM HAS OFFERS A MAKE-VERB (ASSA-86). Every kind the catalogues name, not the four
+	# this file happened to think of: a refined stack used to offer FOUR `Make` buttons plus a
+	# `Craft gear`, which was the worst row in the game and the one a player lives in.
+	var kinds := ["ore", "refined", "gear", "smelter"]
+	for entry in part_kinds:
+		kinds.append(String((entry as Dictionary).get("name", "?")))
+	for kind in kinds:
+		var verbs := AssayHud.stack_verbs(_stack(String(kind), 2, "B", 9), recipes, part_kinds,
+				Vector2i.ZERO, false)
+		for entry in verbs:
+			var verb := String((entry as Dictionary).get("verb", ""))
+			if verb == "craft" or verb == "make":
+				return _fail("a %s row offers `%s`; making something is the menu's (ASSA-88): %s"
+						% [kind, verb, verbs])
 	return true
 
 

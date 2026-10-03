@@ -245,6 +245,11 @@ static func nothing_carried_line() -> String:
 
 ## EVERY VERB A STACK AFFORDS, as descriptors for the row's buttons: `{label, verb, ...}`.
 ##
+## **WHAT YOU HAVE AND WHERE IT CAN GO -- NEVER WHAT IT MAKES** (ASSA-86, Maren's ruling). A row
+## keeps the verbs that MOVE an item: Fuel, Smelt, Place, Frame/Mount. Two or three, never seven.
+## Everything that MAKES something is in the crafting menu (ASSA-88), because a make-verb belongs to
+## a RECIPE and a stack cannot say which species a shared label would make.
+##
 ## WHAT A PLAYER CAN DO WITH A THING IS THE SIM'S LIST, NOT MINE. `recipes` and `part_kinds` are
 ## `AssaySim`'s own catalogues, so a Craft button exists because some hand recipe eats this kind of
 ## item and for no other reason. The alternative was four kind names written into this client, which
@@ -267,15 +272,19 @@ static func stack_verbs(stack: Dictionary, recipes: Array, part_kinds: Array,
 		var recipe: Dictionary = entry
 		if String(recipe.get("input", "")) != kind:
 			continue
+		# A HAND RECIPE IS NOT THIS ROW'S BUSINESS ANY MORE (ASSA-86, Maren's ruling). `Craft <name>`
+		# used to be appended here, which is how an ore row grew four verbs and a refined row seven
+		# inside a 320px column -- and worse, how a pack holding two species drew TWO buttons both
+		# labelled exactly `Craft smelter`, building smelters with different walls. A make-verb
+		# belongs to a RECIPE, so putting it on a stack duplicates it per species and the label
+		# cannot say which. It lives in the crafting menu now (ASSA-88), where a row names what it
+		# makes by species and grade.
+		#
+		# THE LOOP STAYS, because the NON-hand half of it is how this file knows a smelter eats this
+		# kind of item at all. That is a sheet reading and only the sim has it.
 		if bool(recipe.get("hand", false)):
-			# `dead_end` RIDES ALONG UNREAD. It is the sim's own clause -- empty unless nothing in
-			# the game consumes this recipe's output -- and this file neither writes it nor asks
-			# what it is about. Carrying it is how a BUTTON can warn what only a CLI table warned
-			# before (ASSA-84); deciding when to warn would be a second describer.
-			verbs.append({"label": "Craft %s" % String(recipe.get("name", "?")), "verb": "craft",
-					"recipe": recipe.get("tag"),
-					"dead_end": String(recipe.get("dead_end", ""))})
-		elif not _has_verb(verbs, "insert"):
+			continue
+		if not _has_verb(verbs, "insert"):
 			# A recipe that is NOT hand-work happens inside a building, so this kind is something a
 			# smelter eats -- both slots, because which one a species is good for (hot enough fuel, or
 			# ore that melts) is a sheet reading and only the sim has it.
@@ -292,9 +301,11 @@ static func stack_verbs(stack: Dictionary, recipes: Array, part_kinds: Array,
 		# is made of. `material` is the sim's answer (`step.rs`: "a part is made of refined material
 		# and nothing else"), so a row only grows these buttons because the sim would accept them --
 		# and a FIFTH part kind appears here with no change to this client.
-		if String(part.get("material", "")) == kind:
-			verbs.append({"label": "Make %s" % String(part.get("name", "?")), "verb": "make",
-					"kind": part.get("tag"), "part": String(part.get("name", "?"))})
+		# `Make <kind>` USED TO BE HERE AND IS NOW IN THE CRAFTING MENU (ASSA-86/88, Maren's
+		# ruling): the pack is what you HAVE and where it can GO; everything that MAKES something
+		# left it. One `Make` per part kind on every refined row is four of the seven verbs that
+		# made the worst row in the game the one a player lives in.
+		#
 		# And the row for a part itself offers the way into an `Assemble`. The first part added is
 		# the frame, so the word changes rather than the button.
 		if String(part.get("name", "")) == kind:
