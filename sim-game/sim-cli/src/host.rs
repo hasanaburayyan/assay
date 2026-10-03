@@ -79,6 +79,7 @@ Look
   recipes                     what can be made, from what
   parts                       the part catalogue: cost, mount, contributions
   buildings                   every placed building and what it's doing
+  halted                      only the buildings that have stopped, and why
   at <x> <y>                  what's on a tile
   events [n]                  the last n events (default 20)
   status                      tick, clock or connection, hash, save file
@@ -494,6 +495,11 @@ impl Host {
             "recipes" => out!("{}", debug::recipe_table()),
             "species" | "minerals" => out!("{}", debug::species_table(&s.world)),
             "buildings" => out!("{}", debug::building_table(&s.world)),
+            // The headless half of ASSA-94: `buildings` answers "what have I
+            // got", this answers "what do I have to go and fix", which is a
+            // different question once there are more than three of them and
+            // the stall events have scrolled away.
+            "halted" | "stopped" => out!("{}", debug::halted_table(&s.world)),
             "at" => at(s, args)?,
             "where" => where_am_i(s)?,
             "inv" | "inventory" => {

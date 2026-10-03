@@ -1,7 +1,9 @@
 //! Advancing the world one tick.
 
 use crate::assembly::{Assembly, Built, Mount, Part, PartKind, spec};
-use crate::building::{Building, BuildingId, BuildingKind, Machine, Slot, footprint_tiles};
+use crate::building::{
+    Building, BuildingId, BuildingKind, Machine, MachineState, Slot, footprint_tiles,
+};
 use crate::command::{Event, Input, PlayerCommand, RejectReason, StopReason, SystemCommand};
 use crate::inventory::Inventory;
 use crate::item::{Item, ItemKind, ItemStack};
@@ -894,28 +896,23 @@ fn mine_by_machine(world: &mut World, events: &mut Vec<Event>) {
             continue;
         };
         let building = world.buildings[i].id;
-        let Some(d) = world.deposit_at(world.buildings[i].pos) else {
+        // **THE ONE QUESTION** (ASSA-94). Four `continue`s used to live here —
+        // no deposit, mined out, too hard, no room — each a copy of a test
+        // `debug::machine_status` also made in order to write its prose. They
+        // are now one answer in `World::machine_state`, and the arm that works
+        // carries what the work needs, so nothing below is looked up twice.
+        let MachineState::Working {
+            deposit,
+            species,
+            grade,
+        } = world.machine_state(&world.buildings[i], machine)
+        else {
             continue;
         };
-        if d.is_depleted() {
-            continue;
-        }
-        let (deposit, grade) = (d.id, d.grade());
-        let item = Item::new(ItemKind::Ore, d.species, grade);
+        let item = Item::new(ItemKind::Ore, species, grade);
         let amount = YIELD_BY_GRADE[grade as usize];
-        if !crate::ladder::hand_minable(world.species(item.species)) {
-            continue;
-        }
-
         let stats = machine.assembly.stats(&world.species);
         let held = machine.held.map_or(0, |s| s.count);
-
-        // DECISION 9: it stops AT the cap, so it never starts a unit it has
-        // no room for. Nothing is mined and thrown away, and `progress` keeps
-        // whatever it had — emptying the buffer resumes mid-unit.
-        if held + amount > stats.capacity {
-            continue;
-        }
 
         let progress = machine.progress + stats.speed;
         let Some(left) = progress.checked_sub(WORK_PER_UNIT) else {
@@ -946,7 +943,15 @@ fn mine_by_machine(world: &mut World, events: &mut Vec<Event>) {
         });
         // The stall is announced on the tick it fills, not on every tick it
         // sits full.
-        if now + amount > stats.capacity {
+        //
+        // **ASKED OF THE BUFFER, NOT OF `machine_state`, AND DELIBERATELY SO.**
+        // `announce_new_stalls` can re-read the smelter's whole state because
+        // every smelter stall outlives the tick. This one cannot: if the last
+        // unit also mined the deposit out, `machine_state` now answers
+        // `Idle(DepositMinedOut)` — the deposit arm comes first — and a stall
+        // that fires today would go silent. So the edge asks decision 9's own
+        // predicate, which is still the single copy `machine_state` uses.
+        if !m.has_room_for(amount, stats.capacity) {
             events.push(Event::MachineStalled {
                 building,
                 held: now,
