@@ -106,11 +106,9 @@ def ink_bbox(frame):
     return bbox
 
 
-def font(size):
-    try:
-        return ImageFont.load_default(size=size)
-    except TypeError:
-        return ImageFont.load_default()
+# The sheets' one font, shared (ASSA-114). It was three copies of `load_default`,
+# which has no glyph for the U+00D7 in every stack line, so all three drew a tofu box.
+from review_font import font  # noqa: E402
 
 
 ROWS = LAYOUT["rows"]

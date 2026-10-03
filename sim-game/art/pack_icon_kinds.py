@@ -38,6 +38,12 @@ WHAT THIS IS NOT
   acceptable is the Game Director's call and not a number I may pick on my own. Same stance as
   `pack_icon_sheet.py`, for the same reason.
 
+  THAT GATE NOW EXISTS ELSEWHERE and this file is still not it (ASSA-111). Maren ruled the
+  spread acceptable, so `art/check_icon_kinds.py` guards the ruling in CI -- the same two
+  measures out of the same `pack_icon_draw`, on the player-facing property only. This file
+  stays a probe: it prints the whole table and the pictures, which is what a judgement is made
+  from, and the check prints a verdict, which is what a regression is caught by.
+
 WHAT IS MEASURED, and the point is that the two measures DO NOT SHARE A QUANTITY
   Both run on the composited 32x48 plate box -- the icon as the engine drew it, on the slot
   plate the engine painted, at the scale the engine chose -- for all 21 pairs of the seven
@@ -232,11 +238,9 @@ Z = 6
 PAD = 6
 
 
-def font(size):
-    try:
-        return ImageFont.load_default(size=size)
-    except TypeError:
-        return ImageFont.load_default()
+# The sheets' one font, shared (ASSA-114). It was three copies of `load_default`,
+# which has no glyph for the U+00D7 in every stack line, so all three drew a tofu box.
+from review_font import font  # noqa: E402
 
 
 f11, f13, f15 = font(11), font(13), font(15)
@@ -304,9 +308,15 @@ lines = [
     "frame is 2 tiles wide, which KEEP_ASPECT fits by width into 32x25.5 of a 32x48 slot.",
     "Ink filling that slot:  parts %s   vs items %s." % (part_fill, item_fill),
     "That is also why three part/part pairs score IoU 0.000: head is simply on the other side",
-    "of the join. Trimming or re-centring the part frames would delete that separation.",
+    "of the join. CORRECTED (ASSA-104): I claimed re-centring the part frames would DELETE that",
+    "separation. It does not. A uniform shift moves every part by the same amount and the",
+    "registration is RELATIVE, so the 3px window move shipped in #141 left the three head pairs",
+    "at exactly 0.000 and moved the rest TOWARD more separation. What would spend it is moving",
+    "the parts relative to EACH OTHER, which is the items.py job, not a trim.",
     "",
-    "NOT A GATE and no threshold proposed: dE %.1f is quoted from species_probe.DISTINCT."
+    "THERE IS NOW A GATE, and this file is still not it: art/check_icon_kinds.py (ASSA-111) runs",
+    "in CI on the player-facing property -- no pair close on BOTH measures. This sheet still",
+    "proposes no threshold of its own; dE %.1f is quoted from species_probe.DISTINCT."
     % DISTINCT,
 ]
 for ln in lines:
