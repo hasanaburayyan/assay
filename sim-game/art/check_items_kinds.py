@@ -20,10 +20,11 @@ the size a pack slot draws it:
      learning the exception BY NAME. It may never be the floor moving.
 
   B. THE SEPARATION, which is ASSA-111's property on a second surface and therefore
-     ASSA-111's JUDGE: `verdict` and `close_on_both` are imported from
-     `check_icon_kinds`, not reimplemented. A pair close on BOTH silhouette and
-     interior colour is told apart by neither. Two copies of that judge would rot
-     apart, and the pack is going to draw rows from both sheets.
+     ASSA-111's JUDGE: `verdict` is imported from `check_icon_kinds`, not
+     reimplemented -- so Maren deleting the silhouette half of that property on
+     2026-10-03 moved this check too, in one edit, which is the whole point of
+     importing a judge. It now asks: no pair of kinds is close on COLOUR, interior
+     dE76 over the overlap against DISTINCT. Two copies would have rotted apart.
 
 WHY A SECOND CHECK AT ALL, rather than teaching `check_icon_kinds.py` about this.
 That check asks the ENGINE what the client drew and measures exactly that -- which is
@@ -50,9 +51,9 @@ ever been an opinion:
   Neither holding is a pass: both exit 2.
 
 EXIT CODES
-  0 PASS       -- every kind clears the floor and no pair is close on both measures.
+  0 PASS       -- every kind clears the floor and no pair is close on colour.
   1 FAIL       -- some kind is smaller than the smallest item, or some pair is close
-                  on both.
+                  on colour.
   2 NO VERDICT -- could not ask the engine, a control did not hold, or there was
                   nothing to measure. Never a pass.
 """
@@ -241,18 +242,19 @@ def main(argv):
               "moving the floor, which belongs to another row.")
     if failures:
         bad = 1
-        print("\n%d PAIR(S) CLOSE ON BOTH MEASURES -- told apart by neither shape nor colour:"
+        print("\n%d PAIR(S) CLOSE ON COLOUR -- a player tells these apart by shape alone:"
               % len(failures))
         for iou, de, n, x, y in failures:
-            print("  %s / %s: IoU %.3f AND interior dE %.2f < %.2f over %d px"
-                  % (x, y, iou, de, DISTINCT, n))
+            print("  %s / %s: interior dE %.2f < %.2f over %d px (silhouette IoU %.3f, shown"
+                  " because it says how many pixels that dE came from)"
+                  % (x, y, de, DISTINCT, n, iou))
         print("A loose drawing has no join to borrow separation from, so each kind has to be\n"
               "its own object (Maren, ASSA-112). Re-earn it in the art.")
     if bad:
         print("\nVERDICT: FAIL (exit 1).")
         return 1
     print("\nVERDICT: PASS (exit 0). Every row fills its slot at least as well as the\n"
-          "smallest item does, and no pair of kinds is close on both measures.")
+          "smallest item does, and no pair of kinds is close on colour.")
     if pic:
         from pack_icon_draw import PillowBackend
         picture(icons_of(entries, SPRITES, backend=PillowBackend), pct, box, pic)
