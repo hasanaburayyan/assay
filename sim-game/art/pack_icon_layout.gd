@@ -6,15 +6,36 @@ extends SceneTree
 ## 777042), not stacks I typed.
 var _screen: Node = null
 var _frames := 0
+var _stacks: Array = []
 
 func _initialize() -> void:
 	_screen = load("res://scenes/main.tscn").instantiate()
 	root.add_child(_screen)
 
+## WHICH SIM VERB A BUTTON CARRIES, asked of the same source `main.gd` asks (ASSA-99).
+##
+## Maren's ASSA-86 ruling splits a row's buttons into the ones that MOVE an item (insert, place,
+## build -- Fuel, Smelt, Place, Frame/Mount) and the ones that MAKE something (craft, make), which
+## leave for the crafting menu. Drawing that split means knowing which is which, and the one way NOT
+## to know it is to parse my own labels: "Craft gear" starting with the word Craft is a fact about
+## English, not about the command the button submits.
+##
+## `AssayHud.stack_verbs` returns descriptors carrying a `verb` -- the sim-facing name -- in the same
+## order the buttons are built, out of `AssaySimHost.recipes()` and `part_kinds()`. So this asks the
+## recipe table, exactly as the screen did when it made the button.
+func _verb_kinds(stack: Dictionary) -> PackedStringArray:
+	var footprint := AssaySimHost.footprint_of_item(String(stack.get("kind", "")),
+			int(stack.get("species", -1)), String(stack.get("grade", "C")))
+	var out := PackedStringArray()
+	for entry in AssayHud.stack_verbs(stack, AssaySimHost.recipes(), AssaySimHost.part_kinds(),
+			footprint, false):
+		out.append(String((entry as Dictionary).get("verb", "?")))
+	return out
+
 func _process(_d: float) -> bool:
 	_frames += 1
 	if _frames == 2:
-		_screen._rebuild_pack([
+		_stacks = [
 			{"kind": "refined", "species": 4, "grade": "B", "count": 6,
 				"name": "Minyte refined (B)"},
 			{"kind": "head", "species": 4, "grade": "B", "count": 2, "name": "Minyte head (B)"},
@@ -24,7 +45,8 @@ func _process(_d: float) -> bool:
 			{"kind": "ore", "species": 4, "grade": "B", "count": 22, "name": "Minyte ore (B)"},
 			{"kind": "smelter", "species": 4, "grade": "B", "count": 1,
 				"name": "Minyte smelter (B)"},
-		])
+		]
+		_screen._rebuild_pack(_stacks)
 		return false
 	if _frames < 6:
 		return false
@@ -42,14 +64,22 @@ func _process(_d: float) -> bool:
 		var art: TextureRect = _icon_in(row)
 		var label: Label = row.find_child("StackLine", true, false) as Label
 		var verbs := PackedStringArray()
+		var boxes: Array = []
 		for b in _buttons_in(row):
 			verbs.append(b.text)
+			# WHERE EACH BUTTON ACTUALLY LANDED, so a sheet can draw the row rather than guess at it
+			# (ASSA-99). Relative to the row, because the row is what gets pasted.
+			boxes.append([b.global_position.x - row.global_position.x,
+					b.global_position.y - row.global_position.y, b.size.x, b.size.y])
 		var entry: Dictionary = {
 			"line": "" if label == null else label.text,
 			"font_size": 0 if label == null else label.get_theme_font_size("font_size"),
 			"row_size": [row.size.x, row.size.y],
 			"separation": row.get_theme_constant("separation"),
 			"verbs": verbs,
+			"verb_boxes": boxes,
+			# The SIM's name for each verb, in button order. See `_verb_kinds`.
+			"verb_kinds": _verb_kinds(_stacks[rows.size()] as Dictionary),
 		}
 		if art != null:
 			var fw: float = art.texture.get_width()
