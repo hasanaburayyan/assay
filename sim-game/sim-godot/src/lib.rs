@@ -23,7 +23,7 @@ use godot::prelude::*;
 use sim::assembly::{Assembly, Built, Mount, PartKind};
 use sim::command::{Event, Input};
 use sim::hash::fnv64;
-use sim::item::Item;
+use sim::item::{Item, ItemKind};
 use sim::mineral::{Property, SpeciesId};
 use sim::types::{PlayerId, TilePos};
 use sim::world::{CHUNK_SIZE, World, WorldConfig};
@@ -574,9 +574,45 @@ impl AssaySim {
                     "size" => &(sim::assembly::spec(*kind).size as i64).to_variant(),
                     "material" => &gstring(Self::PART_MATERIAL.name()).to_variant(),
                     "tag" => &tag,
+                    // **THE WORD ON A PART ROW'S BUTTON IS A PROPERTY OF THE
+                    // KIND** (Game Director, ASSA-86 ruling 1): a frame kind
+                    // says `Frame` forever and every other kind says `Mount`
+                    // forever, so a fifth part kind labels itself. The client
+                    // used to pick that word from its own buffer state, which
+                    // made two of four rows wrong in each state. It is handed
+                    // the answer here rather than deriving it — the ASSA-90
+                    // shape — because which kinds are frames is a static
+                    // catalogue fact and not a sheet reading.
+                    "is_frame" => &kind.is_frame().to_variant(),
                 })
             })
             .collect()
+    }
+
+    /// WHETHER CHOOSING THIS PART NEXT CAN EVER LEAD TO A MACHINE, and the
+    /// sim's own sentence when it cannot. `""` means the press is safe.
+    ///
+    /// **A CLIENT MUST NOT CONFIRM A PRESS THE SIM WOULD REFUSE** (Game
+    /// Director, ASSA-86 ruling 2; how a client learns it was left to me).
+    /// Pressing `Frame` on a head row is `FrameIsNotAFrame`, which **no later
+    /// press can rescue** — so the window used to answer a confirmed dead end
+    /// in the positive colour, and the refusal arrived at `Assemble` once the
+    /// player had built the rest of the design on it.
+    ///
+    /// `chosen` and `candidate` are the `kind` strings this class already
+    /// handed over in `inventory_of`, in the order the parts were pressed; the
+    /// first is the frame, which is `sim-cli`'s rule. **The client hands back
+    /// what it was given and parses nothing**, which is `part_kinds`' own
+    /// doctrine — and it costs nothing to honour, because legality is a
+    /// question about kinds and never about the material.
+    ///
+    /// A design that is merely half-built answers `""`: being unfinished is
+    /// the normal state of an assembly chosen one row at a time, and
+    /// `AssemblyError::is_unfinished` is where the sim draws that line.
+    #[func]
+    pub fn part_press_refusal(chosen: PackedStringArray, candidate: GString) -> GString {
+        let chosen: Vec<String> = chosen.as_slice().iter().map(ToString::to_string).collect();
+        gstring(&press_refusal_text(&chosen, &candidate.to_string()))
     }
 
     /// EVERY RECIPE THE SIM HAS: `name`, `tag`, `input`, `input_count`, `hand`.
@@ -751,6 +787,28 @@ impl AssaySim {
 /// on `.into()` for it is how this file failed to compile the first time.
 fn gstring(text: &str) -> GString {
     GString::from(text)
+}
+
+/// The whole of `part_press_refusal` except the Variant marshalling, so the
+/// answer can be tested without an engine — the same split `inventory_facts`
+/// and `inventory_of` already use. `""` means the press is safe to confirm.
+fn press_refusal_text(chosen: &[String], candidate: &str) -> String {
+    let mut kinds = Vec::with_capacity(chosen.len() + 1);
+    for name in chosen {
+        match ItemKind::from_name(name).and_then(ItemKind::part) {
+            Some(kind) => kinds.push(kind),
+            // Not a part at all: the sim names what the parts are rather than
+            // this host inventing a sentence for it.
+            None => return sim::debug::not_a_part_phrase(name),
+        }
+    }
+    let Some(kind) = ItemKind::from_name(candidate).and_then(ItemKind::part) else {
+        return sim::debug::not_a_part_phrase(candidate);
+    };
+    match sim::assembly::fault_adding(&kinds, kind) {
+        Some(e) => sim::debug::assembly_error_phrase(e),
+        None => String::new(),
+    }
 }
 
 fn packed(lines: &[String]) -> PackedStringArray {
@@ -2788,5 +2846,74 @@ mod tests {
         let theirs = sim.describe(Some(PlayerId(42)), &events[0]);
         assert!(theirs.contains("limpet"), "got {theirs}");
         assert!(!theirs.contains("you"), "got {theirs}");
+    }
+
+    /// **THE PRESS A CLIENT MUST NOT CONFIRM, THROUGH THE SURFACE A CLIENT
+    /// ACTUALLY CALLS** (ASSA-102, for the Game Director's ASSA-86 ruling 2).
+    ///
+    /// The names are the ones `inventory_of` hands over, which is the whole
+    /// contract: GDScript gives back what it was given. `tests/part_press.rs`
+    /// pins the rule; this pins that the host asks it the right question and
+    /// repeats the sim's answer without touching it.
+    #[test]
+    fn a_doomed_part_press_comes_back_as_the_sims_own_sentence() {
+        let name = |kind: PartKind| sim::ItemKind::Part(kind).name().to_string();
+        let head = name(PartKind::Head);
+        let handle = name(PartKind::Frame(Mount::Held));
+        let hopper = name(PartKind::Hopper);
+
+        // A head cannot be the first part, and the sentence is the sim's.
+        assert_eq!(
+            press_refusal_text(&[], &head),
+            sim::debug::assembly_error_phrase(sim::AssemblyError::FrameIsNotAFrame),
+        );
+        // A hopper on a handle: the fourth case the Game Director's run found.
+        assert_eq!(
+            press_refusal_text(std::slice::from_ref(&handle), &hopper),
+            sim::debug::assembly_error_phrase(sim::AssemblyError::NoSuchSlot(PartKind::Hopper)),
+        );
+        // A handle first is merely unfinished, so the press is confirmed.
+        assert_eq!(press_refusal_text(&[], &handle), "");
+        // And a head on it completes a tool.
+        assert_eq!(press_refusal_text(std::slice::from_ref(&handle), &head), "");
+    }
+
+    /// A row that is not a part at all is answered by the sim's catalogue
+    /// sentence, not by a string this host made up.
+    #[test]
+    fn a_row_that_is_not_a_part_is_refused_in_the_sims_words() {
+        let text = press_refusal_text(&[], "ore");
+        assert_eq!(text, sim::debug::not_a_part_phrase("ore"));
+        // The same holds for a name already in the buffer, which is the half a
+        // single-argument check would miss.
+        assert_eq!(
+            press_refusal_text(&["ore".to_string()], "head"),
+            sim::debug::not_a_part_phrase("ore"),
+        );
+    }
+
+    /// **EVERY PART KIND ROUND-TRIPS THROUGH ITS OWN NAME**, which is what
+    /// `press_refusal_text` rests on: a kind whose name the sim could not look
+    /// up again would come back as "not a machine part" for a real pack row.
+    ///
+    /// Over the catalogue, so a fifth part kind is covered by this test the
+    /// day it is added rather than the day someone remembers.
+    #[test]
+    fn a_part_kinds_own_name_finds_it_again() {
+        for kind in PartKind::ALL {
+            let name = sim::ItemKind::Part(kind).name();
+            assert_eq!(
+                sim::ItemKind::from_name(name).and_then(sim::ItemKind::part),
+                Some(kind),
+                "{name} did not find its way back to {kind:?}"
+            );
+            // And it is never mistaken for a doomed press by accident: as the
+            // first part, exactly the frames are allowed.
+            assert_eq!(
+                press_refusal_text(&[], name).is_empty(),
+                kind.is_frame(),
+                "{name} as the first part disagrees with is_frame()"
+            );
+        }
     }
 }

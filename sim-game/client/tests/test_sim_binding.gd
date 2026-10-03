@@ -35,6 +35,10 @@ const REQUIRED_METHODS := [
 	# The scripted demo session's two: the pair the world guarantees, and serde's own spelling of an
 	# item, which is what the session's commands are checked against.
 	"starter_pair", "item_json", "item_echo",
+	# WHETHER A PART PRESS IS ALREADY DOOMED (ASSA-102, for Maren's ASSA-86 ruling 2). A rename here
+	# fails open in the worst direction: the window would go back to confirming a press the sim
+	# refuses, in the positive colour, with the refusal arriving at `Assemble`.
+	"part_press_refusal",
 ]
 
 
@@ -158,6 +162,72 @@ func test_a_message_that_is_not_a_welcome_yields_nothing() -> bool:
 		var got: Variant = ClassDB.class_call_static("AssaySim", "from_welcome_json", text)
 		if got != null:
 			return _fail("from_welcome_json accepted %s and returned %s" % [text, got])
+	return true
+
+
+## EVERY PART ROW IS TOLD WHETHER ITS KIND IS A FRAME (ASSA-102, for Maren's ASSA-86 ruling 1: the
+## `Frame`/`Mount` word is a property of the KIND, not of the client's buffer state).
+##
+## THIS TEST EXISTS BECAUSE NOTHING IN RUST CAN SEE IT. `is_frame` crosses as a Variant, so a Rust
+## test cannot read the dictionary the client is handed -- I inverted the field on purpose and all 40
+## sim-godot tests stayed green. The value is only checkable from this side.
+##
+## AND IT DERIVES "IS A FRAME" A DIFFERENT WAY ON PURPOSE. Asking `is_frame` whether it agrees with
+## itself proves nothing, so the expectation comes from the TAG's shape: `PartKind::Frame(Mount)` is
+## an enum inside an enum, so serde spells it as a Dictionary (`{"Frame": "Held"}`), while `Head` and
+## `Hopper` are bare strings. That is documented behaviour of `part_kinds` and it moves only if the
+## catalogue's shape moves.
+func test_a_part_rows_frame_word_comes_from_the_sim() -> bool:
+	if not ClassDB.class_exists("AssaySim"):
+		return _fail("no AssaySim class; see the failure above")
+	var catalogue: Array = AssaySimHost.part_kinds()
+	if catalogue.is_empty():
+		return _fail("the part catalogue is empty, so this test proves nothing")
+	var frames := 0
+	for entry in catalogue:
+		var row: Dictionary = entry
+		if not row.has("is_frame"):
+			return _fail(("a part row does not say whether its kind is a frame, so the client "
+					+ "cannot label it without guessing: %s") % [row])
+		# Serde spells a frame as a Dictionary because it carries a Mount; everything else is a
+		# bare string. An independent reading of the same fact.
+		var looks_like_a_frame: bool = typeof(row["tag"]) == TYPE_DICTIONARY
+		if bool(row["is_frame"]) != looks_like_a_frame:
+			return _fail(("%s says is_frame=%s but its tag is %s, which disagrees about whether "
+					+ "it is a frame") % [row.get("name"), row["is_frame"], row["tag"]])
+		if looks_like_a_frame:
+			frames += 1
+	# NON-VACUITY AS AN EQUALITY: the catalogue has exactly two frames, a handle and a frame. A
+	# roster where none were frames would pass every check above.
+	if frames != 2:
+		return _fail(("expected exactly two frame kinds (a handle to hold and a frame to plant), "
+				+ "found %d in %d rows") % [frames, catalogue.size()])
+	return true
+
+
+## A PRESS THE SIM WOULD REFUSE COMES BACK WITH THE SIM'S SENTENCE, THROUGH THE REAL BINDING.
+##
+## Maren's measured case: pressing the part button on a head row with nothing chosen is
+## `FrameIsNotAFrame`, which no later press can rescue. The client used to confirm it in the positive
+## colour. Nothing is asserted about the wording here -- that is the sim's and it may be reworded --
+## only that a doomed press says something and a legal one says nothing.
+func test_a_doomed_part_press_is_refused_before_it_is_confirmed() -> bool:
+	if not ClassDB.class_exists("AssaySim"):
+		return _fail("no AssaySim class; see the failure above")
+	var refused: String = ClassDB.class_call_static(
+			"AssaySim", "part_press_refusal", PackedStringArray(), "head")
+	if refused == "":
+		return _fail("a head as the first part is FrameIsNotAFrame and must not be confirmed")
+	var allowed: String = ClassDB.class_call_static(
+			"AssaySim", "part_press_refusal", PackedStringArray(), "handle")
+	if allowed != "":
+		return _fail(("a handle as the first part is a legal start that is merely unfinished, and "
+				+ "was refused with: %s") % [allowed])
+	# A hopper on a handle has no slot at all, which is the case a single-argument check would miss.
+	var no_slot: String = ClassDB.class_call_static(
+			"AssaySim", "part_press_refusal", PackedStringArray(["handle"]), "hopper")
+	if no_slot == "":
+		return _fail("a held frame offers no hopper slot, so that press must be refused")
 	return true
 
 
