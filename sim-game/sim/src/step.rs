@@ -181,6 +181,18 @@ fn apply_player(
                 return reject(RejectReason::AlreadyBestGrade, events);
             }
             let p = world.player_mut(player).expect("checked above");
+            // SAME GESTURE, SAME ANSWER AS `Mine` (ASSA-109). Pressing Make
+            // again on the batch already running used to refund it and start
+            // over at progress 0 — materials back, elapsed ticks gone, and
+            // the one sentence that said so goes to a log folded away by
+            // default. `count` is deliberately NOT part of this identity:
+            // the Game Director put topping up a batch out of scope, and the
+            // client only ever sends 1.
+            if p.crafting
+                .is_some_and(|c| c.recipe == recipe && c.input == item)
+            {
+                return; // already at it
+            }
             if let Some(c) = p.crafting {
                 // Finish what's in progress first; refund it like Stop does.
                 refund(&mut p.inventory, c.recipe.recipe(), c.input);

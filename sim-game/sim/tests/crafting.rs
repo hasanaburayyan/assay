@@ -206,6 +206,193 @@ fn stop_cancels_crafting_and_refunds_the_current_batch() {
     assert!(p.crafting.is_none());
 }
 
+/// **A RE-PRESS ON THE BATCH ALREADY RUNNING COSTS NOTHING** (ASSA-109), the
+/// way pressing Mine on the deposit you are already mining costs nothing.
+///
+/// Asserted against a CONTROL TICK rather than against the two fields I
+/// thought to check: the same world is stepped once with the re-press and once
+/// with nothing at all, and the two must be indistinguishable. That is what
+/// "no-op" means, it needs no knowledge of the tick rate, and it would catch a
+/// guard that returned early after already having spent something.
+#[test]
+fn pressing_craft_again_on_the_running_batch_is_the_same_as_doing_nothing() {
+    let (mut world, me) = world_with_player();
+    world
+        .player_mut(me)
+        .unwrap()
+        .inventory
+        .add(ore(Grade::B), 50);
+    let press = Input::player(me, craft(RecipeId::Smelter, ore(Grade::B), 1));
+    run(&mut world, std::slice::from_ref(&press), 9);
+
+    // There must be real elapsed ticks to lose, or this test proves nothing.
+    let running = world.player(me).unwrap().crafting.expect("a batch runs");
+    assert!(
+        running.progress > 0,
+        "nothing is at stake in this test unless the batch has progressed: {running:?}"
+    );
+
+    let mut idle = world.clone();
+    let mut idle_events = Vec::new();
+    step(&mut idle, &[], &mut idle_events);
+
+    let mut again_events = Vec::new();
+    step(&mut world, std::slice::from_ref(&press), &mut again_events);
+
+    assert_eq!(
+        world.player(me).unwrap().crafting,
+        idle.player(me).unwrap().crafting,
+        "the re-press moved the batch: {running:?} before it"
+    );
+    assert_eq!(
+        world.state_hash(),
+        idle.state_hash(),
+        "a re-press changed something in the world that an idle tick did not"
+    );
+    assert_eq!(
+        again_events, idle_events,
+        "a re-press said something an idle tick did not"
+    );
+}
+
+/// The other half of the ruling: changing your mind IS a change, and still
+/// refunds what it abandons. Two ways to change it — the recipe and the stack
+/// the batches come from — because the guard compares both and a test naming
+/// one would let the other through.
+#[test]
+fn craft_naming_a_different_recipe_or_stack_still_replaces_the_batch() {
+    for (what, recipe, item) in [
+        ("another recipe", RecipeId::Sort, ore(Grade::B)),
+        ("another stack", RecipeId::Smelter, ore(Grade::C)),
+    ] {
+        const STOCKED: u32 = 5;
+        let switch = craft(recipe, item, 1);
+        let (mut world, me) = world_with_player();
+        let inventory = &mut world.player_mut(me).unwrap().inventory;
+        inventory.add(ore(Grade::B), STOCKED);
+        inventory.add(ore(Grade::C), STOCKED);
+        run(
+            &mut world,
+            &[Input::player(
+                me,
+                craft(RecipeId::Smelter, ore(Grade::B), 1),
+            )],
+            3,
+        );
+        assert_eq!(
+            world.player(me).unwrap().inventory.count(ore(Grade::B)),
+            0,
+            "{what}: the first batch must really have taken the ore"
+        );
+        let abandoned = world.player(me).unwrap().crafting.expect("a batch runs");
+
+        let events = run(&mut world, &[Input::player(me, switch)], 1);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::CraftingStopped {
+                    reason: StopReason::Stopped,
+                    ..
+                }
+            )),
+            "{what}: a real change of intent still stops the old batch: {events:?}"
+        );
+        let p = world.player(me).unwrap();
+        let replacement = p.crafting.expect("the new batch runs");
+        assert_ne!(
+            replacement, abandoned,
+            "{what}: the batch was supposed to be replaced"
+        );
+        // Not `== 0`: the same tick that applied the command also advanced the
+        // new batch. Below the abandoned one, so the clock really restarted.
+        assert!(
+            replacement.progress < abandoned.progress,
+            "{what}: the replacement kept the old batch's clock: {replacement:?} after {abandoned:?}"
+        );
+        // THE REFUND, counted off the recipes rather than off numbers I typed:
+        // Sort takes 3 ore and Smelter 5, so one expected total for both arms
+        // would be asserting that Sort costs what Smelter costs.
+        let came_back = abandoned.recipe.recipe().input.1;
+        let went_out = recipe.recipe().input.1;
+        assert!(came_back > 0, "a refund of nothing proves nothing");
+        assert_eq!(
+            p.inventory.count(ore(Grade::B)) + p.inventory.count(ore(Grade::C)),
+            2 * STOCKED - went_out,
+            "{what}: the abandoned batch's {came_back} must come back (without \
+             it this is short by exactly that) and the replacement's \
+             {went_out} go out"
+        );
+    }
+}
+
+/// **THE TWO ARMS ANSWER THE SAME GESTURE THE SAME WAY**, which is the whole
+/// of ASSA-109: it goes red if somebody deletes `Mine`'s `// already at it`
+/// instead of `Craft`'s.
+///
+/// The quantity is the control tick again, and that is a correction I owe the
+/// test. I first wrote this arm as "neither reports a stop", because that is
+/// the quantity the Game Director measured the asymmetry on — and deleting
+/// `Mine`'s guard left it GREEN, since an unguarded `Mine` re-press emits
+/// `MiningStarted` and silently resets progress rather than reporting a stop.
+/// The harm is the reset, not the word, so the assertion has to be the reset.
+#[test]
+fn neither_mining_nor_crafting_loses_progress_when_you_repeat_yourself() {
+    let (mut world, me) = world_with_player();
+    world
+        .player_mut(me)
+        .unwrap()
+        .inventory
+        .add(ore(Grade::B), 50);
+    // Stand on a deposit soft enough to dig, so `Mine` really starts.
+    let (center, species) = {
+        let d = world.deposits.first().expect("a world has deposits");
+        (d.center, d.species)
+    };
+    world.player_mut(me).unwrap().pos = center;
+    world.species_mut(species).sheet.hardness = 1;
+
+    for (what, command) in [
+        ("craft", craft(RecipeId::Smelter, ore(Grade::B), 1)),
+        ("mine", PlayerCommand::Mine),
+    ] {
+        let press = Input::player(me, command);
+        let first = run(&mut world, std::slice::from_ref(&press), 3);
+        assert!(
+            !first.is_empty(),
+            "{what}: the first press must do something, or the second proves nothing: {first:?}"
+        );
+        let started = world.player(me).unwrap();
+        assert!(
+            started.crafting.is_some() || started.mining.is_some(),
+            "{what}: something must be under way to be lost"
+        );
+
+        let mut idle = world.clone();
+        let mut idle_events = Vec::new();
+        step(&mut idle, &[], &mut idle_events);
+        let mut again_events = Vec::new();
+        step(&mut world, std::slice::from_ref(&press), &mut again_events);
+
+        assert_eq!(
+            world.state_hash(),
+            idle.state_hash(),
+            "{what}: repeating yourself changed the world; an idle tick left \
+             {:?}/{:?} and the re-press left {:?}/{:?}",
+            idle.player(me).unwrap().crafting,
+            idle.player(me).unwrap().mining,
+            world.player(me).unwrap().crafting,
+            world.player(me).unwrap().mining,
+        );
+        assert_eq!(
+            again_events, idle_events,
+            "{what}: repeating yourself said something an idle tick did not"
+        );
+
+        world.player_mut(me).unwrap().crafting = None;
+        world.player_mut(me).unwrap().mining = None;
+    }
+}
+
 #[test]
 fn crafting_is_rejected_for_bad_inputs() {
     let (mut world, me) = world_with_player();
