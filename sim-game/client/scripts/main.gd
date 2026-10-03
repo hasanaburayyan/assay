@@ -43,6 +43,17 @@ var _carrying := VBoxContainer.new()
 var _actions := VBoxContainer.new()
 var _cursor := Label.new()
 var _log := Label.new()
+## THE EVENT LOG'S CONTROL AND ITS STATE (ASSA-89). The log is the surface the team built the loop
+## on and the board's one literal complaint about the window ("logs are hard on the eyes"), so it
+## starts hidden and one named control brings it back. `_log_heading` is held because a hidden
+## section under a visible heading is a labelled empty gap; see `_show_log`.
+var _log_toggle := Button.new()
+var _log_heading: Label = null
+## INITIALISED TO THE WRONG ANSWER ON PURPOSE. `_build_ui` calls `_show_log(false)`, and starting
+## this at `false` would make "the log is hidden on first open" true before anything ran -- a test
+## that passes by construction, which is the failure I keep writing down. At `true` the default-state
+## assertion can only pass if the call actually happened.
+var _log_shown := true
 ## The running-craft countdown inside the `do` section. Held because its text changes every tick while
 ## the section around it must not be rebuilt; remade whenever that section is (ASSA-49).
 var _crafting: Label = null
@@ -219,9 +230,19 @@ func _build_ui() -> void:
 	# button pushed off the bottom of the window is worse than a disabled one -- it looks available
 	# and cannot be pressed. The scroll box is what carries the position now; the inner column sits at
 	# the origin inside it.
+	#
+	# AND THE LOG'S TOGGLE IS PINNED ABOVE IT, outside the scroll, for the reason in
+	# `AssayHud.LOG_TOGGLE_H`: a control inside a column taller than the window is one a stranger has
+	# to scroll to find.
+	_log_toggle.position = Vector2(VIEW.x - PANEL - MARGIN.x, MARGIN.y)
+	_log_toggle.custom_minimum_size = Vector2(PANEL, 0.0)
+	_log_toggle.pressed.connect(func(): _show_log(not _log_shown))
+	add_child(_log_toggle)
+
 	var scroll := ScrollContainer.new()
-	scroll.position = Vector2(VIEW.x - PANEL - MARGIN.x, MARGIN.y)
-	scroll.custom_minimum_size = Vector2(PANEL, VIEW.y - MARGIN.y - 24.0)
+	scroll.position = Vector2(VIEW.x - PANEL - MARGIN.x, MARGIN.y + AssayHud.LOG_TOGGLE_H)
+	scroll.custom_minimum_size = Vector2(PANEL,
+			VIEW.y - MARGIN.y - AssayHud.LOG_TOGGLE_H - 24.0)
 	scroll.size = scroll.custom_minimum_size
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	add_child(scroll)
@@ -235,15 +256,53 @@ func _build_ui() -> void:
 		heading.text = String(part[0])
 		heading.modulate = Color(0.60, 0.64, 0.70)
 		column.add_child(heading)
+		# HELD, BECAUSE A HIDDEN SECTION WITH A VISIBLE HEADING IS A LABELLED EMPTY GAP. The headings
+		# are otherwise anonymous on purpose; this is the only one anything else has to reach.
+		if part[1] == _log:
+			_log_heading = heading
 		var body: Control = part[1]
 		body.custom_minimum_size = Vector2(PANEL, 0.0)
 		if body is Label:
 			(body as Label).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		column.add_child(body)
+	# HIDDEN ON FIRST OPEN, and this is the line the whole item is about.
+	_show_log(false)
 	_refresh_pack()
 	_refresh_actions()
 	_refresh_bench()
 	_refresh_species()
+
+
+## SHOW OR HIDE THE EVENT LOG (ASSA-89). The board's words were "logs are hard on the eyes", and
+## this is the toggle they asked for rather than the deletion they did not.
+##
+## HIDDEN, NOT REMOVED, AND THE DIFFERENCE IS THE WHOLE RISK. `_events` keeps filling and `_log.text`
+## keeps being set every refresh while this is false: the lines are all still there, one `visible`
+## away. The two ways to get this wrong are `queue_free` and clearing the text on hide, and both of
+## them pass a test that only ever looks at the default state -- which is why
+## `test_main_screen.gd` asserts the lines are readable WHILE the toggle is hidden, not merely that
+## they are readable.
+##
+## THE HEADING GOES WITH IT, because "last tick" over nothing is a labelled empty gap, and a stranger
+## reading an empty section assumes the game has nothing to say rather than that they hid it.
+##
+## THE CONTROL NAMES THE KEY, because the key is the half a stranger cannot discover.
+func _show_log(shown: bool) -> void:
+	_log_shown = shown
+	_log.visible = shown
+	if is_instance_valid(_log_heading):
+		_log_heading.visible = shown
+	_log_toggle.text = "hide the event log (L)" if shown else "show the event log (L)"
+
+
+## L SHOWS AND HIDES THE LOG. `_unhandled_key_input` and not `_input`, so a focused `LineEdit` eats
+## the key first: typing "localhost" into the host field must not toggle a panel on the `l`.
+func _unhandled_key_input(event: InputEvent) -> void:
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo:
+		return
+	if key.keycode == KEY_L:
+		_show_log(not _log_shown)
 
 
 func _on_join() -> void:
@@ -295,6 +354,21 @@ func _remember_events() -> void:
 	for line in _sim.event_lines(_client.player_id):
 		_events.append("%d · %s" % [tick, line])
 	_events = AssayHud.trimmed_log(_events, LOG_LINES)
+	# WHAT A HIDDEN LOG MAY NOT SWALLOW (ASSA-89). The sim says which lines those are
+	# (`sim::debug::event_needs_attention`) and these are the SAME SENTENCES, word for word -- a
+	# subset of the log, mapped through the same describer. The client does not decide how loud a
+	# line is by reading it, because the wording moved thirteen times in one afternoon on ASSA-67 and
+	# a classifier made of string matches would have gone quiet without a test going red.
+	#
+	# NOT CONDITIONAL ON THE TOGGLE. A refusal belongs on the always-visible line whether or not the
+	# log is open, and a notice that only fired while hidden would be a notice whose test passes or
+	# fails on the state of a different control.
+	#
+	# THE NEWEST ONE WINS. The surface holds one line; events arrive in the order the sim emitted
+	# them, so the last is the most recent thing that did not happen.
+	var notices := _sim.attention_lines(_client.player_id)
+	if not notices.is_empty():
+		_say(notices[notices.size() - 1], AssayHud.Say.FAILED)
 
 
 func _say(line: String, level: int) -> void:
