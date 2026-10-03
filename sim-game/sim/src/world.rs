@@ -1,6 +1,9 @@
 //! The world: every piece of simulation state lives in here.
 
-use crate::building::{Building, BuildingId, BuildingKind, SmelterStall, SmelterState};
+use crate::building::{
+    Building, BuildingId, BuildingKind, BuildingState, Machine, MachineIdle, MachineStall,
+    MachineState, SmelterStall, SmelterState,
+};
 use crate::hash::fnv64;
 use crate::item::Item;
 use crate::mineral::{MineralSpecies, SpeciesId};
@@ -212,6 +215,74 @@ impl World {
         } else {
             SmelterState::Working { at: fire }
         }
+    }
+
+    /// What this planted machine is doing, and why if it has stopped.
+    ///
+    /// **THE ONE PLACE THAT DECIDES** (ASSA-94), the way
+    /// [`World::smelter_state`] has decided for the smelter since ASSA-80.
+    /// The arms are in the order `debug::machine_status` printed them and the
+    /// order `step` tested them — which were already the same order, and now
+    /// are the same code.
+    ///
+    /// Takes the machine as well as the building so there is no arm for "not
+    /// a machine" to answer wrongly; [`World::building_state`] matches the
+    /// kind once for callers that have only a `Building`.
+    pub fn machine_state(&self, b: &Building, m: &Machine) -> MachineState {
+        let Some(d) = self.deposit_at(b.pos) else {
+            return MachineState::Idle(MachineIdle::NoDeposit);
+        };
+        if d.is_depleted() {
+            return MachineState::Idle(MachineIdle::DepositMinedOut);
+        }
+        if !crate::ladder::hand_minable(self.species(d.species)) {
+            return MachineState::Idle(MachineIdle::DepositTooHard { species: d.species });
+        }
+        // `stats`, not `stat_range().low`, and that is the point of ASSA-94:
+        // the rules read the exact stat, so the one place that decides reads
+        // what the rules read. Capacity is flat from the part kind, so the
+        // banded reading a menu shows cannot differ from it — proved by
+        // `capacity_is_flat_so_a_band_cannot_disagree` rather than assumed.
+        let capacity = m.assembly.stats(&self.species).capacity;
+        let amount = crate::tuning::YIELD_BY_GRADE[d.grade() as usize];
+        if m.has_room_for(amount, capacity) {
+            MachineState::Working {
+                deposit: d.id,
+                species: d.species,
+                grade: d.grade(),
+            }
+        } else {
+            MachineState::Stalled(MachineStall::BufferFull {
+                held: m.held.map_or(0, |h| h.count),
+                capacity,
+            })
+        }
+    }
+
+    /// What any building is doing, whatever kind it is.
+    pub fn building_state(&self, b: &Building) -> BuildingState {
+        match &b.kind {
+            BuildingKind::Smelter(_) => BuildingState::Smelter(self.smelter_state(b)),
+            BuildingKind::Machine(m) => BuildingState::Machine(self.machine_state(b, m)),
+        }
+    }
+
+    /// Every building a player has to do something about, in placement order.
+    ///
+    /// **THE STANDING ANSWER TO A STANDING CONDITION** (Game Director,
+    /// ASSA-94: "a refusal is a MOMENT; a stall is a CONDITION"). The stall
+    /// *events* are edges — each fires once, on the tick it happens, and is
+    /// gone. This is the question a host can ask on any tick, forever, which
+    /// is what a surface that outlives a scrolling log needs.
+    ///
+    /// Whoever placed it: `Building` carries no owner, so the sim cannot
+    /// answer "something *you* built". In co-op that is the better answer
+    /// anyway — a cold smelter is everyone's problem — but it is a widening
+    /// of the ruling and is flagged as one on the item.
+    pub fn halted(&self) -> impl Iterator<Item = &Building> + '_ {
+        self.buildings
+            .iter()
+            .filter(|b| self.building_state(b).halted())
     }
 
     /// The deposit covering `pos`, if any.

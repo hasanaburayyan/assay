@@ -6,16 +6,20 @@ use std::fmt::Write;
 use crate::assembly::{
     Assembly, AssemblyError, BreakVerdict, Built, Mount, PART_SPECS, PartKind, Source,
 };
-use crate::building::{Building, BuildingKind, Machine, Slot, SmelterStall, SmelterState};
+use crate::building::{
+    Building, BuildingKind, BuildingState, Machine, MachineIdle, MachineStall, MachineState, Slot,
+    SmelterStall, SmelterState,
+};
 use crate::command::{Event, PlayerCommand, RejectReason, StopReason};
 use crate::item::{Item, ItemKind, ItemStack};
 use crate::ladder::Lighting;
 use crate::mineral::{MineralSpecies, NameError, Property, Sheet, SpeciesId};
 use crate::ore::OreDeposit;
 use crate::recipe::{RECIPES, Station};
-use crate::tuning::{
-    HAND_MINE_MAX_HARDNESS, HAND_WORK_PER_TICK, PICK_WEAR_PER_SWING, YIELD_BY_GRADE,
-};
+// `YIELD_BY_GRADE` was here until ASSA-94: this file used it to work out for
+// itself whether a drill's buffer had room. It decides nothing now, so it
+// needs no rate.
+use crate::tuning::{HAND_MINE_MAX_HARDNESS, HAND_WORK_PER_TICK, PICK_WEAR_PER_SWING};
 use crate::types::{PlayerId, TilePos};
 use crate::world::World;
 
@@ -972,13 +976,24 @@ pub fn ascii_map(world: &World) -> String {
 /// opposite and that was the only thing the game said about reach at all.
 pub fn deposit_reach_note(world: &World, deposit: &OreDeposit) -> Option<String> {
     let species = world.species(deposit.species);
-    (!crate::ladder::hand_minable(species)).then(|| {
-        format!(
-            "{} is too hard for anything you can build: hardness is over \
-             {HAND_MINE_MAX_HARDNESS}, and a drill mines faster, not harder",
-            species.name()
-        )
-    })
+    (!crate::ladder::hand_minable(species)).then(|| too_hard_sentence(species))
+}
+
+/// The hardness gate in words, for a caller that has already established the
+/// gate applies.
+///
+/// **ONE SENTENCE FOR ONE GATE** — the rock's own line reaches it through
+/// `deposit_reach_note`, a drill standing on that rock reaches it through
+/// `machine_state_line`, and a player who reads both is told the same thing
+/// twice rather than two things once. Separated out on ASSA-94 only because
+/// `MachineIdle::DepositTooHard` has already decided the gate applies, so it
+/// needs the sentence and not the `Option`.
+fn too_hard_sentence(species: &MineralSpecies) -> String {
+    format!(
+        "{} is too hard for anything you can build: hardness is over \
+         {HAND_MINE_MAX_HARDNESS}, and a drill mines faster, not harder",
+        species.name()
+    )
 }
 
 /// A species you can mine and can never smelt, said without quoting its sheet.
@@ -1412,38 +1427,7 @@ pub fn machine_status(world: &World, b: &Building, m: &Machine) -> String {
     // Capacity is flat from the kind, so it is exact whether or not anyone has
     // assayed anything; mass and speed are read off sheets and are not.
     let capacity = range.low.capacity;
-    // EVERY WAY A DRILL CAN BE DOING NOTHING HAS TO SAY SO HERE, because the
-    // alternative is a player watching a machine they paid eight refined for
-    // and guessing. A5's rule — the bad case must be visible — is not only
-    // about mass.
-    let state = match world.deposit_at(b.pos) {
-        None => "idle: no deposit underneath".to_string(),
-        Some(d) if d.is_depleted() => "idle: deposit is mined out".to_string(),
-        // Decision 7: a drill is a throughput upgrade, never a hardness
-        // unlock, so it refuses exactly what hands refuse. Without this line
-        // that refusal is invisible and reads as a bug. The sentence is
-        // `deposit_reach_note`'s now, so a drill and the rock it sits on can
-        // never give a player two different stories about the same gate.
-        //
-        // **REACH, NOT `deposit_dead_end_note`, AND THAT IS DELIBERATE**
-        // (ASSA-52). A drill on a rock that can be mined but never smelted
-        // works perfectly: it fills its hopper. Calling it "idle" there would
-        // be false, and the rock's own line already says the ore is a dead
-        // end. A machine reports what the machine is doing.
-        Some(d) => {
-            if let Some(why) = deposit_reach_note(world, d) {
-                format!("idle: {why}")
-            // The sim stops a machine that has no room for a WHOLE unit, so
-            // the readout has to use the same test or it will call a stopped
-            // drill "mining" for the last few units of its buffer.
-            } else if m.held.map_or(0, |h| h.count) + YIELD_BY_GRADE[d.grade() as usize] > capacity
-            {
-                "stalled: full, take the ore out".to_string()
-            } else {
-                format!("mining {}", world.species(d.species).name())
-            }
-        }
-    };
+    let state = machine_state_line(world, world.machine_state(b, m));
     // Same reason as `assembly_readout`: what it is holding and what it is
     // doing come before the design it was built from, because the table line
     // is truncated in the inspector's side panel.
@@ -1516,6 +1500,66 @@ pub fn stall_reason(why: SmelterStall) -> String {
     }
 }
 
+/// What a smelter is doing, in words. **THE DECISION IS
+/// `World::smelter_state`'S AND THE WORDS ARE MINE** (ASSA-80): the chain used
+/// to live here, which left `step` no way to know a smelter had stalled except
+/// by re-deriving it, and a second copy of a decision is how ASSA-43 and
+/// ASSA-52 happened.
+pub fn smelter_state_line(state: SmelterState) -> String {
+    match state {
+        SmelterState::Idle => "idle: nothing to refine".to_string(),
+        SmelterState::Stalled(why) => format!("stalled: {}", stall_reason(why)),
+        SmelterState::Working { at } => format!("working at {at}"),
+    }
+}
+
+/// What a planted machine is doing, in words.
+///
+/// **EVERY WAY A DRILL CAN BE DOING NOTHING HAS TO SAY SO HERE**, because the
+/// alternative is a player watching a machine they paid eight refined for and
+/// guessing. A5's rule — the bad case must be visible — is not only about mass.
+///
+/// The arms are the sentences this function has always printed; what changed on
+/// ASSA-94 is that it no longer decides which one applies.
+///
+/// **REACH, NOT `deposit_dead_end_note`, AND THAT IS DELIBERATE** (ASSA-52). A
+/// drill on a rock that can be mined but never smelted works perfectly: it
+/// fills its hopper. Calling it "idle" there would be false, and the rock's own
+/// line already says the ore is a dead end. A machine reports what the machine
+/// is doing.
+pub fn machine_state_line(world: &World, state: MachineState) -> String {
+    match state {
+        MachineState::Idle(MachineIdle::NoDeposit) => "idle: no deposit underneath".to_string(),
+        MachineState::Idle(MachineIdle::DepositMinedOut) => {
+            "idle: deposit is mined out".to_string()
+        }
+        // Decision 7: a drill is a throughput upgrade, never a hardness
+        // unlock, so it refuses exactly what hands refuse. Without this line
+        // that refusal is invisible and reads as a bug.
+        MachineState::Idle(MachineIdle::DepositTooHard { species }) => {
+            format!("idle: {}", too_hard_sentence(world.species(species)))
+        }
+        MachineState::Stalled(MachineStall::BufferFull { .. }) => {
+            "stalled: full, take the ore out".to_string()
+        }
+        MachineState::Working { species, .. } => {
+            format!("mining {}", world.species(species).name())
+        }
+    }
+}
+
+/// What any building is doing, in words, whichever kind it is.
+///
+/// The one wording for a standing condition: `building_status` puts it after
+/// the contents, `halted_table` puts it after the address, and neither writes
+/// its own.
+pub fn building_state_line(world: &World, b: &Building) -> String {
+    match world.building_state(b) {
+        BuildingState::Smelter(s) => smelter_state_line(s),
+        BuildingState::Machine(m) => machine_state_line(world, m),
+    }
+}
+
 /// One line describing what a building holds and whether it is working.
 pub fn building_status(world: &World, b: &Building) -> String {
     let s = match &b.kind {
@@ -1523,16 +1567,7 @@ pub fn building_status(world: &World, b: &Building) -> String {
         BuildingKind::Machine(m) => return machine_status(world, b, m),
     };
     let walls = world.max_temperature(b);
-    // **THE DECISION IS `World::smelter_state`'S AND THE WORDS ARE MINE**
-    // (ASSA-80). This chain used to live here, which left `step` no way to
-    // know a smelter had stalled except by re-deriving it -- and a second copy
-    // of a decision is how ASSA-43 and ASSA-52 happened. Same sentences,
-    // same order, decided once.
-    let state = match world.smelter_state(b) {
-        SmelterState::Idle => "idle: nothing to refine".to_string(),
-        SmelterState::Stalled(why) => format!("stalled: {}", stall_reason(why)),
-        SmelterState::Working { at } => format!("working at {at}"),
-    };
+    let state = smelter_state_line(world.smelter_state(b));
     format!(
         "walls {walls} · in {} · fuel {} ({} ticks burning at {}) · out {} · {state}",
         slot(world, s.input),
@@ -1541,6 +1576,59 @@ pub fn building_status(world: &World, b: &Building) -> String {
         s.burn_temperature,
         slot(world, s.output)
     )
+}
+
+/// Where a building is, as a player would say it.
+fn building_address(b: &Building) -> String {
+    format!("{} {} at ({}, {})", b.kind.name(), b.id.0, b.pos.x, b.pos.y)
+}
+
+/// Every building that has stopped, one line each, worst-placed first in
+/// placement order.
+///
+/// **THE SURFACE A SCROLLING LOG CANNOT BE** (Game Director, ASSA-94: "a
+/// refusal is a MOMENT; a stall is a CONDITION"). The board's own session is
+/// the case this exists for: `SmelterStalled` fired correctly, once, on the
+/// edge into the stall — and was gone from a fourteen-line log in about a
+/// second. Ninety thousand ticks later the smelter was still cold and nothing
+/// anywhere said so unless they hovered its two tiles on a 96×64 map.
+///
+/// Empty when nothing has stopped, so a caller can render nothing at all
+/// rather than a reassuring line nobody asked for.
+pub fn halt_lines(world: &World) -> Vec<String> {
+    world
+        .halted()
+        .map(|b| {
+            format!(
+                "{} · {}",
+                building_address(b),
+                building_state_line(world, b)
+            )
+        })
+        .collect()
+}
+
+/// [`halt_lines`] as a block, for the terminal.
+pub fn halted_table(world: &World) -> String {
+    let lines = halt_lines(world);
+    if lines.is_empty() {
+        // Says what was checked, because "nothing has stopped" and "you have
+        // built nothing" look identical to a player and are not the same news.
+        return match world.buildings.len() {
+            0 => "Nothing built yet. Craft a smelter from 5 ore and `place smelter`.\n".into(),
+            1 => "Nothing has stopped. The 1 building you have placed is working.\n".into(),
+            n => format!("Nothing has stopped. All {n} buildings you have placed are working.\n"),
+        };
+    }
+    let mut out = format!(
+        "{} of {} buildings stopped:\n",
+        lines.len(),
+        world.buildings.len()
+    );
+    for line in lines {
+        let _ = writeln!(out, "  {line}");
+    }
+    out
 }
 
 /// Table of every building.

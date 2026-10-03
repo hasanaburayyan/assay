@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::assembly::Assembly;
 use crate::item::{Item, ItemKind, ItemStack};
-use crate::types::TilePos;
+use crate::mineral::{Grade, SpeciesId};
+use crate::types::{DepositId, TilePos};
 
 /// Stable ID for a building. Unlike deposits, buildings come and go, so IDs
 /// are handed out from a counter and are not indexes into `World::buildings`.
@@ -124,6 +125,142 @@ impl SmelterState {
             SmelterState::Stalled(why) => Some(why),
             _ => None,
         }
+    }
+
+    /// Whether a player has to do something about this.
+    ///
+    /// **`Idle` IS NOT A PROBLEM AND MUST NEVER BE REPORTED AS ONE** (Game
+    /// Director, ASSA-80, restated on ASSA-94): an empty smelter follows every
+    /// finished batch, so a surface that listed it would cry wolf after every
+    /// successful smelt. The asymmetry with [`MachineState::halted`] — where
+    /// idle *is* reported — is explained there.
+    pub const fn halted(self) -> bool {
+        self.stall().is_some()
+    }
+}
+
+/// Why a planted machine has stopped with work still in front of it.
+///
+/// One variant, because decision 9 gives a drill exactly one way to stop: it
+/// never starts a unit it has no room for. Structured rather than a string for
+/// [`SmelterStall`]'s reason — the rule says *which*, `debug` says it in
+/// words, and the two cannot drift apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MachineStall {
+    /// The buffer has no room for a whole unit of what is underneath.
+    /// `held`/`capacity` are carried so a host can draw the fill without
+    /// re-reading the world, as [`crate::command::Event::MachineStalled`]
+    /// already does.
+    BufferFull { held: u32, capacity: u32 },
+}
+
+/// Why a planted machine is doing nothing, when nothing is broken about it.
+///
+/// **EVERY ONE OF THESE IS WORTH A PLAYER'S ATTENTION**, which is what makes
+/// a machine's idle different from a smelter's — see [`MachineState::halted`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MachineIdle {
+    /// Planted where there is no deposit at all.
+    NoDeposit,
+    /// Its deposit is mined out. It will never produce again.
+    DepositMinedOut,
+    /// Decision 7: a drill is a throughput upgrade, never a hardness unlock,
+    /// so it refuses exactly what hands refuse. The species is carried because
+    /// the sentence names the rock, and it saves `debug` a fallible re-read of
+    /// a deposit this state has already proved exists.
+    DepositTooHard { species: SpeciesId },
+}
+
+/// What a planted machine is doing. **DECIDED IN ONE PLACE**
+/// (`World::machine_state`), for the reason the smelter got the same treatment
+/// on ASSA-80.
+///
+/// Before ASSA-94 this chain existed three times: `step` refusing to mine,
+/// `step` announcing the stall edge, and `debug::machine_status` writing the
+/// prose. Two read `stats().capacity` and the third read
+/// `stat_range().low.capacity`. Nothing had gone wrong yet — capacity is flat
+/// from the part kind, so those two agree — but the only standing answer about
+/// a drill that existed anywhere was a *sentence*, so a host could not ask
+/// whether a machine had stopped without parsing prose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MachineState {
+    Idle(MachineIdle),
+    Stalled(MachineStall),
+    /// Mining this deposit. **The work system acts on exactly this arm, and
+    /// on nothing it looked up itself** — the deposit and grade ride along so
+    /// `step` re-reads nothing after asking, which is what makes "one place
+    /// decides" true rather than merely intended.
+    Working {
+        deposit: DepositId,
+        species: SpeciesId,
+        grade: Grade,
+    },
+}
+
+impl MachineState {
+    /// The stall, if this is one.
+    pub const fn stall(self) -> Option<MachineStall> {
+        match self {
+            MachineState::Stalled(why) => Some(why),
+            _ => None,
+        }
+    }
+
+    /// Whether a player has to do something about this.
+    ///
+    /// **TRUE FOR IDLE TOO, AND THAT IS THE OPPOSITE OF THE SMELTER**
+    /// (Game Director, ASSA-94: "every standing not-working state", naming
+    /// mined out and unreachable). The two are not inconsistent, because the
+    /// two idles are not the same thing. A smelter is idle when nobody has
+    /// fed it yet, which is the normal end of every batch and resolves itself
+    /// the moment a player inserts. A machine is idle only because it was
+    /// *planted somewhere it cannot work* — no deposit, a mined-out deposit,
+    /// or rock too hard for anything that can be built. None of those three
+    /// will ever resolve on their own, and the player has already paid eight
+    /// refined for the thing not working.
+    pub const fn halted(self) -> bool {
+        match self {
+            MachineState::Idle(_) | MachineState::Stalled(_) => true,
+            MachineState::Working { .. } => false,
+        }
+    }
+}
+
+/// What any building is doing, so one question answers for every kind.
+///
+/// A host asking "has this stopped?" should not have to match the kind first
+/// and then learn two different vocabularies — that is the shape that let the
+/// drill go three days with no askable state at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuildingState {
+    Smelter(SmelterState),
+    Machine(MachineState),
+}
+
+impl BuildingState {
+    /// Whether a player has to do something about this building.
+    ///
+    /// Exhaustive on purpose: a new `BuildingKind` fails to compile here
+    /// rather than quietly reporting itself as fine (ASSA-51/53's shape).
+    pub const fn halted(self) -> bool {
+        match self {
+            BuildingState::Smelter(s) => s.halted(),
+            BuildingState::Machine(m) => m.halted(),
+        }
+    }
+}
+
+impl Machine {
+    /// Whether a whole `amount` more fits in the buffer.
+    ///
+    /// **DECISION 9 LIVES HERE AND NOWHERE ELSE.** It stops AT the cap, so it
+    /// never starts a unit it has no room for: nothing is mined and thrown
+    /// away, and `progress` keeps whatever it had, so emptying the buffer
+    /// resumes mid-unit. `step` asks this before mining and again after, and
+    /// `World::machine_state` asks it to report the stall; before ASSA-94
+    /// those were three separate `>` comparisons.
+    pub fn has_room_for(&self, amount: u32, capacity: u32) -> bool {
+        self.held.map_or(0, |h| h.count) + amount <= capacity
     }
 }
 

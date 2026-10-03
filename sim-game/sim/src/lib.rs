@@ -54,7 +54,8 @@ pub use assembly::{
     PART_SPECS, Part, PartKind, PartSpec, SlotLimit, Source, Stat, StatRange,
 };
 pub use building::{
-    Building, BuildingId, BuildingKind, Machine, Slot, Smelter, SmelterStall, SmelterState,
+    Building, BuildingId, BuildingKind, BuildingState, Machine, MachineIdle, MachineStall,
+    MachineState, Slot, Smelter, SmelterStall, SmelterState,
 };
 pub use command::{Event, Input, PlayerCommand, RejectReason, StopReason, SystemCommand};
 pub use inventory::Inventory;
