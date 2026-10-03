@@ -13,9 +13,7 @@
 //! `tests/tools.rs` pins what a drill does; this file pins only that a
 //! stopped machine stays *askable*, and in one vocabulary.
 
-use sim::tuning::{
-    FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS, HAND_SPARK_TEMPERATURE, YIELD_BY_GRADE,
-};
+use sim::tuning::{HAND_MINE_MAX_HARDNESS, YIELD_BY_GRADE};
 use sim::{
     Assembly, BuildingId, BuildingKind, DepositId, Event, Grade, Input, Item, ItemKind,
     MachineIdle, MachineStall, MachineState, Mount, PART_SPECS, Part, PartKind, PlayerCommand,
@@ -53,12 +51,22 @@ fn world_with_player() -> (World, PlayerId) {
     // hand spark, so it IS fuel and nothing in this world can light it. That
     // is the shape of the rock the board loaded fifty units of.
     world.species_mut(HOT_FUEL).sheet = sheet(30, 90, 100);
-    assert!(
-        90 > HAND_SPARK_TEMPERATURE && 100 >= FUEL_MIN_REACTIVITY,
-        "the fixture's fuel must be real fuel that cannot be lit, or the \
-         central case here is not the board's case"
-    );
     world.species_mut(ROCK).sheet = sheet(30, 60, 1);
+    // **ASKED OF THE SIM, NOT OF THE LITERALS ABOVE.** The fixture is only
+    // the board's case if `ladder` agrees this is real fuel that nothing in
+    // this world can light; comparing the numbers I just typed to the tuning
+    // constants would restate the sheet rather than test it, and would still
+    // pass if the fuel gate moved under it.
+    assert!(
+        sim::ladder::fuel_grade(world.species(HOT_FUEL)).is_some(),
+        "the fixture's fuel must actually be fuel"
+    );
+    assert_eq!(
+        sim::ladder::lighting(&world.species, HOT_FUEL),
+        sim::ladder::Lighting::NothingBurnsHotEnough,
+        "nothing in this world may be able to light it, or the central case \
+         here is not the board's case"
+    );
     let join = Input::System(SystemCommand::AddPlayer { name: "ada".into() });
     step(&mut world, &[join], &mut Vec::new());
     (world, PlayerId(0))
