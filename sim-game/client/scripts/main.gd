@@ -915,7 +915,11 @@ func _make_button(offer: Dictionary) -> Button:
 ## rebuilds the rows.
 func _refresh_pack() -> void:
 	var stacks := _sim.inventory_of(_client.player_id) if _client != null else []
-	var signature := "%s@%d" % [_pack_shape(stacks), _building.size()]
+	# **AND THE PACK NO LONGER REBUILDS WHEN A PART IS CHOSEN** (ASSA-103). The signature carried
+	# `_building.size()` for one reason: the part row's word turned on it. It reads `is_frame` now, so
+	# nothing on a pack row changes when you pick something up -- and a term in a cache key that no
+	# drawn thing depends on is a rebuild nobody asked for, every press.
+	var signature := _pack_shape(stacks)
 	if signature != _pack_showing:
 		_pack_showing = signature
 		_rebuild_pack(stacks)
@@ -1031,8 +1035,7 @@ func _rebuild_pack(stacks: Array) -> void:
 		# for a thing that is not a building.
 		var footprint := AssaySimHost.footprint_of_item(String(stack.get("kind", "")),
 				int(stack.get("species", -1)), String(stack.get("grade", "C")))
-		var verbs := AssayHud.stack_verbs(stack, recipes, part_kinds, footprint,
-				not _building.is_empty())
+		var verbs := AssayHud.stack_verbs(stack, recipes, part_kinds, footprint)
 		if not verbs.is_empty():
 			body.add_child(_verb_row(verbs, func(descriptor: Dictionary) -> Button:
 					return _stack_button(descriptor, stack, footprint)))
@@ -1071,9 +1074,15 @@ func _stack_button(descriptor: Dictionary, stack: Dictionary, footprint: Vector2
 					"stand it on the %d x %d tiles from the one you are acting on"
 							% [footprint.x, footprint.y])
 		"build":
+			# THE SAME FACT AS THE LABEL, FROM THE SAME PLACE (ASSA-103). The tooltip is the label's
+			# claim at length, so it reads `is_frame` out of the descriptor rather than asking the
+			# screen's state what the button probably means. It used to say "mount on the frame you
+			# chose" to anything pressed after a first part -- including another frame, which the sim
+			# refuses.
 			return _button(label, func() -> void: _choose_part(stack),
-					"use as the frame of the next machine" if _building.is_empty()
-							else "mount on the frame you chose")
+					"use as the frame of the next machine"
+							if bool(descriptor.get("is_frame", false))
+							else "mount on the frame of the next machine")
 		_:
 			return _button(label, func() -> void: _say(
 					"no command for %s" % label, AssayHud.Say.FAILED))
@@ -1167,8 +1176,26 @@ func _insert(stack: Dictionary, slot: String) -> void:
 
 
 ## Choose a part for the next `Assemble`. The first one is the FRAME, which is `sim-cli`'s rule kept
-## rather than invented, and the row's button says which it is about to be.
+## rather than invented, and the row's button says whether this kind is one.
+##
+## **A PRESS THE SIM WOULD REFUSE IS ANSWERED AT THE PRESS, IN THE SIM'S OWN SENTENCE** (Maren,
+## ASSA-103). This used to append whatever it was handed and confirm it in the JOINED colour, so a
+## head chosen as a frame looked accepted and the refusal arrived at `Assemble` -- which clears the
+## whole sequence, so the player lost every good press as well as the bad one.
+##
+## THE SIM ANSWERS, NOT THIS FILE. `part_press_refusal` is `sim::assembly::fault_adding` with the
+## sim's own wording (ASSA-102); a design that is merely half built answers `""`, because the
+## recoverable/permanent line is a rule in there and not something GDScript gets to guess at.
+## Nothing is disabled either (ASSA-37): the button stays pressable and the sim does the refusing.
 func _choose_part(stack: Dictionary) -> void:
+	var chosen := PackedStringArray()
+	for entry in _building:
+		chosen.append(String((entry as Dictionary).get("kind", "")))
+	var refusal := AssaySimHost.part_press_refusal(chosen,
+			String(stack.get("kind", "")))
+	if refusal != "":
+		_say(refusal, AssayHud.Say.FAILED)
+		return
 	_building.append(stack)
 	_say("%s %s" % ["frame:" if _building.size() == 1 else "mounting", AssayHud.stack_line(stack)],
 			AssayHud.Say.JOINED)
