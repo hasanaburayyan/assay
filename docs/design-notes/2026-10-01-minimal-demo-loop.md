@@ -183,6 +183,19 @@ holds 687 to 1,184. So the twenty minutes are not gated by material, by
 distance or by the clock — **they are gated by the number of things worth
 building, which is a pick, a drill, and however many hoppers you dare.**
 
+**And on the pinned seed the improvement axis is not grade.** Worldgen's
+starter guarantee hands 14247 a doorstep deposit of purity 77 — **grade A**,
+hardness 39 against the hand limit of 40, so it is both the best grade and the
+fastest head the hand gate allows (`shared/assay/maren_starter_grade_2026-10-03.rs`).
+Grade A cannot be refined further, so `sort` and `resmelt` have nothing to do
+with the rock in front of a new player, and the pick's UNCERTAIN verdict there
+is not a grade problem at all: it is a *rough sheet*, and the thing that
+resolves it is an assay, which the section below shows costs nothing. What is
+left to vary in twenty minutes is **species and hopper count** — both of which
+mean walking to one of the five C or five B deposits and deciding whether a
+different sheet beats the one at the door. That is the demo's improvement loop,
+and it is worth knowing that the ladder is not part of it.
+
 **One pacing fact that is real, though, and is not a scarcity.** Mining
 *continuously* would strip the ore within a 20-tile walk in 5.6 minutes and the
 entire world in 33.7, so a player who treats this like an idle game runs out of
