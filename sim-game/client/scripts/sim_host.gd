@@ -128,6 +128,24 @@ func species_names() -> PackedStringArray:
 	return _sim.species_names() if _sim != null else PackedStringArray()
 
 
+## EVERYTHING THE FACTORY OWNS THAT HAS STOPPED AND NEEDS A PERSON (ASSA-94), one worded line per
+## building, in the sim's own placement order.
+##
+## RENDER THESE VERBATIM AND NEVER SORT THEM. The sentence is `sim::debug::halt_lines`, the same one
+## `halted` prints in the terminal; re-wording it here would be a second vocabulary for one condition
+## (ASSA-43/52). The order is the sim's because which stopped machine matters most depends on what
+## the player is doing next, which this side cannot know.
+##
+## THE COUNT IS `size()`. There is deliberately no second field carrying it: the Game Director ruled
+## the total must never truncate while the reasons are bounded by the column's height, and two copies
+## of one quantity are free to disagree.
+##
+## EMPTY IS THE HEALTHY STATE AND DRAWS NOTHING. A surface that said "0 stopped" would cry wolf the
+## way `idle: nothing to refine` would.
+func halt_lines() -> PackedStringArray:
+	return _sim.halt_lines() if _sim != null else PackedStringArray()
+
+
 ## What the last applied bundle caused, as the sim's own `Debug` text. For a log, not a player.
 func last_events() -> PackedStringArray:
 	return _sim.last_events() if _sim != null else PackedStringArray()
