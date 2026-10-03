@@ -25,7 +25,12 @@ const MARKER: &str = "RELAY STARTED";
 /// No `--port 0` and no saves dir: every caller here is a relay that is
 /// supposed to die before it reaches either.
 fn run(args: &[&str]) -> (String, String, bool) {
-    let saves = std::env::temp_dir().join(format!("assay-marker-test-{}", std::process::id()));
+    run_in(args, &format!("assay-marker-test-{}", std::process::id()))
+}
+
+/// The same, in a named saves directory, so one caller can plant a file in it.
+fn run_in(args: &[&str], dir: &str) -> (String, String, bool) {
+    let saves = std::env::temp_dir().join(dir);
     std::fs::create_dir_all(&saves).expect("a temp saves dir");
     let out = Command::new(env!("CARGO_BIN_EXE_sim-relay"))
         .args(args)
@@ -102,4 +107,43 @@ fn a_socket_it_cannot_have_still_says_it_ran() {
         "it never listened, so it must not have said so: {stdout:?}"
     );
     assert!(stderr.contains("Could not listen on"), "{stderr:?}");
+}
+
+/// **BEFORE ANY FILE WORK, AND THIS IS THE ONLY TEST HERE THAT CAN SAY SO**
+/// (Limpet, added to Marlow's file).
+///
+/// The three tests above all fail inside `parse_args`, which runs before the
+/// save is touched either way — so they fire for any placement after argument
+/// parsing without ever being about the file. Move the marker one step later,
+/// below `open_world`, and they still fire, for the wrong reason.
+///
+/// A save this build cannot read exits 1 from inside `open_world`, which is the
+/// one place a marker printed "after the file" is lost. **And it is not a
+/// contrived case**: `SAVE_VERSION` is 10 and versions 1–8 do not load at all,
+/// so a player who keeps a world across an update meets exactly this. Without
+/// the marker their client would report a file the system refused to run.
+#[test]
+fn a_save_this_build_cannot_read_is_still_preceded_by_the_marker() {
+    let dir = format!("assay-marker-badsave-{}", std::process::id());
+    let saves = std::env::temp_dir().join(&dir);
+    std::fs::create_dir_all(&saves).expect("a temp saves dir");
+    // The relay's own naming, and deliberately not JSON at all, so the failure
+    // is the load itself rather than a migration.
+    std::fs::write(saves.join("world-4244.json"), "{ this is not a world").expect("plant a save");
+    // NO `--fresh`: that flag skips the load, and skipping the load skips the
+    // test. `--port 0` because this must die on the save, not on a busy port.
+    let (stdout, stderr, ok) = run_in(&["4244", "--port", "0", "--bind", "127.0.0.1"], &dir);
+    assert!(
+        !ok,
+        "an unreadable save should exit non-zero. stdout:\n{stdout}"
+    );
+    assert!(
+        stderr.contains("Could not load"),
+        "the person should be told which file: {stderr:?}"
+    );
+    assert!(
+        stdout.starts_with(MARKER),
+        "the relay died opening a save without saying it had started: stdout {stdout:?}. \
+         A client cannot tell that from a file the system refused to execute."
+    );
 }
