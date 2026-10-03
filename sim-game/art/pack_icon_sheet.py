@@ -18,19 +18,20 @@ TextureRect, the atlas region, `modulate`, the row height, the font size and the
 Nothing here is a constant copied out of a GDScript file.
 
 WHAT IS REPLICATED RATHER THAN ASKED. Headless Godot has no renderer, so the one thing this
-cannot ask the engine for is the pixels. Two documented rules are reimplemented:
-  - STRETCH_KEEP_ASPECT_CENTERED: scale = min(rect.w/frame.w, rect.h/frame.h), result centred.
-    The engine's own `scale` is in the JSON and this script asserts its arithmetic matches.
-  - TEXTURE_FILTER_NEAREST: a destination pixel takes the source texel under its CENTRE, and a
-    destination pixel is drawn at all only if its centre is inside the quad. That is why a
-    half-pixel rect (25.5) and a non-integer scale (15/32) matter.
+cannot ask the engine for is the pixels. The two documented rules that stand in for it --
+STRETCH_KEEP_ASPECT_CENTERED and TEXTURE_FILTER_NEAREST, and why a half-pixel rect (25.5) at a
+non-integer scale (15/32) makes them matter -- now live in `art/pack_icon_draw.py`, which is
+imported below. They moved there when `pack_icon_kinds.py` needed the same pixels to ask a
+different question, so that the two sheets can never disagree about what the client drew.
 """
 import json
-import math
 import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pack_icon_draw import nearest_blit  # noqa: E402  the engine's own sampling, defined once
 
 HERE = Path(__file__).resolve().parent.parent
 LAYOUT = json.load(open(sys.argv[1] if len(sys.argv) > 1 else "/tmp/cove-layout.json"))
@@ -98,50 +99,6 @@ def plate_rect_of(entry, row_h):
     """The plate's laid-out size, falling back to the icon box when there is no plate."""
     rect = entry["icon"].get("plate_rect") or []
     return (float(rect[0]), float(rect[1])) if len(rect) == 2 else (ICON, float(row_h))
-
-
-def nearest_blit(dst, frame, tint, dest_x, dest_y, dest_w, dest_h, zoom=1):
-    """Draw `frame` into `dst` the way a TextureRect with NEAREST does, tinted by `modulate`.
-
-    Returns the list of composited (r,g,b) for every pixel whose source texel had any alpha --
-    which is what a contrast question is about: the ink, not the transparent frame around it.
-    """
-    fw, fh = frame.size
-    px = frame.load()
-    ink = []
-    x0 = math.floor(dest_x * zoom)
-    y0 = math.floor(dest_y * zoom)
-    x1 = math.ceil((dest_x + dest_w) * zoom)
-    y1 = math.ceil((dest_y + dest_h) * zoom)
-    out = dst.load()
-    for dy in range(y0, y1):
-        v = (dy + 0.5) / zoom - dest_y
-        if v < 0 or v >= dest_h:
-            continue
-        sy = min(fh - 1, int(v / dest_h * fh))
-        for dx in range(x0, x1):
-            u = (dx + 0.5) / zoom - dest_x
-            if u < 0 or u >= dest_w:
-                continue
-            sx = min(fw - 1, int(u / dest_w * fw))
-            r, g, b, a = px[sx, sy]
-            if a == 0:
-                continue
-            r = r * tint[0] // 255
-            g = g * tint[1] // 255
-            b = b * tint[2] // 255
-            if 0 <= dx < dst.width and 0 <= dy < dst.height:
-                base = out[dx, dy]
-                f = a / 255.0
-                mixed = tuple(int(round(c * f + base[i] * (1 - f))) for i, c in enumerate((r, g, b)))
-                out[dx, dy] = mixed
-                # SOLID INK ONLY, and this is a correction rather than a choice: the part frames
-                # carry a contact shadow whose alpha runs down to 1, so counting every a>0 pixel
-                # made the measure mostly about the shadow -- it reported "100% under 3:1" for a
-                # sprite whose body plainly reads. A pixel is the sprite's body at a >= 200.
-                if a >= 200:
-                    ink.append(mixed)
-    return ink
 
 
 def ink_bbox(frame):
