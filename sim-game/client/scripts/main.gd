@@ -695,6 +695,12 @@ func _rebuild_pack(stacks: Array) -> void:
 				row.add_child(art)
 		var body := VBoxContainer.new()
 		body.add_theme_constant_override("separation", 2)
+		# TAKES THE SPACE THE ICON LEAVES, AND THAT IS WHAT MAKES THE ROW FIT (ASSA-98). A `FILL`
+		# child of an `HBox` gets its own MINIMUM, not the room left over -- which is why the verb
+		# row used to carry a `PANEL`-wide floor, and why that floor made every row 358 wide inside a
+		# 320 box. `EXPAND_FILL` is the derivation: whatever sits beside this body, the body is the
+		# rest of the row, and nothing has a width written down to keep in step.
+		body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(body)
 		var label := Label.new()
 		# NAMED, NOT FOUND BY POSITION. `_refresh_pack`'s fast path re-texts this label ten times a
@@ -704,7 +710,11 @@ func _rebuild_pack(stacks: Array) -> void:
 		# too, and Maren's ruling has two more surfaces coming (bench rows, then the spawn marker).
 		label.name = STACK_LINE
 		label.add_theme_font_size_override("font_size", 13)
-		label.custom_minimum_size = Vector2(PANEL - ICON_PX - 6.0, 0.0)
+		# NO WIDTH OF ITS OWN EITHER, FOR THE SAME REASON AS THE VERB ROW (ASSA-98). This used to be
+		# `PANEL - ICON_PX - 6.0`, which was the right number and the wrong kind of thing: it is the
+		# icon's width and the row's separation written down a second time, so a 64px icon one day
+		# would push the row back over the panel with this floor as the thing doing the pushing. The
+		# body expands into whatever the icon leaves, and the label fills the body.
 		body.add_child(label)
 		# WHETHER AN ITEM CAN BE PLACED IS THE SIM'S ANSWER TOO, by footprint: 2x2 for a smelter, 0x0
 		# for a thing that is not a building.
@@ -916,15 +926,28 @@ func _target_tile() -> Vector2i:
 
 
 ## A ROW OF VERB BUTTONS THAT WRAPS. An `HFlowContainer`, not an `HBoxContainer`, and that is not a
-## style choice: a refined stack offers six buttons (Fuel, Smelt and one Make per part kind) and an
-## HBox would run them off the right edge of a 320px panel. The column only scrolls vertically, so a
-## button pushed sideways is a button that cannot be pressed -- which is the exact failure the scroll
-## box was added to avoid.
+## style choice: a refined stack offers seven buttons (Craft gear, Fuel, Smelt and one Make per part
+## kind) and an HBox would run them off the right edge of a 320px panel. The column only scrolls
+## vertically, so a button pushed sideways is a button that cannot be pressed -- which is the exact
+## failure the scroll box was added to avoid.
+##
+## **AND FOR A WHILE THAT COMMENT WAS TRUE AND THIS CODE WAS NOT** (ASSA-98). It used to claim
+## `custom_minimum_size.x = PANEL`, the whole panel width, which was right while a stack row was just
+## `[VBox(line, verbs)]`. ASSA-46 put a 32px icon BESIDE that VBox and nobody subtracted it, so every
+## pack row's minimum became 320 + 32 + 6 = **358 inside a box 320 wide that clips and does not
+## scroll sideways**. Measured, not reasoned: `art/pack_icon_layout.gd` reported `row_size [358, 48]`
+## against `panel_px 320`.
+##
+## **SO IT CLAIMS NOTHING NOW AND TAKES THE WIDTH IT IS GIVEN.** That is the version that cannot rot:
+## the bench calls this too, where its row IS the full panel, and a width passed in as an argument
+## would be one more number to keep in step with whatever gets added to a row next. What makes it
+## work is `SIZE_EXPAND_FILL` on the stack row's body -- without it a `FILL` child of an `HBox` gets
+## its own minimum rather than the space left over, which is why the floor was there in the first
+## place.
 func _verb_row(verbs: Array, make_button: Callable) -> Control:
 	var row := HFlowContainer.new()
 	row.add_theme_constant_override("h_separation", 4)
 	row.add_theme_constant_override("v_separation", 2)
-	row.custom_minimum_size = Vector2(PANEL, 0.0)
 	for descriptor in verbs:
 		row.add_child(make_button.call(descriptor as Dictionary))
 	return row

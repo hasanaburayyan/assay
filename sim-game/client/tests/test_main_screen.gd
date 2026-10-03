@@ -372,3 +372,64 @@ func test_the_l_key_toggles_the_log_and_cannot_eat_a_typed_l() -> bool:
 			ok = _fail("a key repeat toggled the log, so holding L strobes it")
 	screen.queue_free()
 	return ok
+
+
+## NO ROW ASKS FOR MORE WIDTH THAN THE PANEL THAT CLIPS IT (ASSA-98).
+##
+## The HUD column lives in a `ScrollContainer` exactly `PANEL` wide whose horizontal scrolling is
+## DISABLED, so a row wider than that is not a row you scroll to -- it is a row whose right-hand end
+## does not exist. Every pack row used to ask for 358: the verb flow claimed the whole panel and the
+## 32px icon beside it pushed the total past the box. `art/pack_icon_layout.gd` measured it on real
+## frames; this measures the CAUSE, which is the minimum the row asks for.
+##
+## **`get_combined_minimum_size` AND NOT `size`, DELIBERATELY.** This suite runs inside
+## `SceneTree._initialize`, where no layout pass has happened and every `size` is still whatever it
+## was constructed with -- a `size` assertion here would read zeros and pass against anything. The
+## combined minimum is computed from the children on demand, which is the one width that means
+## something before a frame, and it is also the exact quantity that was wrong.
+##
+## BOTH SHAPES, because only one of them ever was wrong: a stack row has an icon beside its body and
+## a bench row is the full panel with nothing beside it. A fix that just subtracted 38 everywhere
+## would have broken the bench and passed a test that only looked at the pack.
+func test_no_row_asks_for_more_width_than_the_panel_that_clips_it() -> bool:
+	var screen := _screen()
+	var ok := true
+	# The richest pack the demo loop actually produces, which is the one with seven verbs on a row.
+	screen._rebuild_pack([
+		{"kind": "refined", "species": 4, "grade": "B", "count": 6, "name": "Minyte refined (B)"},
+		{"kind": "ore", "species": 4, "grade": "B", "count": 22, "name": "Minyte ore (B)"},
+		{"kind": "head", "species": 4, "grade": "B", "count": 2, "name": "Minyte head (B)"},
+	])
+	var checked := 0
+	for section in [screen._carrying, screen._bench, screen._species, screen._actions]:
+		for child in section.get_children():
+			if not (child is Control):
+				continue
+			var row: Control = child
+			var want: float = row.get_combined_minimum_size().x
+			checked += 1
+			if want > AssayHud.PANEL:
+				ok = _fail(("a row asks for %f px inside a %f px panel that clips and does not "
+						+ "scroll sideways, so its right-hand end cannot be reached: '%s'")
+						% [want, AssayHud.PANEL, _text_in(row)])
+				break
+		if not ok:
+			break
+	if ok and checked == 0:
+		ok = _fail("no rows were measured, so this proves nothing")
+	screen.queue_free()
+	return ok
+
+
+## Whatever text a row carries, for a failure message that names the row rather than its index.
+func _text_in(node: Node) -> String:
+	if node is Label:
+		return (node as Label).text
+	if node is Button:
+		return (node as Button).text
+	var parts := PackedStringArray()
+	for child in node.get_children():
+		var found := _text_in(child)
+		if found != "":
+			parts.append(found)
+	return " | ".join(parts)
