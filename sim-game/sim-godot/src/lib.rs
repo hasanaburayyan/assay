@@ -449,6 +449,20 @@ impl AssaySim {
             .collect()
     }
 
+    /// EVERY BUILDING, FOR DRAWING: where it stands, how many tiles it covers,
+    /// and what it is made of. The thin half of `building_facts`, which holds
+    /// the reasoning and the test.
+    ///
+    /// `pos` IS THE TOP-LEFT TILE OF THE FOOTPRINT — `Building::pos`'s own
+    /// documented meaning, and the convention `art/mock_scene.py` blits at. A
+    /// machine is (1, 1) and its sprite is two tiles wide, so the picture
+    /// OVERHANGS east; occupancy is sim state and this is where a renderer
+    /// reads it rather than guessing it from the drawing (ASSA-30/38).
+    #[func]
+    pub fn buildings(&self) -> Array<VarDictionary> {
+        self.building_facts().iter().map(building_dict).collect()
+    }
+
     /// EVERY DEPOSIT, FOR DRAWING. Depleted ones are included with `amount` 0,
     /// because the sim keeps them so `DepositId`s stay stable; what to do with
     /// an empty patch on screen is the view's business.
@@ -922,12 +936,51 @@ fn design_dict(design: &DesignFacts) -> VarDictionary {
     out
 }
 
+/// ONE BUILDING AS FACTS, AND THE ONLY PLACE THAT SPELLS THEM.
+///
+/// `tile_facts` (a cursor over one tile) and `building_facts` (the list a
+/// renderer draws) both need this. Two copies is exactly the drift this repo
+/// keeps paying for: the tile under the mouse would go on saying one thing
+/// while the list it is drawn from said another, and both would look right.
+fn building_fact(world: &World, building: &sim::building::Building) -> BuildingFacts {
+    BuildingFacts {
+        id: building.id.0 as i64,
+        kind: building.kind.name().to_string(),
+        pos: (building.pos.x, building.pos.y),
+        status: sim::debug::building_status(world, building),
+        footprint: building.kind.footprint(),
+        parts: match &building.kind {
+            sim::building::BuildingKind::Machine(machine) => machine
+                .assembly
+                .parts()
+                .map(|part| part.kind.name().to_string())
+                .collect(),
+            sim::building::BuildingKind::Smelter(_) => Vec::new(),
+        },
+        grade: match &building.kind {
+            sim::building::BuildingKind::Machine(machine) => {
+                machine.assembly.frame.material.grade.letter().to_string()
+            }
+            sim::building::BuildingKind::Smelter(_) => String::new(),
+        },
+        species: building.material.species.0 as i64,
+    }
+}
+
 fn building_dict(building: &BuildingFacts) -> VarDictionary {
     vdict! {
         "id" => building.id,
         "kind" => &gstring(&building.kind).to_variant(),
         "pos" => Vector2i::new(building.pos.0, building.pos.1),
         "status" => &gstring(&building.status).to_variant(),
+        "footprint" => Vector2i::new(building.footprint.0, building.footprint.1),
+        // A PACKED ARRAY AND NOT A LIST OF DICTS. ASSA-94 cost me an unguarded
+        // field for exactly this: a `Variant` is invisible from Rust, so a
+        // packed array of strings is the one shape BOTH `cargo test` and a
+        // GDScript guard can read.
+        "parts" => &packed(&building.parts).to_variant(),
+        "grade" => &gstring(&building.grade).to_variant(),
+        "species" => building.species,
     }
 }
 
@@ -1087,6 +1140,22 @@ pub struct BuildingFacts {
     pub kind: String,
     pub pos: (i32, i32),
     pub status: String,
+    /// How many tiles it occupies, from `pos` as the TOP-LEFT of the footprint.
+    /// A smelter is (2, 2) and a machine (1, 1) — `BuildingKind::footprint`, so
+    /// a renderer never has to know which kinds are big.
+    pub footprint: (i32, i32),
+    /// The part kinds a machine is made of, frame first, in `Assembly::parts()`
+    /// order. Empty for a smelter, which is not an assembly. This is here
+    /// because a machine has NO single drawing: `art/rig.py` rule 2 is that one
+    /// is drawn by overlaying whole part sprites at one frame position, so a
+    /// renderer needs the list and the order.
+    pub parts: Vec<String>,
+    /// The grade the part sprites are drawn at (C/B/A), empty for a smelter.
+    /// From the frame's own material, which is the part `Assembly::parts()`
+    /// yields first.
+    pub grade: String,
+    /// The species of the material it is built from, for anything that tints.
+    pub species: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1371,6 +1440,32 @@ impl AssaySim {
         sim::debug::halt_lines(&self.world)
     }
 
+    /// EVERY BUILDING IN THE WORLD, FOR DRAWING, in the world's own order.
+    ///
+    /// ASSA-119. Until now a building was reachable only through `tile_facts`'s
+    /// `building` key, one tile at a time — which is 500-odd dictionary
+    /// allocations a frame over a 28x18 camera window, and still blind to the
+    /// 2x2 smelter whose other half is one tile outside it. A renderer wants
+    /// the list, the way it already gets `players()` and `deposits()`.
+    ///
+    /// THE SHAPE IS THE SIM'S AND THE RENDERER DERIVES NOTHING: the footprint,
+    /// the part list and its order, and the grade all arrive decided. A client
+    /// that worked out which kinds are 2x2, or stacked the parts in an order of
+    /// its own, would draw a machine the game cannot build. That is the rule
+    /// `Assembly::parts()` exists for — "every rule that has to pick a part
+    /// walks that order, so two peers can never disagree".
+    ///
+    /// Engine-free so `cargo test` can pin it; `AssaySim::buildings` is the
+    /// thin half. A `PackedStringArray` cannot be built in a Rust unit test at
+    /// all (godot-ffi panics), which is why that split is not optional here.
+    pub fn building_facts(&self) -> Vec<BuildingFacts> {
+        self.world
+            .buildings
+            .iter()
+            .map(|building| building_fact(&self.world, building))
+            .collect()
+    }
+
     /// What is on a tile. Out of bounds is reported, not hidden: a cursor is
     /// off the map most of the time and the readout has to say so.
     pub fn tile_facts(&self, x: i32, y: i32) -> TileFacts {
@@ -1403,12 +1498,9 @@ impl AssaySim {
                 None
             },
             building: if in_bounds {
-                self.world.building_at(at).map(|building| BuildingFacts {
-                    id: building.id.0 as i64,
-                    kind: building.kind.name().to_string(),
-                    pos: (building.pos.x, building.pos.y),
-                    status: sim::debug::building_status(&self.world, building),
-                })
+                self.world
+                    .building_at(at)
+                    .map(|building| building_fact(&self.world, building))
             } else {
                 None
             },
@@ -3037,6 +3129,139 @@ mod tests {
     /// successful batch and asks nobody for anything; if that reached this
     /// surface the panel would cry wolf after every smelt, which is the Game
     /// Director's standing constraint on this item.
+    /// ASSA-119: the world view needs the LIST, and every number on it is the
+    /// sim's.
+    ///
+    /// THE FOOTPRINT IS THE ASSERTION THAT MATTERS. A smelter is 2x2 and a
+    /// machine 1x1, `pos` is the TOP-LEFT of that block, and a renderer that
+    /// worked out for itself which kinds are big would draw a smelter over one
+    /// tile of a world the sim has given it four. Checked against the sim's own
+    /// answer and not against a 2 typed here, so a footprint that changes in
+    /// `building.rs` changes here rather than silently disagreeing.
+    #[test]
+    fn every_building_is_listed_with_the_footprint_the_sim_gave_it() {
+        let (mut sim, me) = with_a_player("limpet");
+        assert!(
+            sim.building_facts().is_empty(),
+            "a fresh world already holds buildings, so this test proves nothing"
+        );
+        let species = sim.world().species[0].id;
+        let smelter = Item::new(sim::ItemKind::Smelter, species, sim::Grade::B);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.inventory.add(smelter, 1);
+        }
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 1, at.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place {
+                item: smelter,
+                pos: spot,
+            },
+        )]);
+
+        let facts = sim.building_facts();
+        assert_eq!(facts.len(), 1, "{facts:?}");
+        let placed = &facts[0];
+        let theirs = sim
+            .world()
+            .building_at(spot)
+            .expect("the smelter was placed");
+        assert_eq!(placed.id, theirs.id.0 as i64);
+        assert_eq!(placed.kind, "smelter");
+        assert_eq!(placed.pos, (spot.x, spot.y));
+        assert_eq!(
+            placed.footprint,
+            theirs.kind.footprint(),
+            "the footprint is the sim's, never a size this crate decided"
+        );
+        assert_eq!(
+            placed.footprint,
+            (2, 2),
+            "and today that is 2x2, which is what a renderer has to cover"
+        );
+        assert_eq!(placed.species, species.0 as i64);
+        assert_eq!(
+            placed.status,
+            sim::debug::building_status(sim.world(), theirs),
+            "the status is the sim's sentence, not a second copy of the wording"
+        );
+        // EVERY TILE THE SIM OCCUPIES IS INSIDE THE REPORTED BLOCK. This is the
+        // real content of "pos is the top-left", and it fails if `pos` were ever
+        // the CENTRE — which is the other convention in this repo
+        // (`World::spawn_tile`) and the easy thing to assume.
+        for tile in sim::building::footprint_tiles(theirs.pos, theirs.kind.footprint()) {
+            let inside = tile.x >= placed.pos.0
+                && tile.y >= placed.pos.1
+                && tile.x < placed.pos.0 + placed.footprint.0
+                && tile.y < placed.pos.1 + placed.footprint.1;
+            assert!(
+                inside,
+                "the sim occupies {tile:?}, which is outside the block {:?} + {:?}",
+                placed.pos, placed.footprint
+            );
+            assert!(
+                sim.world().building_at(tile).is_some(),
+                "{tile:?} is inside the reported block and holds no building"
+            );
+        }
+        // A SMELTER IS NOT AN ASSEMBLY, so it has no parts and no grade to draw
+        // them at. Empty rather than a guessed "C": a renderer overlaying a
+        // frame sprite on a smelter would be drawing a machine the game cannot
+        // build, which is the one thing `art/mock_scene.py`'s header forbids.
+        assert!(placed.parts.is_empty(), "{:?}", placed.parts);
+        assert!(placed.grade.is_empty(), "{}", placed.grade);
+    }
+
+    /// A MACHINE CARRIES ITS PARTS IN `Assembly::parts()` ORDER, FRAME FIRST.
+    ///
+    /// A machine has no single drawing: `art/rig.py` rule 2 is that one is drawn
+    /// by overlaying whole part sprites at one frame position, and the frame has
+    /// to be the bottom layer. The order is the sim's canonical one — "every
+    /// rule that has to pick a part walks that order, so two peers can never
+    /// disagree" — and a renderer inventing its own would stack a machine
+    /// differently from the way the game reasons about it.
+    #[test]
+    fn a_machine_carries_its_parts_frame_first_at_the_grade_it_was_built_at() {
+        let (mut sim, me) = with_a_player("marlow");
+        let species = sim.world().species[0].id;
+        let material = Item::new(sim::ItemKind::Refined, species, sim::Grade::B);
+        let frame = sim::assembly::Part::of(
+            sim::assembly::PartKind::Frame(sim::assembly::Mount::Planted),
+            material,
+        );
+        let head = sim::assembly::Part::of(sim::assembly::PartKind::Head, material);
+        let assembly = sim::assembly::Assembly::new(frame, vec![head]);
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 2, at.y);
+        let roster = sim.world().species.clone();
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.assemblies
+                .push(sim::assembly::Built::new(assembly.clone(), &roster));
+        }
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::PlaceAssembly {
+                assembly: 0,
+                pos: spot,
+            },
+        )]);
+        let facts = sim.building_facts();
+        assert_eq!(facts.len(), 1, "the machine was not placed: {facts:?}");
+        let placed = &facts[0];
+        assert_eq!(placed.kind, "machine");
+        assert_eq!(placed.footprint, (1, 1));
+        let want: Vec<String> = assembly
+            .parts()
+            .map(|part| part.kind.name().to_string())
+            .collect();
+        assert_eq!(placed.parts, want, "frame first, then the mounted parts");
+        assert_eq!(placed.parts[0], "frame", "{:?}", placed.parts);
+        assert_eq!(placed.grade, "B");
+    }
+
     #[test]
     fn the_halt_lines_are_the_sims_own_in_its_own_order() {
         let (mut sim, me) = with_a_player("limpet");
