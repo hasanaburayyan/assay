@@ -981,3 +981,68 @@ func test_a_bench_row_that_grows_a_child_is_still_written_correctly() -> bool:
 		ok = _fail("the planted child did not land in front, so this test proves nothing")
 	screen.queue_free()
 	return ok
+
+
+## AN OLD LOG LINE IS ONE ROW; THE NEWEST ONE IS WHOLE (Maren's ruling, ASSA-117 box 8).
+##
+## **THE RULING EXISTS BECAUSE THE LOG WAS A STACK OF PANELS.** She measured entries 1, 4, 4, 5 and 6
+## rows tall at seed 14247: the tall ones are a design verdict whose numbers already live in `bench`,
+## and `sim/src/debug.rs:1785` says in writing that the sentence was ordered to survive being CUT by
+## a narrow panel. This client wrapped it instead, so 682px of log went into a 566px box.
+##
+## **WHAT THIS TEST CAN AND CANNOT SEE.** The height of a drawn row is layout, and `run_tests.gd`
+## works in `SceneTree._initialize`: no frame is drawn and nothing is laid out, so "the section got
+## shorter" is NOT assertable here and is not asserted. It is the window shot's job
+## (`tools/window_shot.gd`, both pinned seeds). What IS visible headless is the two properties the
+## engine decides the cut from, and one consequence that matters more than they do.
+##
+## **THE CONSEQUENCE IS THE LEVER, because the obvious wrong fix passes the properties.** Turning
+## wrapping off ALONE gives a Label a minimum width of its whole sentence -- 1012px, asked of the
+## engine with the real line at the real font -- and a row 692px wider than the 320px panel is
+## ASSA-98's clipping defect restored, which would be a worse bug than the one being fixed and
+## invisible to any assertion about wrap modes. So every cut line is required to fit the panel.
+##
+## The newest line is required to still WRAP rather than merely to be exempt: "shows whole" is a
+## promise about a sentence that is wider than the column, and only wrapping keeps it.
+func test_an_old_log_line_is_one_row_and_the_newest_is_whole() -> bool:
+	var screen := _screen()
+	# A FIXTURE SHAPED LIKE THE LINE MAREN MEASURED -- long enough that one row cannot hold it at any
+	# plausible font. The wording is this test's, not the sim's: nothing here asserts a sentence.
+	var long := ("your design broke: mass 1078 of 705 budget · holds 210 · speed 78 (bare hands 25)"
+			+ " · frame(Tonore A 385) + head(Tonore A 120) + hopper(Souktulore B 140) x4")
+	var lines := PackedStringArray()
+	for i in 12:
+		lines.append("%d · %s" % [500 + i, long])
+	# THE NEWEST ENTRY IS ALSO A LONG ONE, or "the newest shows whole" would be a claim about a
+	# sentence that fits anyway and the exemption could be deleted with nothing going red.
+	lines.append("%d · %s" % [512, long])
+	screen._events = lines
+	screen._rebuild_log()
+	var drawn: Array = screen._log.find_children("*", "Label", true, false)
+	var ok := true
+	if drawn.size() != lines.size():
+		ok = _fail("%d lines went in and %d Labels came out" % [lines.size(), drawn.size()])
+	else:
+		# NEWEST FIRST, so index 0 is the exempt one.
+		var newest := drawn[0] as Label
+		if newest.autowrap_mode == TextServer.AUTOWRAP_OFF:
+			ok = _fail("the newest line does not wrap, so a sentence wider than the column is cut "
+					+ "and `the newest shows whole` is false")
+		for i in range(1, drawn.size()):
+			var line := drawn[i] as Label
+			if line.autowrap_mode != TextServer.AUTOWRAP_OFF:
+				ok = _fail(("log line %d of %d still wraps, so one event is still as many rows as "
+						+ "its sentence wants") % [i, drawn.size()])
+				break
+			if line.text_overrun_behavior == TextServer.OVERRUN_NO_TRIMMING:
+				ok = _fail(("log line %d does not wrap and does not trim either, which is a "
+						+ "sentence that runs out of its panel in silence") % i)
+				break
+			var width := line.get_combined_minimum_size().x
+			if width > AssayHud.PANEL:
+				ok = _fail(("log line %d asks for %.0fpx inside a %.0fpx panel: ASSA-98's clipping, "
+						+ "restored by turning wrapping off without a trim") % [i, width,
+						AssayHud.PANEL])
+				break
+	screen.queue_free()
+	return ok
