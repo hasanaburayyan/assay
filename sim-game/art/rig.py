@@ -65,7 +65,14 @@ SHADOW_ENERGY = 0.9
 PALETTE = {
     "orange": "#F08A24", "orange_dk": "#B85A12", "gun": "#2E333B", "grey": "#6F7883",
     "steel": "#B9C2CC", "cyan": "#3FD8FF", "brass": "#E2B04A", "rubber": "#1B1D22",
-    "ground": "#6E7A4E", "ground_dk": "#5F6B43", "ground_ore": "#57603F",
+    # GROUND IS THREE TONES, NOT ONE (ASSA-115). `ground_lt` is the light step the
+    # tile was missing: with one base plus one dark it had no value structure at all --
+    # luminance p5 to p95 INSIDE a tile was 145.2 to 145.5 out of 255, which is a mat
+    # rather than ground. Low chroma on purpose, like its two siblings: ore owns
+    # saturation (rule 6) and the ground is 100% of the frame, so it is the surface
+    # that can least afford to shout.
+    "ground": "#6E7A4E", "ground_dk": "#5F6B43", "ground_lt": "#717B56",
+    "ground_ore": "#57603F",
     "skin": "#E0B48C", "suit": "#F08A24", "visor": "#3FD8FF",
     # ORE: one species-neutral set, base / dark / accent (accent is the
     # high-purity glint). There is deliberately no iron, copper, coal or
