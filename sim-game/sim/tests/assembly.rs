@@ -576,3 +576,120 @@ fn grade_does_not_narrow_an_unassayed_parts_mass_band() {
         "every grade must read the same non-zero band, got {widths:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// ASSA-90: the small print under a verdict is the sim's sentence.
+// ---------------------------------------------------------------------------
+
+/// The three verdicts, built deliberately rather than fished for, and the one
+/// sentence each earns.
+///
+/// **THE DEFECT THIS PINS WAS THE WINDOW APPENDING ITS OWN LINE WHENEVER THE
+/// ROUGH-SPECIES LIST WAS NON-EMPTY** — so a WILL BREAK design was offered an
+/// assay instead of being told it would break, and a SAFE one was handed a
+/// to-do. Both halves are asserted here: the right sentence, and the absence
+/// of the wrong one.
+#[test]
+fn each_verdict_earns_exactly_one_sentence_and_safe_earns_none() {
+    use sim::BreakVerdict;
+    use sim::debug::verdict_note;
+
+    // light head, strong frame: the heaviest it can be still fits the smallest
+    // budget it can have.
+    let mut safe_roster = vec![species(0, 1, 100, 50)];
+    // dense head, weak frame: the lightest it can be is already over.
+    let heavy_roster = vec![species(0, 100, 1, 50)];
+    // STILL ROUGH, so both spans are 25-wide bands rather than points, and
+    // they overlap: mass 3-75 against budget 6-120. Measured by sweeping the
+    // sheet rather than guessed -- my first attempt used 60/60, whose bands
+    // (mass 150-225, budget 300-450) are disjoint and read SAFE.
+    let mut rough_roster = vec![species(0, 20, 20, 50)];
+    rough_roster[0].assayed = false;
+    rough_roster[0].generated_name = "Korvite".to_string();
+    safe_roster[0].assayed = true;
+
+    let cases = [
+        (&safe_roster, BreakVerdict::Safe, None),
+        (
+            &heavy_roster,
+            BreakVerdict::WillBreak,
+            Some("this is over budget: it will break when planted or first used"),
+        ),
+        (
+            &rough_roster,
+            BreakVerdict::Uncertain,
+            Some("assay Korvite to know"),
+        ),
+    ];
+    let mut seen = Vec::new();
+    for (roster, want_verdict, want_note) in cases {
+        let a = pick(0, Grade::B);
+        let got = a.stat_range(roster).verdict();
+        assert_eq!(
+            got, want_verdict,
+            "this test sets up its own verdicts; {got:?} is not the case it is about"
+        );
+        seen.push(got);
+        let note = verdict_note(roster, &a);
+        assert_eq!(note.as_deref(), want_note, "{got:?}");
+        // THE OTHER HALF: the sentence a verdict must NOT carry. An assay on a
+        // settled verdict is the thing ASSA-90 was filed for.
+        if got != BreakVerdict::Uncertain {
+            assert!(
+                !note.as_deref().unwrap_or("").contains("assay"),
+                "a settled verdict must not offer an assay: {note:?}"
+            );
+        }
+    }
+    // Non-vacuity: all three arms were really reached.
+    for want in [
+        BreakVerdict::Safe,
+        BreakVerdict::WillBreak,
+        BreakVerdict::Uncertain,
+    ] {
+        assert!(seen.contains(&want), "{want:?} was never built");
+    }
+}
+
+/// **"UNCERTAIN IMPLIES A ROUGH SPECIES" IS A CLAIM, SO HERE IS ITS
+/// CONTRAPOSITIVE** (ASSA-90). `verdict_note` has a fallback sentence for an
+/// UNCERTAIN design with nothing rough in it, and that branch should be
+/// unreachable: an all-assayed design reads every property exactly, so both
+/// spans collapse to points and two points cannot overlap.
+///
+/// Swept over every species, grade and frame this roster affords rather than
+/// argued, because "cannot happen" is the kind of statement that turns out to
+/// have an arm nobody looked at.
+#[test]
+fn an_all_assayed_design_is_never_uncertain() {
+    use sim::BreakVerdict;
+
+    let roster = vec![
+        species(0, 50, 50, 50),
+        species(1, 90, 50, 50),
+        species(2, 1, 100, 50),
+        species(3, 100, 1, 50),
+    ];
+    assert!(
+        roster.iter().all(|s| s.assayed),
+        "the premise: every species in this roster is exact"
+    );
+    let mut checked = 0;
+    for id in 0..roster.len() as u8 {
+        for grade in Grade::ALL {
+            for a in [pick(id, grade), drill(id, grade, 0), drill(id, grade, 2)] {
+                let range = a.stat_range(&roster);
+                assert_ne!(
+                    range.verdict(),
+                    BreakVerdict::Uncertain,
+                    "an exact design read UNCERTAIN, so verdict_note's \
+                     no-rough-species fallback is reachable after all and its \
+                     wording needs a Game Director ruling rather than a comment"
+                );
+                assert_eq!(range.low, range.high, "exact readings, exact stats");
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 20, "only {checked} designs swept");
+}
