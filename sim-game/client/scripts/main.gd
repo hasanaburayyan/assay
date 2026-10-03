@@ -50,13 +50,36 @@ var _carrying := VBoxContainer.new()
 ## verbs of whatever building is on it.
 var _actions := VBoxContainer.new()
 var _cursor := Label.new()
-var _log := Label.new()
+## THE EVENT LOG, ONE CONTROL PER LINE (ASSA-117). It was a single Label holding `"\n".join(_events)`
+## and A SINGLE LABEL IS A SINGLE COLOUR, so "the newest line is the most legible" was not something
+## that control could be made to do at all. One Label per line is the cheapest structure that can
+## carry a per-line colour, and it is also the one a test can read a line's colour back out of.
+var _log := VBoxContainer.new()
+## WHAT THE LOG LAST DREW, so fourteen Labels are not rebuilt ten times a second. Same signature rule
+## as the pack and the bench. NOT "" -- an empty log has an empty shape, and starting this at "" made
+## the first refresh a no-op, which is the bug that left the bench blank until something was mined.
+var _log_showing := "\nnothing yet\n"
+## WHAT HAS STOPPED, AND IT IS NOT IN THE LOG (ASSA-117 box 2, Maren's ASSA-89/94 ruling: a refusal
+## is a MOMENT, a stall is a CONDITION). The sim answers this standing -- `sim::debug::halt_lines`
+## through `AssaySimHost.halt_lines()` -- and this block is PINNED OUTSIDE THE SCROLL BOX, which is
+## the only placement that makes "a later line cannot push it off" true structurally rather than by
+## my remembering it. Empty is empty: no heading, no reassuring line, zero pixels.
+var _halt := VBoxContainer.new()
+var _halt_box: PanelContainer = null
+## The stopped lines alone, without the heading. Rebuilt with the block.
+var _halt_lines: VBoxContainer = null
+var _halt_showing := "\nnothing yet\n"
 ## THE EVENT LOG'S CONTROL AND ITS STATE (ASSA-89). The log is the surface the team built the loop
 ## on and the board's one literal complaint about the window ("logs are hard on the eyes"), so it
 ## starts hidden and one named control brings it back. `_log_heading` is held because a hidden
 ## section under a visible heading is a labelled empty gap; see `_show_log`.
 var _log_toggle := Button.new()
 var _log_heading: Label = null
+## THE BOX THAT SCROLLS THE COLUMN. Held since ASSA-117, for one reason: revealing the log has to
+## MOVE THE VIEW to it. Maren verified in code that `ensure_control_visible` and `scroll_vertical`
+## appeared nowhere in this file, which is why pressing the toggle changed a button's label and
+## nothing a player could see -- the log is the last section of a column that already overflows.
+var _scroll: ScrollContainer = null
 ## INITIALISED TO THE WRONG ANSWER ON PURPOSE. `_build_ui` calls `_show_log(false)`, and starting
 ## this at `false` would make "the log is hidden on first open" true before anything ran -- a test
 ## that passes by construction, which is the failure I keep writing down. At `true` the default-state
@@ -115,6 +138,23 @@ var _species_showing := UNBUILT
 ## The pack row's sentence, by name. Everything that re-texts or reads a row finds it with this rather
 ## than by child index, because the row's shape now depends on whether the item has art.
 const STACK_LINE := "StackLine"
+
+## NO NAME FOR AN EVENT LINE OR A STOPPED LINE, AND I TRIED (ASSA-117). `STACK_LINE` works because
+## there is ONE of it per row. Fourteen siblings all called `LogLine` is a different thing, and the
+## engine's answer is worse than uniquifying: I asked it, and four Labels named `LogLine` come back
+## as `["LogLine", "@Label@2", "@Label@3", "@Label@4"]` -- the name is DISCARDED for every sibling
+## after the first. So `find_children("LogLine", ...)` returns exactly 1 of 14, and my own test read
+## that as "2 lines went in and 1 came out" and called it a layout defect. A name that cannot
+## survive a second sibling is worse than no name: it answers confidently and wrongly.
+##
+## Each block therefore holds nothing but its lines, in order, and they are selected by CLASS. That
+## is also the honest statement of the property -- "the lines of this block, in order" -- which is
+## why `_halt`'s heading sits beside `_halt_lines` rather than above its children.
+
+## A bench row's two written parts. Named for the same reason, and because `_write_design` used to
+## find them by child index 0 and 1.
+const BENCH_VERDICT := "BenchVerdict"
+const BENCH_BODY := "BenchBody"
 
 ## The crafting menu row's sentence, by name for the same reason `STACK_LINE` is: the fast path
 ## re-texts it ten times a second because it carries a count, and finding it by child index would
@@ -372,23 +412,47 @@ func _build_ui() -> void:
 	# and cannot be pressed. The scroll box is what carries the position now; the inner column sits at
 	# the origin inside it.
 	#
-	# AND THE LOG'S TOGGLE IS PINNED ABOVE IT, outside the scroll, for the reason in
-	# `AssayHud.LOG_TOGGLE_H`: a control inside a column taller than the window is one a stranger has
-	# to scroll to find.
-	_log_toggle.position = Vector2(VIEW.x - PANEL - MARGIN.x, MARGIN.y)
-	_log_toggle.custom_minimum_size = Vector2(PANEL, 0.0)
+	# AND TWO THINGS ARE PINNED ABOVE IT, outside the scroll: the log's toggle (ASSA-89 -- a control
+	# inside a column taller than the window is one a stranger has to scroll to find) and what has
+	# stopped (ASSA-117 -- a condition a later line must not be able to push away).
+	#
+	# THE PANEL IS A COLUMN OF THREE NOW, laid out by a container rather than by arithmetic. The
+	# scroll's height used to be `VIEW.y - MARGIN.y - LOG_TOGGLE_H - 24.0`: four numbers written down
+	# and a fifth (`LOG_TOGGLE_H`) that was a guess at how tall a themed Button is.
+	#
+	# WHY A CONTAINER AND NOT A THIRD POSITION. The stopped block appears and disappears with the
+	# world: a hand-placed scroll box would have to be moved and resized every time it did, and
+	# whatever number I wrote for its height would be the floor that rots. `SIZE_EXPAND_FILL` on the
+	# scroll is the derivation -- the scroll is whatever the other two leave, measured by the engine
+	# on the frame they change, and nobody has to remember it.
+	var chrome := VBoxContainer.new()
+	chrome.position = Vector2(VIEW.x - PANEL - MARGIN.x, MARGIN.y)
+	chrome.size = Vector2(PANEL, VIEW.y - MARGIN.y - 24.0)
+	chrome.add_theme_constant_override("separation", 6)
+	add_child(chrome)
 	_log_toggle.pressed.connect(func(): _show_log(not _log_shown))
-	add_child(_log_toggle)
+	chrome.add_child(_log_toggle)
+	# WHAT HAS STOPPED, ABOVE THE SCROLL AND NEVER INSIDE IT. A `PanelContainer` so the block reads as
+	# its own surface, from the theme (ASSA-116) rather than from a colour typed here.
+	_halt_box = PanelContainer.new()
+	_halt.add_theme_constant_override("separation", 2)
+	_halt_box.add_child(_halt)
+	chrome.add_child(_halt_box)
 
 	var scroll := ScrollContainer.new()
-	scroll.position = Vector2(VIEW.x - PANEL - MARGIN.x, MARGIN.y + AssayHud.LOG_TOGGLE_H)
-	scroll.custom_minimum_size = Vector2(PANEL,
-			VIEW.y - MARGIN.y - AssayHud.LOG_TOGGLE_H - 24.0)
-	scroll.size = scroll.custom_minimum_size
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	add_child(scroll)
+	chrome.add_child(scroll)
+	_scroll = scroll
 	var column := VBoxContainer.new()
-	column.custom_minimum_size = Vector2(PANEL, 0.0)
+	# NO `PANEL` FLOOR ON ANYTHING IN HERE ANY MORE, and it was not tidying (ASSA-117, box 4). A
+	# `ScrollContainer` with a vertical scrollbar hands its child the panel MINUS the scrollbar, and
+	# a 320px floor inside a ~308px viewport is content wider than the box that holds it -- with
+	# `SCROLL_MODE_DISABLED` horizontally, the overflow is simply clipped. That is ASSA-98's bug one
+	# level up: the row was fixed to derive its width and then the column it sits in was still told
+	# a number. `EXPAND_FILL` is the derivation, and the sections below inherit a `VBoxContainer`
+	# child's default FILL, so none of them needs a width of its own either.
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	column.add_theme_constant_override("separation", 10)
 	scroll.add_child(column)
 	# THE CRAFTING MENU IS THE FIRST SECTION, and it is built by hand rather than by the loop below
@@ -406,17 +470,19 @@ func _build_ui() -> void:
 	column.add_child(make_heading)
 	_crafting = _note("")
 	column.add_child(_crafting)
-	_assembling.custom_minimum_size = Vector2(PANEL, 0.0)
 	column.add_child(_assembling)
-	_make_toggle.custom_minimum_size = Vector2(PANEL, 0.0)
 	# NO FONT SIZE HERE. It is a Button, and how big a Button's label is now comes from the one
 	# theme (ASSA-116) rather than from the eight call sites that used to decide it by hand.
 	_make_toggle.pressed.connect(func(): _show_make(not _make_shown))
 	column.add_child(_make_toggle)
-	_make.custom_minimum_size = Vector2(PANEL, 0.0)
 	column.add_child(_make)
+	# "event log", NOT "last tick" (Maren, ASSA-116 finding 4b/4c). Two defects in one word: the
+	# switch offered an "event log" and the section called itself something else, so even having
+	# scrolled to it you would not know you had found what you asked for -- and `LOG_LINES` keeps the
+	# last fourteen LINES, which span many ticks, so the old heading named a time window the content
+	# never had. A heading is this client's word; the LINES in it stay the sim's (ASSA-80/93).
 	for part in [["you", _carrying], ["do", _actions], ["bench", _bench], ["rocks", _species],
-			["cursor", _cursor], ["last tick", _log]]:
+			["cursor", _cursor], ["event log", _log]]:
 		var heading := Label.new()
 		heading.text = String(part[0])
 		heading.theme_type_variation = &"Heading"
@@ -426,12 +492,12 @@ func _build_ui() -> void:
 		if part[1] == _log:
 			_log_heading = heading
 		var body: Control = part[1]
-		body.custom_minimum_size = Vector2(PANEL, 0.0)
 		if body is Label:
 			(body as Label).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		column.add_child(body)
 	# HIDDEN ON FIRST OPEN, and this is the line the whole item is about.
 	_show_log(false)
+	_refresh_halt()
 	# AND THE CRAFTING MENU IS OPEN ON FIRST JOIN, which is the opposite call for the opposite
 	# reason: the board asked for a crafting menu, and a menu nobody finds is the clunk restated.
 	_show_make(true)
@@ -450,23 +516,36 @@ func _build_ui() -> void:
 ## SHOW OR HIDE THE EVENT LOG (ASSA-89). The board's words were "logs are hard on the eyes", and
 ## this is the toggle they asked for rather than the deletion they did not.
 ##
-## HIDDEN, NOT REMOVED, AND THE DIFFERENCE IS THE WHOLE RISK. `_events` keeps filling and `_log.text`
-## keeps being set every refresh while this is false: the lines are all still there, one `visible`
-## away. The two ways to get this wrong are `queue_free` and clearing the text on hide, and both of
-## them pass a test that only ever looks at the default state -- which is why
-## `test_main_screen.gd` asserts the lines are readable WHILE the toggle is hidden, not merely that
-## they are readable.
+## HIDDEN, NOT REMOVED, AND THE DIFFERENCE IS THE WHOLE RISK. `_events` keeps filling and the line
+## Labels keep being rebuilt while this is false: the lines are all still there, one `visible` away.
+## The two ways to get this wrong are `queue_free` and clearing the lines on hide, and both of them
+## pass a test that only ever looks at the default state -- which is why `test_main_screen.gd`
+## asserts the lines are readable WHILE the toggle is hidden, not merely that they are readable.
 ##
-## THE HEADING GOES WITH IT, because "last tick" over nothing is a labelled empty gap, and a stranger
+## THE HEADING GOES WITH IT, because a heading over nothing is a labelled empty gap, and a stranger
 ## reading an empty section assumes the game has nothing to say rather than that they hid it.
 ##
 ## THE CONTROL NAMES THE KEY, because the key is the half a stranger cannot discover.
+##
+## AND SHOWING IT MOVES THE VIEW TO IT (ASSA-117). Maren verified in code what two screenshots had
+## shown her: `_show_log` set two `visible` flags and nothing else, `ensure_control_visible` appeared
+## nowhere in this file, and the log is the LAST section of a column that is 2023px tall in a 720px
+## window. So the toggle reported success, the button's label changed to "hide the event log", and
+## not one line was anywhere on screen -- the board's "logs are hard on the eyes" describing
+## something they could at least see. Her ruled property, which is the one this line answers: **a
+## control that reveals something must leave that thing visible.**
+##
+## THE HEADING AND NOT THE BODY, so what you scroll to is the word you pressed for. Scrolling to the
+## body alone can leave its own heading one line above the top edge, which is a section you have
+## arrived at without being told you have.
 func _show_log(shown: bool) -> void:
 	_log_shown = shown
 	_log.visible = shown
 	if is_instance_valid(_log_heading):
 		_log_heading.visible = shown
 	_log_toggle.text = "hide the event log (L)" if shown else "show the event log (L)"
+	if shown and _scroll != null and is_instance_valid(_log_heading):
+		_scroll.ensure_control_visible(_log_heading)
 
 
 ## SHOW OR HIDE THE CRAFTING MENU'S ROWS (ASSA-88).
@@ -657,6 +736,114 @@ func _remember_events() -> void:
 		_say(notices[notices.size() - 1], AssayHud.Say.FAILED)
 
 
+## THE EVENT LOG, NEWEST FIRST AND BRIGHTEST FIRST (ASSA-117, box 1).
+##
+## SAME SIGNATURE RULE AS EVERY OTHER SECTION: fourteen Labels are not rebuilt ten times a second,
+## and the lines themselves are the signature -- if the text is identical so is the block.
+func _refresh_log() -> void:
+	var shape := "\n".join(_events)
+	if shape == _log_showing:
+		return
+	_log_showing = shape
+	_rebuild_log()
+
+
+## NEWEST AT THE TOP, AND IT IS A DECISION RATHER THAN A HABIT.
+##
+## ASSA-117 box 3 grants ordering as presentation ("dimming and ordering are presentation,
+## re-phrasing is a second vocabulary"), so this is mine to make and Maren's to overrule in one
+## sentence. The argument is the fold and it is measured, not taste: this section is the LAST in a
+## column that reports 2023px of content in a 720px window, so its bottom edge is the first thing
+## the window cuts off. Oldest-first puts the fourteenth-newest line at the top and spends the
+## surviving rows on the lines that matter least. Newest-first means that whatever height the
+## section is given, the lines you keep are the newest ones.
+##
+## AND IT MAKES BRIGHTNESS AND POSITION AGREE: the line you reach first is the line that is most
+## legible, instead of the eye having to travel to the bottom to find the bright one.
+##
+## CHRONOLOGY SURVIVES BECAUSE EVERY LINE ALREADY CARRIES ITS TICK (`_remember_events` prefixes
+## "%d · "), so the order is a presentation of a sequence that is still legible either way. That is
+## the one thing that makes this cheap rather than confusing, and if the tick prefix ever goes, this
+## decision has to be made again.
+##
+## THE INKS COME OUT OF THE THEME, NEVER OUT OF THIS FILE. `get_theme_color` asks the theme actually
+## in force (`gui/theme/custom`, ASSA-116), so Maren's corrected ruling 3 holds by construction: the
+## client gains no 22nd `Color` literal, and a palette change in `tools/build_theme.gd` moves this
+## ramp with it. `build_theme.gd` refuses to write a theme whose own inks miss WCAG AA on its
+## surface, and the ramp is the straight segment between them, so no step on it can be unreadable.
+func _rebuild_log() -> void:
+	_clear(_log)
+	if _events.is_empty():
+		# WHICH KIND OF EMPTY. A blank section reads as a game with nothing to say; this one says the
+		# world has not spoken yet. Same reason the pack and the bench name their own emptiness.
+		_log.add_child(_note(AssayHud.quiet_log_line()))
+		return
+	var ink := _log.get_theme_color(&"font_color", &"Label")
+	var muted := _log.get_theme_color(&"font_color", &"Muted")
+	var count := _events.size()
+	for age in count:
+		# `_events` is oldest-first (`trimmed_log` keeps the tail), so age 0 is the LAST entry.
+		var line := _note(_events[count - 1 - age])
+		# A FONT COLOUR OVERRIDE, NOT `modulate`. `modulate` multiplies whatever the theme chose, so
+		# the colour a line ends up drawn in would depend on two things and a contrast test could
+		# only ever check one of them. This states the colour, and `get_theme_color` reads it back --
+		# which is how `test_main_screen.gd` asserts the ramp off the engine instead of off my
+		# arithmetic.
+		line.add_theme_color_override(&"font_color",
+				AssayHud.log_line_color(age, count, ink, muted))
+		_log.add_child(line)
+
+
+## WHAT HAS STOPPED (ASSA-117, box 2). The sim's standing answer, `sim::debug::halt_lines` through
+## `AssaySimHost.halt_lines()` (Marlow, ASSA-94): every building that has stopped, one line each,
+## worst-placed first in placement order.
+##
+## RENDERED VERBATIM AND NEVER SORTED. The order is the sim's and the sentence is the sim's -- this
+## block decides that the lines are on screen and nothing else about them.
+##
+## EMPTY MEANS NOTHING IS DRAWN AT ALL, not a reassuring line. `halted_table` has a "nothing has
+## stopped" sentence for the terminal and it is right there, but a panel that permanently says
+## nothing is wrong is furniture competing with the world (Maren's one-screen target), and this block
+## has to cost zero pixels when it has nothing to say or it cannot be pinned above the scroll.
+func _refresh_halt() -> void:
+	var lines := _sim.halt_lines() if _sim != null else PackedStringArray()
+	var shape := "\n".join(lines)
+	if shape == _halt_showing:
+		return
+	_halt_showing = shape
+	_rebuild_halt(lines)
+
+
+## THE BLOCK, FROM LINES. Split from `_refresh_halt` so a test can drive the drawing without a world
+## that has a stalled building in it -- and the split is named here because it is also this item's
+## honest gap: see `test_main_screen.gd`, which checks the drawing against planted lines and the
+## WIRING against `_sim.halt_lines()`'s own answer, but has never seen this block with a real stall
+## in it. Reaching one from the client needs a planted machine on ground it cannot work, which is a
+## mine-craft-assemble-plant chain no test in this suite drives yet (`test_buttons.gd:300`).
+func _rebuild_halt(lines: PackedStringArray) -> void:
+	_clear(_halt)
+	_halt_lines = null
+	if is_instance_valid(_halt_box):
+		_halt_box.visible = not lines.is_empty()
+	if lines.is_empty():
+		return
+	# "stopped" IS THIS CLIENT'S HEADING, the way "you", "do" and "event log" are; the lines under it
+	# are the sim's words. A count would be a second claim about the world and the sim already makes
+	# it (`halted_table`'s "N of M buildings stopped") -- one this block would have to keep true.
+	var heading := Label.new()
+	heading.text = "stopped"
+	heading.theme_type_variation = &"Heading"
+	_halt.add_child(heading)
+	# THE LINES IN THEIR OWN BOX, so "the lines of this block" is a container and not a filter over
+	# one. See the note on `STACK_LINE` for why they cannot be named instead.
+	var rows := VBoxContainer.new()
+	rows.add_theme_constant_override("separation", 2)
+	_halt_lines = rows
+	_halt.add_child(rows)
+	for line in lines:
+		rows.add_child(_note(line))
+
+
 func _say(line: String, level: int) -> void:
 	_status.text = line
 	_status.modulate = AssayHud.status_color(level)
@@ -679,7 +866,8 @@ func _refresh() -> void:
 		at = _my_tile()
 		source = "where you stand"
 	_cursor.text = "%s\n%s" % [source, "\n".join(AssayHud.tile_lines(_sim.tile_at(at)))]
-	_log.text = "\n".join(_events)
+	_refresh_log()
+	_refresh_halt()
 	# The running craft's countdown, set every refresh for the reason in `_refresh_actions`. The
 	# sentence is the sim's (`sim::debug::crafting_readout`); an empty one means nothing is being made,
 	# and hiding the label rather than printing a blank keeps the panel from gaining a silent gap.
@@ -779,6 +967,11 @@ func _species_row(species: Dictionary) -> Control:
 	var letter := Label.new()
 	letter.text = String(species.get("symbol", ""))
 	letter.add_theme_color_override("font_color", AssayHud.glyph_color(tint))
+	# THE ONE HAND-WRITTEN SIZE LEFT IN THIS FILE, AND IT IS ARITHMETIC RATHER THAN TASTE (ASSA-117).
+	# This letter has to fit inside an 18px disc, and `GLYPH_BOX_PX`'s own comment is "big enough for
+	# a 12px letter to sit in" -- the two numbers are one decision. Letting the theme's `BODY` decide
+	# it would make the disc's size depend on a type scale chosen for readouts, and a letter that
+	# outgrew its circle is a worse defect than a size written down beside the number it agrees with.
 	letter.add_theme_font_size_override("font_size", 12)
 	letter.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	letter.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -790,7 +983,6 @@ func _species_row(species: Dictionary) -> Control:
 	title.name = SPECIES_LINE
 	title.text = "%s · %s" % [String(species.get("name", "?")),
 			AssayHud.species_sheet_state(species)]
-	title.add_theme_font_size_override("font_size", 13)
 	head.add_child(title)
 	row.add_child(head)
 
@@ -835,14 +1027,16 @@ func _rebuild_bench(designs: Array) -> void:
 		var design: Dictionary = entry
 		var row := VBoxContainer.new()
 		row.add_theme_constant_override("separation", 2)
+		# THE VERDICT IS THE THEME'S `Display`, not a hand-written 19. `build_theme.gd` names this
+		# exact control in the comment on its own `DISPLAY` constant -- "the bench verdict, SAFE /
+		# UNCERTAIN / WILL BREAK, the one word to read first" -- so the size was already decided in
+		# the one place that decides sizes, and this call site was a second opinion about it.
 		var verdict := Label.new()
-		verdict.add_theme_font_size_override("font_size", 19)
+		verdict.name = BENCH_VERDICT
+		verdict.theme_type_variation = &"Display"
 		row.add_child(verdict)
-		var body := Label.new()
-		body.modulate = Color(0.78, 0.80, 0.85)
-		body.add_theme_font_size_override("font_size", 13)
-		body.custom_minimum_size = Vector2(PANEL, 0.0)
-		body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		var body := _note("")
+		body.name = BENCH_BODY
 		row.add_child(body)
 		row.add_child(_verb_row(AssayHud.design_verbs(design),
 				func(descriptor: Dictionary) -> Button: return _design_button(descriptor, design)))
@@ -852,13 +1046,22 @@ func _rebuild_bench(designs: Array) -> void:
 
 ## The numbers in one row, rewritten. The verdict is a WORD IN ITS OWN COLOUR, and it can change
 ## under a static row -- an assay turns UNCERTAIN into SAFE or WILL BREAK without the design moving.
+## BY NAME, NOT BY CHILD INDEX (ASSA-117). These were `get_child(0)` and `get_child(1)`, which is the
+## bug that already cost me a silently dead fast path once: adding a sprite to a pack row made child
+## 0 a `TextureRect` and the re-text stopped finding its label. A bench row is the next surface
+## Maren's icon ruling reaches, and when it gets one these two lines would have gone quiet the same
+## way -- `_write_design` would have written the verdict into the icon and returned happy.
 func _write_design(row: Node, design: Dictionary) -> void:
-	var verdict: Label = row.get_child(0) as Label
-	var body: Label = row.get_child(1) as Label
+	var verdict := row.find_child(BENCH_VERDICT, true, false) as Label
+	var body := row.find_child(BENCH_BODY, true, false) as Label
 	if verdict == null or body == null:
 		return
 	verdict.text = String(design.get("verdict", "?"))
-	verdict.modulate = AssayHud.verdict_color(verdict.text)
+	# A `font_color` OVERRIDE AND NOT `modulate`, for the reason measured in `_note`: `modulate`
+	# multiplies the theme's ink, so the word was being drawn in `verdict_color` TIMES `INK` and the
+	# colour on screen was nobody's decision. Maren's ruling is that the verdict is a word in its own
+	# colour; this is what makes the colour on screen that colour.
+	verdict.add_theme_color_override(&"font_color", AssayHud.verdict_color(verdict.text))
 	body.text = "\n".join(AssayHud.design_lines(design))
 
 
@@ -959,8 +1162,25 @@ func _rebuild_make(offers: Array) -> void:
 		return
 	for entry in offers:
 		var offer: Dictionary = entry
-		var row := VBoxContainer.new()
-		row.add_theme_constant_override("separation", 2)
+		# THE SAME SHAPE AS A PACK ROW NOW (ASSA-117, box 4): [icon][VBox: the sentence, the dead
+		# end, the verb]. The crafting menu had no art at all -- this is the half of box 4 that was
+		# actually open, because the pack's icons were already exact and guarded (ASSA-65/71/98).
+		#
+		# AND IT IS THE SAME OBJECT ON BOTH SURFACES, which is the point rather than a saving: the
+		# thing you press "make" on in this menu is the thing that turns up in your pack a tick
+		# later, and if the two drew it differently that would be the player's problem to work out.
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var slot := _icon_box(offer)
+		if slot != null:
+			row.add_child(slot)
+		var body := VBoxContainer.new()
+		body.add_theme_constant_override("separation", 2)
+		# TAKES THE SPACE THE ICON LEAVES, AND THAT IS WHAT KEEPS THE ROW IN THE PANEL (ASSA-98). A
+		# `FILL` child of an `HBox` gets its own MINIMUM, not the room left over, which is how every
+		# pack row came to be 358px wide inside a 320px box. `EXPAND_FILL` is the derivation.
+		body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(body)
 		# THE SENTENCE IS THE ROW, AND IT IS A LABEL RATHER THAN THE BUTTON'S TEXT. Not a style call:
 		# the engine reports a 320px-panel-busting MINIMUM for a Button holding this sentence --
 		# `Button.autowrap_mode` exists in 4.6 and does NOT lower `get_combined_minimum_size`, which
@@ -968,15 +1188,14 @@ func _rebuild_make(offers: Array) -> void:
 		# panel is clipped, because the column does not scroll sideways: ASSA-98 exactly.
 		var line := _note(String(offer.get("line", "")))
 		line.name = MAKE_LINE
-		line.modulate = Color(0.86, 0.88, 0.92)
-		row.add_child(line)
+		body.add_child(line)
 		# ASSA-84'S CLAUSE, CARRIED AND NOT REWRITTEN (Maren's ruling here: a recipe row is a better
 		# home for it than a button tooltip). Still the sim's own sentence, still empty unless the sim
 		# says so, and still nothing in this client that names a gear.
 		var dead_end := String(offer.get("dead_end", ""))
 		if dead_end != "":
-			row.add_child(_note("— %s" % dead_end))
-		row.add_child(_verb_row([offer], func(descriptor: Dictionary) -> Button:
+			body.add_child(_note("— %s" % dead_end))
+		body.add_child(_verb_row([offer], func(descriptor: Dictionary) -> Button:
 				return _make_button(descriptor)))
 		_make.add_child(row)
 
@@ -1046,6 +1265,69 @@ func _pack_shape(stacks: Array) -> String:
 	return "|".join(shape)
 
 
+## ONE ITEM'S ICON, PLATE AND ALL, or null when there is no art for it (ASSA-117).
+##
+## PULLED OUT OF `_rebuild_pack` BECAUSE THE CRAFTING MENU NEEDS THE SAME THING, and this body is
+## forty lines of measured detail from ASSA-65/71/98 that I was not going to type a second time. A
+## second copy is the defect the comment inside it already names: two arms that must agree about a
+## thing. `art/check_pack_icon_scale.py` measures the SHIPPED build, so it guards one of them.
+##
+## IT TAKES A STACK-SHAPED DICTIONARY AND NOTHING ELSE. A pack stack and a crafting offer both carry
+## `kind`/`species`/`grade` spelled exactly as `inventory_of` spells them -- `_make_button` relies on
+## that already, to build the item it sends -- so one function reads both without knowing which.
+func _icon_box(stack: Dictionary) -> Control:
+	# THE ICON IS REDUNDANT AND MOST ROWS DO NOT GET ONE. `items.png` carries ore, refined and
+	# smelter, so a gear comes back null; the four part kinds have a row per grade. Every sentence
+	# beside one of these reads completely without it, which is Maren's rule and the same one the
+	# species glyph carries: a redundant cue promoted to the only cue is no longer redundant.
+	var icon := AssaySprites.icon_for(stack)
+	if icon == null:
+		return null
+	var art := TextureRect.new()
+	art.texture = icon
+	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	# The species' own slot, from the table CI holds equal to the art pipeline's copy. The sheets are
+	# drawn species-neutral on light rock precisely so this works (ASSA-19/20).
+	art.modulate = AssaySprites.tint_for(stack)
+	# NEAREST, not linear: these are pixel-art frames and the shipped import defaults say so.
+	art.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	# THE BOX IS SET ONCE, FOR BOTH PATHS. It used to be set inside each arm, and the no-plate arm
+	# set only `custom_minimum_size` -- no `SIZE_SHRINK_CENTER` -- which is ASSA-65's bug exactly: a
+	# TextureRect in an HBox FILLS, so the rect becomes 32 x whatever the row is and the scale goes
+	# back to being decided by how many verbs the stack affords. Nothing caught it, because
+	# `check_pack_icon_scale.py` measures the shipped build and a plate always ships, so that arm is
+	# only reachable when `ui_theme.json` is missing. Two arms that must agree is the defect; one
+	# assignment above the branch is the fix.
+	art.custom_minimum_size = ICON_BOX_PX
+	# SHRINK_CENTER, or the row's height is still half of the scale: FILL stretches this rect to
+	# whatever the buttons beside it need, and the ratio is nobody's decision again.
+	art.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	# THE SLOT PLATE (ASSA-71, Maren's ruling). The ground's own median, so a stack in the pack and a
+	# rock on the map read as the same object -- the panel is the one surface this art was never
+	# judged on. One colour for every species and grade; it never carries information. The colour
+	# comes from the pipeline (`ui_theme.json`), never a hex here.
+	#
+	# A PANEL AROUND THE RECT, NOT A RESIZE OF IT. The box stays exactly `ICON_BOX_PX` and the
+	# TextureRect fills it, so the scale ASSA-65 made exact (1/2 for an item, 1/4 for a part) is
+	# untouched -- a container with content margins would have quietly eaten it, which is the same
+	# bug ASSA-65 fixed.
+	var plate := AssaySprites.pack_icon_plate()
+	if plate.a <= 0.0:
+		return art
+	var slot := Panel.new()
+	slot.custom_minimum_size = ICON_BOX_PX
+	slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var style := StyleBoxFlat.new()
+	style.bg_color = plate
+	slot.add_theme_stylebox_override("panel", style)
+	# Inside a Panel the rect is placed by anchors, so the two lines above are inert here --
+	# harmless, and worth more than a branch that has to remember them.
+	art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	slot.add_child(art)
+	return slot
+
+
 func _rebuild_pack(stacks: Array) -> void:
 	_clear(_carrying)
 	if stacks.is_empty():
@@ -1065,54 +1347,9 @@ func _rebuild_pack(stacks: Array) -> void:
 		# species glyph carries: a redundant cue promoted to the only cue is no longer redundant.
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 6)
-		var icon := AssaySprites.icon_for(stack)
-		if icon != null:
-			var art := TextureRect.new()
-			art.texture = icon
-			# SHRINK_CENTER, or the row's height is still half of the scale: FILL stretches this rect
-			# to whatever the buttons beside it need, and the ratio is nobody's decision again.
-			art.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			# The species' own slot, from the table CI holds equal to the art pipeline's copy. The
-			# sheets are drawn species-neutral on light rock precisely so this works (ASSA-19/20).
-			art.modulate = AssaySprites.tint_for(stack)
-			# NEAREST, not linear: these are pixel-art frames and the shipped import defaults say so.
-			art.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-			# THE SLOT PLATE (ASSA-71, Maren's ruling). The ground's own median, so a stack in the
-			# pack and a rock on the map read as the same object -- the panel is the one surface this
-			# art was never judged on. One colour for every species and grade; it never carries
-			# information. The colour comes from the pipeline (`ui_theme.json`), never a hex here.
-			#
-			# A PANEL AROUND THE RECT, NOT A RESIZE OF IT. The box stays exactly `ICON_BOX_PX` and
-			# the TextureRect fills it, so the scale ASSA-65 made exact (1/2 for an item, 1/4 for a
-			# part) is untouched -- a container with content margins would have quietly eaten it,
-			# which is the same bug ASSA-65 fixed. `check_pack_icon_scale.py` is the guard.
-			# THE BOX IS SET ONCE, FOR BOTH PATHS. It used to be set inside each arm, and the
-			# no-plate arm set only `custom_minimum_size` -- no `SIZE_SHRINK_CENTER` -- which is
-			# ASSA-65's bug exactly: a TextureRect in an HBox FILLS, so the rect becomes 32 x
-			# whatever the row is and the scale goes back to being decided by how many verbs the
-			# stack affords. Nothing caught it, because `check_pack_icon_scale.py` measures the
-			# shipped build and a plate always ships, so that arm is only reachable when
-			# `ui_theme.json` is missing. Two arms that must agree about a thing is the defect;
-			# one assignment above the branch is the fix.
-			art.custom_minimum_size = ICON_BOX_PX
-			art.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-			var plate := AssaySprites.pack_icon_plate()
-			if plate.a > 0.0:
-				var slot := Panel.new()
-				slot.custom_minimum_size = ICON_BOX_PX
-				slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-				var style := StyleBoxFlat.new()
-				style.bg_color = plate
-				slot.add_theme_stylebox_override("panel", style)
-				# Inside a Panel the rect is placed by anchors, so the two lines above are inert
-				# here -- harmless, and worth more than a branch that has to remember them.
-				art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-				slot.add_child(art)
-				row.add_child(slot)
-			else:
-				row.add_child(art)
+		var slot := _icon_box(stack)
+		if slot != null:
+			row.add_child(slot)
 		var body := VBoxContainer.new()
 		body.add_theme_constant_override("separation", 2)
 		# TAKES THE SPACE THE ICON LEAVES, AND THAT IS WHAT MAKES THE ROW FIT (ASSA-98). A `FILL`
@@ -1129,7 +1366,6 @@ func _rebuild_pack(stacks: Array) -> void:
 		# broke it doing exactly that and three tests caught it. A name survives the next layout change
 		# too, and Maren's ruling has two more surfaces coming (bench rows, then the spawn marker).
 		label.name = STACK_LINE
-		label.add_theme_font_size_override("font_size", 13)
 		# NO WIDTH OF ITS OWN EITHER, FOR THE SAME REASON AS THE VERB ROW (ASSA-98). This used to be
 		# `PANEL - ICON_PX - 6.0`, which was the right number and the wrong kind of thing: it is the
 		# icon's width and the row's separation written down a second time, so a 64px icon one day
@@ -1373,7 +1609,6 @@ func _button(label: String, on_press: Callable, hint := "") -> Button:
 	var button := Button.new()
 	button.text = label
 	button.tooltip_text = hint
-	button.add_theme_font_size_override("font_size", 12)
 	button.pressed.connect(on_press)
 	return button
 
@@ -1383,9 +1618,25 @@ func _button(label: String, on_press: Callable, hint := "") -> Button:
 func _note(line: String) -> Label:
 	var label := Label.new()
 	label.text = line
-	label.modulate = Color(0.55, 0.58, 0.64)
-	label.add_theme_font_size_override("font_size", 13)
-	label.custom_minimum_size = Vector2(PANEL, 0.0)
+	# THE SECONDARY INK, FROM THE THEME, AND THIS IS THE BOARD'S COMPLAINT MEASURED (ASSA-117).
+	#
+	# This line was `modulate = Color(0.55, 0.58, 0.64)`, and `modulate` MULTIPLIES the colour the
+	# theme chose instead of replacing it. So every note in this client -- every pack sentence, every
+	# crafting row, the running-craft line, every log line -- was drawn at (0.494, 0.530, 0.605) and
+	# scored **4.091:1** against the panel. `tools/build_theme.gd` refuses to WRITE a theme whose
+	# inks miss 4.5:1, and this went round the outside of that guard: the same hole Maren found for
+	# the status line (ASSA-116), on roughly every readout in the window rather than on one line.
+	# Measured in the engine against the shipped `theme/assay.tres`, not computed here: 4.091 before,
+	# 6.731 after. "logs are hard on the eyes" was a true report of a number.
+	#
+	# A `font_color` OVERRIDE READ OUT OF THE THEME, so there is no colour written down and no 22nd
+	# `Color` literal (Maren's corrected ruling 3). Off-tree lookup reaches the project theme --
+	# asked, not assumed, because this label is built before it has a parent.
+	label.add_theme_color_override(&"font_color", label.get_theme_color(&"font_color", &"Muted"))
+	# NO FONT SIZE AND NO WIDTH. The size was a hand-written 13, which is exactly what the theme's
+	# `BODY` already is, so the override only existed to be wrong one day. The width was a `PANEL`
+	# floor on EVERY note in the window -- 320px of minimum inside a scroll viewport that is 320
+	# minus its scrollbar, which is ASSA-98's clipping with the floor doing the pushing.
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return label
 
