@@ -1696,6 +1696,28 @@ mod tests {
     #[test]
     fn the_small_print_is_the_sims_sentence_and_a_safe_design_has_none() {
         let (mut sim, me) = with_a_player("limpet");
+        // **ALL THREE VERDICTS ARE BUILT, NOT HOPED FOR.** My first version
+        // swept the roster and asserted it had met "at least two" -- and a
+        // mutation that turned the over-budget sentence into an assay offer
+        // left it GREEN, because this world happened never to produce a WILL
+        // BREAK design. The arm existed and nothing reached it.
+        //
+        // So two sheets are set deliberately: light-and-strong is SAFE at any
+        // grade, dense-and-weak is WILL BREAK, and both are assayed so their
+        // spans are points. The rest of the roster stays rough and supplies
+        // UNCERTAIN.
+        {
+            let world = &mut sim.world;
+            let (safe, breaks) = (world.species[0].id, world.species[1].id);
+            let s = world.species_mut(safe);
+            s.assayed = true;
+            s.sheet.density = 1;
+            s.sheet.strength = 100;
+            let b = world.species_mut(breaks);
+            b.assayed = true;
+            b.sheet.density = 100;
+            b.sheet.strength = 1;
+        }
         let mut built = Vec::new();
         for i in 0..sim.world().species.len() {
             for grade in [sim::Grade::C, sim::Grade::A] {
@@ -1732,9 +1754,12 @@ mod tests {
                 other => panic!("the sim grew a fourth verdict: {other}"),
             }
         }
-        // Non-vacuity: a sweep that only ever met one verdict would prove
-        // nothing about the other two.
-        assert!(seen.len() >= 2, "only met {seen:?}");
+        // Non-vacuity, and it is an equality rather than a floor: every arm
+        // above must have been reached, or a mutation inside an unvisited one
+        // reports nothing. That is exactly what happened with `>= 2`.
+        for want in ["SAFE", "UNCERTAIN", "WILL BREAK"] {
+            assert!(seen.contains(want), "{want} was never built: met {seen:?}");
+        }
     }
 
     /// THE VERDICT IS THE SIM'S WORD, NEVER THIS CRATE'S ARITHMETIC. Checked
