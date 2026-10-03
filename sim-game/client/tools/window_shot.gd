@@ -205,27 +205,83 @@ func _shoot(name: String) -> void:
 ##
 ## So each named section reports its rect against the window. `visible` and `on screen` are
 ## different questions and this is the one nobody was asking.
+##
+## **AND THE WINDOW IS NOT WHAT CLIPS THESE SECTIONS (Limpet, ASSA-117).** Every one of them lives
+## inside `_scroll`, whose viewport is the chrome column minus the toggle, minus the stopped block and
+## minus the horizontal scrollbar -- a box roughly 100px shorter than the window and starting ~96px
+## down. Measured against the window, a section whose top is scrolled up under the toggle reads
+## `on screen` while its first line is clipped in half, which is what `looks-2026-10-03-after-14247`
+## showed me and this report denied. A section is now judged against the box that actually clips it,
+## and the box is printed so the numbers can be checked rather than believed.
 func _fold_report() -> void:
 	var window := Rect2(Vector2.ZERO, root.size)
+	var scroll: ScrollContainer = _screen._scroll as ScrollContainer
+	var clip := window
+	if scroll != null:
+		clip = scroll.get_global_rect().intersection(window)
+		print("  scroll viewport y %d..%d (the window is y %d..%d)"
+				% [clip.position.y, clip.end.y, window.position.y, window.end.y])
 	for part in [["crafting menu", _screen._make], ["you", _screen._carrying],
 			["do", _screen._actions], ["bench", _screen._bench], ["rocks", _screen._species],
 			["cursor", _screen._cursor], ["event log", _screen._log]]:
 		var control: Control = part[1]
 		var rect := control.get_global_rect()
+		var box := clip if scroll != null and scroll.is_ancestor_of(control) else window
 		var where := "on screen"
 		if not control.visible:
 			where = "hidden"
-		elif not window.intersects(rect):
+		elif not box.intersects(rect):
 			where = "OFF SCREEN"
-		elif not window.encloses(rect):
+		elif not box.encloses(rect):
 			where = "CLIPPED"
 		print("  section %-14s y %5d..%-5d  %s" % [part[0], rect.position.y, rect.end.y, where])
+
+
+## **DID PRESSING "SHOW THE EVENT LOG" LEAVE THE LOG WHERE A STRANGER CAN READ IT** (Limpet,
+## ASSA-117; Maren's ruling 1 on that item, in the shape she asked for it: *proved by reading the
+## scroll offset back*, not by asserting `visible`).
+##
+## THIS IS THE LEVER THE CLIENT SUITE CANNOT HOLD. `tests/run_tests.gd` works inside
+## `SceneTree._initialize`, so `_ready` never fires, no frame is ever drawn and no container ever lays
+## out -- a headless test can ask a node whether it is visible and gets an honest yes about a section
+## 745px below the bottom edge. When I mutated the reveal away, every one of 191 tests stayed green.
+## A real window is the only thing that can fail here, so the verdict lives in the tool that has one.
+##
+## TWO PROPERTIES, AND THE SECOND IS THE ONE THAT CAUGHT ME. The heading has to be inside the
+## viewport, or you have arrived somewhere without being told where. And the TOP of the body has to be
+## inside it too: the log is newest-first, so a body whose top is clipped is a log whose NEWEST line
+## is the one torn in half -- the single line the player pressed the button to read.
+func _reveal_report() -> bool:
+	var scroll: ScrollContainer = _screen._scroll as ScrollContainer
+	var heading: Label = _screen._log_heading as Label
+	if scroll == null or heading == null:
+		_finish(false, "no scroll box or no log heading on the screen, so the reveal cannot be judged")
+		return false
+	var clip := scroll.get_global_rect().intersection(Rect2(Vector2.ZERO, root.size))
+	var bar := scroll.get_v_scroll_bar()
+	var head := heading.get_global_rect()
+	var body := (_screen._log as Control).get_global_rect()
+	print("  reveal: scrolled to %d of %d; heading y %d..%d; body top y %d"
+			% [scroll.scroll_vertical, int(bar.max_value - bar.page), head.position.y, head.end.y,
+			body.position.y])
+	if not clip.encloses(head):
+		_finish(false, ("the log's own heading is at y %d..%d, outside the scroll viewport y %d..%d: "
+				+ "pressing 'show the event log' left you somewhere without saying where")
+				% [head.position.y, head.end.y, clip.position.y, clip.end.y])
+		return false
+	if body.position.y < clip.position.y - 0.5:
+		_finish(false, ("the log's first line starts at y %d, above the scroll viewport's y %d, so the "
+				+ "NEWEST line is the one clipped in half") % [body.position.y, clip.position.y])
+		return false
+	return true
 
 
 func _report() -> void:
 	for line in _shots:
 		print("  ", line)
 	_fold_report()
+	if not _reveal_report():
+		return
 	_finish(true, "")
 
 
