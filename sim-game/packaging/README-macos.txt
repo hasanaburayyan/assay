@@ -2,12 +2,14 @@ Assay multiplayer test (macOS, Apple Silicon and Intel)
 ======================================================
 
 Three programs:
-  sim-relay   the host. One person runs it; it owns the world and the clock.
-  sim-cli     the text-mode client, and the one that can actually play:
-              mine, craft, place, assay. Everyone can run this.
-  Assay.app   the graphical client. Early: it joins, and it draws the world
-              it joined. It cannot move or build yet (see "The graphical
-              client" below for exactly why).
+  Assay.app   the graphical client, and the quickest way in: press Play solo
+              and it starts a world on this machine and joins it, with
+              nothing to type. It can also join someone else's world. You can
+              walk, mine, assay, craft, place machines and design parts in it.
+  sim-relay   the host, for co-op. One person runs it; it owns the world and
+              the clock. Play solo starts one of these for you.
+  sim-cli     the text-mode client. Plays the same world through a terminal,
+              and shows far more about it (see "The inspector").
 
 Everyone must use the files from this same zip.
 
@@ -19,12 +21,28 @@ Unzip, open Terminal, and go to the unzipped folder, for example:
     cd ~/Downloads/assay-macos
 
 macOS blocks programs downloaded from the internet that aren't from the App
-Store or an identified developer. Clear that once:
+Store or an identified developer. Clear that once, for the WHOLE FOLDER:
 
     xattr -dr com.apple.quarantine .
 
+Do this even if you only intend to double-click Assay.app. Right-clicking
+the app and picking Open approves that one item, and Play solo has to start
+the sim-relay file sitting beside it -- which is still blocked, and the app
+cannot tell you that precisely yet. The command above covers all of them.
 
-2. Host: start the relay
+
+2. Play on your own
+-------------------
+Double-click Assay.app and press Play solo (it is the first button, and
+Enter presses it). Nothing to type and no terminal needed: it starts the
+sim-relay from this folder on your own machine and joins it.
+
+It is world 14247, and pressing Play solo again later RESUMES it rather than
+starting over. Solo worlds are saved in your user data folder, not in this
+one, so they survive replacing this zip with a newer build.
+
+
+3. Co-op: host the world
 ------------------------
     ./sim-relay
 
@@ -42,8 +60,8 @@ Options: ./sim-relay 7         host world seed 7 instead of 42
          ./sim-relay --fresh   start world 42 over
 
 
-3. Everyone (host included): join
----------------------------------
+4. Everyone (host included): join in text mode
+----------------------------------------------
 In a new Terminal window, in the same folder:
 
     ./sim-cli --connect <address from the relay> --name <your name>
@@ -54,28 +72,42 @@ Names: 1-20 letters, numbers, - or _. Use the same name next time to get
 your character back.
 
 
-4. Or join with the graphical client
-------------------------------------
-Double-click Assay.app. If macOS still refuses it, right-click it and pick
-Open (step 1's xattr command covers this for the whole folder).
+5. Or join someone else with the graphical client
+-------------------------------------------------
+Double-click Assay.app. If macOS still refuses it, see step 1 -- run the
+xattr command on the whole folder rather than approving the app on its own,
+or Play solo will fail later when it tries to start sim-relay.
 
 Type the relay's address in the "host" box -- the same address the relay
 printed, e.g. 192.168.1.48:7777 -- put in a name, and click join. A bare
-address uses port 7777.
+address uses port 7777. (To play by yourself instead, press Play solo and
+ignore the box entirely.)
 
-It then draws the world it joined: the deposits, the players, spawn. The
-status line says which tick it joined at and counts the updates arriving, so
-you can see the link is live.
 
-Nothing moves yet, and that is on purpose rather than a bug. The host sends
-out the inputs players pressed, not the world itself, so turning those into a
-newer world means running the simulation -- the Rust `sim` crate -- inside
-this client. Until that is wired in, drawing a guessed position would just be
-a second, disagreeing copy of the rules. Use sim-cli to play; use Assay.app
-to confirm it joins and draws on your machine.
+The graphical client
+--------------------
+It runs the real rules: the same Rust `sim` crate the relay and sim-cli run,
+inside the client. Your presses go to the host as commands, and every peer
+steps the same simulation, so what you see is the world and not a guess.
 
-Worth reporting: it will not start, it will not connect to an address sim-cli
-connects to fine, or what it draws does not match what sim-cli shows.
+What you can do in it:
+  click a tile          walk there
+  Mine / Stop / Assay   mine the deposit under you, stop, or study it until
+                        its property sheet reads exact instead of in bands
+  Take / Pick up        empty a building's output into your pack, or take
+                        the building back with whatever is inside
+  your pack             Fuel and Smelt put ore into a building; Place stands
+                        a machine down; Frame and Mount choose the parts of
+                        the next machine you design
+  the crafting menu     what you can make from what you are carrying
+
+The world view is still a map -- deposits, players, spawn, drawn as shapes
+and colours rather than art. Proper art for it is being built now; this is
+the part to be rude about.
+
+Worth reporting: it will not start, Play solo fails, it will not connect to
+an address sim-cli connects to fine, or what it draws does not match what
+sim-cli shows.
 
 
 Playing over the internet (not on the same Wi-Fi)
@@ -137,8 +169,10 @@ What to report
 
 Known limits
 ------------
-- Playing is text only. The graphical client joins and draws, nothing more.
+- The world view is a map of shapes and colours, not finished art.
 - Assay.app is ad-hoc signed, not notarised, so macOS warns on first open.
+- If Play solo says it could not start your own world, step 1's xattr
+  command on the whole folder is the usual reason and the usual fix.
 - If your connection drops, restart sim-cli to rejoin.
 - Your own moves wait for the host, so there's about a tenth of a second
   of delay.
