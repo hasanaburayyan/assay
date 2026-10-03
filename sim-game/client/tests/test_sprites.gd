@@ -254,41 +254,45 @@ func _grades_the_sim_has() -> PackedStringArray:
 ## ASSA-46, MAREN'S RULING B: A PACK ROW CARRIES A SPECIES-TINTED ICON WHERE WE HAVE ART, AND READS
 ## COMPLETELY WHERE WE DO NOT.
 ##
-## `items.png` has two rows (ore and refined, ASSA-66) and the four part sheets have C/B/A, so gears
-## and smelters have no art today. That is a fact about the sheets, not a failure, and the rule Maren
-## set for both the glyph and the icon is that the redundant cue may never become the only read.
+## `items.png` has three rows -- ore, refined (ASSA-66) and smelter (ASSA-87) -- and the four part
+## sheets have C/B/A, so the gear is the one kind with no art. That is a fact about the sheets, not a
+## failure, and the rule Maren set for both the glyph and the icon is that the redundant cue may never
+## become the only read. The gear's gap is SETTLED rather than pending: nothing in the game consumes a
+## gear (Maren, ASSA-84), so drawing one would be art for a dead recipe.
 ##
-## REFINED AND ORE MUST NOT DRAW THE SAME ROW. They are the two kinds a pack holds most, they take
-## the same species tint, and they usually carry the same species NAME in adjacent rows -- so if the
-## row lookup ever collapsed them the panel would look fine and say something false. This is the
-## assertion that was waiting to be written when `_row_for` still answered `if kind == "ore": return 0`
-## for an items sheet with one row in it.
-func test_an_ore_stack_gets_a_frame_and_a_smelter_does_not() -> bool:
-	var ore := {"kind": "ore", "species": 2, "grade": "B", "count": 7, "name": "Kuri ore (B)"}
-	var icon := AssaySprites.icon_for(ore)
-	if icon == null:
-		return _fail("ore has art in items.png and got no frame")
-	if icon.atlas == null:
-		return _fail("the frame has no sheet behind it")
-	if icon.region.size.x <= 0.0 or icon.region.size.y <= 0.0:
-		return _fail("the frame is empty: %s" % icon.region)
-	var refined := AssaySprites.icon_for({"kind": "refined", "species": 2, "grade": "B"})
-	if refined == null:
-		return _fail("refined has had art in items.png since ASSA-66 and got no frame")
-	if refined.region.position.y == icon.region.position.y:
-		return _fail(("refined and ore drew the SAME row of items.png (%s). They are the two kinds a "
-				+ "pack holds most and they take the same tint, so this would read as a correct "
-				+ "panel saying the wrong thing.") % refined.region)
-	# AND THE KINDS WITH NO ART STILL GET NOTHING. Worth knowing WHICH mechanism holds this, because
+## NO TWO ITEM KINDS MAY DRAW THE SAME ROW. They take the same species tint and usually carry the
+## same species NAME in adjacent pack rows, so if the row lookup ever collapsed two of them the panel
+## would look perfectly fine and say something false. This is the assertion that was waiting to be
+## written when `_row_for` still answered `if kind == "ore": return 0` for a one-row items sheet.
+##
+## WRITTEN AS A LOOP OVER THE KINDS, not as hand-named pairs, so the fourth item row is covered by
+## this test on the day it lands rather than the day someone remembers to add it here.
+func test_an_ore_stack_gets_a_frame_and_a_gear_does_not() -> bool:
+	var rows := {}
+	for kind in ["ore", "refined", "smelter"]:
+		var icon := AssaySprites.icon_for({"kind": kind, "species": 2, "grade": "B", "count": 7})
+		if icon == null:
+			return _fail("`%s` has a row in items.png and got no frame" % kind)
+		if icon.atlas == null:
+			return _fail("`%s`'s frame has no sheet behind it" % kind)
+		if icon.region.size.x <= 0.0 or icon.region.size.y <= 0.0:
+			return _fail("`%s`'s frame is empty: %s" % [kind, icon.region])
+		var at := icon.region.position.y
+		if rows.has(at):
+			return _fail(("`%s` and `%s` drew the SAME row of items.png (y %s). They take the same "
+					+ "tint and often the same species name in adjacent rows, so this would read as "
+					+ "a correct panel saying the wrong thing.") % [kind, rows[at], at])
+		rows[at] = kind
+	# AND THE KIND WITH NO ART STILL GETS NOTHING. Worth knowing WHICH mechanism holds this, because
 	# the obvious answer is wrong and it was mutation-tested: an entry in `SHEET_OF` is not enough on
-	# its own, because the sheet also has to carry a row the lookup can find by name. Both of those
-	# had to happen for refined. So the empty `SHEET_OF` entries are DOCUMENTATION of the gap and the
-	# row lookup is what actually gates it -- nobody should read `SHEET_OF` and think it is the guard.
-	for kind in ["gear", "smelter"]:
-		var none := AssaySprites.icon_for({"kind": kind, "species": 2, "grade": "B"})
-		if none != null:
-			return _fail(("`%s` got a frame and we have drawn no art for it. Inventing one means "
-					+ "drawing the wrong thing; the row is supposed to read without an icon.") % kind)
+	# its own, because the sheet also has to carry a row the lookup can find by name. Both had to
+	# happen for refined and again for smelter. So the empty `SHEET_OF` entry is DOCUMENTATION of the
+	# gap and the row lookup is what actually gates it -- nobody should read `SHEET_OF` and think it
+	# is the guard.
+	var none := AssaySprites.icon_for({"kind": "gear", "species": 2, "grade": "B"})
+	if none != null:
+		return _fail("`gear` got a frame and we have drawn no art for it. Inventing one means "
+				+ "drawing the wrong thing; the row is supposed to read without an icon.")
 	return true
 
 
