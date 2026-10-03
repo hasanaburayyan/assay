@@ -380,6 +380,25 @@ impl AssaySim {
     /// `count` is the pack's count AT THIS TICK and is in the row's sentence
     /// too. It is a thing to SHOW and must be re-read every refresh; nothing a
     /// button sends is derived from it (ASSA-55: one batch, always).
+    ///
+    /// **`makes` IS THE OUTPUT ITEM, AND IT IS HERE BECAUSE THE MENU DRAWS IT**
+    /// (Maren's ruling on ASSA-117 box 4). Without it a client that wants to
+    /// show what a row produces has only `offer.input`, so every row in a menu
+    /// whose one job is choosing between five things drew the same picture —
+    /// the thing you SPEND, which is identical on every row and already named
+    /// in the sentence.
+    ///
+    /// **AND IT IS THE SIM'S, NOT THE CLIENT'S, FOR THE REASON ALREADY WRITTEN
+    /// ABOVE:** `sort` moves a grade and grade A makes nothing at all, so
+    /// GDScript deriving "the output of this row" from `tag` plus `input` would
+    /// be guessing at `Recipe::output_for` and wrong on the one recipe that
+    /// moves a grade.
+    ///
+    /// **ABSENT, NOT EMPTY, WHEN THE ROW MAKES NOTHING** (`sort` on grade A) —
+    /// the shape `lighting` and `durability` already use, so a surface cannot
+    /// draw a blank plate for a row that has no output. Spelled `kind` /
+    /// `species` / `grade` exactly as `inventory_of` spells them, so the same
+    /// function draws a pack stack and this.
     #[func]
     pub fn make_offers(&self, player: i64) -> Array<VarDictionary> {
         let Some(id) = player_id_of(player) else {
@@ -396,7 +415,7 @@ impl AssaySim {
                         ("make", tag_variant(&serde_json::to_value(kind).ok()?)?)
                     }
                 };
-                Some(vdict! {
+                let mut row = vdict! {
                     "line" => &gstring(&offer.line).to_variant(),
                     "dead_end" => &gstring(&offer.dead_end).to_variant(),
                     "walls" => &gstring(&offer.walls).to_variant(),
@@ -406,7 +425,19 @@ impl AssaySim {
                     "species" => offer.input.species.0 as i64,
                     "grade" => &gstring(&offer.input.grade.letter().to_string()).to_variant(),
                     "count" => offer.have as i64,
-                })
+                };
+                if let Some(makes) = offer.makes {
+                    row.set(
+                        &gstring("makes"),
+                        &vdict! {
+                            "kind" => &gstring(makes.kind.name()).to_variant(),
+                            "species" => makes.species.0 as i64,
+                            "grade" => &gstring(&makes.grade.letter().to_string()).to_variant(),
+                        }
+                        .to_variant(),
+                    );
+                }
+                Some(row)
             })
             .collect()
     }
