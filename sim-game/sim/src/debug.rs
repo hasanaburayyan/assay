@@ -1959,6 +1959,60 @@ pub fn crafting_readout(world: &World, player: PlayerId) -> Option<String> {
     })
 }
 
+/// EVERY ACTIVITY THIS PLAYER HAS RUNNING, one sentence each, in the order
+/// `step` runs the systems: hand mining, assaying, hand crafting (ASSA-95,
+/// Maren's ruling).
+///
+/// **PLURAL BY CONSTRUCTION, AND THAT IS A MEASUREMENT, NOT A STYLE.** `step`
+/// never clears `mining` when an assay starts, nor the reverse — independent
+/// fields, independent systems — so a player standing on a deposit mines
+/// through their own assay and gets seven ore out of it
+/// (`shared/assay/maren_assay_while_mining_2026-10-03.rs`, seed 14247). A
+/// readout built for "whichever activity is running" would therefore say the
+/// mining had stopped. **A list that silently omits a kind teaches that it is
+/// complete when it is not**, which is the defect ASSA-94 exists to fix.
+///
+/// **NEVER RANKED.** The order is `step`'s own, so the day a fourth self-running
+/// activity is added it has one obvious place and no host gets an opinion.
+///
+/// **A COUNTDOWN ONLY WHERE THERE IS AN END.** An assay finishes, so it counts
+/// down; a craft finishes, so `crafting_readout` says so in its own words. Hand
+/// mining repeats until you stop or the deposit runs dry, so it carries NO
+/// NUMBER AT ALL — the 4-tick cycle restarting forever is not a countdown, and
+/// a number there would promise an end that does not come. The absence is the
+/// fact.
+///
+/// Ticks, never seconds and never a bar: the tick is what the sim counts in and
+/// a clock rate belongs to a host. A host may label this list; it may not
+/// reword a number, rank the lines, or drop one.
+pub fn activity_lines(world: &World, player: PlayerId) -> Vec<String> {
+    let Some(p) = world.player(player) else {
+        return Vec::new();
+    };
+    let mut lines = Vec::new();
+    // THE DEPOSIT IS LOOKED UP, NEVER ASSUMED. A player keeps mining a deposit
+    // the world can still hand back; if it ever could not, a line naming a
+    // species nobody can read is worse than one line fewer.
+    if let Some(mining) = p.mining
+        && let Some(deposit) = world.deposit(mining.deposit)
+    {
+        lines.push(format!("mining {}", world.species(deposit.species).name()));
+    }
+    if let Some(assaying) = p.assaying
+        && let Some(deposit) = world.deposit(assaying.deposit)
+    {
+        lines.push(format!(
+            "assaying {}: {} ticks left",
+            world.species(deposit.species).name(),
+            crate::tuning::ASSAY_TICKS.saturating_sub(assaying.progress)
+        ));
+    }
+    if let Some(line) = crafting_readout(world, player) {
+        lines.push(line);
+    }
+    lines
+}
+
 /// WHAT ONE PRESS WOULD MAKE, as the words a menu row or a terminal line
 /// shows, plus the identity a host needs to send the command.
 ///
