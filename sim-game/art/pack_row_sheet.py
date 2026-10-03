@@ -59,11 +59,9 @@ PLATE = tuple(json.load(open(SPRITES / "ui_theme.json"))["pack_icon_plate_rgb"])
 PAD, GAP = 14, 10
 
 
-def font(size):
-    try:
-        return ImageFont.load_default(size=size)
-    except TypeError:
-        return ImageFont.load_default()
+# The sheets' one font, shared (ASSA-114). It was three copies of `load_default`,
+# which has no glyph for the U+00D7 in every stack line, so all three drew a tofu box.
+from review_font import font  # noqa: E402
 
 
 def icon_of(entry):
@@ -167,8 +165,9 @@ lines = [
     "Every rect, size and position is read off the real main.tscn. The verb comes from",
     "AssayHud.stack_verbs' sim-facing `verb`, and frame-ness from the sim's part catalogue --",
     "neither is parsed from the button's text.",
-    "GLYPHS ARE THIS SHEET'S FONT, not Godot's -- headless has no renderer -- so the client's",
-    "multiplication sign comes out as a box here. That is mine, not the window's.",
+    "GLYPHS ARE THIS SHEET'S FONT, not Godot's -- headless has no renderer. The multiplication",
+    "sign used to come out as a BOX here, which was this sheet's font and never the window's;",
+    "it is drawn properly now (ASSA-114). What the CLIENT's font does with it is still unseen.",
     "",
     "ROW HEIGHTS: %s. Maren declined to add a row-height rule, on the grounds that a uniform"
     % ", ".join("%dpx" % h for h in heights),
