@@ -618,21 +618,31 @@ func _carry_out_the_scroll_to_the_log() -> void:
 	_scroll_to_log = false
 	if _scroll == null or not is_instance_valid(_log_heading):
 		return
-	# BODY FIRST, THEN HEADING, AND THE ORDER IS THE WHOLE TRICK.
+	# PUT THE HEADING'S TOP AT THE VIEWPORT'S TOP, by the distance between them, measured now.
 	#
-	# `ensure_control_visible` does the MINIMUM scroll that makes a control visible, which I did not
-	# know and the real window told me: asking for the HEADING alone parked its 20px against the
-	# bottom edge of the viewport and left all 556px of the log below it -- the section went from
-	# "OFF SCREEN" to "CLIPPED at y 706..1262 of 720", which is fourteen pixels of log and a report
-	# that reads like progress. I had even written down a reason for choosing the heading. It was a
-	# good reason about the wrong engine behaviour.
+	# **TWO `ensure_control_visible` CALLS IN A ROW CANNOT DO THIS, AND I SHIPPED THAT VERSION.** It
+	# asked for the body (minimum scroll down, body's end in view) and then for the heading (minimum
+	# scroll back up), on the reasoning that two minimum scrolls in opposite directions land the
+	# heading at the top. The reasoning is right about the rects and wrong about WHEN they exist:
+	# `set_v_scroll` does not move a child's `get_global_rect()` until the scroll box re-lays its
+	# contents, so the SECOND call measures the heading where it was BEFORE the first call scrolled.
+	# On a column 2019px tall it therefore asks to scroll down again, the engine clamps it to the
+	# maximum, and the view sits exactly where the body-only call left it. Measured on both pinned
+	# seeds: `scrolled to 1453 of 1453, heading y -18..4` against a viewport of y 130..696 -- the
+	# heading one line ABOVE the top edge and the newest log line torn in half.
 	#
-	# So: ask for the bottom of the section (scrolls down until the body's end is in view), then for
-	# the top (scrolls back up until the heading is in view). Two minimum scrolls in opposite
-	# directions leave the heading at the top of the viewport with as much body under it as fits,
-	# which is what "show me the log" means. No arithmetic, no rect of mine, no number to keep.
-	_scroll.ensure_control_visible(_log)
-	_scroll.ensure_control_visible(_log_heading)
+	# That is the third engine call I have made at the only moment it cannot work, and the first one
+	# I shipped: `window_shot.gd`'s fold report measured sections against the WINDOW, so a section
+	# scrolled up under the chrome read `on screen`. The report is clip-rect-aware now and carries the
+	# verdict (`_reveal_report`), which is why this is a bug with a lever rather than a screenshot
+	# somebody squints at.
+	#
+	# ARITHMETIC, THEN, AND SAID OUT LOUD: one subtraction between two rects read in the same frame,
+	# after the layout pass that `_process` guarantees. No number is written down -- both sides are
+	# measured -- and the engine clamps the result, so a log too short to reach the top simply stops
+	# where the content does.
+	_scroll.scroll_vertical += int(
+			_log_heading.get_global_rect().position.y - _scroll.get_global_rect().position.y)
 
 
 ## START A RELAY OF OUR OWN AND JOIN IT (ASSA-106).

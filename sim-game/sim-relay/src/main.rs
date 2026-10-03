@@ -12,7 +12,7 @@
 mod auth;
 
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{BufReader, BufWriter};
+use std::io::{BufReader, BufWriter, Write};
 use std::net::{IpAddr, Ipv4Addr, Shutdown, TcpListener};
 use std::path::{Path, PathBuf};
 use std::process::exit;
@@ -26,6 +26,29 @@ use sim_net::{
     ClientMsg, DEFAULT_PORT, Greeting, HASH_EVERY, PROTOCOL_VERSION, ServerMsg, TickBundle,
     read_frame, saves_dir, write_msg,
 };
+
+/// THE FIRST THING THIS PROCESS PRINTS, and a contract exactly like `LISTENING`
+/// is: a client keys on this prefix, never on the words after it.
+///
+/// **IT EXISTS SO A DEAD CHILD CAN BE TOLD FROM A REFUSED ONE** (ASSA-120).
+/// Limpet measured that a client which spawns this binary cannot learn whether
+/// the exec happened: `OS.execute_with_pipe` hands back a live pid for a file
+/// that is not executable and for a path that does not exist alike, Godot's own
+/// complaint reached the child's stderr 3 times in 10 and then 0 in 9, and
+/// `/bin/sh -c "exit 1"` — a process that really ran — leaves exactly as much
+/// behind as a failed exec. So "macOS would not run it" was a reading, not a
+/// fact, and a confident wrong diagnosis is worse than a vague true one.
+///
+/// This line makes it a fact: a child that died without it never reached this
+/// crate's code. **Which is why it is printed before argument parsing, before
+/// the save is opened and before the socket is bound** (Maren's one constraint,
+/// ASSA-120). A marker printed after anything that can fail turns "ran but
+/// could not bind" into "the system would not run it" — the same wrong
+/// diagnosis one layer down. It therefore says nothing a running world knows:
+/// the protocol and rules id are compile-time constants of this build, and
+/// resumed-versus-created is knowable only after the save opens, so Maren ruled
+/// it belongs beside `LISTENING` instead.
+const RELAY_STARTED: &str = "RELAY STARTED";
 
 const AUTOSAVE_EVERY: u64 = 20;
 const DEFAULT_TPS: u32 = 10;
@@ -94,6 +117,16 @@ struct Relay {
 }
 
 fn main() {
+    // BEFORE EVERYTHING, INCLUDING THE ARGUMENTS. See `RELAY_STARTED`. The
+    // flush is belt and braces — Rust line-buffers stdout, so the newline
+    // already pushes it — but the whole value of this line is that it has left
+    // the process before anything that could fail or hang, and that is worth a
+    // syscall that costs nothing once per run.
+    println!(
+        "{RELAY_STARTED} protocol {PROTOCOL_VERSION} rules {}",
+        sim_net::RULES_ID
+    );
+    let _ = std::io::stdout().flush();
     let opts = parse_args();
     let (world, accounts) = open_world(&opts);
 
