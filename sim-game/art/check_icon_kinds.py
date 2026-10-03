@@ -21,32 +21,31 @@ because `rig.py` places head on the far side of the join from the others -- a wo
 accident. The fix that ends it (loose parts drawn by `items.py`, rig rule 3) must be able
 to land green if it re-earns the separation by shape, and red if it does not.
 
-THE PROPERTY, AND WHY IT IS A CONJUNCTION
-  Both measures run on the composited plate box -- the icon as the engine drew it, at the
-  scale the engine chose, through the tint the engine applied -- for every pair of kinds
-  the client actually drew.
+THE PROPERTY: NO PAIR OF KINDS IS CLOSE ON COLOUR.
+  Measured on the composited plate box -- the icon as the engine drew it, at the scale the
+  engine chose, through the tint the engine applied -- for every pair of kinds the client
+  actually drew: mean dE76 where BOTH are body ink, against Maren's DISTINCT. A pair with
+  no shared pixel has no interior to compare and is not close.
 
-  A. SILHOUETTE: intersection over union of the two body masks. Cannot see colour.
-  B. INTERIOR: mean dE76 where BOTH are body ink. Cannot see shape.
+  IT WAS A CONJUNCTION UNTIL 2026-10-03 (dE AND a silhouette IoU above a midpoint of
+  MINE), and Maren deleted my half of it: "deleting is strictly stricter, still passes by
+  3.90 dE, and removes a bound of mine-by-adoption that decides nothing. I have set six
+  bounds on this palette that turned out to be the wrong instrument; I am not keeping a
+  seventh alive because it is harmless today."
 
-  FAIL means some pair is close on BOTH: two things a player tells apart by neither. A
-  single measure would be the wrong guard in a way that matters here. "Every pair must
-  differ in colour" would pass today and would go red the day two kinds are separated
-  legitimately BY SHAPE, which is the fix Maren wants left possible.
+  WHAT IT COSTS, which I said to her rather than only here: this file used to argue that a
+  colour-only guard "would go red the day two kinds are separated legitimately BY SHAPE".
+  That day is still possible -- two kinds in one palette, told apart by silhouette alone,
+  now fail. The trade is deliberate: the failure is a FALSE RED, which is loud, arguable
+  and in front of the Director, where the conjunction's failure was a quiet pass bought
+  with a number nobody had derived. A guard that errs should err toward being read.
 
-WHOSE NUMBERS THESE ARE, said in the output and not just here
+WHOSE NUMBER THIS IS, said in the output and not just here
   DISTINCT = 12.0 comes from `colour.py` and is Maren's: "two species a player must never
-  confuse at a glance". CLOSE_IOU is MINE, and I will not pretend otherwise. It is not
-  tuned until the art passed: 0.5 is the measure's own midpoint, the point where the
-  intersection exceeds half the union and the shapes agree more than they differ.
-
-  It also cannot decide today's verdict, and the check proves that rather than claiming
-  it: the minimum interior dE over ALL pairs is printed, and while that minimum is at or
-  above DISTINCT the verdict is PASS for every CLOSE_IOU in [0, 1] -- no pair is close on
-  colour at all, so the shape bound has nothing to bite on. The day that stops being true
-  the output says so, and the bound becomes a real decision for the Director. One line to
-  change, or delete CLOSE_IOU and the check becomes "no pair close on colour", which is
-  strictly stricter.
+  confuse at a glance". There is no number of mine left in this file. The silhouette IoU
+  is still MEASURED and still printed for every pair -- it is what a reader needs to tell
+  a dE drawn from 400 shared pixels from one drawn from 40 -- it just no longer decides
+  anything.
 
 TWO CONTROLS RUN EVERY TIME, because a check that has only ever been green has only ever
 been an opinion:
@@ -69,7 +68,7 @@ every row, and nothing here measures it. A PASS says the icons are separable, ne
 the row reads well.
 
 EXIT CODES
-  0 PASS     -- no pair is close on both measures.
+  0 PASS     -- no pair is close on colour.
   1 FAIL     -- some pair is.
   2 NO VERDICT -- could not ask the engine, a control did not hold, or there was nothing
                   to measure. Never a pass.
@@ -91,18 +90,13 @@ from stdlib_image import StdlibBackend  # noqa: E402  pixels without pip
 WHY_THE_ENGINE = ("what the icons look like AT THE DRAWN SIZE is the whole question, and\n"
                   "the drawn size is the engine's answer, not a number in a script.")
 
-# MINE, not Maren's. The midpoint of the measure: above it the intersection exceeds half
-# the union. See the docstring -- and the output, which shows whether it decides anything.
-CLOSE_IOU = 0.5
-
-
-def close_on_both(iou, de):
-    """THE PROPERTY. No positions, no fill fractions, no names -- just the two measures.
+def close_on_colour(de):
+    """THE PROPERTY. No positions, no fill fractions, no names, and no bound of mine.
 
     A pair with no shared pixel has `de is None`: there is no interior to compare, and
     treating that as 0.00 would read as "identical colour", the exact opposite of true.
     """
-    return iou >= CLOSE_IOU and de is not None and de < DISTINCT
+    return de is not None and de < DISTINCT
 
 
 def verdict(icons):
@@ -112,7 +106,7 @@ def verdict(icons):
         iou, de, n = compare(icons[a], icons[b])
         table.append((iou, de, n, a, b))
     table.sort(key=lambda row: -row[0])
-    return [r for r in table if close_on_both(r[0], r[1])], table
+    return [r for r in table if close_on_colour(r[1])], table
 
 
 def main(sprites):
@@ -169,41 +163,31 @@ def main(sprites):
         print("  %-8s / %-8s  IoU %.3f   interior dE %s   over %4d px" % (x, y, iou, shown, n))
 
     overlapping = [(de, x, y) for iou, de, n, x, y in table if de is not None]
-    print("\nTHE TWO BOUNDS, and which is whose:")
+    print("\nTHE ONE BOUND, and it is not mine:")
     print("  DISTINCT  %5.2f  dE76, Maren's (colour.py): two things a player must never"
           % DISTINCT)
-    print("                   confuse at a glance.")
-    print("  CLOSE_IOU %5.2f  MINE: the measure's own midpoint, where the shapes agree"
-          % CLOSE_IOU)
-    print("                   more than they differ. Not fitted to the art.")
+    print("                   confuse at a glance. My silhouette bound was deleted on")
+    print("                   2026-10-03 (her ruling); IoU is measured and shown, never judged.")
     if overlapping:
         worst = min(overlapping)
-        print("\n  Minimum interior dE over every overlapping pair: %.2f (%s / %s)."
-              % (worst[0], worst[1], worst[2]))
-        if worst[0] >= DISTINCT:
-            print("  SO CLOSE_IOU DECIDES NOTHING TODAY: no pair is close on colour at all,\n"
-                  "  so the verdict below is PASS for every CLOSE_IOU in [0, 1]. The margin\n"
-                  "  on the colour side is %.2f dE." % (worst[0] - DISTINCT))
-        else:
-            print("  CLOSE_IOU NOW MATTERS: %s / %s is inside DISTINCT on colour, so the\n"
-                  "  verdict turns on whether its silhouettes are called close. That is a\n"
-                  "  decision for the Director, not a number I may move to go green."
-                  % (worst[1], worst[2]))
+        print("\n  Minimum interior dE over every overlapping pair: %.2f (%s / %s), margin\n"
+              "  %.2f dE over DISTINCT." % (worst[0], worst[1], worst[2], worst[0] - DISTINCT))
 
     if failures:
-        print("\n%d PAIR(S) CLOSE ON BOTH MEASURES -- told apart by neither shape nor colour:"
+        print("\n%d PAIR(S) CLOSE ON COLOUR -- a player tells these apart by shape alone:"
               % len(failures))
         for iou, de, n, x, y in failures:
-            print("  %s / %s: IoU %.3f >= %.2f AND interior dE %.2f < %.2f over %d px"
-                  % (x, y, iou, CLOSE_IOU, de, DISTINCT, n))
+            print("  %s / %s: interior dE %.2f < %.2f over %d px (silhouette IoU %.3f, shown\n"
+                  "    because it says how many pixels that dE came from -- it is not a bound)"
+                  % (x, y, de, DISTINCT, n, iou))
         print("\nVERDICT: FAIL (exit 1). The pack row's icon is one of two carriers of kind\n"
               "and these two kinds are not separable on it. Either re-earn the separation\n"
               "in the art, or the Director decides the row may lean on `stack_line` alone.")
         return 1
 
-    print("\nVERDICT: PASS (exit 0). No pair of kinds is close on both measures, so every\n"
-          "icon the client drew is separable from every other by shape, by interior colour,\n"
-          "or by both -- which is the property Maren ruled acceptable on ASSA-101.")
+    print("\nVERDICT: PASS (exit 0). No pair of kinds is close on colour, so every icon the\n"
+          "client drew is separable from every other on its interior alone -- strictly more\n"
+          "than the property Maren ruled acceptable on ASSA-101.")
     return 0
 
 
