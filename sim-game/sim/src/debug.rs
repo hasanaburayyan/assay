@@ -718,9 +718,7 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
                     format!("not enough {} (you have {have})", name(item))
                 }
                 RejectReason::WrongItem => "that's the wrong kind of item for this".to_string(),
-                RejectReason::AlreadyBestGrade => {
-                    "grade A is already the best; refining can't improve it".to_string()
-                }
+                RejectReason::AlreadyBestGrade => best_grade_note().to_string(),
                 RejectReason::RequirementNotMet(property, min) => format!(
                     "its {} is below {min} at that grade",
                     property.name()
@@ -1891,4 +1889,198 @@ pub fn crafting_readout(world: &World, player: PlayerId) -> Option<String> {
     } else {
         format!("making {making}: {left} ticks left")
     })
+}
+
+/// WHAT ONE PRESS WOULD MAKE, as the words a menu row or a terminal line
+/// shows, plus the identity a host needs to send the command.
+///
+/// **A host must not compose this sentence.** It names the OUTPUT item, and
+/// the output's grade is not always the input's: a recipe with `raises_grade`
+/// makes one grade better, and `Recipe::output_for` makes nothing at all out
+/// of grade A. A client that wrote "Souktulore ore (A)" on a `sort` row would
+/// be guessing a rule, and would be wrong on the one recipe in the table that
+/// moves a grade (ASSA-88, Maren's wording ruling).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MakeOffer {
+    /// Which catalogue row this is, so a host can name it in a command.
+    pub what: MakeWhat,
+    /// The stack a batch is spent from.
+    pub input: Item,
+    /// How many of `input` one batch costs.
+    pub cost: u32,
+    /// How many of `input` the player holds right now.
+    pub have: u32,
+    /// What one batch makes, or `None` when this input makes nothing.
+    pub makes: Option<Item>,
+    /// The row's sentence: what it makes, then what it costs.
+    pub line: String,
+    /// [`recipe_dead_end`], empty unless nothing in the game uses the output.
+    pub dead_end: String,
+}
+
+/// The two catalogues a player can make something out of by hand. Not a
+/// string: a host sends `Craft` for one and `MakePart` for the other, and
+/// telling them apart by reading a label is how a client invents a rule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MakeWhat {
+    Recipe(crate::recipe::RecipeId),
+    Part(PartKind),
+}
+
+/// EVERYTHING A PLAYER COULD MAKE BY HAND RIGHT NOW: one offer per catalogue
+/// row per stack it could be made from, in the sim's own order.
+///
+/// **One offer per RECIPE × MATERIAL, not per stack** (Maren's ruling on
+/// ASSA-88). A make-verb belongs to a recipe, so a pack holding two species of
+/// ore used to grow two buttons both labelled `Craft smelter` which build
+/// smelters with different walls — identical labels, different machines, told
+/// apart only by which row you were standing on.
+///
+/// **ORDER IS THIS TABLE'S, THEN THE PACK'S.** `RecipeId::ALL`, then
+/// `PartKind::ALL`, and inside each the player's own stack order, which
+/// `Inventory` already sorts. A host that sorted again would be a second
+/// opinion that drifts from the terminal's.
+///
+/// **A ROW WITH NO OUTPUT IS STILL AN OFFER.** `sort` on grade A makes
+/// nothing, and the answer to that is a sentence saying so, not a missing row:
+/// absence is never a cue (Maren, ASSA-37) and the player holding grade A ore
+/// is exactly the person wondering why they cannot refine it. The clause is
+/// [`best_grade_note`], the same words the refusal uses.
+///
+/// Hand work only. `Refine` and `Resmelt` happen inside a smelter, so they are
+/// nobody's button; `recipes()` has told the client that much since ASSA-37.
+pub fn make_offers(world: &World, player: PlayerId) -> Vec<MakeOffer> {
+    let Some(p) = world.player(player) else {
+        return Vec::new();
+    };
+    let mut offers = Vec::new();
+    for id in crate::recipe::RecipeId::ALL {
+        if !id.is_hand_craftable() {
+            continue;
+        }
+        let recipe = id.recipe();
+        for stack in p.inventory.stacks() {
+            if stack.item.kind != recipe.input.0 {
+                continue;
+            }
+            let makes = recipe.output_for(stack.item);
+            offers.push(MakeOffer {
+                what: MakeWhat::Recipe(id),
+                input: stack.item,
+                cost: recipe.input.1,
+                have: stack.count,
+                makes,
+                line: offer_line(
+                    world,
+                    makes.map(|item| (item, recipe.output.1)),
+                    recipe.input.1,
+                    stack,
+                ),
+                dead_end: recipe_dead_end(recipe),
+            });
+        }
+    }
+    for kind in PartKind::ALL {
+        for stack in p.inventory.stacks() {
+            if stack.item.kind != ItemKind::Refined {
+                continue;
+            }
+            let cost = crate::assembly::spec(kind).size;
+            let makes = crate::assembly::Part::of(kind, stack.item).as_item();
+            offers.push(MakeOffer {
+                what: MakeWhat::Part(kind),
+                input: stack.item,
+                cost,
+                have: stack.count,
+                makes: Some(makes),
+                line: offer_line(world, Some((makes, 1)), cost, stack),
+                dead_end: String::new(),
+            });
+        }
+    }
+    offers
+}
+
+/// CONSEQUENCE FIRST, FIGURES AFTER (the ASSA-76 shape): what the press makes,
+/// by species and grade, then what it spends out of what you hold.
+///
+/// The count of a batch's output is only spelled when it is more than one, so
+/// today's table reads as a name and a cost; a recipe that one day yields two
+/// says so without this sentence being rewritten.
+fn offer_line(world: &World, makes: Option<(Item, u32)>, cost: u32, from: &ItemStack) -> String {
+    let spend = format!(
+        "{cost} of your {} {}",
+        from.count,
+        world.item_name(from.item)
+    );
+    match makes {
+        Some((item, 1)) => format!("{} — {spend}", world.item_name(item)),
+        Some((item, n)) => format!("{n} × {} — {spend}", world.item_name(item)),
+        // THE INPUT, NOT THE OUTPUT, because there is no output: what the row
+        // can still honestly name is the thing you would have spent.
+        None => format!(
+            "nothing from {}: {}",
+            world.item_name(from.item),
+            best_grade_note()
+        ),
+    }
+}
+
+/// WHY A GRADE-A STACK CANNOT BE REFINED. One sentence, two callers: the
+/// refusal a player reads after pressing, and the offer row they read before.
+/// It was written out inside `event_line`'s match and nowhere else, so the
+/// menu either repeated it in different words or said nothing.
+pub fn best_grade_note() -> &'static str {
+    "grade A is already the best; refining can't improve it"
+}
+
+impl MakeOffer {
+    /// THE COMMAND THIS OFFER SENDS, so the catalogue a row came from decides
+    /// which command it is rather than a host reading the label back. `Craft`
+    /// and `MakePart` are different commands with differently shaped payloads,
+    /// and a host that chose between them by inspecting a sentence would be
+    /// the one place that breaks when a third catalogue appears.
+    pub fn command(&self, count: u32) -> PlayerCommand {
+        match self.what {
+            MakeWhat::Recipe(recipe) => PlayerCommand::Craft {
+                recipe,
+                item: self.input,
+                count,
+            },
+            MakeWhat::Part(kind) => PlayerCommand::MakePart {
+                kind,
+                material: self.input,
+                count,
+            },
+        }
+    }
+}
+
+/// THE SAME MENU, FOR A TERMINAL: what you could make by hand right now, with
+/// the line to type beside each row.
+///
+/// The game is playable headless by rule, so the menu the window grew for
+/// ASSA-88 is a block here first. Both halves are existing describers —
+/// [`command_line`] spells what to type, [`make_offers`] words what it makes —
+/// so there is nothing in this function for the two hosts to disagree about.
+pub fn make_offer_table(world: &World, player: PlayerId) -> String {
+    let offers = make_offers(world, player);
+    if offers.is_empty() {
+        return "you are carrying nothing a pair of hands can work with\n".to_string();
+    }
+    let mut out = String::from("what you could make by hand, from what you are carrying:\n");
+    for offer in &offers {
+        let _ = writeln!(
+            out,
+            "  {:<34} {}{}",
+            command_line(&offer.command(1), world),
+            offer.line,
+            if offer.dead_end.is_empty() {
+                String::new()
+            } else {
+                format!(" — {}", offer.dead_end)
+            }
+        );
+    }
+    out
 }

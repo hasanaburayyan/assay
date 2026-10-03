@@ -76,7 +76,10 @@ Look
   players                     everyone in this world
   species                     this world's minerals and their property sheets
   deposits                    list every deposit
-  recipes                     what can be made, from what
+  recipes                     what can be made, from what, then what you
+                              could make by hand out of your own pack
+  makes                       just your own half of that: one line per recipe
+                              and part you are carrying the material for
   parts                       the part catalogue: cost, mount, contributions
   buildings                   every placed building and what it's doing
   halted                      only the buildings that have stopped, and why
@@ -492,7 +495,21 @@ impl Host {
                 }
             }
             "deposits" | "ls" => out!("{}", debug::deposit_table(&s.world)),
-            "recipes" => out!("{}", debug::recipe_table()),
+            // THE CATALOGUE, THEN YOUR OWN SHELF OF IT. `recipe_table` is every
+            // recipe in the game and says nothing about what you are carrying;
+            // `make_offer_table` is the same list crossed with your pack, which
+            // is the menu the window grew for ASSA-88. Both here, because the
+            // game is playable headless by rule and a menu only the window has
+            // is a feature that only works with graphics.
+            "recipes" => {
+                out!("{}", debug::recipe_table());
+                s.me()?;
+                out!("{}", debug::make_offer_table(&s.world, s.me));
+            }
+            "makes" | "make?" => {
+                s.me()?;
+                out!("{}", debug::make_offer_table(&s.world, s.me));
+            }
             "species" | "minerals" => out!("{}", debug::species_table(&s.world)),
             "buildings" => out!("{}", debug::building_table(&s.world)),
             // The headless half of ASSA-94: `buildings` answers "what have I
