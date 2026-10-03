@@ -19,9 +19,9 @@
 //! `recipe_table` are read at a prompt by someone who has one.
 
 use sim::{
-    BuildingId, Event, Grade, Input, Item, ItemKind, Mount, PartKind, PlayerCommand, PlayerId,
-    RecipeId, RejectReason, Slot, SpeciesId, SystemCommand, TilePos, World, WorldConfig, debug,
-    step,
+    BuildingId, DepositId, Event, Grade, Input, Item, ItemKind, Mount, PartKind, PlayerCommand,
+    PlayerId, RecipeId, RejectReason, Slot, SpeciesId, StopReason, SystemCommand, TilePos, World,
+    WorldConfig, debug, step,
 };
 
 /// This crate's own source, so the guard cannot drift from the thing it
@@ -531,5 +531,180 @@ fn a_refusal_mirrors_the_success_it_would_have_been() {
     assert!(
         theirs.starts_with("ada's moving to (12, 5) was refused"),
         "a teammate's refusal is theirs and reads as English: {theirs}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// WHICH SENTENCES A HIDDEN LOG MAY NOT SWALLOW (ASSA-89).
+//
+// The board's complaint about the window was "logs are hard on the eyes", so
+// the Godot client's event log is hidden by default — and the refusal that
+// explains why a button did nothing used to live only there.
+// `debug::event_needs_attention` is the one place that decides which lines a
+// host must say out loud. It belongs beside `event_line` for this file's whole
+// reason: a host that classified sentences by reading their TEXT would have
+// gone silent the afternoon ASSA-67 reworded thirteen of them, and no test
+// here would have reddened.
+// ---------------------------------------------------------------------------
+
+/// **THE REFUSAL AND THE SUCCESS IT WOULD HAVE BEEN, SPLIT BY THE PROPERTY.**
+/// Same player, same action, same world: one event says the mining happened and
+/// one says it was refused. A classifier that ignored its argument, or that
+/// answered by player alone, cannot pass this.
+///
+/// Phrased against the pair rather than against either one alone, because the
+/// claim is a SEPARATION — "an event needs attention when it reports something
+/// that did not happen" is a statement about two worlds, and asserting only the
+/// true half would read green against a function that returns true for
+/// everything.
+#[test]
+fn a_refusal_needs_attention_and_the_success_it_mirrors_does_not() {
+    let me = Some(PlayerId(0));
+    let refused = Event::CommandRejected {
+        player: PlayerId(0),
+        command: PlayerCommand::Mine,
+        reason: RejectReason::NotOnDeposit,
+    };
+    let happened = Event::OreMined {
+        player: PlayerId(0),
+        deposit: DepositId(0),
+        item: Item::new(ItemKind::Ore, SpeciesId(0), Grade::C),
+        amount: 2,
+    };
+    assert!(
+        debug::event_needs_attention(me, &refused),
+        "a refusal is the only sentence that says why a button did nothing"
+    );
+    assert!(
+        !debug::event_needs_attention(me, &happened),
+        "mining ore is the story, and the story is what the log is for"
+    );
+}
+
+/// **MINE, NOT EVERYONE'S.** The same refusal, read by the player it happened to
+/// and by the one watching. In a co-op world of two, the alternative is each
+/// player reading the other's mistakes over their own.
+#[test]
+fn another_players_refusal_is_not_my_notice() {
+    let refused = Event::CommandRejected {
+        player: PlayerId(0),
+        command: PlayerCommand::Assay,
+        reason: RejectReason::AlreadyAssayed,
+    };
+    assert!(debug::event_needs_attention(Some(PlayerId(0)), &refused));
+    assert!(!debug::event_needs_attention(Some(PlayerId(1)), &refused));
+    // And a client with no player yet is nobody: before the `Welcome` there is
+    // no "you", which is the same `None` that `event_line` takes.
+    assert!(!debug::event_needs_attention(None, &refused));
+}
+
+/// **A STOP YOU ASKED FOR IS NOT NEWS.** One variant, one player, two reasons:
+/// the only difference is whether the world imposed the stop or the player
+/// requested it. This is the assertion that fails if the arm is ever
+/// simplified to "mining stopped", which is the tempting shape.
+#[test]
+fn a_stop_i_asked_for_is_not_a_notice_and_a_depleted_deposit_is() {
+    let stop = |reason| Event::MiningStopped {
+        player: PlayerId(0),
+        deposit: DepositId(0),
+        reason,
+    };
+    let me = Some(PlayerId(0));
+    assert!(
+        !debug::event_needs_attention(me, &stop(StopReason::Stopped)),
+        "pressing Stop and being told you stopped is a notice about yourself"
+    );
+    for imposed in [
+        StopReason::Depleted,
+        StopReason::LeftDeposit,
+        StopReason::OutOfInputs,
+    ] {
+        assert!(
+            debug::event_needs_attention(me, &stop(imposed)),
+            "{imposed:?} is the reason the next press will do nothing"
+        );
+    }
+}
+
+/// **THE VACUITY GUARD, MEASURED ON A RUN RATHER THAN ON EVENTS I BUILT.** A
+/// classifier that answered `true` to everything would satisfy every assertion
+/// above except one, and one that answered `false` to everything would make the
+/// client silent — the exact defect this item exists to fix, shipped green.
+///
+/// So: play a world, mix legal commands with one the sim refuses, and require
+/// the attention set to be **neither empty nor everything**. It asserts no
+/// count: a count would pin today's event stream and break on the next rule
+/// change, which is not what is at risk here.
+#[test]
+fn over_a_real_run_some_events_need_attention_and_most_do_not() {
+    let mut world = world_with_players();
+    let me = Some(PlayerId(0));
+    let mut seen: Vec<Event> = Vec::new();
+    let script = [
+        // Legal: produces movement events, which are successes.
+        Input::Player {
+            player: PlayerId(0),
+            command: PlayerCommand::MoveTo {
+                target: TilePos::new(50, 34),
+            },
+        },
+        // Refused: nobody is standing on a deposit at spawn.
+        Input::Player {
+            player: PlayerId(0),
+            command: PlayerCommand::Mine,
+        },
+    ];
+    for input in script {
+        step(&mut world, &[input], &mut seen);
+    }
+    for _ in 0..40 {
+        step(&mut world, &[], &mut seen);
+    }
+
+    let loud = seen
+        .iter()
+        .filter(|e| debug::event_needs_attention(me, e))
+        .count();
+    assert!(
+        loud > 0,
+        "nothing in a run containing a refused command needed attention, so the \
+         client would be silent about the one thing it must say: {seen:#?}"
+    );
+    assert!(
+        loud < seen.len(),
+        "every one of the {} events in this run needed attention, which is a log \
+         with extra steps: {seen:#?}",
+        seen.len()
+    );
+}
+
+/// **NO WILDCARD ARM, WHICH IS THE WHOLE VALUE OF THE EXHAUSTIVE MATCH.** A new
+/// `Event` variant must fail to compile until its author decides whether a
+/// player has to be told; `_ => false` is the one-character edit that makes
+/// silence the default for everything nobody thought about, and it is the way a
+/// future reader will be tempted to fix that compile error.
+///
+/// Checked against this crate's own source, like the no-backtick guard at the
+/// top of this file, because the thing to prevent is the next arm rather than
+/// today's.
+#[test]
+fn event_needs_attention_has_no_catch_all_arm() {
+    let start = DEBUG_RS
+        .find("pub fn event_needs_attention")
+        .expect("event_needs_attention is still called that");
+    let rest = &DEBUG_RS[start..];
+    let end = rest[1..].find("\npub ").map_or(rest.len(), |i| i + 1 + 1);
+    let body = &rest[..end];
+    for (n, line) in body.lines().enumerate() {
+        let code = line.split("//").next().unwrap_or("").trim();
+        assert!(
+            !(code == "_ => false," || code == "_ => true," || code.starts_with("_ =>")),
+            "line {n} of event_needs_attention is a catch-all: {line}\nAn Event \
+             variant nobody classified must break the build, not go quiet."
+        );
+    }
+    assert!(
+        body.contains("Event::CommandRayjected") || body.contains("Event::CommandRejected"),
+        "this guard is reading the wrong function: {body}"
     );
 }

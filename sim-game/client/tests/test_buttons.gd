@@ -693,3 +693,103 @@ func test_a_running_craft_is_named_on_the_do_section() -> bool:
 					ok = _fail("the craft finished and the do section still claims one: %s" % after)
 	screen.queue_free()
 	return ok
+
+
+## A REFUSAL REACHES THE ALWAYS-VISIBLE LINE WITH THE LOG HIDDEN (ASSA-89), THROUGH A REAL SIM.
+##
+## The log is folded away by default now, and it was the only place the sentence explaining why a
+## button did nothing ever appeared. So: press **Mine** standing where there is no deposit, which is
+## a refusal the sim produces rather than one this file writes, and require the sentence on the
+## status line while the log is hidden.
+##
+## **WHAT IS NOT ASSERTED, AND WHY.** Not that the status text equals
+## `_sim.attention_lines(id)[-1]` -- that is the expression `_remember_events` runs, so it would
+## pass by construction the moment the function was called at all, about nothing. What is asserted
+## is the RELATIONSHIP BETWEEN THE TWO SURFACES: the status line must be a sentence the log also
+## carries (so the client moved a line rather than composing one of its own), it must have replaced
+## the join message (so something actually arrived), and the log must still carry it (so the loud
+## copy is a copy and the log was not drained to feed it).
+func test_a_refused_press_reaches_the_status_line_while_the_log_is_hidden() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var joined_said: String = screen._status.text
+	var ok := true
+	if screen._log.visible:
+		ok = _fail("the log is visible in a fresh client, so this test proves nothing")
+		screen.queue_free()
+		return ok
+	var mine := _find(screen._actions, "Mine")
+	if mine == null:
+		ok = _fail("no Mine button in the `do` section")
+		screen.queue_free()
+		return ok
+	# Spawn is not a deposit: the two chunks BESIDE spawn hold the starter material, which is what
+	# makes this a refusal rather than a mining cycle. Checked, not assumed.
+	var standing: Dictionary = screen._sim.tile_at(screen._my_tile())
+	if standing.get("deposit", null) != null:
+		ok = _fail("this seed spawns the player on a deposit, so Mine would succeed: %s" % standing)
+		screen.queue_free()
+		return ok
+	mine.pressed.emit()
+	_tick(screen, 2)
+	var said: String = screen._status.text
+	var log_text: String = screen._log.text
+	if said == joined_said:
+		ok = _fail(("the sim refused a press and the always-visible line still reads '%s'. With the "
+				+ "log hidden the player is told nothing at all.") % said)
+	elif said.strip_edges() == "":
+		ok = _fail("the status line was blanked rather than written")
+	elif not log_text.contains(said):
+		ok = _fail(("the status line says '%s', which is not one of the log's own sentences: '%s'. "
+				+ "A client that words its own refusal is a second describer.") % [said, log_text])
+	elif screen._log.visible:
+		ok = _fail("showing the player a refusal unfolded the whole log")
+	screen.queue_free()
+	return ok
+
+
+## AND A SUCCESS DOES NOT TAKE THE LINE. The separation is the whole property: if every event were
+## loud the always-visible line would be a one-row log, and a player learns to stop reading a surface
+## that talks constantly. Walking is the plainest success there is -- a left click, three events, none
+## of them a problem.
+##
+## **IT TOOK TWO WRONG VERSIONS TO GET THE ASSERTION RIGHT, AND BOTH ARE WORTH LEAVING WRITTEN DOWN.**
+##
+## First I required the status line to be UNCHANGED by a walk. It failed, correctly: offline play
+## puts its own note there ("offline, so no hash report was sent") through the same `_say` the link
+## uses, so "unchanged" was never the property.
+##
+## Then I read the status line ONCE, at the end, and required it not to be one of the log's
+## sentences. That passed -- and it passed a mutation that promoted EVERY event line, which is the
+## one thing this test exists to catch. The reason is a 20-tick clock: a hash report is owed every
+## twenty ticks, its note lands on the status line after the walk's events, and I was ticking twenty
+## times. The surface I was reading had been overwritten by the time I looked at it.
+##
+## So the status line is sampled after EVERY tick and none of the samples may be a sentence the log
+## carries. That is the claim as stated -- "no success is ever promoted" -- rather than a claim about
+## what the line happens to hold at one arbitrary moment.
+func test_walking_does_not_shout_on_the_always_visible_line() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := true
+	var before: String = screen._log.text
+	_click(screen, screen._my_tile() + Vector2i(2, 0), MOUSE_BUTTON_LEFT)
+	var samples := PackedStringArray()
+	for _i in range(20):
+		_tick(screen, 1)
+		samples.append(screen._status.text)
+	var log_text: String = screen._log.text
+	if log_text == before or log_text.strip_edges() == "":
+		ok = _fail("the walk produced no event lines, so this proves nothing about what is loud")
+	else:
+		for said in samples:
+			if said.strip_edges() == "":
+				ok = _fail("the status line was blanked during the walk")
+				break
+			if log_text.contains(said):
+				ok = _fail(("walking promoted one of the log's own sentences onto the "
+						+ "always-visible line: '%s'. Successes are the log's; that surface holds "
+						+ "one line and it is for what went wrong.") % said)
+				break
+	screen.queue_free()
+	return ok

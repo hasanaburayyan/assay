@@ -139,6 +139,13 @@ func event_lines(me: int) -> PackedStringArray:
 	return _sim.event_lines(me) if _sim != null else PackedStringArray()
 
 
+## The ones this player must see with the log hidden (ASSA-89): the same sentences, word for word,
+## filtered by `sim::debug::event_needs_attention`. A subset of `event_lines`, never a rewording --
+## which is why the client never decides for itself how loud a line is.
+func attention_lines(me: int) -> PackedStringArray:
+	return _sim.attention_lines(me) if _sim != null else PackedStringArray()
+
+
 ## One player's stacks: `kind`, `species`, `species_name`, `grade` (a LETTER), `count`, and `name`,
 ## which is the sim's own wording for the item. Empty for a player the world does not have.
 func inventory_of(player: int) -> Array:

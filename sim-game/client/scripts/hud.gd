@@ -21,6 +21,14 @@ const VIEW := Vector2(1280.0, 720.0)
 const MARGIN := Vector2(24.0, 96.0)
 const PANEL := 320.0
 
+## HOW MUCH OF THE PANEL THE LOG'S TOGGLE TAKES OFF THE TOP (ASSA-89).
+##
+## The control that shows and hides the event log is PINNED ABOVE THE SCROLL BOX rather than sitting
+## in the column it controls. The column is scrolled, and with a full pack, a bench and six species
+## rows it is taller than the window: a toggle inside it would be a "visible control" that a stranger
+## has to scroll to find, which is the acceptance box read in a way that satisfies nobody.
+const LOG_TOGGLE_H := 28.0
+
 ## What the map is drawn on. Here rather than in `main.gd` because `glyph_color` has to composite a
 ## deposit's colour against it to decide whether a letter on top should be dark or light.
 const MAP_BG := Color(0.10, 0.11, 0.13)

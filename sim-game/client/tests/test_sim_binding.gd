@@ -24,6 +24,10 @@ const REQUIRED_METHODS := [
 	# The HUD's reads. All four are called every frame, so a rename that only showed up at runtime
 	# would show up as an empty panel in a shipped build.
 	"event_lines", "inventory_of", "tile_at", "species_sheets",
+	# WHICH LINES A HIDDEN LOG MAY NOT SWALLOW (ASSA-89). The log is hidden by default now, so this
+	# is the only route a refusal has to the screen: a rename here would not empty a panel, it would
+	# make the client silent about the one thing it must say, which looks like nothing at all.
+	"attention_lines",
 	# The wire's own number, so no GDScript file has to keep a copy of it.
 	"protocol_version",
 	# The roster size, so the client's species colour table is checked against the sim's own count.
