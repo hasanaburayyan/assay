@@ -112,7 +112,7 @@ def refined_row():
 
 
 def smelter_row():
-    """A square ring of walls with a dark hearth inside. (ASSA-87)
+    """A ring of walls with a dark MOUTH in it. (ASSA-87)
 
     THE SIM'S SMELTER IS WALLS. `building.rs` gives it a 2x2 footprint and
     walls whose heat tolerance is the species' own, and `recipe.rs` builds it
@@ -120,12 +120,24 @@ def smelter_row():
     generic furnace with a chimney would be drawing a machine this game does
     not have.
 
-    IT IS THE ONLY ITEM ROW WITH ENCLOSED NEGATIVE SPACE, which is the whole
-    read at icon size. Ore is irregular blobs with no straight edge, refined is
-    flat parallel bars all in one plane, and this is a square with a hole in
-    it. Three kinds, three silhouettes, no colour doing the work -- which it
-    could not anyway, because all three take the same species tint and often
-    carry the same species name in adjacent pack rows.
+    IT IS THE ONLY ITEM ROW WITH ENCLOSED NEGATIVE SPACE, and that topology is
+    what separates it rather than any colour distance. Maren flood-filled the
+    three rows from outside the silhouette at the client's own 32x48: smelter
+    has exactly ONE enclosed dark region, ore has zero, refined has zero. That
+    cannot drift with a render's extremes the way a threshold can.
+
+    THE HOLE IS A SLOT, NOT THE SQUARE WELL I FIRST WROTE HERE. Measured at
+    drawn size it is 40 px, bbox 10x4, aspect 2.50 -- the rig's tilt
+    foreshortens the opening into a letterbox. I had described the geometry I
+    authored instead of the picture it produces, and Maren caught it: at this
+    angle it reads as a MOUTH, and a mouth is what says furnace. The render was
+    better than its own docstring, so the words moved and the art did not.
+
+    AND THE HOLE IS NOT WHAT MAKES THE ROW FINDABLE -- the silhouette is. At
+    drawn size the body is 709 px against ore's 448 and refined's 435 (Maren's
+    count, taken at a different alpha cut from the 540/380/396 further down this
+    file; do not line the two sets up). What the mouth earns is RECOGNITION: "a
+    thing with a mouth" rather than "a brick".
 
     AND IT PLAYS TO THE CAMERA RATHER THAN AGAINST IT. rig.py rule 1: the
     camera is tilted off VERTICAL and mostly sees an object's TOP. That is what
@@ -147,6 +159,19 @@ def smelter_row():
     WALLS THICK ENOUGH TO SURVIVE THE HALVING. At the size a pack row draws an
     items frame -- exactly 1/2 since ASSA-65 -- a wall thinner than about 0.1
     world units closes up against its neighbour and the ring becomes a blob.
+
+    THE MOUTH'S CONTRAST HAS A CEILING THAT IS NOT MINE TO RAISE, and the next
+    person to look at this number should not spend a render on it. Mouth
+    against the wall within 2 px of it, through the client's own `modulate`, on
+    its own plate, at 32x48: 6.85 untinted, 6.58 on #FFFF33, down to 1.87 on
+    #7A29CC and 1.88 on #3333FF -- the species the demo starts you on. Maren
+    tried the obvious fix before asking for it: taking this hearth to black
+    buys 6.58 -> 10.35 on yellow but only 1.88 -> 2.07 on blue. `modulate` is a
+    per-channel multiply and blue carries 7% of luminance, so NOTHING drawn in
+    this sheet holds an interior read under a blue-dominant tint. Take the
+    near-black hearth free whenever this file next renders; do not make a trip
+    for it, and do not reach for a new pigment, because the limit is the tint
+    and not the paint.
     """
     random.seed(11)
     r = rig.Rig(samples=64)
