@@ -296,6 +296,34 @@
   "sheet": "spawn.png",
   "columns": 4
  },
+ "smelter": {
+  "name": "smelter",
+  "tiles": [
+   2,
+   2
+  ],
+  "frame_px": [
+   128,
+   144
+  ],
+  "anchor_px": [
+   0,
+   16
+  ],
+  "rows": [
+   {
+    "name": "cold",
+    "frames": 1
+   },
+   {
+    "name": "lit",
+    "frames": 1
+   }
+  ],
+  "animations": {},
+  "sheet": "smelter.png",
+  "columns": 1
+ },
  "player": {
   "name": "player",
   "tiles": [

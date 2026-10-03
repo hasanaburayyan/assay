@@ -69,6 +69,13 @@ ALLOWED = {
     "handle/A":                   6.8,
     "player/idle_SW":             6.4,
     "player/walk_SW":             6.4,
+    # THE ONE ROW HERE THAT IS SUPPOSED TO BE AT THE CEILING, and the second
+    # after the grade-A glint. `smelter/lit` is a fire: the hearth's embers
+    # emit, and this file's own header says the honest limit is not zero for
+    # exactly this reason. The COLD row is absent, which is the real check --
+    # a smelter that is not burning has no excuse, and the first version of
+    # that row was red at 4.2% until its wall caps came off `ore_hi`.
+    "smelter/lit":                6.3,
     "player/idle_SE":             5.8,
     "player/walk_SE":             5.8,
     "player/idle_E":              4.9,
