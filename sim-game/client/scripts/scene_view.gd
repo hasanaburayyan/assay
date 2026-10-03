@@ -203,14 +203,22 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 			place["layer"] = FLOOR
 			out.append(place)
 
-	# WHAT STANDS ON THE GROUND, sorted by bottom edge. The spawn pad is in here rather than in the
-	# ground layer because it is 3x3 of art on ONE sim tile and bodies have to be able to walk in
-	# front of it.
-	var standing: Array[Dictionary] = []
+	# THE SPAWN PAD IS FLOOR, AND THAT IS A DEPARTURE FROM `mock_scene.py` WITH A MEASUREMENT BEHIND
+	# IT. That file sorts the pad in with the bodies by bottom edge, which is right for anything you
+	# stand BESIDE -- and the first shot of this view showed what it does to the thing you stand ON:
+	# the pad's footprint ends one row south of the player's, so a player standing on spawn sorted
+	# BEHIND it and vanished completely. On seed 14247 that is the whole of your first second in the
+	# game. Nothing in `mock_scene.py` was wrong; it simply never put a player on the pad.
 	var pad := _standing(manifest, "spawn", "pad", Vector2(view.get("spawn", Vector2i.ZERO)),
 			Color.WHITE, true)
 	if not pad.is_empty():
-		standing.append(pad)
+		var place := _place(manifest, "spawn", "pad", pad["tile"], origin, pad["tint"], seconds)
+		if not place.is_empty():
+			place["layer"] = FLOOR
+			out.append(place)
+
+	# WHAT STANDS ON THE GROUND, sorted by bottom edge, so the nearer body wins.
+	var standing: Array[Dictionary] = []
 	for entry in view.get("players", []):
 		var player: Dictionary = entry
 		var row := player_row(String(player.get("facing", "")), bool(player.get("moving", false)))

@@ -345,6 +345,34 @@ func test_the_spawn_pad_is_centred_on_the_sims_spawn_tile() -> bool:
 	return true
 
 
+## AND YOU ARE VISIBLE WHILE STANDING ON IT. THIS TEST IS A DEFECT THE FIRST REAL SHOT OF THIS VIEW
+## FOUND, which is the reason to take a shot at all.
+##
+## The pad was sorted in with the bodies by bottom edge, the way `art/mock_scene.py` does it -- and a
+## 3x3 pad's footprint ends one row south of the 1x1 player standing in the middle of it, so the pad
+## counted as NEARER and painted over them. You spawn on spawn, so that was the whole of your first
+## second in the game: a world with no player in it. `mock_scene.py` was never wrong; it just never
+## put a body on the pad.
+func test_a_player_standing_on_the_spawn_pad_is_drawn_over_it() -> bool:
+	var view := _view({"spawn": Vector2i(8, 5),
+			"players": [{"at": Vector2(8.0, 5.0), "facing": "S", "moving": false}]})
+	var places := AssayScene.placements(view)
+	var pad := -1
+	var body := -1
+	for i in range(places.size()):
+		match String((places[i] as Dictionary)["asset"]):
+			"spawn": pad = i
+			"player": body = i
+	if pad < 0:
+		return _fail("no spawn pad was drawn, so this test proves nothing")
+	if body < 0:
+		return _fail("the player standing on spawn was not drawn at all")
+	if body < pad:
+		return _fail("the pad is drawn after the player standing on it, so you are invisible on "
+				+ "the one tile every game starts on")
+	return true
+
+
 ## WHAT STANDS IN FRONT OF WHAT: row order, so the nearer thing wins (`art/mock_scene.py`'s rule).
 func test_a_nearer_body_is_drawn_over_a_further_one() -> bool:
 	var view := _view({"players": [
