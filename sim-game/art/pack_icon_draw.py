@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 """HOW THE ENGINE PUTS A PACK ICON ON SCREEN, in one place.
 
-Not a script: a module, imported by `pack_icon_sheet.py` (the 1:1 review sheet) and by
-`pack_icon_kinds.py` (the kind-discrimination measure). It exists because those two ask
-DIFFERENT questions of the SAME pixels, and the moment each carried its own copy of the
-sampling rule they could disagree about what the client drew while both looked right.
+Not a script: a module, imported by `pack_icon_sheet.py` (the 1:1 review sheet), by
+`pack_icon_kinds.py` (the kind-discrimination measure) and by `check_icon_kinds.py` (the
+CI guard on it). It exists because those ask DIFFERENT questions of the SAME pixels, and
+the moment each carried its own copy of the sampling rule they could disagree about what
+the client drew while both looked right.
+
+WHICH IS WHY THIS FILE IS STDLIB-ONLY (ASSA-111). A `check_*.py` runs on plain `python3`
+with no pip, so if the blit needed Pillow the check would have had to retype it. Instead
+the two things Pillow was used for -- opening a frame and filling a plate -- are behind a
+two-method BACKEND, and everything that is a rule about pixels lives below, called once by
+both callers. `PillowBackend` imports PIL inside its methods on purpose: importing this
+module must never require it.
 
 That is the same failure `check_part_contract.py` was written for, stated for code instead
 of for a constant: a shipped copy of a rule is a copy, and copies rot.
@@ -29,6 +37,11 @@ where its centre falls. The two answers differ along that edge, which is exactly
 a silhouette measure is about.
 """
 import math
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from colour import dE  # noqa: E402  the house colour metric, never a second copy
 
 # A DESTINATION PIXEL IS THE SPRITE'S BODY AT SOURCE ALPHA >= 200.
 #
@@ -86,3 +99,72 @@ def nearest_blit(dst, frame, tint, dest_x, dest_y, dest_w, dest_h, zoom=1, body=
                     if body is not None:
                         body.add((dx, dy))
     return ink
+
+
+def rgb(h):
+    """A `#`-less hex string as the engine hands it back, as (r, g, b)."""
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+class PillowBackend:
+    """Opens frames and plates with Pillow. For the review sheets, which need resize/paste.
+
+    PIL is imported INSIDE the methods, so a CI check can import this module on a python
+    that has never heard of Pillow. That is the whole reason the backend exists.
+    """
+
+    name = "pillow"
+
+    @staticmethod
+    def open_frame(path, x, y, w, h):
+        from PIL import Image
+        sheet = Image.open(str(path)).convert("RGBA")
+        return sheet.crop((int(x), int(y), int(x + w), int(y + h)))
+
+    @staticmethod
+    def new_plate(w, h, colour):
+        from PIL import Image
+        return Image.new("RGB", (w, h), colour)
+
+
+def drawn_icon(entry, sprites_dir, backend):
+    """The icon on its plate, exactly as the engine put it there, plus its body mask.
+
+    Returns (image, body) where `image` is the composited plate box and `body` is the set of
+    (x, y) the sprite's solid ink actually landed on. Both come out of ONE blit, because a
+    mask computed separately would be a second sampling of the same quad.
+
+    Everything positional is READ OFF THE PROBE'S ANSWER -- the region, the plate box, the
+    drawn size, the tint -- after the real `main.tscn` was instantiated. The only arithmetic
+    here is STRETCH_KEEP_ASPECT_CENTERED's centring, and `pack_icon_kinds.py` asserts the
+    probe's own scale against the rect rather than trusting either.
+    """
+    ic = entry["icon"]
+    x, y, w, h = ic["region"]
+    frame = backend.open_frame(Path(sprites_dir) / Path(ic["sheet"]).name, x, y, w, h)
+    bw, bh = (int(round(v)) for v in (ic["plate_rect"] or ic["rect"]))
+    dw, dh = ic["drawn"]
+    img = backend.new_plate(bw, bh, rgb(ic["plate"]) if ic["plate"] else (0, 0, 0))
+    body = set()
+    nearest_blit(img, frame, rgb(ic["modulate"]), (bw - dw) / 2.0, (bh - dh) / 2.0, dw, dh,
+                 body=body)
+    return img, body
+
+
+def compare(a, b):
+    """(IoU of the body masks, mean dE76 over their overlap, overlap pixel count).
+
+    TWO MEASURES THAT SHARE NO QUANTITY, which is the point: IoU cannot see colour and the
+    interior dE cannot see shape, because a pixel one sprite does not cover is not in it.
+    """
+    (ia, ba), (ib, bb) = a, b
+    inter = ba & bb
+    union = ba | bb
+    iou = len(inter) / len(union) if union else 0.0
+    if not inter:
+        # NO SHARED PIXEL AT ALL: there is no interior to compare, and reporting 0.00 would read
+        # as "identical colour" -- the exact opposite of the truth. Say so instead.
+        return iou, None, 0
+    pa, pb = ia.load(), ib.load()
+    total = sum(dE(pa[x, y], pb[x, y]) for (x, y) in inter)
+    return iou, total / len(inter), len(inter)

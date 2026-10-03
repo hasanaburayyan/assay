@@ -53,7 +53,6 @@ Exit codes, matching the other two engine checks: 0 green, 1 the plate is wrong,
 import json
 import os
 import re
-import subprocess
 import sys
 
 ART = os.path.dirname(os.path.abspath(__file__))
@@ -62,53 +61,19 @@ CLIENT = os.path.join(ROOT, "client")
 SPRITES = os.path.join(CLIENT, "assets", "sprites")
 THEME = os.path.join(SPRITES, "ui_theme.json")
 SCRIPTS = os.path.join(CLIENT, "scripts")
-PROBE = os.path.join(ART, "pack_icon_layout.gd")
-GODOT = os.environ.get("GODOT", "/Applications/Godot_mono.app/Contents/MacOS/Godot")
-
-TIMEOUT = int(os.environ.get("ICON_GODOT_TIMEOUT", "300"))
 
 sys.path.insert(0, ART)
 import ui_theme  # noqa: E402  (after sys.path, on purpose)
+# Running the layout probe is shared with the other two checks that need the engine's
+# own answer (ASSA-111); it used to be a character-for-character copy in each.
+from ask_layout import CannotCheck, ask_the_engine  # noqa: E402
 
-
-class CannotCheck(Exception):
-    """No verdict is available. Never allowed to look like a pass."""
+WHY_THE_ENGINE = ("whether the CLIENT paints the plate is half of what this file\n"
+                  "checks, and it cannot be answered without the engine.")
 
 
 def hexs(rgb):
     return "#%02X%02X%02X" % tuple(rgb)
-
-
-def ask_the_engine():
-    """Run the layout probe and return the rows it measured."""
-    if not os.path.exists(GODOT):
-        raise CannotCheck(
-            "no Godot at %r. Set GODOT=<path>.\n"
-            "Deliberately not a pass: whether the CLIENT paints the plate is half of\n"
-            "what this file checks, and it cannot be answered without the engine." % GODOT)
-    if not os.path.exists(PROBE):
-        raise CannotCheck("no layout probe at %s" % PROBE)
-    try:
-        p = subprocess.run(
-            [GODOT, "--headless", "--path", CLIENT, "--script", PROBE],
-            capture_output=True, text=True, timeout=TIMEOUT)
-    except subprocess.TimeoutExpired:
-        raise CannotCheck(
-            "Godot did not finish in %ds. Another headless Godot may be sitting on\n"
-            "%s (check `pgrep -f Godot`), or an import is mid-flight. Raise it with\n"
-            "ICON_GODOT_TIMEOUT=<seconds>." % (TIMEOUT, os.path.relpath(CLIENT, ROOT)))
-    for line in p.stdout.splitlines():
-        if line.startswith("LAYOUT_JSON "):
-            return json.loads(line[len("LAYOUT_JSON "):])
-    blob = p.stdout + p.stderr
-    why = ""
-    if "not declared" in blob:
-        why = ("\nTHE LIKELY CAUSE: the class cache is missing. Run `godot --headless\n"
-               "--import` TWICE in client/.\n")
-    elif "gdextension" in blob.lower() or "libsim_godot" in blob:
-        why = "\nTHE LIKELY CAUSE: the binding is missing. Run `make client-lib`.\n"
-    raise CannotCheck("the probe printed no LAYOUT_JSON.%s\n--- godot said ---\n%s"
-                      % (why, blob[-1200:]))
 
 
 def gdscript_colour_literals(wanted):
@@ -167,7 +132,7 @@ def main():
                           % (os.path.relpath(THEME, ROOT), why))
 
     # ---- source 3: what the engine painted.
-    layout = ask_the_engine()
+    layout = ask_the_engine(WHY_THE_ENGINE)
     art = [r for r in layout.get("rows", []) if r.get("icon")]
     if not art:
         raise CannotCheck(

@@ -291,6 +291,27 @@ jobs:
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
             python3 art/check_pack_icon_plate.py
+      # A PACK ICON MUST STILL CARRY THE KIND ON ITS OWN (ASSA-111, guarding ASSA-101).
+      # Maren's split took every MAKE verb off the pack row, so four consecutive part
+      # rows now carry one identical word and the icon is one of only two carriers of
+      # what a row holds. She ruled today's separation acceptable; nothing guarded it.
+      #
+      # It asserts the PLAYER-FACING property and nothing else -- no pair of kinds is
+      # close on BOTH silhouette (IoU of the drawn body masks) and interior colour
+      # (dE76 over their overlap). Her ruling 2 is the reason it may not be written on
+      # positions: three part/part pairs separate at IoU 0.000 only because rig.py puts
+      # head on the far side of the join, and the correct fix for that (loose parts
+      # drawn by items.py) must be able to land green.
+      #
+      # TWO CONTROLS RUN INSIDE IT EVERY TIME, so it cannot be green by construction:
+      # every kind against itself must come back IoU 1.000 / dE 0.00, and one kind's
+      # icon substituted for another's must be CAUGHT. Either control failing exits 2.
+      # Proved red end to end as well, exit 1, against a sprite tree with hopper.png
+      # replaced by handle.png.
+      - name: A pack icon still carries the kind on its own
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
+            python3 art/check_icon_kinds.py
 
   macos:
     name: macOS bundle
