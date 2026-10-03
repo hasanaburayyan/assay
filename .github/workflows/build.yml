@@ -111,6 +111,29 @@ jobs:
       # Stdlib only, no pip, ~0.1s.
       - name: The species palette agrees with itself
         run: python3 art/check_species_tints.py
+      # NO SHIPPED SURFACE SITS ON THE CEILING (ASSA-115). A pixel with a
+      # channel pinned at 255 has no shading left, and because the client tints
+      # ore with Godot's `modulate` -- a per-channel MULTIPLY -- a pinned
+      # channel maps to EXACTLY the species hex. So a blown region does not
+      # read as a bright rock, it reads as a flat patch of species colour.
+      #
+      # Three assets fell off the top of the rig independently and were written
+      # up as three separate bugs (ASSA-28's grade-A chassis matching a hopper,
+      # the grade-A glint landing on a species yellow, 34% of a grade-A ore tile
+      # going flat). One cause: `Standard` is a hard clip and a lit face of this
+      # rig was about a stop over it, so every albedo above 192 rendered as the
+      # same white. 15.7% of ALL shipped pixels were sitting there and nothing
+      # asked. The fix was one line in rig.py, which is exactly the kind of line
+      # that gets spent again by anyone adding a lamp or lightening a palette
+      # entry -- hence a guard rather than a commit message.
+      #
+      # The bound is a RATCHET of measurements, not a number anyone picked: a
+      # glint is SUPPOSED to blow out, so the honest limit is not zero, and this
+      # file holds what each row does today and fails if any row gets worse.
+      # Proved red before it was trusted green -- it fails on the pre-fix sheets
+      # with 25 rows over, player/walk_SW worst at 47.6%. Stdlib only, ~3s.
+      - name: No shipped surface sits on the ceiling
+        run: python3 art/check_headroom.py
       # THE ENGINE CAN REACH THE ART. For the pipeline's whole life the sheets
       # sat in `assets/sprites/`, the Godot project's SIBLING -- and `res://` is
       # the project folder and nothing above it, so no client script could load

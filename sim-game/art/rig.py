@@ -402,7 +402,62 @@ class Rig:
             for d in prefs.devices: d.use = True
             sc.cycles.device = "GPU"
         sc.render.image_settings.file_format = "PNG"; sc.render.image_settings.color_mode = "RGBA"
-        sc.view_settings.view_transform = "Standard"
+        # HEADROOM: THE TOP THIRD OF THE PALETTE WAS NOT PRINTABLE (ASSA-115).
+        #
+        # `Standard` is a hard clip at 1.0, and these four lamps put a lit
+        # face about a stop over it. Measured on this rig -- `art/
+        # headroom_probe.py` renders the SAME rock geometry at a ramp of
+        # neutral albedos and reads the lit body back:
+        #
+        #   albedo      174  183  192  201  210  219  228  237  246  255
+        #   Standard    215  225  237  248  255  255  255  255  255  255
+        #   % at 254+   0.0  0.0 17.2 36.1 60.0 73.6 90.4 90.9 94.1 96.4
+        #
+        # So every albedo from 192 up renders as the same white, and 15.7% of
+        # ALL shipped pixels were sitting on the ceiling with no shading left
+        # in them -- which under the client's multiply tint is not "bright",
+        # it is "exactly the species hex". THAT is one cause for all three
+        # symptoms: ASSA-28's grade-A chassis matching the hoppers, the
+        # grade-A glint landing on a species yellow, and 34% of a grade-A ore
+        # tile going flat (Maren, ASSA-115).
+        #
+        # IT CANNOT BE FIXED IN THE PALETTE, and that is why this line moved
+        # rather than a colour. Grade C's lightest rock is already albedo 173
+        # against a ceiling of 183 -- C is held UP by rule 3 in ore.py (a
+        # multiply scales species differences by its own factor, so a dark
+        # rock is a small gap between two species). Ten units of room, three
+        # grades to fit in it: the ladder does not fit under this exposure,
+        # so the exposure is the defect.
+        #
+        # WHY THIS TRANSFORM AND NOT LESS LIGHT. Cutting the lamps a stop
+        # fixes the clip by darkening everything -- the ground's median goes
+        # 142 -> ~105. `Khronos PBR Neutral` is a shoulder instead: it leaves
+        # the midtones where they were and rolls off only the top.
+        #
+        #   albedo      120  138  156  174  183  192  210  228  246  255
+        #   Khronos     143  165  187  210  220  230  240  245  248  248
+        #   vs Standard  -9   -8   -7   -5   -5  +recovered, monotonic, 0% clipped
+        #
+        # Filmic was measured too and REJECTED: it crushes the whole ramp
+        # into 155-221, which buys headroom by spending contrast everywhere.
+        # AND IT IS NOT A PURE SHOULDER, so it comes with a compensation.
+        # Khronos pulls the whole curve down a little, not just the top: on the
+        # ramp above every midtone lost 5-9 of 255. Uncompensated that is a
+        # change to art nobody asked me to change -- the ground's median had
+        # just been judged at 142 (ASSA-115 part 1) and would have arrived at
+        # 135 with no note. Worse, it is not cosmetic at the BOTTOM: the
+        # hopper's shaded interior fell from 1 opaque pixel under
+        # `part_layout.SHADOW_CEILING` to 305, and that ceiling is a SHIPPED
+        # CONTRACT -- `part_layout.json` tells the client that anything below
+        # it is contact shadow, to be composited alpha-MAX. A surface drifting
+        # under it does not just fail `check_part_contract.py`, it makes the
+        # client composite the inside of a hopper as a shadow.
+        #
+        # +0.2 stops puts the midtones back (linear 143 -> 152 is +0.195) and
+        # the shoulder absorbs it at the top, which is the whole point of
+        # having one. Measured after, on the shipped sheets, not predicted.
+        sc.view_settings.view_transform = "Khronos PBR Neutral"
+        sc.view_settings.exposure = 0.2
         sc.render.pixel_aspect_x = 1 / COS; sc.render.pixel_aspect_y = 1.0
 
         sc.render.use_freestyle = outlines
