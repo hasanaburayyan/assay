@@ -275,10 +275,13 @@ func poll() -> bool:
 		# The two causes that ARE facts are read before the spawn instead (`binary == ""` and
 		# `is_runnable`), and the sentence below says only what was observed.
 		#
-		# WHAT WOULD MAKE IT PROVABLE, and it is one line in a file I do not own: if `sim-relay`
-		# printed a marker as its FIRST action -- the way it prints `LISTENING` as its last -- then a
-		# child that died without it never reached the relay's own code, and "the system would not run
-		# it" would be a fact rather than a reading. Filed for Marlow rather than guessed at here.
+		# WHAT MAKES IT PROVABLE NOW EXISTS, AND THIS FILE DOES NOT YET SPEND IT (ASSA-120, box 4).
+		# `sim-relay` prints `RELAY v<protocol>` as its FIRST statement -- before argument parsing,
+		# any file and any socket -- the way it prints `LISTENING` as its last. So a child that died
+		# WITHOUT that line never reached the relay's own code, which is the fact this sentence has
+		# been missing: "the system would not run it" becomes an observation rather than a reading.
+		# Until the branch below keys on it, the sentence stays the vague true one, because a
+		# confident wrong diagnosis on a player who hit a real bug is worse (Maren, ASSA-120).
 		# THE OPEN DOOR COMES BEFORE THE QUOTE, not after it (Maren): the relay's last words are a
 		# figure for a bug report, and a paragraph of them between the problem and what to do about
 		# it buries the only clause a stranger acts on. Retry is NOT offered here -- a relay that

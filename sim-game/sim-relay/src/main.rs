@@ -8,6 +8,27 @@
 //! puts them in one order, runs the sim itself, and broadcasts that tick's
 //! inputs so every client can run the identical step. It also welcomes
 //! joiners with a snapshot, compares clients' state hashes, and autosaves.
+//!
+//! # Two lines on stdout are a contract; everything else is prose
+//!
+//! A parent process — the Godot client's "Play solo", `tests/common/mod.rs`,
+//! `sim-cli`'s `three_peers` — keys on a PREFIX, never on a sentence. Both of
+//! these may grow fields on the end and neither may be reworded. Every other
+//! line here is written for a person and will be rewritten.
+//!
+//! | Line | Printed | Means |
+//! |---|---|---|
+//! | `RELAY v<protocol>` | first statement in `main`, before argument parsing, any file and any socket | this binary was executed at all, and which wire it speaks |
+//! | `LISTENING <addr>:<port>` | once the socket is accepting, before the first tick | up, and where to join |
+//!
+//! **The marker's whole value is that NOTHING precedes it** (ASSA-120). Spawning
+//! a child cannot tell you it failed to exec — Godot hands back a live PID for a
+//! path that does not exist — so the absence of this line is the only evidence a
+//! client has that the relay's own code never ran. A marker printed after the
+//! first thing that can fail turns "ran but could not bind" into "the system
+//! would not run it": the same wrong diagnosis one layer down, which is worse
+//! than a vague true one. `tests/marker.rs` holds that position against the
+//! three early exits in `parse_args` and against an unreadable save.
 
 mod auth;
 
@@ -26,6 +47,15 @@ use sim_net::{
     ClientMsg, DEFAULT_PORT, Greeting, HASH_EVERY, PROTOCOL_VERSION, ServerMsg, TickBundle,
     read_frame, saves_dir, write_msg,
 };
+
+/// **THE RELAY'S FIRST WORD, A PREFIX AND NOT A SENTENCE** (ASSA-120).
+///
+/// `RELAY v<protocol>` on stdout, before anything that can fail. A parent
+/// process keys on the prefix exactly the way it keys on `LISTENING `, so this
+/// line may grow fields on the end and may never be reworded. Prose above and
+/// below it is written for a person and will be rewritten; these two lines are
+/// the contract.
+const RELAY_MARKER: &str = "RELAY";
 
 const AUTOSAVE_EVERY: u64 = 20;
 const DEFAULT_TPS: u32 = 10;
@@ -94,6 +124,31 @@ struct Relay {
 }
 
 fn main() {
+    // **THE FIRST STATEMENT IN THE PROGRAM, AND THAT IS THE WHOLE FEATURE**
+    // (ASSA-120). `LISTENING` is the contract for "up, on this port"; this is
+    // the contract for "the exec happened at all", and it is only worth
+    // anything if NOTHING that can fail runs before it — not argument parsing,
+    // not opening a save, not binding a socket.
+    //
+    // WHY A CLIENT NEEDS IT. `OS.execute_with_pipe` in Godot hands back a live
+    // PID for a non-executable file and for a path that does not exist alike,
+    // so a client that spawns this relay cannot tell "macOS would not run the
+    // file" from "it ran and could not bind". Measured on the client side
+    // (ASSA-113): the dead child leaves Godot's own `Could not create child
+    // process` on stderr 3 of 10 attempts and then 0 of the next 9, from a mono
+    // build CI does not even ship — and `/bin/sh -c "exit 1"`, a process that
+    // really ran, leaves exactly as much behind. Silence is not a signal. One
+    // line printed before anything can fail turns it into one: **the marker
+    // absent means this code never ran.**
+    //
+    // IT CARRIES THE PROTOCOL AND NOTHING ELSE. Maren's ruling on ASSA-106:
+    // whether the world was resumed or created belongs beside `LISTENING`,
+    // because it is not known until the save is open — putting it here would
+    // either delay the marker and destroy its meaning, or print twice. The
+    // protocol version is a compiled-in constant, so reading it cannot fail,
+    // and a peer whose number differs learns it before the socket rather than
+    // through a torn read.
+    println!("{RELAY_MARKER} v{PROTOCOL_VERSION}");
     let opts = parse_args();
     let (world, accounts) = open_world(&opts);
 
