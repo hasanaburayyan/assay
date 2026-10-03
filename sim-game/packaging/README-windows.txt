@@ -2,12 +2,15 @@ Assay multiplayer test (Windows 10/11, 64-bit)
 ==============================================
 
 Three programs:
-  sim-relay.exe   the host. One person runs it; it owns the world and the clock.
-  sim-cli.exe     the text-mode client, and the one that can actually play:
-                  mine, craft, place, assay. Everyone can run this.
-  Assay.exe       the graphical client. Early: it joins, and it draws the
-                  world it joined. It cannot move or build yet (see "The
-                  graphical client" below for exactly why).
+  Assay.exe       the graphical client, and the quickest way in: press Play
+                  solo and it starts a world on this machine and joins it,
+                  with nothing to type. It can also join someone else's
+                  world. You can walk, mine, assay, craft, place machines and
+                  design parts in it.
+  sim-relay.exe   the host, for co-op. One person runs it; it owns the world
+                  and the clock. Play solo starts one of these for you.
+  sim-cli.exe     the text-mode client. Plays the same world through a
+                  terminal, and shows far more about it (see "The inspector").
 
 Everyone must use builds made at the same time (Mac and Windows zips from the
 same message). Mac and Windows players can share a world.
@@ -15,16 +18,30 @@ same message). Mac and Windows players can share a world.
 
 1. First run
 ------------
-Unzip the folder somewhere (right-click the zip, Extract All).
-Open the folder, click the address bar, type  cmd  and press Enter.
-A command window opens in that folder.
+Unzip the folder somewhere (right-click the zip, Extract All). Extract it
+properly rather than opening the zip and running from inside it -- the
+programs have to sit together in a real folder to find each other.
 
 These programs aren't signed, so Windows may show "Windows protected your
 PC" the first time. Click "More info", then "Run anyway". Some antivirus
 tools may also ask; allow it.
 
+For the text-mode client you also want a command window: open the folder,
+click the address bar, type  cmd  and press Enter.
 
-2. Joining someone else's world
+
+2. Play on your own
+-------------------
+Double-click Assay.exe and press Play solo (it is the first button, and
+Enter presses it). Nothing to type and no command window needed: it starts
+sim-relay.exe from this folder on your own machine and joins it.
+
+It is world 14247, and pressing Play solo again later RESUMES it rather than
+starting over. Solo worlds are saved in your user data folder, not in this
+one, so they survive replacing this zip with a newer build.
+
+
+3. Joining someone else's world
 -------------------------------
 The host gives you an address. Then:
 
@@ -39,8 +56,8 @@ the host shares their machine with you (or invites you to their tailnet),
 and you connect to the host's Tailscale address (100.x.y.z).
 
 
-3. Hosting yourself (optional)
-------------------------------
+4. Hosting for co-op (optional)
+-------------------------------
     sim-relay.exe
 
 If Windows Firewall asks, click Allow access. It prints the address to give
@@ -53,23 +70,33 @@ The graphical client
 Double-click Assay.exe. Windows may warn that the publisher is unknown (the
 build is not code-signed): More info, then Run anyway.
 
-Type the relay's address in the "host" box -- the same address the relay
-printed, e.g. 192.168.1.48:7777 -- put in a name, and click join. A bare
-address uses port 7777.
+To play by yourself, press Play solo. To join someone, type the relay's
+address in the "host" box -- the same address the relay printed, e.g.
+192.168.1.48:7777 -- put in a name, and click join. A bare address uses
+port 7777.
 
-It then draws the world it joined: the deposits, the players, spawn. The
-status line says which tick it joined at and counts the updates arriving, so
-you can see the link is live.
+It runs the real rules: the same Rust `sim` crate the relay and sim-cli run,
+inside the client. Your presses go to the host as commands, and every peer
+steps the same simulation, so what you see is the world and not a guess.
 
-Nothing moves yet, and that is on purpose rather than a bug. The host sends
-out the inputs players pressed, not the world itself, so turning those into a
-newer world means running the simulation -- the Rust `sim` crate -- inside
-this client. Until that is wired in, drawing a guessed position would just be
-a second, disagreeing copy of the rules. Use sim-cli.exe to play; use
-Assay.exe to confirm it joins and draws on your machine.
+What you can do in it:
+  click a tile          walk there
+  Mine / Stop / Assay   mine the deposit under you, stop, or study it until
+                        its property sheet reads exact instead of in bands
+  Take / Pick up        empty a building's output into your pack, or take
+                        the building back with whatever is inside
+  your pack             Fuel and Smelt put ore into a building; Place stands
+                        a machine down; Frame and Mount choose the parts of
+                        the next machine you design
+  the crafting menu     what you can make from what you are carrying
 
-Worth reporting: it will not start, it will not connect to an address
-sim-cli.exe connects to fine, or what it draws does not match sim-cli.exe.
+The world view is still a map -- deposits, players, spawn, drawn as shapes
+and colours rather than art. Proper art for it is being built now; this is
+the part to be rude about.
+
+Worth reporting: it will not start, Play solo fails, it will not connect to
+an address sim-cli.exe connects to fine, or what it draws does not match
+sim-cli.exe.
 
 
 The inspector
@@ -123,7 +150,7 @@ What to report
 
 Known limits
 ------------
-- Playing is text only. The graphical client joins and draws, nothing more.
+- The world view is a map of shapes and colours, not finished art.
 - Assay.exe is not code-signed, so Windows warns on first run.
 - If your connection drops, restart sim-cli.exe to rejoin.
 - Your own moves wait for the host, so there's a small delay.
