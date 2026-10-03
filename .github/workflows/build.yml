@@ -330,6 +330,31 @@ jobs:
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
             python3 art/check_icon_kinds.py
+      # A LOOSE PART IS AS MUCH OF AN OBJECT AS AN ORE CHUNK (ASSA-112). The pack slot
+      # is portrait (32x48) and a part's authoring frame is landscape (128x102, because
+      # it holds an assembly JOIN), so a part fitted into a slot filled 4.5-13.3% of it
+      # where every item fills 24.7-35.2%. Maren ruled the fix: parts get rows on the
+      # ITEMS sheet, drawn as loose things, and the assembly sheets are untouched.
+      #
+      # TWO PROPERTIES, both hers: no row smaller in its slot than the SMALLEST ITEM --
+      # a floor read from the ore row in the same run, never a number in the check --
+      # and ASSA-111's conjunction on the new rows, using ASSA-111's own `verdict`
+      # imported rather than copied, because a loose drawing has no join to borrow its
+      # separation from.
+      #
+      # IT MEASURES THE SHEET, NOT THE CLIENT, and says so: `sprites.gd` still points
+      # part rows at the assembly sheets, and that switch is its own item. The day it
+      # lands, `check_icon_kinds.py` measures these same pixels through the engine.
+      #
+      # TWO CONTROLS RUN INSIDE IT EVERY TIME: every kind is itself at IoU 1.000 / dE
+      # 0.00 and the rows are not one picture, and on a copy of the real answer a
+      # substituted icon must be caught AND a kind drawn at half size must fall under
+      # the floor. Either failing exits 2. Proved red end to end too: `--shrink hopper`
+      # exits 1.
+      - name: A loose part fills a pack slot like an item
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
+            python3 art/check_items_kinds.py
 
   macos:
     name: macOS bundle
