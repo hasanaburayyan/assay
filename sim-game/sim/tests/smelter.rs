@@ -1061,3 +1061,140 @@ fn a_smelter_that_runs_dry_is_silent_because_idle_is_not_a_stall() {
     let status = sim::debug::building_status(&world, world.building(id).unwrap());
     assert!(status.contains("idle: nothing to refine"), "{status}");
 }
+
+/// **THE DEMO'S OWN LOG, AS A TEST** (ASSA-128). On seed 14247 the scripted
+/// session printed `smelter 0 stopped: fuel won't light from cold` five times
+/// while that smelter turned 19 ore into 19 refined. One false line per fuel
+/// unit burned: the tick that spends the last of a unit ends with
+/// `burn_left == 0`, and the relight is the next tick's first act, so
+/// `announce_new_stalls` saw a dead fire in between.
+///
+/// **WHY NO TEST HERE CAUGHT IT: every other smelter test burns one unit.**
+/// `BURN_TICKS_PER_REACTIVITY * 60` is 120 ticks of fire, and the longest run
+/// above is 60 ticks. The bug lives in the seam between two units, so the
+/// run has to be long enough to have a seam.
+#[test]
+fn a_batch_burning_three_fuel_units_never_claims_the_fuel_will_not_light() {
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(WALLS), 15);
+    give(&mut world, me, ore(FUEL), 3);
+    let events = run(
+        &mut world,
+        &[
+            Input::player(me, insert(id, Slot::Fuel, ore(FUEL), 3)),
+            Input::player(me, insert(id, Slot::Input, ore(WALLS), 15)),
+        ],
+        400,
+    );
+
+    // **THE PREMISE FIRST, OR THE ASSERTION IS OVER AN EMPTY RUN.** A smelter
+    // that never lit would also announce nothing once this is fixed, and it
+    // has to have crossed a seam: 15 ore at 20 ticks each is 300 ticks of
+    // fire, which no single unit of this fuel can pay for.
+    let smelted = events
+        .iter()
+        .filter(|e| matches!(e, Event::ItemSmelted { .. }))
+        .count();
+    assert_eq!(smelted, 15, "premise: the whole batch has to run: {events:?}");
+    let smelter = smelter_of(&world, id);
+    assert!(smelter.input.is_none(), "premise: all the ore went in");
+    assert_eq!(
+        smelter.output.map(|o| o.count),
+        Some(15),
+        "premise: all the refined came out"
+    );
+    assert!(
+        smelter.fuel.is_none(),
+        "premise: every unit of fuel was consumed, so every seam was crossed"
+    );
+
+    assert_eq!(
+        stalls(&events),
+        vec![],
+        "a working smelter says nothing: {:?}",
+        stalls(&events)
+    );
+}
+
+/// **A STALL IS A CONDITION, NOT A MOMENT** (Game Director's ruling 2 on
+/// ASSA-128): *a fire that relights unaided on the next tick is not a stop. A
+/// stall is only a stall when nothing clears it but the player.*
+///
+/// That is a property of every stall and not a fact about fuel, so it is
+/// asserted over every tick of a batch rather than at the two ticks we know
+/// about. If any future state can un-stall itself with no input, this fails
+/// without being rewritten.
+///
+/// It is also the lever: it is red on the state of the code before this
+/// commit (tick 120 reports `FuelWontLight`, tick 121 is `Working`) and stays
+/// red for any fix that only silences the *event* while `smelter_state` keeps
+/// lying — which `halt_lines()` and the status line read directly.
+#[test]
+fn no_smelter_stall_clears_itself_without_the_player() {
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(WALLS), 15);
+    give(&mut world, me, ore(FUEL), 3);
+    let mut events = Vec::new();
+    step(
+        &mut world,
+        &[
+            Input::player(me, insert(id, Slot::Fuel, ore(FUEL), 3)),
+            Input::player(me, insert(id, Slot::Input, ore(WALLS), 15)),
+        ],
+        &mut events,
+    );
+
+    let mut seen_working = false;
+    for _ in 0..400 {
+        let before = world.smelter_state(world.building(id).unwrap());
+        let tick = world.tick;
+        step(&mut world, &[], &mut events);
+        let after = world.smelter_state(world.building(id).unwrap());
+        seen_working |= matches!(after, sim::SmelterState::Working { .. });
+        if let Some(why) = before.stall() {
+            assert!(
+                after.stall().is_some(),
+                "tick {tick} reported stalled: {why:?}, and tick {} is {after:?} \
+                 with nothing done about it, so it was never a stall",
+                tick + 1
+            );
+        }
+    }
+    assert!(seen_working, "premise: the smelter has to have worked");
+}
+
+/// **AND THE TRUE CASE STILL ANNOUNCES**, which is half of what the Game
+/// Director asked for: *a check we have only ever seen fire when it is false
+/// is worse than no check.* Driven through the commands, not hand-set, so it
+/// is the same path the false ones came down.
+#[test]
+fn fuel_that_cannot_light_from_cold_still_says_so_once() {
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(WALLS), 15);
+    give(&mut world, me, ore(HOT_FUEL), 3);
+    let events = run(
+        &mut world,
+        &[
+            Input::player(me, insert(id, Slot::Fuel, ore(HOT_FUEL), 3)),
+            Input::player(me, insert(id, Slot::Input, ore(WALLS), 15)),
+        ],
+        400,
+    );
+    assert_eq!(
+        stalls(&events),
+        vec![SmelterStall::FuelWontLight],
+        "it is said once and only once: {events:?}"
+    );
+    let smelter = smelter_of(&world, id);
+    assert_eq!(
+        smelter.input.map(|i| i.count),
+        Some(15),
+        "nothing was smelted, which is why the sentence is true"
+    );
+    assert!(smelter.output.is_none());
+    let status = sim::debug::building_status(&world, world.building(id).unwrap());
+    assert!(
+        status.contains("stalled: fuel won't light from cold"),
+        "{status}"
+    );
+}
