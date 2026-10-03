@@ -31,6 +31,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ask_layout import kind_of  # noqa: E402  one reader of what a row holds
 from pack_icon_draw import nearest_blit  # noqa: E402  the engine's own sampling, defined once
 
 HERE = Path(__file__).resolve().parent.parent
@@ -279,7 +280,16 @@ for i, hexv in enumerate(TINTS):
 # ONE TINT FOR ALL OF THEM, the one the engine actually hands each row (`modulate`), so this strip
 # is the shipped pack and not six species of part. The species sweep is panels 4 and 5' job.
 art_rows = [r for r in ROWS if "icon" in r]
-CELL = int(ICON) + 10
+# THE LABELS DECIDE THE CELL WIDTH, not the other way round (ASSA-118). This used to
+# draw `line.split()[-2][:6]` into a fixed 42 px cell, which is a truncation in the units
+# of my LAYOUT (characters) rather than of the thing: the strip said "refine" and "smelte"
+# -- neither of which is a kind in this game -- and "hopper" ran into "ore". Measured, as
+# the captions below already measure themselves. The kind comes from `kind_of`, the same
+# reader the checks use, rather than from counting words in the sentence.
+_KIND_LABELS = [kind_of(r) for r in art_rows]
+_label_w = max(int(ImageDraw.Draw(Image.new("RGB", (1, 1))).textlength(s, font=f12))
+               for s in _KIND_LABELS)
+CELL = max(int(ICON) + 10, _label_w + 6)
 SWATCH = 48
 both_w = CELL * len(art_rows)
 both_h = 2 * (SWATCH + 18) + 14  # the last 14 is the kind label's own line, under both numbers
@@ -298,8 +308,9 @@ for i, r in enumerate(art_rows):
         cs = sorted(contrast(p, surface) for p in ink)
         measured.append(cs)
         db.text((x, top + SWATCH + 2), "%.2f" % cs[-1], font=f12, fill=(240, 240, 240))
-    # The kind, not the whole sentence: "22 x Minyte ore (B)" does not fit a 42px cell.
-    db.text((x, 2 * (SWATCH + 18)), r["line"].split()[-2][:6], font=f12, fill=(170, 170, 175))
+    # The kind, not the whole sentence: "22 x Minyte ore (B)" does not fit a cell this
+    # wide. Whole word, though -- the cell above was measured to hold the longest of them.
+    db.text((x, 2 * (SWATCH + 18)), _KIND_LABELS[i], font=f12, fill=(170, 170, 175))
     per_row.append((r["line"], measured[0], measured[1]))
 
 # ---------------------------------------------------------------------------- assemble
