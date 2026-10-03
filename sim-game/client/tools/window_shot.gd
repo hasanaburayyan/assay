@@ -450,14 +450,18 @@ func _report() -> void:
 	for line in _shots:
 		print("  ", line)
 	_fold_report()
+	# THE REVEAL VERDICT GOES FIRST, and the order is not taste. The incomplete check below ends the
+	# run, so with it first a shot that could not contain its subject also silently skipped the only
+	# measurement of whether the reveal worked -- two different questions, and the second one never
+	# asked on exactly the runs where it matters most.
+	if not _reveal_report():
+		return
 	if not _missing.is_empty():
 		_incomplete = true
 		var said := PackedStringArray()
 		for name in _missing:
 			said.append("%s: %s" % [name, ", ".join(_missing[name] as PackedStringArray)])
 		_finish(false, "; ".join(said))
-		return
-	if not _reveal_report():
 		return
 	_finish(true, "")
 
