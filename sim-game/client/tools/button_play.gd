@@ -586,17 +586,27 @@ func _press_once(key: String, label: String) -> void:
 	_stop(false, "no `%s` button on the screen" % label)
 
 
-## CLICK THE MAP where a tile actually is, through `_unhandled_input`. The centre of the tile, so a
+## CLICK THE WORLD where a tile actually is, through `_unhandled_input`. The centre of the tile, so a
 ## floor() of the position cannot land on its neighbour.
+##
+## THE SCREEN SAYS WHERE THAT IS, not this file (`point_of_tile`). There are two views of the world
+## since ASSA-119 and they put a tile in different places; a loop that pressed the schematic's
+## coordinates while the close-up was up would walk somewhere else and report the sim had refused.
 func _click(tile: Vector2i, button: int) -> bool:
-	var cell: float = screen._cell
-	if cell <= 0.0:
+	if screen._cell <= 0.0:
 		return false
 	var event := InputEventMouseButton.new()
 	event.button_index = button
 	event.pressed = true
-	event.position = AssayHud.MARGIN + (Vector2(tile) + Vector2(0.5, 0.5)) * cell
+	# AND FROM WHICHEVER VIEW SHOWS IT. A tile 26 away is off the close-up's 28x18 window, which is
+	# why the schematic exists; see the longer note on `tests/test_buttons.gd::_click`.
+	var was: bool = screen._close_up
+	if was and not AssayHud.world_rect().has_point(screen.point_of_tile(tile)):
+		screen._show_close_up(false)
+	event.position = screen.point_of_tile(tile)
 	screen._unhandled_input(event)
+	if was != screen._close_up:
+		screen._show_close_up(was)
 	clicks.append("%s %s @%d" % ["right" if button == MOUSE_BUTTON_RIGHT else "left", tile,
 			_world().tick()])
 	_quiet = 0

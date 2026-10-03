@@ -178,6 +178,63 @@ var _building: Array = []
 var _cell := 0.0
 ## Hash reports actually put on the wire. See `_on_tick_bundle`.
 var _hashes_sent := 0
+
+## THE SCENE: THE WORLD AT 32 PX A TILE, with a camera on you (ASSA-119, Maren's ruling). The
+## close-up is the MAIN view and the whole-world schematic `_draw` paints is the second one -- they
+## occupy the same rectangle (`AssayHud.world_rect`) and exactly one is visible.
+##
+## WHY BOTH SURVIVE. The schematic is how you cross 96x64, it carries every other player, and its
+## species discs and glyphs are the only colour-blindness-MEASURED read on this screen (Decision #36,
+## worst observer dE 18.3, glyph contrast 4.52). Maren's constraint on the second view is a property
+## and not a mechanism: you can always find a deposit you have not visited, and you can always see
+## which player is you. A toggle over the view's own corner is what I chose to meet it, keyed like the
+## other two toggles on this screen -- a key alone is not discoverable and a control that names its
+## key is the pattern ASSA-88/89 already settled here.
+var _world := AssayWorldLayer.new()
+var _view_toggle := Button.new()
+var _close_up := true
+
+## WHERE EVERY PLAYER WAS ONE TICK AGO, AND WHICH WAY THAT POINTED.
+##
+## MAREN'S MOTION RULING (ASSA-119, 18:07 UTC) IS WHY THIS EXISTS, and it is the sharpest statement
+## of principle 1 anyone here has written for a renderer: **a renderer MAY interpolate the DRAWN
+## position; it MAY NOT interpolate state.** At 9 px a tile a one-tile step was invisible; at 32 px it
+## is a 32 px jump ten times a second. So the sprite tweens between the PREVIOUS tick's tile and the
+## CURRENT tick's tile -- lagging one tick, inventing nothing, and always arriving at a position the
+## sim actually produced. Never toward where a `target` suggests they are going: that is prediction,
+## it is a second copy of the movement rule living outside `sim`, and it is wrong the moment they
+## stop, change target or get refused.
+##
+## SO THESE ARE A HISTORY, NOT A GUESS. `_was` is the snapshot's own answer from one tick ago; "now"
+## is the snapshot's answer today, read live. Nothing here extrapolates past it.
+var _was := {}
+var _seen := {}
+var _facing := {}
+## When the newest tick landed, and how far apart the last few were, both in seconds of wall clock.
+##
+## MEASURED RATHER THAN ASSUMED, and that is not fussiness: the relay's rate is a FLAG
+## (`sim-relay --tps N`, default 10), so a 100 ms constant in this client would draw a `--tps 20`
+## world at half speed and nothing would report it. An observed gap also degrades the right way -- if
+## the link stalls, the fraction saturates and the sprite SITS on the last position the sim produced,
+## which is exactly where it should be.
+var _tick_at := 0.0
+var _tick_gap := 0.1
+## The ore under the camera, as the sim answered it: tile -> {species, grade, depleted}.
+##
+## CACHED, AND THE CACHE'S KEY IS THE HONEST PART. Which deposit covers a tile is a circle the sim
+## owns, so this is `tile_at` per tile and there are ~580 of them in a 28x18 window -- too many to ask
+## every frame and not nearly enough to be worth asking twice. It is rebuilt when the window moves or
+## when a visible patch runs out, and `depleted` is the only thing about a deposit that can change
+## what is DRAWN (the row becomes `depleted_full`; `amount` itself is on no sprite).
+var _ore := {}
+var _ore_at := Rect2i()
+var _ore_stamp := ""
+var _ore_tick := -1
+## `assets/sprites/manifest.json`, parsed once. `AssaySprites.manifest()` re-reads and re-parses the
+## file on every call, which is fine for a pack row built on a tick and plainly not fine for a view
+## rebuilt 60 times a second. Cached here rather than in that file so nothing else's behaviour
+## changes with this item.
+var _manifest := {}
 ## The tile under the mouse, and whether the mouse has ever been over the map. Not a Vector2i alone,
 ## because tile (0, 0) is a real tile and "no hover" is not it.
 var _hover := Vector2i.ZERO
@@ -237,6 +294,21 @@ var _built := false
 
 
 func _build_ui() -> void:
+	# THE WORLD FIRST, so every control built below this line draws on top of it. Nothing in the HUD
+	# actually overlaps the world's rectangle today -- that is `AssayHud.world_rect`'s whole job -- but
+	# child order is what would decide it if one ever did, and a panel UNDER the map is not a defect a
+	# screenshot makes obvious.
+	var world := AssayHud.world_rect()
+	_world.position = world.position
+	_world.size = world.size
+	add_child(_world)
+	_view_toggle.position = world.end - Vector2(152.0, 36.0)
+	_view_toggle.custom_minimum_size = Vector2(144.0, 0.0)
+	_view_toggle.tooltip_text = ("the close-up follows you at 32px a tile; the whole world is the"
+			+ " schematic, with every deposit and every player on it")
+	_view_toggle.pressed.connect(func(): _show_close_up(not _close_up))
+	add_child(_view_toggle)
+
 	var row := HBoxContainer.new()
 	row.position = Vector2(24.0, 20.0)
 	row.add_theme_constant_override("separation", 8)
@@ -363,6 +435,10 @@ func _build_ui() -> void:
 	# AND THE CRAFTING MENU IS OPEN ON FIRST JOIN, which is the opposite call for the opposite
 	# reason: the board asked for a crafting menu, and a menu nobody finds is the clunk restated.
 	_show_make(true)
+	# THE CLOSE-UP IS THE MAIN VIEW (Maren, ASSA-119: "the scene becomes the main view; the
+	# whole-world schematic survives as a second view"). Through the setter rather than by assigning
+	# `_close_up`, so the toggle's own words can never disagree with what is on screen.
+	_show_close_up(true)
 	_refresh_make()
 	_refresh_assembling()
 	_refresh_pack()
@@ -408,6 +484,21 @@ func _show_make(shown: bool) -> void:
 	_make_toggle.text = AssayHud.make_toggle_text(shown)
 
 
+## SWAP THE TWO VIEWS OF THE WORLD (ASSA-119). The close-up is the main one; the schematic is how you
+## cross a 96x64 world.
+##
+## ONE RECTANGLE, ONE VISIBLE VIEW, and `_cell` keeps its meaning in both: the schematic's tile size
+## is still `AssayHud.map_cell`'s pure answer, so a click lands on the tile the player sees whichever
+## view is up. `_tile_under` is the single place that knows which arithmetic applies.
+func _show_close_up(close_up: bool) -> void:
+	_close_up = close_up
+	_world.visible = close_up
+	_view_toggle.text = AssayHud.view_toggle_text(close_up)
+	if close_up:
+		_refresh_world()
+	queue_redraw()
+
+
 ## L SHOWS AND HIDES THE LOG, M THE CRAFTING MENU. `_unhandled_key_input` and not `_input`, so a
 ## focused `LineEdit` eats the key first: typing "localhost" into the host field must not toggle a
 ## panel on the `l`, and a name with an `m` in it must not fold the menu away.
@@ -419,6 +510,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		_show_log(not _log_shown)
 	elif key.keycode == KEY_M:
 		_show_make(not _make_shown)
+	elif key.keycode == KEY_V:
+		_show_close_up(not _close_up)
 
 
 ## START A RELAY OF OUR OWN AND JOIN IT (ASSA-106).
@@ -455,6 +548,12 @@ func _on_play_solo() -> void:
 ## IN `_process` AND NOT IN `_refresh`, because `_refresh` runs on tick bundles and there are no
 ## bundles until we have joined -- polling there would wait for the thing it is waiting to start.
 func _process(_delta: float) -> void:
+	# THE SCENE IS THE ONLY THING ON THIS SCREEN THAT MOVES BETWEEN TICKS, so it is the only thing
+	# that redraws per frame: a body tweening between two tiles the sim produced, and two gaits
+	# running off the wall clock. The schematic does not redraw here -- it is painted when a tick
+	# lands, which is every state it has.
+	if _close_up and _sim.running():
+		_refresh_world()
 	if _solo == null or _solo.address != "" or _solo.failure != "":
 		return
 	if _solo.poll():
@@ -510,6 +609,9 @@ func _on_welcomed(player: int, _world: Dictionary, raw: String) -> void:
 		_refresh()
 		return
 	_say("joined as player %d" % player, AssayHud.Say.JOINED)
+	# NO HISTORY YET AND THAT IS THE RIGHT STATE: everyone is drawn standing where the Welcome put
+	# them, with nothing tweening, because the sim has produced exactly one position for each of them.
+	_remember_positions()
 	_refresh()
 	queue_redraw()
 
@@ -526,6 +628,7 @@ func _on_tick_bundle(_tick: int, _inputs: Array, raw: String) -> void:
 	if report != "" and _client.send_text(report):
 		_hashes_sent += 1
 	_remember_events()
+	_remember_positions()
 	_refresh()
 	queue_redraw()
 
@@ -587,8 +690,10 @@ func _refresh() -> void:
 	# survive a GDScript number -- that is not caution, it is measured. The bundle and hash counts are
 	# here because a client that has stopped applying bundles looks exactly like one that is idle.
 	var size := _sim.size_tiles()
-	# WHERE A CLICK LANDS, WORKED OUT WITHOUT PAINTING ANYTHING. See `_cell`.
+	# WHERE A CLICK LANDS, WORKED OUT WITHOUT PAINTING ANYTHING. See `_cell`. The scene's half of the
+	# same promise is `_refresh_world`'s camera, built on the same tick and for the same reason.
 	_cell = AssayHud.map_cell(size)
+	_refresh_world()
 	_detail.text = ("world seed %s, %d x %d tiles, %d species, %d players · tick %d, hash %s · "
 			+ "%d bundles applied, %d hashes reported") % [
 			_sim.seed_text(), size.x, size.y, _sim.species_names().size(), _sim.players().size(),
@@ -1293,6 +1398,133 @@ func _clear(box: Node) -> void:
 
 ## The tile my own player is on, as the sim has them. Spawn before there is a player of mine to find:
 ## it is the one tile every world has and it is where I am about to be.
+## HAND THE SCENE EVERYTHING IT DRAWS. One dictionary, built here and consumed by `AssayScene`, which
+## is what keeps every decision in the scene testable headless.
+##
+## CALLED FROM BOTH `_refresh` AND `_process`, DELIBERATELY. `_refresh` is the tick path and it is the
+## one that matters for correctness: the suite and every probe run inside `SceneTree._initialize`
+## where `_process` never fires, so a camera that only existed on a frame would mean no headless test
+## could ever click the scene. `_process` adds the frames between ticks, which is only ever motion.
+func _refresh_world() -> void:
+	if not _sim.running():
+		_world.view = {}
+		_world.me = null
+		_world.queue_redraw()
+		return
+	if _manifest.is_empty():
+		_manifest = AssaySprites.manifest()
+	var size := _sim.size_tiles()
+	var now := float(Time.get_ticks_msec()) / 1000.0
+	# HOW FAR THROUGH THE GAP BETWEEN THE LAST TWO TICKS WE ARE. Clamped at 1, which is the whole
+	# safety of the thing: past the end of a gap the body stops on the newest position the sim
+	# produced rather than carrying on toward one it has not. 1.0 before any tick has landed, so an
+	# unplayed world draws everyone exactly where the Welcome put them.
+	var part := 1.0
+	if _tick_at > 0.0:
+		part = clampf((now - _tick_at) / maxf(_tick_gap, 0.01), 0.0, 1.0)
+	var players: Array = []
+	var me: Variant = null
+	for entry in _sim.players():
+		var player: Dictionary = entry
+		var id := int(player.get("id", -1))
+		var at_now: Vector2i = _seen.get(id, player.get("pos", Vector2i.ZERO))
+		var at_was: Vector2i = _was.get(id, at_now)
+		players.append({
+			"at": Vector2(at_was).lerp(Vector2(at_now), part),
+			"facing": String(_facing.get(id, "")),
+			"moving": at_was != at_now,
+		})
+		if id == _client.player_id:
+			me = players[players.size() - 1]["at"]
+	# THE CAMERA IS ON YOUR DRAWN POSITION, not on your tile, or the world would jerk 32 px under a
+	# body that is moving smoothly over it. Spawn when you have no player yet, which is the state
+	# `--selfcheck` and a mid-join frame are both in.
+	var origin := AssayScene.camera_origin(me if me != null else Vector2(_sim.spawn_tile()),
+			size, _world.size)
+	_world.view = {
+		"world_tiles": size,
+		"origin": origin,
+		"size": _world.size,
+		"spawn": _sim.spawn_tile(),
+		"ore": _ore_under(origin, size),
+		"players": players,
+		"manifest": _manifest,
+		"seconds": now,
+	}
+	_world.me = me
+	_world.queue_redraw()
+
+
+## WHICH TILES UNDER THE CAMERA HOLD ORE, as the sim answered it, cached.
+##
+## THE SIM DECIDES, ONE TILE AT A TIME, and that is not laziness about a faster query. A deposit's
+## `radius` is a CIRCLE (`tile_at`: "radius is a circle, not a square") and `contains` is sim code, so
+## a client walking the bounding box itself would eventually draw rock on tiles that cannot be mined
+## -- a picture that lies about where the game stops working. ~580 calls for a 28x18 window, which is
+## why this is cached rather than why it is done differently.
+##
+## WHAT INVALIDATES IT: the window moving, or a patch running out. `depleted` is the only fact about a
+## deposit that changes what is DRAWN -- the row becomes `depleted_full` -- and `amount` appears on no
+## sprite, which is `sim`'s own position: one number for the whole patch, so a sparser rim would be a
+## mark for a difference the game does not have.
+func _ore_under(origin: Vector2, size: Vector2i) -> Dictionary:
+	var window := AssayScene.visible_tiles(origin, _world.size, size)
+	var stamp := _ore_stamp
+	if _sim.tick() != _ore_tick:
+		_ore_tick = _sim.tick()
+		var bits := PackedStringArray()
+		for entry in _sim.deposits():
+			bits.append("1" if bool((entry as Dictionary).get("depleted", false)) else "0")
+		stamp = "".join(bits)
+	if window == _ore_at and stamp == _ore_stamp:
+		return _ore
+	_ore_at = window
+	_ore_stamp = stamp
+	_ore = {}
+	for y in range(window.position.y, window.end.y):
+		for x in range(window.position.x, window.end.x):
+			var at := Vector2i(x, y)
+			var patch: Variant = (_sim.tile_at(at) as Dictionary).get("deposit")
+			if patch == null:
+				continue
+			var deposit: Dictionary = patch
+			_ore[at] = {
+				"species": int(deposit.get("species", 0)),
+				"grade": String(deposit.get("grade", "C")),
+				"depleted": bool(deposit.get("depleted", false)),
+			}
+	return _ore
+
+
+## WHERE EVERYONE IS NOW AND WAS ONE TICK AGO. Called after a bundle has been applied, so "now" is
+## the world the sim just produced and the previous "now" becomes "was".
+##
+## THE FACING IS THE STEP THEY ACTUALLY TOOK, never the direction of their `target`. A target is an
+## INTENTION -- the walk line draws it as one -- and a sprite turned to face an intention is turned by
+## a rule this client worked out, which is the prediction Maren's ruling forbids. The last real step
+## is remembered so a player who has stopped keeps looking the way they were going instead of
+## snapping south.
+func _remember_positions() -> void:
+	_was = _seen
+	_seen = {}
+	for entry in _sim.players():
+		var player: Dictionary = entry
+		var id := int(player.get("id", -1))
+		var at: Vector2i = player.get("pos", Vector2i.ZERO)
+		_seen[id] = at
+		if _was.has(id):
+			var way := AssayScene.facing_of(at - (_was[id] as Vector2i))
+			if way != "":
+				_facing[id] = way
+	var now := float(Time.get_ticks_msec()) / 1000.0
+	if _tick_at > 0.0:
+		# SMOOTHED, because the gap between two bundles is a network measurement and a single late
+		# packet should not stretch one step across half a second. A quarter weight settles on a
+		# changed rate in a handful of ticks and ignores one hiccup.
+		_tick_gap = lerpf(_tick_gap, clampf(now - _tick_at, 0.01, 1.0), 0.25)
+	_tick_at = now
+
+
 func _my_tile() -> Vector2i:
 	for entry in _sim.players():
 		var player: Dictionary = entry
@@ -1336,14 +1568,54 @@ func _unhandled_input(event: InputEvent) -> void:
 
 ## Which tile a screen position is on, or null for anywhere that is not a tile. ONE PLACE DOES THIS,
 ## because a hover readout that disagreed with where a click goes would be worse than no readout.
+## TWO VIEWS, TWO PIECES OF ARITHMETIC, ONE FUNCTION. The scene is the camera's offset inverted; the
+## schematic is the tile size it was painted at. A second copy of either would be a click that lands
+## on a tile next to the one the player is pointing at, which is the kind of wrong that gets blamed on
+## the sim.
 func _tile_under(at: Vector2) -> Variant:
-	if not _sim.running() or _cell <= 0.0:
+	if not _sim.running():
 		return null
-	var tile := ((at - MARGIN) / _cell).floor()
 	var size := _sim.size_tiles()
-	if tile.x < 0.0 or tile.y < 0.0 or tile.x >= float(size.x) or tile.y >= float(size.y):
+	var tile := Vector2i.ZERO
+	if _close_up:
+		var world := AssayHud.world_rect()
+		if not world.has_point(at):
+			return null
+		# The camera the view was last BUILT with, not one recomputed here: the body is mid-tween and
+		# a camera worked out a frame later would be a few pixels along from the picture that was
+		# clicked. `_refresh` keeps this current on every tick, headless included.
+		tile = AssayScene.tile_at_point(at - world.position,
+				_world.view.get("origin", Vector2.ZERO))
+	else:
+		if _cell <= 0.0:
+			return null
+		var cell := ((at - MARGIN) / _cell).floor()
+		tile = Vector2i(int(cell.x), int(cell.y))
+	if tile.x < 0 or tile.y < 0 or tile.x >= size.x or tile.y >= size.y:
 		return null
-	return Vector2i(int(tile.x), int(tile.y))
+	return tile
+
+
+## WHERE ON SCREEN A TILE IS: the centre of it, in whichever view is up. `_tile_under`'s inverse, and
+## the one thing on this node with no leading underscore because it is the only thing outside it that
+## needs to point at a tile.
+##
+## IT EXISTS BECAUSE THIS ITEM BROKE SEVENTEEN TESTS, and the failure is worth writing down. Three
+## places -- `tests/test_buttons.gd`, `tests/test_species_panel.gd` and `tools/button_play.gd` -- each
+## held their own copy of `MARGIN + (tile + 0.5) * _cell`, which was correct for exactly as long as
+## there was one view. The moment the close-up became the default they were all pressing a point 40
+## tiles from the tile they named, and the symptom was "walked toward the deposit at (74, 36) and
+## stopped at (63, 41)": a sim that looked like it had refused a walk. Nothing in those three files
+## was wrong about the game; they were wrong about the screen, which is not their subject.
+##
+## `tests/test_scene_view.gd` asserts the round trip (`_tile_under(point_of_tile(t)) == t`) in BOTH
+## views, so the pair cannot drift again without a red suite.
+func point_of_tile(tile: Vector2i) -> Vector2:
+	if not _close_up:
+		return MARGIN + (Vector2(tile) + Vector2(0.5, 0.5)) * _cell
+	var world := AssayHud.world_rect()
+	var origin: Vector2 = _world.view.get("origin", Vector2.ZERO)
+	return world.position + (Vector2(tile) + Vector2(0.5, 0.5)) * AssayScene.TILE_PX - origin
 
 
 func _track_hover(at: Vector2) -> void:
@@ -1366,35 +1638,35 @@ func _track_hover(at: Vector2) -> void:
 	queue_redraw()
 
 
-## The world as the sim has it: bounds, every deposit, every player, and spawn.
+## THE WHOLE-WORLD SCHEMATIC: bounds, every deposit, every player, and spawn. THE SECOND VIEW NOW.
 ##
-## NO SPRITES HERE YET, AND THE REASON IS A SCALE. Two earlier reasons are gone and both are worth
-## naming, because this comment has been wrong twice and someone reading it goes looking in the wrong
-## place each time.
+## THE SPRITES ARE DRAWN, AND THEY ARE NOT DRAWN HERE. ASSA-119 is the camera at 32 px a tile, and it
+## lives in `AssayScene` + `AssayWorldLayer` over the same rectangle this paints -- `_close_up` says
+## which of the two is up. This function is the one that fits a 96x64 world into 912x600, which is
+## what makes it a map rather than a view.
 ##
-## IT IS NOT THE ART. That claim -- `assets/sprites` drawn for the old named ores while a world's
-## species are generated -- stopped being true at ASSA-19/20: the ore art is species-neutral and meant
-## to be tinted, the `_edge` variant is gone (ASSA-26), and the tint table is already in this client
-## (`AssayHud.SPECIES_TINTS`), checked against the pipeline's own copy in CI.
+## THAT WAS THE ONE THING IN THE WAY FOR TWO ITEMS (ASSA-46). A tile here is 9 px (measured; 18 px on
+## a 32x32 world) against a 64 px frame of art, which is a 7x downscale, and the art direction's one
+## rule is readability at 1x. Cove measured what it costs: the sprite does not degrade into the disc,
+## it becomes speckle 29 dE from flat. So the answer was never sprites on THIS map -- it was a second
+## view at the size the pipeline has been authoring for since the first asset (`art/rig.py:18`).
 ##
-## IT IS NO LONGER A PATH EITHER. That was ASSA-34, Cove's finding: `res://` is `client/` and the
-## images were in its sibling, so nothing had an `.import` and no preset packed them. Marlow ruled and
-## `art/build.py` writes to `client/assets/sprites/` now. `tests/test_sprites.gd` holds the engine's
-## half of that from inside the engine -- all nine load through `res://` with pixels in them and match
-## the grid the manifest claims -- and `art/check_client_can_see_art.py` holds the path half in CI.
+## AND IT SURVIVES RATHER THAN BEING REPLACED, on Maren's ruling, for three reasons that are all about
+## what a close-up cannot do: it is how you cross 96x64, it carries players you are nowhere near, and
+## its species discs and glyphs are the only colour-blindness-MEASURED read on this screen (Decision
+## #36 -- worst observer dE 18.3, glyph contrast 4.52 over all six species and all 100 purities).
 ##
-## WHAT IS ACTUALLY IN THE WAY (ASSA-46): `AssayHud.map_cell` draws the WHOLE 96x64 world beside the
-## HUD, so a tile is 9 px (measured; 18 px on a 32x32 world) and a frame of art is 64 px. Drawing the
-## images on this map is a 7x downscale, which is the one thing the art direction says not to do. The
-## way out is either a camera at 1x or sprites only where the scale suits them, and that is a design
-## call rather than mine. So the shapes and colours below are still the honest picture, and they are a
-## measured one: the discs clear a colour-blindness floor of 12 with the glyph as a second read.
+## Two older reasons for the lack of sprites are long gone and worth naming, because this comment has
+## been wrong twice and each time it sent a reader to the wrong place. It was never the ART (the ore
+## art is species-neutral and tinted since ASSA-19/20, and `AssayHud.SPECIES_TINTS` is checked against
+## the pipeline's copy in CI), and it stopped being a PATH at ASSA-34 (`res://` is `client/`, so
+## `art/build.py` writes into the project; `tests/test_sprites.gd` holds the engine's half).
 func _draw() -> void:
 	# A self-check run returns out of `_ready` before there is a client, and the engine still calls
 	# `_draw` once. In the editor that is a caught script error; in an EXPORTED RELEASE BUILD it
 	# segfaulted on exit (measured: exit 139 after the marker was already written). Nothing to draw
 	# without a client is also just true.
-	if _client == null or not _sim.running():
+	if _client == null or not _sim.running() or _close_up:
 		return
 	var size := _sim.size_tiles()
 	if size.x <= 0 or size.y <= 0 or _cell <= 0.0:
@@ -1403,7 +1675,7 @@ func _draw() -> void:
 
 	var spawn := _sim.spawn_tile()
 	draw_rect(Rect2(MARGIN + Vector2(spawn) * _cell - Vector2(_cell, _cell) * 2.0,
-			Vector2(_cell, _cell) * 4.0), Color(0.35, 0.33, 0.20), true)
+			Vector2(_cell, _cell) * 4.0), AssayHud.SPAWN_PAD, true)
 
 	# SPECIES IS A DESIGNED SLOT, PURITY IS BRIGHTNESS, and the rule plus the two versions of this I
 	# got wrong are in `AssayHud.deposit_color`. Grade bands (C < 40, B 40-69, A >= 70) are the
@@ -1433,30 +1705,52 @@ func _draw() -> void:
 			draw_string(font, at + Vector2(-wide * 0.5, float(glyph) * 0.36), symbol,
 					HORIZONTAL_ALIGNMENT_LEFT, -1, glyph, AssayHud.glyph_color(colour))
 
+	# EVERY PLAYER, AT A SIZE THAT DOES NOT COME FROM THE TILE (ASSA-119 box 6, Maren's finding 1).
+	# This mark used to be two cells square, which made it 18 px on this world and would make it 36 on
+	# a small one -- so the bigger and more confusing the world, the smaller you got. Measured on the
+	# real shot: 324 px of an 864x576 view, 0.065% of it, smaller than all eleven deposits and twelve
+	# times smaller than one pink patch. `AssayHud.PLAYER_MARK_PX` now says how big a person is on any
+	# world, and yours carries a ring so two players at the same size are still told apart.
+	var mark := Vector2(AssayHud.PLAYER_MARK_PX, AssayHud.PLAYER_MARK_PX)
 	for entry in _sim.players():
 		var player: Dictionary = entry
-		var at := MARGIN + Vector2(player.get("pos", Vector2i.ZERO) as Vector2i) * _cell
+		var at := MARGIN + (Vector2(player.get("pos", Vector2i.ZERO) as Vector2i)
+				+ Vector2(0.5, 0.5)) * _cell
 		var mine := int(player.get("id", -1)) == _client.player_id
+		var colour := AssayHud.MINE if mine else AssayHud.THEIRS
 		# Where the sim is walking them, drawn as a line to there. Not a tween: the sim owns the
-		# position and this is its intention, not a frame of motion we invented.
+		# position and this is its intention, not a frame of motion we invented. (The scene DOES
+		# tween the body, between two positions the sim produced -- Maren's motion ruling -- and this
+		# line stays a line there for the same reason it is one here.)
 		var target: Variant = player.get("target")
 		if target != null:
-			draw_line(at, MARGIN + Vector2(target as Vector2i) * _cell,
-					Color(0.95, 0.85, 0.45, 0.35) if mine else Color(0.75, 0.78, 0.85, 0.25), 1.0)
-		draw_rect(Rect2(at - Vector2(_cell, _cell), Vector2(_cell, _cell) * 2.0),
-				Color(0.95, 0.85, 0.45) if mine else Color(0.75, 0.78, 0.85), true)
+			draw_line(at, MARGIN + (Vector2(target as Vector2i) + Vector2(0.5, 0.5)) * _cell,
+					Color(colour.r, colour.g, colour.b, 0.35 if mine else 0.25), 1.0)
+		draw_rect(Rect2(at - mark * 0.5, mark), colour, true)
+		if mine:
+			draw_rect(Rect2(at - mark * 0.8, mark * 1.6), colour, false, 2.0)
 
-	# THE TILE THE BUTTONS ACT ON, if one has been chosen. Drawn before the hover outline and in its
-	# own colour, because the two mean different things -- this one is where a placement lands and it
-	# stays put, where the hover outline follows the mouse and vanishes with it. Thicker, so the two
-	# are still telling apart on top of each other.
+	# THE TILE THE BUTTONS ACT ON, AND IT IS A SHAPE NOW, NOT A THINNER YOU (ASSA-119 box 6).
+	#
+	# MAREN CORRECTED HERSELF ON THIS ONE AND THE CORRECTION IS THE INTERESTING HALF. She defended the
+	# shared yellow in the morning -- you, your walk line and your target are one meaning, "yours", at
+	# three weights, and the old comment here said so on purpose -- then measured the shot: at 9 px a
+	# tile the weights are indistinguishable and a solid 18 px square beside a hollow 9 px one reads
+	# as two of something. So the target keeps the tile it marks and loses the hue: four corner
+	# brackets in the neutral ink, which cannot be mistaken for a body at any tile size, and no 22nd
+	# colour literal added to the 21 she counted.
 	if _targeted:
-		draw_rect(Rect2(MARGIN + Vector2(_target) * _cell, Vector2(_cell, _cell)),
-				Color(0.95, 0.85, 0.45, 0.85), false, 2.0)
+		var corner := MARGIN + Vector2(_target) * _cell
+		var reach := maxf(4.0, _cell * 0.45)
+		for step in [Vector2(1.0, 1.0), Vector2(-1.0, 1.0), Vector2(1.0, -1.0), Vector2(-1.0, -1.0)]:
+			var from := corner + Vector2(0.0 if step.x > 0.0 else _cell,
+					0.0 if step.y > 0.0 else _cell)
+			draw_line(from, from + Vector2(reach * step.x, 0.0), AssayHud.HOVER, 2.0)
+			draw_line(from, from + Vector2(0.0, reach * step.y), AssayHud.HOVER, 2.0)
 
 	# The tile the readout is talking about, outlined. Drawn last so it is never buried, and only
 	# while the mouse is actually over the map -- an outline left behind would point at an answer the
 	# panel is no longer giving.
 	if _hovering:
 		draw_rect(Rect2(MARGIN + Vector2(_hover) * _cell, Vector2(_cell, _cell)),
-				Color(0.95, 0.95, 0.95, 0.55), false, 1.0)
+				Color(AssayHud.HOVER.r, AssayHud.HOVER.g, AssayHud.HOVER.b, 0.55), false, 1.0)
