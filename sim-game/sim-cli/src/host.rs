@@ -359,9 +359,20 @@ impl Host {
         }
     }
 
-    pub fn run(&mut self, args: &[&str]) -> Result<Flow, String> {
+    pub fn run(&mut self, words: &[&str]) -> Result<Flow, String> {
+        let args = &Args::new(words);
+        let flow = self.dispatch(args)?;
+        // AFTER THE ARM, AND ONLY WHEN IT SUCCEEDED (ASSA-79). A command that
+        // failed has already said something more useful than a count.
+        if let Some(complaint) = args.surplus() {
+            out!("{complaint}");
+        }
+        Ok(flow)
+    }
+
+    fn dispatch(&mut self, args: &Args) -> Result<Flow, String> {
         let online = self.session.as_ref().is_some_and(Session::is_online);
-        match args[0] {
+        match args.get(0).unwrap_or("") {
             "help" | "?" => out!("{HELP}"),
             "quit" | "exit" | "q" => return Ok(Flow::Quit),
             "new" | "load" | "speed" if online => return Err(ONLINE_CLOCK.into()),
@@ -389,7 +400,7 @@ impl Host {
         );
     }
 
-    fn speed(&mut self, args: &[&str]) -> Result<(), String> {
+    fn speed(&mut self, args: &Args) -> Result<(), String> {
         let tps: u32 = parse_arg(args, 1, "speed")
             .map_err(|e| format!("{e}\nUsage: speed <ticks per second>, e.g. speed 20"))?;
         if !(1..=60).contains(&tps) {
@@ -400,7 +411,7 @@ impl Host {
         Ok(())
     }
 
-    fn run_in_world(&mut self, cmd: &str, args: &[&str]) -> Result<(), String> {
+    fn run_in_world(&mut self, cmd: &str, args: &Args) -> Result<(), String> {
         let paused = self.paused;
         let s = self
             .session
@@ -536,8 +547,8 @@ impl Host {
             "assay" => submit(s, paused, PlayerCommand::Assay)?,
             "rename" => {
                 let usage = "Usage: rename <species> <name>, e.g. rename kel Kelvite";
-                let species = resolve_species(s, args.get(1).copied())
-                    .map_err(|e| format!("{e}\n{usage}"))?;
+                let species =
+                    resolve_species(s, args.get(1)).map_err(|e| format!("{e}\n{usage}"))?;
                 let name = args.get(2).ok_or(format!("Missing name.\n{usage}"))?;
                 submit(
                     s,
@@ -550,8 +561,8 @@ impl Host {
             }
             "grant" => {
                 let usage = "Usage: grant <species> <player name or id>, e.g. grant kel grace";
-                let species = resolve_species(s, args.get(1).copied())
-                    .map_err(|e| format!("{e}\n{usage}"))?;
+                let species =
+                    resolve_species(s, args.get(1)).map_err(|e| format!("{e}\n{usage}"))?;
                 let who = args.get(2).ok_or(format!("Missing player.\n{usage}"))?;
                 let to = s
                     .world
@@ -568,7 +579,7 @@ impl Host {
                 let usage =
                     "Usage: place [item] [x y], e.g. place smelter, or place smelter:kel 10 12";
                 let (spec, next) = match args.get(1) {
-                    Some(a) if a.parse::<i32>().is_err() => (Some(*a), 2),
+                    Some(a) if a.parse::<i32>().is_err() => (Some(a), 2),
                     _ => (None, 1),
                 };
                 let item = resolve_item(s, spec, Some(ItemKind::Smelter))?;
@@ -584,13 +595,13 @@ impl Host {
                 let usage = "Usage: insert <building id> ore|fuel <item> [count], e.g. insert 0 fuel ore:kel 5";
                 let id: u32 =
                     parse_arg(args, 1, "building id").map_err(|e| format!("{e}\n{usage}"))?;
-                let slot = match args.get(2).copied() {
+                let slot = match args.get(2) {
                     Some("ore" | "in" | "input") => Slot::Input,
                     Some("fuel" | "burn") => Slot::Fuel,
                     Some(other) => return Err(format!("`{other}` is not a slot.\n{usage}")),
                     None => return Err(format!("Missing slot.\n{usage}")),
                 };
-                let item = resolve_item(s, args.get(3).copied(), None)?;
+                let item = resolve_item(s, args.get(3), None)?;
                 let count: u32 = optional_arg(args, 4, "count", 1)?;
                 let building = sim::BuildingId(id);
                 submit(
@@ -622,7 +633,7 @@ impl Host {
                 let recipe = sim::RecipeId::parse(name)
                     .ok_or(format!("No recipe makes `{name}`.\n{usage}"))?;
                 let (spec, next) = match args.get(2) {
-                    Some(a) if a.parse::<u32>().is_err() => (Some(*a), 3),
+                    Some(a) if a.parse::<u32>().is_err() => (Some(a), 3),
                     _ => (None, 2),
                 };
                 let item = resolve_item(s, spec, Some(recipe.recipe().input.0))?;
@@ -648,7 +659,7 @@ impl Host {
                 let kind = sim::PartKind::parse(name)
                     .ok_or(format!("There is no `{name}` part.\n{usage}"))?;
                 let (spec, next) = match args.get(2) {
-                    Some(a) if a.parse::<u32>().is_err() => (Some(*a), 3),
+                    Some(a) if a.parse::<u32>().is_err() => (Some(a), 3),
                     _ => (None, 2),
                 };
                 let material = resolve_item(s, spec, Some(ItemKind::Refined))?;
@@ -671,7 +682,7 @@ impl Host {
                 // Every argument is an item spec, resolved against what the
                 // player actually carries - the same path `place` uses.
                 let mut items = Vec::new();
-                for arg in &args[1..] {
+                for arg in args.rest(1) {
                     items.push(resolve_item(s, Some(*arg), None)?);
                 }
                 let (frame, mounted) = items.split_first().expect("checked above");
@@ -796,7 +807,7 @@ fn local_session(mut world: World, path: PathBuf, saved_at: Option<u64>, name: &
     }
 }
 
-fn new_world(args: &[&str], name: &str) -> Result<Session, String> {
+fn new_world(args: &Args, name: &str) -> Result<Session, String> {
     let usage = "Usage: new <seed> [width height], e.g. new 42 or new 42 8 8";
     let seed: u64 = parse_arg(args, 1, "seed").map_err(|e| format!("{e}\n{usage}"))?;
     // THE DEFAULT IS THE RELAY'S SHAPE, NAMED ONCE (ASSA-53). These were `6`
@@ -828,7 +839,7 @@ fn new_world(args: &[&str], name: &str) -> Result<Session, String> {
     Ok(session)
 }
 
-fn load_world(args: &[&str], name: &str) -> Result<Session, String> {
+fn load_world(args: &Args, name: &str) -> Result<Session, String> {
     let arg = args
         .get(1)
         .ok_or("Usage: load <seed or path>, e.g. load 42 or load saves/world-42.json")?;
@@ -840,7 +851,7 @@ fn load_world(args: &[&str], name: &str) -> Result<Session, String> {
     Ok(local_session(world, path, saved_at, name))
 }
 
-fn at(s: &Session, args: &[&str]) -> Result<(), String> {
+fn at(s: &Session, args: &Args) -> Result<(), String> {
     let x: i32 = parse_arg(args, 1, "x")?;
     let y: i32 = parse_arg(args, 2, "y")?;
     let pos = TilePos::new(x, y);
@@ -1115,14 +1126,94 @@ fn direction(s: &str) -> Option<(i32, i32)> {
     })
 }
 
-fn parse_arg<T: std::str::FromStr>(args: &[&str], i: usize, name: &str) -> Result<T, String> {
+/// The words a player typed, **and a record of how many of them the command
+/// actually looked at** (ASSA-79).
+///
+/// The Game Director typed `mine 12` on the board's bench expecting twelve ore
+/// and got continuous mining: the `12` was neither used nor refused. `take 0
+/// banana` and `where now` swallow their extra word too. `sim-cli` is not a
+/// debug tool — it is the reference client and the harness every scripted test
+/// is typed into (repo `CLAUDE.md`, principle 2) — and a reference that accepts
+/// input it ignores is a reference for the wrong thing.
+///
+/// **THE ARITY IS DERIVED, NOT WRITTEN DOWN.** Her item says the dispatcher
+/// knows how many arguments each arm consumed; I read it and it does not —
+/// every arm indexes the slice itself. The alternative was a per-verb table
+/// beside the match, which is a second list nothing can check against the arms,
+/// and that is the defect shape this repo keeps paying for. So the accessor
+/// remembers the highest index anyone asked for, and the surplus check happens
+/// after the arm returns: a command's arity is whatever it actually read.
+///
+/// Consequences worth knowing. A command that reads an argument only on some
+/// path (`place`, whose `x y` are optional and only parsed when given) has a
+/// smaller arity on the path that skipped them — which is exactly right, since
+/// those words would have been ignored. And a variadic arm says so with
+/// [`Args::rest`].
+pub struct Args<'a> {
+    words: &'a [&'a str],
+    /// Highest index read. Starts at 0 because the verb itself is read.
+    seen: std::cell::Cell<usize>,
+}
+
+impl<'a> Args<'a> {
+    pub fn new(words: &'a [&'a str]) -> Self {
+        Self {
+            words,
+            seen: std::cell::Cell::new(0),
+        }
+    }
+
+    pub fn get(&self, i: usize) -> Option<&'a str> {
+        self.seen.set(self.seen.get().max(i));
+        self.words.get(i).copied()
+    }
+
+    pub fn len(&self) -> usize {
+        self.words.len()
+    }
+
+    /// Everything from `i` on, for a command that takes a list. Marks the whole
+    /// line as read, because it was.
+    pub fn rest(&self, i: usize) -> &'a [&'a str] {
+        self.seen.set(self.words.len().saturating_sub(1));
+        self.words.get(i..).unwrap_or(&[])
+    }
+
+    /// The complaint, or `None` when every word was looked at.
+    ///
+    /// Only consulted when the command SUCCEEDED: if it failed, its own error
+    /// says something more useful than a count, and a player who typed
+    /// `goto 1` wants "Missing y", not "goto takes 2 arguments".
+    fn surplus(&self) -> Option<String> {
+        let read = self.seen.get();
+        let given = self.words.len().saturating_sub(1);
+        if given <= read {
+            return None;
+        }
+        let verb = self.words.first().copied().unwrap_or("that");
+        let extra = self.words[read + 1..].join(" ");
+        Some(match read {
+            0 => format!(
+                "`{verb}` takes no arguments, so `{extra}` was ignored. Nothing happened differently; type `help` for what it does take."
+            ),
+            1 => format!(
+                "`{verb}` takes one argument, so `{extra}` was ignored. Type `help` for its usage."
+            ),
+            n => format!(
+                "`{verb}` takes {n} arguments, so `{extra}` was ignored. Type `help` for its usage."
+            ),
+        })
+    }
+}
+
+fn parse_arg<T: std::str::FromStr>(args: &Args, i: usize, name: &str) -> Result<T, String> {
     let raw = args.get(i).ok_or(format!("Missing {name}."))?;
     raw.parse()
         .map_err(|_| format!("`{raw}` is not a valid {name}."))
 }
 
 fn optional_arg<T: std::str::FromStr>(
-    args: &[&str],
+    args: &Args,
     i: usize,
     name: &str,
     default: T,
@@ -1130,5 +1221,66 @@ fn optional_arg<T: std::str::FromStr>(
     match args.get(i) {
         Some(_) => parse_arg(args, i, name),
         None => Ok(default),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Args;
+
+    /// **THE BOOKKEEPING, BECAUSE A MUTATION FOUND THE PLACE THE PROMPT CANNOT
+    /// REACH** (ASSA-79). `surplus_arguments.rs` drives the real binary, which
+    /// is the right way to prove the dispatcher consults any of this — but the
+    /// complaint is only printed when a command SUCCEEDS, and the one variadic
+    /// command, `assemble`, needs a pack full of parts to succeed. So breaking
+    /// `rest` reddened nothing out there: the two conditions are mutually
+    /// exclusive in a scripted session that has not played the whole loop.
+    ///
+    /// These cover the arithmetic the prompt cannot see. They are NOT evidence
+    /// that anything calls it; that is M1's job over there.
+    #[test]
+    fn the_arity_is_whatever_the_command_actually_read() {
+        // Nothing read past the verb: every extra word is surplus.
+        let a = Args::new(&["mine", "12"]);
+        assert_eq!(a.get(0), Some("mine"));
+        let said = a.surplus().expect("12 was never read");
+        assert!(
+            said.contains("`mine` takes no arguments") && said.contains("12"),
+            "{said}"
+        );
+
+        // One argument read, one given: nothing to say.
+        let a = Args::new(&["take", "0"]);
+        assert_eq!(a.get(1), Some("0"));
+        assert_eq!(a.surplus(), None);
+
+        // One read, two given.
+        let a = Args::new(&["take", "0", "banana"]);
+        assert_eq!(a.get(1), Some("0"));
+        let said = a.surplus().expect("banana was never read");
+        assert!(
+            said.contains("`take` takes one argument") && said.contains("banana"),
+            "{said}"
+        );
+
+        // AN OPTIONAL ARGUMENT NOT GIVEN IS STILL READ, and asking for a word
+        // that is not there must not make the line look over-long.
+        let a = Args::new(&["place", "smelter"]);
+        assert_eq!(a.get(1), Some("smelter"));
+        assert_eq!(a.get(2), None, "x was asked for and is absent");
+        assert_eq!(a.surplus(), None);
+
+        // THE VARIADIC ARM, which is the one the prompt could not reach.
+        let a = Args::new(&["assemble", "handle", "head", "hopper"]);
+        assert_eq!(a.rest(1), &["handle", "head", "hopper"]);
+        assert_eq!(a.surplus(), None, "a list command reads its whole list");
+        // And the mutation that broke it: a `rest` that only claimed its own
+        // index would accuse `assemble` of a surplus.
+        let a = Args::new(&["assemble", "handle", "head", "hopper"]);
+        a.get(1);
+        assert!(
+            a.surplus().is_some(),
+            "the premise: without rest(), the list reads as surplus"
+        );
     }
 }
