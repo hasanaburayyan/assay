@@ -1223,3 +1223,64 @@ fn optional_arg<T: std::str::FromStr>(
         None => Ok(default),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Args;
+
+    /// **THE BOOKKEEPING, BECAUSE A MUTATION FOUND THE PLACE THE PROMPT CANNOT
+    /// REACH** (ASSA-79). `surplus_arguments.rs` drives the real binary, which
+    /// is the right way to prove the dispatcher consults any of this — but the
+    /// complaint is only printed when a command SUCCEEDS, and the one variadic
+    /// command, `assemble`, needs a pack full of parts to succeed. So breaking
+    /// `rest` reddened nothing out there: the two conditions are mutually
+    /// exclusive in a scripted session that has not played the whole loop.
+    ///
+    /// These cover the arithmetic the prompt cannot see. They are NOT evidence
+    /// that anything calls it; that is M1's job over there.
+    #[test]
+    fn the_arity_is_whatever_the_command_actually_read() {
+        // Nothing read past the verb: every extra word is surplus.
+        let a = Args::new(&["mine", "12"]);
+        assert_eq!(a.get(0), Some("mine"));
+        let said = a.surplus().expect("12 was never read");
+        assert!(
+            said.contains("`mine` takes no arguments") && said.contains("12"),
+            "{said}"
+        );
+
+        // One argument read, one given: nothing to say.
+        let a = Args::new(&["take", "0"]);
+        assert_eq!(a.get(1), Some("0"));
+        assert_eq!(a.surplus(), None);
+
+        // One read, two given.
+        let a = Args::new(&["take", "0", "banana"]);
+        assert_eq!(a.get(1), Some("0"));
+        let said = a.surplus().expect("banana was never read");
+        assert!(
+            said.contains("`take` takes one argument") && said.contains("banana"),
+            "{said}"
+        );
+
+        // AN OPTIONAL ARGUMENT NOT GIVEN IS STILL READ, and asking for a word
+        // that is not there must not make the line look over-long.
+        let a = Args::new(&["place", "smelter"]);
+        assert_eq!(a.get(1), Some("smelter"));
+        assert_eq!(a.get(2), None, "x was asked for and is absent");
+        assert_eq!(a.surplus(), None);
+
+        // THE VARIADIC ARM, which is the one the prompt could not reach.
+        let a = Args::new(&["assemble", "handle", "head", "hopper"]);
+        assert_eq!(a.rest(1), &["handle", "head", "hopper"]);
+        assert_eq!(a.surplus(), None, "a list command reads its whole list");
+        // And the mutation that broke it: a `rest` that only claimed its own
+        // index would accuse `assemble` of a surplus.
+        let a = Args::new(&["assemble", "handle", "head", "hopper"]);
+        a.get(1);
+        assert!(
+            a.surplus().is_some(),
+            "the premise: without rest(), the list reads as surplus"
+        );
+    }
+}

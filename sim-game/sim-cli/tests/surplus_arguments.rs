@@ -118,8 +118,12 @@ quit
         said.contains("banana"),
         "the complaint must quote what it ignored\n{said}"
     );
-    // `assemble` fails here for want of the parts, which is fine and expected
-    // — what must NOT appear is a surplus complaint about its own list.
+    // **AND HERE IS WHAT THIS ASSERTION CANNOT SEE, SAID RATHER THAN IMPLIED.**
+    // `assemble` fails for want of the parts, and the complaint is only
+    // printed when a command succeeds — so breaking `rest` leaves this green.
+    // I found that by mutating it. The arithmetic is covered by the unit test
+    // in `host.rs`; what this line still earns is that a FAILING variadic
+    // command does not get a count on top of its real error.
     assert!(
         !said.contains("`assemble` takes"),
         "a variadic command counted its arguments\n{said}"
