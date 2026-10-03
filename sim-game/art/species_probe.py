@@ -54,10 +54,13 @@ SPECIES = 6        # sim/src/tuning.rs SPECIES_PER_WORLD
 # invents quartiles that cross no real boundary.
 GRADE_ROWS = ("C", "B", "A")
 
-# dE76 thresholds. 2.3 is the just-noticeable difference under ideal side-by-
-# side viewing; nothing on a game map is ideal or side-by-side, so:
-JND = 2.3
-DISTINCT = 12.0     # two species a player must never confuse at a glance
+# dE76 and the two thresholds that are about HUMAN VISION rather than about ore
+# now live in `colour.py`, so a `check_*.py` on plain python3 (no pip, no PIL)
+# can ask the house question instead of retyping the answer -- ASSA-111. They
+# are re-exported here UNCHANGED: `assemble.py` and `loudness.py` import them
+# from this module and must keep doing so, and there is still exactly one `dE`.
+from colour import DISTINCT, JND, _lin, dE, lab  # noqa: E402,F401  (re-exported)
+
 POP = 10.0          # ore against the terrain it sits on
 # Grade C is deliberately sparse, so it is held to a lower floor than POP --
 # but to a floor. Maren, ruling 2 on ASSA-20: "5.7 is a sentence, not a
@@ -243,24 +246,8 @@ def frame_of(asset, row, f=0):
 
 # ------------------------------------------------------------------ colour
 
-def _lin(c):
-    c /= 255.0
-    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
-
-
-def lab(rgb):
-    r, g, b = (_lin(c) for c in rgb[:3])
-    x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047
-    y = (0.2126 * r + 0.7152 * g + 0.0722 * b)
-    z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883
-    f = lambda t: t ** (1 / 3.0) if t > 0.008856 else 7.787 * t + 16 / 116.0
-    fx, fy, fz = f(x), f(y), f(z)
-    return (116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz))
-
-
-def dE(a, b):
-    la, lb = lab(a), lab(b)
-    return math.sqrt(sum((la[i] - lb[i]) ** 2 for i in range(3)))
+# `_lin`, `lab` and `dE` moved to `colour.py` (ASSA-111) and are imported at the
+# top of this file. Nothing about them changed; they are not reimplemented here.
 
 
 def wcag_ratio(a, b):

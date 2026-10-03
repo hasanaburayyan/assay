@@ -89,8 +89,12 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pack_icon_draw import BODY_ALPHA, nearest_blit  # noqa: E402  the engine's sampling, once
-from species_probe import DISTINCT, dE  # noqa: E402  the house colour metric and its one line
+# The engine's sampling, the composite and the two-measure comparison, once, shared with
+# `check_icon_kinds.py` -- the CI guard on what this file measures (ASSA-111). A probe and
+# the check that enforces its finding must not be able to disagree about the pixels.
+from pack_icon_draw import (  # noqa: E402
+    BODY_ALPHA, PillowBackend, compare, drawn_icon, rgb)
+from species_probe import DISTINCT  # noqa: E402  the house threshold, Maren's not mine
 
 HERE = Path(__file__).resolve().parent.parent
 SPRITES = HERE / "client/assets/sprites"
@@ -108,31 +112,14 @@ def kind_of(entry):
     return entry["line"].split("x ")[-1].split("× ")[-1].rsplit(" (", 1)[0].split()[-1]
 
 
-def rgb(h):
-    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
-
-
 def drawn(entry):
     """The icon on its plate, exactly as the engine put it there, plus its body mask.
 
-    Returns (image, body) where `image` is the composited 32x48 plate box and `body` is the set
-    of (x, y) the sprite's solid ink actually landed on. Both come out of ONE blit, because a
-    mask computed separately would be a second sampling of the same quad.
+    One line, because the compositing lives in `pack_icon_draw` where the check can reach it
+    too (ASSA-111). Pillow, because this file goes on to resize and paste these icons into a
+    review sheet; the check passes the stdlib backend to the same function.
     """
-    ic = entry["icon"]
-    sheet = Image.open(SPRITES / Path(ic["sheet"]).name).convert("RGBA")
-    x, y, w, h = ic["region"]
-    frame = sheet.crop((int(x), int(y), int(x + w), int(y + h)))
-    bw, bh = (int(round(v)) for v in (ic["plate_rect"] or ic["rect"]))
-    dw, dh = ic["drawn"]
-    img = Image.new("RGB", (bw, bh), rgb(ic["plate"]) if ic["plate"] else (0, 0, 0))
-    body = set()
-    # STRETCH_KEEP_ASPECT_CENTERED: the engine centres the scaled quad in the rect. The scale
-    # itself is the engine's -- `drawn` is `frame * scale` straight out of the probe -- so the
-    # only arithmetic here is the centring, and it is asserted against the probe below.
-    nearest_blit(img, frame, rgb(ic["modulate"]), (bw - dw) / 2.0, (bh - dh) / 2.0, dw, dh,
-                 body=body)
-    return img, body
+    return drawn_icon(entry, SPRITES, PillowBackend)
 
 
 def source_body_bbox(entry):
@@ -149,19 +136,8 @@ def source_body_bbox(entry):
     return alpha.point(lambda v: 255 if v >= BODY_ALPHA else 0).getbbox()
 
 
-def compare(a, b):
-    """(IoU of the body masks, mean dE76 over their overlap, overlap pixel count)."""
-    (ia, ba), (ib, bb) = a, b
-    inter = ba & bb
-    union = ba | bb
-    iou = len(inter) / len(union) if union else 0.0
-    if not inter:
-        # NO SHARED PIXEL AT ALL: there is no interior to compare, and reporting 0.00 would read
-        # as "identical colour" -- the exact opposite of the truth. Say so instead.
-        return iou, None, 0
-    pa, pb = ia.load(), ib.load()
-    total = sum(dE(pa[x, y], pb[x, y]) for (x, y) in inter)
-    return iou, total / len(inter), len(inter)
+# `compare` moved to `pack_icon_draw` with the blit (ASSA-111): the probe and the check must
+# not be able to hold two opinions about what "close" measures.
 
 
 # ------------------------------------------------------------------ measure
