@@ -25,6 +25,35 @@ func _fail(reason: String) -> bool:
 	return false
 
 
+## **THE SHAPE MAREN RULED, CHECKED ON EVERY SENTENCE RATHER THAN ON ONE** (ASSA-113): what you
+## cannot do now · why · the door that is still open. All five sentences I shipped in ASSA-106 had
+## the first two parts and none had the third.
+##
+## THE WRONG DOOR IS ALSO A FAILURE, not just a missing one. Retry is honest for the deadline alone,
+## because that is the only path that killed the process on its way out; offering it for a missing
+## file would send a player pressing a button that cannot start working.
+##
+## AND `the relay` IS CHECKED ONLY ON OUR OWN CLAUSES -- the trailing quote is the relay's own words
+## and we do not get to edit those.
+func _check_shape(what: String, line: String, door: String) -> bool:
+	var ours := line.split(" It said:")[0]
+	if not line.begins_with(AssaySoloRelay.CANNOT):
+		return _fail("%s does not open with what failed: %s" % [what, line])
+	if not line.contains(door):
+		return _fail("%s has no door that is still open: %s" % [what, line])
+	var other: String = (AssaySoloRelay.SOLO_AGAIN if door == AssaySoloRelay.JOIN_INSTEAD
+			else AssaySoloRelay.JOIN_INSTEAD)
+	if line.contains(other):
+		return _fail("%s offers both doors, so one of them is a lie: %s" % [what, line])
+	if ours.to_lower().contains("the relay"):
+		return _fail("%s calls it `the relay`, a word a solo player has never met: %s" % [what, line])
+	# `sim-relay` IS ALLOWED, in the one clause that is about the file -- their folder really does
+	# contain a file with that name. Anywhere else it is our internals made the player's problem.
+	if ours.contains("sim-relay") and not ours.contains("file"):
+		return _fail("%s names sim-relay outside a clause about the file: %s" % [what, line])
+	return true
+
+
 ## A command that exists on this platform and exits immediately with nothing to say.
 ##
 ## IT HAS TO TOLERATE THE FLAGS `start` ADDS, which is why these are shells and not the bare tools.
@@ -57,6 +86,13 @@ func test_a_missing_relay_names_where_it_looked() -> bool:
 		ok = _fail("a missing relay refused in silence, which is the one thing ruling 6 forbids")
 	elif not solo.failure.contains("sim-relay"):
 		ok = _fail("the sentence does not name what is missing: %s" % solo.failure)
+	elif not _check_shape("a missing relay", solo.failure, AssaySoloRelay.JOIN_INSTEAD):
+		ok = false
+	# **AND THE PATHS COME AFTER THE OPEN DOOR** (Maren): consequence first, figures after. A stranger
+	# reads the first sentence and a bug report reads the rest, so a list of four absolute paths must
+	# not sit between the problem and the only clause that says what to do.
+	elif solo.failure.find("Looked in:") < solo.failure.find(AssaySoloRelay.JOIN_INSTEAD):
+		ok = _fail("the paths list is printed before the open door: %s" % solo.failure)
 	else:
 		for path in AssaySoloRelay.candidate_paths():
 			if not solo.failure.contains(path):
@@ -124,6 +160,10 @@ func test_a_relay_that_dies_at_once_is_reported_and_not_waited_for() -> bool:
 			ok = _fail("waited %dms for a dead relay and nothing was ever reported" % waited)
 		elif not solo.failure.contains("stopped"):
 			ok = _fail("the sentence does not say it stopped: %s" % solo.failure)
+		else:
+			# JOIN A HOST, NOT RETRY: nothing killed this process, it died on its own, and it will
+			# die the same way on a second press.
+			ok = _check_shape("a relay that died", solo.failure, AssaySoloRelay.JOIN_INSTEAD)
 	solo.stop()
 	return ok
 
@@ -132,8 +172,10 @@ func test_a_relay_that_dies_at_once_is_reported_and_not_waited_for() -> bool:
 ## the process is killed rather than left holding a port.
 ##
 ## **THIS IS THE CASE THAT WOULD OTHERWISE HANG THE WINDOW.** `FileAccess.get_line()` on a pipe
-## blocks -- measured at 3044ms against a child that slept three seconds -- so the line is read on a
-## thread and this is what proves the main side gives up on time.
+## blocks -- measured at 3044ms against a child that slept three seconds -- so the pipe is read only
+## when `get_length() > get_position()` says a read cannot block, and this is what proves the main
+## side gives up on time. (It said "read on a thread" until ASSA-113; the thread went when it turned
+## out to be calling `get_process_exit_code` off the main thread, and the comment outlived it.)
 func test_a_silent_relay_times_out_says_so_and_is_not_left_running() -> bool:
 	var solo := AssaySoloRelay.new()
 	var ok := true
@@ -152,8 +194,12 @@ func test_a_silent_relay_times_out_says_so_and_is_not_left_running() -> bool:
 			ok = _fail("a silent process was reported as listening on %s" % solo.address)
 		elif solo.failure == "":
 			ok = _fail("a silent relay never timed out; the window would hang here")
-		elif not solo.failure.contains("listening"):
+		elif not solo.failure.contains("ready"):
 			ok = _fail("the sentence does not say what was waited for: %s" % solo.failure)
+		# **THE ONE SENTENCE THAT MAY SAY `PRESS PLAY SOLO AGAIN`**, and the `stop()` four lines
+		# below is what earns it: the process is gone, so a second press starts from clean ground.
+		elif not _check_shape("a silent relay", solo.failure, AssaySoloRelay.SOLO_AGAIN):
+			ok = false
 		elif took > 3000:
 			ok = _fail("the deadline was 300ms and it took %dms to give up" % took)
 		# THE PID CAPTURED BEFORE THE TIMEOUT, because `poll` calls `stop()` on the deadline and
@@ -199,6 +245,98 @@ func test_the_address_comes_out_of_the_listening_line() -> bool:
 			ok = _fail("read the address as `%s`" % solo.address)
 	solo.stop()
 	return ok
+
+
+## **A FILE THE MACHINE WILL NOT RUN IS REFUSED BEFORE IT IS SPAWNED, NOT DIAGNOSED AFTERWARDS.**
+##
+## THIS TEST USED TO SPAWN IT, AND IT WAS A COIN FLIP I GOT AWAY WITH ONCE. The old version let the
+## process start and expected `poll()` to recognise the exec failure from the child's stderr. It
+## passed on my run and then failed in a mutation harness with the DEADLINE sentence, so I measured
+## the case ten times instead of twice: Godot's `Could not create child process` appeared 3 of 10
+## times and 0 of the next 9, `libc++abi ... PAL_SEHException` the rest, and twice the child never
+## exited at all. The test agreed with my code because both were written from one lucky sample.
+##
+## SO THE REFUSAL NOW RESTS ON THE EXEC BIT, which is a fact `FileAccess` will answer the same way
+## every time, and this test is deterministic: no process, no deadline, no race.
+##
+## A `chmod 644` FILE IS NOT A QUARANTINED ONE and this does not claim to be -- quarantine sets a
+## separate flag on a file whose exec bit is fine, and the board's click is still the only evidence
+## for it. What is pinned here is that the one cause we CAN read is read, and worded.
+func test_a_file_the_machine_will_not_run_is_refused_before_it_is_spawned() -> bool:
+	if OS.get_name() == "Windows":
+		return true  # No exec bit to withhold, and `is_runnable` deliberately answers true there.
+	var path := OS.get_user_data_dir().path_join("limpet-not-executable")
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		return _fail("could not write a stand-in at %s" % path)
+	f.store_line("#!/bin/sh")
+	f.close()
+	var solo := AssaySoloRelay.new()
+	var ok := true
+	if solo.start(path, PackedStringArray(), 2000):
+		ok = _fail("a file with no exec bit was spawned rather than refused (pid %d)" % solo.pid)
+	elif solo.failure.contains("stopped"):
+		ok = _fail("a file that was never run is reported as a world that stopped: %s" % solo.failure)
+	elif not solo.failure.contains("not marked as a program"):
+		ok = _fail("the sentence does not say what is wrong with the file: %s" % solo.failure)
+	elif not solo.failure.contains(path):
+		ok = _fail("the sentence does not name the file it refused: %s" % solo.failure)
+	# AND IT MUST NOT BORROW THE DOWNLOADED CAUSE. A downloaded file keeps its exec bit, so blaming
+	# the download here would send a player to clear a flag that was never set.
+	elif solo.failure.contains("downloaded"):
+		ok = _fail("a missing exec bit is blamed on the download: %s" % solo.failure)
+	else:
+		ok = _check_shape("a file that is not a program", solo.failure, AssaySoloRelay.JOIN_INSTEAD)
+	solo.stop()
+	DirAccess.remove_absolute(path)
+	return ok
+
+
+## **THE GUARD MUST NOT REFUSE A GOOD RELAY, AND THAT IS THE EXPENSIVE WAY FOR IT TO BE WRONG.**
+##
+## `FileAccess.get_unix_permissions` FAILS ON WINDOWS, where there is no such bit -- so a guard that
+## read its answer as "no exec bit, refuse" would break Play solo for every Windows player while
+## every test I can run here stayed green. That is the asymmetry: the failure mode I cannot reach by
+## hand is the one that matters, so the no-answer case is pinned rather than assumed.
+##
+## A PATH THAT DOES NOT EXIST ANSWERS 0 TOO (measured, with an engine error printed), which is the
+## same "no answer" and must likewise not be a refusal: a missing file has its own sentence and gets
+## to keep it.
+func test_the_exec_bit_guard_refuses_nothing_it_cannot_read() -> bool:
+	var relay := AssaySoloRelay.find_binary()
+	if relay != "" and not AssaySoloRelay.is_runnable(relay):
+		return _fail("the real relay at %s was judged unrunnable" % relay)
+	# NO ANSWER IS NOT A NO. Both of these read 0: a path that does not exist anywhere, and every
+	# path on Windows.
+	if not AssaySoloRelay.is_runnable(OS.get_user_data_dir().path_join("limpet-no-such-file")):
+		return _fail("a path with no permissions to read was treated as a refusal")
+	if not AssaySoloRelay.is_runnable(""):
+		return _fail("the empty path was treated as a refusal, which belongs to the missing sentence")
+	return true
+
+
+## **THE DOWNLOADED CAUSE IS CLAIMED ON MACOS AND NOWHERE ELSE**, which is the one clause where I
+## overruled Maren rather than widened her ruling quietly. On macOS quarantine really is why an
+## unsigned helper out of a downloaded zip will not exec; on Windows the same empty exec means
+## something else, and a confident wrong diagnosis is worse than a vaguer true one.
+##
+## AND NEITHER SENTENCE INVENTS A GESTURE. Nobody here has hands on a quarantined zip, so no words of
+## ours get to tell a player which click clears it.
+func test_the_downloaded_cause_is_claimed_on_macos_and_no_gesture_is_invented() -> bool:
+	var mac := AssaySoloRelay.would_not_run("/Users/x/assay-macos/sim-relay", "macOS")
+	var win := AssaySoloRelay.would_not_run("C:/x/assay-windows/sim-relay.exe", "Windows")
+	if not mac.contains("downloaded"):
+		return _fail("the macOS sentence does not give the cause: %s" % mac)
+	if win.contains("downloaded"):
+		return _fail("the Windows sentence claims a macOS cause: %s" % win)
+	for gesture in ["right-click", "Open Anyway", "System Settings", "xattr", "Privacy & Security"]:
+		if mac.contains(gesture) or win.contains(gesture):
+			return _fail("a refusal invents the gesture `%s`, which nobody here has tested: %s / %s"
+					% [gesture, mac, win])
+	if not win.contains("C:/x/assay-windows/sim-relay.exe"):
+		return _fail("the sentence does not name the file it tried: %s" % win)
+	return _check_shape("the macOS exec refusal", mac, AssaySoloRelay.JOIN_INSTEAD) \
+			and _check_shape("the Windows exec refusal", win, AssaySoloRelay.JOIN_INSTEAD)
 
 
 ## THE SOLO SAVE IS IN THE USER DATA DIRECTORY (ruling 5), never inside the bundle and never a folder

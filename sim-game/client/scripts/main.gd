@@ -34,6 +34,10 @@ var _client: AssayNetClient
 ## stopped when the window closes.
 var _solo: AssaySoloRelay = null
 var _sim := AssaySimHost.new()
+## THE FIRST DOOR. Held as a field so a test can find it without counting children -- the row's order
+## is the thing under test, so a test that located the button BY its position in the row could never
+## fail.
+var _solo_button := Button.new()
 var _host := LineEdit.new()
 var _name := LineEdit.new()
 var _status := Label.new()
@@ -213,7 +217,11 @@ func _ready() -> void:
 			if _client.stage == AssayNetClient.Stage.JOINED else AssayHud.Say.CONNECTING))
 	add_child(_client)
 	_build_ui()
-	_say("enter a host address and join", AssayHud.Say.IDLE)
+	# **TWO DOORS, SOLO FIRST** (Maren, ASSA-113). This used to read "enter a host address and join",
+	# which sent a stranger to the one door that needs information they do not have -- and it survived
+	# the whole of ASSA-106 because I never re-read the item between the branch and the PR.
+	_say("Press Play solo to start your own world, or enter a host address to join someone.",
+			AssayHud.Say.IDLE)
 
 
 ## WHETHER `_ready` HAS ALREADY RUN. `tests/test_main_screen.gd` and `tools/button_session.gd` both
@@ -234,6 +242,30 @@ func _build_ui() -> void:
 	row.add_theme_constant_override("separation", 8)
 	add_child(row)
 
+	# **PLAY SOLO: DOWNLOAD AND PLAY, WITH NOTHING TO TYPE** (ASSA-106, the board's own ask). The
+	# host box already defaults to `localhost`, so the shortest honest version of their request was
+	# never "a field with a better default" -- it was that nothing is listening on the other end.
+	# This starts the `sim-relay` that shipped in the same zip, on loopback, and joins it.
+	#
+	# **FIRST IN THE ROW AND IT TAKES THE FOCUS** (Maren, ASSA-113): the row reads left to right, so
+	# the door that needs nothing typed is the first thing a stranger reads and the thing Enter
+	# presses. Beside `Join` rather than instead of it -- a friend's host address is the other half of
+	# the milestone and this must not become the only way in.
+	#
+	# FOCUS IS ASKED FOR ON `tree_entered`, NOT TAKEN HERE. `grab_focus` asserts `is_inside_tree()`,
+	# and measured: inside `SceneTree._initialize` -- where the suite and every tool run -- a node
+	# added under the root reports `is_inside_tree() == false`, `get_viewport()` is null, and
+	# `grab_focus` errors out leaving `has_focus()` false. One frame later the same node IS in the
+	# tree and the focus lands for real, headless included (`tools/focus_probe.gd` reads it back off
+	# the viewport). So the request is attached to the moment the button reaches a tree, which is the
+	# only time it can succeed, and it costs the suite nothing.
+	_solo_button.text = "Play solo"
+	_solo_button.tooltip_text = "start a world of your own on this machine and join it"
+	_solo_button.focus_mode = Control.FOCUS_ALL
+	_solo_button.pressed.connect(_on_play_solo)
+	_solo_button.tree_entered.connect(_solo_button.grab_focus)
+	row.add_child(_solo_button)
+
 	var host_label := Label.new()
 	host_label.text = "host"
 	row.add_child(host_label)
@@ -253,19 +285,6 @@ func _build_ui() -> void:
 	join.text = "Join"
 	join.pressed.connect(_on_join)
 	row.add_child(join)
-
-	# **PLAY SOLO: DOWNLOAD AND PLAY, WITH NOTHING TO TYPE** (ASSA-106, the board's own ask). The
-	# host box already defaults to `localhost`, so the shortest honest version of their request was
-	# never "a field with a better default" -- it was that nothing is listening on the other end.
-	# This starts the `sim-relay` that shipped in the same zip, on loopback, and joins it.
-	#
-	# BESIDE JOIN RATHER THAN INSTEAD OF IT: a friend's host address is the other half of the
-	# milestone and this must not become the only way in.
-	var solo := Button.new()
-	solo.text = "Play solo"
-	solo.tooltip_text = "start a world of your own on this machine and join it"
-	solo.pressed.connect(_on_play_solo)
-	row.add_child(solo)
 
 	_status.position = Vector2(24.0, 54.0)
 	add_child(_status)
@@ -404,10 +423,14 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 ## START A RELAY OF OUR OWN AND JOIN IT (ASSA-106).
 ##
-## THE SAME `_on_join` PATH ONCE THE ADDRESS IS KNOWN, which is ruling 7 in one line: solo is co-op
-## with one player and a host on 127.0.0.1, so there is no second way for this client to be wrong.
-## The host box is filled in with the address the relay reported, so what a player sees afterwards is
-## the same world they would have joined by typing it.
+## THE SAME JOIN PATH ONCE THE ADDRESS IS KNOWN, which is ruling 7 in one line: solo is co-op with
+## one player and a host on 127.0.0.1, so there is no second way for this client to be wrong.
+##
+## **AND IT DOES NOT TOUCH THE HOST BOX** (Maren, ASSA-113). It used to do `_host.text = address`
+## before joining, which meant pressing Play solo silently ERASED whatever the player had typed --
+## the one genuinely confusing bug in reach here, and I shipped it in ASSA-106 with a docstring
+## defending it. The address now reaches `_join_address` directly, so Play solo neither reads the box
+## nor writes it.
 func _on_play_solo() -> void:
 	if _client.stage != AssayNetClient.Stage.IDLE and _client.stage != AssayNetClient.Stage.DEAD:
 		_say("already joining; restart the client to start a world of your own",
@@ -435,8 +458,7 @@ func _process(_delta: float) -> void:
 	if _solo == null or _solo.address != "" or _solo.failure != "":
 		return
 	if _solo.poll():
-		_host.text = _solo.address
-		_on_join()
+		_join_address(_solo.address)
 	elif _solo.failure != "":
 		_say(_solo.failure, AssayHud.Say.FAILED)
 
@@ -459,7 +481,14 @@ func stop_solo_relay() -> void:
 		_solo = null
 
 
+## THE JOIN BUTTON: the address is whatever is in the box, and only this path reads the box.
 func _on_join() -> void:
+	_join_address(_host.text)
+
+
+## JOIN ONE ADDRESS. The only caller that reads `_host` is `_on_join`; solo passes the address its
+## own relay reported, which is what keeps a typed host untouched (Maren, ASSA-113).
+func _join_address(address: String) -> void:
 	if _client.stage != AssayNetClient.Stage.IDLE and _client.stage != AssayNetClient.Stage.DEAD:
 		_say("already joining; restart the client to change host (no reconnect in the demo)",
 				AssayHud.Say.FAILED)
@@ -468,8 +497,8 @@ func _on_join() -> void:
 	# until the answer comes back reads as a dead button. Maren's ruling, and she had the premise
 	# slightly wrong -- `join` already emits a "connecting to ..." note of its own -- but only on the
 	# path where `connect_to_host` succeeds, so this is the line that is true either way.
-	_say("connecting to %s…" % _host.text, AssayHud.Say.CONNECTING)
-	_client.join(_host.text, _name.text if _name.text != "" else "player")
+	_say("connecting to %s…" % address, AssayHud.Say.CONNECTING)
+	_client.join(address, _name.text if _name.text != "" else "player")
 
 
 ## THE RAW TEXT GOES TO THE SIM, the dictionary does not. By the time a `Welcome` is a Godot
