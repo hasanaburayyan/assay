@@ -344,8 +344,12 @@ func _section(named: String) -> Control:
 ## MEASURING AGAINST THE WINDOW ALONE IS THE NARROWER QUESTION, and it let a true answer hide a
 ## defect (Limpet, ASSA-117): the HUD column lives in a `ScrollContainer` whose box ends well above
 ## the bottom of the window, so a section can sit inside the window and still be cut by the scroll's
-## own edge -- which is exactly what the first log line does once the reveal scrolls to it. A
-## `ScrollContainer` clips by definition, so it counts whatever its `clip_contents` flag says.
+## own edge -- which is exactly what the first log line does once the reveal scrolls to it.
+##
+## The `ScrollContainer` clause is belt and braces and MEASURED TO BE REDUNDANT TODAY: the engine
+## sets `clip_contents` on a `ScrollContainer` itself, and dropping the clause leaves the clip rect
+## at exactly y 124..696. It stays because a scroll box clips whatever a flag says, and a flag
+## somebody turns off should not quietly widen this measure back to the window.
 func _frame_for(control: Control) -> Rect2:
 	var frame := Rect2(Vector2.ZERO, root.size)
 	var node: Node = control.get_parent()
