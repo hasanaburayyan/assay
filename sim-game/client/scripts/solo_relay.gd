@@ -24,8 +24,15 @@ extends RefCounted
 ##
 ## **AND NOTHING HERE MAY BLOCK** (ruling 6). `FileAccess.get_line()` on a pipe blocks until a line
 ## arrives -- measured at 3044 ms against a child that slept three seconds -- so a relay that never
-## speaks would freeze the whole window, which is the hang the ruling forbids. The line is read on a
-## `Thread` and the caller polls with a deadline.
+## speaks would freeze the whole window, which is the hang the ruling forbids.
+##
+## **SO THE PIPE IS ONLY READ WHEN IT ALREADY HAS BYTES IN IT.** `get_length()` on a pipe reports
+## what is waiting (measured: 28 for two short lines), so `get_length() > get_position()` is the
+## question "will a read return immediately", and the answer is checked before every read. There is
+## no thread here. The first version used one, and it is worth saying why it went: it made the
+## reader ask `OS.get_process_exit_code` off the main thread, which is not allowed, so a relay that
+## had already died was never noticed and the WRONG sentence came back after the deadline. Not
+## reading at all until a read is free removes the thread, the mutex and that whole class of bug.
 
 ## MARLOW'S CONTRACT, and the reason it is a prefix and not a sentence: `LISTENING <addr>:<port>`,
 ## printed once, after the socket is accepting and before the first tick. The prose around it is
@@ -47,10 +54,9 @@ var address := ""
 var failure := ""
 
 var _stdio: FileAccess = null
-var _thread: Thread = null
-var _mutex := Mutex.new()
-var _line := ""
-var _spoke := false
+var _stderr: FileAccess = null
+## Prose the relay printed above its contract line, kept only so a failure can quote it.
+var _heard := PackedStringArray()
 var _deadline_ms := DEFAULT_DEADLINE_MS
 var _started_at := 0
 var _binary := ""
@@ -111,8 +117,13 @@ func start(binary: String, extra: PackedStringArray, deadline_ms := DEFAULT_DEAD
 		failure = ("no sim-relay next to this client, so there is nothing to play against. Looked in: "
 				+ ", ".join(candidate_paths()))
 		return false
-	var args := PackedStringArray(["--bind", "127.0.0.1", "--port", "0"])
-	args.append_array(extra)
+	# THE SEED FIRST AND THE FLAGS AFTER, which is the relay's own documented order
+	# (`sim-relay [seed] [--port N] [--tps N] [--fresh] [--bind ADDR]`) rather than a shape I chose.
+	# It also keeps a stand-in process usable in a test: prepending flags made `/bin/sh -c ...`
+	# reject `--bind` before it ever ran the script, so the only thing I could drive was the real
+	# relay -- and ruling 6's sentences are exactly the cases the real relay will not produce.
+	var args := extra.duplicate()
+	args.append_array(PackedStringArray(["--bind", "127.0.0.1", "--port", "0"]))
 	var pipe := OS.execute_with_pipe(binary, args)
 	if pipe.is_empty() or int(pipe.get("pid", -1)) <= 0:
 		# A FILE THAT EXISTS AND WILL NOT RUN IS ITS OWN REFUSAL, and it is the one the board is most
@@ -122,9 +133,9 @@ func start(binary: String, extra: PackedStringArray, deadline_ms := DEFAULT_DEAD
 		return false
 	pid = int(pipe["pid"])
 	_stdio = pipe["stdio"]
+	_stderr = pipe.get("stderr")
+	_heard = PackedStringArray()
 	_started_at = Time.get_ticks_msec()
-	_thread = Thread.new()
-	_thread.start(_read_first_line)
 	return true
 
 
@@ -144,23 +155,25 @@ func start_solo(seed_text := DEFAULT_SEED, deadline_ms := DEFAULT_DEADLINE_MS) -
 func poll() -> bool:
 	if address != "" or failure != "":
 		return address != ""
-	_mutex.lock()
-	var spoke := _spoke
-	var line := _line
-	_mutex.unlock()
-	if spoke:
+	# THE WAITING BYTES FIRST, AND ONLY THEN THE PROCESS'S STATE. A relay that printed its address
+	# and then died has still told us where it is, and joining it is the right answer; checking
+	# liveness first would throw that away for no reason.
+	while _stdio != null and _stdio.get_length() > _stdio.get_position():
+		var line := _stdio.get_line()
 		if line.begins_with(LISTENING):
 			address = line.substr(LISTENING.length()).strip_edges()
 			return true
-		# THE PIPE CLOSED, which means the process is gone: either it exited before saying anything
-		# or it was killed. Its last words are quoted when there were any, because "it stopped" with
-		# no reason is the report nobody can act on.
+		# EVERYTHING ELSE IS PROSE FOR A PERSON and is skipped rather than parsed. `main.rs` prints
+		# "Hosting world N at tick ... on port ..." ABOVE the contract line, so a reader that took
+		# the first line would have handed the join screen a sentence instead of an address -- which
+		# is what my own test caught when it put the prose first on purpose.
+		_heard.append(line)
+	if has_exited():
+		# ITS LAST WORDS IF IT HAD ANY. "It stopped" with no reason is the report nobody can act on,
+		# and a relay that cannot bind says so on stderr before exiting.
+		var said := _last_words()
 		failure = ("the relay stopped before it said it was listening"
-				if line.strip_edges() == ""
-				else "the relay stopped and said: %s" % line.strip_edges())
-		return false
-	if not OS.is_process_running(pid):
-		failure = "the relay stopped before it said it was listening"
+				if said == "" else "the relay stopped and said: %s" % said)
 		return false
 	if Time.get_ticks_msec() - _started_at > _deadline_ms:
 		# A RUNNING PROCESS THAT WILL NOT SPEAK IS STILL A FAILURE, and it is the one a deadline
@@ -173,24 +186,44 @@ func poll() -> bool:
 	return false
 
 
+## HAS THE RELAY EXITED. **`OS.get_process_exit_code` AND NOT `OS.is_process_running`, AND THE
+## DIFFERENCE IS A ZOMBIE.**
+##
+## This process holds the child's pipe and does not wait on it, so an exited child can stay in the
+## table and `is_process_running` answer TRUE for it -- measured: a `/bin/false` gone for 800ms still
+## reported running on every poll, so "the relay died" was never noticed and the deadline fired with
+## the wrong sentence. `get_process_exit_code` answers -1 while the child lives and the code once it
+## is gone, and reaping it is also what lets the pipe stop blocking.
+func has_exited() -> bool:
+	return pid > 0 and OS.get_process_exit_code(pid) != -1
+
+
+## Whatever the relay said before it stopped: its own stderr first, then any prose from stdout.
+##
+## STDERR FIRST because that is where `main.rs` puts the one failure a player can act on -- "Could
+## not listen on 127.0.0.1:0" -- while stdout carries the greeting.
+func _last_words() -> String:
+	var said := PackedStringArray()
+	if _stderr != null:
+		while _stderr.get_length() > _stderr.get_position():
+			var line := _stderr.get_line().strip_edges()
+			if line != "":
+				said.append(line)
+	if said.is_empty():
+		for line in _heard:
+			var text := String(line).strip_edges()
+			if text != "":
+				said.append(text)
+	return " / ".join(said)
+
+
 ## Stop the relay this client started, and leave nothing behind.
 ##
 ## THE THREAD IS WAITED ON, not abandoned. Killing the process closes the pipe, which is what ends
 ## the blocking `get_line` -- so the order matters: kill, then join.
 func stop() -> void:
-	if pid > 0 and OS.is_process_running(pid):
+	if pid > 0 and not has_exited():
 		OS.kill(pid)
-	if _thread != null and _thread.is_started():
-		_thread.wait_to_finish()
-	_thread = null
 	_stdio = null
+	_stderr = null
 	pid = -1
-
-
-## Runs on its own thread for exactly as long as the relay takes to speak once.
-func _read_first_line() -> void:
-	var line := _stdio.get_line() if _stdio != null else ""
-	_mutex.lock()
-	_line = line
-	_spoke = true
-	_mutex.unlock()
