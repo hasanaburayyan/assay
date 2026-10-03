@@ -515,3 +515,79 @@ func test_the_crafting_menu_says_why_it_is_empty_before_a_world_exists() -> bool
 		ok = _fail("the empty menu says `%s`" % said)
 	screen.queue_free()
 	return ok
+
+
+## ASSA-107 / Maren's ASSA-88 RULING: THE CHOSEN PARTS LIVE IN THE CRAFTING MENU, UNDER THE RUNNING
+## CRAFT — not in the `do` section two sections away from the rows they were chosen on.
+##
+## ASSERTED AS ORDER IN A SHARED PARENT, not as pixel positions: the three parts of the menu have to
+## read top to bottom as one activity (what is running · what you are assembling · what you can
+## make), and that is a property of the column's child order which survives any restyling.
+func test_the_chosen_parts_sit_under_the_running_craft_inside_the_menu() -> bool:
+	var screen := _screen()
+	var ok := true
+	var column: Node = screen._crafting.get_parent()
+	if screen._assembling.get_parent() != column:
+		ok = _fail("the chosen parts are not in the same container as the running craft")
+	elif screen._make.get_parent() != column:
+		ok = _fail("the menu's rows are not in that container either, so order proves nothing")
+	else:
+		var craft := column.get_children().find(screen._crafting)
+		var mid := column.get_children().find(screen._assembling)
+		var rows := column.get_children().find(screen._make)
+		if not (craft < mid and mid < rows):
+			ok = _fail(("the menu does not read running craft (%d), assembling (%d), rows (%d)")
+					% [craft, mid, rows])
+	# AND NOT IN THE `do` SECTION ANY MORE. Checked by walking `_actions` for the button, because
+	# that is what a player would still find there if the move were half done.
+	if ok and _button_under(screen._actions, "Assemble") != null:
+		ok = _fail("`Assemble` is still in the do section")
+	screen.queue_free()
+	return ok
+
+
+## FOLDING THE ROWS AWAY DOES NOT PUT DOWN THE PARTS IN YOUR HANDS.
+##
+## MY READING OF MAREN'S CLAUSE, NOT HER WORDS: she ruled a running craft is a CONDITION and must
+## survive the collapse, and left the bench's placement to me. A half-chosen assembly is the same
+## kind of thing — fold the rows with three parts in hand and a container inside them would take
+## `Assemble` with it, so the chosen parts are a sibling of the rows rather than a child. Structural,
+## so it holds whatever a later edit does to the rows.
+func test_folding_the_menu_cannot_put_down_the_parts_you_are_holding() -> bool:
+	var screen := _screen()
+	var ok := true
+	var walk: Node = screen._assembling
+	while walk != null:
+		if walk == screen._make:
+			ok = _fail("the chosen parts live inside the container the toggle hides")
+			break
+		walk = walk.get_parent()
+	# AND IT SURVIVES A REBUILD OF THE ROWS -- THE SAME GUARD `_crafting`'s test needed, which I
+	# failed to carry over and a mutation caught. `_rebuild_make` CLEARS the container it owns, so a
+	# block moved inside the rows is FREED: the walk above then finds a node with no parent at all
+	# and passes about nothing. Second time in one night for this exact shape.
+	if ok:
+		screen._make_showing = "not a shape any pack has"
+		screen._refresh_make()
+		if not is_instance_valid(screen._assembling):
+			ok = _fail("rebuilding the rows freed the chosen-parts block")
+		elif screen._assembling.get_parent() == null:
+			ok = _fail("rebuilding the rows took the chosen-parts block off the panel")
+	if ok:
+		screen._show_make(false)
+		if not screen._assembling.visible:
+			ok = _fail("folding the rows away hid the parts you are holding")
+		elif screen._make.visible:
+			ok = _fail("_show_make(false) left the rows visible, so this proves nothing")
+	screen.queue_free()
+	return ok
+
+
+func _button_under(node: Node, label: String) -> Button:
+	for child in node.get_children():
+		if child is Button and (child as Button).text == label:
+			return child
+		var found := _button_under(child, label)
+		if found != null:
+			return found
+	return null

@@ -1168,3 +1168,49 @@ func _mine_two_species(screen: Node) -> bool:
 			second = int(id)
 			break
 	return _mine_some_ore_of(screen, second)
+
+
+## ASSA-107: CHOOSING A PART PUTS IT IN THE MENU, AND CLEARING IT TAKES IT BACK OUT — through the
+## real refresh path, with a real stack the sim named.
+##
+## `_choose_part` IS CALLED DIRECTLY AND THAT IS DELIBERATE. What this test is about is where the
+## chosen parts are DRAWN and whether the two buttons there work; getting a real head into the pack
+## costs the whole chain (mine, smelt, make part) and `tools/button_session.gd -- offline` already
+## drives that end to end. Using an ore stack keeps the test about the surface — the sim would refuse
+## the `Assemble`, which is why `Clear` is what is pressed here and the refusal is ASSA-103's.
+func test_choosing_a_part_draws_it_in_the_menu_and_clear_takes_it_back() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_some_ore(screen)
+	if ok:
+		var stack: Dictionary = screen._sim.inventory_of(screen._client.player_id)[0]
+		if _text_of(screen._assembling) != "":
+			ok = _fail("something is in the assembling block before anything was chosen: %s"
+					% _text_of(screen._assembling))
+		else:
+			screen._choose_part(stack)
+			var said := _text_of(screen._assembling)
+			if said == "":
+				ok = _fail("chose a part and the menu shows nothing")
+			# `building_line`'s OWN WORDING, not `stack_line`'s, and that is correct rather than
+			# a near miss: a chosen part is ONE item, so the block names the item (`name`, the
+			# sim's) where a pack row counts a stack. I asserted `stack_line` first and the test
+			# caught me, not the code.
+			elif not said.contains(String(stack.get("name", "?"))):
+				ok = _fail("the block does not name what was chosen: `%s`" % said)
+			elif _find(screen._assembling, "Assemble") == null:
+				ok = _fail("no Assemble button beside the chosen parts: %s"
+						% _labels_of(screen._assembling))
+			elif _text_of(screen._actions).contains("assembling:"):
+				ok = _fail("the chosen part is ALSO still drawn in the do section")
+			else:
+				var clear := _find(screen._assembling, "Clear")
+				if clear == null:
+					ok = _fail("no Clear button: %s" % _labels_of(screen._assembling))
+				else:
+					clear.pressed.emit()
+					if _text_of(screen._assembling) != "":
+						ok = _fail("pressed Clear and the block still reads `%s`"
+								% _text_of(screen._assembling))
+	screen.queue_free()
+	return ok

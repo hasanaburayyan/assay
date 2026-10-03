@@ -68,6 +68,17 @@ var _crafting: Label = null
 ## this player could make from what they carry, in the sim's order, each row the sim's own sentence.
 var _make := VBoxContainer.new()
 var _make_toggle := Button.new()
+## THE PARTS YOU HAVE CHOSEN FOR THE NEXT `Assemble`, AND ITS TWO BUTTONS (ASSA-107, Maren's ASSA-88
+## ruling). They used to live in the `do` section, two sections away from the rows they were chosen
+## on; the discriminator she gave is ACTIVITY, not widget -- making parts and assembling them are one
+## activity in two stages, so the second stage belongs under the first. The menu now reads top to
+## bottom as one thing: what is running, what you are assembling, what you can make.
+##
+## OUTSIDE THE COLLAPSIBLE ROWS, for the reason the running craft is: a half-chosen assembly is a
+## CONDITION, not a moment. Fold the rows away with three parts in hand and a container inside them
+## would take `Assemble` with it -- so this is a sibling of `_make`, not a child. Maren ruled that
+## clause for the craft line and left this one to me; it is the same argument and she can overrule it.
+var _assembling := VBoxContainer.new()
 ## INITIALISED TO THE WRONG ANSWER, same as `_log_shown` and for the same reason: `_build_ui` calls
 ## `_show_make(true)`, and starting this at `true` would make "the menu is open on first join" pass
 ## before any code ran. The board asked for a crafting menu, so unlike the log this one starts OPEN.
@@ -137,6 +148,7 @@ const UNBUILT := "nothing built yet"
 var _bench_showing := UNBUILT
 var _pack_showing := UNBUILT
 var _make_showing := UNBUILT
+var _assembling_showing := UNBUILT
 var _actions_showing := UNBUILT
 ## THE TILE EVERY PLACEMENT LANDS ON. `_targeted` false means "where you stand", which is not a
 ## placeholder: your own tile is the one tile every player has, and planting beside yourself is the
@@ -286,6 +298,8 @@ func _build_ui() -> void:
 	column.add_child(make_heading)
 	_crafting = _note("")
 	column.add_child(_crafting)
+	_assembling.custom_minimum_size = Vector2(PANEL, 0.0)
+	column.add_child(_assembling)
 	_make_toggle.custom_minimum_size = Vector2(PANEL, 0.0)
 	_make_toggle.add_theme_font_size_override("font_size", 12)
 	_make_toggle.pressed.connect(func(): _show_make(not _make_shown))
@@ -313,6 +327,7 @@ func _build_ui() -> void:
 	# reason: the board asked for a crafting menu, and a menu nobody finds is the clunk restated.
 	_show_make(true)
 	_refresh_make()
+	_refresh_assembling()
 	_refresh_pack()
 	_refresh_actions()
 	_refresh_bench()
@@ -475,6 +490,7 @@ func _refresh() -> void:
 			_sim.seed_text(), size.x, size.y, _sim.species_names().size(), _sim.players().size(),
 			_sim.tick(), _sim.hash_hex(), _sim.applied, _hashes_sent]
 	_refresh_make()
+	_refresh_assembling()
 	_refresh_pack()
 	_refresh_actions()
 	_refresh_bench()
@@ -659,6 +675,32 @@ func _design_button(descriptor: Dictionary, design: Dictionary) -> Button:
 		_:
 			return _button(label, func() -> void: _say(
 					"no command for %s" % label, AssayHud.Say.FAILED))
+
+
+## WHAT YOU ARE ASSEMBLING, under the running craft (ASSA-107, Maren's ASSA-88 ruling).
+##
+## ITS OWN SIGNATURE, so this is not rebuilt ten times a second: `_building` only changes when a
+## `Frame`/`Mount` is pressed or an `Assemble` clears it, and rebuilding a container destroys any
+## button the pointer happens to be over. The shape is what the sim named for each chosen stack --
+## the same `stack_line` sentences the pack rows use, through `AssayHud.building_line`.
+func _refresh_assembling() -> void:
+	var signature := AssayHud.building_line(_building) if not _building.is_empty() else ""
+	if signature == _assembling_showing:
+		return
+	_assembling_showing = signature
+	_clear(_assembling)
+	if _building.is_empty():
+		# NOTHING, NOT A NOTE. This sits inside the menu's own section under a heading that is
+		# already about making things, so "no parts chosen" would be a line telling a player about
+		# a thing they have not started. The pack's empty note exists because `you` is a heading
+		# with its own section; this is not.
+		return
+	_assembling.add_child(_note(AssayHud.building_line(_building)))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 4)
+	row.add_child(_button("Assemble", _assemble, "build the machine from the parts you chose"))
+	row.add_child(_button("Clear", _clear_build, "put the chosen parts back"))
+	_assembling.add_child(row)
 
 
 ## THE CRAFTING MENU'S ROWS (ASSA-88). One per recipe and part the sim says this player could make
@@ -978,14 +1020,8 @@ func _refresh_actions() -> void:
 				"take the building back, with whatever is inside it"))
 		_actions.add_child(row)
 
-	if not _building.is_empty():
-		_actions.add_child(_note(AssayHud.building_line(_building)))
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 4)
-		row.add_child(_button("Assemble", _assemble,
-				"build the machine from the parts you chose"))
-		row.add_child(_button("Clear", _clear_build, "put the chosen parts back"))
-		_actions.add_child(row)
+	# THE CHOSEN PARTS USED TO BE DRAWN HERE and are now in the crafting menu, under the running
+	# craft (ASSA-107). `_refresh_assembling` owns them.
 
 
 ## ONE DOOR FOR EVERY BUTTON ON THIS SCREEN, and the only place any of them reaches the wire.
@@ -1033,6 +1069,7 @@ func _choose_part(stack: Dictionary) -> void:
 	_say("%s %s" % ["frame:" if _building.size() == 1 else "mounting", AssayHud.stack_line(stack)],
 			AssayHud.Say.JOINED)
 	_refresh_pack()
+	_refresh_assembling()
 	_refresh_actions()
 
 
@@ -1053,6 +1090,7 @@ func _assemble() -> void:
 func _clear_build() -> void:
 	_building.clear()
 	_refresh_pack()
+	_refresh_assembling()
 	_refresh_actions()
 
 
