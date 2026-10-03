@@ -105,6 +105,10 @@
    {
     "name": "refined",
     "frames": 1
+   },
+   {
+    "name": "smelter",
+    "frames": 1
    }
   ],
   "animations": {},

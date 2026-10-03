@@ -33,9 +33,12 @@ const UI_THEME := "res://assets/sprites/ui_theme.json"
 ##
 ## `ore` as an ITEM is `items.png`'s own row, not the `ore.png` world tile: the tile is a rock on the
 ## ground and the item is a thing in a pack, and Cove drew them separately. `refined` is the second
-## row of the same sheet (ASSA-66). The four part kinds have a row per grade. `gear` and `smelter`
-## have NO art yet and are listed here as empty on purpose, so the gap is visible in this file rather
-## than looking like a missing case.
+## row of the same sheet (ASSA-66) and `smelter` the third (ASSA-87). The four part kinds have a row
+## per grade. `gear` has NO art and is listed here as empty on purpose, so the gap is visible in this
+## file rather than looking like a missing case.
+##
+## THE GEAR'S GAP IS SETTLED, NOT PENDING. Maren ruled on ASSA-84 that nothing in the game consumes
+## a gear, so a gear icon would be art for a dead recipe. It stays empty until that changes.
 ##
 ## THESE EMPTY ENTRIES ARE DOCUMENTATION, NOT THE GUARD, and that was checked rather than assumed:
 ## before `items` had a second row, pointing `refined` here still drew nothing, because `_row_for`
@@ -45,12 +48,12 @@ const UI_THEME := "res://assets/sprites/ui_theme.json"
 const SHEET_OF := {
 	"ore": "items",
 	"refined": "items",
+	"smelter": "items",
 	"head": "head",
 	"handle": "handle",
 	"frame": "frame",
 	"hopper": "hopper",
 	"gear": "",
-	"smelter": "",
 }
 
 
@@ -96,8 +99,8 @@ static func pack_icon_plate() -> Color:
 
 ## THE FRAME FOR ONE PACK STACK, or null when we have no art for it.
 ##
-## Null is a normal answer and not a failure: `items.png` carries ore and refined, so a gear and a
-## smelter still come back null today. The caller draws a row without an icon, which is why
+## Null is a normal answer and not a failure: `items.png` carries ore, refined and smelter, so a gear
+## is the one kind that still comes back null. The caller draws a row without an icon, which is why
 ## `stack_line` has to stay a complete sentence.
 static func icon_for(stack: Dictionary) -> AtlasTexture:
 	var kind := String(stack.get("kind", "")).to_lower()

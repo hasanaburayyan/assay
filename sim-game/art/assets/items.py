@@ -111,7 +111,64 @@ def refined_row():
     return r
 
 
-for row, build in (("ore", ore_row), ("refined", refined_row)):
+def smelter_row():
+    """A square ring of walls with a dark hearth inside. (ASSA-87)
+
+    THE SIM'S SMELTER IS WALLS. `building.rs` gives it a 2x2 footprint and
+    walls whose heat tolerance is the species' own, and `recipe.rs` builds it
+    out of 5 ore of any species. So an enclosure is the honest object; a
+    generic furnace with a chimney would be drawing a machine this game does
+    not have.
+
+    IT IS THE ONLY ITEM ROW WITH ENCLOSED NEGATIVE SPACE, which is the whole
+    read at icon size. Ore is irregular blobs with no straight edge, refined is
+    flat parallel bars all in one plane, and this is a square with a hole in
+    it. Three kinds, three silhouettes, no colour doing the work -- which it
+    could not anyway, because all three take the same species tint and often
+    carry the same species name in adjacent pack rows.
+
+    AND IT PLAYS TO THE CAMERA RATHER THAN AGAINST IT. rig.py rule 1: the
+    camera is tilted off VERTICAL and mostly sees an object's TOP. That is what
+    turned my first `refined` attempt into an open crate when I did not want
+    one -- a wall around a pale panel. Here the top-down read IS the subject, so
+    the same geometry that was a defect there is the signal here.
+
+    THE HEARTH IS A DARK FLOOR, NOT A HOLE THROUGH THE SPRITE. Left open, the
+    middle would show whatever is behind the icon -- the slot plate in the pack
+    (ASSA-71), bare ground on the map -- so the shape would read as a frame
+    around the background rather than as a vessel with something in it. A floor
+    makes it an inside. It is `ore_dk` pushed toward black rather than a new
+    palette entry, so the species tint still lands on it like everything else.
+
+    UNLIT, deliberately. A fire is a STATE and a pack holds an unplaced
+    smelter; a glow would also collide with the grade-glint rule, where an
+    emissive mark means "grade changes a number in sim" and nothing else.
+
+    WALLS THICK ENOUGH TO SURVIVE THE HALVING. At the size a pack row draws an
+    items frame -- exactly 1/2 since ASSA-65 -- a wall thinner than about 0.1
+    world units closes up against its neighbour and the ring becomes a blob.
+    """
+    random.seed(11)
+    r = rig.Rig(samples=64)
+    r.shadow_catcher()
+    wall = mat("ore", rough=0.62)
+    wall_dk = mat(rig.mix_hex(rig.PALETTE["ore"], rig.PALETTE["ore_dk"], 0.45), rough=0.62)
+    hearth = mat(rig.mix_hex(rig.PALETTE["ore_dk"], "#000000", 0.78), rough=0.85)
+    span, thick, high = 0.62, 0.15, 0.34
+    # The hearth bed first, so the walls sit on it and its edge never shows.
+    r.box((span, span, 0.06), (0, 0, 0.03), hearth, bev=0.01)
+    # Four walls. The two running along X are full width; the two along Y are
+    # inset by a wall so the corners butt rather than overlap, which keeps the
+    # bevels from doubling into a bright corner pip at 1/2.
+    arm = span - thick
+    r.box((span, thick, high), (0, (span - thick) / 2, high / 2 + 0.04), wall, bev=0.02)
+    r.box((span, thick, high), (0, -(span - thick) / 2, high / 2 + 0.04), wall_dk, bev=0.02)
+    r.box((thick, arm, high), ((span - thick) / 2, 0, high / 2 + 0.04), wall_dk, bev=0.02)
+    r.box((thick, arm, high), (-(span - thick) / 2, 0, high / 2 + 0.04), wall, bev=0.02)
+    return r
+
+
+for row, build in (("ore", ore_row), ("refined", refined_row), ("smelter", smelter_row)):
     r = build()
     r.frame(1, 1, headroom=0.5)
     r.render(asset.path(row))
