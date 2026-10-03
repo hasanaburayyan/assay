@@ -148,10 +148,26 @@ static func variant_of(at: Vector2i, count: int) -> int:
 ## EVERY TILE INSIDE THE CIRCLE IS THE SAME TILE: no rim variant, no sparser edge. `amount` is one
 ## number for the WHOLE patch, so a thinner border would be a visible mark for a difference the game
 ## does not have, and the hard edge is exactly where mining and placing stop working.
-static func ore_row(grade: String, depleted: bool, at: Vector2i) -> String:
+##
+## HOW MANY ARRANGEMENTS THERE ARE IS THE SHEET'S ANSWER, NOT A LITERAL HERE. This read 2 until
+## ASSA-115 rendered v2/v3, and a hardcoded count does not fail when the art grows -- it silently
+## ships the new rows to nobody, which is the same shape as the ground that was rendered for a
+## client that never opened it. The ground above already counts its own rows; ore could not reuse
+## `_rows_in` only because its rows are grade-prefixed.
+static func ore_row(grade: String, depleted: bool, at: Vector2i, manifest: Dictionary) -> String:
 	if depleted:
 		return "depleted_full"
-	return "%s_full_v%d" % [grade.to_upper(), variant_of(at, 2)]
+	var letter := grade.to_upper()
+	return "%s_full_v%d" % [letter, variant_of(at, _ore_variants(manifest, letter))]
+
+
+static func _ore_variants(manifest: Dictionary, letter: String) -> int:
+	var rows: Array = ((manifest.get("ore", {}) as Dictionary).get("rows", []) as Array)
+	var n := 0
+	for row in rows:
+		if String((row as Dictionary).get("name", "")).begins_with("%s_full_v" % letter):
+			n += 1
+	return maxi(n, 1)
 
 
 ## EVERYTHING TO DRAW, IN THE ORDER TO DRAW IT.
@@ -196,7 +212,8 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 	for key in ore:
 		var at: Vector2i = key
 		var tile: Dictionary = ore[key]
-		var row := ore_row(String(tile.get("grade", "C")), bool(tile.get("depleted", false)), at)
+		var row := ore_row(String(tile.get("grade", "C")), bool(tile.get("depleted", false)), at,
+				manifest)
 		var place := _place(manifest, "ore", row, at, origin,
 				AssayHud.species_tint(int(tile.get("species", 0))), seconds)
 		if not place.is_empty():

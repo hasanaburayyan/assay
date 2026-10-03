@@ -67,6 +67,14 @@
     "frames": 1
    },
    {
+    "name": "C_full_v2",
+    "frames": 1
+   },
+   {
+    "name": "C_full_v3",
+    "frames": 1
+   },
+   {
     "name": "B_full_v0",
     "frames": 1
    },
@@ -75,11 +83,27 @@
     "frames": 1
    },
    {
+    "name": "B_full_v2",
+    "frames": 1
+   },
+   {
+    "name": "B_full_v3",
+    "frames": 1
+   },
+   {
     "name": "A_full_v0",
     "frames": 1
    },
    {
     "name": "A_full_v1",
+    "frames": 1
+   },
+   {
+    "name": "A_full_v2",
+    "frames": 1
+   },
+   {
+    "name": "A_full_v3",
     "frames": 1
    },
    {
