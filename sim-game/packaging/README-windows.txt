@@ -72,7 +72,7 @@ build is not code-signed): More info, then Run anyway.
 
 To play by yourself, press Play solo. To join someone, type the relay's
 address in the "host" box -- the same address the relay printed, e.g.
-192.168.1.48:7777 -- put in a name, and click join. A bare address uses
+192.168.1.10:7777 -- put in a name, and click join. A bare address uses
 port 7777.
 
 It runs the real rules: the same Rust `sim` crate the relay and sim-cli run,
