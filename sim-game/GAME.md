@@ -134,13 +134,32 @@ These need art eventually. Rough order they'll be built:
 
 - **Readability at scale beats detail.** Factories grow to thousands of
   machines and items on screen. Every entity must read clearly when small.
+- **A tile is 32 screen pixels, and the world view is a scene** (Maren,
+  2026-10-03, ASSA-115/119, closing the question ASSA-46 left open).
+  `art/rig.py` has authored at 64px per tile for a 32px screen tile since
+  the first sprite; the client never got the memo and still draws the whole
+  96×64 world beside the HUD at **9px** a tile, which is a 7× downscale of
+  every asset and the reason it renders no sprites at all. The main view
+  becomes a camera on the player at 32px — about 28×18 tiles, one or two
+  deposits and your reach. **The whole-world schematic does not die**: it is
+  how you cross the map, it carries the other players, and its species
+  discs and glyphs are the only colour-blindness-measured read on that
+  screen (Decision #36). It becomes the second view. Two properties bind
+  wherever it goes: you can always find a deposit you have not visited, and
+  you can always see which player is you.
 - **Modular machines must look modular.** Since players design machines from
   parts, parts are drawn as separate pieces that combine (base, arm, claws),
   not as one fixed sprite per machine.
 - **Ore kinds need to be told apart by shape as well as color**, so they
   work for colorblind players.
 - **Ore purity should be visible**, e.g. brighter, glowing, or more
-  crystalline as purity rises. Suggested tiers: 1–25, 26–50, 51–75, 76–100.
+  crystalline as purity rises. **The tiers are the sim's grade bands — C
+  below 40, B 40–69, A 70+ (`tuning.rs`), and nothing else.** This line used
+  to suggest 1–25 / 26–50 / 51–75 / 76–100, which lines up with the sim
+  nowhere: it put a visible step at purity 50, where nothing happens, and
+  none at 40 or 70, where every stat changes through `effective()`.
+  `art/assets/ore.py` stopped drawing the old tiers (Decision #36, ruling 3);
+  this brief was the last place still asking for them.
 - **Depleted deposits need their own look** (the terminal map already shows
   them in lowercase).
 - **Simple and consistent over detailed.** The team is engineer-heavy. Pick
@@ -176,9 +195,23 @@ These need art eventually. Rough order they'll be built:
 
 ### Animation and timing
 
-The simulation runs at a fixed rate (60 ticks per second planned). The
-renderer smooths motion between ticks, so animations can use any frame count;
-they don't need to line up with ticks.
+The simulation runs at a fixed rate: **10 ticks per second**
+(`sim-relay`'s `DEFAULT_TPS`), not the 60 this section used to plan for.
+Animations can still use any frame count and need not line up with ticks.
+
+**The renderer does not smooth motion between ticks yet, and that sentence
+was wishful when it was written.** `main.gd` draws a player at their integer
+tile and says so on purpose: the sim owns the position, and the line to a
+walk target is their intention, not a frame of motion the client invented.
+At the 9px tile the client draws today a one-tile step is 9px and nobody
+notices. At the ruled 32px (below) it is a 32px jump ten times a second,
+which is the first thing a scene renderer will have to answer.
+
+**Maren's ruling: a renderer MAY interpolate the drawn position, and MAY NOT
+interpolate state.** Tween between the previous tick's tile and the current
+one — lagging one tick, inventing nothing. Never tween toward where a walk
+target suggests a player is going: that is prediction, it is a second copy
+of the movement rule outside `sim`, and it is wrong the moment they stop.
 
 ### Generative AI art
 
