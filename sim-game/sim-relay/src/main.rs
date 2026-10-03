@@ -13,7 +13,7 @@ mod auth;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufReader, BufWriter};
-use std::net::{Shutdown, TcpListener};
+use std::net::{IpAddr, Ipv4Addr, Shutdown, TcpListener};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -69,6 +69,16 @@ struct Options {
     port: u16,
     tps: u32,
     fresh: bool,
+    /// Which interfaces to listen on. `0.0.0.0` is every one of them, which is
+    /// what a relay people join over a network wants and what this has always
+    /// done.
+    ///
+    /// **A SOLO RELAY MUST NOT BE REACHABLE FROM THE NETWORK** (Wren's ruling
+    /// 2 on ASSA-106). `DevAuthenticator` trusts any well-formed name, so a
+    /// single-player world started by a button on the join screen would
+    /// otherwise sit open on the player's LAN under whatever name a stranger
+    /// typed. Solo passes `127.0.0.1`.
+    bind: IpAddr,
 }
 
 struct Relay {
@@ -87,17 +97,38 @@ fn main() {
     let opts = parse_args();
     let (world, accounts) = open_world(&opts);
 
-    let listener = TcpListener::bind(("0.0.0.0", opts.port)).unwrap_or_else(|e| {
-        eprintln!("Could not listen on port {}: {e}", opts.port);
+    let listener = TcpListener::bind((opts.bind, opts.port)).unwrap_or_else(|e| {
+        eprintln!("Could not listen on {}:{}: {e}", opts.bind, opts.port);
         exit(1);
     });
+    // **THE ADDRESS WE ACTUALLY GOT, NOT THE ONE WE ASKED FOR.** `--port 0`
+    // means "any free port", which is the only race-free way to get one: a
+    // caller that picks a number, closes it and hands it over can lose the
+    // port in between (`tests/join_refusal.rs` does exactly that and it
+    // flakes). Printing `opts.port` would announce "port 0" and nobody could
+    // join, so every line below reads this instead.
+    let bound = listener.local_addr().unwrap_or_else(|e| {
+        eprintln!("Listening, but could not read our own address: {e}");
+        exit(1);
+    });
+    let local_only = bound.ip().is_loopback();
     let (events_tx, events_rx) = mpsc::channel();
     spawn_listener(listener, events_tx);
 
     println!(
         "Hosting world {} at tick {} on port {} ({} ticks/s)",
-        opts.seed, world.tick, opts.port, opts.tps
+        opts.seed,
+        world.tick,
+        bound.port(),
+        opts.tps
     );
+    // ONE STABLE LINE A PARENT PROCESS CAN MATCH (ASSA-108, for ASSA-106's
+    // "Play solo"). A client that spawns this relay has to know two things —
+    // that it is up, and on which port — and the alternative is scraping the
+    // prose above, which is written for a person and will be reworded. This
+    // line is the contract: `LISTENING <addr>:<port>`, printed once, after the
+    // socket is accepting and before the first tick.
+    println!("LISTENING {bound}");
     // ASSA-40: so pairing a downloaded zip to a running host is reading, not
     // guessing. A peer on a different rules id is refused at join, with both
     // numbers named.
@@ -110,18 +141,30 @@ fn main() {
     println!("Players join with:");
     println!(
         "  this computer:  sim-cli --connect localhost:{} --name <name>",
-        opts.port
+        bound.port()
     );
-    if let Some(ip) = lan_ip() {
+    // **THE INSTRUCTIONS FOLLOW THE BIND.** A relay listening only on loopback
+    // refuses every one of these routes, and telling somebody to forward a
+    // port to a socket that will not answer is worse than saying nothing: it
+    // sends them to their router. So on a local-only bind we say so instead of
+    // printing two addresses that cannot work.
+    if local_only {
         println!(
-            "  same network:   sim-cli --connect {ip}:{} --name <name>",
-            opts.port
+            "  nobody else:    this relay is listening on {} only",
+            bound.ip()
+        );
+    } else {
+        if let Some(ip) = lan_ip() {
+            println!(
+                "  same network:   sim-cli --connect {ip}:{} --name <name>",
+                bound.port()
+            );
+        }
+        println!(
+            "  over the internet: use Tailscale or forward TCP port {} on your router",
+            bound.port()
         );
     }
-    println!(
-        "  over the internet: use Tailscale or forward TCP port {} on your router",
-        opts.port
-    );
 
     let mut relay = Relay {
         seed: opts.seed,
@@ -513,12 +556,17 @@ fn save_paths(seed: u64) -> (PathBuf, PathBuf) {
 }
 
 fn parse_args() -> Options {
-    let usage = "Usage: sim-relay [seed] [--port N] [--tps N] [--fresh]";
+    let usage = "Usage: sim-relay [seed] [--port N] [--tps N] [--fresh] [--bind ADDR]\n\
+         \n\
+         --port 0     listen on any free port, and print the one you got\n\
+         --bind ADDR  which interfaces to accept on (default 0.0.0.0, every one).\n\
+         \x20            127.0.0.1 makes the relay reachable from this computer only.";
     let mut opts = Options {
         seed: 42,
         port: DEFAULT_PORT,
         tps: DEFAULT_TPS,
         fresh: false,
+        bind: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -530,6 +578,10 @@ fn parse_args() -> Options {
         };
         let parsed = match arg.as_str() {
             "--port" => value("--port").parse().map(|p| opts.port = p).is_ok(),
+            // A name is not accepted on purpose: "localhost" resolves to more
+            // than one address on some machines and the point of this flag is
+            // to be exact about which one we are open on.
+            "--bind" => value("--bind").parse().map(|a| opts.bind = a).is_ok(),
             "--tps" => value("--tps")
                 .parse()
                 .ok()
