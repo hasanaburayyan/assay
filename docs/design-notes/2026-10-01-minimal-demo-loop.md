@@ -151,6 +151,30 @@ seconds is roughly four times what the whole demo loop consumes. What would
 change my mind is a player who cannot tell a stalled drill from a broken one;
 that is a message problem, not a capacity one.
 
+### Assaying is free while you mine (Maren, 2026-10-03)
+
+The 326-tick loop above never assays, and reading `ASSAY_TICKS = 30` makes an
+assay look like ten seconds of standing still — three per cent of the demo
+spent on nothing. It is not. `Player` holds `mining`, `crafting` and
+`assaying` as three independent fields, and no system clears one when another
+starts. Measured rather than read
+(`shared/assay/maren_assay_while_mining_2026-10-03.rs`, seed 14247): `Mine` and
+`Assay` submitted on the same deposit in the same tick both survive, the assay
+completes on schedule, and **seven ore arrive while it runs** — one per
+four-tick cycle at grade C, exactly what mining alone would have yielded.
+Mining and hand crafting coexist the same way. Three at once is not
+demonstrated, only the two pairs; nothing in `step.rs` couples any of them.
+
+**So the price of assaying is zero in the case that matters**, because the
+thing you must stand on to assay is the thing you came to mine. That reframes
+the UNCERTAIN verdict the part panel leads with: it is an invitation whose cost
+is not time but *knowing it is happening*. Nothing on screen says an assay is
+running (ASSA-95), so what limits the demo's conversion from "UNCERTAIN" to "go
+and assay it" is visibility, not price. The concurrency is a property worth a
+guard when that item lands, not an accident to tidy up: an `Assay` that quietly
+cancelled your mining would turn a free action into a tax on the mechanic the
+game is named after.
+
 ### Resolved: gears do not survive in the demo
 
 The open question below asked whether gears survive as a part kind. They do
