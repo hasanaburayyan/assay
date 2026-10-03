@@ -139,6 +139,15 @@ Things to try
   quit                     leave (the host keeps running)
 
 
+If a host refuses you
+----------------------
+A relay refusal names a build by its rules id, a hex string with nothing to
+click. That id is not a download link -- it's in VERSION.txt, right beside
+this file, which also names the commit it came from. If you're refused: ask
+whoever is hosting for their run link and download the same one. Both halves
+-- the relay and your zip -- must come from a single CI run.
+
+
 What to report
 --------------
 - Any "WARNING: desync" message in the client. That means two players'
