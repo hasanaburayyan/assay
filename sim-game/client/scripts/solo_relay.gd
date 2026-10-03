@@ -39,6 +39,17 @@ extends RefCounted
 ## written for a person and will be reworded; this will not.
 const LISTENING := "LISTENING "
 
+## **THE OTHER HALF OF THE CONTRACT, AND THE ONE THAT MAKES AN ABSENCE MEAN SOMETHING** (ASSA-120,
+## #167). `RELAY STARTED protocol <n> rules <id>` is the relay's FIRST statement, printed before
+## argument parsing, before the save is opened and before the socket is bound. So a child that exited
+## WITHOUT it never reached the relay's own code at all -- which is the one fact this file could not
+## have, and the reason every refusal here used to say only "it stopped" (see `poll`).
+##
+## A PREFIX, LIKE `LISTENING `, AND MATCHED WITHOUT ITS FIELDS. The line carries a protocol and a
+## rules id today and may grow more; nothing here reads them, because what is being asked is whether
+## the line was said at all.
+const STARTED := "RELAY STARTED"
+
 ## How long the relay gets to say it is listening. Generous on purpose: a cold start from a
 ## downloaded zip on a slow disk is the case that matters, and the cost of being wrong here is a
 ## sentence a player can retry rather than a wrong world.
@@ -77,7 +88,22 @@ const EXEC_OWNER := FileAccess.UNIX_EXECUTE_OWNER
 ## ground. Nowhere else: a missing file is still missing and a relay that died will die again.
 const SOLO_AGAIN := "Press Play solo again to try once more."
 
+## **WHAT TO DO ABOUT A FILE macOS WOULD NOT RUN, and it is only offered where it is true.** A zip
+## downloaded with a browser carries a quarantine flag on every file in it; approving the app through
+## right-click → Open approves THE APP and leaves its sibling `sim-relay` blocked, which is this exact
+## undiagnosable failure (Maren found our own README teaching it, #158). One command clears the whole
+## folder, and it is the command the README beside the app now gives.
+##
+## NOT OFFERED ON WINDOWS OR LINUX, where there is no such flag and this would be noise in the one
+## sentence a stranger reads.
+const CLEAR_QUARANTINE := ("On macOS this is usually the download quarantine: open Terminal in the "
+		+ "folder you unzipped and run `xattr -dr com.apple.quarantine .`")
+
 var pid := -1
+## **DID THE RELAY EVER SAY IT RAN** (ASSA-120 box 4). Set by `poll` the moment a `RELAY STARTED`
+## line comes out of the pipe, and never cleared: a relay that said it and then died is a different
+## report from one that never said it.
+var said_it_ran := false
 ## `127.0.0.1:PORT` once the relay has said so, and "" until then.
 var address := ""
 ## WHICH refusal, as a sentence for the join screen. Empty while nothing has gone wrong.
@@ -247,6 +273,12 @@ func poll() -> bool:
 	# liveness first would throw that away for no reason.
 	while _stdio != null and _stdio.get_length() > _stdio.get_position():
 		var line := _stdio.get_line()
+		if line.begins_with(STARTED):
+			# READ, NOT PARSED. Whether the line was said is the whole question; its fields are the
+			# relay's business. Recorded before the `LISTENING` branch can return, because a relay
+			# fast enough to print both between two polls must still be seen to have printed this.
+			said_it_ran = true
+			continue
 		if line.begins_with(LISTENING):
 			address = line.substr(LISTENING.length()).strip_edges()
 			return true
@@ -275,15 +307,32 @@ func poll() -> bool:
 		# The two causes that ARE facts are read before the spawn instead (`binary == ""` and
 		# `is_runnable`), and the sentence below says only what was observed.
 		#
-		# WHAT WOULD MAKE IT PROVABLE, and it is one line in a file I do not own: if `sim-relay`
-		# printed a marker as its FIRST action -- the way it prints `LISTENING` as its last -- then a
-		# child that died without it never reached the relay's own code, and "the system would not run
-		# it" would be a fact rather than a reading. Filed for Marlow rather than guessed at here.
+		# **THE RELAY'S OWN FIRST LINE IS THE FACT THAT WAS MISSING** (ASSA-120, landed in #167). It
+		# is printed before argument parsing, before the save is opened and before the socket is
+		# bound, so a child that exited WITHOUT it never reached that crate's code at all. That is not
+		# a reading of an engine string: it is the absence of a line this build's relay always says
+		# first. The two deaths are finally two observations.
+		if not said_it_ran:
+			# **IT NEVER RAN.** What was observed first -- it did not get as far as its own first line
+			# -- and only then a likely cause, as "usually" and never "because". The one case this
+			# cannot distinguish is a `sim-relay` from a build older than #167 sitting beside a newer
+			# client, which would not know to print the line. A zip ships both together, so that takes
+			# someone mixing two downloads by hand -- and hedging the cause is what keeps that person
+			# from being told something false. Maren's rule: a confident wrong diagnosis on a player
+			# who hit a real bug is worse than a vague true one.
+			failure = "%s: %s did not run -- it never got as far as its own first line." % [
+					CANNOT, _binary.get_file() if _binary != "" else "the world host"]
+			if OS.get_name() == "macOS":
+				failure += " " + CLEAR_QUARANTINE
+			failure += " " + JOIN_INSTEAD
+			return false
+		# IT RAN AND THEN DIED: a different report, and the sentence it already had.
 		# THE OPEN DOOR COMES BEFORE THE QUOTE, not after it (Maren): the relay's last words are a
 		# figure for a bug report, and a paragraph of them between the problem and what to do about
 		# it buries the only clause a stranger acts on. Retry is NOT offered here -- a relay that
 		# died on its own will die the same way on a second press.
-		failure = "%s: it stopped before it was ready to join. %s" % [CANNOT, JOIN_INSTEAD]
+		failure = "%s: it started and then stopped before it was ready to join. %s" % [
+				CANNOT, JOIN_INSTEAD]
 		if said != "":
 			failure += " It said: %s" % said
 		return false

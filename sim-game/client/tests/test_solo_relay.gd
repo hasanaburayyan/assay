@@ -60,7 +60,24 @@ func _check_shape(what: String, line: String, door: String) -> bool:
 ## `/bin/sleep 30 --bind 127.0.0.1 --port 0` is a usage error, not a silent process, so the first
 ## version of this test measured a stand-in refusing arguments rather than the case it was named
 ## after. A shell takes the extra arguments as positional parameters and ignores them.
+## A command that SAYS IT RAN, the way the relay does, and then dies.
+##
+## **THE `echo` IS NOT DECORATION, IT IS WHICH DEATH THIS IS** (ASSA-120). Since #167 the relay's
+## first statement is `RELAY STARTED ...`, and `solo_relay.gd` now tells "it never ran" from "it ran
+## and died" by whether that line arrived. A bare `exit 1` is a process that really ran and said
+## nothing -- which is exactly the shape of a file the system refused to execute, and is now reported
+## as one. So a stand-in for "the relay died" has to say the relay's own first line, or it is a
+## stand-in for the other case. The bare version is still used, under its own name, below.
 func _dies_at_once() -> Array:
+	var said := "RELAY STARTED protocol 9 rules deadbeef"
+	if OS.get_name() == "Windows":
+		return ["C:/Windows/System32/cmd.exe",
+				PackedStringArray(["/c", "echo %s& exit 1" % said])]
+	return ["/bin/sh", PackedStringArray(["-c", "echo '%s'; exit 1" % said])]
+
+
+## A command that dies having said NOTHING AT ALL -- the picture a refused exec leaves.
+func _never_speaks_and_dies() -> Array:
 	if OS.get_name() == "Windows":
 		return ["C:/Windows/System32/cmd.exe", PackedStringArray(["/c", "exit 1"])]
 	return ["/bin/sh", PackedStringArray(["-c", "exit 1"])]
@@ -160,6 +177,11 @@ func test_a_relay_that_dies_at_once_is_reported_and_not_waited_for() -> bool:
 			ok = _fail("waited %dms for a dead relay and nothing was ever reported" % waited)
 		elif not solo.failure.contains("stopped"):
 			ok = _fail("the sentence does not say it stopped: %s" % solo.failure)
+		# AND IT MUST NOT BE THE OTHER REPORT. This stand-in printed the relay's first line, so
+		# claiming it never ran would be the confident wrong diagnosis ASSA-120 exists to prevent.
+		elif solo.failure.contains("did not run"):
+			ok = _fail("a relay that said it had started is reported as never having run: %s"
+					% solo.failure)
 		else:
 			# JOIN A HOST, NOT RETRY: nothing killed this process, it died on its own, and it will
 			# die the same way on a second press.
@@ -351,4 +373,80 @@ func test_the_solo_save_is_in_the_user_data_directory() -> bool:
 		ok = _fail("the solo save is inside the app bundle: %s" % dir)
 	elif dir == OS.get_user_data_dir():
 		ok = _fail("the solo save shares the user data dir root rather than a folder of its own")
+	return ok
+
+
+## **A CHILD THAT DIED WITHOUT SAYING IT RAN IS REPORTED AS A FILE THAT DID NOT RUN** (ASSA-120 box
+## 4, now that #167 makes it a fact rather than a reading).
+##
+## WHY THIS WAS NOT POSSIBLE BEFORE. `OS.execute_with_pipe` hands back a live pid for a missing path,
+## for a non-executable file and for a healthy relay alike, and the debris a dead child leaves is not
+## a signal: measured on this machine, Godot's own `Could not create child process` appeared 3 of 10
+## attempts and 0 of the next 9, from a mono build CI does not ship, and `/bin/sh -c "exit 1"` -- a
+## process that really ran -- leaves exactly as much behind. So the client said only "it stopped" for
+## both, and ASSA-106's version, which did claim a cause, was a coin flip I got away with once.
+##
+## THE RELAY'S FIRST LINE IS PRINTED BEFORE ARGUMENT PARSING, THE SAVE AND THE SOCKET, so its absence
+## is the fact. The pair of tests is the whole claim: this one dies silent and must be told it never
+## ran; `test_a_relay_that_dies_at_once...` says the line first and must NOT be.
+func test_a_child_that_never_said_it_started_is_reported_as_never_having_run() -> bool:
+	var solo := AssaySoloRelay.new()
+	var ok := true
+	var stand_in: Array = _never_speaks_and_dies()
+	if not solo.start(String(stand_in[0]), stand_in[1], 2000):
+		ok = _fail("could not even start the stand-in: %s" % solo.failure)
+	else:
+		var waited := 0
+		while waited < 4000:
+			if solo.poll() or solo.failure != "":
+				break
+			OS.delay_msec(20)
+			waited += 20
+		if solo.address != "":
+			ok = _fail("a process that printed nothing was reported as listening")
+		elif solo.failure == "":
+			ok = _fail("waited %dms for a silent dead child and nothing was reported" % waited)
+		elif not solo.failure.contains("did not run"):
+			ok = _fail("the sentence does not say it never ran: %s" % solo.failure)
+		# THE BINARY IS NAMED BY ITS FILE NAME, which is the thing in the folder the player unzipped.
+		elif not solo.failure.contains("sh"):
+			ok = _fail("the sentence does not name what did not run: %s" % solo.failure)
+		# **THE CAUSE IS OFFERED WHERE IT IS TRUE AND NOWHERE ELSE.** A Windows or Linux player told
+		# about `xattr` is being sent to a command that does not exist on their machine.
+		elif OS.get_name() == "macOS" and not solo.failure.contains("quarantine"):
+			ok = _fail("macOS and no quarantine clause: %s" % solo.failure)
+		elif OS.get_name() != "macOS" and solo.failure.contains("quarantine"):
+			ok = _fail("%s and a macOS-only clause: %s" % [OS.get_name(), solo.failure])
+		else:
+			ok = _check_shape("a child that never ran", solo.failure, AssaySoloRelay.JOIN_INSTEAD)
+	solo.stop()
+	return ok
+
+
+## **`said_it_ran` IS SET BY THE LINE AND NOT BY THE PROCESS SURVIVING.** The flag is the whole
+## mechanism, and a version that set it on any output at all -- or on the `LISTENING` line, which
+## arrives later -- would pass the pair above and still be wrong about a relay that printed prose and
+## died. So this drives a child that prints a line of the relay's OWN prose and nothing else.
+func test_prose_is_not_mistaken_for_the_relay_saying_it_started() -> bool:
+	if OS.get_name() == "Windows":
+		return true  # `echo` is a shell builtin there; the pair above covers the rule.
+	var solo := AssaySoloRelay.new()
+	var ok := true
+	# THE RELAY'S REAL PROSE, which used to be the first thing it printed. A reader keyed on "some
+	# output arrived" cannot tell this from the contract line.
+	if not solo.start("/bin/sh", PackedStringArray(["-c",
+			"echo 'Hosting world 14247 at tick 1 on port 7777'; exit 1"]), 2000):
+		ok = _fail("could not start the stand-in: %s" % solo.failure)
+	else:
+		var waited := 0
+		while waited < 4000:
+			if solo.poll() or solo.failure != "":
+				break
+			OS.delay_msec(20)
+			waited += 20
+		if solo.said_it_ran:
+			ok = _fail("a line of prose was taken for the relay's first line")
+		elif not solo.failure.contains("did not run"):
+			ok = _fail("prose and no marker should still be `did not run`: %s" % solo.failure)
+	solo.stop()
 	return ok
