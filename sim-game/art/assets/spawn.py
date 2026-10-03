@@ -26,7 +26,17 @@ for i in range(4):  # corner beacons
     x, y = 1.15 * math.cos(a), 1.15 * math.sin(a)
     r.cyl(0.12, 0.22, (x, y, 0.21), steel, bev=0.02, verts=16)
     lamps.append(r.cyl(0.08, 0.06, (x, y, 0.34), rig.lamp("cyan"), bev=0, verts=16))
-off = mat("iron_dk")
+# THE UNLIT BEACON, AND THIS FILE COULD NOT RENDER AT ALL UNTIL IT WAS FIXED.
+# It asked for `iron_dk`, a palette entry deleted in bc6d880 when the art went
+# species-neutral -- so `mat()` fell through to its hex path, tried to parse
+# "iron_dk" as a colour and died. `spawn.png` has been shipping out of a stale
+# `art/out/` ever since, which is the exact hazard CLAUDE.md warns about: a
+# `--pack` repacks whatever your machine last rendered. Nothing in CI asked
+# whether the sheets could still be MADE (ASSA-115, found by re-rendering).
+#
+# No new palette name, and never a mineral one again (ADR 0001): a dead lens
+# is its own colour gone dark, so it is mixed from the lamp it stops being.
+off = mat(rig.mix_hex("cyan", "gun", 0.78))
 
 asset = rig.Asset("spawn", out, (3, 3), headroom=0.25)
 asset.anim("blink", FRAMES, 4)
