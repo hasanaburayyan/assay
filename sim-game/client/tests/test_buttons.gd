@@ -807,7 +807,7 @@ func test_a_refused_press_reaches_the_status_line_while_the_log_is_hidden() -> b
 	mine.pressed.emit()
 	_tick(screen, 2)
 	var said: String = screen._status.text
-	var log_text: String = screen._log.text
+	var log_text := _text_of(screen._log)
 	if said == joined_said:
 		ok = _fail(("the sim refused a press and the always-visible line still reads '%s'. With the "
 				+ "log hidden the player is told nothing at all.") % said)
@@ -846,13 +846,13 @@ func test_walking_does_not_shout_on_the_always_visible_line() -> bool:
 	var screen := _joined()
 	_tick(screen, 2)
 	var ok := true
-	var before: String = screen._log.text
+	var before := _text_of(screen._log)
 	_click(screen, screen._my_tile() + Vector2i(2, 0), MOUSE_BUTTON_LEFT)
 	var samples := PackedStringArray()
 	for _i in range(20):
 		_tick(screen, 1)
 		samples.append(screen._status.text)
-	var log_text: String = screen._log.text
+	var log_text := _text_of(screen._log)
 	if log_text == before or log_text.strip_edges() == "":
 		ok = _fail("the walk produced no event lines, so this proves nothing about what is loud")
 	else:
@@ -1145,10 +1145,11 @@ func test_no_menu_button_label_carries_what_the_row_makes() -> bool:
 	if ok:
 		var labels := {}
 		for row in screen._make.get_children():
-			for child in row.get_children():
-				for button in child.get_children():
-					if button is Button:
-						labels[(button as Button).text] = true
+			# AT ANY DEPTH, for the reason in `test_species_panel.gd`: this walked exactly two
+			# levels, and ASSA-117 put the verb row one level further down inside the row's body.
+			# Two nested loops over `get_children` is a shape assertion wearing a property's clothes.
+			for button in row.find_children("*", "Button", true, false):
+				labels[(button as Button).text] = true
 		if labels.size() == 0:
 			ok = _fail("the menu has no buttons at all: %s" % _text_of(screen._make))
 		elif labels.size() > 1:

@@ -292,6 +292,16 @@ static func nothing_carried_line() -> String:
 	return "carrying nothing"
 
 
+## What the event log says before the world has said anything (ASSA-117). A blank section reads as a
+## game with nothing to say, which is not the same news as a world that has not spoken yet -- the
+## same distinction `halted_table` makes between "nothing has stopped" and "you have built nothing".
+##
+## THIS IS NOT ONE OF THE SIM'S SENTENCES AND IT IS NOT DESCRIBING AN EVENT. It is what the section
+## says in the absence of events, so there is no wording of the sim's for it to be a second copy of.
+static func quiet_log_line() -> String:
+	return "nothing has happened yet"
+
+
 ## EVERY VERB A STACK AFFORDS, as descriptors for the row's buttons: `{label, verb, ...}`.
 ##
 ## **WHAT YOU HAVE AND WHERE IT CAN GO -- NEVER WHAT IT MAKES** (ASSA-86, Maren's ruling). A row
@@ -499,6 +509,31 @@ static func trimmed_log(lines: PackedStringArray, limit: int) -> PackedStringArr
 	if limit <= 0 or lines.size() <= limit:
 		return lines
 	return lines.slice(lines.size() - limit)
+
+
+## HOW OLD A LOG LINE LOOKS (ASSA-117). `age` 0 is the newest line and gets `ink`; the oldest gets
+## `muted`; everything between is on the straight line from one to the other.
+##
+## THE TWO INKS ARE ARGUMENTS AND THAT IS THE POINT. There is no colour written down here, because
+## Maren's corrected ruling 3 on ASSA-116 is that the client stops holding `Color` literals -- she
+## counted 21 of them. The caller reads these out of the theme that is actually in force
+## (`get_theme_color`), so a palette change in `tools/build_theme.gd` moves this ramp with it and a
+## comment claiming they are "derived" is not the thing holding it true.
+##
+## AND IT IS WHY "NO LINE IS UNREADABLE" IS PROVABLE RATHER THAN EYEBALLED. Relative luminance is
+## monotonic in each channel, so every colour on the segment between two inks has a luminance between
+## theirs -- and therefore a contrast ratio against a DARKER panel between theirs. `build_theme.gd`
+## already refuses to write a theme whose `INK` or `INK_MUTED` misses WCAG AA on its own surface. So
+## if the endpoints pass, every step passes, for any ramp length. `test_hud.gd` asserts that against
+## the shipped `theme/assay.tres` rather than against the numbers I happen to have read today.
+##
+## ONE LINE IS THE NEWEST LINE. A ramp over a single entry has no oldest end to reach, and dividing
+## by `count - 1` there is a division by zero that GDScript answers with `inf` rather than a crash --
+## so the one-line case is answered first and explicitly.
+static func log_line_color(age: int, count: int, ink: Color, muted: Color) -> Color:
+	if count <= 1 or age <= 0:
+		return ink
+	return ink.lerp(muted, clampf(float(age) / float(count - 1), 0.0, 1.0))
 
 
 ## A SPAN THE SIM GAVE US, as words: "26-50" while a species reads rough, "38" once it is assayed.
