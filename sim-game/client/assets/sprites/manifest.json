@@ -109,6 +109,22 @@
    {
     "name": "smelter",
     "frames": 1
+   },
+   {
+    "name": "handle",
+    "frames": 1
+   },
+   {
+    "name": "head",
+    "frames": 1
+   },
+   {
+    "name": "frame",
+    "frames": 1
+   },
+   {
+    "name": "hopper",
+    "frames": 1
    }
   ],
   "animations": {},
