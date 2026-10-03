@@ -72,9 +72,9 @@ def build(g):
     return r
 
 
-asset = rig.Asset("head", out, rig.PART_TILES, headroom=rig.PART_HEADROOM)
+asset = rig.part_asset("head", out)
 for g, name in enumerate(rig.GRADES):
     r = build(g)
-    r.frame(rig.PART_TILES[0], rig.PART_TILES[1], headroom=rig.PART_HEADROOM)
+    r.part_window()
     r.render(asset.path(name)); asset.add(name, 1)
 asset.write()

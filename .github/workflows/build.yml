@@ -134,6 +134,24 @@ jobs:
       # constant that ships is a copy, and copies rot. Stdlib only, ~0.1s.
       - name: The part-layout contract matches its module
         run: python3 art/check_part_contract.py
+      # A PART FITS INSIDE THE FRAME IT IS RENDERED IN, ON ALL FOUR SIDES (ASSA-104).
+      # rig.py's rule 4 treated exactly this as a defect on the VERTICAL axis -- the
+      # hopper's mouth was once clipped flat against row 0 -- and the horizontal axis
+      # had no equivalent, so handle and frame ran 2 px off their west edge with no ink
+      # rim for as long as nobody measured it. A body pixel ON the boundary means the
+      # rim that closes that side was never rendered, which is why "touches the edge"
+      # is the whole rule and nothing here tries to detect a rim.
+      #
+      # The margin is deliberately ONE pixel (Maren's ruling, rule 4b): the fix moves
+      # the camera window 3 px, not the frame size, because widening a part frame would
+      # shrink the pack icon on the one surface where a part reaches a player. So this
+      # check is expected to be TIGHT. If a future shape eats that pixel it goes red and
+      # somebody looks, which is the check working rather than a bound to pad.
+      #
+      # Proved red before it was trusted green: it fails on the pre-fix sheets with
+      # "handle CUT west 19 px / frame CUT west 58 px" per grade row. Stdlib only.
+      - name: A part fits inside its own frame
+        run: python3 art/check_part_frame_fit.py
       # The client's own GDScript suite gates the bundles below. Editor only:
       # running tests needs no export templates, which is the ~1 GB download.
       - name: Godot (editor only)

@@ -155,6 +155,30 @@ from part_layout import PART_REPEAT_OFFSET  # noqa: F401  (rule 5, see that file
 #    spare. A per-asset headroom would have hidden that as four frames of
 #    different heights that silently refuse to compose.
 #
+#    4b. AND ONE WINDOW POSITION INSIDE IT (ASSA-104). Rule 4 guarded the
+#    vertical axis only, and the horizontal axis had the same defect for as
+#    long as nobody measured it: handle and frame ran 2 px off the WEST edge,
+#    so the ink rim that closes that side was never rendered. The fix is NOT
+#    more room -- `headroom` widens `frame_px`, and widening a part frame
+#    shrinks the pack icon (it fits by width: 0.25 -> 0.2353 drops a part icon
+#    from 32x25.5 to 32x24.0, on the one surface where a part reaches a
+#    player). It is the SAME frame, looking 3 px further west, so the subject
+#    lands 3 px east of where it did and the cut becomes a 1 px margin.
+#
+#    THE SHIFT IS THE WHOLE SET'S OR IT IS A BUG. Parts assemble by being
+#    overlaid, so three parts shifted and one not would be a machine that
+#    comes apart by 3 px. That is why `part_window()` and `part_asset()` exist
+#    below and why no asset script is trusted to pass the offset itself.
+#    Because every part translates by the same amount, the RELATIVE placement
+#    ASSA-101 measures is untouched: head still sits right of the join and the
+#    rest left, and IoU between two masks that both translate is unchanged.
+#    Maren measured that before approving it (largest delta 0.029, every one
+#    toward MORE separation); ASSA-111's check is the standing guard on it.
+#
+#    1 PX OF WEST MARGIN IS THE DESIGN, not an oversight to pad later
+#    (Maren's ruling): if a future shape eats that pixel,
+#    `art/check_part_frame_fit.py` goes red and somebody looks.
+#
 # 6. ORE OWNS SATURATION (Maren, ruling 3 on ASSA-20). Ore is the only fully
 #    saturated thing in Assay. Ground, buildings, parts, items and UI chrome
 #    all stay UNDER the quietest ore surface a player can see -- not under
@@ -186,6 +210,11 @@ LYING = (0, math.pi / 2, 0)
 PART_TILES = (2, 1)
 PART_AXIS = 0.28
 PART_HEADROOM = 0.6
+# How far EAST every part sits inside its unchanged frame (rule 4b). 3, because the
+# measured overhang is 2 px (ASSA-104, from a wider re-render -- a cut sprite cannot
+# report its own extent) and the rim needs the third. In authoring px, so it is a
+# whole number of subpixels at SS and the downscale cannot smear it.
+PART_SHIFT_PX = 3
 
 
 def srgb(h):
@@ -499,6 +528,18 @@ class Rig:
         cam.rotation_euler = (TILT, 0, 0)
         return res_x, res_y
 
+    def part_window(self):
+        """EVERY part's camera window, so rule 4b cannot land on three parts of four.
+
+        The frame is `PART_TILES` + `PART_HEADROOM`, exactly as before; only the centre
+        moves, `PART_SHIFT_PX` WEST, which puts the subject that many px EAST inside the
+        same rectangle. An asset script calls this instead of `frame()` and therefore
+        cannot forget the offset or pick its own -- which would be a machine that comes
+        apart by 3 px, and nothing in the pipeline would say so.
+        """
+        return self.frame(PART_TILES[0], PART_TILES[1], headroom=PART_HEADROOM,
+                          center=(-PART_SHIFT_PX / TILE_PX, 0))
+
     def render(self, path, transparent=True):
         sc = self.scene
         sc.render.film_transparent = transparent
@@ -518,13 +559,16 @@ class Asset:
     footprint's top-left tile corner sits in the frame, in authoring px.
     """
 
-    def __init__(self, name, out_root, tiles, headroom=0.0):
+    def __init__(self, name, out_root, tiles, headroom=0.0, anchor_x=0):
         self.name = name
         self.dir = os.path.join(out_root, name)
         os.makedirs(self.dir, exist_ok=True)
         self.tiles = list(tiles)
         self.frame_px = [int(tiles[0] * TILE_PX), int(round((tiles[1] + headroom) * TILE_PX))]
-        self.anchor = [0, int(round(headroom * TILE_PX))]
+        # `anchor_x` moves with the camera window, never on its own: if the window looks
+        # PART_SHIFT_PX west, the footprint's corner sits that many px east in the frame.
+        # Letting these two disagree would draw every machine off its tile (rule 4b).
+        self.anchor = [int(anchor_x), int(round(headroom * TILE_PX))]
         self.rows = []
         self.animations = {}
 
@@ -547,3 +591,13 @@ def args():
     """(out_root) from the command line after `--`."""
     import sys
     return sys.argv[sys.argv.index("--") + 1]
+
+
+def part_asset(name, out_root):
+    """EVERY part's Asset (rule 4b). One frame rectangle, one anchor, for the whole set.
+
+    `art/assemble.py` asserts that all parts share one frame size AND one anchor, because
+    overlaying is how a machine is assembled. This is the single place that decides both,
+    so that assertion can never be satisfied by three parts agreeing and one drifting.
+    """
+    return Asset(name, out_root, PART_TILES, headroom=PART_HEADROOM, anchor_x=PART_SHIFT_PX)
