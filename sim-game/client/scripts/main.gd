@@ -54,9 +54,24 @@ var _log_heading: Label = null
 ## that passes by construction, which is the failure I keep writing down. At `true` the default-state
 ## assertion can only pass if the call actually happened.
 var _log_shown := true
-## The running-craft countdown inside the `do` section. Held because its text changes every tick while
-## the section around it must not be rebuilt; remade whenever that section is (ASSA-49).
+## The running-craft countdown. Held because its text changes every tick while the section around it
+## must not be rebuilt (ASSA-49).
+##
+## IT MOVED TO THE HEAD OF THE CRAFTING MENU AND OUT OF ANY SECTION THAT CAN BE REBUILT OR HIDDEN
+## (ASSA-88, Maren's ruling). It used to be made inside `_refresh_actions`, which put the one sentence
+## that explains an eight-second silence in the `do` section, competing with Mine and Assay -- and
+## nowhere near the button that started the craft. A craft is a CONDITION, not a moment, so this line
+## is a sibling of the menu's toggle rather than a child of the menu: collapsing the menu cannot take
+## it away.
 var _crafting: Label = null
+## THE CRAFTING MENU (ASSA-88): the home of every make-verb. One row per recipe and part the sim says
+## this player could make from what they carry, in the sim's order, each row the sim's own sentence.
+var _make := VBoxContainer.new()
+var _make_toggle := Button.new()
+## INITIALISED TO THE WRONG ANSWER, same as `_log_shown` and for the same reason: `_build_ui` calls
+## `_show_make(true)`, and starting this at `true` would make "the menu is open on first join" pass
+## before any code ran. The board asked for a crafting menu, so unlike the log this one starts OPEN.
+var _make_shown := false
 ## THE PART MENU'S HOME: one headline label plus one body label per design, rebuilt only when the
 ## list changes. Not a Label like the others, because the verdict is a WORD IN ITS OWN COLOUR above
 ## numbers in another (Maren's ruling) and one Label can only be one colour.
@@ -81,6 +96,11 @@ var _species_showing := UNBUILT
 ## The pack row's sentence, by name. Everything that re-texts or reads a row finds it with this rather
 ## than by child index, because the row's shape now depends on whether the item has art.
 const STACK_LINE := "StackLine"
+
+## The crafting menu row's sentence, by name for the same reason `STACK_LINE` is: the fast path
+## re-texts it ten times a second because it carries a count, and finding it by child index would
+## break the first time a row grows a second line -- which it already does, for a dead end.
+const MAKE_LINE := "MakeLine"
 
 ## The species row's name-and-state label, by name for the same reason `STACK_LINE` is: tests and
 ## probes find it without counting children, and the row's shape is free to change.
@@ -116,6 +136,7 @@ const ICON_BOX_PX := Vector2(ICON_PX, 48.0)
 const UNBUILT := "nothing built yet"
 var _bench_showing := UNBUILT
 var _pack_showing := UNBUILT
+var _make_showing := UNBUILT
 var _actions_showing := UNBUILT
 ## THE TILE EVERY PLACEMENT LANDS ON. `_targeted` false means "where you stand", which is not a
 ## placeholder: your own tile is the one tile every player has, and planting beside yourself is the
@@ -250,6 +271,27 @@ func _build_ui() -> void:
 	column.custom_minimum_size = Vector2(PANEL, 0.0)
 	column.add_theme_constant_override("separation", 10)
 	scroll.add_child(column)
+	# THE CRAFTING MENU IS THE FIRST SECTION, and it is built by hand rather than by the loop below
+	# because it is the only section with three parts in a fixed order: the heading, the running
+	# craft, the toggle, then the rows (ASSA-88).
+	#
+	# FIRST, FOR THE RUNNING CRAFT'S SAKE. Maren ruled the craft line sits at the head of this menu
+	# and is visible whatever the menu's open state; the menu being the top section means that line
+	# is also the one the scroll box is least likely to have carried off the bottom of the window.
+	# That is as far as placement can go without a second always-visible surface, which the status
+	# line already is and already has a job (refusals).
+	var make_heading := Label.new()
+	make_heading.text = "make"
+	make_heading.modulate = Color(0.60, 0.64, 0.70)
+	column.add_child(make_heading)
+	_crafting = _note("")
+	column.add_child(_crafting)
+	_make_toggle.custom_minimum_size = Vector2(PANEL, 0.0)
+	_make_toggle.add_theme_font_size_override("font_size", 12)
+	_make_toggle.pressed.connect(func(): _show_make(not _make_shown))
+	column.add_child(_make_toggle)
+	_make.custom_minimum_size = Vector2(PANEL, 0.0)
+	column.add_child(_make)
 	for part in [["you", _carrying], ["do", _actions], ["bench", _bench], ["rocks", _species],
 			["cursor", _cursor], ["last tick", _log]]:
 		var heading := Label.new()
@@ -267,6 +309,10 @@ func _build_ui() -> void:
 		column.add_child(body)
 	# HIDDEN ON FIRST OPEN, and this is the line the whole item is about.
 	_show_log(false)
+	# AND THE CRAFTING MENU IS OPEN ON FIRST JOIN, which is the opposite call for the opposite
+	# reason: the board asked for a crafting menu, and a menu nobody finds is the clunk restated.
+	_show_make(true)
+	_refresh_make()
 	_refresh_pack()
 	_refresh_actions()
 	_refresh_bench()
@@ -295,14 +341,32 @@ func _show_log(shown: bool) -> void:
 	_log_toggle.text = "hide the event log (L)" if shown else "show the event log (L)"
 
 
-## L SHOWS AND HIDES THE LOG. `_unhandled_key_input` and not `_input`, so a focused `LineEdit` eats
-## the key first: typing "localhost" into the host field must not toggle a panel on the `l`.
+## SHOW OR HIDE THE CRAFTING MENU'S ROWS (ASSA-88).
+##
+## THE ROWS ONLY, NEVER THE RUNNING CRAFT. Maren's clause from ASSA-89 applies here as she said:
+## a craft is a CONDITION, not a moment, so a line a closed menu could hide would not discharge it.
+## `_crafting` is a sibling of this container in the column, not a child, which is what makes that
+## true structurally rather than by me remembering it here.
+##
+## THE HEADING STAYS TOO, unlike the log's. "make" over a one-line craft countdown and a control that
+## says what it will show is not a labelled empty gap; "last tick" over nothing was.
+func _show_make(shown: bool) -> void:
+	_make_shown = shown
+	_make.visible = shown
+	_make_toggle.text = AssayHud.make_toggle_text(shown)
+
+
+## L SHOWS AND HIDES THE LOG, M THE CRAFTING MENU. `_unhandled_key_input` and not `_input`, so a
+## focused `LineEdit` eats the key first: typing "localhost" into the host field must not toggle a
+## panel on the `l`, and a name with an `m` in it must not fold the menu away.
 func _unhandled_key_input(event: InputEvent) -> void:
 	var key := event as InputEventKey
 	if key == null or not key.pressed or key.echo:
 		return
 	if key.keycode == KEY_L:
 		_show_log(not _log_shown)
+	elif key.keycode == KEY_M:
+		_show_make(not _make_shown)
 
 
 func _on_join() -> void:
@@ -410,6 +474,7 @@ func _refresh() -> void:
 			+ "%d bundles applied, %d hashes reported") % [
 			_sim.seed_text(), size.x, size.y, _sim.species_names().size(), _sim.players().size(),
 			_sim.tick(), _sim.hash_hex(), _sim.applied, _hashes_sent]
+	_refresh_make()
 	_refresh_pack()
 	_refresh_actions()
 	_refresh_bench()
@@ -594,6 +659,106 @@ func _design_button(descriptor: Dictionary, design: Dictionary) -> Button:
 		_:
 			return _button(label, func() -> void: _say(
 					"no command for %s" % label, AssayHud.Say.FAILED))
+
+
+## THE CRAFTING MENU'S ROWS (ASSA-88). One per recipe and part the sim says this player could make
+## from what they carry, in the sim's own order, each row the sim's own sentence.
+##
+## THE CLIENT FILTERS NOTHING AND SORTS NOTHING. `make_offers` is the whole answer: which rows there
+## are, what order they come in, and what each one says. A row that makes nothing arrives too (`sort`
+## on grade A) and is shown, because absence is never a cue -- the player holding grade A ore is
+## exactly the one wondering why they cannot refine it.
+##
+## SAME SIGNATURE RULE AS THE PACK, and the fast path matters MORE here: every row's sentence carries
+## "of your N", which climbs every mining cycle. The shape is what a row IS (its catalogue row and its
+## material); the count is text, re-set every refresh without rebuilding a button under the pointer.
+func _refresh_make() -> void:
+	var offers := _sim.make_offers(_client.player_id) if _client != null else []
+	var signature := _make_shape(offers)
+	if signature != _make_showing:
+		_make_showing = signature
+		_rebuild_make(offers)
+		return
+	for i in range(offers.size()):
+		var offer: Dictionary = offers[i]
+		var label := _make.get_child(i).find_child(MAKE_LINE, true, false) as Label
+		if label != null:
+			label.text = String(offer.get("line", ""))
+
+
+## What the menu LOOKS like: which catalogue row, made of which material. NOT the sentence, which
+## carries a count that climbs on its own, and not the player's count either.
+##
+## `JSON.stringify` on the tag because a recipe's tag is a bare string and a part's is a nested
+## dictionary (`{"Frame": "Held"}`), and only one of those can be glued into a string by hand.
+func _make_shape(offers: Array) -> String:
+	var shape := PackedStringArray()
+	for entry in offers:
+		var offer: Dictionary = entry
+		shape.append("%s/%s/%s/%d/%s" % [String(offer.get("verb", "?")),
+				JSON.stringify(offer.get("tag")), String(offer.get("kind", "?")),
+				int(offer.get("species", -1)), String(offer.get("grade", "?"))])
+	return "|".join(shape)
+
+
+func _rebuild_make(offers: Array) -> void:
+	_clear(_make)
+	if offers.is_empty():
+		_make.add_child(_note(AssayHud.nothing_to_make_line()))
+		return
+	for entry in offers:
+		var offer: Dictionary = entry
+		var row := VBoxContainer.new()
+		row.add_theme_constant_override("separation", 2)
+		# THE SENTENCE IS THE ROW, AND IT IS A LABEL RATHER THAN THE BUTTON'S TEXT. Not a style call:
+		# the engine reports a 320px-panel-busting MINIMUM for a Button holding this sentence --
+		# `Button.autowrap_mode` exists in 4.6 and does NOT lower `get_combined_minimum_size`, which
+		# I asked the engine rather than assuming (661px for the grade-A row). A row wider than the
+		# panel is clipped, because the column does not scroll sideways: ASSA-98 exactly.
+		var line := _note(String(offer.get("line", "")))
+		line.name = MAKE_LINE
+		line.modulate = Color(0.86, 0.88, 0.92)
+		row.add_child(line)
+		# ASSA-84'S CLAUSE, CARRIED AND NOT REWRITTEN (Maren's ruling here: a recipe row is a better
+		# home for it than a button tooltip). Still the sim's own sentence, still empty unless the sim
+		# says so, and still nothing in this client that names a gear.
+		var dead_end := String(offer.get("dead_end", ""))
+		if dead_end != "":
+			row.add_child(_note("— %s" % dead_end))
+		row.add_child(_verb_row([offer], func(descriptor: Dictionary) -> Button:
+				return _make_button(descriptor)))
+		_make.add_child(row)
+
+
+## ONE PRESS ON ONE OFFER. ONE WORD ON EVERY BUTTON (Maren's ruling): the bug she measured was two
+## buttons both labelled exactly `Craft smelter` making smelters with different walls, so a row's
+## identity lives in its sentence and never in its label.
+##
+## WHICH COMMAND IS THE SIM'S ANSWER TOO. `verb` comes from `MakeWhat` -- `Craft` and `MakePart` are
+## different commands with differently shaped payloads -- and the item is built by the same
+## `item_of_stack` the pack rows use, because the offer carries `kind`/`species`/`grade` spelled
+## exactly as `inventory_of` spells them.
+##
+## ONE BATCH, AND THE COUNT IS NEVER CAPTURED (ASSA-55). The sentence says how many you hold; what is
+## sent is 1, so there is no number in this closure that can go stale.
+func _make_button(offer: Dictionary) -> Button:
+	var what := String(offer.get("line", "?"))
+	var item := AssayActions.item_of_stack(offer)
+	match String(offer.get("verb", "")):
+		"craft":
+			var recipe: Variant = offer.get("tag")
+			return _button(AssayHud.make_button_text(), func() -> void: _act(what,
+					AssayActions.craft(recipe, item, 1)), "one batch: %s" % what)
+		"make":
+			var kind: Variant = offer.get("tag")
+			return _button(AssayHud.make_button_text(), func() -> void: _act(what,
+					AssayActions.make_part(kind, item, 1)), "one part: %s" % what)
+		_:
+			# A VERB THIS CLIENT DOES NOT KNOW IS NAMED, NOT GUESSED AT. The day the sim grows a third
+			# catalogue the menu says so rather than sending one of the two commands it does know.
+			return _button(AssayHud.make_button_text(), func() -> void: _say(
+					"this client has no command for %s" % String(offer.get("verb", "?")),
+					AssayHud.Say.FAILED))
 
 
 ## THE PACK, AS ROWS YOU CAN ACT ON. The words are `AssayHud.stack_line`'s and the verbs are
@@ -819,19 +984,10 @@ func _refresh_actions() -> void:
 			"study the deposit under you until its sheet reads exact instead of in bands"))
 	_actions.add_child(here)
 	_actions.add_child(_note(AssayHud.target_line(target, _targeted, facts)))
-	# A RUNNING CRAFT SAYS SO (ASSA-49, Maren's ruling), and the label is KEPT rather than rebuilt.
-	#
-	# Pressing Craft again while one runs refunds the current unit and starts over -- "latest command
-	# wins", the same as `MoveTo` and `Mine` -- and that rule is right. What was wrong is the silence:
-	# a person who presses a button and sees nothing presses it again and loses the work.
-	#
-	# WHY IT IS NOT IN THE SIGNATURE ABOVE. The ticks left change EVERY TICK, so folding the sentence
-	# into `signature` would rebuild this whole section ten times a second and destroy whatever button
-	# the pointer is over -- the exact cost the signature exists to avoid. So the line is made once
-	# here and its text is set in `_refresh`, which is how `_cursor` and `_log` already work. A
-	# countdown is the one thing on this panel that must change without anything being rebuilt.
-	_crafting = _note("")
-	_actions.add_child(_crafting)
+	# THE RUNNING CRAFT USED TO BE MADE HERE and is now made once in `_build_ui`, at the head of the
+	# crafting menu (ASSA-88, Maren's ruling). Rebuilding it with this section was always a liability
+	# as well as the wrong place: `_refresh_actions` runs whenever the target tile or the building
+	# under it changes, and every run replaced the node whose text `_refresh` sets.
 
 	if building != null:
 		var row := HBoxContainer.new()

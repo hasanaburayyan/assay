@@ -152,6 +152,18 @@ func inventory_of(player: int) -> Array:
 	return _sim.inventory_of(player) if _sim != null else []
 
 
+## THE CRAFTING MENU'S ROWS (ASSA-88): `line` (the sim's sentence), `dead_end`, `verb` (which
+## command, `craft` or `make`), `tag` (that catalogue's own wire tag) and the input stack's `kind`,
+## `species`, `grade`, `count` -- spelled exactly as `inventory_of` spells them, so one
+## `item_of_stack` serves both.
+##
+## ONE OFFER PER CATALOGUE ROW PER MATERIAL, IN THE SIM'S ORDER, AND THE CLIENT NEITHER FILTERS NOR
+## SORTS. The sentence names the OUTPUT item and its grade is a rule, not an echo of the input: `sort`
+## makes one grade better and makes nothing at all out of grade A.
+func make_offers(player: int) -> Array:
+	return _sim.make_offers(player) if _sim != null else []
+
+
 ## Everything on one tile: `in_bounds`, `pos`, `chunk`, `chunks_from_spawn`, `is_spawn`, `deposit`
 ## (null or a dictionary), `building` (null or a dictionary), `players_here`.
 ##
