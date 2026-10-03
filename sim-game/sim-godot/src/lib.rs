@@ -2869,13 +2869,13 @@ mod tests {
         );
         // A hopper on a handle: the fourth case the Game Director's run found.
         assert_eq!(
-            press_refusal_text(&[handle.clone()], &hopper),
+            press_refusal_text(std::slice::from_ref(&handle), &hopper),
             sim::debug::assembly_error_phrase(sim::AssemblyError::NoSuchSlot(PartKind::Hopper)),
         );
         // A handle first is merely unfinished, so the press is confirmed.
         assert_eq!(press_refusal_text(&[], &handle), "");
         // And a head on it completes a tool.
-        assert_eq!(press_refusal_text(&[handle], &head), "");
+        assert_eq!(press_refusal_text(std::slice::from_ref(&handle), &head), "");
     }
 
     /// A row that is not a part at all is answered by the sim's catalogue
