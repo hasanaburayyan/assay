@@ -1226,6 +1226,57 @@ fn slot(world: &World, stack: Option<ItemStack>) -> String {
     })
 }
 
+/// The small print under a design's verdict: the sim's own sentence, or
+/// nothing when the verdict is settled and good.
+///
+/// **ONE SENTENCE, TWO HOSTS** (Game Director's ruling on ASSA-90). The window
+/// used to compose its own, out of the raw `unassayed` list, and appended it
+/// **whenever that list was non-empty** — so a WILL BREAK design was offered an
+/// assay instead of being told it would break, and a SAFE one was handed a
+/// to-do. The two hosts said opposite things about one design.
+///
+/// **WHY THE ASSAY OFFER IS DEAD ON A SETTLED VERDICT, by construction and not
+/// by bench:** SAFE means the highest mass is under the lowest budget, and WILL
+/// BREAK means the lowest mass is over the highest budget — the two spans are
+/// **disjoint**. An assay collapses a band to a point *inside* itself, so it
+/// cannot cross a gap that is already open. Offering it there names an action
+/// that cannot move the thing it is named for.
+///
+/// Takes the roster rather than a `World`, so both hosts and a synthetic test
+/// ask the same question.
+pub fn verdict_note(species: &[MineralSpecies], a: &Assembly) -> Option<String> {
+    match a.stat_range(species).verdict() {
+        // A settled design is not a to-do.
+        BreakVerdict::Safe => None,
+        BreakVerdict::WillBreak => {
+            Some("this is over budget: it will break when planted or first used".to_string())
+        }
+        BreakVerdict::Uncertain => {
+            let mut rough: Vec<&str> = Vec::new();
+            for part in a.parts() {
+                let s = &species[usize::from(part.material.species.0)];
+                if !s.assayed && !rough.contains(&s.name()) {
+                    rough.push(s.name());
+                }
+            }
+            // **THE WINDOW'S WORDING WON** (her ruling): it names the material,
+            // and this is the only advertisement assaying gets. The reference
+            // client used to say "assay every species in it to know whether it
+            // will hold" — true, and it tells you nothing to do next.
+            //
+            // UNCERTAIN implies a rough species, because an all-exact design has
+            // low == high on both spans and they cannot overlap. This says what
+            // it can rather than panicking on a state it has not proved
+            // impossible; `assembly.rs` measures that the list is never empty.
+            if rough.is_empty() {
+                Some("assay the materials in it to know".to_string())
+            } else {
+                Some(format!("assay {} to know", rough.join(" and ")))
+            }
+        }
+    }
+}
+
 /// The parts a design is made of, as `handle(Korvite B 150) + head(Adaite A
 /// 26-50)`.
 ///
@@ -1549,16 +1600,11 @@ pub fn assembly_readout(world: &World, built: &Built) -> String {
         show(range.low.speed, range.high.speed),
         parts_summary(world, a)
     );
-    if range.verdict() != BreakVerdict::Safe {
-        let _ = write!(
-            out,
-            "\n      {}",
-            match range.verdict() {
-                BreakVerdict::WillBreak =>
-                    "this is over budget: it will break when planted or first used",
-                _ => "assay every species in it to know whether it will hold",
-            }
-        );
+    // ONE SENTENCE, TWO HOSTS (ASSA-90). This used to be an inline match that
+    // the Godot window had no access to, so the window wrote its own and got
+    // it wrong on two verdicts out of three.
+    if let Some(note) = verdict_note(&world.species, a) {
+        let _ = write!(out, "\n      {note}");
     }
     out
 }

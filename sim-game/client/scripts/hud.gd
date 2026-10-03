@@ -463,11 +463,19 @@ static func design_lines(design: Dictionary) -> PackedStringArray:
 	var mount := String(design.get("mount", "?"))
 	lines.append("%s · mass %s of %s budget" % [
 			"in hand" if bool(design.get("in_hand", false)) else mount, mass, budget])
-	# THE ONLY AD ASSAYING GETS. An UNCERTAIN design that could only say "assay something" would read
-	# as danger; naming the material turns the doubt into the next thing to do.
-	var unassayed := design.get("unassayed", PackedStringArray()) as PackedStringArray
-	if unassayed.size() > 0:
-		lines.append("assay %s to know" % " and ".join(unassayed))
+	# THE SMALL PRINT IS THE SIM'S SENTENCE, NOT ONE THIS FILE WRITES (ASSA-90). This used to compose
+	# "assay %s to know" from the raw `unassayed` list and append it WHENEVER THAT LIST WAS NON-EMPTY,
+	# which is a field printed because it is non-empty rather than because it means anything here:
+	# - on WILL BREAK it offered an assay instead of saying the design would break, and an assay
+	#   cannot move that verdict -- its mass and budget spans are already disjoint, and an assay only
+	#   collapses a band to a point inside itself;
+	# - on SAFE it handed a settled design a to-do.
+	# The sim now words all three (`sim::debug::verdict_note`) and the key is ABSENT on SAFE, so there
+	# is nothing here to get wrong. The ad assaying gets is still the one that names the material --
+	# that wording won and moved into the sim, it did not go away.
+	var note := String(design.get("note", ""))
+	if note != "":
+		lines.append(note)
 	# ABSENT, not blank: a planted machine has no durability key, because drill wear is parked and a
 	# number that never moves teaches a mechanic that does not exist.
 	# KEEPING THE "durability" LABEL, which Marlow offered to let me drop now that the sim's string

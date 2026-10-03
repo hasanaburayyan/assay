@@ -725,6 +725,12 @@ fn design_dict(design: &DesignFacts) -> VarDictionary {
     if let Some(durability) = &design.durability {
         out.set("durability", &gstring(durability).to_variant());
     }
+    // ABSENT on a SAFE design, for the same reason (ASSA-90): a settled design
+    // has no small print, and a key present-but-empty is how a panel ends up
+    // printing a blank line under a verdict that had nothing to say.
+    if let Some(note) = &design.note {
+        out.set("note", &gstring(note).to_variant());
+    }
     out
 }
 
@@ -974,6 +980,19 @@ pub struct DesignFacts {
     /// can only say "assay something", and 36.9% of the designs a player can
     /// build read UNCERTAIN (measured, 2000 worlds; ADR 0003 A8).
     pub unassayed: Vec<String>,
+    /// **THE SIM'S SMALL PRINT FOR THIS VERDICT**, or `None` when the verdict is
+    /// settled and good (ASSA-90). `sim::debug::verdict_note` writes it and the
+    /// reference client prints the same string; before this the window composed
+    /// its own from `unassayed` above and appended it whenever that list was
+    /// non-empty, which offered an assay on a WILL BREAK design — an action
+    /// that cannot move a verdict whose spans are already disjoint — and never
+    /// said the design would break at all.
+    ///
+    /// `unassayed` stays because it is what the sentence is derived FROM, and a
+    /// probe reads it. Whether the window should still be handed the raw list
+    /// now that the sentence exists is the Game Director's call, asked on the
+    /// item rather than decided here.
+    pub note: Option<String>,
     pub parts: Vec<PartFacts>,
 }
 
@@ -1278,6 +1297,7 @@ impl AssaySim {
                 Some(Mount::Held) => Some(sim::debug::durability_readout(&self.world, built)),
                 _ => None,
             },
+            note: sim::debug::verdict_note(&self.world.species, a),
             unassayed,
             parts: a
                 .parts()
@@ -1666,6 +1686,55 @@ mod tests {
         assert_eq!((designs[2].index, designs[2].in_hand), (1, false));
         assert_eq!(designs[0].mount, "held");
         assert_eq!(designs[1].mount, "planted");
+    }
+
+    /// **THE SMALL PRINT IS THE SIM'S SENTENCE, AND SAFE HAS NONE** (ASSA-90).
+    /// Asserted against `sim::debug::verdict_note` on every design rather than
+    /// against strings I expected, because the failure worth catching is this
+    /// crate growing a second wording — which is the defect the item was filed
+    /// for, one layer up in `hud.gd`.
+    #[test]
+    fn the_small_print_is_the_sims_sentence_and_a_safe_design_has_none() {
+        let (mut sim, me) = with_a_player("limpet");
+        let mut built = Vec::new();
+        for i in 0..sim.world().species.len() {
+            for grade in [sim::Grade::C, sim::Grade::A] {
+                built.push(design(&sim, Mount::Planted, &[i], grade));
+                built.push(design(&sim, Mount::Held, &[i], grade));
+            }
+        }
+        sim.world
+            .player_mut(me)
+            .expect("the player exists")
+            .assemblies = built.clone();
+
+        let designs = sim.design_facts(Some(me));
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for (facts, b) in designs.iter().zip(built.iter()) {
+            let want = sim::debug::verdict_note(&sim.world().species, &b.assembly);
+            assert_eq!(facts.note, want, "design {}: {facts:?}", facts.index);
+            seen.insert(facts.verdict.as_str());
+            match facts.verdict.as_str() {
+                "SAFE" => assert!(facts.note.is_none(), "{facts:?}"),
+                // The whole point: the verdict the window never announced.
+                "WILL BREAK" => {
+                    let note = facts.note.as_deref().unwrap_or("");
+                    assert!(note.contains("over budget"), "{facts:?}");
+                    assert!(
+                        !note.contains("assay"),
+                        "an assay cannot move a settled verdict: {facts:?}"
+                    );
+                }
+                "UNCERTAIN" => assert!(
+                    facts.note.as_deref().unwrap_or("").starts_with("assay "),
+                    "{facts:?}"
+                ),
+                other => panic!("the sim grew a fourth verdict: {other}"),
+            }
+        }
+        // Non-vacuity: a sweep that only ever met one verdict would prove
+        // nothing about the other two.
+        assert!(seen.len() >= 2, "only met {seen:?}");
     }
 
     /// THE VERDICT IS THE SIM'S WORD, NEVER THIS CRATE'S ARITHMETIC. Checked

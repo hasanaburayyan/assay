@@ -520,6 +520,11 @@ func _design() -> Dictionary:
 		# file was the last place in the repo still claiming a wording the sim had abandoned.
 		"mount": "held", "durability": "0 of 120-180 swings used",
 		"unassayed": PackedStringArray(["Korvite"]),
+		# THE SIM'S SMALL PRINT FOR THIS VERDICT (ASSA-90). Absent on a SAFE design, which is the
+		# case the tests below erase it to reach. `unassayed` is still here because it is what the
+		# sim derives the sentence FROM -- but nothing in the panel may read it now, and
+		# `test_the_small_print_is_only_ever_the_sims_own_sentence` is what holds that.
+		"note": "assay Korvite to know",
 		"parts": [
 			{"kind": "frame", "species": 0, "species_name": "Korvite", "symbol": "K",
 					"grade": "B", "mass_low": 18, "mass_high": 34},
@@ -571,6 +576,12 @@ func test_the_verdict_word_is_not_repeated_in_the_small_print() -> bool:
 
 ## UNCERTAIN MUST NAME WHAT RESOLVES IT. "assay something" is not an action; "assay Korvite to know"
 ## is, and it is the only advertisement assaying gets.
+##
+## WHAT MOVED (ASSA-90): the sentence used to be composed HERE, out of `unassayed`, and appended
+## whenever that list was non-empty. It is now `sim::debug::verdict_note`'s, arriving in `note`, and
+## the second case below moved with it -- erasing `unassayed` no longer proves anything, because the
+## panel has stopped reading it. Erasing `note` is the case that matters now, and it is the real SAFE
+## design rather than a state the sim does not produce.
 func test_an_uncertain_design_names_the_material_to_assay() -> bool:
 	var found := false
 	for line in AssayHud.design_lines(_design()):
@@ -578,11 +589,48 @@ func test_an_uncertain_design_names_the_material_to_assay() -> bool:
 			found = true
 	if not found:
 		return _fail("no line names the rough species: %s" % AssayHud.design_lines(_design()))
-	var known := _design()
-	known["unassayed"] = PackedStringArray()
-	for line in AssayHud.design_lines(known):
+	var settled := _design()
+	settled.erase("note")
+	for line in AssayHud.design_lines(settled):
 		if String(line).begins_with("assay "):
-			return _fail("a design with nothing rough still advises an assay: %s" % line)
+			return _fail("a design the sim gave no small print still advises an assay: %s" % line)
+	return true
+
+
+## THE SMALL PRINT IS ONLY EVER THE SIM'S SENTENCE (Maren's ruling, ASSA-90). Two halves, and the
+## second is the one that was broken: this panel appended "assay %s to know" whenever `unassayed` was
+## non-empty, so a WILL BREAK design was offered an assay -- which cannot move a verdict whose mass
+## and budget spans are already disjoint -- and was never told it would break.
+##
+## Checked by handing the panel a sentence no part of this repo would write, so the assertion cannot
+## pass off a string the panel happens to produce itself.
+func test_the_small_print_is_only_ever_the_sims_own_sentence() -> bool:
+	var sentinel := "a sentence only the sim could have written"
+	var design := _design()
+	design["note"] = sentinel
+	var lines := AssayHud.design_lines(design)
+	var found := false
+	for line in lines:
+		if String(line) == sentinel:
+			found = true
+	if not found:
+		return _fail("the panel did not print the sim's sentence verbatim: %s" % lines)
+
+	# THE HALF ASSA-90 WAS FILED FOR: a design that will break, with rough species in it, must carry
+	# the sim's over-budget sentence and NOT an assay offer the panel composed for itself.
+	var breaking := _design()
+	breaking["verdict"] = "WILL BREAK"
+	breaking["note"] = "this is over budget: it will break when planted or first used"
+	breaking["unassayed"] = PackedStringArray(["Korvite"])
+	var said_break := false
+	for line in AssayHud.design_lines(breaking):
+		if String(line).contains("assay"):
+			return _fail(("WILL BREAK was offered an assay, which cannot move disjoint spans. "
+					+ "The panel is composing from `unassayed` again: %s") % line)
+		if String(line).contains("over budget"):
+			said_break = true
+	if not said_break:
+		return _fail("WILL BREAK never says it will break: %s" % AssayHud.design_lines(breaking))
 	return true
 
 
