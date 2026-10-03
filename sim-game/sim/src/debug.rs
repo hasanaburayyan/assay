@@ -1964,6 +1964,43 @@ pub fn make_offers(world: &World, player: PlayerId) -> Vec<MakeOffer> {
                 continue;
             }
             let makes = recipe.output_for(stack.item);
+            // **ONE CLAUSE PER ROW, FIRST MATCH WINS, DEAD END OUTRANKING THE
+            // MATERIAL'S SHORTFALL** (Maren's ruling on ASSA-88, copied from
+            // `deposit_dead_end_note`'s `reach.or_else(unsmeltable)`). Her
+            // reason is the whole of it: told its hardness is short, a player
+            // goes and finds harder rock and spends 2 refined, only to learn
+            // nothing consumes the thing. So when a recipe is a dead end, the
+            // shortfall is not shown AT ALL -- not shown second, not shown in
+            // smaller print.
+            //
+            // **AND TODAY THAT MAKES THE SHORTFALL CLAUSE UNREACHABLE.** `Gear`
+            // is the only recipe with a `requires` and the only one whose
+            // output nothing consumes, so the two sets coincide exactly and the
+            // dead end always wins. I am building the ruled behaviour rather
+            // than the reachable half of it, and saying so: it starts being
+            // read the day a recipe gains a requirement or anything consumes a
+            // gear, and `unmet_requirement_clause` is unit-tested directly
+            // because `make_offers` cannot currently reach it.
+            let dead_end = recipe_dead_end(recipe);
+            let blocker = if dead_end.is_empty() {
+                match makes {
+                    None => Some(no_better_grade_clause(world, stack.item)),
+                    Some(item) => recipe
+                        .unmet_requirement(world.species(stack.item.species), stack.item)
+                        .map(|(property, min)| {
+                            shortfall_clause(&world.item_name(item), property, min)
+                        }),
+                }
+            } else {
+                // A DEAD END STILL HAS TO SAY WHAT IT MAKES, or the row claims
+                // nothing and warns about nothing. The positive claim is right
+                // here: the batch WILL produce the item, and that it is useless
+                // is exactly what the slot says.
+                match makes {
+                    None => Some(no_better_grade_clause(world, stack.item)),
+                    Some(_) => None,
+                }
+            };
             offers.push(MakeOffer {
                 what: MakeWhat::Recipe(id),
                 input: stack.item,
@@ -1973,10 +2010,11 @@ pub fn make_offers(world: &World, player: PlayerId) -> Vec<MakeOffer> {
                 line: offer_line(
                     world,
                     makes.map(|item| (item, recipe.output.1)),
+                    blocker.as_deref(),
                     recipe.input.1,
                     stack,
                 ),
-                dead_end: recipe_dead_end(recipe),
+                dead_end,
             });
         }
     }
@@ -1993,7 +2031,13 @@ pub fn make_offers(world: &World, player: PlayerId) -> Vec<MakeOffer> {
                 cost,
                 have: stack.count,
                 makes: Some(makes),
-                line: offer_line(world, Some((makes, 1)), cost, stack),
+                // NO BLOCKER ON A PART, AND IT IS THE CATALOGUE SAYING SO
+                // RATHER THAN ME: a part has no property threshold to miss
+                // (`PartSpec` carries size and contributions, no `requires`)
+                // and no grade to raise, so neither clause has anything to
+                // report. A `requires` added to `PartSpec` one day lands here
+                // as a missing arm rather than as silence.
+                line: offer_line(world, Some((makes, 1)), None, cost, stack),
                 dead_end: String::new(),
             });
         }
@@ -2007,22 +2051,34 @@ pub fn make_offers(world: &World, player: PlayerId) -> Vec<MakeOffer> {
 /// The count of a batch's output is only spelled when it is more than one, so
 /// today's table reads as a name and a cost; a recipe that one day yields two
 /// says so without this sentence being rewritten.
-fn offer_line(world: &World, makes: Option<(Item, u32)>, cost: u32, from: &ItemStack) -> String {
+fn offer_line(
+    world: &World,
+    makes: Option<(Item, u32)>,
+    blocker: Option<&str>,
+    cost: u32,
+    from: &ItemStack,
+) -> String {
     let spend = format!(
         "{cost} of your {} {}",
         from.count,
         world.item_name(from.item)
     );
-    match makes {
-        Some((item, 1)) => format!("{} — {spend}", world.item_name(item)),
-        Some((item, n)) => format!("{n} × {} — {spend}", world.item_name(item)),
-        // THE INPUT, NOT THE OUTPUT, because there is no output: what the row
-        // can still honestly name is the thing you would have spent.
-        None => format!(
-            "nothing from {}: {}",
-            world.item_name(from.item),
-            best_grade_note()
-        ),
+    // **THE LIMIT BINDS THE CLAIM IT KILLS, WITH NO COMMA BEFORE THE "IF"**
+    // (Maren's ruling on ASSA-88, the shape `species_table` already uses for
+    // "fuel at B or better if you could mine it"). What shipped first was
+    // "nothing from X: grade A is already the best", which names no verb at all
+    // and leaves the reason trailing after a colon -- the defect her ruling
+    // describes, in my own code.
+    match (makes, blocker) {
+        (_, Some(why)) => format!("{why} — {spend}"),
+        (Some((item, 1)), None) => format!("{} — {spend}", world.item_name(item)),
+        (Some((item, n)), None) => format!("{n} × {} — {spend}", world.item_name(item)),
+        // UNREACHABLE BY CONSTRUCTION rather than by luck: every caller that can
+        // produce `None` for `makes` produces a blocker in the same step,
+        // because a row with no output has a reason and `make_offers` is the
+        // only place that knows it. Written out so that the next arm added here
+        // has to decide, rather than inheriting a silent empty claim.
+        (None, None) => format!("nothing from {} — {spend}", world.item_name(from.item)),
     }
 }
 
@@ -2032,6 +2088,41 @@ fn offer_line(world: &World, makes: Option<(Item, u32)>, cost: u32, from: &ItemS
 /// menu either repeated it in different words or said nothing.
 pub fn best_grade_note() -> &'static str {
     "grade A is already the best; refining can't improve it"
+}
+
+/// WHY A GRADE-RAISING RECIPE MAKES NOTHING OUT OF THIS STACK, bound to the
+/// claim it kills: "a better grade of X ore if it were not already grade A".
+///
+/// THE SAME FACT AS `best_grade_note` IN A DIFFERENT MOOD, and they sit next to
+/// each other on purpose. The refusal is read AFTER a press and states what
+/// happened; an offer row is read BEFORE one and has to be a conditional on the
+/// thing it would have made (Maren, ASSA-88: the disqualifier inside the claim,
+/// never trailing after a comma). Neither can be derived from the other because
+/// English will not have it -- but the only part that could DRIFT is the grade,
+/// and both say A for the same reason: `Grade::better` returns `None` there and
+/// nowhere else.
+fn no_better_grade_clause(world: &World, input: Item) -> String {
+    format!(
+        "a better grade of {} {} if it were not already grade {}",
+        world.species(input.species).name(),
+        input.kind.name(),
+        input.grade.letter()
+    )
+}
+
+/// WHY THIS MATERIAL CANNOT FEED THIS RECIPE, bound to the claim it kills:
+/// "Minyte gear (B) if its hardness reached 20 at that grade".
+///
+/// **THE NUMBER HAS ONE SOURCE.** The property and the threshold both arrive
+/// from `Recipe::unmet_requirement`, which is the same call `step` makes before
+/// refusing, so the figure in the offer and the figure in the refusal cannot
+/// disagree. The refusal's own indicative wording stays where it is, for the
+/// reason given on `no_better_grade_clause`.
+pub fn shortfall_clause(made: &str, property: Property, min: u32) -> String {
+    format!(
+        "{made} if its {} reached {min} at that grade",
+        property.name()
+    )
 }
 
 impl MakeOffer {

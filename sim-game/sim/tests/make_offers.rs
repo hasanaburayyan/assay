@@ -8,8 +8,8 @@
 
 use sim::debug::{self, MakeWhat};
 use sim::{
-    Event, Grade, Input, Item, ItemKind, PartKind, PlayerCommand, PlayerId, RecipeId, SpeciesId,
-    SystemCommand, World, WorldConfig, step,
+    Event, Grade, Input, Item, ItemKind, PartKind, PlayerCommand, PlayerId, Property, RecipeId,
+    SpeciesId, SystemCommand, World, WorldConfig, step,
 };
 
 const X: SpeciesId = SpeciesId(0);
@@ -118,11 +118,17 @@ fn a_row_names_the_output_first_then_spends_out_of_what_you_hold() {
     );
 }
 
-/// A ROW WITH NO OUTPUT IS STILL AN OFFER. Absence is never a cue, and the
-/// player holding grade A ore is exactly the one wondering why they cannot
-/// refine it.
+/// A ROW WITH NO OUTPUT IS STILL AN OFFER, AND ITS LIMIT BINDS THE CLAIM IT
+/// KILLS (Maren's ruling on ASSA-88, which my first version failed).
+///
+/// Absence is never a cue, and the player holding grade A ore is exactly the one
+/// wondering why they cannot refine it. **What shipped first read "nothing from
+/// X ore (A): grade A is already the best" — a reason trailing after a colon,
+/// naming no verb at all.** The ruling is one sentence in which grade A IS why
+/// there is no sort, with no comma before the "if", the shape
+/// `species_table` already uses for "fuel at B or better if you could mine it".
 #[test]
-fn sorting_grade_a_is_offered_and_says_it_makes_nothing() {
+fn sorting_grade_a_is_offered_and_its_limit_binds_what_it_would_have_made() {
     let (mut world, me) = world_with_player();
     give(&mut world, me, ore(X, Grade::A), 12);
 
@@ -131,26 +137,52 @@ fn sorting_grade_a_is_offered_and_says_it_makes_nothing() {
         .find(|o| o.what == MakeWhat::Recipe(RecipeId::Sort))
         .expect("the row is there even though it makes nothing");
     assert!(offer.makes.is_none());
+
+    let line = offer.line.clone();
+    let claim = line.split(" — ").next().expect("a claim before the cost");
+    // THE CLAIM NAMES WHAT WOULD HAVE BEEN MADE, and the limit is inside it.
     assert!(
-        offer.line.contains(debug::best_grade_note()),
-        "{}",
-        offer.line
+        claim.contains("a better grade") && claim.contains(world.species(X).name()),
+        "the claim names no outcome: {claim}"
     );
     assert!(
-        offer.line.contains(world.species(X).name()),
-        "it still names what you would have spent: {}",
-        offer.line
+        claim.contains(" if "),
+        "the limit does not bind the claim: {claim}"
+    );
+    // AND NOT THE SHAPE THAT WAS RULED AGAINST: a reason trailing after a colon
+    // or a comma. Asserted on the CLAIM and not the whole line, because the cost
+    // half legitimately follows an em dash.
+    assert!(
+        !claim.contains(": ") && !claim.contains(", "),
+        "the reason trails the claim instead of binding it: {claim}"
+    );
+    assert!(
+        claim.contains(Grade::A.letter()),
+        "grade A is the reason and must be in the sentence: {claim}"
     );
 }
 
-/// ONE DESCRIBER, TWO MOMENTS. The sentence an offer row shows before the
-/// press is the same one the refusal shows after it; that is why
-/// `best_grade_note` was pulled out of `event_line`'s match instead of being
-/// written a second time for the menu.
+/// THE OFFER AND THE REFUSAL ARE ONE FACT IN TWO MOODS, and the only thing that
+/// could drift between them is pinned.
+///
+/// **THIS TEST GOT WEAKER AND I WANT THAT ON THE RECORD.** It used to require
+/// both to contain `best_grade_note()` verbatim, which was a strong guarantee of
+/// one describer. Maren's ruling makes the offer a CONDITIONAL on the thing it
+/// would have made, and English will not let a conditional and an indicative be
+/// the same string. So what is asserted now is the part that can actually go
+/// wrong: both must name the grade at which there is nothing better, and that
+/// letter is taken from `Grade` rather than typed here — if `Grade::better` ever
+/// stops returning `None` at A, this reddens instead of quietly describing the
+/// wrong grade in two places.
 #[test]
-fn the_offer_and_the_refusal_give_the_same_reason() {
+fn the_offer_and_the_refusal_name_the_same_grade() {
     let (mut world, me) = world_with_player();
     give(&mut world, me, ore(X, Grade::A), 12);
+    let best = Grade::A.letter();
+    assert!(
+        Grade::A.better().is_none(),
+        "A is the grade with nothing above it"
+    );
 
     let offer = debug::make_offers(&world, me)
         .into_iter()
@@ -177,7 +209,15 @@ fn the_offer_and_the_refusal_give_the_same_reason() {
         .expect("the sim refuses it");
 
     assert!(refusal.contains(debug::best_grade_note()), "{refusal}");
-    assert!(offer.line.contains(debug::best_grade_note()));
+    assert!(
+        refusal.contains(best),
+        "the refusal names the grade: {refusal}"
+    );
+    assert!(
+        offer.line.contains(best),
+        "the offer names the grade: {}",
+        offer.line
+    );
 }
 
 /// ORDER IS THE SIM'S: the recipe table, then the part catalogue, then the
@@ -349,5 +389,167 @@ fn a_part_row_reads_as_the_part_it_makes_then_the_material() {
     assert_eq!(
         offer.line,
         format!("{species} head (B) — {size} of your 9 {species} refined (B)")
+    );
+}
+
+/// MAREN'S CHECK BEFORE ASSA-86 LEAVES QA: **every make-verb that was reachable
+/// from a pack row is reachable from the menu.** A verb now on NEITHER surface
+/// is the defect the 88-before-86 ordering existed to prevent, and it would
+/// pass every test written against the new row shape alone.
+///
+/// **COUNTED FROM THE CATALOGUES ON BOTH SIDES, NOT FROM THE DIFF.** The old
+/// pack rule was not a list in the client: `stack_verbs` put a `Craft` on a row
+/// when some HAND recipe's `input` matched that row's kind, and a `Make` on a
+/// row when a part's `material` matched. So the "before" set is
+/// `RecipeId::ALL.filter(is_hand_craftable)` plus `PartKind::ALL` — the same
+/// source the deleted code read — and the "after" set is whatever
+/// `make_offers` reports for a player carrying one stack of every input kind.
+/// Equality is the property; a count alone would pass if one verb vanished and
+/// another doubled.
+#[test]
+fn every_make_verb_the_pack_used_to_offer_is_reachable_from_the_menu() {
+    let (mut world, me) = world_with_player();
+    // ONE STACK OF EVERY KIND ANY HAND RECIPE OR PART EATS, so no verb is
+    // missing merely because its material is not carried. Read off the
+    // catalogues for the same reason the sets below are.
+    let mut inputs: Vec<ItemKind> = RecipeId::ALL
+        .iter()
+        .filter(|id| id.is_hand_craftable())
+        .map(|id| id.recipe().input.0)
+        .collect();
+    inputs.push(ItemKind::Refined); // what a part is made of (`step.rs`)
+    inputs.dedup();
+    for kind in inputs {
+        give(&mut world, me, Item::new(kind, X, Grade::B), 9);
+    }
+
+    let before: Vec<MakeWhat> = RecipeId::ALL
+        .iter()
+        .filter(|id| id.is_hand_craftable())
+        .map(|id| MakeWhat::Recipe(*id))
+        .chain(PartKind::ALL.iter().map(|kind| MakeWhat::Part(*kind)))
+        .collect();
+    let mut after: Vec<MakeWhat> = debug::make_offers(&world, me)
+        .into_iter()
+        .map(|o| o.what)
+        .collect();
+    after.dedup();
+
+    assert_eq!(
+        before,
+        after,
+        "a make-verb is on neither surface: pack rows lost {:?}, menu gained {:?}",
+        before
+            .iter()
+            .filter(|w| !after.contains(w))
+            .collect::<Vec<_>>(),
+        after
+            .iter()
+            .filter(|w| !before.contains(w))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(before.len(), 7, "three hand recipes and four part kinds");
+}
+
+/// **THE PRECEDENCE, AND IT IS THE RULING: a dead end outranks the material's
+/// shortfall, and the shortfall is then not shown AT ALL** (Maren, ASSA-88,
+/// copied from `deposit_dead_end_note`'s `reach.or_else(unsmeltable)`).
+///
+/// Her reason is the whole of it: told its hardness is short, a player goes and
+/// finds harder rock and spends 2 refined, only to learn nothing consumes the
+/// thing.
+///
+/// **AND THIS IS WHERE THE CATALOGUE MAKES THE OTHER CLAUSE UNREACHABLE.**
+/// `Gear` is the only recipe with a `requires` AND the only one whose output
+/// nothing consumes, so the two sets coincide exactly: today the dead end always
+/// wins and the shortfall never reaches a player. This test pins the ruled
+/// order; `the_shortfall_clause_binds_the_item_it_would_have_made` below is the
+/// only witness the shortfall wording has, because `make_offers` cannot produce
+/// it. Both facts are on ASSA-107 rather than left for the next reader.
+#[test]
+fn a_dead_end_outranks_the_materials_shortfall_and_hides_it() {
+    let (mut world, me) = world_with_player();
+    // A ROCK TOO SOFT FOR A GEAR AT ANY GRADE, so both clauses apply at once.
+    world.species_mut(X).sheet.hardness = 1;
+    give(&mut world, me, refined(X, Grade::B), 9);
+
+    let recipe = RecipeId::Gear.recipe();
+    let short = recipe
+        .unmet_requirement(world.species(X), refined(X, Grade::B))
+        .expect("this rock is too soft for a gear, so both clauses apply");
+    assert_eq!(short.0, Property::Hardness);
+    let dead_end = debug::recipe_dead_end(recipe);
+    assert!(!dead_end.is_empty(), "a gear is still a dead end");
+
+    let offer = debug::make_offers(&world, me)
+        .into_iter()
+        .find(|o| o.what == MakeWhat::Recipe(RecipeId::Gear))
+        .expect("the row stays: never filtered, never disabled");
+
+    assert_eq!(offer.dead_end, dead_end, "the dead end takes the one slot");
+    assert!(
+        !offer.line.contains(short.0.name()),
+        "the shortfall is shown while a dead end applies, which sends the player \
+         hunting harder rock for something nothing uses: {}",
+        offer.line
+    );
+    // AND THE ROW STILL SAYS WHAT IT MAKES. A dead end produces its item; that
+    // the item is useless is exactly what the slot is for. A row claiming
+    // nothing AND warning about nothing would be the worst of both.
+    assert!(
+        offer.makes.is_some()
+            && offer
+                .line
+                .starts_with(&world.item_name(offer.makes.unwrap())),
+        "a dead-end row stops naming its output: {}",
+        offer.line
+    );
+}
+
+/// THE SHORTFALL CLAUSE ITSELF, through the only door it has.
+///
+/// `make_offers` cannot reach this today (see the precedence test above), so it
+/// is reached through `recipe_table`'s own path: the property and the number
+/// come from `Recipe::unmet_requirement`, the same call `step` makes before
+/// refusing, which is what makes the figure in an offer and the figure in a
+/// refusal the same figure.
+///
+/// **A LEVER THAT CANNOT FAIL IS NOT EVIDENCE, so this one asserts the SHAPE
+/// the ruling is about** — the claim first, the limit bound to it with no comma
+/// — rather than the exact sentence, which Maren may still reword.
+#[test]
+fn the_shortfall_clause_binds_the_item_it_would_have_made() {
+    let (mut world, me) = world_with_player();
+    world.species_mut(X).sheet.hardness = 1;
+    give(&mut world, me, refined(X, Grade::B), 9);
+
+    let recipe = RecipeId::Gear.recipe();
+    let made = world.item_name(
+        recipe
+            .output_for(refined(X, Grade::B))
+            .expect("a gear does not raise grade"),
+    );
+    let (property, min) = recipe
+        .unmet_requirement(world.species(X), refined(X, Grade::B))
+        .expect("too soft");
+    let clause = debug::shortfall_clause(&made, property, min);
+
+    assert!(clause.starts_with(&made), "the claim comes first: {clause}");
+    assert!(
+        clause.contains(" if "),
+        "the limit binds the claim: {clause}"
+    );
+    assert!(
+        !clause.contains(", ") && !clause.contains(": "),
+        "the reason trails instead of binding: {clause}"
+    );
+    assert!(
+        clause.contains(&min.to_string()) && clause.contains(property.name()),
+        "the clause names the property and the number this species misses: {clause}"
+    );
+    assert_eq!(
+        min,
+        sim::tuning::GEAR_MIN_HARDNESS,
+        "the number is the sim's threshold, not one typed into a sentence"
     );
 }
