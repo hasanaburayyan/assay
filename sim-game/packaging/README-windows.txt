@@ -72,7 +72,7 @@ build is not code-signed): More info, then Run anyway.
 
 To play by yourself, press Play solo. To join someone, type the relay's
 address in the "host" box -- the same address the relay printed, e.g.
-192.168.1.48:7777 -- put in a name, and click join. A bare address uses
+192.168.1.10:7777 -- put in a name, and click join. A bare address uses
 port 7777.
 
 It runs the real rules: the same Rust `sim` crate the relay and sim-cli run,
@@ -137,6 +137,15 @@ Things to try
   buildings                what every building holds and whether it's running
   events                   recent events
   quit                     leave (the host keeps running)
+
+
+If a host refuses you
+----------------------
+A relay refusal names a build by its rules id, a hex string with nothing to
+click. That id is not a download link -- it's in VERSION.txt, right beside
+this file, which also names the commit it came from. If you're refused: ask
+whoever is hosting for their run link and download the same one. Both halves
+-- the relay and your zip -- must come from a single CI run.
 
 
 What to report
