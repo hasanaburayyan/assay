@@ -10,50 +10,16 @@
 //! which is the point: a harness that found the relay by path once handed me
 //! a passing mutation against the previous build.
 
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::io::Write;
+use std::net::TcpStream;
+use std::time::Duration;
+
+mod common;
+use common::spawn_relay;
 
 use sim_net::{ClientMsg, RULES_ID, ServerMsg, read_msg, write_msg};
 
 const OTHER_RULES: &str = "0123456789abcdef";
-
-struct Relay(Child);
-
-impl Drop for Relay {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("a free port")
-        .local_addr()
-        .expect("its address")
-        .port()
-}
-
-fn spawn_relay(port: u16) -> Relay {
-    let saves = std::env::temp_dir().join(format!("assay-assa40-{}", std::process::id()));
-    std::fs::create_dir_all(&saves).expect("a temp saves dir");
-    let child = Command::new(env!("CARGO_BIN_EXE_sim-relay"))
-        .args(["7", "--port", &port.to_string(), "--fresh"])
-        .env("R2TS_SAVES_DIR", &saves)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("sim-relay starts");
-
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while TcpStream::connect(("127.0.0.1", port)).is_err() {
-        assert!(Instant::now() < deadline, "the relay never listened");
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    Relay(child)
-}
 
 /// Say hello with these identities and return what the relay says back.
 fn greet(port: u16, name: &str, rules: &str) -> ServerMsg {
@@ -73,8 +39,8 @@ fn greet(port: u16, name: &str, rules: &str) -> ServerMsg {
 
 #[test]
 fn a_peer_from_different_rules_is_refused_and_one_from_the_same_rules_joins() {
-    let port = free_port();
-    let relay = spawn_relay(port);
+    let relay = spawn_relay("7", &[]);
+    let port = relay.port();
 
     // 1. The failure this feature exists for: same wire, different game.
     match greet(port, "stale", OTHER_RULES) {
@@ -107,20 +73,30 @@ fn a_peer_from_different_rules_is_refused_and_one_from_the_same_rules_joins() {
 /// has been doing it with `lsof` and a binary mtime.
 #[test]
 fn the_relay_prints_the_rules_it_is_hosting() {
-    let port = free_port();
-    let mut relay = spawn_relay(port);
-    let mut stdout = relay.0.stdout.take().expect("piped");
+    let relay = spawn_relay("7", &[]);
 
-    // Read what it has printed by the time it is listening, then stop it so
-    // the pipe closes rather than blocking on a relay that runs for ever.
-    let _ = greet(port, "reader", RULES_ID);
-    let _ = relay.0.kill();
-    let mut banner = String::new();
-    let _ = stdout.read_to_string(&mut banner);
-
+    // **THE BANNER IS CAPTURED AS IT IS PRINTED, NOT RECOVERED AFTERWARDS.**
+    // This test used to greet the relay, kill it, and read its pipe to EOF —
+    // so what it asserted against was whatever had been flushed by the time
+    // the kill landed. That is the same race as the port it used to guess, in
+    // the same test, and it is why this one went red under load while passing
+    // alone. `spawn_relay` reads the startup block to its terminator before
+    // returning.
     assert!(
-        banner.contains(RULES_ID),
-        "the startup banner must name the rules identity, got:\n{banner}"
+        relay.startup.contains(RULES_ID),
+        "the startup banner must name the rules identity, got:\n{}",
+        relay.startup
+    );
+
+    // NON-VACUITY: a harness that captured nothing would pass an assertion
+    // about a string that only has to *contain* something if it is empty by
+    // accident — it would not, but a future change to the reader could make it
+    // so, and this is the line that would notice.
+    assert!(
+        relay.startup.lines().count() >= 4,
+        "the banner is suspiciously short, so the assertion above proves \
+         little: {:?}",
+        relay.startup
     );
 }
 
@@ -151,8 +127,8 @@ fn send_raw(stream: &mut TcpStream, body: &str) {
 /// `refuse_unreadable` alone would have stayed green through.
 #[test]
 fn a_client_two_protocols_behind_is_refused_in_words() {
-    let port = free_port();
-    let relay = spawn_relay(port);
+    let relay = spawn_relay("7", &[]);
+    let port = relay.port();
 
     let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
     stream.set_read_timeout(Some(Duration::from_secs(20))).ok();
@@ -194,8 +170,8 @@ fn a_client_two_protocols_behind_is_refused_in_words() {
 /// over one transcript can pass from the other command's output.
 #[test]
 fn a_first_frame_that_is_not_json_is_also_refused_in_words() {
-    let port = free_port();
-    let relay = spawn_relay(port);
+    let relay = spawn_relay("7", &[]);
+    let port = relay.port();
 
     let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
     stream.set_read_timeout(Some(Duration::from_secs(20))).ok();
