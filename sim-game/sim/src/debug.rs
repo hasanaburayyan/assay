@@ -807,6 +807,97 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
     }
 }
 
+/// WHETHER A PLAYER MUST SEE THIS EVENT EVEN WITH THE EVENT LOG HIDDEN
+/// (ASSA-89). Says nothing about wording: the sentence is still
+/// [`event_line`]'s, and a host shows the same string in a louder place.
+///
+/// THE PROPERTY, WHICH IS A PROPERTY AND NOT A LIST: an event needs attention
+/// when it reports that something **did not happen, stopped happening, or was
+/// lost**. Never a success. Successes are the story, and the story is what the
+/// log is for; a surface that holds one line at a time can only carry the
+/// problem.
+///
+/// IT LIVES HERE, BESIDE `event_line`, FOR THE REASON `recipe_dead_end` DOES
+/// (ASSA-84). The alternative is a host matching the TEXT of a sentence to
+/// decide how loudly to say it — and `event_line`'s wording moved thirteen
+/// times in one afternoon on ASSA-67. A host that classified by text would
+/// have gone quiet that afternoon without one test going red.
+///
+/// THE MATCH IS EXHAUSTIVE AND THE `false` ARMS ARE WRITTEN OUT, which is most
+/// of the point. A new `Event` variant fails to compile here, so its author
+/// decides whether a player must be told; a `_ => false` would make silence
+/// the default for every event nobody thought about, which is the shape of
+/// defect ASSA-51 and ASSA-53 both were.
+///
+/// MINE AND NOT EVERYONE'S, for anything carrying a player: another player's
+/// refusal is their notice, and in a co-op world of two the alternative is
+/// each of us reading the other's mistakes over our own. Machines have no
+/// player and belong to the world, so a stall is everybody's.
+pub fn event_needs_attention(me: Option<PlayerId>, event: &Event) -> bool {
+    let mine = |p: &PlayerId| me.is_some() && me == Some(*p);
+    match event {
+        // THE WORLD REFUSED WHAT YOU ASKED FOR (ASSA-43, ASSA-70). The reason
+        // this function exists at all: this is the only sentence in the game
+        // that says why the button you pressed did nothing.
+        Event::CommandRejected { player, .. } => mine(player),
+
+        // A MACHINE STOPPED AND WANTS A HAND (decision 9, ASSA-80). Emitted
+        // once on the edge into the stall, so a notice cannot repeat every
+        // tick -- that property is the event's, not this function's.
+        Event::MachineStalled { .. } | Event::SmelterStalled { .. } => true,
+
+        // YOU LOST SOMETHING (decision 11, decision 12). The most dramatic
+        // moment in the game is a poor one to find out by scrolling.
+        Event::MachineBroke { player, .. } | Event::ToolWornOut { player, .. } => mine(player),
+
+        // SOMETHING OF YOURS STOPPED WITHOUT YOU ASKING. A stop you asked for
+        // is not news; a depleted deposit, a missing input or walking off the
+        // rock is the reason your next press will do nothing.
+        Event::MiningStopped { player, reason, .. }
+        | Event::AssayStopped { player, reason, .. }
+        | Event::CraftingStopped { player, reason, .. } => {
+            mine(player) && *reason != StopReason::Stopped
+        }
+
+        // PART OF WHAT YOU ASKED FOR DID NOT FIT (ASSA-48). `left` is the
+        // actionable half by that variant's own doc comment: "put 50 in" tells
+        // a player nothing about why they still have 167.
+        Event::ItemsInserted { player, left, .. } => mine(player) && *left > 0,
+
+        // EVERY SUCCESS, WRITTEN OUT RATHER THAN DEFAULTED.
+        //
+        // `DepositDepleted` is here deliberately and it is the one I would
+        // argue about: it is a thing that stopped. But it lands on the same
+        // tick as the miner's own `MiningStopped { Depleted }`, so taking both
+        // means two notices for one fact on a surface that holds one line, and
+        // the second would overwrite the sentence that names the player.
+        Event::PlayerJoined { .. }
+        | Event::MiningStarted { .. }
+        | Event::OreMined { .. }
+        | Event::DepositDepleted { .. }
+        | Event::SpeciesDiscovered { .. }
+        | Event::AssayStarted { .. }
+        | Event::SpeciesAssayed { .. }
+        | Event::SpeciesRenamed { .. }
+        | Event::RenameGranted { .. }
+        | Event::CraftStarted { .. }
+        | Event::ItemCrafted { .. }
+        | Event::BuildingPlaced { .. }
+        | Event::ItemsTaken { .. }
+        | Event::BuildingRemoved { .. }
+        | Event::ItemSmelted { .. }
+        | Event::PartsMade { .. }
+        | Event::Assembled { .. }
+        | Event::Equipped { .. }
+        | Event::Unequipped { .. }
+        | Event::MachinePlaced { .. }
+        | Event::MachineMined { .. }
+        | Event::MoveStarted { .. }
+        | Event::PlayerArrived { .. }
+        | Event::PlayerStopped { .. } => false,
+    }
+}
+
 pub const MAP_LEGEND: &str =
     "P player   @ spawn   M smelter   letters = ore by species initial (lowercase = depleted)";
 

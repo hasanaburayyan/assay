@@ -109,7 +109,10 @@ func test_the_screen_builds_a_hud_column_beside_the_map() -> bool:
 	var ok := true
 	var beside := AssayHud.VIEW.x - AssayHud.PANEL - AssayHud.MARGIN.x
 	for part in [["you", screen._carrying], ["do", screen._actions], ["bench", screen._bench],
-			["cursor", screen._cursor], ["last tick", screen._log]]:
+			["cursor", screen._cursor], ["last tick", screen._log],
+			# The log's toggle, which sits above the column rather than in it (ASSA-89) and so is the
+			# one control that could have been placed over the map by arithmetic of its own.
+			["log toggle", screen._log_toggle]]:
 		var section: Control = part[1]
 		if section.get_parent() == null:
 			ok = _fail("the %s section was never added to the screen" % part[0])
@@ -245,5 +248,127 @@ func test_the_bench_is_wired_into_the_column_and_says_when_it_is_empty() -> bool
 		if line == null or not line.text.contains("nothing built"):
 			ok = _fail("an empty bench must say so, shows '%s'"
 					% ("" if line == null else line.text))
+	screen.queue_free()
+	return ok
+
+
+## THE LOG IS HIDDEN ON FIRST OPEN, AND ITS HEADING WITH IT (ASSA-89). The board's words were "logs
+## are hard on the eyes", and "last tick" over nothing would be a labelled empty gap -- a stranger
+## reading an empty section assumes the game has nothing to say rather than that it is folded away.
+##
+## The toggle is checked as a VISIBLE CONTROL THAT NAMES ITSELF, because "one key/button, named on
+## screen" is the acceptance and a bare icon or a bare keybinding would satisfy neither half.
+func test_the_event_log_starts_hidden_behind_a_named_control() -> bool:
+	var screen := _screen()
+	var ok := true
+	var toggle: Button = screen._log_toggle
+	if screen._log.visible:
+		ok = _fail("the event log is on the first screen the board opens")
+	elif screen._log_shown:
+		ok = _fail("the log reads as shown while its Label is hidden; the two have drifted")
+	elif is_instance_valid(screen._log_heading) and screen._log_heading.visible:
+		ok = _fail("the log is hidden under a visible 'last tick' heading: a labelled empty gap")
+	elif not toggle.visible or toggle.get_parent() == null:
+		ok = _fail("there is no visible control to show the log with")
+	elif not toggle.text.to_lower().contains("log"):
+		ok = _fail("the control does not name what it does, it reads '%s'" % toggle.text)
+	elif not toggle.text.contains("L"):
+		ok = _fail("the control does not name its key, so the key cannot be discovered: '%s'"
+				% toggle.text)
+	screen.queue_free()
+	return ok
+
+
+## HIDDEN MEANS HIDDEN, NOT REMOVED -- Marlow's note on the item, and the one risk the whole change
+## carries.
+##
+## **THE ORDER IS THE TEST, AND MY FIRST VERSION HAD IT WRONG.** I planted the lines while the log
+## was already hidden, so the hide path never ran over them -- and a `_show_log` that cleared the
+## text on hide PASSED, which I only found by mutating it. The lines have to go in while the log is
+## SHOWN and the hide has to happen over text that is already there, which is the order a player's
+## lines actually arrive in. A test whose steps run in an order the real thing never does is a test
+## that agrees with the bug.
+##
+## So: show, plant, hide **through the control**, and read the node back while it is hidden -- still
+## in the column, still carrying its text, with `_events` untrimmed. Then reveal, and the same text
+## must be there with nothing re-fetched: showing the log may not be what loads it.
+##
+## WHAT THIS CANNOT CATCH, said rather than implied: a deferred `queue_free` on hide. The suite works
+## inside `SceneTree._initialize` and there is no frame for the free to happen in, so the node would
+## still be valid here. The lever that does catch it is
+## `test_the_screen_builds_a_hud_column_beside_the_map`, which fails with "the last tick section was
+## never added to the screen" -- measured, not assumed.
+##
+## The lines are planted rather than played because this file has no relay and no world; the real
+## stream is covered by `test_buttons.gd`, which drives a refusal through a real sim.
+func test_a_hidden_log_still_carries_its_lines() -> bool:
+	var screen := _screen()
+	var ok := true
+	var planted := PackedStringArray(["41 · you mined 2 ore", "42 · you started walking"])
+	screen._log_toggle.pressed.emit()
+	screen._events = planted
+	screen._log.text = "\n".join(planted)
+	screen._log_toggle.pressed.emit()
+	if screen._log.visible:
+		ok = _fail("the control would not hide the log again")
+	elif not is_instance_valid(screen._log) or screen._log.get_parent() == null:
+		ok = _fail("the log was taken out of the column rather than hidden, so the lines it was "
+				+ "carrying are gone and the probes' surface with them")
+	elif not screen._log.text.contains("you mined 2 ore"):
+		ok = _fail("a hidden log dropped the lines it was given: '%s'" % screen._log.text)
+	elif screen._events.size() != planted.size():
+		ok = _fail("the remembered lines were trimmed while hidden: %d of %d"
+				% [screen._events.size(), planted.size()])
+	else:
+		# The reveal shows what was already there. Nothing is refetched, and that is the point: a
+		# node freed on hide cannot come back, and text cleared on hide comes back empty.
+		screen._log_toggle.pressed.emit()
+		if not screen._log.visible:
+			ok = _fail("pressing the control did not show the log")
+		elif not screen._log_shown:
+			ok = _fail("the log is visible but reads as hidden; the two have drifted")
+		elif not screen._log.text.contains("you started walking"):
+			ok = _fail("the revealed log had lost the lines it carried: '%s'" % screen._log.text)
+		elif is_instance_valid(screen._log_heading) and not screen._log_heading.visible:
+			ok = _fail("the log came back without its heading")
+		elif not screen._log_toggle.text.to_lower().contains("hide"):
+			ok = _fail("the control still offers to show an already-shown log: '%s'"
+					% screen._log_toggle.text)
+	screen.queue_free()
+	return ok
+
+
+## THE KEY DOES WHAT THE BUTTON DOES, and it is `_unhandled_key_input` so that a focused `LineEdit`
+## eats the keystroke first: typing "localhost" into the host field must not fold the panel on the
+## `l`. That half cannot be tested here -- it is the engine's own input routing, and this suite runs
+## before there is a focus owner -- so what is checked is that the handler is the unhandled one.
+func test_the_l_key_toggles_the_log_and_cannot_eat_a_typed_l() -> bool:
+	var screen := _screen()
+	var ok := true
+	var key := InputEventKey.new()
+	key.keycode = KEY_L
+	key.pressed = true
+	if not screen.has_method("_unhandled_key_input"):
+		ok = _fail("the key is handled in _input, so typing an 'l' in the host field toggles the "
+				+ "panel")
+	elif screen._log.visible:
+		ok = _fail("the log was not hidden to begin with, so this proves nothing")
+	else:
+		screen._unhandled_key_input(key)
+		if not screen._log.visible:
+			ok = _fail("L did not show the log")
+		else:
+			screen._unhandled_key_input(key)
+			if screen._log.visible:
+				ok = _fail("L showed the log and will not hide it again")
+		# An echo is a held key, and a held L must not strobe the panel.
+		var echo := InputEventKey.new()
+		echo.keycode = KEY_L
+		echo.pressed = true
+		echo.echo = true
+		var before: bool = screen._log.visible
+		screen._unhandled_key_input(echo)
+		if ok and screen._log.visible != before:
+			ok = _fail("a key repeat toggled the log, so holding L strobes it")
 	screen.queue_free()
 	return ok

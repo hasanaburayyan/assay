@@ -169,6 +169,33 @@ impl AssaySim {
             .collect()
     }
 
+    /// THE LINES THIS PLAYER MUST SEE WITH THE LOG HIDDEN (ASSA-89): the
+    /// subset of `event_lines` that reports something which did not happen,
+    /// stopped happening, or was lost.
+    ///
+    /// A SUBSET BY CONSTRUCTION, NOT BY AGREEMENT. Both functions map the same
+    /// `self.last_events` through the same `self.describe`, so a line here is
+    /// the same string, word for word, as the one in the log — there is no
+    /// second wording to drift. The only thing added is the filter, and
+    /// `sim::debug::event_needs_attention` owns that, for the reason the
+    /// wording itself lives in the sim: the alternative is the client deciding
+    /// how loud a sentence is by matching its text, which goes quiet the next
+    /// time anybody rewords one.
+    ///
+    /// WHY THE CLIENT NEEDS THIS AT ALL: the board's complaint was "logs are
+    /// hard on the eyes", so the log is hidden by default now, and a hidden
+    /// log may not swallow the only sentence that explains why the button you
+    /// pressed did nothing.
+    #[func]
+    pub fn attention_lines(&self, me: i64) -> PackedStringArray {
+        let who = player_id_of(me);
+        self.last_events
+            .iter()
+            .filter(|event| sim::debug::event_needs_attention(who, event))
+            .map(|event| gstring(&self.describe(who, event)))
+            .collect()
+    }
+
     /// WHAT THIS PLAYER IS CRAFTING RIGHT NOW, in the sim's own sentence, or ""
     /// when nothing is being made (ASSA-49).
     ///
