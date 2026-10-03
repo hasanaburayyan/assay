@@ -239,7 +239,7 @@ fn no_reach_sentence_promises_a_later_unlock() {
     // guard that watched one row would miss the next sentence like it.
     let w = host_world(14247);
     for row in sim::debug::species_table(&w).lines() {
-        if LIGHT_SENTENCES.iter().any(|t| row.contains(t)) {
+        if light_sentences().iter().any(|t| row.contains(t)) {
             sentences.push(row.to_string());
         }
     }
@@ -575,11 +575,24 @@ fn species_row(table: &str, s: &sim::MineralSpecies) -> String {
         .to_string()
 }
 
-const LIGHT_SENTENCES: [&str; 3] = [
-    "lights from cold",
-    "needs a hotter fire to light",
-    "nothing here burns hot enough to light it",
-];
+/// The three lighting clauses, **read from the sim rather than copied** —
+/// their wording moved on ASSA-93, when the Game Director ruled that the
+/// disqualifier must BIND the fuel claim instead of trailing it after a comma
+/// where it read like another positive tag. Three tests in this file held the
+/// old strings and went red, which is the pin doing its job; they follow the
+/// ruling now instead of restating it.
+///
+/// Index order is FromCold, FromAHotterFire, NothingBurnsHotEnough. The sweep
+/// below still decides WHICH state applies from the primitives — that is the
+/// half that must not come from the function under test.
+fn light_sentences() -> [&'static str; 3] {
+    use sim::ladder::Lighting;
+    [
+        sim::debug::lighting_clause(Lighting::FromCold),
+        sim::debug::lighting_clause(Lighting::FromAHotterFire),
+        sim::debug::lighting_clause(Lighting::NothingBurnsHotEnough),
+    ]
+}
 
 /// **EXHAUSTIVE AND FOUR-WAY**, the same shape as the dead-end test above:
 /// every fuel row is in exactly one state, and the row has to say which — and
@@ -611,7 +624,7 @@ fn every_fuel_row_says_how_that_fuel_could_be_lit() {
             let Some(grade) = cheapest_fuel_grade(s) else {
                 not_fuel += 1;
                 assert!(
-                    !row.contains("fuel") && LIGHT_SENTENCES.iter().all(|t| !row.contains(t)),
+                    !row.contains("fuel") && light_sentences().iter().all(|t| !row.contains(t)),
                     "a species nothing would burn must not be offered as fuel: {row}"
                 );
                 continue;
@@ -633,7 +646,7 @@ fn every_fuel_row_says_how_that_fuel_could_be_lit() {
                      must be conditional: {row}",
                     s.sheet.hardness
                 );
-                for sentence in LIGHT_SENTENCES {
+                for sentence in light_sentences() {
                     assert!(
                         !row.contains(sentence),
                         "seed {seed}: a rock nothing can mine must not be told how it lights: \
@@ -651,20 +664,20 @@ fn every_fuel_row_says_how_that_fuel_could_be_lit() {
             let heat = u32::from(s.sheet.heat_tolerance);
             let (want, i) = if heat <= HAND_SPARK_TEMPERATURE {
                 cold += 1;
-                (LIGHT_SENTENCES[0], 0)
+                (light_sentences()[0], 0)
             } else if heat <= fire {
                 hotter += 1;
-                (LIGHT_SENTENCES[1], 1)
+                (light_sentences()[1], 1)
             } else {
                 never += 1;
-                (LIGHT_SENTENCES[2], 2)
+                (light_sentences()[2], 2)
             };
             assert!(
                 row.contains(want),
                 "seed {seed}: heat {heat} against this world's best fire {fire} means \
                  \"{want}\": {row}"
             );
-            for (j, other) in LIGHT_SENTENCES.iter().enumerate() {
+            for (j, other) in light_sentences().iter().enumerate() {
                 assert!(
                     j == i || !row.contains(other),
                     "seed {seed}: one state per row, and this one claims two: {row}"
@@ -717,7 +730,7 @@ fn seed_777042_has_a_fuel_no_fire_in_that_world_can_light() {
     );
     let row = species_row(&table, naersernium);
     assert!(
-        row.contains("nothing here burns hot enough to light it"),
+        row.contains(light_sentences()[2]),
         "one degree short must read as a dead end, not as a promise: {row}"
     );
 }
@@ -772,7 +785,7 @@ fn seed_777042_stops_selling_a_cold_light_in_its_first_fuel_row() {
         "the fuel claim on unminable rock is conditional: {}",
         fuel_rows[0]
     );
-    for sentence in LIGHT_SENTENCES {
+    for sentence in light_sentences() {
         assert!(
             !fuel_rows[0].contains(sentence),
             "and it keeps none of the lighting sentences: {}",
@@ -812,12 +825,12 @@ fn seed_777042_stops_selling_a_cold_light_in_its_first_fuel_row() {
 fn seed_14247_shows_both_a_cold_light_and_a_hotter_fire() {
     let w = host_world(14247);
     let table = sim::debug::species_table(&w);
-    let said: Vec<&str> = LIGHT_SENTENCES
+    let said: Vec<&str> = light_sentences()
         .into_iter()
         .filter(|t| table.contains(t))
         .collect();
     assert!(
-        said.contains(&LIGHT_SENTENCES[0]) && said.contains(&LIGHT_SENTENCES[1]),
+        said.contains(&light_sentences()[0]) && said.contains(&light_sentences()[1]),
         "the pinned world must show a fuel that lights from cold AND one that needs a \
          hotter fire: got {said:?}\n{table}"
     );
@@ -898,4 +911,93 @@ fn the_smelter_row_says_its_walls_come_from_its_material_and_that_is_true() {
             );
         }
     }
+}
+
+/// **THE DISQUALIFIER BINDS THE FUEL CLAIM; THE CONDITIONAL DOES NOT**
+/// (ASSA-93). Read off seed 42 — the board's own world, where they loaded 50
+/// units of a fuel nothing there can light into a smelter that then sat cold.
+/// Worldgen is a pure function of the seed, so this is their exact roster.
+///
+/// Three rows, three shapes, and the point is that they are **visibly
+/// different**: before this, "fuel at C or better, nothing here burns hot
+/// enough to light it" trailed the disqualifier after a comma, where it looked
+/// exactly like the positive ", lights from cold" and followed a grade-bearing
+/// claim that had already invited the player in.
+#[test]
+fn a_fuel_nothing_can_light_reads_differently_from_one_that_lights() {
+    let w = host_world(42);
+    let table = sim::debug::species_table(&w);
+    let row = |name: &str| {
+        table
+            .lines()
+            .find(|l| l.contains(name))
+            .unwrap_or_else(|| panic!("seed 42 has no {name} row:\n{table}"))
+            .to_string()
+    };
+
+    // 1. Fuel nothing in this world can light: the claim is BOUND, so there is
+    //    no comma to read it as a separate positive tag.
+    let dead = row("Zuxite");
+    assert!(
+        dead.contains("fuel at C or better if anything here could light it"),
+        "the disqualifier must bind the fuel claim: {dead}"
+    );
+    assert!(
+        !dead.contains("or better, "),
+        "a bound claim must not also trail a clause after a comma: {dead}"
+    );
+
+    // 2. Fuel that lights: positive, and a comma is right here.
+    let live = row("Souktulore");
+    assert!(
+        live.contains("fuel at C or better, lights from cold"),
+        "{live}"
+    );
+
+    // 3. Not fuel at all: silent about lighting. This is the row that used to
+    //    be indistinguishable from the first one at the window.
+    let not_fuel = row("Viomnunine");
+    assert!(
+        !not_fuel.contains("fuel") && !not_fuel.contains("light"),
+        "a rock the sim does not call fuel must say nothing about lighting: {not_fuel}"
+    );
+    assert_ne!(dead, not_fuel, "the two rows the window collapsed");
+}
+
+/// Both renderings of `Lighting` are total and distinct, so neither surface
+/// can quietly lose a state (ASSA-93). The clause goes in a sentence and the
+/// tag goes in a column; what must not happen is a HOST picking either.
+#[test]
+fn every_lighting_state_has_a_clause_and_a_tag_and_they_are_not_the_same_word() {
+    use sim::debug::{lighting_clause, lighting_tag};
+    use sim::ladder::Lighting;
+
+    let all = [
+        Lighting::FromCold,
+        Lighting::FromAHotterFire,
+        Lighting::NothingBurnsHotEnough,
+    ];
+    let mut clauses = Vec::new();
+    let mut tags = Vec::new();
+    for state in all {
+        let (clause, tag) = (lighting_clause(state), lighting_tag(state));
+        assert!(
+            !clause.trim().is_empty() && !tag.trim().is_empty(),
+            "{state:?}"
+        );
+        // A TAG IS NOT A CLAUSE. The clause has to join a sentence, so it
+        // carries its own separator; a tag never does.
+        assert!(
+            !tag.starts_with(',') && !tag.starts_with(' '),
+            "a tag must stand alone: {tag:?}"
+        );
+        clauses.push(clause);
+        tags.push(tag);
+    }
+    clauses.sort_unstable();
+    clauses.dedup();
+    tags.sort_unstable();
+    tags.dedup();
+    assert_eq!(clauses.len(), 3, "two states share a clause: {clauses:?}");
+    assert_eq!(tags.len(), 3, "two states share a tag: {tags:?}");
 }

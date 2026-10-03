@@ -530,16 +530,25 @@ static func no_designs_line() -> String:
 ##
 ## ABSENT RATHER THAN NEGATED. A row says what a rock CAN do; "not hand-minable" would be the client
 ## ranking the roster, which ruling 4 refuses. The player compares six rows and decides.
+## LIGHTING IS THREE STATES AND USED TO RENDER AS ONE BIT (ASSA-93). `hand_lit_fuel` is true only
+## for the first of them, so a fuel NOTHING in the world can light rendered exactly like a rock that
+## is not fuel at all -- and the board loaded 50 units of the first kind into a smelter that then sat
+## cold with no reason given. The sim already holds the answer (`ladder::lighting`) and now sends its
+## own short label in `lighting`; this file picks none of the words and must never re-derive the
+## state from heat tolerance.
+##
+## ABSENT RATHER THAN NEGATED SURVIVES, which is why the key is missing rather than empty on a rock
+## the sim does not call fuel: those rows still say nothing about lighting, so no row is ranked.
 const TAG_HAND_MINABLE := "hand-minable"
-const TAG_HAND_LIT_FUEL := "lights from cold"
 
 ## The tags a species row shows, in a fixed order so six rows read as a column rather than a jumble.
 static func species_tags(species: Dictionary) -> PackedStringArray:
 	var tags := PackedStringArray()
 	if bool(species.get("hand_minable", false)):
 		tags.append(TAG_HAND_MINABLE)
-	if bool(species.get("hand_lit_fuel", false)):
-		tags.append(TAG_HAND_LIT_FUEL)
+	var lighting := String(species.get("lighting", ""))
+	if lighting != "":
+		tags.append(lighting)
 	return tags
 
 

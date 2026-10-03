@@ -226,12 +226,16 @@ func test_the_boolean_facts_show_as_tags_only_where_the_sim_says_true() -> bool:
 	for i in range(mini(rows.size(), sheets.size())):
 		var species: Dictionary = sheets[i]
 		var text := _all_text(rows[i])
-		var lights := bool(species.get("hand_lit_fuel", false))
-		if lights:
+		# WHAT MOVED (ASSA-93): this used to compare the row against the BOOLEAN `hand_lit_fuel`,
+		# which is true for only one of the sim's three lighting states -- so a fuel nothing can
+		# light and a rock that is not fuel both read as "no tag" and this test called that
+		# correct. It now compares against the sim's own label, which covers all three.
+		var lighting := String(species.get("lighting", ""))
+		if lighting != "":
 			seen_fuel += 1
-		if text.contains(AssayHud.TAG_HAND_LIT_FUEL) != lights:
-			ok = _fail(("species %s: the sim says hand_lit_fuel=%s and the row reads `%s`")
-					% [species.get("name", "?"), lights, text])
+		if text.contains(lighting) != (lighting != ""):
+			ok = _fail(("species %s: the sim's lighting label is `%s` and the row reads `%s`")
+					% [species.get("name", "?"), lighting, text])
 			break
 		if text.contains(AssayHud.TAG_HAND_MINABLE) != bool(species.get("hand_minable", false)):
 			ok = _fail(("species %s: the sim says hand_minable=%s and the row reads `%s`")
@@ -239,12 +243,11 @@ func test_the_boolean_facts_show_as_tags_only_where_the_sim_says_true() -> bool:
 			break
 		# NEVER NEGATED. "not hand-minable" would be this client ranking the roster, which ruling 4
 		# refuses: a row says what a rock CAN do and the player compares six of them.
-		if text.contains("not " + AssayHud.TAG_HAND_MINABLE) \
-				or text.contains("no " + AssayHud.TAG_HAND_LIT_FUEL):
+		if text.contains("not " + AssayHud.TAG_HAND_MINABLE):
 			ok = _fail("a row negates a fact instead of leaving the tag off: %s" % text)
 			break
 	if ok and seen_fuel == 0:
-		ok = _fail("no species in this world lights from cold, so the tag was never exercised")
+		ok = _fail("no species in this world is fuel, so the lighting label was never exercised")
 	screen.queue_free()
 	return ok
 

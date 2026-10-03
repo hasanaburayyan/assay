@@ -288,7 +288,7 @@ impl AssaySim {
                         acc
                     },
                 );
-                vdict! {
+                let mut row = vdict! {
                     "id" => species.id,
                     "name" => &gstring(&species.name).to_variant(),
                     "symbol" => &gstring(&species.symbol).to_variant(),
@@ -296,7 +296,15 @@ impl AssaySim {
                     "readings" => &readings.to_variant(),
                     "hand_minable" => species.hand_minable,
                     "hand_lit_fuel" => species.hand_lit_fuel,
+                };
+                // ABSENT, not empty, when the sim does not call this rock fuel
+                // (ASSA-93) -- the same shape `durability` and the design note
+                // use, so a panel cannot print a blank tag for a rock that
+                // simply is not fuel.
+                if let Some(lighting) = &species.lighting {
+                    row.set("lighting", &gstring(lighting).to_variant());
                 }
+                row
             })
             .collect()
     }
@@ -1040,6 +1048,19 @@ pub struct SpeciesFacts {
     pub readings: Vec<(String, String)>,
     pub hand_minable: bool,
     pub hand_lit_fuel: bool,
+    /// **WHICH OF THE THREE LIGHTING STATES**, in the sim's own short label, or
+    /// `None` when the sim does not call this rock fuel at all (ASSA-93).
+    ///
+    /// `hand_lit_fuel` above is a bit, and the sim holds a three-state answer:
+    /// the window rendered a fuel nothing can light identically to a rock that
+    /// is not fuel, and the board loaded 50 units of the first kind. The
+    /// label comes from `sim::debug::lighting_tag` — this crate words none of
+    /// it, and GDScript must not re-derive it from heat tolerance.
+    ///
+    /// Absent on a rock nothing can mine, for ASSA-68's reason: the lighting
+    /// of something that can never enter an inventory is physics about a thing
+    /// the player cannot touch, and the row already says it cannot be mined.
+    pub lighting: Option<String>,
 }
 
 // Plain Rust, no engine types: everything here is reachable from `cargo test`.
@@ -1257,6 +1278,12 @@ impl AssaySim {
                     .collect(),
                 hand_minable: sim::ladder::hand_minable(species),
                 hand_lit_fuel: sim::ladder::hand_lit_fuel(species),
+                lighting: (sim::ladder::fuel_grade(species).is_some()
+                    && sim::ladder::hand_minable(species))
+                .then(|| {
+                    sim::debug::lighting_tag(sim::ladder::lighting(&self.world.species, species.id))
+                        .to_string()
+                }),
             })
             .collect()
     }

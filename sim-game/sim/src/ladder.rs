@@ -47,6 +47,25 @@ pub fn burn_temperature(s: &MineralSpecies) -> Option<u32> {
     (t >= FUEL_MIN_REACTIVITY).then_some(t)
 }
 
+/// The cheapest grade at which a species counts as fuel at all, or `None` if
+/// no grade does.
+///
+/// **ONE PLACE DECIDES WHETHER A ROCK IS FUEL** (ASSA-93). `species_table` had
+/// this loop inline and the Godot binding had nothing, so the window could not
+/// tell a fuel nobody can light from a rock that is not fuel — it was handed a
+/// bit where the sim holds a three-state answer. Grades ascend (`Grade::ALL`
+/// is C, B, A), so the first hit is the cheapest; iterating the other way is
+/// the bug ASSA-58 found, where every row claimed grade A.
+///
+/// Distinct from [`burn_temperature`], which judges at [`JUDGED_AT`] because
+/// the ladder models what a player can *rely* on. This answers what the
+/// roster affords at any grade, which is what a readout should say.
+pub fn fuel_grade(s: &MineralSpecies) -> Option<Grade> {
+    Grade::ALL
+        .into_iter()
+        .find(|g| s.effective(Property::Reactivity, *g) >= FUEL_MIN_REACTIVITY)
+}
+
 /// Whether a hand spark alone sets this species alight.
 ///
 /// **NO GRADE ANYWHERE IN HERE** (Game Director's ruling on ASSA-58). Heat
