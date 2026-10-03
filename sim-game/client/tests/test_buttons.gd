@@ -80,13 +80,27 @@ func _find(node: Node, label: String) -> Button:
 	return null
 
 
+## PRESS A TILE THROUGH THE SCREEN'S OWN ANSWER FOR WHERE THAT TILE IS (`point_of_tile`), not through
+## a copy of the arithmetic. This used to spell `MARGIN + (tile + 0.5) * _cell` itself, which was
+## right while there was one view of the world and wrong in sixteen tests the hour a second one
+## arrived (ASSA-119): every press landed on a tile 40 away and read as the sim refusing a walk.
+## FROM WHICHEVER VIEW SHOWS THE TILE, and that branch is a fact about the GAME rather than about this
+## harness. The close-up is 28x18 tiles of a 96x64 world, so the starter deposit 26 tiles away is
+## genuinely not on screen and no real click could land on it -- crossing the world is what the
+## schematic is for (Maren's ruling, ASSA-119). A synthetic press that names a tile has to pick a view
+## the way a player would, press, and put the view back. `tools/button_play.gd::_click` does the same
+## for the same reason.
 func _click(screen: Node, tile: Vector2i, button: int) -> void:
 	var event := InputEventMouseButton.new()
 	event.button_index = button
 	event.pressed = true
-	var cell: float = screen._cell
-	event.position = AssayHud.MARGIN + (Vector2(tile) + Vector2(0.5, 0.5)) * cell
+	var was: bool = screen._close_up
+	if was and not AssayHud.world_rect().has_point(screen.point_of_tile(tile)):
+		screen._show_close_up(false)
+	event.position = screen.point_of_tile(tile)
 	screen._unhandled_input(event)
+	if was != screen._close_up:
+		screen._show_close_up(was)
 
 
 ## THERE IS A WORLD, AND IT IS THE SIM'S. Everything below leans on this, so it is asserted on its

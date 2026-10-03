@@ -272,7 +272,9 @@ func _click(screen: Node, tile: Vector2i) -> void:
 	var event := InputEventMouseButton.new()
 	event.button_index = MOUSE_BUTTON_LEFT
 	event.pressed = true
-	event.position = AssayHud.MARGIN + (Vector2(tile) + Vector2(0.5, 0.5)) * screen._cell
+	# The screen's own answer for where that tile is, in whichever view is up. See the note on
+	# `test_buttons.gd::_click`: a second copy of this arithmetic is what ASSA-119 broke.
+	event.position = screen.point_of_tile(tile)
 	screen._unhandled_input(event)
 
 

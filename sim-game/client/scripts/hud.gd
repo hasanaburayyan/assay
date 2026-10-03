@@ -33,6 +33,35 @@ const LOG_TOGGLE_H := 28.0
 ## deposit's colour against it to decide whether a letter on top should be dark or light.
 const MAP_BG := Color(0.10, 0.11, 0.13)
 
+## THE FOUR MARKS ON A MAP THAT ARE NOT A SPECIES, named, because until now they were six `Color(...)`
+## literals inside `main.gd::_draw`.
+##
+## MAREN'S RULING-3 CORRECTION (ASSA-116, 2026-10-03) IS WHAT THESE ARE FOR, and her finding is worth
+## restating because it is not the one she set out to make: there are 21 colour literals in
+## `client/scripts/` and nobody chose them as a set. Two near-miss ambers, five cool greys with gaps
+## you cannot see. The deliverable she asked for is a named small set and a client that stops holding
+## literals. This is that for the map's half; `tools/build_theme.gd` is it for the panels'.
+##
+## `MINE` IS ONE MEANING AT SEVERAL WEIGHTS: you, and the line to where you are walking. That is the
+## leg of her original ruling 3 that survived her own check -- the three yellows really were one
+## meaning. What did NOT survive is the targeted tile being a thinner `MINE`: at 9 px a tile the
+## weights are indistinguishable and it read as two of something. So `TARGET` is a SHAPE in `INK`'s
+## neutral rather than a fifth colour -- corner brackets, drawn by `main.gd` -- and the hover outline
+## keeps the thin full-tile box it has always had. Two marks, one hue, no new meaning for a colour.
+const MINE := Color(0.95, 0.85, 0.45)
+const THEIRS := Color(0.75, 0.78, 0.85)
+const HOVER := Color(0.95, 0.95, 0.95)
+const SPAWN_PAD := Color(0.35, 0.33, 0.20)
+
+## HOW BIG A PLAYER'S MARK IS ON THE SCHEMATIC, IN SCREEN PIXELS AND NOT IN TILES (ASSA-119 box 6).
+##
+## It used to be two cells square, which on the 96x64 world is 18 px and on a 32x32 world would be 36.
+## Maren measured the consequence on the real shot: the player was 324 px of an 864x576 view, 0.065%
+## of it and smaller than all eleven deposits, with one deposit twelve times their size. A mark that
+## scales with the tile gets SMALLER exactly as the world gets bigger and harder to find yourself in,
+## which is backwards. So it is a constant: on any world, you are this big.
+const PLAYER_MARK_PX := 16.0
+
 ## THE SIX SPECIES TINTS, SLOT BY SLOT, AND THE CLIENT MAY NOT WORK THEM OUT.
 ##
 ## Decision #36 and Maren's ruling (ASSA-7, 2026-10-02). What I shipped first was Decision #35's
@@ -77,8 +106,28 @@ const GLYPH_LIGHT := Color(1.0, 1.0, 1.0)
 static func map_cell(size: Vector2i) -> float:
 	if size.x <= 0 or size.y <= 0:
 		return 0.0
-	return maxf(2.0, floorf(minf((VIEW.x - MARGIN.x * 2.0 - PANEL) / float(size.x),
-			(VIEW.y - MARGIN.y - 24.0) / float(size.y))))
+	var at := world_rect()
+	return maxf(2.0, floorf(minf(at.size.x / float(size.x), at.size.y / float(size.y))))
+
+
+## WHERE THE WORLD GOES: 912x600 at (24, 96), which is 13% / 63% / 24% of the window with the top
+## strip and the HUD column (Maren's measurement, ASSA-116).
+##
+## FACTORED OUT FOR ASSA-119, because there are two views of the world now and they have to occupy
+## exactly the same rectangle: the whole-world schematic `map_cell` sizes a tile for, and the scene at
+## 32 px a tile that `AssayWorldLayer` clips to. Two copies of this arithmetic would be a scene
+## whose click targets are a few pixels off its own picture.
+static func world_rect() -> Rect2:
+	return Rect2(MARGIN, Vector2(VIEW.x - MARGIN.x * 2.0 - PANEL, VIEW.y - MARGIN.y - 24.0))
+
+
+## WHAT THE VIEW'S CONTROL SAYS, naming its key like the log's and the crafting menu's.
+##
+## IT NAMES WHAT YOU WILL GET, not what you are looking at, which is the same way round as the other
+## two toggles on this screen. The words are deliberately about SCALE rather than about a mechanism:
+## one view is where you are, the other is the whole world.
+static func view_toggle_text(close_up: bool) -> String:
+	return "whole world (V)" if close_up else "back to where I am (V)"
 
 
 ## A DEPOSIT'S COLOUR: THE SPECIES' SLOT, DIMMED BY PURITY. Purity may never move the hue.
