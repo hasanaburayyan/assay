@@ -21,16 +21,32 @@ that layout would have been a measurement of my own guess. The split landed (#12
 the panel exists and drawing it is reporting rather than guessing. The struck-through make-verbs are
 gone from the sheet because they are gone from the client.
 
-TWO STATES, BECAUSE THE PART ROWS HAVE TWO. `stack_verbs` returns `"Mount" if building else
-"Frame"`, so every part row says a different word once a frame has been chosen. A laid-out row can
-only be in one state at a time, so the second column's labels come from `labels_building` -- the
-probe asking the same function again -- never from a word typed in here.
+ONE COLUMN NOW, AND ONE COLOUR OF BUTTON (Maren, after ASSA-103). This sheet used to draw the pack
+twice -- "nothing chosen" beside "a frame chosen" -- because `stack_verbs` returned `"Mount" if
+building else "Frame"` and every part row changed its word mid-assembly. ASSA-103 made the word a
+property of the KIND, so the two columns became identical: measured off the real scene, not assumed
+(handle/frame say Frame, head/hopper say Mount, in both asks). Half the sheet's width was buying two
+red boxes moving. The comparison survives as a DERIVED LINE in the caption, which is the stronger
+form: a diff that fires is a sentence, where a second identical column is something a reader has to
+notice is identical.
 
-AND THE SHEET MARKS WHICH OF THOSE WORDS THE SIM ALWAYS REFUSES, because that is the thing a picture
-of four identical buttons cannot say on its own. Frame-ness is read from the sim's catalogue: a
-kind's `tag` is the serde form of `PartTag`, so `{"Frame": "Held"}` is a frame and `"Head"` is not
-(see `_is_frame_kind` in the probe). It is NOT read from the button saying the word "Frame", which
-would be a fact about English -- the same trap the verb split had to avoid.
+AND NOTHING IS PAINTED AS REFUSED, because the client paints nothing as refused. `main.gd:_button`
+sets no `disabled`, no modulate and no override -- that is Maren's own ASSA-37 ruling ("nothing is
+disabled; the button stays pressable and the sim does the refusing"), and ASSA-103 answers the press
+with the sim's sentence instead. A sheet headed "AS IT SHIPS" may paint only what ships, and four
+angry red buttons were the loudest thing on a page about a screen that has none.
+
+THE REFUSAL IS A FACT ABOUT THE SIM, SO IT IS TEXT. And the sheet states only the half it can
+actually compute. `permanent_fault` has three rules, not two: the first part must be a frame
+(`FrameIsNotAFrame`), a frame may not be mounted (`FrameMounted`), and a mount needs a slot on THAT
+frame (`NoSuchSlot`). The first depends only on `is_frame`, which the probe reads from the sim's
+catalogue, so the sheet can be certain about it. The other two depend on WHICH frame was chosen --
+`assembly.rs` is explicit that "a held frame offers no hopper slot at all" -- so "a frame chosen" was
+never one state, and the old right-hand column drew a hopper as pressable that a handle always
+refuses. The sheet names that limit rather than printing a confident wrong set.
+
+Frame-ness is read from the sim's catalogue, never from the button saying the word "Frame", which
+would be a fact about English -- the same trap the verb split had to avoid (see `_is_frame_kind`).
 """
 import json
 import sys
@@ -83,23 +99,21 @@ def icon_of(entry):
     return frame
 
 
-def refused(entry, building):
-    """Would the sim refuse the word this part row is showing, in this state?
+def cannot_be_first(entry):
+    """Would the sim refuse this row as the FIRST part of a design?
 
-    `Assembly::validate` wants the FIRST part to be a frame and refuses a frame mounted on a
-    frame, so with nothing chosen a non-frame kind pressing `Frame` is `FrameIsNotAFrame`, and
-    once a frame is chosen a frame kind pressing `Mount` is `FrameMounted`. Exactly the kinds
-    whose frame-ness disagrees with the state.
+    `permanent_fault` opens with `if !frame.is_frame() { FrameIsNotAFrame }`, so the answer
+    depends on `is_frame` ALONE -- no chosen frame, no slot table, nothing this sheet would have
+    to guess at. That is the whole reason this is the one refusal stated here: the other two
+    (`FrameMounted`, `NoSuchSlot`) need to know WHICH frame was chosen, and a handle and a
+    planted frame give different answers for the same hopper.
 
-    `is_frame` is -1 for a row that is not a part at all, which is never refused here.
+    `is_frame` is -1 for a row that is not a part at all, which is never a first part question.
     """
-    is_frame = entry.get("is_frame", -1)
-    if is_frame < 0:
-        return False
-    return is_frame == 1 if building else is_frame == 0
+    return entry.get("is_frame", -1) == 0
 
 
-def draw_row(dst, entry, oy, building=False):
+def draw_row(dst, entry, oy):
     d = ImageDraw.Draw(dst)
     icon = icon_of(entry)
     rh = int(entry["row_size"][1])
@@ -109,32 +123,25 @@ def draw_row(dst, entry, oy, building=False):
         d.rectangle([0, box_y, 31, box_y + 47], fill=PLATE)
         dst.alpha_composite(icon, (int((32 - icon.width) / 2), box_y + int((48 - icon.height) / 2)))
     d.text((38, oy + 4), entry["line"], font=font(13), fill=(236, 236, 236))
-    # In the building state the labels are the probe's second ask of `stack_verbs`, not a word
-    # composed here. Same boxes: only the caption on the button changes.
-    labels = entry.get("labels_building", []) if building else entry["verbs"]
-    dead = refused(entry, building)
-    for label, box in zip(labels, entry.get("verb_boxes", [])):
+    # EVERY BUTTON THE SAME, because `main.gd:_button` builds every button the same: no
+    # `disabled`, no modulate, no theme override (ASSA-37, and ASSA-103 answers the press with
+    # the sim's sentence instead). A refusal is not a pixel on this screen, so it is not a pixel
+    # on this sheet.
+    for label, box in zip(entry["verbs"], entry.get("verb_boxes", [])):
         bx, by, bw, bh = box
         x0, y0, x1, y1 = bx, oy + by, bx + bw - 1, oy + by + bh - 1
-        d.rectangle([x0, y0, x1, y1],
-                    outline=(196, 104, 92) if dead else (170, 170, 170),
-                    fill=(74, 50, 48) if dead else (92, 92, 92))
+        d.rectangle([x0, y0, x1, y1], outline=(170, 170, 170), fill=(92, 92, 92))
         f = font(12)
         tw = d.textlength(label, font=f)
-        d.text((x0 + (bw - tw) / 2, y0 + (bh - 12) / 2 - 1), label, font=f,
-               fill=(236, 150, 136) if dead else (240, 240, 240))
-        if dead:
-            # The sim refuses this press every time, in this state, for this kind.
-            d.text((x1 + 6, y0 + (bh - 12) / 2 - 1), "always refused", font=font(11),
-                   fill=(214, 128, 110))
+        d.text((x0 + (bw - tw) / 2, y0 + (bh - 12) / 2 - 1), label, font=f, fill=(240, 240, 240))
 
 
-def build_column(building):
+def build_column():
     col_h = sum(int(r["row_size"][1]) for r in ROWS) + GAP * (len(ROWS) - 1)
     col = Image.new("RGBA", (PANEL, col_h), BG)
     y = 0
     for r in ROWS:
-        draw_row(col, r, y, building)
+        draw_row(col, r, y)
         y += int(r["row_size"][1]) + GAP
     return col
 
@@ -148,17 +155,23 @@ if missing:
     raise SystemExit("pack_row_sheet: no icon found on %d row(s): %s. The icon moved under a new "
                      "wrapper and the probe stopped finding it." % (len(missing), missing))
 
-column = build_column(False)
-column_building = build_column(True)
+column = build_column()
 summary = [(r["line"], len(r.get("verb_kinds", [])), int(r["row_size"][1]),
-            refused(r, False), refused(r, True)) for r in ROWS]
+            cannot_be_first(r)) for r in ROWS]
+
+# DOES THE WORD STILL SWAP? Computed, never asserted in prose. This is what the second column used
+# to be: `labels_building` is the probe asking `stack_verbs` a second time, and since ASSA-103 it
+# must come back identical for every row. A sentence that fires beats a picture a reader has to
+# notice is identical -- and if it ever fires, it names the rows rather than leaving them to be
+# spotted.
+swapped = [(r["line"], list(r["verbs"]), list(r.get("labels_building", [])))
+           for r in ROWS if list(r.get("labels_building", [])) != list(r["verbs"])]
 
 cap = font(13)
 head = font(15)
-heights = sorted({h for _, _, h, _, _ in summary})
-worst = max(total for _, total, _, _, _ in summary)
-dead_a = [l for l, _, _, a, _ in summary if a]
-dead_b = [l for l, _, _, _, b in summary if b]
+heights = sorted({h for _, _, h, _ in summary})
+worst = max(total for _, total, _, _ in summary)
+not_first = [l for l, _, _, a in summary if a]
 
 lines = [
     "THE PACK AT 1:1 AS IT SHIPS, AFTER THE ASSA-86 SPLIT (main #128, with #126).",
@@ -169,39 +182,48 @@ lines = [
     "sign used to come out as a BOX here, which was this sheet's font and never the window's;",
     "it is drawn properly now (ASSA-114). What the CLIENT's font does with it is still unseen.",
     "",
+    # THE CHECK IS UNIFORMITY, WHICH IS THE PROPERTY RULED ON -- not a remembered number. This
+    # read `heights == [48]` and so shouted "IT DID NOT HOLD" at a pack whose rows were all 49px:
+    # perfectly uniform, one pixel off a figure someone wrote down once. A bar that hardcodes a
+    # quantity is checking something other than what it says (Maren, and her own recurring defect).
     "ROW HEIGHTS: %s. Maren declined to add a row-height rule, on the grounds that a uniform"
     % ", ".join("%dpx" % h for h in heights),
     "height falls out of the verb split and so cannot drift from it. %s"
-    % ("That holds: the refined row was 72px before and is 48px now."
-       if heights == [48] else "IT DID NOT HOLD -- see the heights above."),
+    % ("That holds: every row is the same height, and the refined row was 72px before."
+       if len(heights) == 1 else "IT DID NOT HOLD -- the heights above disagree."),
     "WORST ROW: %d verbs (it was 7). Three button sets across seven rows." % worst,
     "",
 ]
-for line, total, h, a, b in summary:
-    # WHICH state, not just that there is one: every part row is refused in exactly one of the
-    # two, and which one is the whole content of the defect. "one state or both" was true and
-    # said nothing.
-    when = "  <-- always refused with %s" % (" and ".join(
-        s for s, on in (("nothing chosen", a), ("a frame chosen", b)) if on)) if (a or b) else ""
+for line, total, h, a in summary:
+    when = "  <-- cannot be the first part" if a else ""
     lines.append("  %-26s %d verb%s  %dpx%s"
                  % (line, total, " " if total == 1 else "s", h, when))
 lines += [
     "",
-    "LEFT: nothing chosen yet. RIGHT: the same pack once a frame has been chosen -- the only",
-    "difference `stack_verbs` makes is the word, so the boxes are identical and the caption is not.",
+    "THE WORD IS THE KIND'S, AND THIS LINE IS COMPUTED, NOT CLAIMED (ASSA-103). The probe asks",
+    "`stack_verbs` a second time as if an assembly were part-way built; every label must come back",
+]
+lines += ([
+    "the same, and all %d rows do. The word has stopped swapping." % len(ROWS),
+] if not swapped else [
+    "THE SAME, AND %d ROW(S) DO NOT -- the word is swapping again:" % len(swapped),
+] + ["    %-26s %s -> %s" % (ln, a, b) for ln, a, b in swapped])
+lines += [
     "",
-    "RED = THE SIM REFUSES THAT PRESS EVERY TIME. Maren's ASSA-86 ruling 1 (the label is a property",
-    "of the KIND, not of the state) is NOT in this build: all four part rows still say one word.",
-    "  nothing chosen -> %s" % (", ".join(dead_a) if dead_a else "none"),
-    "  frame chosen   -> %s" % (", ".join(dead_b) if dead_b else "none"),
+    "NOTHING IS DRAWN AS REFUSED, BECAUSE THE CLIENT DRAWS NOTHING AS REFUSED: `_button` sets no",
+    "`disabled`, no modulate, no override (ASSA-37), and ASSA-103 answers a bad press at the press",
+    "with the sim's own sentence. The one refusal this sheet can be CERTAIN of is the first-part",
+    "rule, which `permanent_fault` decides from `is_frame` alone:",
+    "  cannot be the first part -> %s" % (", ".join(not_first) if not_first else "none"),
     "`FrameIsNotAFrame` is the unrecoverable one: no later press can fix a buffer that starts wrong.",
-    "AND THE TWO HALVES SWAP: in each state exactly two of the four part rows are pressable, and",
-    "never the same two. There is no state of this pack in which all four part rows work.",
+    "AND THE SHEET STOPS THERE ON PURPOSE. The other two faults -- `FrameMounted`, `NoSuchSlot` --",
+    "need to know WHICH frame was chosen, so \"a frame chosen\" was never one state: assembly.rs says",
+    "a held frame offers no hopper slot at all, where a planted one does. The old second column drew",
+    "one picture of that and so drew a hopper as pressable that a handle always refuses.",
 ]
 
 cap_h = PAD * 2 + len(lines) * 17
-COLGAP = 150  # room for the "always refused" note beside the right-hand column's buttons
-W = max(PANEL * 2 + COLGAP + PAD * 2, 860)
+W = max(PANEL + PAD * 2, 860)
 H = cap_h + column.height + PAD * 2 + 20
 sheet = Image.new("RGBA", (W, H), (34, 34, 34))
 d = ImageDraw.Draw(sheet)
@@ -209,14 +231,14 @@ yy = PAD
 for i, line in enumerate(lines):
     d.text((PAD, yy), line, font=head if i == 0 else cap, fill=(236, 236, 236))
     yy += 17
-d.text((PAD, cap_h), "NOTHING CHOSEN", font=cap, fill=(210, 210, 210))
-d.text((PAD + PANEL + COLGAP, cap_h), "A FRAME CHOSEN", font=cap, fill=(210, 210, 210))
+d.text((PAD, cap_h), "THE PACK, AT 1:1, EXACTLY AS THE CLIENT DRAWS IT", font=cap,
+       fill=(210, 210, 210))
 sheet.alpha_composite(column, (PAD, cap_h + 20))
-sheet.alpha_composite(column_building, (PAD + PANEL + COLGAP, cap_h + 20))
 OUT.parent.mkdir(parents=True, exist_ok=True)
 sheet.convert("RGB").save(OUT)
 
-for line, total, h, a, b in summary:
-    print("%-28s %d verbs  %dpx  refused: nothing=%s frame=%s" % (line, total, h, a, b))
+for line, total, h, a in summary:
+    print("%-28s %d verbs  %dpx  cannot be first: %s" % (line, total, h, a))
+print("word swaps: %s" % (swapped if swapped else "none (ASSA-103 holds)"))
 print("row heights: %s   worst row: %d verbs" % (heights, worst))
 print("sheet written to %s (%dx%d)" % (OUT, sheet.width, sheet.height))
