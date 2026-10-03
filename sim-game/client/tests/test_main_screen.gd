@@ -433,3 +433,85 @@ func _text_in(node: Node) -> String:
 		if found != "":
 			parts.append(found)
 	return " | ".join(parts)
+
+
+## ASSA-88: THE CRAFTING MENU IS A SECTION BESIDE THE MAP, OPEN ON FIRST JOIN, AND ITS CONTROL NAMES
+## ITS KEY.
+##
+## Open, unlike the event log, and that is the opposite call for the opposite reason: the board asked
+## for a crafting menu, so a menu nobody finds is the clunk restated. The default is asserted here
+## because `_make_shown` is initialised to the WRONG answer on purpose -- this can only pass if
+## `_build_ui` actually called `_show_make(true)`.
+func test_the_crafting_menu_is_open_on_first_join_and_its_control_names_the_key() -> bool:
+	var screen := _screen()
+	var ok := true
+	var beside := AssayHud.VIEW.x - AssayHud.PANEL - AssayHud.MARGIN.x
+	if screen._make.get_parent() == null:
+		ok = _fail("the crafting menu was never added to the screen")
+	elif _left_edge_of(screen._make) < beside:
+		ok = _fail("the crafting menu starts at x %f, which is over the map"
+				% _left_edge_of(screen._make))
+	elif not screen._make.visible:
+		ok = _fail("the crafting menu is folded away on first open; the board asked for a menu")
+	elif not screen._make_toggle.text.contains("(M)"):
+		ok = _fail("the menu's control does not name its key: `%s`" % screen._make_toggle.text)
+	elif screen._make_toggle.text != AssayHud.make_toggle_text(true):
+		ok = _fail("the control says `%s` while the rows are showing" % screen._make_toggle.text)
+	screen.queue_free()
+	return ok
+
+
+## THE MENU FOLDS AND THE RUNNING CRAFT DOES NOT FOLD WITH IT (Maren's clause on ASSA-89, applied to
+## ASSA-88): a craft is a CONDITION, not a moment.
+##
+## STRUCTURAL, AND THAT IS THE POINT. `test_buttons.gd` proves it with a real craft running; this
+## proves the countdown is not a CHILD of the thing the toggle hides, so the property holds whatever
+## a later edit does to the rows. Both, because the structural half is what makes the behavioural
+## half impossible to break by accident.
+func test_folding_the_crafting_menu_cannot_hide_the_running_craft() -> bool:
+	var screen := _screen()
+	var ok := true
+	var walk: Node = screen._crafting
+	while walk != null:
+		if walk == screen._make:
+			ok = _fail("the running craft lives inside the container the toggle hides")
+			break
+		walk = walk.get_parent()
+	# AND IT SURVIVES A REBUILD OF THE ROWS. `_rebuild_make` CLEARS the container it owns, so a
+	# countdown that had been added to the rows would be freed and the walk above would find a node
+	# with no parent at all -- which is how a mutation that moved this line into the rows passed
+	# every test I had. The parent is therefore asserted, not just "not the menu".
+	if ok:
+		screen._make_showing = "not a shape any pack has"
+		screen._refresh_make()
+		if not is_instance_valid(screen._crafting):
+			ok = _fail("rebuilding the rows freed the running-craft line")
+		elif screen._crafting.get_parent() == null:
+			ok = _fail("rebuilding the rows took the running-craft line off the panel")
+	if ok:
+		screen._show_make(false)
+		if screen._make.visible:
+			ok = _fail("_show_make(false) left the rows visible")
+		elif not screen._crafting.visible and screen._crafting.text != "":
+			ok = _fail("folding the rows away hid a running craft")
+		elif screen._make_toggle.text != AssayHud.make_toggle_text(false):
+			ok = _fail("the control still says `%s` with the rows hidden"
+					% screen._make_toggle.text)
+	screen.queue_free()
+	return ok
+
+
+## AN EMPTY MENU SAYS WHICH KIND OF EMPTY IT IS, and names the cause: hands work on what you carry,
+## so an empty menu means an empty pack. A heading over nothing reads as a bug -- the same rule the
+## empty pack and empty bench already follow.
+func test_the_crafting_menu_says_why_it_is_empty_before_a_world_exists() -> bool:
+	var screen := _screen()
+	var ok := true
+	var said := ""
+	for child in screen._make.get_children():
+		if child is Label:
+			said = (child as Label).text
+	if said != AssayHud.nothing_to_make_line():
+		ok = _fail("the empty menu says `%s`" % said)
+	screen.queue_free()
+	return ok

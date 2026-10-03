@@ -569,3 +569,25 @@ static func species_readings_line(species: Dictionary) -> String:
 	for property in readings:
 		parts.append("%s %s" % [String(property), String(readings[property])])
 	return " · ".join(parts)
+
+
+## WHAT THE CRAFTING MENU'S CONTROL SAYS, and it names its key (ASSA-88). The same shape as the event
+## log's toggle, for the same reason: the key is the half of a toggle a stranger cannot discover.
+static func make_toggle_text(shown: bool) -> String:
+	return "hide what I can make (M)" if shown else "show what I can make (M)"
+
+
+## What the crafting menu says when there is nothing in it. A heading over nothing reads as a bug, so
+## every empty section says WHICH kind of empty it is -- and this one has a cause a player can act on:
+## a pair of hands works on what you are carrying, so an empty menu means an empty pack.
+static func nothing_to_make_line() -> String:
+	return "nothing you are carrying can be worked by hand — mine some rock first"
+
+
+## THE ONE WORD ON EVERY ROW'S BUTTON, and it is the same word on every row ON PURPOSE (ASSA-88,
+## Maren's ruling). The bug she measured was two buttons both labelled exactly `Craft smelter` making
+## smelters with different walls: a LABEL that was the only read, and ambiguous. So the identity of a
+## row lives in the sim's sentence beside the button, never in the button, and this returns one word
+## however many catalogues a row can come from.
+static func make_button_text() -> String:
+	return "Make"

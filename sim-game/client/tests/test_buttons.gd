@@ -659,40 +659,64 @@ func test_the_pack_count_climbs_without_rebuilding_the_row() -> bool:
 ## fix, and this is the test that it is actually on the panel rather than merely available.
 ##
 ## IT ASKS THE SCREEN, NOT THE SIM. `crafting_readout` is unit-tested in `sim/tests/crafting.rs`
-## against the whole sentence; what can only be checked here is that `_refresh` puts it in the `do`
-## section and takes it away again, which is the half that broke twice this week in other panels.
-func test_a_running_craft_is_named_on_the_do_section() -> bool:
+## against the whole sentence; what can only be checked here is that `_refresh` puts it on the panel
+## and takes it away again, which is the half that broke twice this week in other panels.
+##
+## **MOVED TO THE HEAD OF THE CRAFTING MENU (ASSA-88, Maren's ruling), AND THIS TEST MOVED WITH IT
+## RATHER THAN BEING LOOSENED.** It used to read the `do` section, where the sentence competed with
+## Mine and Assay and sat nowhere near the button that started the craft. Two things are asserted now
+## that were not before: that the press comes from a MENU row, and that **collapsing the menu does
+## not take the countdown away** -- a craft is a CONDITION, not a moment, so a line a closed menu
+## could hide would not discharge it.
+func test_a_running_craft_is_named_at_the_head_of_the_crafting_menu() -> bool:
 	var screen := _joined()
 	_tick(screen, 2)
 	var ok := _mine_some_ore(screen)
+	if ok and screen._crafting.visible:
+		ok = _fail("the panel claimed a craft before one was started: %s" % screen._crafting.text)
 	if ok:
-		var before := _text_of(screen._actions)
-		if before.contains("making "):
-			ok = _fail("the do section claimed a craft before one was started: %s" % before)
-	if ok:
-		var stacks: Array = screen._sim.inventory_of(screen._client.player_id)
-		var row := _row_for(screen, AssayHud.stack_line(stacks[0] as Dictionary))
-		var button: Button = null if row == null else _find(row, "Craft smelter")
+		var button := _make_button_for(screen, "smelter")
 		if button == null:
-			ok = _fail("no `Craft smelter` button to press")
+			ok = _fail("no menu row offers a smelter: %s" % _text_of(screen._make))
 		else:
 			button.pressed.emit()
 			_tick(screen, 2)
-			var during := _text_of(screen._actions)
-			if not during.contains("making "):
-				ok = _fail(("a craft is running and the do section does not say so: %s. The ticks "
-						+ "come from the sim; this client only prints them.") % during)
-			elif not during.contains("ticks left"):
-				ok = _fail("the running craft does not say how long is left: %s" % during)
+			var during: String = screen._crafting.text
+			if not screen._crafting.visible:
+				ok = _fail("a craft is running and the countdown is hidden: `%s`" % during)
+			elif not during.contains("making ") or not during.contains("ticks left"):
+				ok = _fail(("a craft is running and the head of the menu does not say so: %s. The "
+						+ "ticks come from the sim; this client only prints them.") % during)
 			else:
-				# AND IT GOES AWAY. A line that appears and never clears is worse than no line: it
-				# would say a craft is running forever, which is the same lie the silence was.
-				_tick(screen, PATIENCE)
-				var after := _text_of(screen._actions)
-				if after.contains("making "):
-					ok = _fail("the craft finished and the do section still claims one: %s" % after)
+				# THE CLAUSE MAREN ADDED. The menu folds; the condition does not.
+				screen._show_make(false)
+				screen._refresh()
+				if not screen._crafting.visible:
+					ok = _fail("folding the menu away hid the running craft, which lasts until it "
+							+ "finishes whatever the menu is doing")
+				elif screen._make.visible:
+					ok = _fail("_show_make(false) left the rows visible, so this proves nothing")
+				else:
+					screen._show_make(true)
+					# AND IT GOES AWAY. A line that appears and never clears is worse than no line:
+					# it would say a craft is running forever, which is the same lie the silence was.
+					_tick(screen, PATIENCE)
+					if screen._crafting.visible or screen._crafting.text != "":
+						ok = _fail("the craft finished and the panel still claims one: %s"
+								% screen._crafting.text)
 	screen.queue_free()
 	return ok
+
+
+## THE MENU ROW THAT OFFERS `want`, by the SIM'S OWN SENTENCE and never by a button label: every
+## row's button says the same word on purpose (Maren's ruling), so the row is found by what it says
+## it makes and the button is then the one inside it.
+func _make_button_for(screen: Node, want: String) -> Button:
+	for row in screen._make.get_children():
+		var line := row.find_child(screen.MAKE_LINE, true, false) as Label
+		if line != null and line.text.contains(want):
+			return _find(row, AssayHud.make_button_text())
+	return null
 
 
 ## A REFUSAL REACHES THE ALWAYS-VISIBLE LINE WITH THE LOG HIDDEN (ASSA-89), THROUGH A REAL SIM.
@@ -793,3 +817,318 @@ func test_walking_does_not_shout_on_the_always_visible_line() -> bool:
 				break
 	screen.queue_free()
 	return ok
+
+
+## ASSA-88: THE BUG THE BOARD HIT, AT THE WINDOW. Maren measured their pack: two ore species drew two
+## buttons both labelled exactly `Craft smelter`, building smelters with DIFFERENT WALLS, told apart
+## only by which row you were standing on. Walls decide what a smelter can ever melt.
+##
+## So: carry two species of ore and require that the menu's rows for one recipe (a) are two, and
+## (b) DO NOT READ ALIKE. That is the whole defect as a property, and it cannot be satisfied by a
+## label this client writes -- the only text on a row is the sim's sentence.
+func test_two_species_of_ore_give_two_menu_rows_that_do_not_read_alike() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_two_species(screen)
+	if ok:
+		var species: Array = screen._sim.species_names()
+		var rows := _make_lines_containing(screen, "smelter")
+		if rows.size() < 2:
+			ok = _fail("two species of ore in the pack and %d smelter rows: %s"
+					% [rows.size(), _text_of(screen._make)])
+		elif rows[0] == rows[1]:
+			ok = _fail("two rows read exactly `%s` and make different machines" % rows[0])
+		else:
+			var named := 0
+			for name in species:
+				for row in rows:
+					if String(row).contains(String(name)):
+						named += 1
+						break
+			if named < 2:
+				ok = _fail("the two smelter rows name %d species between them: %s" % [named, rows])
+	screen.queue_free()
+	return ok
+
+
+## EVERY ROW IS THE SIM'S SENTENCE AND NOT A STRING THIS CLIENT BUILT. Asserted as a property rather
+## than by comparing against `make_offers()[i].line`, which is the expression `_rebuild_make` runs and
+## would pass by construction about nothing: a row must name its material in WORDS (the species name
+## and a grade in brackets) and must never carry the typed `ore:species:b` spec or a serde tag.
+func test_no_menu_row_shows_a_typed_spec_or_a_wire_tag() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_some_ore(screen)
+	if ok:
+		var lines := _make_lines_containing(screen, "")
+		if lines.is_empty():
+			ok = _fail("a pack with ore in it produced no menu rows at all")
+		for entry in lines:
+			var line := String(entry)
+			if line.contains("ore:") or line.contains("refined:"):
+				ok = _fail("a row carries the typed item spec, which is what you TYPE: %s" % line)
+				break
+			if line.contains("Smelter") or line.contains("Sort") or line.contains("{"):
+				ok = _fail("a row carries a wire tag rather than a sentence: %s" % line)
+				break
+			if not line.contains("(") or not line.contains(")"):
+				ok = _fail("a row names no grade, so two grades of one rock read alike: %s" % line)
+				break
+	screen.queue_free()
+	return ok
+
+
+## PRESSING A ROW SUBMITS THE SAME `PlayerCommand` `sim-cli` SENDS, and the recipe and item in it are
+## the sim's own -- the tag out of `make_offers`, the item rearranged by `item_of_stack`. Read off the
+## real `asked` signal, so a button wired to nothing collects nothing.
+##
+## AND THE COUNT IS ALWAYS 1 (ASSA-55). The sentence on the row says how many you hold; nothing in the
+## closure does, so there is no number here that can go stale between the build and the press.
+##
+## **EVERY ROW, NOT THE FIRST ONE.** I wrote this against `offers[0]` and a mutation walked straight
+## through it: make every button send `offers[0]`'s item and the test still passed, because the only
+## row it ever pressed was the one that mutation happened to be right about. A menu's whole job is
+## that row N acts on row N's material.
+func test_pressing_any_menu_row_submits_the_sims_own_command_for_that_row() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	# TWO SPECIES, NOT ONE, AND THAT IS WHAT MAKES THIS TEST ABOUT PAIRING. With one stack in the
+	# pack every offer has the SAME input item and only the recipe differs, so "every button sends
+	# the first row's item" is indistinguishable from correct -- a mutation walked through this test
+	# until the pack held two kinds of rock.
+	var ok := _mine_two_species(screen)
+	if ok:
+		var offers: Array = screen._sim.make_offers(screen._client.player_id)
+		var inputs := {}
+		for entry in offers:
+			inputs[int((entry as Dictionary).get("species", -1))] = true
+		if offers.size() < 2:
+			ok = _fail("a pack with ore in it offers %d rows; one row proves nothing about pairing"
+					% offers.size())
+		elif inputs.size() < 2:
+			ok = _fail("every row acts on the same material, so pairing cannot be tested here")
+		for i in range(offers.size()):
+			if not ok:
+				break
+			var offer: Dictionary = offers[i]
+			var row: Node = screen._make.get_child(i)
+			var line := row.find_child(screen.MAKE_LINE, true, false) as Label
+			var button := _find(row, AssayHud.make_button_text())
+			_asked.clear()
+			if line == null or button == null:
+				ok = _fail("row %d has no sentence or no button" % i)
+				break
+			button.pressed.emit()
+			var wanted := "craft" if String(offer.get("verb", "")) == "craft" else "make"
+			var key := "Craft" if wanted == "craft" else "MakePart"
+			if _asked.size() != 1:
+				ok = _fail("one press on row %d submitted %d commands" % [i, _asked.size()])
+				break
+			var sent: Dictionary = _asked[0]
+			var body: Dictionary = sent.get(key, {})
+			var tag_key := "recipe" if key == "Craft" else "kind"
+			var item_key := "item" if key == "Craft" else "material"
+			# THE SENTENCE AND THE COMMAND MUST BE ABOUT THE SAME THING. This is the pairing the
+			# fast path makes by INDEX (`offers[i]` against `_make.get_child(i)`): get that wrong
+			# and a row would say one thing and do another, which no amount of correct wording
+			# would save.
+			var species: PackedStringArray = screen._sim.species_names()
+			var named: String = species[int(offer.get("species", -1))]
+			if body.is_empty():
+				ok = _fail("row %d reading `%s` sent %s" % [i, line.text, JSON.stringify(sent)])
+			elif not line.text.contains(named):
+				ok = _fail("row %d acts on %s and its sentence says `%s`" % [i, named, line.text])
+			elif JSON.stringify(body.get(tag_key)) != JSON.stringify(offer.get("tag")):
+				ok = _fail("row %d sent tag %s for an offer tagged %s"
+						% [i, JSON.stringify(body.get(tag_key)), JSON.stringify(offer.get("tag"))])
+			elif int(body.get("count", -1)) != 1:
+				ok = _fail("row %d sent count %d; a row is one batch and never a captured number"
+						% [i, int(body.get("count", -1))])
+			elif JSON.stringify(body.get(item_key)) != JSON.stringify(
+					AssayActions.item_of_stack(offer)):
+				ok = _fail("row %d sent item %s for an offer of %s"
+						% [i, JSON.stringify(body.get(item_key)), JSON.stringify(offer)])
+	screen.queue_free()
+	return ok
+
+
+## THE ROW THE REBUILD PUTS ON SCREEN IS ALREADY THE SIM'S SENTENCE, before any later refresh has
+## touched it.
+##
+## **WHY THIS TEST EXISTS, AND IT IS A FAILURE OF MINE.** Every other test here reads the menu after
+## several ticks, by which time `_refresh_make`'s FAST PATH has re-texted every row -- so I could
+## replace the rebuild's text with `"craft ore"` composed in GDScript and all 143 tests passed. The
+## fast path repairs it on the next frame, which is lucky rather than correct: the two paths agreeing
+## is the thing to assert, and the rebuild is the one that pairs a sentence with a button.
+func test_a_rebuilt_row_carries_the_sims_sentence_before_any_refresh() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_some_ore(screen)
+	if ok:
+		var offers: Array = screen._sim.make_offers(screen._client.player_id)
+		# FORCE THE REBUILD PATH and nothing else: a shape nothing can equal, then one refresh.
+		screen._make_showing = "not a shape any pack has"
+		screen._refresh_make()
+		if offers.is_empty():
+			ok = _fail("nothing to rebuild")
+		elif screen._make.get_child_count() != offers.size():
+			ok = _fail("the rebuild made %d rows for %d offers"
+					% [screen._make.get_child_count(), offers.size()])
+		else:
+			for i in range(offers.size()):
+				var wanted := String((offers[i] as Dictionary).get("line", ""))
+				var line := screen._make.get_child(i).find_child(screen.MAKE_LINE,
+						true, false) as Label
+				if line == null:
+					ok = _fail("rebuilt row %d has no sentence" % i)
+					break
+				if line.text != wanted:
+					ok = _fail(("the rebuild wrote `%s` where the sim says `%s`. A sentence this "
+							+ "client composed is one the sim cannot correct.")
+							% [line.text, wanted])
+					break
+	screen.queue_free()
+	return ok
+
+
+## THE COUNT IN A ROW'S SENTENCE CLIMBS WITHOUT THE ROW BEING REBUILT. Every row says "N of your M",
+## and M is the pack's count, which rises every mining cycle. The shape-signature path exists so a
+## button under the pointer is not destroyed ten times a second, and the cost of that is a sentence
+## that must be re-TEXTED instead -- which is the half that silently stopped working on the pack rows
+## when an icon became child 0 (ASSA-46).
+##
+## THE SIGNATURE IS CHECKED NOT TO HAVE MOVED, or the rebuild path ran and this proves nothing.
+func test_the_menu_re_texts_its_rows_as_the_pack_grows() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_some_ore(screen)
+	if ok:
+		var first: Array = screen._sim.make_offers(screen._client.player_id)
+		if first.is_empty():
+			ok = _fail("nothing to make, so nothing to re-text")
+		else:
+			var shape_before: String = screen._make_showing
+			var before := String((first[0] as Dictionary).get("line", ""))
+			var mine := _find(screen._actions, "Mine")
+			if mine == null:
+				ok = _fail("no Mine button to grow the pack with")
+			else:
+				mine.pressed.emit()
+				_tick(screen, 40)
+				var after: Array = screen._sim.make_offers(screen._client.player_id)
+				var wanted := String((after[0] as Dictionary).get("line", ""))
+				var row: Node = screen._make.get_child(0)
+				var label := row.find_child(screen.MAKE_LINE, true, false) as Label
+				if wanted == before:
+					ok = _fail("the sim's count did not move in 40 ticks, so this proves nothing")
+				elif screen._make_showing != shape_before:
+					ok = _fail("the menu's shape changed, so the rebuild path ran and the fast path "
+							+ "is still untested")
+				elif label == null:
+					ok = _fail("the row has no %s label any more" % screen.MAKE_LINE)
+				elif label.text != wanted:
+					ok = _fail(("the row still reads `%s` while the sim says `%s`. The fast path "
+							+ "stopped finding its label.") % [label.text, wanted])
+	screen.queue_free()
+	return ok
+
+
+## Walk to a deposit of species `species` and mine it, so the pack can hold two species at once.
+##
+## NOT `starter_pair()[1]`, WHICH IS WHERE I WROTE THIS FIRST AND IT QUIETLY MINED THE SAME ROCK
+## TWICE. The starter pair is (material, fuel) and nothing stops ONE species being both -- in the
+## offline test world it is, so the helper walked back to the deposit it was already standing on and
+## the pack still held one kind. The caller picks two distinct workable species instead.
+func _mine_some_ore_of(screen: Node, species: int) -> bool:
+	var deposit := AssaySessionPlan.nearest_of_species(screen._sim.deposits(), species,
+			screen._my_tile(), 0)
+	if deposit.is_empty():
+		return _fail("no deposit of species %d has ore in it" % species)
+	var centre: Vector2i = deposit.get("center", Vector2i.ZERO)
+	_click(screen, centre, MOUSE_BUTTON_LEFT)
+	_tick(screen, PATIENCE)
+	if screen._my_tile() != centre:
+		return _fail("walked to %s and stopped at %s" % [centre, screen._my_tile()])
+	var mine := _find(screen._actions, "Mine")
+	if mine == null:
+		return _fail("no Mine button on the deposit")
+	var pack_before: Array = screen._sim.inventory_of(screen._client.player_id)
+	var kinds_before := pack_before.size()
+	mine.pressed.emit()
+	_tick(screen, 20)
+	var stop := _find(screen._actions, "Stop")
+	if stop != null:
+		stop.pressed.emit()
+		_tick(screen, 2)
+	# DID IT ACTUALLY MINE. Pressing Mine and waiting is not evidence: a species can be refused for
+	# hardness, and a helper that returns true anyway makes the test above fail about the wrong thing.
+	var pack_after: Array = screen._sim.inventory_of(screen._client.player_id)
+	if pack_after.size() <= kinds_before:
+		var said := PackedStringArray()
+		for line in screen._sim.event_lines(screen._client.player_id):
+			said.append(String(line))
+		return _fail("mined species %d at %s and the pack still holds %d kinds. %s"
+				% [species, centre, kinds_before, " / ".join(said)])
+	return true
+
+
+## Every menu row's sentence containing `want` ("" for all of them), read off the named label.
+func _make_lines_containing(screen: Node, want: String) -> Array:
+	var out := []
+	for row in screen._make.get_children():
+		var line := row.find_child(screen.MAKE_LINE, true, false) as Label
+		if line != null and (want == "" or line.text.contains(want)):
+			out.append(line.text)
+	return out
+
+
+## EVERY BUTTON IN THE MENU SAYS THE SAME WORD, which is Maren's ruling stated as a property rather
+## than as a style note. The defect she measured was a LABEL that was the only read and was ambiguous:
+## two buttons both saying exactly `Craft smelter`, making smelters with different walls. A row's
+## identity therefore lives in its sentence, and the only way that can rot is a label growing
+## information again -- so this asserts labels carry NONE, with two species in the pack so there is
+## something for a label to be wrong about.
+func test_no_menu_button_label_carries_what_the_row_makes() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_some_ore(screen)
+	if ok:
+		var labels := {}
+		for row in screen._make.get_children():
+			for child in row.get_children():
+				for button in child.get_children():
+					if button is Button:
+						labels[(button as Button).text] = true
+		if labels.size() == 0:
+			ok = _fail("the menu has no buttons at all: %s" % _text_of(screen._make))
+		elif labels.size() > 1:
+			ok = _fail("the menu's buttons say %s; a label that names the row is the bug Maren "
+					% JSON.stringify(labels.keys()) + "measured on the board's own pack")
+		elif not labels.has(AssayHud.make_button_text()):
+			ok = _fail("the menu's button says %s" % JSON.stringify(labels.keys()))
+	screen.queue_free()
+	return ok
+
+
+## MINE TWO DIFFERENT SPECIES OF ORE, so the pack holds two stacks.
+##
+## NOT `starter_pair()[0]` AND `[1]`: the pair is (material, fuel) and ONE species can be both, which
+## in the offline test world it is -- so that reading walked back to the deposit it was already
+## standing on and the pack still held one kind. The second species is any hand-minable one with ore
+## left that is not the first.
+func _mine_two_species(screen: Node) -> bool:
+	if not _mine_some_ore(screen):
+		return false
+	var workable := AssaySessionPlan.workable_species(screen._sim.deposits(),
+			screen._sim.species_sheets())
+	if workable.size() < 2:
+		return _fail("this world has %d hand-minable species with ore left, so two stacks of rock "
+				% workable.size() + "cannot be reached at all")
+	var carrying: Array = screen._sim.inventory_of(screen._client.player_id)
+	var first := int((carrying[0] as Dictionary).get("species", -1))
+	var second := -1
+	for id in workable:
+		if int(id) != first:
+			second = int(id)
+			break
+	return _mine_some_ore_of(screen, second)

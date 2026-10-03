@@ -309,6 +309,60 @@ impl AssaySim {
             .collect()
     }
 
+    /// EVERYTHING THIS PLAYER COULD MAKE BY HAND, as the crafting menu's rows:
+    /// `line`, `dead_end`, `verb`, `tag`, and the input stack's own `kind` /
+    /// `species` / `grade` / `count`.
+    ///
+    /// `sim::debug::make_offers` is the whole answer, including the ORDER
+    /// (`RecipeId::ALL`, then `PartKind::ALL`, then the pack's own order) and
+    /// the SENTENCE. The client composes neither, for a reason worth keeping
+    /// written down: the sentence names the OUTPUT item, and its grade is a
+    /// rule — `sort` makes one grade better and makes nothing at all out of
+    /// grade A. GDScript spelling that would be guessing at
+    /// `Recipe::output_for`, and wrong on the one recipe that moves a grade.
+    ///
+    /// `verb` IS WHICH COMMAND, NOT A LABEL. `Craft` and `MakePart` are
+    /// different commands with differently shaped payloads, so `MakeWhat`
+    /// crosses as the word that chooses between them; a host that read a
+    /// label's first token instead would break the day a row is reworded.
+    ///
+    /// The three item fields are spelled exactly as `inventory_of` spells
+    /// them, so `AssayActions.item_of_stack` builds the input item out of an
+    /// offer with no second rearranging function.
+    ///
+    /// `count` is the pack's count AT THIS TICK and is in the row's sentence
+    /// too. It is a thing to SHOW and must be re-read every refresh; nothing a
+    /// button sends is derived from it (ASSA-55: one batch, always).
+    #[func]
+    pub fn make_offers(&self, player: i64) -> Array<VarDictionary> {
+        let Some(id) = player_id_of(player) else {
+            return Array::new();
+        };
+        sim::debug::make_offers(&self.world, id)
+            .iter()
+            .filter_map(|offer| {
+                let (verb, tag) = match offer.what {
+                    sim::debug::MakeWhat::Recipe(recipe) => {
+                        ("craft", tag_variant(&serde_json::to_value(recipe).ok()?)?)
+                    }
+                    sim::debug::MakeWhat::Part(kind) => {
+                        ("make", tag_variant(&serde_json::to_value(kind).ok()?)?)
+                    }
+                };
+                Some(vdict! {
+                    "line" => &gstring(&offer.line).to_variant(),
+                    "dead_end" => &gstring(&offer.dead_end).to_variant(),
+                    "verb" => &gstring(verb).to_variant(),
+                    "tag" => &tag,
+                    "kind" => &gstring(offer.input.kind.name()).to_variant(),
+                    "species" => offer.input.species.0 as i64,
+                    "grade" => &gstring(&offer.input.grade.letter().to_string()).to_variant(),
+                    "count" => offer.have as i64,
+                })
+            })
+            .collect()
+    }
+
     /// EVERY DESIGN ONE PLAYER HOLDS, for the part menu. The tool in hand
     /// first, then the built list in the order `Equip` and `PlaceAssembly`
     /// index.
