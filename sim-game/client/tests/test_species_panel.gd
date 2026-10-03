@@ -328,9 +328,13 @@ func test_a_menu_row_carries_the_sims_dead_end_clause_and_only_then() -> bool:
 			var offer: Dictionary = offers[i]
 			var row: Node = screen._make.get_child(i)
 			var said := ""
-			for child in row.get_children():
-				if child is Label:
-					said += " " + (child as Label).text
+			# EVERY Label IN THE ROW, AT ANY DEPTH. The row became [icon][VBox: sentence, dead end,
+			# verb] in ASSA-117 so the sentence and the clause are one level further down, and a
+			# walk over the row's direct children read an empty string and still called itself a
+			# check of the clause. A test that depends on a row's shape fails the day the shape is
+			# improved; what this test is about is whether the words are in the row.
+			for child in row.find_children("*", "Label", true, false):
+				said += " " + (child as Label).text
 			checked += 1
 			# RULING 1: the row is there and its button is pressable whatever the sim says about
 			# the output. Absence is never a cue and neither is a greyed-out button.
