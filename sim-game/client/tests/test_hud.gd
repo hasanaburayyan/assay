@@ -707,3 +707,42 @@ func test_an_empty_bench_says_so_rather_than_showing_nothing() -> bool:
 	if not AssayHud.no_designs_line().contains("nothing built"):
 		return _fail("got %s" % AssayHud.no_designs_line())
 	return true
+
+
+## MAREN'S 18:15 FINDING ON THE THEME (ASSA-116): **"DERIVED" AND "BORROWED" ARE TRUE BY LITERAL,
+## NOT BY CONSTRUCTION, and nothing holds them true.**
+##
+## `build_theme.gd` says `ACCENT` is borrowed from `AssayHud.status_color`'s joined green and that
+## `SURFACE` is `MAP_BG` lifted off the map. Both claims are exactly right today and both are typed
+## out as `Color(...)` literals — so the day `MAP_BG` moves for the scene work, the panel silently
+## stops being derived from anything with a comment still saying it is. Her words: either compute
+## them, or add the check, and she does not mind which.
+##
+## **THE CHECK, because computing one of them would move a shipped colour.** `SURFACE` is not one
+## factor of `MAP_BG` (1.450 / 1.427 / 1.446 per channel), so "deriving" it means picking a factor
+## and changing the panel by a hair — a look change nobody asked for, hidden inside a tidy-up. The
+## accent IS exact and is asserted exactly. The surface is asserted as the per-channel scale it
+## actually is, so a `MAP_BG` that moves reddens this with both numbers in the message.
+##
+## The precedent is `check_species_tints.py`, which fails CI when two copies of a table drift.
+func test_the_themes_borrowed_colours_are_still_the_ones_they_say_they_borrowed() -> bool:
+	var theme_script = load("res://tools/build_theme.gd")
+	var accent: Color = theme_script.ACCENT
+	var joined := AssayHud.status_color(AssayHud.Say.JOINED)
+	if not accent.is_equal_approx(joined):
+		return _fail(("the theme's ACCENT %s is no longer status_color(JOINED) %s. One of them was "
+				+ "changed alone, and a focused field and a good status are now two opinions about "
+				+ "success") % [accent, joined])
+	var surface: Color = theme_script.SURFACE
+	var scale := Vector3(surface.r / AssayHud.MAP_BG.r, surface.g / AssayHud.MAP_BG.g,
+			surface.b / AssayHud.MAP_BG.b)
+	# THE MEASURED SCALE, TO THREE PLACES, as Maren read it off the two constants — and compared to
+	# three places, not with `is_equal_approx`, whose epsilon is far tighter than the precision the
+	# figure was ever stated at. A test that demands more digits than the claim has is a test that
+	# fails for being right.
+	var was := Vector3(1.450, 1.427, 1.446)
+	if (Vector3(scale) - was).abs().length() > 0.001:
+		return _fail(("the panel is no longer the map lifted by the scale it was built at: SURFACE "
+				+ "%s over MAP_BG %s is now %v, was %v. If the map moved, move the panel with it; "
+				+ "if the panel moved, say so here") % [surface, AssayHud.MAP_BG, scale, was])
+	return true
