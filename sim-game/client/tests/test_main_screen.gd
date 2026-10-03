@@ -943,3 +943,41 @@ func test_what_has_stopped_is_pinned_outside_the_scroll_and_reads_verbatim() -> 
 				ok = _fail("the lines are still in the block, one `visible` away from coming back")
 	screen.queue_free()
 	return ok
+
+
+## A BENCH ROW IS WRITTEN BY NAME, SO A ROW THAT GROWS A CHILD STILL GETS ITS WORDS (ASSA-117).
+##
+## **THIS TEST EXISTS BECAUSE A MUTATION SURVIVED.** I changed `_write_design` from `get_child(0)`
+## and `get_child(1)` to a lookup by name, ran the mutation back, and the whole suite stayed green --
+## because the verdict IS child 0 today, so the index is right by luck and nothing could tell the
+## two apart. A hardening with no lever is a comment.
+##
+## The failure it is about has already happened once, on the other surface: adding a sprite to a pack
+## row made child 0 a `TextureRect`, and the fast path that re-texts the count silently stopped
+## finding its label. Maren's icon ruling reaches bench rows next, so this row WILL grow a child.
+## Here that is simulated by putting one in front, which is the cheapest honest version of it.
+func test_a_bench_row_that_grows_a_child_is_still_written_correctly() -> bool:
+	var screen := _screen()
+	var design := {"index": 0, "verdict": "WILL BREAK", "in_hand": false, "mount": "planted"}
+	screen._rebuild_bench([design])
+	var ok := true
+	var row: Node = screen._bench.get_child(0)
+	if row == null:
+		ok = _fail("the bench built no row to write into")
+		screen.queue_free()
+		return ok
+	# The icon that is coming. Added at the front, which is where `_icon_box` puts one.
+	var icon := TextureRect.new()
+	row.add_child(icon)
+	row.move_child(icon, 0)
+	screen._write_design(row, {"index": 0, "verdict": "SAFE", "in_hand": false, "mount": "planted"})
+	var verdict := row.find_child(screen.BENCH_VERDICT, true, false) as Label
+	if verdict == null:
+		ok = _fail("the bench row has no named verdict label at all")
+	elif verdict.text != "SAFE":
+		ok = _fail(("the row grew a child and the verdict now reads '%s'; it was written into "
+				+ "whatever happened to be child 0") % verdict.text)
+	elif row.get_child(0) is Label:
+		ok = _fail("the planted child did not land in front, so this test proves nothing")
+	screen.queue_free()
+	return ok

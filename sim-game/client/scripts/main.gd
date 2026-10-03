@@ -80,6 +80,9 @@ var _log_heading: Label = null
 ## appeared nowhere in this file, which is why pressing the toggle changed a button's label and
 ## nothing a player could see -- the log is the last section of a column that already overflows.
 var _scroll: ScrollContainer = null
+## A SCROLL THE NEXT FRAME OWES THE PLAYER. True between pressing the log's toggle and the view
+## actually moving to it; see `_show_log` for why those cannot be the same moment.
+var _scroll_to_log := false
 ## INITIALISED TO THE WRONG ANSWER ON PURPOSE. `_build_ui` calls `_show_log(false)`, and starting
 ## this at `false` would make "the log is hidden on first open" true before anything ran -- a test
 ## that passes by construction, which is the failure I keep writing down. At `true` the default-state
@@ -544,8 +547,15 @@ func _show_log(shown: bool) -> void:
 	if is_instance_valid(_log_heading):
 		_log_heading.visible = shown
 	_log_toggle.text = "hide the event log (L)" if shown else "show the event log (L)"
-	if shown and _scroll != null and is_instance_valid(_log_heading):
-		_scroll.ensure_control_visible(_log_heading)
+	# ASKED FOR HERE, CARRIED OUT A FRAME LATER, AND THAT IS NOT TIDINESS (ASSA-117). I called
+	# `ensure_control_visible` on this line first and the real window said it did nothing: the
+	# section was still 667px below the bottom edge. A container lays its children out on the frame
+	# AFTER they change, so at this instant the heading's rect is the one it had while hidden, and
+	# the scroll box honoured that rect exactly. This is the third time this week I have reached for
+	# an engine call at the only moment it cannot work -- `grab_focus` inside `_initialize` was the
+	# same shape -- and the only reason I caught it is that `window_shot.gd` reports the section's
+	# rect against the window instead of asking the node whether it is visible.
+	_scroll_to_log = shown
 
 
 ## SHOW OR HIDE THE CRAFTING MENU'S ROWS (ASSA-88).
@@ -593,6 +603,38 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		_show_close_up(not _close_up)
 
 
+## MOVE THE VIEW TO THE LOG, ONE FRAME AFTER THE PRESS THAT ASKED FOR IT.
+##
+## IN `_process` RATHER THAN `call_deferred`, because a Container's own layout is ALSO deferred
+## (`queue_sort`), so a deferred call races it and the race is invisible when it is lost -- the
+## scroll box honours a stale rect and reports success. The next `_process` is after that layout
+## pass, which is the cheapest moment that is certainly late enough.
+##
+## ONE SHOT. Re-running it every frame would fight the player's own scrollbar: you would press L,
+## look at the log, drag away to the pack, and be dragged back.
+func _carry_out_the_scroll_to_the_log() -> void:
+	if not _scroll_to_log:
+		return
+	_scroll_to_log = false
+	if _scroll == null or not is_instance_valid(_log_heading):
+		return
+	# BODY FIRST, THEN HEADING, AND THE ORDER IS THE WHOLE TRICK.
+	#
+	# `ensure_control_visible` does the MINIMUM scroll that makes a control visible, which I did not
+	# know and the real window told me: asking for the HEADING alone parked its 20px against the
+	# bottom edge of the viewport and left all 556px of the log below it -- the section went from
+	# "OFF SCREEN" to "CLIPPED at y 706..1262 of 720", which is fourteen pixels of log and a report
+	# that reads like progress. I had even written down a reason for choosing the heading. It was a
+	# good reason about the wrong engine behaviour.
+	#
+	# So: ask for the bottom of the section (scrolls down until the body's end is in view), then for
+	# the top (scrolls back up until the heading is in view). Two minimum scrolls in opposite
+	# directions leave the heading at the top of the viewport with as much body under it as fits,
+	# which is what "show me the log" means. No arithmetic, no rect of mine, no number to keep.
+	_scroll.ensure_control_visible(_log)
+	_scroll.ensure_control_visible(_log_heading)
+
+
 ## START A RELAY OF OUR OWN AND JOIN IT (ASSA-106).
 ##
 ## THE SAME JOIN PATH ONCE THE ADDRESS IS KNOWN, which is ruling 7 in one line: solo is co-op with
@@ -627,6 +669,7 @@ func _on_play_solo() -> void:
 ## IN `_process` AND NOT IN `_refresh`, because `_refresh` runs on tick bundles and there are no
 ## bundles until we have joined -- polling there would wait for the thing it is waiting to start.
 func _process(_delta: float) -> void:
+	_carry_out_the_scroll_to_the_log()
 	# THE SCENE IS THE ONLY THING ON THIS SCREEN THAT MOVES BETWEEN TICKS, so it is the only thing
 	# that redraws per frame: a body tweening between two tiles the sim produced, and two gaits
 	# running off the wall clock. The schematic does not redraw here -- it is painted when a tick
@@ -815,11 +858,15 @@ func _refresh_halt() -> void:
 
 
 ## THE BLOCK, FROM LINES. Split from `_refresh_halt` so a test can drive the drawing without a world
-## that has a stalled building in it -- and the split is named here because it is also this item's
-## honest gap: see `test_main_screen.gd`, which checks the drawing against planted lines and the
-## WIRING against `_sim.halt_lines()`'s own answer, but has never seen this block with a real stall
-## in it. Reaching one from the client needs a planted machine on ground it cannot work, which is a
-## mine-craft-assemble-plant chain no test in this suite drives yet (`test_buttons.gd:300`).
+## that has a stalled building in it.
+##
+## AND A REAL ONE HAS NOW BEEN SEEN, which I did not expect and had written the opposite of here.
+## `tools/window_shot.gd` plays the demo loop, and the loop PLANTS a machine on ground with no
+## deposit under it -- `MachineState::Idle`, which `halted()` reports for a machine precisely because
+## idle means "planted somewhere it cannot work". So the 2026-10-03 shots carry this block drawn from
+## a live `halt_lines()`: "machine 1 at (71, 38) · idle: no deposit underneath", the sim's sentence,
+## pinned above the scroll. The suite still cannot reach it -- `button_play.gd` can, and that is the
+## path a test would take (`test_buttons.gd:300` is where the chain was last declined).
 func _rebuild_halt(lines: PackedStringArray) -> void:
 	_clear(_halt)
 	_halt_lines = null
