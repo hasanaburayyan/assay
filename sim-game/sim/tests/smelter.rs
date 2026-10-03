@@ -1095,7 +1095,10 @@ fn a_batch_burning_three_fuel_units_never_claims_the_fuel_will_not_light() {
         .iter()
         .filter(|e| matches!(e, Event::ItemSmelted { .. }))
         .count();
-    assert_eq!(smelted, 15, "premise: the whole batch has to run: {events:?}");
+    assert_eq!(
+        smelted, 15,
+        "premise: the whole batch has to run: {events:?}"
+    );
     let smelter = smelter_of(&world, id);
     assert!(smelter.input.is_none(), "premise: all the ore went in");
     assert_eq!(
