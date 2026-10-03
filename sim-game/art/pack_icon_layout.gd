@@ -50,9 +50,11 @@ func _verbs_for(stack: Dictionary) -> Array:
 ## STILL ASKED OF THE SAME FUNCTION, never typed in here. `stack_verbs` no longer takes the state at
 ## all, so this cannot drift from the screen without the whole first column drifting with it.
 ##
-## `art/pack_row_sheet.py` draws this as a second column and captions it as the other state. The
-## caption is the renderer's (Cove's) to reword now that the two columns agree by design; the data
-## is honest either way.
+## `art/pack_row_sheet.py` NO LONGER DRAWS THIS, and that is the ruling rather than a regression:
+## a second identical column cost half the sheet's width to say "nothing changed", so the sheet now
+## DIFFS the two label sets and prints a line that fires, naming the rows, if the word ever swaps
+## again. That is why this field is still worth exporting -- it is the input to a check, not a
+## picture. Proved to fire by feeding the sheet a pre-ASSA-103 `labels_building`.
 func _labels_building(stack: Dictionary) -> PackedStringArray:
 	var out := PackedStringArray()
 	for entry in _verbs_for(stack):
