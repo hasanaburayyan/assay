@@ -151,6 +151,47 @@ seconds is roughly four times what the whole demo loop consumes. What would
 change my mind is a player who cannot tell a stalled drill from a broken one;
 that is a message problem, not a capacity one.
 
+### What fills the twenty minutes (Maren, 2026-10-03)
+
+This note's own summary says friends "play for twenty minutes or so", and the
+loop measured above is 326 ticks — 33 seconds. The other 19.5 minutes had never
+been read off anything. Measured on the pinned seed
+(`shared/assay/maren_twenty_minutes_2026-10-03.rs`, seed 14247):
+
+| what | number |
+|---|---|
+| hand-minable ore in the world | 24,563 units |
+| of that, inside a 20-tile walk | 3,747 units |
+| ore nothing in that world can break | 11,946 units (32.7%) |
+| bare hands to clear every minable deposit | 67,848 ticks ≈ 113 min |
+| one smelter to refine all of it | 491,260 ticks ≈ 819 min |
+| a pick · a one-hopper drill | 3 · 8 refined = 60 · 160 smelter ticks |
+
+**Nothing in the demo is scarce.** Twenty minutes is 12,000 ticks; one smelter
+turns that into about 600 refined, and the whole catalogue costs single digits.
+The ore inside a 20-tile walk is a session's worth on its own. So the twenty
+minutes are not gated by material, by distance or by the clock — **they are
+gated by the number of things worth building, which is a pick, a drill, and
+however many hoppers you dare.**
+
+**Which makes the assembly verdict the demo's content rather than one of its
+features.** What a player does after the first pick is re-run that one
+decision: a different species, a sorted grade, one more hopper, SAFE against
+UNCERTAIN, and the occasional design that breaks on placement and hands half
+its parts back. The UI work in flight is therefore aimed at the right surface,
+and "more feedback while mining" is not what the next hour buys.
+
+**Two levers nobody should pull on feel.** First, the smelter is only a
+bottleneck while you own one, and a second costs five ore and 20 ticks by hand;
+working that out is the first lesson a factory game has to teach, so it must
+not be hinted and its rate must not be softened. Second, the grade ladder is
+cheaper by hand than at the fire: nine grade-C ore become one grade-A refined
+for four hand sorts (80 ticks) plus one 20-tick refine, where refining first
+and resmelting costs **340 ticks of the one machine everything else queues
+behind** — seventeen times the smelter work for the same ore. Hand crafting runs
+while you walk or mine, so the sorting route is close to free. `resmelt` is the
+recovery path for refined you already hold, not a rung on the ladder.
+
 ### Assaying is free while you mine (Maren, 2026-10-03)
 
 The 326-tick loop above never assays, and reading `ASSAY_TICKS = 30` makes an
