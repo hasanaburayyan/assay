@@ -124,6 +124,57 @@ the reroll total above: 3.32 rolls per world over 1000 seeds, 3.44 over
 worst accepted pick **3.85 ticks/unit against the hands' 4.00**, best 1.56,
 median 2.08.
 
+## Measured 2026-10-03: rung zero's other two legs are the fuel and the walls
+
+The section above fixed the *hardness* leg of rung zero. The ladder has two
+more — a fuel you can light and walls that survive its fire — and both are now
+measured. Neither wants a tuning change. Both are information problems, and
+one of them is what stopped the founders' own two-handed session.
+
+**A fuel the world cannot light is the modal first mistake, not a tail.** A
+species is fuel when its effective reactivity clears `FUEL_MIN_REACTIVITY`,
+and it lights from cold when its heat tolerance is at most
+`HAND_SPARK_TEMPERATURE` (30). Those are two different properties, so a world
+routinely generates rock the game calls fuel and nothing there can light. Over
+4000 rosters: about **80%** of worlds hold at least one, and about **half**
+let you mine one by hand. In *every* one of those a lightable fuel also
+exists — ASSA-35's reroll guarantees it, and 0 of 4000 worlds lacked one — so
+the player is never stuck, always one swap away, and never told. It is also
+baited: the unlightable rock burns hotter than every lightable one in about
+**54%** of those worlds and is softer to dig in about **57%**, so the sheet
+points at it whichever way a player reads it. In world 42 a smelter sat cold
+on 50 Zuxite for two and a half hours while the Souktulore that lights it was
+in the player's own pack. ASSA-93 puts the sim's three `Lighting` states on
+the species row; that is the fix and it shipped in #123.
+
+**The first smelter is a choice the player cannot yet make.** A smelter's
+walls are its material's heat tolerance and `fire = min(fuel burn temperature,
+walls)`, so the rock it is built from decides what it can ever melt — and five
+ore is spent before anything says whether the choice was good. Over 2000
+worlds, of the (walls, fuel) pairs a pair of hands can reach, about **43%**
+refine anything at all. A pair that refines your nearest diggable rock exists
+in about **87%** of worlds — exactly `ladder::usable_from_bare_hands`,
+cross-checked against it — but **rough sheets settle which pair in only about
+half**. In the other half the comparison sits inside two 25-wide bands and
+only an assay closes it. **That makes the smelter, not the pick, assaying's
+first and most consequential sale**, and it arrives before any design exists.
+On the pinned friend seed 14247 it is starker than the average: 1 of its 16
+hand-reachable pairs refines the rock under spawn.
+
+Two cautions for whoever quotes this. The "about" is this note's own rule and
+these figures carry the same point of sampling noise. And **measuring a first
+smelter is not the same question as whether a rock is ever refinable**:
+`step::smelt` lights a fuel when `ignition <= HAND_SPARK_TEMPERATURE ||
+ignition <= burn_temperature`, so a player bootstraps a hotter fuel off a fire
+already going. My first pass required the fuel to light from cold and so
+measured one step short of the player; the gap is 0.6 points (86.8 → 87.4) and
+the corrected figure agrees with `usable_from_bare_hands` exactly.
+
+Method: `shared/assay/maren_dead_fuel_2026-10-02.rs` (4000 rosters) and
+`maren_first_smelter_2026-10-02.rs` (2000 worlds), with
+`maren_first_smelter_crosscheck_2026-10-02.rs` asserting the enumeration
+against `ladder::usable_from_bare_hands` over every (world, species) pair.
+
 ## Where grades stand (built, open to retuning)
 
 Purity 1–39 is C, 40–69 B, 70–100 A. Grades keep 60/80/100% of strength,
