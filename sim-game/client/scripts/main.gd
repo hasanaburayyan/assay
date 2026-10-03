@@ -1242,6 +1242,13 @@ func _rebuild_make(offers: Array) -> void:
 		var dead_end := String(offer.get("dead_end", ""))
 		if dead_end != "":
 			body.add_child(_note("— %s" % dead_end))
+		# MAREN'S WALLS CLAUSE (ASSA-125), APPENDED AND NEVER COMPOSED, by the same route and for the
+		# same reason: a smelter's walls are its material's heat tolerance, and what the player may
+		# know of that is a band until they assay. The sim words it; this client would have to decide
+		# how to say "somewhere between 50 and 74" and would be deciding a rule.
+		var walls := String(offer.get("walls", ""))
+		if walls != "":
+			body.add_child(_note("— %s" % walls))
 		body.add_child(_verb_row([offer], func(descriptor: Dictionary) -> Button:
 				return _make_button(descriptor)))
 		_make.add_child(row)

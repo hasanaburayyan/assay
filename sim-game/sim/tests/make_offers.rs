@@ -9,7 +9,7 @@
 use sim::debug::{self, MakeWhat};
 use sim::{
     Event, Grade, Input, Item, ItemKind, PartKind, PlayerCommand, PlayerId, Property, RecipeId,
-    SpeciesId, SystemCommand, World, WorldConfig, step,
+    Sheet, SpeciesId, SystemCommand, World, WorldConfig, step,
 };
 
 const X: SpeciesId = SpeciesId(0);
@@ -551,5 +551,178 @@ fn the_shortfall_clause_binds_the_item_it_would_have_made() {
         min,
         sim::tuning::GEAR_MIN_HARDNESS,
         "the number is the sim's threshold, not one typed into a sentence"
+    );
+}
+
+/// MAREN'S WALLS CLAUSE (ASSA-88 → ASSA-125). A smelter's walls are its
+/// material's heat tolerance, `fire = min(fuel burn, walls)`, and five ore are
+/// spent before anything tells a player whether the rock they chose can melt
+/// anything. The row names the figure at the moment of choice.
+///
+/// **THE FIGURE, NOT A VERDICT.** It says what the walls would be and never
+/// whether they are enough: the comparison against the ore is the game.
+#[test]
+fn the_smelter_row_names_the_walls_that_smelter_would_have() {
+    let (mut world, me) = world_with_player();
+    world.species_mut(X).sheet.heat_tolerance = 57;
+    give(&mut world, me, ore(X, Grade::B), 7);
+
+    let smelter = debug::make_offers(&world, me)
+        .into_iter()
+        .find(|o| o.what == MakeWhat::Recipe(RecipeId::Smelter))
+        .expect("a smelter offer");
+    let (lo, hi) = Sheet::band(57);
+    assert_eq!(
+        smelter.walls,
+        format!("walls {lo}-{hi}"),
+        "the player's reading of this species' heat tolerance, not the ground's"
+    );
+}
+
+/// **IT IS WHAT THEY KNOW, NOT WHAT IS TRUE.** A sheet reads as a 25-wide band
+/// until that species is assayed, so until then a player can only predict their
+/// walls to within a band — which is a reason to assay before spending, and a
+/// claim this clause must not quietly skip past.
+#[test]
+fn the_walls_sharpen_from_a_band_to_a_number_when_the_species_is_assayed() {
+    let (mut world, me) = world_with_player();
+    world.species_mut(X).sheet.heat_tolerance = 57;
+    give(&mut world, me, ore(X, Grade::B), 7);
+    let rough = walls_of(&world, me);
+
+    world.species_mut(X).assayed = true;
+    let exact = walls_of(&world, me);
+
+    assert!(rough.contains('-'), "a band before the assay: {rough}");
+    assert_eq!(exact, "walls 57", "the number after it");
+    assert_ne!(rough, exact);
+}
+
+/// **THE TRAP, AND THE REASON THIS SENTENCE IS THE SIM'S.** Everything else on
+/// the row moves with grade — the output item is `ore (A)`, the shortfall is
+/// judged at grade — but heat tolerance is one of the two properties grade
+/// never scales. A host composing this from a stack would reasonably scale it
+/// and be wrong, and the player would choose their first smelter on it.
+///
+/// **WHAT THIS LEVER CAN AND CANNOT CATCH, measured rather than assumed.**
+/// Rewriting the clause to `effective(HeatTolerance, grade)` — the obvious
+/// wrong move — leaves this test GREEN, because `Sheet::effective` itself
+/// refuses to scale heat tolerance, so the sim already protects that route.
+/// It reddens against a scaling written out by hand (60/80/100 on the grade),
+/// which is the version a host would invent, and that is the mutation I ran.
+/// Recorded so nobody reads its green as cover for the first case.
+#[test]
+fn the_walls_do_not_move_with_the_grade_of_the_ore_they_are_built_from() {
+    let (mut world, me) = world_with_player();
+    world.species_mut(X).sheet.heat_tolerance = 57;
+    world.species_mut(X).assayed = true;
+    give(&mut world, me, ore(X, Grade::C), 7);
+    give(&mut world, me, ore(X, Grade::A), 7);
+
+    let walls: Vec<String> = debug::make_offers(&world, me)
+        .into_iter()
+        .filter(|o| o.what == MakeWhat::Recipe(RecipeId::Smelter))
+        .map(|o| o.walls)
+        .collect();
+    assert_eq!(walls.len(), 2, "one row per stack's species × grade");
+    assert_eq!(
+        walls[0], walls[1],
+        "grade C and grade A build the same walls"
+    );
+    assert_eq!(walls[0], "walls 57");
+}
+
+/// EVERY OTHER ROW IS SILENT ABOUT WALLS, because every other row makes
+/// something that has none. Keyed on the recipe's output kind, so a later
+/// placeable recipe arrives here as a row with no clause rather than as one
+/// inheriting the smelter's.
+#[test]
+fn no_other_row_claims_walls() {
+    let (mut world, me) = world_with_player();
+    give(&mut world, me, ore(X, Grade::B), 7);
+    give(&mut world, me, refined(X, Grade::B), 9);
+
+    for offer in debug::make_offers(&world, me) {
+        if offer.what == MakeWhat::Recipe(RecipeId::Smelter) {
+            assert!(
+                !offer.walls.is_empty(),
+                "the smelter row is the one that does"
+            );
+        } else {
+            assert!(
+                offer.walls.is_empty(),
+                "{:?} claims walls: {}",
+                offer.what,
+                offer.walls
+            );
+        }
+    }
+}
+
+/// **BEHAVIOURAL, NOT A WORDING TEST.** What keeps this clause true is not that
+/// it reads well: it is that a smelter actually built from that species has the
+/// walls the row promised. Assert the sentence against `World::max_temperature`
+/// — the one place that decides — and a rule change moves both or reddens this.
+#[test]
+fn a_smelter_built_from_that_species_has_the_walls_the_row_promised() {
+    let (mut world, me) = world_with_player();
+    world.species_mut(X).sheet.heat_tolerance = 57;
+    world.species_mut(X).assayed = true;
+    give(&mut world, me, ore(X, Grade::B), 7);
+    let promised = walls_of(&world, me);
+
+    let built = Item::new(ItemKind::Smelter, X, Grade::B);
+    give(&mut world, me, built, 1);
+    let spawn = world.spawn_tile();
+    let pos = sim::TilePos::new(spawn.x + 1, spawn.y);
+    step(
+        &mut world,
+        &[Input::player(me, PlayerCommand::Place { item: built, pos })],
+        &mut Vec::new(),
+    );
+    let standing = world.building_at(pos).expect("a smelter on the ground");
+
+    assert_eq!(
+        promised,
+        format!("walls {}", world.max_temperature(standing)),
+        "the row promised walls the placed smelter does not have"
+    );
+}
+
+fn walls_of(world: &World, me: PlayerId) -> String {
+    debug::make_offers(world, me)
+        .into_iter()
+        .find(|o| o.what == MakeWhat::Recipe(RecipeId::Smelter))
+        .expect("a smelter offer")
+        .walls
+}
+
+/// **THE TERMINAL SAYS IT TOO**, because a menu only the window has is a
+/// feature that only works with graphics, which this repo does not allow. The
+/// table is what `makes` and `recipes` print, so this is the headless half of
+/// Maren's ruling rather than a second assertion about the same function.
+#[test]
+fn the_terminal_table_carries_the_walls_clause_too() {
+    let (mut world, me) = world_with_player();
+    world.species_mut(X).sheet.heat_tolerance = 57;
+    world.species_mut(X).assayed = true;
+    give(&mut world, me, ore(X, Grade::B), 7);
+
+    let table = debug::make_offer_table(&world, me);
+    let clause = walls_of(&world, me);
+    assert!(
+        !clause.is_empty(),
+        "the premise: there is a clause to carry"
+    );
+    assert!(table.contains(&clause), "{table}");
+    // ON THE SMELTER'S OWN ROW, not loose in the table. A clause that landed on
+    // the wrong line would still pass a `contains` over the whole string.
+    let row = table
+        .lines()
+        .find(|l| l.contains(&clause))
+        .expect("a row with the clause");
+    assert!(
+        row.contains(&world.item_name(Item::new(ItemKind::Smelter, X, Grade::B))),
+        "the clause is not on the row that makes the smelter: {row}"
     );
 }

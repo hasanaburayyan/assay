@@ -351,8 +351,14 @@ impl AssaySim {
     }
 
     /// EVERYTHING THIS PLAYER COULD MAKE BY HAND, as the crafting menu's rows:
-    /// `line`, `dead_end`, `verb`, `tag`, and the input stack's own `kind` /
-    /// `species` / `grade` / `count`.
+    /// `line`, `dead_end`, `walls`, `verb`, `tag`, and the input stack's own
+    /// `kind` / `species` / `grade` / `count`.
+    ///
+    /// `walls` is the smelter row's figure and empty everywhere else
+    /// (`sim::debug::walls_clause`, Maren's ruling on ASSA-88). It is a
+    /// SENTENCE and not a number on purpose: what the player may know of a
+    /// species' heat tolerance is a 25-wide band until they assay it, and a
+    /// host handed the number would have to decide how to say so.
     ///
     /// `sim::debug::make_offers` is the whole answer, including the ORDER
     /// (`RecipeId::ALL`, then `PartKind::ALL`, then the pack's own order) and
@@ -393,6 +399,7 @@ impl AssaySim {
                 Some(vdict! {
                     "line" => &gstring(&offer.line).to_variant(),
                     "dead_end" => &gstring(&offer.dead_end).to_variant(),
+                    "walls" => &gstring(&offer.walls).to_variant(),
                     "verb" => &gstring(verb).to_variant(),
                     "tag" => &tag,
                     "kind" => &gstring(offer.input.kind.name()).to_variant(),

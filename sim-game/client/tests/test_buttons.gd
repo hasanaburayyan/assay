@@ -1185,6 +1185,48 @@ func _mine_two_species(screen: Node) -> bool:
 	return _mine_some_ore_of(screen, second)
 
 
+## MAREN'S WALLS CLAUSE ON A REAL PACK (ASSA-125), which is two claims a Rust test cannot make: that
+## the field survives the binding, and that the row a player looks at carries it.
+##
+## **NOTHING HERE NAMES THE SMELTER**, deliberately, the way the dead-end test names no gear. It asks
+## the SIM which rows carry a clause and then requires exactly those rows to show exactly that
+## sentence. The day a second recipe output gets walls, this test covers it without being edited.
+##
+## A VARIANT FIELD IS INVISIBLE FROM RUST: I inverted `is_frame` in the binding on ASSA-103 and all
+## 40 Rust tests stayed green, because nothing on that side reads a `VarDictionary` key. The guard
+## for a field crossing into GDScript has to live in GDScript.
+func test_a_menu_row_carries_the_sims_walls_clause_where_the_sim_puts_it() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_two_species(screen)
+	if ok:
+		var offers: Array = screen._sim.make_offers(screen._client.player_id)
+		if screen._make.get_child_count() != offers.size():
+			return _fail("%d rows for %d offers" % [screen._make.get_child_count(), offers.size()])
+		var carried := 0
+		for i in range(offers.size()):
+			var offer: Dictionary = offers[i]
+			var walls := String(offer.get("walls", ""))
+			if walls == "":
+				continue
+			carried += 1
+			var said := ""
+			for child in screen._make.get_child(i).find_children("*", "Label", true, false):
+				said += " " + (child as Label).text
+			if not said.contains(walls):
+				ok = _fail("row %d should carry the sim's clause `%s` and reads `%s`"
+						% [i, walls, said])
+				break
+		# THE PREMISE, ASSERTED BEFORE THE ASSERTIONS OVER IT. A loop over rows that all have an
+		# empty clause passes every check inside it, so an empty pack or a dropped binding field
+		# would read as a green test about a sentence nobody drew.
+		if ok and carried == 0:
+			ok = _fail("no row carried a walls clause: a pack with two kinds of rock in it offers "
+					+ "two smelters, so either the binding dropped the field or the sim stopped "
+					+ "wording it")
+	return ok
+
+
 ## ASSA-107: CHOOSING A PART PUTS IT IN THE MENU, AND CLEARING IT TAKES IT BACK OUT — through the
 ## real refresh path, with a real stack the sim named.
 ##

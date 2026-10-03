@@ -1086,6 +1086,49 @@ pub fn recipe_dead_end(recipe: &crate::recipe::Recipe) -> String {
     }
 }
 
+/// THE WALLS A SMELTER MADE FROM THIS STACK WOULD HAVE, or "" for every other
+/// row. One clause, appended like [`recipe_dead_end`], never composed by a
+/// host.
+///
+/// **THE FIGURE, NOT THE RULE** (Game Director, ASSA-88 → ASSA-125). The
+/// recipe table already says what walls ARE and what they DO, once, and two
+/// wordings for one condition is how hosts drift. What a player cannot get
+/// from that rule is the number for THIS rock at the moment they spend five
+/// ore on it. Her measurement is why it is worth a clause at all: a pair that
+/// refines your nearest diggable rock exists in 86.8% of worlds, but rough
+/// sheets prove one works in only 49.4% — so in half of worlds the first
+/// smelter cannot be chosen, only tried.
+///
+/// **THE COMPARISON STAYS THE PLAYER'S.** This says what the walls would be
+/// and not whether they are enough: ranking the rocks for them is the game,
+/// and `ladder::starter_pair` — the one answer the sim could give — is right
+/// 75.2% of the time and wrong exactly where a player cannot tell (her
+/// measurement again; a hint right three times in four is worse than none).
+///
+/// **IT IS THE PLAYER'S READING, NOT THE GROUND'S.** [`reading`] gives the
+/// 25-wide band until that species is assayed, which is honest about what they
+/// know and is a third reason to assay, on a decision taken in the first two
+/// minutes of play.
+///
+/// Keyed on the recipe's OUTPUT KIND, like the recipe table's own sentence:
+/// every building's material sets its `max_temperature`, but only a smelter
+/// melts anything with it, so a later placeable recipe gets its own clause
+/// rather than inheriting this one.
+pub fn walls_clause(world: &World, recipe: &crate::recipe::Recipe, input: Item) -> String {
+    if recipe.output.0 != ItemKind::Smelter {
+        return String::new();
+    }
+    // GRADE IS DELIBERATELY NOT READ. Heat tolerance is one of the two
+    // properties grade never scales (`Sheet::effective`), so the same species
+    // at grade C and grade A builds walls of exactly the same height. A clause
+    // that quietly took the stack's grade would be a second opinion about a
+    // rule that lives in one place, and `make_offers.rs` pins it.
+    format!(
+        "walls {}",
+        reading(world.species(input.species), Property::HeatTolerance)
+    )
+}
+
 /// Table of every species with its sheet as the players know it (rough
 /// bands until assayed), plus what the sheet means for the rules that
 /// exist today. Notes use the exact values: the ground knows what it is.
@@ -1941,6 +1984,8 @@ pub struct MakeOffer {
     pub line: String,
     /// [`recipe_dead_end`], empty unless nothing in the game uses the output.
     pub dead_end: String,
+    /// [`walls_clause`], empty on every row but the smelter's.
+    pub walls: String,
 }
 
 /// The two catalogues a player can make something out of by hand. Not a
@@ -2040,6 +2085,7 @@ pub fn make_offers(world: &World, player: PlayerId) -> Vec<MakeOffer> {
                     stack,
                 ),
                 dead_end,
+                walls: walls_clause(world, recipe, stack.item),
             });
         }
     }
@@ -2064,6 +2110,11 @@ pub fn make_offers(world: &World, player: PlayerId) -> Vec<MakeOffer> {
                 // as a missing arm rather than as silence.
                 line: offer_line(world, Some((makes, 1)), None, cost, stack),
                 dead_end: String::new(),
+                // A PART IS NEVER A BUILDING, so there are no walls to name.
+                // Spelled out rather than defaulted for the same reason the
+                // blocker is: the day a part can be planted, this is a line
+                // somebody has to decide about.
+                walls: String::new(),
             });
         }
     }
@@ -2186,16 +2237,24 @@ pub fn make_offer_table(world: &World, player: PlayerId) -> String {
     }
     let mut out = String::from("what you could make by hand, from what you are carrying:\n");
     for offer in &offers {
+        // EVERY CLAUSE THE ROW CARRIES, IN ONE ORDER, AND THE TERMINAL GETS
+        // THEM TOO. A menu only the window has is a feature that only works
+        // with graphics, which this repo does not allow; the window appends
+        // the same two fields as their own lines. They are disjoint today — a
+        // smelter is consumed, so its row has no dead end — and the order is
+        // fixed anyway, because a disqualifier outranks a figure (Maren's
+        // precedence ruling on ASSA-88).
+        let clauses: String = [&offer.dead_end, &offer.walls]
+            .iter()
+            .filter(|c| !c.is_empty())
+            .map(|c| format!(" — {c}"))
+            .collect();
         let _ = writeln!(
             out,
             "  {:<34} {}{}",
             command_line(&offer.command(1), world),
             offer.line,
-            if offer.dead_end.is_empty() {
-                String::new()
-            } else {
-                format!(" — {}", offer.dead_end)
-            }
+            clauses
         );
     }
     out
