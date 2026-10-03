@@ -33,7 +33,7 @@ mod common;
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -517,11 +517,10 @@ struct Party {
 
 impl Party {
     fn start(seed: u64) -> Party {
-        let port = free_port();
         let saves =
             std::env::temp_dir().join(format!("assay-three-peers-{}-{seed}", std::process::id()));
         std::fs::create_dir_all(&saves).expect("a temp saves dir");
-        let (relay, log) = spawn_relay(seed, port, &saves);
+        let (relay, log, port) = spawn_relay(seed, &saves);
         let peers = NAMES.iter().map(|n| spawn_peer(n, port, &saves)).collect();
         Party {
             peers,
@@ -626,14 +625,6 @@ impl Drop for Party {
     }
 }
 
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("a free port")
-        .local_addr()
-        .expect("its address")
-        .port()
-}
-
 /// `sim-relay` lives beside `sim-cli` in the target directory, and this builds
 /// it EVERY time rather than only when it is missing.
 ///
@@ -659,12 +650,20 @@ fn relay_bin() -> PathBuf {
         .with_file_name(format!("sim-relay{}", std::env::consts::EXE_SUFFIX))
 }
 
-fn spawn_relay(seed: u64, port: u16, saves: &Path) -> (Child, Arc<Mutex<Vec<String>>>) {
+/// **THE PORT COMES FROM THE RELAY, NOT FROM A GUESS** (ASSA-110).
+///
+/// This used to bind `127.0.0.1:0`, read the number, close the socket and
+/// hand it over — so anything on the machine could take that port in the gap,
+/// including another test binary in the same run. That is why
+/// `three_peers` went red under a full `cargo test` and passed 5/5 alone.
+/// `--port 0` plus the relay's own `LISTENING` line has no gap, and it is the
+/// same line the Godot client reads when it starts a solo relay (ASSA-106).
+fn spawn_relay(seed: u64, saves: &Path) -> (Child, Arc<Mutex<Vec<String>>>, u16) {
     let mut child = Command::new(relay_bin())
         .args([
             &seed.to_string(),
             "--port",
-            &port.to_string(),
+            "0",
             "--tps",
             &TPS.to_string(),
             "--fresh",
@@ -677,17 +676,28 @@ fn spawn_relay(seed: u64, port: u16, saves: &Path) -> (Child, Arc<Mutex<Vec<Stri
     let log = collect(child.stdout.take().expect("piped"));
     let _ = collect(child.stderr.take().expect("piped"));
 
-    // Wait for the port rather than sleeping on faith.
+    // Wait for the relay to say where it is, rather than sleeping on faith.
+    // `LISTENING` is printed once the socket is accepting, so there is nothing
+    // to poll for afterwards.
     let deadline = Instant::now() + Duration::from_secs(20);
-    while TcpStream::connect(("127.0.0.1", port)).is_err() {
+    let port = loop {
+        let found = log.lock().unwrap().iter().find_map(|line| {
+            line.trim()
+                .strip_prefix("LISTENING ")
+                .and_then(|a| a.parse::<SocketAddr>().ok())
+                .map(|a| a.port())
+        });
+        if let Some(port) = found {
+            break port;
+        }
         assert!(
             Instant::now() < deadline,
-            "the relay never listened on {port}: {:?}",
+            "the relay never said it was listening: {:?}",
             log.lock().unwrap()
         );
-        thread::sleep(Duration::from_millis(50));
-    }
-    (child, log)
+        thread::sleep(Duration::from_millis(25));
+    };
+    (child, log, port)
 }
 
 fn spawn_peer(name: &str, port: u16, saves: &Path) -> Peer {

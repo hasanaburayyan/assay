@@ -14,92 +14,12 @@
 //! unit test on an options struct proves the flag parses and says nothing
 //! about what the socket does.
 
-use std::io::{BufRead, BufReader};
 use std::net::{IpAddr, SocketAddr, TcpStream, UdpSocket};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::time::Duration;
 
-struct Relay {
-    child: Child,
-    /// The address the relay said it was listening on.
-    bound: SocketAddr,
-    /// Everything it printed before it went quiet and started ticking.
-    startup: String,
-}
-
-impl Drop for Relay {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-/// Start a relay and wait for it to say where it is.
-///
-/// **NO PORT IS GUESSED HERE, WHICH IS THE POINT OF THE FEATURE.** The relay
-/// is given `--port 0` and asked what it got. `join_refusal.rs` picks a port
-/// by binding `127.0.0.1:0`, closing it and handing the number over, and that
-/// gap is real: `the_relay_prints_the_rules_it_is_hosting` failed on my branch
-/// under full-suite load with ConnectionReset and passes 6/6 alone.
-///
-/// Reading `LISTENING` is also how the client will learn the relay is up
-/// (Wren's ruling 6: never a hang), so the test and the client depend on the
-/// same line.
-fn spawn(args: &[&str]) -> Relay {
-    let saves = std::env::temp_dir().join(format!(
-        "assay-assa108-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    std::fs::create_dir_all(&saves).expect("a temp saves dir");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_sim-relay"))
-        .args(["7", "--port", "0", "--fresh"])
-        .args(args)
-        .env("R2TS_SAVES_DIR", &saves)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("sim-relay starts");
-    let mut stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
-    let mut bound = None;
-    let mut startup = String::new();
-    // **READ TO A TERMINATOR, NEVER KILL AND DRAIN.** The first version of
-    // this harness killed the relay and read whatever had been flushed, so how
-    // much output a test saw depended on timing: one assertion passed by luck
-    // and the next failed on two lines. The relay prints its whole startup
-    // block and then goes quiet, so the block's last line is the signal that
-    // there is nothing more coming — `nobody else` on a local-only bind and
-    // `over the internet` otherwise.
-    for _ in 0..40 {
-        let mut line = String::new();
-        if stdout.read_line(&mut line).unwrap_or(0) == 0 {
-            break;
-        }
-        startup.push_str(&line);
-        if let Some(addr) = line.trim().strip_prefix("LISTENING ") {
-            bound =
-                Some(addr.parse::<SocketAddr>().unwrap_or_else(|e| {
-                    panic!("LISTENING did not carry an address: {line:?} ({e})")
-                }));
-        }
-        if line.contains("nobody else") || line.contains("over the internet") {
-            break;
-        }
-    }
-    let bound = bound.expect("the relay never said it was listening");
-    // A POSITIVE ANCHOR, so the absence assertions below cannot pass by
-    // having read too little: if a line is ever added after the terminator,
-    // this still proves the join block itself was captured.
-    assert!(
-        startup.contains("Players join with"),
-        "the startup block was not read to the end: {startup}"
-    );
-    Relay {
-        child,
-        bound,
-        startup,
-    }
-}
+mod common;
+use common::spawn_relay;
 
 /// A local address that is not loopback, if this machine has one.
 ///
@@ -122,7 +42,7 @@ fn can_connect(addr: SocketAddr) -> bool {
 /// would mean a live host had been taken off the network.
 #[test]
 fn a_relay_given_no_bind_still_listens_on_every_interface() {
-    let relay = spawn(&[]);
+    let relay = spawn_relay("7", &[]);
     assert!(
         relay.bound.ip().is_unspecified(),
         "the default bind changed: {}",
@@ -160,7 +80,7 @@ fn a_relay_given_no_bind_still_listens_on_every_interface() {
 /// so the strong half runs there.
 #[test]
 fn a_loopback_relay_answers_here_and_refuses_every_other_address() {
-    let relay = spawn(&["--bind", "127.0.0.1"]);
+    let relay = spawn_relay("7", &["--bind", "127.0.0.1"]);
     assert!(
         relay.bound.ip().is_loopback(),
         "asked for loopback and got {}",
@@ -192,7 +112,7 @@ fn a_loopback_relay_answers_here_and_refuses_every_other_address() {
 /// than saying nothing.
 #[test]
 fn a_loopback_relay_does_not_print_routes_it_will_refuse() {
-    let local = spawn(&["--bind", "127.0.0.1"]);
+    let local = spawn_relay("7", &["--bind", "127.0.0.1"]);
     let port = local.bound.port();
     let output = local.startup.clone();
     assert!(
@@ -221,7 +141,7 @@ fn a_loopback_relay_does_not_print_routes_it_will_refuse() {
 /// that the relay reports reality.
 #[test]
 fn the_port_in_the_readout_is_the_port_actually_bound() {
-    let relay = spawn(&["--bind", "127.0.0.1"]);
+    let relay = spawn_relay("7", &["--bind", "127.0.0.1"]);
     let port = relay.bound.port();
     assert_ne!(port, 0, "an OS-assigned port is never 0 once bound");
     let output = relay.startup.clone();
