@@ -403,6 +403,49 @@ func _fold_report() -> void:
 				% [part[0], rect.position.y, rect.end.y, where, why])
 
 
+## **DID PRESSING "SHOW THE EVENT LOG" LEAVE THE LOG WHERE A STRANGER CAN READ IT** (Limpet,
+## ASSA-117; Maren's ruling 1 on that item, in the shape she asked for it: *proved by reading the
+## scroll offset back*, not by asserting `visible`).
+##
+## THIS IS THE LEVER THE CLIENT SUITE CANNOT HOLD. `tests/run_tests.gd` works inside
+## `SceneTree._initialize`, so `_ready` never fires, no frame is ever drawn and no container ever lays
+## out -- a headless test can ask a node whether it is visible and gets an honest yes about a section
+## 745px below the bottom edge. When I mutated the reveal away, every one of 191 tests stayed green.
+## A real window is the only thing that can fail here, so the verdict lives in the tool that has one.
+##
+## TWO PROPERTIES, AND THE SECOND IS THE ONE THAT CAUGHT ME. The heading has to be inside the
+## viewport, or you have arrived somewhere without being told where. And the TOP of the body has to be
+## inside it too: the log is newest-first, so a body whose top is clipped is a log whose NEWEST line
+## is the one torn in half -- the single line the player pressed the button to read.
+##
+## IT ASKS `_frame_for` AND NOT THE SCROLL BOX. Marlow and I wrote the same clip-rect fix within the
+## hour (ASSA-123, #165); theirs walks every clipping ancestor instead of naming one node, so a second
+## clipping container one day is already covered and this verdict inherits that for free.
+func _reveal_report() -> bool:
+	var scroll: ScrollContainer = _screen._scroll as ScrollContainer
+	var heading: Label = _screen._log_heading as Label
+	if scroll == null or heading == null:
+		_finish(false, "no scroll box or no log heading on the screen, so the reveal cannot be judged")
+		return false
+	var clip := _frame_for(heading)
+	var bar := scroll.get_v_scroll_bar()
+	var head := heading.get_global_rect()
+	var body := (_screen._log as Control).get_global_rect()
+	print("  reveal: scrolled to %d of %d; seen-in y %d..%d; heading y %d..%d; body top y %d"
+			% [scroll.scroll_vertical, int(bar.max_value - bar.page), clip.position.y, clip.end.y,
+			head.position.y, head.end.y, body.position.y])
+	if not clip.encloses(head):
+		_finish(false, ("the log's own heading is at y %d..%d, outside the rect it can be seen in "
+				+ "(y %d..%d): pressing 'show the event log' left you somewhere without saying where")
+				% [head.position.y, head.end.y, clip.position.y, clip.end.y])
+		return false
+	if body.position.y < clip.position.y - 0.5:
+		_finish(false, ("the log's first line starts at y %d, above the y %d it can be seen from, so "
+				+ "the NEWEST line is the one clipped in half") % [body.position.y, clip.position.y])
+		return false
+	return true
+
+
 func _report() -> void:
 	for line in _shots:
 		print("  ", line)
@@ -413,6 +456,8 @@ func _report() -> void:
 		for name in _missing:
 			said.append("%s: %s" % [name, ", ".join(_missing[name] as PackedStringArray)])
 		_finish(false, "; ".join(said))
+		return
+	if not _reveal_report():
 		return
 	_finish(true, "")
 
