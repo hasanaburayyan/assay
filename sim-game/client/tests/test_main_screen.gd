@@ -10,6 +10,23 @@ extends RefCounted
 var runner = null
 
 
+## **A RELAY THAT HAS JUST BECOME READY, WHICH IS A STATE AND NOT A VALUE.** `poll()` sets `address`
+## and returns true in the same call; nobody ever hands `main.gd` a relay with an address already on
+## it, because the guard at the top of `_process` exists precisely to skip those frames.
+##
+## Subclassed rather than faked so everything else on the object is the real thing: `stop()`, the
+## `failure` field and the save path all come from `AssaySoloRelay`. Only the one call whose real
+## implementation needs a child process is replaced, and its contract is pinned against a real
+## process in `test_solo_relay.gd::test_the_address_comes_out_of_the_listening_line`.
+class _RelayThatIsListening extends AssaySoloRelay:
+	var polls := 0
+
+	func poll() -> bool:
+		polls += 1
+		address = "127.0.0.1:54321"
+		return true
+
+
 func set_runner(r) -> void:
 	runner = r
 
@@ -163,8 +180,8 @@ func test_clicking_join_says_connecting_before_anything_can_block() -> bool:
 	return true
 
 
-## MAREN'S RULING 2: "enter a host address and join" and a connection error are the same words in the
-## same place. The colour is the only thing that can tell an instruction from a failure.
+## MAREN'S RULING 2: the opening instruction and a connection error land in the same place. The
+## colour is the only thing that can tell an instruction from a failure.
 func test_a_failure_does_not_look_like_the_instruction_it_replaces() -> bool:
 	var screen := _screen()
 	var idle: Color = screen._status.modulate
@@ -180,6 +197,106 @@ func test_a_failure_does_not_look_like_the_instruction_it_replaces() -> bool:
 	if failed != AssayHud.status_color(AssayHud.Say.FAILED):
 		return _fail("a failure is coloured %s, not the failed colour" % failed)
 	return true
+
+
+## **THE FIRST THING A STRANGER READS NAMES BOTH DOORS, SOLO FIRST** (Maren, ASSA-113).
+##
+## It used to read "enter a host address and join", which sent them to the one door that needs
+## information they do not have -- and it survived the whole of ASSA-106 because I never re-read the
+## item between cutting the branch and opening the PR.
+func test_the_opening_line_offers_the_door_that_needs_nothing_typed() -> bool:
+	var screen := _screen()
+	var said: String = screen._status.text
+	var colour: Color = screen._status.modulate
+	screen.queue_free()
+	if not said.contains("Play solo"):
+		return _fail("the opening line does not mention Play solo at all: %s" % said)
+	if not said.contains("host address"):
+		return _fail("the opening line dropped the host door: %s" % said)
+	# SOLO FIRST, because the row reads left to right and so does the sentence above it.
+	if said.find("Play solo") > said.find("host address"):
+		return _fail("the opening line puts the host door first: %s" % said)
+	if colour != AssayHud.status_color(AssayHud.Say.IDLE):
+		return _fail("the opening instruction is coloured %s, not the idle colour" % colour)
+	return true
+
+
+## **PLAY SOLO IS THE FIRST CONTROL IN THE ROW, AND IT ASKS FOR THE FOCUS** (Maren, ASSA-113).
+##
+## FOUND BY FIELD AND NOT BY INDEX, because the index is the thing under test: a test that located
+## the button by its position in the row could not fail. And `get_parent()` is asserted alongside
+## `is_instance_valid`, because a freed node has no parent and a parent-walk over one passes about
+## nothing -- that has caught me twice.
+##
+## WHAT THIS CANNOT DO IS WATCH THE FOCUS LAND. Measured: inside `SceneTree._initialize`, where this
+## suite runs, a node added under the root reports `is_inside_tree() == false`, `get_viewport()` is
+## null, and `grab_focus()` errors out leaving `has_focus()` false. One frame later it works, so the
+## real focus owner is read back off the viewport by `tools/focus_probe.gd` instead, headless.
+func test_play_solo_is_the_first_door_in_the_row() -> bool:
+	var screen := _screen()
+	var button: Button = screen._solo_button
+	var ok := true
+	if not is_instance_valid(button):
+		ok = _fail("the Play solo button does not exist")
+	elif button.get_parent() == null:
+		ok = _fail("the Play solo button is not in the screen at all")
+	elif button.text != "Play solo":
+		ok = _fail("the first door reads `%s`" % button.text)
+	elif button.get_index() != 0:
+		var row := button.get_parent()
+		var names := PackedStringArray()
+		for child in row.get_children():
+			names.append(child.get_class() + ":" + String(child.get("text")))
+		ok = _fail("Play solo is child %d of the row, which reads %s"
+				% [button.get_index(), ", ".join(names)])
+	elif button.focus_mode != Control.FOCUS_ALL:
+		ok = _fail("the first door cannot take focus, so Enter cannot press it")
+	# THE REQUEST, not the outcome: the outcome needs a tree and a frame, and this suite has neither.
+	elif not button.tree_entered.is_connected(button.grab_focus):
+		ok = _fail("nothing asks the first door for the focus when it reaches the tree")
+	screen.queue_free()
+	return ok
+
+
+## **PRESSING PLAY SOLO DOES NOT TOUCH WHAT THE PLAYER TYPED** (Maren, ASSA-113, and this one was a
+## live bug rather than wording).
+##
+## `_process` used to do `_host.text = _solo.address` before joining, so a player who had typed a
+## friend's address and then pressed Play solo watched it silently vanish. The address now goes
+## straight to `_join_address`, so the box is neither read nor written by the solo path.
+func test_play_solo_neither_reads_nor_wipes_a_typed_host() -> bool:
+	var screen := _screen()
+	var typed := "friend.example:7777"
+	screen._host.text = typed
+	# THE FRAME THE BUG LIVED IN IS THE ONE WHERE `poll()` FIRST SAYS YES, and it has to be reached
+	# the way production reaches it. My first version of this test set `address` on a real
+	# `AssaySoloRelay` and called `_process`, which proves nothing: `_process` returns at its first
+	# line when `address != ""`, because that guard is what stops it re-joining on every later frame.
+	# The suite caught it (`solo did not join the address its own relay reported`) and the test was
+	# right -- the setup was a state production never passes through.
+	#
+	# So the stub honours `poll()`'s actual contract: set the address, return true, once. That
+	# contract is not assumed here, it is verified against a real process in
+	# `test_solo_relay.gd::test_the_address_comes_out_of_the_listening_line`.
+	var solo := _RelayThatIsListening.new()
+	screen._solo = solo
+	screen._process(0.016)
+	if solo.polls != 1:
+		screen._solo = null
+		screen.queue_free()
+		return _fail("the solo frame polled the relay %d times, not once" % solo.polls)
+	var ok := true
+	if screen._host.text != typed:
+		ok = _fail("Play solo rewrote the host box to `%s`" % screen._host.text)
+	# AND IT JOINED THE RELAY, not the typed address -- the other way for this to "pass" is to honour
+	# what was typed, which is the same confusion with the blame reversed.
+	elif not screen._status.text.contains("127.0.0.1:54321"):
+		ok = _fail("solo did not join the address its own relay reported: %s" % screen._status.text)
+	elif screen._status.text.contains(typed):
+		ok = _fail("solo joined the typed host instead of its own relay: %s" % screen._status.text)
+	screen._solo = null
+	screen.queue_free()
+	return ok
 
 
 ## A desync is unrecoverable in the demo, so it is a failure, not narration.
