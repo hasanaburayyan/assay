@@ -55,21 +55,24 @@ func _labels_building(stack: Dictionary) -> PackedStringArray:
 ## IS THIS STACK'S KIND A FRAME, according to the SIM'S OWN CATALOGUE?
 ##
 ## Maren's ASSA-86 ruling 1 says the part label is a property of the KIND: a frame kind says
-## `Frame` forever, every other kind says `Mount` forever, picked by `is_frame()`. Her note adds
-## that the field "is simply absent: `part_kinds()` carries name/size/material/tag".
+## `Frame` forever, every other kind says `Mount` forever, picked by `is_frame()`.
 ##
-## It is not absent -- it is carried STRUCTURALLY by `tag`, which is the serde form of the sim's
-## own `PartTag` enum. Printed from the running engine:
-##     head   -> "Head"              handle -> {"Frame": "Held"}
-##     hopper -> "Hopper"            frame  -> {"Frame": "Planted"}
-## So a kind is a frame exactly when its tag is a Dictionary carrying "Frame". That is the sim's
-## discriminant, not a rule this script invented, and it is why this asks the catalogue rather
-## than testing the button's text -- "Frame" starting with the word Frame would be a fact about
-## English (ASSA-99's lesson).
+## PREFERS THE EXPLICIT FIELD, WHICH NOW EXISTS. When this was written, `part_kinds()` carried
+## name/size/material/tag and Maren's ruling said the field "is simply absent". It was not absent,
+## only structural: `tag` is the serde form of the sim's `PartTag`, so `{"Frame": "Held"}` is a
+## frame and `"Head"` is not. ASSA-102 (#131) then added a real `is_frame` to `part_kinds()`, so
+## that inference is now the WORSE source and is kept only as a fallback.
+##
+## Reading the enum's SHAPE was always the fragile half of this: had `PartTag` become a struct with
+## a `kind` field, the inference would have gone QUIET -- every part reported as mounted -- rather
+## than failing. I said so when I reported the finding; the explicit field is what retires it.
+##
+## Either way this asks the CATALOGUE and never the button's text: "Frame" starting with the word
+## Frame would be a fact about English, not about the sim (ASSA-99's lesson).
 ##
 ## CHECKED AGAINST THE SIM'S OWN VERDICTS rather than trusted: Maren ran `Assembly::validate`
 ## (shared/assay/maren_frame_button_2026-10-02.out) and got head/hopper FrameIsNotAFrame,
-## handle/frame accepted as the first part. This agrees on all four.
+## handle/frame accepted as the first part. Both sources agree with it on all four kinds.
 ##
 ## Returns 1 for a frame kind, 0 for a mounted kind, -1 when the stack is not a part at all.
 func _is_frame_kind(stack: Dictionary) -> int:
@@ -78,6 +81,8 @@ func _is_frame_kind(stack: Dictionary) -> int:
 		var part: Dictionary = entry as Dictionary
 		if String(part.get("name", "")) != kind:
 			continue
+		if part.has("is_frame"):
+			return 1 if bool(part["is_frame"]) else 0
 		var tag: Variant = part.get("tag")
 		return 1 if (tag is Dictionary and (tag as Dictionary).has("Frame")) else 0
 	return -1
