@@ -155,24 +155,40 @@ that is a message problem, not a capacity one.
 
 This note's own summary says friends "play for twenty minutes or so", and the
 loop measured above is 326 ticks — 33 seconds. The other 19.5 minutes had never
-been read off anything. Measured on the pinned seed
-(`shared/assay/maren_twenty_minutes_2026-10-03.rs`, seed 14247):
+been read off anything. Measured on the pinned seed, in the world a session
+really builds — `sim_net::SESSION_CHUNKS`, 6x4 chunks, 96x64 tiles, 13 deposits
+(`shared/assay/maren_twenty_minutes_session_world_2026-10-03.rs`, seed 14247).
+**The first version of this section used `WorldConfig::default()`, which is 8x8
+chunks: 64 chunks against 24, so every total in it was for a world no friend
+will ever play. `first_pick.rs` warns about that exact trap in a comment and I
+walked into it anyway. The figures below replace those.**
 
 | what | number |
 |---|---|
-| hand-minable ore in the world | 24,563 units |
-| of that, inside a 20-tile walk | 3,747 units |
-| ore nothing in that world can break | 11,946 units (32.7%) |
-| bare hands to clear every minable deposit | 67,848 ticks ≈ 113 min |
-| one smelter to refine all of it | 491,260 ticks ≈ 819 min |
+| ore in the world, all kinds | 11,632 units |
+| hand-minable | 8,722 units |
+| of that, inside a 20-tile walk | 2,143 units |
+| ore nothing in that world can break | 2,910 units (25.0% by volume) |
+| bare hands to clear every minable deposit | 20,244 ticks ≈ 33.7 min |
+| bare hands on the ore within 20 tiles | 3,336 ticks ≈ 5.6 min |
+| one smelter to refine all of it | 174,440 ticks ≈ 290.7 min |
 | a pick · a one-hopper drill | 3 · 8 refined = 60 · 160 smelter ticks |
 
-**Nothing in the demo is scarce.** Twenty minutes is 12,000 ticks; one smelter
-turns that into about 600 refined, and the whole catalogue costs single digits.
-The ore inside a 20-tile walk is a session's worth on its own. So the twenty
-minutes are not gated by material, by distance or by the clock — **they are
-gated by the number of things worth building, which is a pick, a drill, and
-however many hoppers you dare.**
+**What the demo asks for is tens of units, and the nearest ore is thousands.**
+The whole loop — a smelter (5 ore), a pick (3 refined) and a one-hopper drill
+(8 refined) — costs **16 units at grade C**, or about **100** if you insist on
+grade A everywhere, because the ladder is 9 grade-C ore per grade-A unit.
+Against that, 2,143 units sit inside a 20-tile walk and each single deposit
+holds 687 to 1,184. So the twenty minutes are not gated by material, by
+distance or by the clock — **they are gated by the number of things worth
+building, which is a pick, a drill, and however many hoppers you dare.**
+
+**One pacing fact that is real, though, and is not a scarcity.** Mining
+*continuously* would strip the ore within a 20-tile walk in 5.6 minutes and the
+entire world in 33.7, so a player who treats this like an idle game runs out of
+nearby rock inside a session. Nothing in the demo asks for that — the loop needs
+16 units — but it is the number to know before anyone adds a reason to mine in
+bulk. Belts would make it binding; nothing today does.
 
 **Which makes the assembly verdict the demo's content rather than one of its
 features.** What a player does after the first pick is re-run that one
