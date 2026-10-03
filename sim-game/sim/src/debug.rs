@@ -10,12 +10,11 @@ use crate::building::{Building, BuildingKind, Machine, Slot, SmelterStall, Smelt
 use crate::command::{Event, PlayerCommand, RejectReason, StopReason};
 use crate::item::{Item, ItemKind, ItemStack};
 use crate::ladder::Lighting;
-use crate::mineral::{Grade, MineralSpecies, NameError, Property, Sheet, SpeciesId};
+use crate::mineral::{MineralSpecies, NameError, Property, Sheet, SpeciesId};
 use crate::ore::OreDeposit;
 use crate::recipe::{RECIPES, Station};
 use crate::tuning::{
-    FUEL_MIN_REACTIVITY, HAND_MINE_MAX_HARDNESS, HAND_WORK_PER_TICK, PICK_WEAR_PER_SWING,
-    YIELD_BY_GRADE,
+    HAND_MINE_MAX_HARDNESS, HAND_WORK_PER_TICK, PICK_WEAR_PER_SWING, YIELD_BY_GRADE,
 };
 use crate::types::{PlayerId, TilePos};
 use crate::world::World;
@@ -1154,10 +1153,7 @@ pub fn species_table(world: &World) -> String {
         // the first pass, which tested A first — so every fuel row in the game
         // said "fuel at A or better" even when C would burn, and the clause
         // sorted nothing. Found while building this; flagged on ASSA-58.
-        if let Some(grade) = Grade::ALL
-            .into_iter()
-            .find(|g| s.effective(Property::Reactivity, *g) >= FUEL_MIN_REACTIVITY)
-        {
+        if let Some(grade) = crate::ladder::fuel_grade(s) {
             //
             // **ON A ROW NOTHING CAN MINE, THE LIGHT SLOT ANSWERS THE PRIOR
             // QUESTION INSTEAD** (Game Director, ASSA-68). The lighting state of
@@ -1175,12 +1171,11 @@ pub fn species_table(world: &World) -> String {
             // amended, not broken — the slot is still occupied, so a missing
             // clause still cannot become the cue for "won't light".
             let clause = if minable {
-                let light = match crate::ladder::lighting(&world.species, s.id) {
-                    Lighting::FromCold => "lights from cold",
-                    Lighting::FromAHotterFire => "needs a hotter fire to light",
-                    Lighting::NothingBurnsHotEnough => "nothing here burns hot enough to light it",
-                };
-                format!("fuel at {} or better, {light}", grade.letter())
+                format!(
+                    "fuel at {} or better{}",
+                    grade.letter(),
+                    lighting_clause(crate::ladder::lighting(&world.species, s.id))
+                )
             } else {
                 format!("fuel at {} or better if you could mine it", grade.letter())
             };
@@ -1461,6 +1456,46 @@ pub fn machine_status(world: &World, b: &Building, m: &Machine) -> String {
         show(range.low.speed, range.high.speed),
         parts_summary(world, &m.assembly),
     )
+}
+
+/// How a fuel can be lit, as the clause that follows the grade in a species
+/// row — **binding the fuel claim when it disqualifies it** (Game Director,
+/// ASSA-93).
+///
+/// The disqualifier used to trail after a comma, so `fuel at C or better,
+/// nothing here burns hot enough to light it` looked exactly like the positive
+/// `, lights from cold` after a grade-bearing claim that had already invited
+/// the player in. The board loaded 50 units of a fuel nothing in their world
+/// could light and the row read like an offer. `species_table` already binds
+/// correctly one clause over — `fuel at C or better if you could mine it` —
+/// and this is the same shape for the same reason.
+///
+/// `FromAHotterFire` keeps its comma on purpose: it is a real conditional a
+/// player can satisfy, not a disqualifier.
+pub fn lighting_clause(l: Lighting) -> &'static str {
+    match l {
+        Lighting::FromCold => ", lights from cold",
+        Lighting::FromAHotterFire => ", needs a hotter fire to light",
+        Lighting::NothingBurnsHotEnough => " if anything here could light it",
+    }
+}
+
+/// The same three states as a short label, for a host that shows tags rather
+/// than sentences (ASSA-93).
+///
+/// **TWO RENDERINGS OF ONE ENUM, BOTH HERE.** A window row is a column of tags
+/// and a table row is prose; a clause reading " if anything here could light
+/// it" is not a tag, and "nothing here can light it" does not bind a sentence.
+/// What must not happen is a HOST choosing either — so both matches live in
+/// this file and a fourth `Lighting` state fails to compile in both at once.
+/// If the Game Director would rather have one wording on both surfaces, it is
+/// this function and the one above that merge, and no host changes.
+pub fn lighting_tag(l: Lighting) -> &'static str {
+    match l {
+        Lighting::FromCold => "lights from cold",
+        Lighting::FromAHotterFire => "needs a hotter fire",
+        Lighting::NothingBurnsHotEnough => "nothing here can light it",
+    }
 }
 
 /// Why a smelter stopped, in the words it has always used.
