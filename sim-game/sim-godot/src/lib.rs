@@ -23,7 +23,7 @@ use godot::prelude::*;
 use sim::assembly::{Assembly, Built, Mount, PartKind};
 use sim::command::{Event, Input};
 use sim::hash::fnv64;
-use sim::item::Item;
+use sim::item::{Item, ItemKind};
 use sim::mineral::{Property, SpeciesId};
 use sim::types::{PlayerId, TilePos};
 use sim::world::{CHUNK_SIZE, World, WorldConfig};
@@ -574,9 +574,60 @@ impl AssaySim {
                     "size" => &(sim::assembly::spec(*kind).size as i64).to_variant(),
                     "material" => &gstring(Self::PART_MATERIAL.name()).to_variant(),
                     "tag" => &tag,
+                    // **THE WORD ON A PART ROW'S BUTTON IS A PROPERTY OF THE
+                    // KIND** (Game Director, ASSA-86 ruling 1): a frame kind
+                    // says `Frame` forever and every other kind says `Mount`
+                    // forever, so a fifth part kind labels itself. The client
+                    // used to pick that word from its own buffer state, which
+                    // made two of four rows wrong in each state. It is handed
+                    // the answer here rather than deriving it — the ASSA-90
+                    // shape — because which kinds are frames is a static
+                    // catalogue fact and not a sheet reading.
+                    "is_frame" => &kind.is_frame().to_variant(),
                 })
             })
             .collect()
+    }
+
+    /// WHETHER CHOOSING THIS PART NEXT CAN EVER LEAD TO A MACHINE, and the
+    /// sim's own sentence when it cannot. `""` means the press is safe.
+    ///
+    /// **A CLIENT MUST NOT CONFIRM A PRESS THE SIM WOULD REFUSE** (Game
+    /// Director, ASSA-86 ruling 2; how a client learns it was left to me).
+    /// Pressing `Frame` on a head row is `FrameIsNotAFrame`, which **no later
+    /// press can rescue** — so the window used to answer a confirmed dead end
+    /// in the positive colour, and the refusal arrived at `Assemble` once the
+    /// player had built the rest of the design on it.
+    ///
+    /// `chosen` and `candidate` are the `kind` strings this class already
+    /// handed over in `inventory_of`, in the order the parts were pressed; the
+    /// first is the frame, which is `sim-cli`'s rule. **The client hands back
+    /// what it was given and parses nothing**, which is `part_kinds`' own
+    /// doctrine — and it costs nothing to honour, because legality is a
+    /// question about kinds and never about the material.
+    ///
+    /// A design that is merely half-built answers `""`: being unfinished is
+    /// the normal state of an assembly chosen one row at a time, and
+    /// `AssemblyError::is_unfinished` is where the sim draws that line.
+    #[func]
+    pub fn part_press_refusal(chosen: PackedStringArray, candidate: GString) -> GString {
+        let mut kinds = Vec::with_capacity(chosen.len() + 1);
+        for name in chosen.as_slice().iter().map(ToString::to_string) {
+            match ItemKind::from_name(&name).and_then(ItemKind::part) {
+                Some(kind) => kinds.push(kind),
+                // Not a part at all: the sim names what the parts are rather
+                // than this host inventing a sentence for it.
+                None => return gstring(&sim::debug::not_a_part_phrase(&name)),
+            }
+        }
+        let name = candidate.to_string();
+        let Some(kind) = ItemKind::from_name(&name).and_then(ItemKind::part) else {
+            return gstring(&sim::debug::not_a_part_phrase(&name));
+        };
+        match sim::assembly::fault_adding(&kinds, kind) {
+            Some(e) => gstring(&sim::debug::assembly_error_phrase(e)),
+            None => GString::new(),
+        }
     }
 
     /// EVERY RECIPE THE SIM HAS: `name`, `tag`, `input`, `input_count`, `hand`.

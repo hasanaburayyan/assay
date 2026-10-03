@@ -53,6 +53,16 @@ impl ItemKind {
         }
     }
 
+    /// The kind that goes by this name, if any.
+    ///
+    /// The inverse of [`ItemKind::name`], over the catalogue rather than a
+    /// second match, so a new kind is findable here the moment it is named.
+    /// A host handing a name back to the sim is the alternative to a host
+    /// keeping its own table of them (ASSA-102).
+    pub fn from_name(name: &str) -> Option<ItemKind> {
+        ItemKind::ALL.into_iter().find(|k| k.name() == name)
+    }
+
     /// The part kind this item is, if it is a part at all.
     pub const fn part(self) -> Option<PartKind> {
         match self {

@@ -747,37 +747,8 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
                     "that slot is full or holds a different item".to_string()
                 }
                 RejectReason::NothingToTake => "it has nothing waiting to be taken".to_string(),
-                RejectReason::BadAssembly(e) => match e {
-                    AssemblyError::FrameIsNotAFrame => {
-                        "the first part must be a frame: a handle for a tool, a frame to plant"
-                            .to_string()
-                    }
-                    AssemblyError::FrameMounted => {
-                        "a frame cannot be mounted on another frame".to_string()
-                    }
-                    AssemblyError::NoSuchSlot(kind) => {
-                        format!("that frame has no {} slot at all", kind.name())
-                    }
-                    AssemblyError::TooFew { kind, have, min } => {
-                        format!("it needs at least {min} {} and has {have}", kind.name())
-                    }
-                    AssemblyError::TooMany { kind, have, max } => {
-                        format!("it takes at most {max} {} and was given {have}", kind.name())
-                    }
-                },
-                RejectReason::NotAPart(item) => {
-                    format!(
-                        "{} is not a machine part; parts are {}",
-                        item.code(),
-                        // From the catalogue, so a new part kind names itself
-                        // here without anyone editing this sentence.
-                        PartKind::ALL
-                            .iter()
-                            .map(|k| k.name())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                }
+                RejectReason::BadAssembly(e) => assembly_error_phrase(*e),
+                RejectReason::NotAPart(item) => not_a_part_phrase(&item.code()),
                 RejectReason::NoSuchAssembly => {
                     "you have not built that design".to_string()
                 }
@@ -1478,6 +1449,52 @@ pub fn lighting_tag(l: Lighting) -> &'static str {
         Lighting::FromAHotterFire => "needs a hotter fire",
         Lighting::NothingBurnsHotEnough => "nothing here can light it",
     }
+}
+
+/// Why a design was refused, in the words it has always used.
+///
+/// **THE SENTENCES WERE REAL AND UNREACHABLE** (ASSA-102). They lived inside
+/// `event_line`'s `BadAssembly` arm, so the only way for a host to obtain one
+/// was to *actually be rejected* — which is exactly what the Game Director's
+/// ASSA-86 ruling 2 forbids, since a client must say why it will not confirm a
+/// press *before* submitting anything. Same sentences, same arms, now callable:
+/// the `stall_reason` shape.
+pub fn assembly_error_phrase(e: AssemblyError) -> String {
+    match e {
+        AssemblyError::FrameIsNotAFrame => {
+            "the first part must be a frame: a handle for a tool, a frame to plant".to_string()
+        }
+        AssemblyError::FrameMounted => "a frame cannot be mounted on another frame".to_string(),
+        AssemblyError::NoSuchSlot(kind) => {
+            format!("that frame has no {} slot at all", kind.name())
+        }
+        AssemblyError::TooFew { kind, have, min } => {
+            format!("it needs at least {min} {} and has {have}", kind.name())
+        }
+        AssemblyError::TooMany { kind, have, max } => {
+            format!(
+                "it takes at most {max} {} and was given {have}",
+                kind.name()
+            )
+        }
+    }
+}
+
+/// What a player offered that is not a part, and what the parts are.
+///
+/// Extracted alongside [`assembly_error_phrase`] and for the same reason: a
+/// host that is handed an item kind it cannot place has to say so in the sim's
+/// words rather than compose its own. The list comes from the catalogue, so a
+/// new part kind names itself here without anyone editing this sentence.
+pub fn not_a_part_phrase(what: &str) -> String {
+    format!(
+        "{what} is not a machine part; parts are {}",
+        PartKind::ALL
+            .iter()
+            .map(|k| k.name())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 /// Why a smelter stopped, in the words it has always used.

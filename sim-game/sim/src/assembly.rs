@@ -493,6 +493,87 @@ pub enum AssemblyError {
     },
 }
 
+impl AssemblyError {
+    /// Whether adding more parts could still rescue a selection this
+    /// describes.
+    ///
+    /// **"NOT FINISHED YET" IS THE ONLY RECOVERABLE REFUSAL**, and it is the
+    /// Game Director's measurement on ASSA-86 rather than my reading:
+    /// `TooFew` means add a head and it passes, while `FrameIsNotAFrame`,
+    /// `FrameMounted`, `NoSuchSlot` and `TooMany` are things no later press
+    /// can undo. She found that asymmetry by running the four cases, and it is
+    /// what makes a client confirming a press on a head row a *confirmed dead
+    /// end* rather than slow feedback.
+    ///
+    /// A rule and not a host's guess: a window asking "would this be refused"
+    /// must not be told yes for a design that is merely half-built, and the
+    /// judgement of which is which cannot live in GDScript.
+    pub const fn is_unfinished(self) -> bool {
+        match self {
+            AssemblyError::TooFew { .. } => true,
+            AssemblyError::FrameIsNotAFrame
+            | AssemblyError::FrameMounted
+            | AssemblyError::NoSuchSlot(_)
+            | AssemblyError::TooMany { .. } => false,
+        }
+    }
+}
+
+/// Everything wrong with a selection of part kinds that **adding more parts
+/// can never fix**.
+///
+/// [`Assembly::validate`] is this plus the "not finished yet" test, and calls
+/// it, so the frame, mounting, slot and maximum rules exist once.
+///
+/// **KINDS, NOT PARTS, AND THAT IS THE POINT.** Nothing in here reads a
+/// material: whether a press is legal is a question about the catalogue, not
+/// about the rock. That is what lets a host ask the question with the item
+/// kinds it already has, and it is proved in `tests/part_press.rs` rather than
+/// assumed.
+pub fn permanent_fault(frame: PartKind, mounted: &[PartKind]) -> Option<AssemblyError> {
+    if !frame.is_frame() {
+        return Some(AssemblyError::FrameIsNotAFrame);
+    }
+    let frame_spec = spec(frame);
+    for kind in mounted {
+        if kind.is_frame() {
+            return Some(AssemblyError::FrameMounted);
+        }
+        if !frame_spec.slots.iter().any(|s| s.kind == *kind) {
+            return Some(AssemblyError::NoSuchSlot(*kind));
+        }
+    }
+    for limit in frame_spec.slots {
+        let have = mounted.iter().filter(|k| **k == limit.kind).count() as u32;
+        if have > limit.max {
+            return Some(AssemblyError::TooMany {
+                kind: limit.kind,
+                have,
+                max: limit.max,
+            });
+        }
+    }
+    None
+}
+
+/// Whether the sim could **ever** accept a design that is `chosen` so far and
+/// then `candidate` — the question a client must ask before it confirms a
+/// press (Game Director, ASSA-86 ruling 2).
+///
+/// `None` means the press is safe to confirm, including when the result is
+/// still half-built: an unfinished design is the normal state of a design
+/// being assembled one row at a time.
+///
+/// The first part chosen is the frame, which is `sim-cli`'s rule
+/// (`assemble <frame> <part>...`) and the client's existing behaviour.
+pub fn fault_adding(chosen: &[PartKind], candidate: PartKind) -> Option<AssemblyError> {
+    let mut kinds = Vec::with_capacity(chosen.len() + 1);
+    kinds.extend_from_slice(chosen);
+    kinds.push(candidate);
+    let (frame, mounted) = kinds.split_first().expect("one was just pushed");
+    permanent_fault(*frame, mounted)
+}
+
 impl Assembly {
     pub fn new(frame: Part, mounted: Vec<Part>) -> Self {
         Self { frame, mounted }
@@ -516,33 +597,32 @@ impl Assembly {
     }
 
     /// Whether the parts fit the frame's slots. Mass is never consulted.
+    /// Whether this design is one the sim will build.
+    ///
+    /// **EVERY PERMANENT FAULT IS CHECKED BEFORE ANY MINIMUM** (ASSA-102), and
+    /// that is a deliberate change of precedence rather than a refactor. The
+    /// slot loop used to test min then max one limit at a time, so a selection
+    /// with no head *and* too many hoppers reported `TooFew { Head }` — the
+    /// slot list puts `Head` first. That sentence sends a player to add a head,
+    /// which still fails, while the problem they must actually undo goes
+    /// unmentioned. Naming the unrecoverable fault first is the same
+    /// precedence the Game Director ruled on ASSA-52, where hardness wins over
+    /// smeltability because it is the swing that will not land.
+    ///
+    /// The rules themselves live in [`permanent_fault`], so this and a host
+    /// asking "could this ever work" can never drift apart.
     pub fn validate(&self) -> Result<(), AssemblyError> {
-        if !self.frame.kind.is_frame() {
-            return Err(AssemblyError::FrameIsNotAFrame);
+        let mounted: Vec<PartKind> = self.mounted.iter().map(|p| p.kind).collect();
+        if let Some(e) = permanent_fault(self.frame.kind, &mounted) {
+            return Err(e);
         }
-        let frame = spec(self.frame.kind);
-        for part in &self.mounted {
-            if part.kind.is_frame() {
-                return Err(AssemblyError::FrameMounted);
-            }
-            if !frame.slots.iter().any(|s| s.kind == part.kind) {
-                return Err(AssemblyError::NoSuchSlot(part.kind));
-            }
-        }
-        for limit in frame.slots {
-            let have = self.mounted.iter().filter(|p| p.kind == limit.kind).count() as u32;
+        for limit in spec(self.frame.kind).slots {
+            let have = mounted.iter().filter(|k| **k == limit.kind).count() as u32;
             if have < limit.min {
                 return Err(AssemblyError::TooFew {
                     kind: limit.kind,
                     have,
                     min: limit.min,
-                });
-            }
-            if have > limit.max {
-                return Err(AssemblyError::TooMany {
-                    kind: limit.kind,
-                    have,
-                    max: limit.max,
                 });
             }
         }
