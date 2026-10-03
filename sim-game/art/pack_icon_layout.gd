@@ -24,13 +24,64 @@ func _initialize() -> void:
 ## order the buttons are built, out of `AssaySimHost.recipes()` and `part_kinds()`. So this asks the
 ## recipe table, exactly as the screen did when it made the button.
 func _verb_kinds(stack: Dictionary) -> PackedStringArray:
-	var footprint := AssaySimHost.footprint_of_item(String(stack.get("kind", "")),
-			int(stack.get("species", -1)), String(stack.get("grade", "C")))
 	var out := PackedStringArray()
-	for entry in AssayHud.stack_verbs(stack, AssaySimHost.recipes(), AssaySimHost.part_kinds(),
-			footprint, false):
+	for entry in _verbs_for(stack, false):
 		out.append(String((entry as Dictionary).get("verb", "?")))
 	return out
+
+
+## The descriptors `main.gd` would build for this stack, asked of the same function it asks.
+## `building` is the client's "a frame has already been chosen" state.
+func _verbs_for(stack: Dictionary, building: bool) -> Array:
+	var footprint := AssaySimHost.footprint_of_item(String(stack.get("kind", "")),
+			int(stack.get("species", -1)), String(stack.get("grade", "C")))
+	return AssayHud.stack_verbs(stack, AssaySimHost.recipes(), AssaySimHost.part_kinds(),
+			footprint, building)
+
+
+## THE LABELS IN THE OTHER STATE, because Maren's ASSA-86 ruling 1 is about BOTH.
+##
+## `stack_verbs` returns `"Mount" if building else "Frame"`, so a part row says a different word
+## once a frame has been chosen, and in that state it is handle and frame that the sim refuses
+## rather than head and hopper. The row laid out on screen can only be in one state at a time, so
+## the other one is ASKED OF THE SAME FUNCTION rather than typed into the sheet by me -- writing
+## "Mount" into the renderer would be a picture of what I believe the code says.
+func _labels_building(stack: Dictionary) -> PackedStringArray:
+	var out := PackedStringArray()
+	for entry in _verbs_for(stack, true):
+		out.append(String((entry as Dictionary).get("label", "?")))
+	return out
+
+## IS THIS STACK'S KIND A FRAME, according to the SIM'S OWN CATALOGUE?
+##
+## Maren's ASSA-86 ruling 1 says the part label is a property of the KIND: a frame kind says
+## `Frame` forever, every other kind says `Mount` forever, picked by `is_frame()`. Her note adds
+## that the field "is simply absent: `part_kinds()` carries name/size/material/tag".
+##
+## It is not absent -- it is carried STRUCTURALLY by `tag`, which is the serde form of the sim's
+## own `PartTag` enum. Printed from the running engine:
+##     head   -> "Head"              handle -> {"Frame": "Held"}
+##     hopper -> "Hopper"            frame  -> {"Frame": "Planted"}
+## So a kind is a frame exactly when its tag is a Dictionary carrying "Frame". That is the sim's
+## discriminant, not a rule this script invented, and it is why this asks the catalogue rather
+## than testing the button's text -- "Frame" starting with the word Frame would be a fact about
+## English (ASSA-99's lesson).
+##
+## CHECKED AGAINST THE SIM'S OWN VERDICTS rather than trusted: Maren ran `Assembly::validate`
+## (shared/assay/maren_frame_button_2026-10-02.out) and got head/hopper FrameIsNotAFrame,
+## handle/frame accepted as the first part. This agrees on all four.
+##
+## Returns 1 for a frame kind, 0 for a mounted kind, -1 when the stack is not a part at all.
+func _is_frame_kind(stack: Dictionary) -> int:
+	var kind := String(stack.get("kind", ""))
+	for entry in AssaySimHost.part_kinds():
+		var part: Dictionary = entry as Dictionary
+		if String(part.get("name", "")) != kind:
+			continue
+		var tag: Variant = part.get("tag")
+		return 1 if (tag is Dictionary and (tag as Dictionary).has("Frame")) else 0
+	return -1
+
 
 func _process(_d: float) -> bool:
 	_frames += 1
@@ -80,6 +131,10 @@ func _process(_d: float) -> bool:
 			"verb_boxes": boxes,
 			# The SIM's name for each verb, in button order. See `_verb_kinds`.
 			"verb_kinds": _verb_kinds(_stacks[rows.size()] as Dictionary),
+			# 1 frame kind, 0 mounted kind, -1 not a part. From the catalogue; see `_is_frame_kind`.
+			"is_frame": _is_frame_kind(_stacks[rows.size()] as Dictionary),
+			# The same row's labels once a frame has been chosen. See `_labels_building`.
+			"labels_building": _labels_building(_stacks[rows.size()] as Dictionary),
 		}
 		if art != null:
 			var fw: float = art.texture.get_width()
