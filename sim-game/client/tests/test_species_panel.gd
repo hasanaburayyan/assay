@@ -286,64 +286,88 @@ func _find(node: Node, label: String) -> Button:
 	return null
 
 
-## THE CRAFT BUTTON WARNS WHAT ONLY THE TERMINAL'S TABLE WARNED (ASSA-84).
+## THE CRAFTING MENU'S ROW WARNS WHAT ONLY THE TERMINAL'S TABLE WARNED (ASSA-84), AND IT SURVIVED
+## THE MOVE OFF THE PACK ROW (ASSA-86/88 -- Maren: "carried, not rewritten").
 ##
 ## ASSA-59 settled that nothing in this game consumes a gear, and the recipe table says so in a
 ## clause derived from `is_consumed`. That table is sim-cli only, so the window player got the
-## invitation without the warning -- and at a window a BUTTON is a stronger invitation than a row,
-## for an output that costs 2 refined.
+## invitation without the warning -- and at a window a row with a button on it is a stronger
+## invitation than a table row, for an output that costs 2 refined.
+##
+## IT IS A LINE NOW AND NOT A TOOLTIP, which is the half of the move worth testing: a tooltip is
+## only read by someone who already hesitated, and Maren ruled a recipe row is a better home for the
+## sim's own clause than a button's hover text.
 ##
 ## NOTHING HERE NAMES THE GEAR, and that is the point of the test as much as of the code. It asks the
-## SIM which recipes are dead ends and then requires exactly those buttons to carry exactly that
+## SIM which recipes are dead ends and then requires exactly those rows to carry exactly that
 ## sentence. The day something consumes that output, the sim stops saying it, this test stops
 ## expecting it, and no one edits either.
-func test_a_craft_button_carries_the_sims_dead_end_clause_and_only_then() -> bool:
+func test_a_menu_row_carries_the_sims_dead_end_clause_and_only_then() -> bool:
 	var screen := _joined()
 	var ok := true
 	var recipes: Array = AssaySimHost.recipes()
-	var checked := 0
-	var warned := 0
+	var offers := []
 	for entry in recipes:
 		var recipe: Dictionary = entry
 		if not bool(recipe.get("hand", false)):
 			continue
-		var stack := {"kind": String(recipe.get("input", "")), "species": 1, "grade": "B",
-				"count": 9, "name": "test material"}
-		var verbs := AssayHud.stack_verbs(stack, recipes, [], Vector2i.ZERO, false)
-		for verb in verbs:
-			var descriptor: Dictionary = verb
-			if String(descriptor.get("verb", "")) != "craft":
-				continue
-			if String(descriptor.get("label", "")) != "Craft %s" % String(recipe.get("name", "?")):
-				continue
+		# A ROW'S WORTH OF OFFER, with the sim's own `dead_end` and the sim's own tag. The sentence
+		# is not the subject here, so it says what it is: this test is about which rows warn.
+		offers.append({"line": "a test row for %s" % String(recipe.get("name", "?")),
+				"dead_end": String(recipe.get("dead_end", "")), "verb": "craft",
+				"tag": recipe.get("tag"), "kind": String(recipe.get("input", "")),
+				"species": 1, "grade": "B", "count": 9})
+	screen._make_showing = "a shape no pack has"
+	screen._rebuild_make(offers)
+	var checked := 0
+	var warned := 0
+	if screen._make.get_child_count() != offers.size():
+		ok = _fail("%d rows for %d offers" % [screen._make.get_child_count(), offers.size()])
+	else:
+		for i in range(offers.size()):
+			var offer: Dictionary = offers[i]
+			var row: Node = screen._make.get_child(i)
+			var said := ""
+			for child in row.get_children():
+				if child is Label:
+					said += " " + (child as Label).text
 			checked += 1
-			var button: Button = screen._stack_button(descriptor, stack, Vector2i.ZERO)
+			# RULING 1: the row is there and its button is pressable whatever the sim says about
+			# the output. Absence is never a cue and neither is a greyed-out button.
+			var button := _find_button(row, AssayHud.make_button_text())
 			if button == null:
-				ok = _fail("no button for %s" % descriptor)
+				ok = _fail("row %d has no button" % i)
 				break
-			# RULING 1: the button exists and is pressable whatever the sim says about its output.
 			if button.disabled:
-				ok = _fail("`%s` is disabled; a legal action stays offered" % button.text)
+				ok = _fail("the button on row %d is disabled; a legal action stays offered" % i)
 				break
-			var want := String(recipe.get("dead_end", ""))
+			var want := String(offer.get("dead_end", ""))
 			if want == "":
-				if button.tooltip_text.contains("nothing uses"):
-					ok = _fail(("`%s` warns `%s` while the sim says its output IS consumed")
-							% [button.text, button.tooltip_text])
+				if said.contains("nothing uses"):
+					ok = _fail("row %d warns `%s` while the sim says its output IS consumed"
+							% [i, said])
 					break
 			else:
 				warned += 1
-				if not button.tooltip_text.contains(want):
-					ok = _fail(("`%s` should carry the sim's clause `%s` and reads `%s`")
-							% [button.text, want, button.tooltip_text])
+				if not said.contains(want):
+					ok = _fail("row %d should carry the sim's clause `%s` and reads `%s`"
+							% [i, want, said])
 					break
-		if not ok:
-			break
 	if ok and checked == 0:
-		ok = _fail("no hand-craft buttons were built, so nothing was checked")
+		ok = _fail("no hand recipes in this build, so nothing was checked")
 	elif ok and warned == 0:
 		ok = _fail(("no recipe in this build is a dead end, so the warning was never exercised. "
 				+ "If something now consumes every output that is good news and this test should "
 				+ "be retired, not loosened."))
 	screen.queue_free()
 	return ok
+
+
+func _find_button(node: Node, label: String) -> Button:
+	for child in node.get_children():
+		if child is Button and (child as Button).text == label:
+			return child
+		var found := _find_button(child, label)
+		if found != null:
+			return found
+	return null

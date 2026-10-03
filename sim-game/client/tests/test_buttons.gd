@@ -192,46 +192,79 @@ func test_the_session_tool_can_press_a_pack_row() -> bool:
 		var stack: Dictionary = screen._sim.inventory_of(screen._client.player_id)[0]
 		var play := AssayButtonPlay.new(screen, 0)
 		_asked.clear()
+		# A MOVE VERB, because `Craft smelter` is not on a pack row any more (ASSA-86): the pack is
+		# what you have and where it can go. `Fuel` is the one every ore row carries whatever the
+		# sheet says (Maren, ASSA-37), so it is the honest thing to look for here.
 		if not play._press_on_stack(String(stack.get("kind", "")),
-				int(stack.get("species", -1)), "Craft smelter"):
-			ok = _fail("AssayButtonPlay found no `Craft smelter` on the row reading `%s`; the pack "
+				int(stack.get("species", -1)), "Fuel"):
+			ok = _fail("AssayButtonPlay found no `Fuel` on the row reading `%s`; the pack "
 					% AssayHud.stack_line(stack) + "shows %s" % _text_of(screen._carrying))
-		elif _asked.size() != 1:
-			ok = _fail("the tool's press submitted %s, not one command" % [_asked])
+		# NO COMMAND IS ASSERTED FOR THE PACK HALF, and that is the honest reading: `Insert` carries
+		# a building id, so with nothing right-clicked the client cannot form the command at all and
+		# says so on the status line. What ASSA-62 broke was the tool's ability to FIND and press a
+		# row, which is what this asserts. The menu half below does submit.
+		elif play.pressed.is_empty():
+			ok = _fail("the tool pressed a pack row and recorded nothing")
+		else:
+			# AND THE TOOL'S MENU FINDER, for the same reason: the make-verbs moved, so the press
+			# that used to rot silently is `_press_on_offer` now. Nothing in CI runs the session.
+			_asked.clear()
+			if not play._press_on_offer("craft", "Smelter", int(stack.get("species", -1))):
+				ok = _fail("AssayButtonPlay found no craft/Smelter row in the menu: %s"
+						% _text_of(screen._make))
+			elif _asked.size() != 1:
+				ok = _fail("the tool's menu press submitted %s, not one command" % [_asked])
 	screen.queue_free()
 	return ok
 
 
-## BOX TWO AND THE PACK: a row describes one stack the sim reports, and its buttons act on THAT item.
+## NO PACK ROW OFFERS A VERB THAT MAKES SOMETHING (ASSA-86, Maren's ruling: the pack is what you
+## HAVE and where it can GO).
 ##
-## The command's item is compared against the sim's own stack, so a row wired to the wrong stack --
-## two grades of one ore are two rows -- fails here rather than as a refusal nobody sees.
-func test_a_pack_row_submits_a_command_about_its_own_stack() -> bool:
+## DERIVED FROM THE COMMANDS, NOT FROM THE LABELS. Pressing every button on every row and requiring
+## that none of them submits a `Craft` or a `MakePart` reads the sim's own command names, so it keeps
+## working the day a label is reworded or a fifth part kind appears -- where a list of allowed labels
+## written in this file would be one more thing to keep in step.
+##
+## TWO SPECIES IN THE PACK, because the bug Maren measured needed two: the duplicate `Craft smelter`
+## only appears once you carry ore of two kinds.
+##
+## That a row's buttons act on THAT row's stack is `test_an_insert_submits_the_count_it_read_at_the_press`
+## with a real building in reach; this is about which verbs are there at all.
+func test_no_pack_row_offers_a_verb_that_makes_something() -> bool:
 	var screen := _joined()
 	_tick(screen, 2)
-	var ok := _mine_some_ore(screen)
+	var ok := _mine_two_species(screen)
+	var presses := 0
 	if ok:
-		var stacks: Array = screen._sim.inventory_of(screen._client.player_id)
-		var stack: Dictionary = stacks[0]
-		var row := _row_for(screen, AssayHud.stack_line(stack))
-		if row == null:
-			ok = _fail("no pack row reads `%s`; rows are %s"
-					% [AssayHud.stack_line(stack), _text_of(screen._carrying)])
-		else:
-			var button := _find(row, "Craft smelter")
-			if button == null:
-				ok = _fail("no `Craft smelter` on an ore row: %s" % _labels_of(row))
-			else:
+		for row in screen._carrying.get_children():
+			for button in _buttons_under(row):
 				_asked.clear()
+				presses += 1
 				button.pressed.emit()
-				var want: Variant = AssayActions.craft(AssaySimHost.recipe_tag("smelter"),
-						AssayActions.item_of_stack(stack), 1)
-				if _asked.size() != 1 or _asked[0] != want:
-					ok = _fail("`Craft smelter` submitted %s, not %s" % [_asked, want])
-				elif AssaySimHost.command_echo(_asked[0]) == "":
-					ok = _fail("`Craft smelter` submitted %s, which serde refuses" % [_asked[0]])
+				for command in _asked:
+					var sent: Dictionary = command
+					if sent.has("Craft") or sent.has("MakePart"):
+						ok = _fail("a pack row's `%s` submitted %s; making something left the pack"
+								% [button.text, JSON.stringify(sent)])
+						break
+				if not ok:
+					break
+			if not ok:
+				break
+	if ok and presses == 0:
+		ok = _fail("no buttons on any pack row, so nothing was checked")
 	screen.queue_free()
 	return ok
+
+
+func _buttons_under(node: Node) -> Array:
+	var out := []
+	for child in node.get_children():
+		if child is Button:
+			out.append(child)
+		out.append_array(_buttons_under(child))
+	return out
 
 
 ## AND THE SMELTER IS ACTUALLY MADE, through the button and nothing else. The shape being right is
@@ -242,10 +275,11 @@ func test_pressing_craft_puts_a_smelter_in_the_pack() -> bool:
 	var ok := _mine_some_ore(screen)
 	if ok:
 		var stacks: Array = screen._sim.inventory_of(screen._client.player_id)
-		var row := _row_for(screen, AssayHud.stack_line(stacks[0] as Dictionary))
-		var button: Button = null if row == null else _find(row, "Craft smelter")
+		# FROM THE MENU SINCE ASSA-86, which is also a better test of the move: the row has to name
+		# the smelter it will make for this to find it at all.
+		var button := _make_button_for(screen, "smelter")
 		if button == null:
-			ok = _fail("no `Craft smelter` button to press")
+			ok = _fail("no menu row offers a smelter: %s" % _text_of(screen._make))
 		else:
 			button.pressed.emit()
 			# `RecipeId::Smelter` takes 20 ticks, and PRESSING AGAIN WOULD REFUND AND RESTART IT
@@ -462,8 +496,10 @@ func _a_placed_smelter(screen: Node) -> int:
 		_fail("mined and hold %d of %s, want %d before crafting a smelter"
 				% [_counted(screen, ore), AssayHud.stack_line(ore), want])
 		return -1
-	var craft: Button = _button_on_row(screen, ore, "Craft smelter")
+	# FROM THE CRAFTING MENU SINCE ASSA-86: the pack row carries only the verbs that MOVE an item.
+	var craft := _make_button_for(screen, "smelter")
 	if craft == null:
+		_fail("no menu row offers a smelter: %s" % _text_of(screen._make))
 		return -1
 	craft.pressed.emit()
 	for _i in range(6):

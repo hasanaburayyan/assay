@@ -896,27 +896,13 @@ func _rebuild_pack(stacks: Array) -> void:
 
 ## One verb on one stack. EVERY ITEM SENT IS THE ONE THE SIM NAMED: `item_of_stack` rearranges the
 ## three fields out of `inventory_of` and this client never works out what it is carrying.
+## WITH THE MAKE-VERBS GONE (ASSA-86) THIS HANDLES THREE: Fuel/Smelt, Place, Frame/Mount. The two
+## locals that went with them were `count` and the stack's sentence, both only ever read by the craft
+## and make arms -- and `count` had in fact been dead since ASSA-55 took the number out of the Fuel
+## tooltip, which is the sort of thing that survives a deletion unnoticed.
 func _stack_button(descriptor: Dictionary, stack: Dictionary, footprint: Vector2i) -> Button:
 	var label := String(descriptor.get("label", "?"))
-	var count := int(stack.get("count", 0))
-	var what := AssayHud.stack_line(stack)
 	match String(descriptor.get("verb", "")):
-		"craft":
-			var recipe: Variant = descriptor.get("recipe")
-			# THE BUTTON STAYS, AND SO DOES THE WARNING (ASSA-84, Maren's ruling 1). A legal action
-			# is always offered and absence is never a cue -- the same call as the unfiltered Fuel
-			# button. What was missing is that at a window a button is a stronger invitation than a
-			# table row, and a gear costs 2 refined for an output nothing consumes.
-			#
-			# THE SENTENCE IS THE SIM'S, APPENDED NOT COMPOSED. `dead_end` is empty unless the sim
-			# says so, and nothing here names a gear: the day something consumes that output the
-			# clause goes away on its own, with no edit to this client. That is the property
-			# ASSA-59 fought for in the sim, and a client-side `if` on the kind would throw it away.
-			var dead_end := String(descriptor.get("dead_end", ""))
-			return _button(label, func() -> void: _act(label,
-					AssayActions.craft(recipe, AssayActions.item_of_stack(stack), 1)),
-					"one batch, from %s" % what
-							+ ("" if dead_end == "" else " — %s" % dead_end))
 		"insert":
 			# THE WHOLE STACK. A button cannot ask for a quantity without growing a field, and
 			# picking a smaller number for the player would be this client deciding how much fuel a
@@ -938,12 +924,6 @@ func _stack_button(descriptor: Dictionary, stack: Dictionary, footprint: Vector2
 					AssayActions.place(AssayActions.item_of_stack(stack), _target_tile())),
 					"stand it on the %d x %d tiles from the one you are acting on"
 							% [footprint.x, footprint.y])
-		"make":
-			var kind: Variant = descriptor.get("kind")
-			var part := String(descriptor.get("part", "?"))
-			return _button(label, func() -> void: _act(label,
-					AssayActions.make_part(kind, AssayActions.item_of_stack(stack), 1)),
-					"one %s, out of this material" % part)
 		"build":
 			return _button(label, func() -> void: _choose_part(stack),
 					"use as the frame of the next machine" if _building.is_empty()
@@ -1082,10 +1062,16 @@ func _target_tile() -> Vector2i:
 
 
 ## A ROW OF VERB BUTTONS THAT WRAPS. An `HFlowContainer`, not an `HBoxContainer`, and that is not a
-## style choice: a refined stack offers seven buttons (Craft gear, Fuel, Smelt and one Make per part
-## kind) and an HBox would run them off the right edge of a 320px panel. The column only scrolls
-## vertically, so a button pushed sideways is a button that cannot be pressed -- which is the exact
+## style choice: an HBox would run buttons off the right edge of a 320px panel, and the column only
+## scrolls vertically, so a button pushed sideways is a button that cannot be pressed -- the exact
 ## failure the scroll box was added to avoid.
+##
+## **THE NUMBER THIS COMMENT USED TO QUOTE IS GONE AND SO IS THE REASON FOR IT** (ASSA-86). It said a
+## refined stack offers SEVEN buttons -- Craft gear, Fuel, Smelt and one Make per part kind -- which
+## was true, was the clunk the board hit, and is now three: the make-verbs live in the crafting menu.
+## The wrapping stays because the bench calls this too and because a row with three buttons and a
+## wider font still has to fit; what it must not do is go back to being load-bearing for a row the
+## panel cannot hold.
 ##
 ## **AND FOR A WHILE THAT COMMENT WAS TRUE AND THIS CODE WAS NOT** (ASSA-98). It used to claim
 ## `custom_minimum_size.x = PANEL`, the whole panel width, which was right while a stack row was just

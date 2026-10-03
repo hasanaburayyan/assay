@@ -220,7 +220,7 @@ func _crafting() -> void:
 	if _held("smelter", _material) > 0:
 		step = Step.WALK_TO_FUEL if _fuel != _material else Step.PLACING
 		return
-	_press_on_stack_once("craft smelter", "ore", _material, "Craft smelter")
+	_press_on_offer_once("craft smelter", "craft", "Smelter", _material)
 	if _quiet > 200:
 		_stop(false, "pressed Craft smelter and no smelter arrived in 200 ticks")
 
@@ -327,8 +327,8 @@ func _making() -> void:
 			return
 		if asked >= want:
 			return  # waiting for the ones already asked for
-		if not _press_on_stack("refined", _material, "Make %s" % kind):
-			_stop(false, "no `Make %s` button on the refined material" % kind)
+		if not _press_on_offer("make", AssayActions.part_kind_tag(kind), _material):
+			_stop(false, "no `Make %s` row in the crafting menu for this material" % kind)
 			return
 		_made[kind] = asked + 1
 		return
@@ -502,6 +502,53 @@ func _press_on_stack(kind: String, species: int, label: String) -> bool:
 		button.pressed.emit()
 		return true
 	return false
+
+
+## PRESS A ROW OF THE CRAFTING MENU, found by what the SIM says it makes (ASSA-86/88).
+##
+## The make-verbs left the pack rows, so this is where `Craft smelter` and `Make head` are pressed
+## now -- and a menu row is found by its SENTENCE rather than by a button label, because every
+## button in that menu says the same word on purpose: the bug Maren measured was two buttons both
+## labelled exactly `Craft smelter` making smelters with different walls.
+##
+## `verb` and `tag` are the sim's own (`make_offers`), so this matches the catalogue row rather than
+## any text: `("craft", "Smelter")` or `("make", "Head")`. The species is the input stack's, which is
+## what makes "the smelter I asked for is made of MY material" a thing this tool can assert.
+func _press_on_offer(verb: String, tag: Variant, species: int) -> bool:
+	var offers: Array = _world().make_offers(_me())
+	for i in range(offers.size()):
+		var offer: Dictionary = offers[i]
+		if String(offer.get("verb", "")) != verb:
+			continue
+		if JSON.stringify(offer.get("tag")) != JSON.stringify(tag):
+			continue
+		if int(offer.get("species", -1)) != species:
+			continue
+		if i >= screen._make.get_child_count():
+			return false
+		var row: Node = screen._make.get_child(i)
+		var button := _find_button(row, AssayHud.make_button_text())
+		if button == null:
+			return false
+		pressed.append("%s on `%s` @%d" % [AssayHud.make_button_text(),
+				String(offer.get("line", "?")), _world().tick()])
+		_quiet = 0
+		button.pressed.emit()
+		return true
+	return false
+
+
+## Once, by key, like `_press_on_stack_once` -- and it reports the menu it was looking at, because a
+## row that is not there is the sim saying you cannot make that from what you carry.
+func _press_on_offer_once(key: String, verb: String, tag: Variant, species: int) -> void:
+	if _done.has(key):
+		return
+	if _press_on_offer(verb, tag, species):
+		_done[key] = true
+		return
+	if _quiet > 60:
+		_stop(false, "no `%s %s` row in the crafting menu after 60 ticks of looking"
+				% [verb, JSON.stringify(tag)])
 
 
 ## Press a button on the bench's Nth row. The ROW INDEX, because that is what a player clicks; the
