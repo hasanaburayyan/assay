@@ -261,11 +261,14 @@ static func nothing_carried_line() -> String:
 ## peer; a button missing here would be this client holding an opinion the other peers do not have.
 ## A verb is offered when the COMMAND CAN BE BUILT AT ALL, and then the sim answers.
 ##
-## `building` is whether an assembly is part-way built, which changes one word: the first part you add
-## is the FRAME (`sim-cli`'s `assemble <frame> <part>...` rule, kept rather than invented).
+## **IT NO LONGER TAKES THE SCREEN'S STATE, AND THAT IS THE FIX** (ASSA-103). It used to take
+## `building` -- whether an assembly was part-way built -- and turn one word on it, which made every
+## part row's verb a claim about the player's progress instead of about the item. A kind's word comes
+## from `is_frame` now, so the argument is gone rather than ignored: a parameter nobody reads is an
+## invitation to start reading it again.
 ## `footprint` is `AssaySimHost.footprint_of_item`, so "is this placeable" is also the sim's answer.
 static func stack_verbs(stack: Dictionary, recipes: Array, part_kinds: Array,
-		footprint: Vector2i, building: bool) -> Array:
+		footprint: Vector2i) -> Array:
 	var kind := String(stack.get("kind", ""))
 	var verbs := []
 	for entry in recipes:
@@ -309,7 +312,19 @@ static func stack_verbs(stack: Dictionary, recipes: Array, part_kinds: Array,
 		# And the row for a part itself offers the way into an `Assemble`. The first part added is
 		# the frame, so the word changes rather than the button.
 		if String(part.get("name", "")) == kind:
-			verbs.append({"label": "Mount" if building else "Frame", "verb": "build"})
+			# **THE WORD BELONGS TO THE KIND, NOT TO WHERE THE PLAYER HAS GOT TO** (Maren, ASSA-103).
+			# This read `"Mount" if building else "Frame"`, so a head said `Frame` until something was
+			# chosen and `Mount` afterwards -- and both were refused, because a head is never a frame
+			# and a frame is never mounted. Cove's `pack_rows.png` showed it as a swap: in each state
+			# exactly two of four rows are pressable and never the same two.
+			#
+			# `is_frame` IS THE SIM'S FIELD (ASSA-102), so this derives nothing and a fifth part kind
+			# labels itself. It is carried into the descriptor as well, because the button's tooltip
+			# makes the same claim in a longer sentence and two renderings of one fact must not be
+			# free to disagree.
+			var is_frame := bool(part.get("is_frame", false))
+			verbs.append({"label": "Frame" if is_frame else "Mount", "verb": "build",
+					"is_frame": is_frame})
 	return verbs
 
 

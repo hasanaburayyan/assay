@@ -1176,14 +1176,29 @@ func _mine_two_species(screen: Node) -> bool:
 ## `_choose_part` IS CALLED DIRECTLY AND THAT IS DELIBERATE. What this test is about is where the
 ## chosen parts are DRAWN and whether the two buttons there work; getting a real head into the pack
 ## costs the whole chain (mine, smelt, make part) and `tools/button_session.gd -- offline` already
-## drives that end to end. Using an ore stack keeps the test about the surface — the sim would refuse
-## the `Assemble`, which is why `Clear` is what is pressed here and the refusal is ASSA-103's.
+## drives that end to end.
+##
+## **IT USED TO CHOOSE AN ORE STACK, AND ASSA-103 TOOK THAT AWAY.** A press the sim would refuse is
+## now refused AT the press, so an ore never reaches the menu at all -- which is the next test. The
+## stack here is a real mined one with its KIND swapped for a frame kind out of the sim's own
+## catalogue: everything the block draws (species, grade, count, the sim's name) is still the sim's,
+## and the one invented field is the one the refusal reads.
 func test_choosing_a_part_draws_it_in_the_menu_and_clear_takes_it_back() -> bool:
 	var screen := _joined()
 	_tick(screen, 2)
 	var ok := _mine_some_ore(screen)
 	if ok:
-		var stack: Dictionary = screen._sim.inventory_of(screen._client.player_id)[0]
+		var stack: Dictionary = (screen._sim.inventory_of(screen._client.player_id)[0]
+				as Dictionary).duplicate()
+		var frame_kind := ""
+		for entry in AssaySimHost.part_kinds():
+			if bool((entry as Dictionary).get("is_frame", false)):
+				frame_kind = String((entry as Dictionary).get("name", ""))
+				break
+		if frame_kind == "":
+			screen.queue_free()
+			return _fail("the sim's catalogue has no frame kind, so nothing can be chosen at all")
+		stack["kind"] = frame_kind
 		if _text_of(screen._assembling) != "":
 			ok = _fail("something is in the assembling block before anything was chosen: %s"
 					% _text_of(screen._assembling))
@@ -1214,3 +1229,84 @@ func test_choosing_a_part_draws_it_in_the_menu_and_clear_takes_it_back() -> bool
 								% _text_of(screen._assembling))
 	screen.queue_free()
 	return ok
+
+
+## **A PRESS THE SIM WOULD REFUSE IS ANSWERED AT THE PRESS, IN THE SIM'S OWN SENTENCE** (Maren,
+## ASSA-103, ruling 2) -- and never confirmed in the colour that means it worked.
+##
+## THE COST OF THE OLD BEHAVIOUR IS WHAT MAKES THIS WORTH A TEST. An impossible press was appended
+## and confirmed in the JOINED colour; the refusal arrived at `Assemble`, which clears the whole
+## sequence -- so the player lost every good press as well as the bad one, and nothing on screen had
+## told them which press was the bad one.
+##
+## A REAL MINED STACK AND THE SIM'S OWN WORDING, compared against the binding's answer rather than
+## against a sentence typed in here: an ore is not a part at all, which is the one fault reachable
+## without the whole mine-smelt-make chain. `sim/tests/part_press.rs` is where the rule lives.
+func test_a_press_the_sim_would_refuse_is_refused_at_the_press_not_at_assemble() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_some_ore(screen)
+	if ok:
+		var ore: Dictionary = screen._sim.inventory_of(screen._client.player_id)[0]
+		var refusal := AssaySimHost.part_press_refusal(PackedStringArray(),
+				String(ore.get("kind", "")))
+		if refusal == "":
+			ok = _fail("the sim does not refuse an ore as a frame, so this test proves nothing")
+		else:
+			screen._choose_part(ore)
+			var said: String = screen._status.text
+			if said != refusal:
+				ok = _fail("the screen says `%s`; the sim's own sentence is `%s`" % [said, refusal])
+			# THE COLOUR IS HALF THE DEFECT. A refusal drawn in the colour that means "you are in" is a
+			# confirmation, whatever the words say.
+			elif screen._status.modulate != AssayHud.status_color(AssayHud.Say.FAILED):
+				ok = _fail("the refusal is drawn in %s, not the failed colour"
+						% screen._status.modulate)
+			# AND NOTHING LANDED: the old code appended first and the menu drew it.
+			elif not screen._building.is_empty():
+				ok = _fail("the refused press still went into the assembly: %s" % [screen._building])
+			elif _text_of(screen._assembling) != "":
+				ok = _fail("the refused press is drawn in the menu: %s"
+						% _text_of(screen._assembling))
+			# **AND THE PARTS ALREADY CHOSEN REACH THE SIM, WHICH THE FIRST HALF CANNOT SHOW.** With
+			# nothing chosen the `chosen` array is empty either way, so a client that never passed it
+			# would pass everything above. A second frame on a frame is Maren's other half of the swap:
+			# the rows that say `Frame` are exactly the ones a frame-first design must refuse.
+			else:
+				var frame := _a_frame_stack(ore)
+				if frame.is_empty():
+					ok = _fail("the sim's catalogue has no frame kind")
+				else:
+					screen._choose_part(frame)
+					if screen._building.size() != 1:
+						ok = _fail("a frame was refused as the first part: %s" % screen._status.text)
+					else:
+						var second := AssaySimHost.part_press_refusal(
+								PackedStringArray([String(frame.get("kind", ""))]),
+								String(frame.get("kind", "")))
+						if second == "":
+							ok = _fail("the sim allows two frames, so this half proves nothing")
+						else:
+							screen._choose_part(frame)
+							if screen._building.size() != 1:
+								ok = _fail("a second frame was accepted; the parts already chosen "
+										+ "never reached the sim")
+							elif screen._status.text != second:
+								ok = _fail("the second frame says `%s`, the sim says `%s`"
+										% [screen._status.text, second])
+	screen.queue_free()
+	return ok
+
+
+## A REAL MINED STACK WITH ITS KIND SWAPPED FOR A FRAME KIND OUT OF THE SIM'S CATALOGUE. Everything
+## drawn from it -- species, grade, count, the sim's name -- stays the sim's; the one invented field
+## is the one the refusal reads. Getting a real frame into a pack costs the whole mine-smelt-make
+## chain, which `tools/button_session.gd -- offline` drives end to end instead.
+func _a_frame_stack(like: Dictionary) -> Dictionary:
+	for entry in AssaySimHost.part_kinds():
+		var part: Dictionary = entry
+		if bool(part.get("is_frame", false)):
+			var stack := like.duplicate()
+			stack["kind"] = String(part.get("name", ""))
+			return stack
+	return {}

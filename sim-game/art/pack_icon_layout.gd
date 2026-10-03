@@ -25,30 +25,37 @@ func _initialize() -> void:
 ## recipe table, exactly as the screen did when it made the button.
 func _verb_kinds(stack: Dictionary) -> PackedStringArray:
 	var out := PackedStringArray()
-	for entry in _verbs_for(stack, false):
+	for entry in _verbs_for(stack):
 		out.append(String((entry as Dictionary).get("verb", "?")))
 	return out
 
 
 ## The descriptors `main.gd` would build for this stack, asked of the same function it asks.
-## `building` is the client's "a frame has already been chosen" state.
-func _verbs_for(stack: Dictionary, building: bool) -> Array:
+##
+## IT USED TO TAKE THE CLIENT'S "a frame has already been chosen" STATE. ASSA-103 removed that
+## argument from `stack_verbs` -- a part row's word is its kind's `is_frame` and no longer moves --
+## so there is nothing left to pass.
+func _verbs_for(stack: Dictionary) -> Array:
 	var footprint := AssaySimHost.footprint_of_item(String(stack.get("kind", "")),
 			int(stack.get("species", -1)), String(stack.get("grade", "C")))
 	return AssayHud.stack_verbs(stack, AssaySimHost.recipes(), AssaySimHost.part_kinds(),
-			footprint, building)
+			footprint)
 
 
-## THE LABELS IN THE OTHER STATE, because Maren's ASSA-86 ruling 1 is about BOTH.
+## **THE LABELS WITH A FRAME ALREADY CHOSEN, WHICH SINCE ASSA-103 ARE THE SAME LABELS.** That is
+## now the point of this field rather than a reason to delete it: the defect Maren filed was that a
+## part row's word SWAPPED when an assembly was part-way built, so a second column showing the same
+## words is the evidence that it has stopped swapping.
 ##
-## `stack_verbs` returns `"Mount" if building else "Frame"`, so a part row says a different word
-## once a frame has been chosen, and in that state it is handle and frame that the sim refuses
-## rather than head and hopper. The row laid out on screen can only be in one state at a time, so
-## the other one is ASKED OF THE SAME FUNCTION rather than typed into the sheet by me -- writing
-## "Mount" into the renderer would be a picture of what I believe the code says.
+## STILL ASKED OF THE SAME FUNCTION, never typed in here. `stack_verbs` no longer takes the state at
+## all, so this cannot drift from the screen without the whole first column drifting with it.
+##
+## `art/pack_row_sheet.py` draws this as a second column and captions it as the other state. The
+## caption is the renderer's (Cove's) to reword now that the two columns agree by design; the data
+## is honest either way.
 func _labels_building(stack: Dictionary) -> PackedStringArray:
 	var out := PackedStringArray()
-	for entry in _verbs_for(stack, true):
+	for entry in _verbs_for(stack):
 		out.append(String((entry as Dictionary).get("label", "?")))
 	return out
 

@@ -228,7 +228,7 @@ func test_a_stacks_verbs_come_from_the_sims_recipes_and_catalogue() -> bool:
 	var recipes := AssaySimHost.recipes()
 	var part_kinds := AssaySimHost.part_kinds()
 	var ore := AssayHud.stack_verbs(_stack("ore", 2, "C", 9), recipes, part_kinds,
-			Vector2i.ZERO, false)
+			Vector2i.ZERO)
 	if _has(ore, "craft"):
 		return _fail("ore offers a Craft; making something belongs to the menu: %s" % [ore])
 	if not _has(ore, "insert"):
@@ -245,27 +245,24 @@ func test_a_stacks_verbs_come_from_the_sims_recipes_and_catalogue() -> bool:
 		return _fail("ore offers %d Insert buttons; it should be exactly fuel and input" % inserts)
 
 	var smelter := AssayHud.stack_verbs(_stack("smelter", 2, "C", 1), recipes, part_kinds,
-			Vector2i(2, 2), false)
+			Vector2i(2, 2))
 	if not _has(smelter, "place"):
 		return _fail("a smelter item has a 2x2 footprint and must offer Place: %s" % [smelter])
 
 	var head := AssayHud.stack_verbs(_stack("head", 2, "B", 1), recipes, part_kinds,
-			Vector2i.ZERO, false)
+			Vector2i.ZERO)
 	if not _has(head, "build"):
 		return _fail("a part offers no way into an Assemble: %s" % [head])
-	if _label_of(head, "build") != "Frame":
-		return _fail("the first part chosen is the frame, so the button says %s"
+	# A HEAD IS NOT A FRAME, SO ITS ROW SAYS `Mount` -- and says it whatever the player has chosen so
+	# far, which is ASSA-103. The word used to be `Frame` here, on the state of the screen.
+	if _label_of(head, "build") != "Mount":
+		return _fail("a head is never a frame, so its button should say Mount, says %s"
 				% _label_of(head, "build"))
-	var mounting := AssayHud.stack_verbs(_stack("head", 2, "B", 1), recipes, part_kinds,
-			Vector2i.ZERO, true)
-	if _label_of(mounting, "build") != "Mount":
-		return _fail("with a frame already chosen the button should say Mount, says %s"
-				% _label_of(mounting, "build"))
 
 	# A kind nothing eats and nothing places offers nothing, and is STILL LISTED by the pack -- the
 	# row is what a player is carrying, not a menu of what they can do.
 	var gear := AssayHud.stack_verbs(_stack("gear", 2, "B", 1), recipes, part_kinds,
-			Vector2i.ZERO, false)
+			Vector2i.ZERO)
 	for entry in gear:
 		if String((entry as Dictionary).get("verb", "")) in ["craft", "place", "build"]:
 			return _fail("a gear is not craftable, placeable or a part: %s" % [gear])
@@ -278,12 +275,60 @@ func test_a_stacks_verbs_come_from_the_sims_recipes_and_catalogue() -> bool:
 		kinds.append(String((entry as Dictionary).get("name", "?")))
 	for kind in kinds:
 		var verbs := AssayHud.stack_verbs(_stack(String(kind), 2, "B", 9), recipes, part_kinds,
-				Vector2i.ZERO, false)
+				Vector2i.ZERO)
 		for entry in verbs:
 			var verb := String((entry as Dictionary).get("verb", ""))
 			if verb == "craft" or verb == "make":
 				return _fail("a %s row offers `%s`; making something is the menu's (ASSA-88): %s"
 						% [kind, verb, verbs])
+	return true
+
+
+## **EVERY PART KIND'S WORD IS ITS OWN `is_frame`, ACROSS THE WHOLE CATALOGUE** (Maren, ASSA-103).
+##
+## NOT TWO HAND-PICKED KINDS. The defect was a swap -- in each screen state exactly two of the four
+## rows were pressable and never the same two -- so a test that checked one kind would have passed in
+## one state and been the thing that hid the other. This walks `part_kinds()` and asserts both words
+## appear, which is also box 4: a fifth kind added to `PART_SPECS` arrives here with no client edit
+## and is checked by this test the first time it is run.
+##
+## AND IT ASSERTS THE DESCRIPTOR CARRIES THE SAME FACT, because `main.gd`'s tooltip reads `is_frame`
+## out of it to make the label's claim at length. Two renderings of one fact are only safe while they
+## cannot disagree.
+func test_every_part_kinds_verb_word_is_its_own_frame_ness() -> bool:
+	var recipes := AssaySimHost.recipes()
+	var part_kinds := AssaySimHost.part_kinds()
+	if part_kinds.is_empty():
+		return _fail("the sim's part catalogue is empty, so this test measured nothing")
+	var frames := 0
+	var mounts := 0
+	for entry in part_kinds:
+		var part: Dictionary = entry
+		var name := String(part.get("name", "?"))
+		if not part.has("is_frame"):
+			return _fail("`%s` has no is_frame, so the client would be inventing the word" % name)
+		var is_frame := bool(part["is_frame"])
+		var verbs := AssayHud.stack_verbs(_stack(name, 2, "B", 1), recipes, part_kinds,
+				Vector2i.ZERO)
+		var word := _label_of(verbs, "build")
+		var wanted := "Frame" if is_frame else "Mount"
+		if word != wanted:
+			return _fail("`%s` has is_frame=%s, so its row should say %s and says %s"
+					% [name, is_frame, wanted, word])
+		for verb in verbs:
+			var descriptor: Dictionary = verb
+			if String(descriptor.get("verb", "")) == "build" \
+					and bool(descriptor.get("is_frame", not is_frame)) != is_frame:
+				return _fail("`%s`'s descriptor disagrees with its own label: %s" % [name, verbs])
+		if is_frame:
+			frames += 1
+		else:
+			mounts += 1
+	# BOTH WORDS HAVE TO BE REACHED or this passed over a catalogue where everything is the same, and
+	# a constant would satisfy it.
+	if frames == 0 or mounts == 0:
+		return _fail("the catalogue produced %d Frame rows and %d Mount rows; one word was never "
+				% [frames, mounts] + "exercised, so a constant would pass this")
 	return true
 
 

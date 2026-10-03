@@ -263,6 +263,24 @@ static func recipes() -> Array:
 	return ClassDB.class_call_static("AssaySim", "recipes")
 
 
+## **WOULD THE SIM REFUSE THIS PRESS, IN THE SIM'S OWN SENTENCE** -- or `""` when it would not
+## (ASSA-102's `AssemblyError::is_unfinished` lives behind this, so a design that is merely half
+## built answers `""` and the player is not told off for being part-way).
+##
+## `chosen` is the kinds already picked IN PRESS ORDER, the first being the frame; `candidate` is the
+## kind of the row being pressed. Kind names, which is what `inventory_of` already hands over -- no
+## material crosses, because whether a press is legal is a question about the catalogue and not about
+## the rock.
+##
+## `""` WITH NO BINDING AT ALL, which is the same answer as "no refusal". That is the right way round
+## here: without `AssaySim` there is no world, no pack and nothing to press, so a sentence invented
+## in this file would be a refusal nobody could have earned.
+static func part_press_refusal(chosen: PackedStringArray, candidate: String) -> String:
+	if not ClassDB.class_exists("AssaySim"):
+		return ""
+	return String(ClassDB.class_call_static("AssaySim", "part_press_refusal", chosen, candidate))
+
+
 ## The wire tag for one part kind by name, as serde spells it: `"Head"`, or `{"Frame": "Held"}` for a
 ## handle. THE NAME ITSELF when the catalogue has no such kind, so the command is refused by name
 ## rather than quietly becoming another part.
