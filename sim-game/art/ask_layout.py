@@ -71,3 +71,12 @@ def ask_the_engine(because):
         why = "\nTHE LIKELY CAUSE: the binding is missing. Run `make client-lib`.\n"
     raise CannotCheck("the probe printed no LAYOUT_JSON.%s\n--- godot said ---\n%s"
                       % (why, blob[-1200:]))
+
+
+def kind_of(entry):
+    """The kind as the stack line says it, which is the word the player reads on that row.
+
+    Read off the row the engine laid out, not off a list of kinds written down somewhere: if
+    the client ever stops drawing a kind, this follows it instead of asserting a roster.
+    """
+    return entry["line"].split("x ")[-1].split("\u00d7 ")[-1].rsplit(" (", 1)[0].split()[-1]

@@ -94,6 +94,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # the check that enforces its finding must not be able to disagree about the pixels.
 from pack_icon_draw import (  # noqa: E402
     BODY_ALPHA, PillowBackend, compare, drawn_icon, rgb)
+from ask_layout import kind_of  # noqa: E402  one reading of the row's word, shared
 from species_probe import DISTINCT  # noqa: E402  the house threshold, Maren's not mine
 
 HERE = Path(__file__).resolve().parent.parent
@@ -105,11 +106,6 @@ LAYOUT = json.load(open(sys.argv[1] if len(sys.argv) > 1 else "/tmp/cove-layout.
 OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else REVIEW / "pack_icon_kinds.png"
 
 ROWS = [r for r in LAYOUT["rows"] if "icon" in r]
-
-
-def kind_of(entry):
-    """The kind as the stack line says it, which is the word the player reads on that row."""
-    return entry["line"].split("x ")[-1].split("× ")[-1].rsplit(" (", 1)[0].split()[-1]
 
 
 def drawn(entry):
