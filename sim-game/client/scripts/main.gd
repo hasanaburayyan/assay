@@ -29,6 +29,10 @@ const PANEL := AssayHud.PANEL
 const LOG_LINES := 14
 
 var _client: AssayNetClient
+## THE RELAY THIS CLIENT STARTED, or null when we joined somebody else's (ASSA-106). Held rather than
+## local because it outlives the press: the address arrives frames later, and the process has to be
+## stopped when the window closes.
+var _solo: AssaySoloRelay = null
 var _sim := AssaySimHost.new()
 var _host := LineEdit.new()
 var _name := LineEdit.new()
@@ -250,6 +254,19 @@ func _build_ui() -> void:
 	join.pressed.connect(_on_join)
 	row.add_child(join)
 
+	# **PLAY SOLO: DOWNLOAD AND PLAY, WITH NOTHING TO TYPE** (ASSA-106, the board's own ask). The
+	# host box already defaults to `localhost`, so the shortest honest version of their request was
+	# never "a field with a better default" -- it was that nothing is listening on the other end.
+	# This starts the `sim-relay` that shipped in the same zip, on loopback, and joins it.
+	#
+	# BESIDE JOIN RATHER THAN INSTEAD OF IT: a friend's host address is the other half of the
+	# milestone and this must not become the only way in.
+	var solo := Button.new()
+	solo.text = "Play solo"
+	solo.tooltip_text = "start a world of your own on this machine and join it"
+	solo.pressed.connect(_on_play_solo)
+	row.add_child(solo)
+
 	_status.position = Vector2(24.0, 54.0)
 	add_child(_status)
 	_detail.position = Vector2(24.0, 74.0)
@@ -382,6 +399,63 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		_show_log(not _log_shown)
 	elif key.keycode == KEY_M:
 		_show_make(not _make_shown)
+
+
+## START A RELAY OF OUR OWN AND JOIN IT (ASSA-106).
+##
+## THE SAME `_on_join` PATH ONCE THE ADDRESS IS KNOWN, which is ruling 7 in one line: solo is co-op
+## with one player and a host on 127.0.0.1, so there is no second way for this client to be wrong.
+## The host box is filled in with the address the relay reported, so what a player sees afterwards is
+## the same world they would have joined by typing it.
+func _on_play_solo() -> void:
+	if _client.stage != AssayNetClient.Stage.IDLE and _client.stage != AssayNetClient.Stage.DEAD:
+		_say("already joining; restart the client to start a world of your own",
+				AssayHud.Say.FAILED)
+		return
+	if _solo != null:
+		_say("already starting a world of your own", AssayHud.Say.CONNECTING)
+		return
+	_solo = AssaySoloRelay.new()
+	if not _solo.start_solo():
+		# NO REFUSAL IS SILENT (ruling 6) and the sentence is the one `AssaySoloRelay` composed,
+		# which names WHICH refusal this is -- a missing binary lists where it looked, a binary the
+		# system will not run names itself.
+		_say(_solo.failure, AssayHud.Say.FAILED)
+		_solo = null
+		return
+	_say("starting a world of your own…", AssayHud.Say.CONNECTING)
+
+
+## WAIT FOR THE RELAY TO SAY IT IS LISTENING, one frame at a time.
+##
+## IN `_process` AND NOT IN `_refresh`, because `_refresh` runs on tick bundles and there are no
+## bundles until we have joined -- polling there would wait for the thing it is waiting to start.
+func _process(_delta: float) -> void:
+	if _solo == null or _solo.address != "" or _solo.failure != "":
+		return
+	if _solo.poll():
+		_host.text = _solo.address
+		_on_join()
+	elif _solo.failure != "":
+		_say(_solo.failure, AssayHud.Say.FAILED)
+
+
+## THE RELAY WE STARTED DIES WITH US (ruling 4). An orphan holding a port is the kind of mess a
+## player cannot clear up without a terminal, which is the whole thing this feature exists to avoid.
+##
+## BOTH NOTIFICATIONS, because they are different events and only one of them is the window's X:
+## `WM_CLOSE_REQUEST` is the close box, `PREDELETE` covers the scene being torn down (which is how
+## every test and probe ends). A relay left running by a test run would hold a port for the next one.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_PREDELETE:
+		stop_solo_relay()
+
+
+## Stop the relay this client started, if it started one. Safe to call twice.
+func stop_solo_relay() -> void:
+	if _solo != null:
+		_solo.stop()
+		_solo = null
 
 
 func _on_join() -> void:
