@@ -83,6 +83,16 @@ fn rejection(events: &[Event]) -> Option<RejectReason> {
     })
 }
 
+/// The refusal as a player reads it: the rejection `step` produced, worded by
+/// the same function `sim-cli` prints through.
+fn rejection_line(world: &World, me: PlayerId, events: &[Event]) -> String {
+    let rejected = events
+        .iter()
+        .find(|e| matches!(e, Event::CommandRejected { .. }))
+        .expect("the command was supposed to be refused");
+    debug::event_line(world, Some(me), rejected)
+}
+
 /// Hand the player every part of `assembly`, so `Assemble` can take them.
 fn give_parts(world: &mut World, me: PlayerId, assembly: &Assembly) {
     for item in assembly.part_items() {
@@ -554,6 +564,33 @@ fn assemble_refuses_an_item_that_is_not_a_part() {
         Some(RejectReason::NotAPart(ore)),
         "a non-part mounted"
     );
+
+    // **AND WHAT THE PLAYER READS NAMES THE KIND, NOT THE SAVE-FILE ID.**
+    // Rendered from the rejection `step` actually produced, because the
+    // subject is chosen in `event_line`'s arm: a test that built its own
+    // `Event` would pass just as well with the arm put back the way it was.
+    for (what, events) in [("frame", &frame_is_ore), ("mounted", &mount_is_ore)] {
+        let line = rejection_line(&world, me, events);
+        assert!(
+            line.contains(ItemKind::Ore.name()),
+            "{what}: the refusal must name what was offered: {line}"
+        );
+        // Not a literal: the id is asked of the same item the command carried.
+        // `ore#0(B)` is a save-file spelling, and a player never typed it.
+        assert_ne!(
+            ore.code(),
+            ItemKind::Ore.name(),
+            "if a code ever equalled a kind name this check would be vacuous"
+        );
+        assert!(
+            !line.contains(&ore.code()),
+            "{what}: the refusal showed an item code: {line}"
+        );
+        assert!(
+            !line.contains('#'),
+            "{what}: '#' only ever spells an item code here: {line}"
+        );
+    }
 }
 
 /// Two hoppers of one material are two of one stack: the parts must be taken

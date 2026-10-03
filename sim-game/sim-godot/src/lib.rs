@@ -2892,6 +2892,58 @@ mod tests {
         );
     }
 
+    /// **THE PRESS AND THE TERMINAL SAY ONE SENTENCE ABOUT ONE NOUN** — the
+    /// box QA could not tick on ASSA-102, closed where both sides are
+    /// reachable.
+    ///
+    /// The other tests here compare `press_refusal_text` with the function it
+    /// calls, so they agree with themselves by construction and said nothing
+    /// when `event_line` rendered the same refusal as `ore#3(B)`. This one
+    /// drives a real `Assemble` through `step`, words the rejection the way
+    /// `sim-cli` does, and asks whether what the client would have shown
+    /// AHEAD of the press is inside it. Nothing here is a typed sentence, so
+    /// it follows the Game Director's wording wherever she moves it.
+    #[test]
+    fn the_refusal_a_press_shows_is_inside_the_one_the_terminal_prints() {
+        let (mut sim, me) = with_a_player("limpet");
+        let species = sim.world().species[0].id;
+        let ore = Item::new(sim::ItemKind::Ore, species, sim::Grade::B);
+        let head = Item::new(sim::ItemKind::Part(PartKind::Head), species, sim::Grade::B);
+        for item in [ore, head] {
+            sim.world
+                .player_mut(me)
+                .expect("the player exists")
+                .inventory
+                .add(item, 4);
+        }
+
+        // The pack row the player would press, named the way `inventory_of`
+        // hands it over — which is the only subject the client ever holds.
+        let row = sim::ItemKind::Ore.name();
+        let press = press_refusal_text(&[], row);
+        assert!(!press.is_empty(), "an ore frame must refuse the press");
+
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Assemble {
+                frame: ore,
+                mounted: vec![head],
+            },
+        )]);
+        let rejected = sim
+            .last_events
+            .iter()
+            .find(|e| matches!(e, sim::Event::CommandRejected { .. }))
+            .expect("an ore frame is refused by `step`, or this proves nothing");
+        let line = sim::debug::event_line(sim.world(), Some(me), rejected);
+
+        assert!(
+            line.contains(&press),
+            "the press and the log disagree about a refusal the player sees \
+             twice.\npress: {press}\nlog:   {line}"
+        );
+    }
+
     /// **EVERY PART KIND ROUND-TRIPS THROUGH ITS OWN NAME**, which is what
     /// `press_refusal_text` rests on: a kind whose name the sim could not look
     /// up again would come back as "not a machine part" for a real pack row.

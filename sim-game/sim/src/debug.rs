@@ -748,7 +748,15 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
                 }
                 RejectReason::NothingToTake => "it has nothing waiting to be taken".to_string(),
                 RejectReason::BadAssembly(e) => assembly_error_phrase(*e),
-                RejectReason::NotAPart(item) => not_a_part_phrase(&item.code()),
+                // **THE SUBJECT IS THE KIND, NOT THE ITEM.** This refusal is
+                // categorical — no ore of any species or grade is a machine
+                // part — so naming "Korvite ore (B)" would imply some other
+                // ore might work, and `item.code()` (what this said until
+                // ASSA-102's QA found it) shows a player `ore#3(B)`, an id
+                // that exists for save files. It is also the only subject a
+                // host asking *before* the press can have: it holds a pack
+                // row's kind, not a rejected `Item`. One sentence, one noun.
+                RejectReason::NotAPart(item) => not_a_part_phrase(item.kind.name()),
                 RejectReason::NoSuchAssembly => {
                     "you have not built that design".to_string()
                 }
