@@ -3341,26 +3341,39 @@ mod tests {
             sim.building_facts()[0]
         );
 
-        sim.step_with(&[
-            Input::player(
-                me,
-                sim::PlayerCommand::Insert {
-                    building: id,
-                    slot: sim::Slot::Fuel,
-                    item: fuel,
-                    count: 3,
-                },
-            ),
-            Input::player(
-                me,
-                sim::PlayerCommand::Insert {
-                    building: id,
-                    slot: sim::Slot::Input,
-                    item: ore,
-                    count: 15,
-                },
-            ),
-        ]);
+        // **ORE IN AND NOTHING TO BURN: STILL COLD, AND THIS IS THE ARM THE
+        // OBVIOUS MISTAKE FAILS.** `lit = anything but Idle` passes every other
+        // assertion in this test and draws a fire in a smelter that is stalled
+        // asking the player for fuel. Found by mutation, not by inspection.
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Insert {
+                building: id,
+                slot: sim::Slot::Input,
+                item: ore,
+                count: 15,
+            },
+        )]);
+        assert!(
+            sim.building_facts()[0].status.contains("stalled: no fuel"),
+            "premise: this arm is only worth anything if it is a STALL and not idle: {:?}",
+            sim.building_facts()[0].status
+        );
+        assert!(
+            !sim.building_facts()[0].lit,
+            "a smelter stalled for want of fuel has no fire in it: {:?}",
+            sim.building_facts()[0]
+        );
+
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Insert {
+                building: id,
+                slot: sim::Slot::Fuel,
+                item: fuel,
+                count: 3,
+            },
+        )]);
         assert!(
             sim.building_facts()[0].lit,
             "ore and lightable fuel in: {:?}",
