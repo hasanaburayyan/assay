@@ -106,12 +106,33 @@ def scatter(n, rmin, rmax, light):
     `random.choice` is what the first render did, and the four variants came out with
     medians 126.8, 126.8, 158.7 and 144.8 -- a player could point at a tile and say
     that one is lighter, which reads as terrain the sim does not have.
+
+    THE BUDGET WAS FIXED IN COUNT AND NOT IN AREA, which is only the same thing while
+    the radii are close. Widening the patch layer to 0.14-0.30 for box 11 broke it:
+    `random.uniform` handed v5 the big end of the range for its three DARK spots, and
+    that variant's median came out 137.7 against everyone else's 142.4 -- the very
+    sentence above, failing again four renders later, on the lever I had just widened.
+
+    So the radii are a LADDER, not a roll: n sizes evenly spanning [rmin, rmax], the
+    same n in every variant, with the light tone pinned to fixed rungs. Every variant
+    now holds the same area in the same tone by construction, and what varies is
+    placement and rotation -- which is what "differ by layout, never by tone" says.
+    (Overlap still moves a median a little, since two dark discs crossing cover less
+    than two apart. That is a tile being a tile; the budget is what I can fix.)
     """
-    cols = ["ground_lt"] * light + ["ground_dk"] * (n - light)
-    random.shuffle(cols)
-    return [(random.uniform(-0.5, 0.5), random.uniform(-0.5, 0.5),
-             random.uniform(rmin, rmax), c, (0, 0, random.random() * math.tau))
-            for c in cols]
+    radii = [rmin + (rmax - rmin) * i / max(1, n - 1) for i in range(n)]
+    lit = {min(n - 1, int(round((k + 0.5) * n / light - 0.5))) for k in range(light)}
+    # A LADDER WITH NO JITTER IS ITS OWN MOTIF, and the picture said so before any
+    # number did: with the rungs exact, every tile holds the same inventory of sizes
+    # and the eye finds the repeat on the sizes instead of on the arrangement. Box 2
+    # ("no repeating motif a person can point to") is already ticked and may not be
+    # paid out to buy box 11. +/-8% of a rung moves an area by at most 17% of one
+    # spot and leaves the budget flat, which is the whole point of the ladder.
+    radii = [r * random.uniform(0.92, 1.08) for r in radii]
+    return [(random.uniform(-0.5, 0.5), random.uniform(-0.5, 0.5), radii[i],
+             "ground_lt" if i in lit else "ground_dk",
+             (0, 0, random.random() * math.tau))
+            for i in range(n)]
 
 
 asset = rig.Asset("ground", out, (1, 1))
