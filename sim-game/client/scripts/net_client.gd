@@ -55,6 +55,14 @@ signal tick_bundle(tick: int, inputs: Array, raw: String)
 signal desynced(tick: int)
 ## The socket never came up, or died. `reason` is for a player to read.
 signal link_failed(reason: String)
+## **THE LINK HAS SAID NOTHING FOR `seconds` WHOLE SECONDS, AND NOTHING HAS CHANGED BECAUSE OF IT**
+## (ASSA-191). Not a failure and not a stage: the socket is open, the world is still on screen, Join
+## is still refused, and this is the one thing a player in that state is owed -- a number going up.
+##
+## **`0` MEANS "NEVER MIND": a message arrived, or the link finished.** Whoever shows this must take
+## it down on a zero, which is why it is one signal carrying a count rather than a pair of them. It
+## fires only when the NUMBER changes, so a receiver can be as dumb as a label.
+signal link_quiet(seconds: int)
 ## Narration for the console / a probe's stdout.
 signal note(line: String)
 ## EVERY COMMAND THE UI ASKED THIS CLIENT TO SUBMIT, whether or not it reached a socket.
@@ -87,6 +95,25 @@ enum Stage { IDLE, CONNECTING, GREETED, JOINED, DEAD }
 ## check runs (see `_process`), not by the size of the number, which is why it can afford to be short.
 const SILENCE_MS := 10000
 
+## **HOW LONG A JOINED CLIENT WAITS BEFORE SAYING SO -- A DIFFERENT NUMBER AND A DIFFERENT KIND OF
+## NUMBER FROM THE ONE ABOVE** (ASSA-191, Maren's second threshold, and the half of ASSA-179 I did
+## not build the first time).
+##
+## **WHAT WENT WRONG WITHOUT IT.** `SILENCE_MS` alone means a host that hiccups for nine seconds
+## gives the player nothing at all, and then drops them with no warning. The whole finding of
+## ASSA-179 was that the window looks exactly like a running game; for the first ten seconds of a
+## silent host it still did.
+##
+## **THE TWO NUMBERS BUY DIFFERENT THINGS, WHICH IS WHY THEY ARE NOT ONE.** Crossing this one is
+## REVERSIBLE -- no stage change, no band, no closed socket, and the sentence goes the moment a
+## bundle lands -- so a false positive costs a player a glance. Crossing `SILENCE_MS` drops them. A
+## cheap, reversible warning can afford to be 7.6x the worst measured gap (263ms over 599 bundles,
+## `tools/maren_bundle_gap_probe.gd`); an irreversible drop is set at 38x.
+##
+## The same ordering defence covers both: this is computed after the socket is drained (see
+## `_process`), so a frozen main loop warns about nothing either.
+const QUIET_MS := 2000
+
 var stage: Stage = Stage.IDLE
 ## Our slot in the world, once welcomed. -1 while unknown; `PlayerId` is a slot, not an identity.
 var player_id := -1
@@ -107,6 +134,9 @@ var last_tick := -1
 ## been welcomed has no link to time, and treating -1 as a timestamp would make every cold start a
 ## drop the moment `SILENCE_MS` elapsed after launch.
 var _last_heard_msec := -1
+## **THE NUMBER THIS NODE HAS ALREADY SAID OUT LOUD**, so `link_quiet` fires when the count changes
+## rather than sixty times a second. 0 is "nothing is being said", and `_fail` puts it back there.
+var _quiet_said := 0
 
 var _socket := StreamPeerTCP.new()
 var _reader := AssayFrameReader.new()
@@ -247,7 +277,17 @@ func _process(_delta: float) -> void:
 	# Checked before the drain it would call every freeze a dead host, which is the one thing this
 	# must not do. Measured, not asserted: `tools/reconnect_probe.gd` case H freezes the client for
 	# longer than `SILENCE_MS` against a live relay and the link survives.
-	if link_is_silent(stage, _last_heard_msec, Time.get_ticks_msec(), SILENCE_MS):
+	var now := Time.get_ticks_msec()
+	# **THE WARNING IS COMPUTED IN THE SAME PLACE AS THE DROP, FROM THE SAME STAMP** (ASSA-191). It
+	# has to be after the drain for the reason above -- a frozen client that warned "the host has
+	# gone quiet" about a host that was talking the whole time would be the false positive wearing a
+	# politer sentence -- and it is computed BEFORE the drop so a run that crosses both thresholds in
+	# one frame emits the count and then the zero `_fail` sends, in that order.
+	var quiet := quiet_seconds(stage, _last_heard_msec, now, QUIET_MS)
+	if quiet != _quiet_said:
+		_quiet_said = quiet
+		link_quiet.emit(quiet)
+	if link_is_silent(stage, _last_heard_msec, now, SILENCE_MS):
 		# THE SENTENCE IS `AssayHud`'s, not this file's, and the four above it are not: see
 		# `AssayHud.silent_host_line` for why this one moved and they did not.
 		_fail(AssayHud.silent_host_line(_where, SILENCE_MS / 1000))
@@ -265,6 +305,25 @@ static func link_is_silent(at_stage: Stage, heard_msec: int, now_msec: int, limi
 	if at_stage != Stage.JOINED or heard_msec < 0 or limit_msec <= 0:
 		return false
 	return now_msec - heard_msec >= limit_msec
+
+
+## **HOW MANY WHOLE SECONDS OF SILENCE ARE WORTH SAYING OUT LOUD, or 0 when there is nothing to say**
+## (ASSA-191). Static and pure for the same reason as `link_is_silent`, and sharing its three guards
+## deliberately: a client that has not joined, a client with nothing being timed and a zeroed
+## threshold must be as harmless here as they are there, or the warning becomes the false positive
+## the drop was careful not to be.
+##
+## **WHOLE SECONDS, FLOORED, AND THE NUMBER IS THE GAP AND NOT THE THRESHOLD.** Maren's wording is
+## "nothing for 3s" with the number going up, so this reports what has actually elapsed -- the only
+## honest claim this client can make is about what IT waited. A gap of 2900ms is "2s", not "3s":
+## rounding up would have the screen claim a second that has not happened yet.
+static func quiet_seconds(at_stage: Stage, heard_msec: int, now_msec: int, quiet_ms: int) -> int:
+	if at_stage != Stage.JOINED or heard_msec < 0 or quiet_ms <= 0:
+		return 0
+	var gap := now_msec - heard_msec
+	if gap < quiet_ms:
+		return 0
+	return gap / 1000
 
 
 ## Hand every whole message in the reader to `_handle`. False when the link is finished and the
@@ -350,4 +409,13 @@ func _fail(reason: String) -> void:
 		return
 	stage = Stage.DEAD
 	_socket.disconnect_from_host()
+	# **THE WARNING COMES DOWN BEFORE THE REASON GOES UP** (ASSA-191). `_process` returns at DEAD, so
+	# nothing below will ever recompute the count: a warning left standing would be the last word on a
+	# link that now has a real sentence of its own. It matters most where the two meet -- the 2s
+	# warning and the 10s drop are about the SAME silence, and the player must end up reading the one
+	# that tells them what to do. Before `link_failed` so a receiver drawing both sees them in that
+	# order and not the other way round.
+	if _quiet_said != 0:
+		_quiet_said = 0
+		link_quiet.emit(0)
 	link_failed.emit(reason)

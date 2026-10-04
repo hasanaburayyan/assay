@@ -48,6 +48,14 @@ var _join_band := HBoxContainer.new()
 ## The door that stays in every stage. A field only so a test can assert it stayed.
 var _join_button := Button.new()
 var _status := Label.new()
+## **WHAT THE STATUS LINE WOULD SAY IF THE LINK WERE FINE**: the last sentence `_say` was given, kept
+## because the quiet warning is TEMPORARY and something has to be underneath it when it goes
+## (ASSA-191). Not a saved-and-restored copy of the label -- the label is DERIVED from this plus the
+## count, which is the difference between a rule and a pair of assignments that have to agree.
+var _base_line := ""
+var _base_level: int = AssayHud.Say.IDLE
+## Whole seconds the host has been quiet, 0 when it is not. Set only by `AssayNetClient.link_quiet`.
+var _quiet_seconds := 0
 var _detail := Label.new()
 ## THE PACK, AS ROWS YOU CAN ACT ON (ASSA-37). A container and not a Label any more: a stack's row
 ## carries the verbs that stack affords, which is what turns "3 × ore" from a readout into the start
@@ -411,6 +419,9 @@ func _ready() -> void:
 	_client.refused.connect(func(reason): _say("refused: %s" % reason, AssayHud.Say.FAILED))
 	_client.link_failed.connect(func(reason): _say(reason, AssayHud.Say.FAILED))
 	_client.tick_bundle.connect(_on_tick_bundle)
+	# THE WARNING BEFORE THE DROP (ASSA-191). Not a `_say`: it is reversible, so it may not become the
+	# last real sentence the window remembers. See `_render_status`.
+	_client.link_quiet.connect(_on_link_quiet)
 	# **THE ADVICE IS RIGHT AND ITS REASON WAS WRONG** (ASSA-177). It said "(Decision 3: no
 	# reconnect)", which the probe has now disproved for every other way a session ends -- but a
 	# desync is not a drop: `desynced` leaves the stage JOINED, so the Join button refuses and there
@@ -1348,9 +1359,47 @@ func _rebuild_running(lines: PackedStringArray) -> void:
 
 
 func _say(line: String, level: int) -> void:
-	_status.text = line
-	_status.modulate = AssayHud.status_color(level)
+	_base_line = line
+	_base_level = level
+	_render_status()
 	print(line)
+
+
+## **THE STATUS LINE, FROM THE TWO THINGS THAT CAN WANT IT** (ASSA-191). One function so the rule is
+## in one place: the last real sentence, unless the host has gone quiet, in which case the count.
+##
+## **THE WARNING OUTRANKS THE SENTENCE UNDERNEATH IT, AND THAT CALL IS MINE** (Maren can overrule it
+## here in one line). While the link is quiet, a refusal from a click is about a world that is not
+## moving and a command that reached nobody, so the warning is the more useful of the two sentences --
+## and it is the one that keeps changing, which is what a player needs to see. The alternative,
+## newest-wins, makes the warning vanish on every click and flicker back a second later.
+##
+## NOTHING IS LOST BY THAT: the sentence it covers is still `_base_line`, and the moment a bundle
+## lands the line goes back to it rather than to blank.
+func _render_status() -> void:
+	if _quiet_seconds > 0:
+		_status.text = AssayHud.quiet_host_line(_quiet_seconds)
+		# THE AMBER THIS LINE ALREADY USES FOR A TRANSIENT STATE ("connecting to …"), not the red it
+		# uses for failures: nothing has failed yet, and a red line that takes itself back down would
+		# be the client crying off. Not a new colour -- the one state surface's palette is
+		# `AssayHud.status_color` and ASSA-116 is what happens when something invents its own.
+		_status.modulate = AssayHud.status_color(AssayHud.Say.CONNECTING)
+		return
+	_status.text = _base_line
+	_status.modulate = AssayHud.status_color(_base_level)
+
+
+## The host went quiet, or came back. `seconds == 0` is "came back": see `AssayNetClient.link_quiet`.
+func _on_link_quiet(seconds: int) -> void:
+	if seconds == _quiet_seconds:
+		return
+	_quiet_seconds = seconds
+	_render_status()
+	# ONE LINE PER SECOND IN THE CONSOLE, AND IT IS THE SAME SENTENCE THE SCREEN HAS. `_say` prints
+	# every other sentence this window shows, and a probe log of a silent host that said nothing for
+	# eight seconds would be indistinguishable from a probe log of a client that never noticed.
+	if seconds > 0:
+		print(AssayHud.quiet_host_line(seconds))
 
 
 ## **WHETHER THERE IS A WORLD TO TALK ABOUT**, which is the question the three "which kind of empty"

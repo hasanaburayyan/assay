@@ -14,6 +14,11 @@ extends RefCounted
 ## the socket is drained is the whole false-positive defence, and proving it needs a real freeze
 ## against a real relay, which is `tools/reconnect_probe.gd` case H. A unit test of the ordering would
 ## have to fake the clock, which is to say fake the bug.
+##
+## **AND THE WARNING BEFORE THE DROP** (ASSA-191, `quiet_seconds`), which is the same clock read for a
+## different purpose: 2s says something and changes nothing, 10s drops you. Its edges are here for the
+## same reason; what it does to the SCREEN is `tests/test_main_screen.gd`, because that is a question
+## about a label and not about a rule.
 
 var runner = null
 
@@ -133,4 +138,115 @@ func test_the_silent_host_sentence_names_the_host_the_wait_and_the_way_back() ->
 	if not line.to_lower().contains("join"):
 		return _fail(("the sentence does not name the control that gets the player back in: \"%s\". "
 				+ "The door being open is the point of noticing at all.") % line)
+	return true
+
+
+# ------------------------------------------------------- the warning before the drop (ASSA-191)
+
+
+## **TWO SECONDS IS A FLOOR AND IT IS NOT THE SAME FLOOR AS THE DROP'S.** A gap one millisecond short
+## of it is a link nobody should be told about: the worst gap a healthy session has been measured
+## producing is 263ms (`tools/maren_bundle_gap_probe.gd`), so anything that fires under this number is
+## the client narrating its own frame rate.
+func test_a_gap_too_short_to_mention_says_nothing() -> bool:
+	var quiet := AssayNetClient.QUIET_MS
+	var said := AssayNetClient.quiet_seconds(AssayNetClient.Stage.JOINED, 5000, 5000 + quiet - 1,
+			quiet)
+	if said != 0:
+		return _fail("a gap of %dms was worth saying \"%ds\" about on a %dms threshold"
+				% [quiet - 1, said, quiet])
+	var at_the_floor := AssayNetClient.quiet_seconds(AssayNetClient.Stage.JOINED, 5000,
+			5000 + quiet, quiet)
+	if at_the_floor != quiet / 1000:
+		return _fail("a gap of exactly %dms read as \"%ds\"" % [quiet, at_the_floor])
+	return true
+
+
+## **THE NUMBER IS THE GAP, FLOORED, AND NOT THE THRESHOLD THAT LET IT SPEAK.** Maren ruled whole
+## seconds with the count going up, so the screen says what this client has actually waited. Rounding
+## up would have it claim a second that has not happened; reporting the threshold would freeze the
+## number at 2 and lose the only thing a player can read off it -- that it is still climbing.
+##
+## THE FIXTURE GAPS SHARE NO DIGITS WITH THE THRESHOLD on purpose: 2000ms would be satisfied by a
+## function that returned `quiet_ms / 1000` and ignored the clock entirely.
+func test_the_number_a_player_reads_is_whole_seconds_of_the_real_gap() -> bool:
+	var cases := [[2900, 2], [3000, 3], [7400, 7], [9999, 9], [61000, 61]]
+	for case in cases:
+		var gap: int = case[0]
+		var want: int = case[1]
+		var got := AssayNetClient.quiet_seconds(AssayNetClient.Stage.JOINED, 1234, 1234 + gap,
+				AssayNetClient.QUIET_MS)
+		if got != want:
+			return _fail("a gap of %dms read as \"%ds\" and should have read \"%ds\""
+					% [gap, got, want])
+	return true
+
+
+## THE THREE GUARDS THE DROP HAS, HELD HERE TOO. A warning that fired on a client which had not
+## joined, or had nothing being timed, or had its detector turned off, would be the false positive the
+## drop was careful not to be -- cheaper, but on screen all the same.
+func test_nothing_but_a_joined_client_with_a_clock_is_called_quiet() -> bool:
+	var an_hour := 3600 * 1000
+	for stage in [AssayNetClient.Stage.IDLE, AssayNetClient.Stage.CONNECTING,
+			AssayNetClient.Stage.GREETED, AssayNetClient.Stage.DEAD]:
+		if AssayNetClient.quiet_seconds(stage, 0, an_hour, AssayNetClient.QUIET_MS) != 0:
+			return _fail(("stage %d was told its host had gone quiet. Only a JOINED client has a "
+					+ "link to go quiet; the rest is a cold start or a link that already ended.")
+					% stage)
+	if AssayNetClient.quiet_seconds(AssayNetClient.Stage.JOINED, -1, an_hour,
+			AssayNetClient.QUIET_MS) != 0:
+		return _fail("a client with no last-heard stamp was called quiet an hour into the process")
+	for off in [0, -1]:
+		if AssayNetClient.quiet_seconds(AssayNetClient.Stage.JOINED, 0, an_hour, off) != 0:
+			return _fail("a threshold of %d still warned: zero must turn the warning off" % off)
+	return true
+
+
+## **THE WORDS, AND WHAT THEY MUST NOT SAY.** Maren's sentence is `the host has gone quiet -- nothing
+## for 3s`, and the two omissions are hers: no address and no control. This line is REVERSIBLE -- it
+## comes down the moment a bundle lands -- so a sentence that named the Join button would be advice
+## about a decision this client has not made, and `silent_host_line` is where that advice belongs.
+##
+## THE DURATION FIXTURE CARRIES A DIGIT THE REST OF THE SENTENCE CANNOT: my first silent-host test
+## passed "10.0.0.4:7777" and 10 seconds, so "does it say how long" was satisfied by the address.
+func test_the_quiet_warning_names_the_host_and_the_wait_and_promises_nothing() -> bool:
+	var line := AssayHud.quiet_host_line(47)
+	if not line.to_lower().contains("host"):
+		return _fail(("the warning does not name the host: \"%s\". A player cannot check \"the "
+				+ "network\", so what it blames is the whole of what they can act on.") % line)
+	if not line.contains("47"):
+		return _fail("the warning does not say how long has been waited: \"%s\"" % line)
+	if line.to_lower().contains("join"):
+		return _fail(("the warning names the Join button: \"%s\". Nothing has been dropped yet, so "
+				+ "that is advice about a decision this client has not made -- and Join is refused "
+				+ "while the stage is still JOINED (ASSA-176).") % line)
+	if line.to_lower().contains("disconnect"):
+		return _fail(("the warning says the player is disconnected: \"%s\". The socket is open and "
+				+ "this line takes itself back down when a bundle lands.") % line)
+	return true
+
+
+## **THE DROP TAKES THE WARNING DOWN BEFORE IT GIVES ITS REASON.** The 2s warning and the 10s drop are
+## about the SAME silence, and `_process` returns at DEAD -- so nothing recomputes the count after the
+## drop and a warning left standing would be the last word on a link that has a real sentence of its
+## own. The ORDER is the assertion: a receiver drawing both must not be handed the reason first and
+## then be told to clear something.
+##
+## `_quiet_said` IS SET BY HAND and that is the honest way round: the real emit comes from `_process`,
+## which on a client with no socket calls `_fail` for a dead connection on its first frame, so driving
+## it there would test the wrong failure.
+func test_the_drop_takes_the_warning_down_before_it_gives_its_reason() -> bool:
+	var client := _joined_client()
+	client._quiet_said = 4
+	var order := PackedStringArray()
+	client.link_quiet.connect(func(seconds: int) -> void: order.append("quiet %d" % seconds))
+	client.link_failed.connect(func(_reason: String) -> void: order.append("failed"))
+	client._fail("the host stopped answering")
+	var got := ", ".join(order)
+	if got != "quiet 0, failed":
+		return _fail(("a drop on a warned client emitted \"%s\"; it must clear the warning and then "
+				+ "give the reason (\"quiet 0, failed\"). Anything else leaves \"nothing for 9s\" on "
+				+ "screen under a link that has ended.") % got)
+	if client._quiet_said != 0:
+		return _fail("the drop left the warning's count at %d" % client._quiet_said)
 	return true

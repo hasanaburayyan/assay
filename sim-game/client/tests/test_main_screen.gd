@@ -2215,3 +2215,62 @@ func test_the_log_panel_stops_above_the_body_the_camera_centres() -> bool:
 			break
 	screen.queue_free()
 	return ok
+
+
+## **THE WARNING COVERS THE STATUS LINE AND GIVES BACK WHAT IT COVERED** (ASSA-191, Maren's 2s
+## threshold: say something, change nothing, and go the moment a bundle lands).
+##
+## WHAT IS DRIVEN HERE AND WHY IT IS THE SIGNAL. The RULE -- when a gap is worth a word and what the
+## number is -- is `tests/test_link_silence.gd`, and that a real silent host reaches this signal at
+## all is `tools/reconnect_probe.gd` case F against a real relay. What is left, and what this file
+## exists for, is that the signal is wired to anything: a label nobody connected would pass both of
+## those and show a player nothing.
+##
+## THE ASSERTION IS THE ROUND TRIP, not the warning. A client that blanked the line on the way back
+## would satisfy "the sentence disappears" and leave the player with less than they started with.
+func test_a_quiet_host_covers_the_status_line_and_gives_back_what_it_covered() -> bool:
+	var screen := _joined_screen()
+	if screen._client.stage != AssayNetClient.Stage.JOINED:
+		screen.queue_free()
+		return _fail("the fixture never joined (stage %d), so there is no status line to cover"
+				% screen._client.stage)
+	var joined_said: String = screen._status.text
+	var joined_colour: Color = screen._status.modulate
+	var ok := true
+	if joined_said.strip_edges() == "":
+		ok = _fail("the joined screen says nothing, so this test cannot tell a cover from a blank")
+	screen._client.link_quiet.emit(3)
+	var warned: String = screen._status.text
+	if ok and warned != AssayHud.quiet_host_line(3):
+		ok = _fail(("a host quiet for 3s left the status line saying \"%s\". The window looks exactly "
+				+ "like a running game, which is the whole defect.") % warned)
+	elif ok and screen._status.modulate != AssayHud.status_color(AssayHud.Say.CONNECTING):
+		ok = _fail("the warning is coloured %s, not the colour this line uses for a transient state"
+				% screen._status.modulate)
+	# THE NUMBER GOING UP IS THE PART A PLAYER READS. A line that froze at the first count would say
+	# the same thing at 3s and at 9s, which is "something happened once" rather than "it is ongoing".
+	screen._client.link_quiet.emit(7)
+	if ok and screen._status.text != AssayHud.quiet_host_line(7):
+		ok = _fail("the count did not go up: the line still reads \"%s\"" % screen._status.text)
+	# A REAL SENTENCE ARRIVES WHILE THE HOST IS QUIET -- through the path that composes them, not by
+	# assignment. It must not show (the warning outranks it, `main.gd::_render_status`) and it must be
+	# what comes back, which is what proves the line is derived rather than saved and restored.
+	screen._client.note.emit("said hello on protocol 9")
+	if ok and screen._status.text != AssayHud.quiet_host_line(7):
+		ok = _fail(("a note displaced the quiet warning: \"%s\". The world is not moving; the newest "
+				+ "sentence is not the most useful one.") % screen._status.text)
+	screen._client.link_quiet.emit(0)
+	var back: String = screen._status.text
+	if ok and back == AssayHud.quiet_host_line(7):
+		ok = _fail("a bundle landed and the warning is still on screen: \"%s\"" % back)
+	elif ok and back.strip_edges() == "":
+		ok = _fail(("the warning took the status line down with it. It covered \"%s\"; a player who "
+				+ "waited out a hiccup now has less than they started with.") % joined_said)
+	elif ok and back != "said hello on protocol 9":
+		ok = _fail(("the line came back as \"%s\" and not as the sentence that arrived under the "
+				+ "warning. The label is being restored from a copy rather than derived.") % back)
+	elif ok and screen._status.modulate == AssayHud.status_color(AssayHud.Say.CONNECTING) \
+			and joined_colour != AssayHud.status_color(AssayHud.Say.CONNECTING):
+		ok = _fail("the warning's colour outlived its sentence: %s" % screen._status.modulate)
+	screen.queue_free()
+	return ok
