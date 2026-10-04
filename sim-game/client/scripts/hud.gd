@@ -378,7 +378,20 @@ static func nothing_carried_line() -> String:
 ##
 ## THIS IS NOT ONE OF THE SIM'S SENTENCES AND IT IS NOT DESCRIBING AN EVENT. It is what the section
 ## says in the absence of events, so there is no wording of the sim's for it to be a second copy of.
-static func quiet_log_line() -> String:
+##
+## **AND THERE ARE TWO KINDS OF EMPTY HERE, NOT ONE** (ASSA-186, Maren's wording). "Nothing has
+## happened yet" is true in a world that has not spoken; on the join screen it is an answer about a
+## world that does not exist, and the section is the first thing a stranger presses (L) on. The
+## no-world half mirrors `do`, the one section that was already right, rather than adding a sixth
+## literal "no world yet" to a screen `main.gd` says already carries five.
+##
+## `in_world` IS A REQUIRED ARGUMENT AND THAT IS THE POINT. The three sections that got this wrong
+## had one wording each and a caller with nothing to decide, so nobody could notice the state was
+## missing; a caller that cannot compile without answering "which kind of empty" is the only shape
+## that stops the next section shipping the same defect.
+static func quiet_log_line(in_world: bool) -> String:
+	if not in_world:
+		return "join a world and what happens is listed here"
 	return "nothing has happened yet"
 
 
@@ -802,7 +815,14 @@ static func design_lines(design: Dictionary) -> PackedStringArray:
 
 ## WHAT THE PANEL SAYS WHEN THERE IS NOTHING TO SHOW, which is every player until the craft chain
 ## runs. A heading over an empty space reads as a bug; this says which it is.
-static func no_designs_line() -> String:
+##
+## **TWO KINDS OF EMPTY, AND THE IN-WORLD ONE WAS BEING SHOWN TO A STRANGER WITH NO WORLD**
+## (ASSA-186). "Mine, smelt and make parts first" is a route a player in a world can walk; on the
+## join screen it is three instructions none of which can be acted on. See [quiet_log_line] for why
+## `in_world` is an argument rather than a second function.
+static func no_designs_line(in_world: bool) -> String:
+	if not in_world:
+		return "join a world and the machines you build appear here"
 	return "nothing built yet — mine, smelt and make parts first"
 
 
@@ -905,7 +925,13 @@ static func make_toggle_text(shown: bool) -> String:
 ## What the crafting menu says when there is nothing in it. A heading over nothing reads as a bug, so
 ## every empty section says WHICH kind of empty it is -- and this one has a cause a player can act on:
 ## a pair of hands works on what you are carrying, so an empty menu means an empty pack.
-static func nothing_to_make_line() -> String:
+##
+## **WITH NO WORLD THE CAUSE IS A DIFFERENT ONE AND SO IS THE SENTENCE** (ASSA-186): an empty pack is
+## not why the menu is empty on the join screen, and "mine some rock first" is an instruction the one
+## stranger who reads it cannot follow. See [quiet_log_line] for why `in_world` is an argument.
+static func nothing_to_make_line(in_world: bool) -> String:
+	if not in_world:
+		return "join a world and what you can make is listed here"
 	return "nothing you are carrying can be worked by hand — mine some rock first"
 
 
