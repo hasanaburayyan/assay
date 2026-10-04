@@ -67,6 +67,16 @@ extends SceneTree
 ## even on a compile error. A set missing a subject ends `WINDOW SHOT INCOMPLETE` and exits 1; a set
 ## whose subjects are all present but one is cut by the frame ends `WINDOW SHOT OK (cut, not missing
 ## -- ...)` and exits 0, naming what was cut and how much of it was in frame.
+##
+## **AND THE FOUR VERDICTS ARE A TABLE, NOT A CHAIN** (ASSA-185). `reveal`, `controls`, `roster` and
+## `subject` are printed under `legs:` with `yes`, `NO` or `not run` beside each, and the exit code is
+## the AND of the legs that RAN. They used to run behind early returns, so the first failure ended the
+## run and the three verdicts behind it were measured on nothing -- and because the subject check was
+## last, a screen broken enough to move a section reported a roster fault and never said that a
+## picture had missed its subject at all. The order was deliberate and so was reversing it; a chain is
+## simply the wrong shape for four independent questions. A leg whose subject does not exist reads
+## `not run` and cannot fail the run: a `NO` about a question nobody could put is a bug report about
+## nothing.
 
 ## Frames to let pass before reading the viewport back. One is not enough: the screen is built from
 ## containers, and a container lays its children out on the frame AFTER they are added, so a capture
@@ -694,12 +704,38 @@ func _fold_report() -> void:
 ## heading has to be on screen, and the newest line has to be whole -- and a third is added, because
 ## the log is now a panel over the map and a panel that outgrew its region would cover the HUD column
 ## or run off the top of the window. That bound is measured here rather than written into a constant.
-func _reveal_report() -> bool:
+## **A LEG'S VERDICT, AND WHY THESE THREE FIELDS** (ASSA-185). `ok` is the answer, `why` is the
+## sentence a reader acts on, and `ran` is separate from both because a leg that could not be asked
+## must never read as one that failed -- `reconnect_probe.gd`'s verdict line learned that the hard
+## way, where a leg printing `NO` about a case that never happened is a bug report about nothing.
+##
+## NOTHING HERE CALLS `_finish` ANY MORE, and that is the whole of this item: these three reports used
+## to end the run on their first failure, so on a screen broken enough to move a section the roster's
+## sentence spoke and the SUBJECT verdict -- did each shot contain the thing it was named for -- was
+## never reached. I had put them in that order deliberately (the subject check ends the run, and
+## 04-pack is legitimately clipped, so anything behind it was measured on no run at all), which is why
+## the fix is not a swap: both orders lose a verdict, because an early return is the wrong shape for a
+## tool with four independent questions.
+static func _passed() -> Dictionary:
+	return {"ok": true, "ran": true, "why": ""}
+
+
+static func _refused(why: String) -> Dictionary:
+	return {"ok": false, "ran": true, "why": why}
+
+
+## A LEG NOBODY COULD ASK. `why` says what was missing, and the run's exit code ignores it.
+static func _not_asked(why: String) -> Dictionary:
+	return {"ok": false, "ran": false, "why": why}
+
+
+func _reveal_report() -> Dictionary:
 	var heading: Label = _screen._log_heading as Label
 	var box: Control = _screen._log_box as Control
 	if box == null or heading == null:
-		_finish(false, "no log panel or no log heading on the screen, so the reveal cannot be judged")
-		return false
+		# A FAILURE AND NOT A `not_asked`: a screen with no log panel is the thing this leg exists to
+		# notice, and "could not be asked" would read as all-clear on exactly that screen.
+		return _refused("no log panel or no log heading on the screen, so the reveal cannot be judged")
 	var clip := _frame_for(heading)
 	var head := heading.get_global_rect()
 	var body := (_screen._log as Control).get_global_rect()
@@ -709,23 +745,20 @@ func _reveal_report() -> bool:
 			% [panel.position, panel.size, map.position, map.size, clip.position.y, clip.end.y,
 			head.position.y, head.end.y, body.position.y])
 	if not clip.encloses(head):
-		_finish(false, ("the log's own heading is at y %d..%d, outside the rect it can be seen in "
+		return _refused(("the log's own heading is at y %d..%d, outside the rect it can be seen in "
 				+ "(y %d..%d): pressing 'show the event log' left you somewhere without saying where")
 				% [head.position.y, head.end.y, clip.position.y, clip.end.y])
-		return false
 	if body.position.y < clip.position.y - 0.5:
-		_finish(false, ("the log's first line starts at y %d, above the y %d it can be seen from, so "
-				+ "the NEWEST line is the one clipped in half") % [body.position.y, clip.position.y])
-		return false
+		return _refused(("the log's first line starts at y %d, above the y %d it can be seen from, "
+				+ "so the NEWEST line is the one clipped in half") % [body.position.y, clip.position.y])
 	# THE PANEL'S OWN BOUND, GROWN FROM ITS CONTENT AND THEREFORE NOT GUARANTEED BY ARITHMETIC. The
 	# height is whatever fourteen lines need at this font and width -- 350-odd px of the 600 the map
 	# gives it when it was measured -- so a bigger font, a longer line or a higher `LOG_LINES` is what
 	# would push it out, and this is the line that would say so instead of a reader noticing.
 	if not map.grow(1.0).encloses(panel):
-		_finish(false, ("the log's panel is %s %s, outside the map's %s %s: it has outgrown the "
+		return _refused(("the log's panel is %s %s, outside the map's %s %s: it has outgrown the "
 				+ "surface it is drawn over, so it is covering the HUD column or the window's edge")
 				% [panel.position, panel.size, map.position, map.size])
-		return false
 	# **AND IT MAY NOT REACH YOUR OWN BODY (ASSA-156).** The panel is inside the map and was still
 	# covering the one tile the camera guarantees you are standing on: Maren shot seed 777042 and
 	# counted ZERO player pixels anywhere in the map with the log open, against 199 with it closed.
@@ -737,12 +770,11 @@ func _reveal_report() -> bool:
 	# count; this is the rectangle the player gets.
 	var ceiling := AssayScene.player_ceiling(AssaySprites.manifest(), map.size)
 	if ceiling > 0.0 and panel.end.y > map.position.y + ceiling + 0.5:
-		_finish(false, ("the log's panel ends at y %d, below the y %d your own body is drawn from "
+		return _refused(("the log's panel ends at y %d, below the y %d your own body is drawn from "
 				+ "at an unclamped camera: the log is covering the tile you are standing on, which "
 				+ "is the tile its newest line is usually about (ASSA-156)")
 				% [panel.end.y, map.position.y + ceiling])
-		return false
-	return true
+	return _passed()
 
 
 ## **DOES OPENING THE EVENT LOG TAKE A CONTROL OFF THE SCREEN** (ASSA-147, Maren's box 4 in the shape
@@ -805,7 +837,7 @@ func _scroll_to_rocks() -> void:
 ## cannot be: it is taller than the box. Two is the smallest number that can show the thing a roster
 ## panel exists for -- that two rocks are described differently. A guard of "one" would pass on a
 ## picture that cannot answer any comparison, and a guard of "all six" could never pass at all.
-func _rocks_report() -> bool:
+func _rocks_report() -> Dictionary:
 	var rocks: Control = _screen._species
 	var frame := _frame_for(rocks)
 	var whole := 0
@@ -833,24 +865,26 @@ func _rocks_report() -> bool:
 				" ".join(said)])
 	print("  rocks: %d rows, %d whole in the frame y %d..%d" % [rows, whole, frame.position.y,
 			frame.end.y])
+	if rows == 0:
+		# **NOT ASKED, NOT FAILED.** No roster rows at all is a screen with no world or no species
+		# panel: there is nothing to photograph, and `0 whole rows of 0` as a failure would be this
+		# leg complaining about a question nobody could put to it.
+		return _not_asked("the screen carries no roster rows, so no two rocks could be compared")
 	if whole < 2:
-		_finish(false, ("the roster shot shows %d whole rows of %d, so no two rocks in it can be "
+		return _refused(("the roster shot shows %d whole rows of %d, so no two rocks in it can be "
 				+ "compared") % [whole, rows])
-		return false
-	return true
+	return _passed()
 
 
-func _controls_report() -> bool:
+func _controls_report() -> Dictionary:
 	var after := _controls_after
 	print("  controls: %d before the log opened, %d after" % [_controls_before.size(), after.size()])
 	if after.is_empty():
-		_finish(false, "no controls were measured while the log was open, so 'the log moves no "
+		return _refused("no controls were measured while the log was open, so 'the log moves no "
 				+ "control' is a claim about nothing")
-		return false
 	if _controls_before.is_empty():
-		_finish(false, "no controls were measured before the log opened, so 'the log moves no "
+		return _refused("no controls were measured before the log opened, so 'the log moves no "
 				+ "control' is a claim about nothing")
-		return false
 	var worse := PackedStringArray()
 	var moved := PackedStringArray()
 	for key in _controls_before:
@@ -872,14 +906,12 @@ func _controls_report() -> bool:
 		print("    %-28s y %5d..%-5d  %s" % [was["said"], (was["rect"] as Rect2).position.y,
 				(was["rect"] as Rect2).end.y, was["where"]])
 	if not worse.is_empty():
-		_finish(false, "opening the event log took controls off the screen: %s"
+		return _refused("opening the event log took controls off the screen: %s"
 				% "; ".join(worse))
-		return false
 	if not moved.is_empty():
-		_finish(false, "opening the event log moved controls that stayed on screen: %s. They are "
+		return _refused("opening the event log moved controls that stayed on screen: %s. They are "
 				% "; ".join(moved) + "reachable, but the log is not allowed to move them at all")
-		return false
-	return true
+	return _passed()
 
 
 ## EVERY CONTROL ON THE SCREEN, WHERE IT STANDS, AND A NAME A PERSON CAN READ.
@@ -962,31 +994,59 @@ func _report() -> void:
 		print("  ", line)
 	_machine_report()
 	_fold_report()
-	# THE REVEAL VERDICT GOES FIRST, and the order is not taste. The incomplete check below ends the
-	# run, so with it first a shot that could not contain its subject also silently skipped the only
-	# measurement of whether the reveal worked -- two different questions, and the second one never
-	# asked on exactly the runs where it matters most.
-	if not _reveal_report():
+	# **FOUR LEGS, ALL MEASURED, NONE OF THEM ABLE TO END THE RUN** (ASSA-185). Every one of these ran
+	# behind an early `return` until today, in an order I chose on purpose and defended in three
+	# comments -- and the cost was the verdict a reader needs most: on a screen broken enough to move
+	# a section, the roster's sentence spoke and "a shot does not contain its subject" was never
+	# printed. It cost me half an hour on ASSA-144 reading a roster complaint and hunting a roster bug.
+	# Reversing the order loses the other three instead. A table loses nothing.
+	var legs := [
+		["reveal", "the press put the log's heading where it said it would", _reveal_report()],
+		["controls", "opening the log moved no control off the screen", _controls_report()],
+		["roster", "two rocks can be compared in one shot", _rocks_report()],
+		["subject", "every shot contains the section it is named for", _subject_report()],
+	]
+	print("  legs:")
+	var failures := PackedStringArray()
+	var hard := false
+	for leg in legs:
+		var verdict: Dictionary = leg[2]
+		var ran: bool = verdict["ran"]
+		var ok: bool = verdict["ok"]
+		var mark := ("yes" if ok else "NO") if ran else "not run"
+		var said: String = String(verdict["why"]) if String(verdict["why"]) != "" else String(leg[1])
+		print("    %-9s %-7s %s" % [leg[0], mark, said])
+		if ran and not ok:
+			# THE SUBJECT LEADS WHEN IT FAILED, because it is this tool's primary question and the
+			# whole of this item is that it used to be the one that got buried.
+			if String(leg[0]) == "subject":
+				failures.insert(0, "%s: %s" % [leg[0], said])
+			else:
+				failures.append("%s: %s" % [leg[0], said])
+				hard = true
+	if failures.is_empty():
+		_finish(true, "")
 		return
-	# AND THE CONTROLS, for the same reason the reveal verdict goes before the incomplete check: a
-	# shot that could not contain its subject would otherwise skip the only measurement of whether
-	# reading the log costs you your buttons.
-	if not _controls_report():
-		return
-	# AND THE ROSTER, before the incomplete check and for the third time for the same reason: today
-	# 04-pack.png is legitimately CLIPPED (ASSA-133 ruling 2 says the crafting menu is the section
-	# that gives way, and ASSA-149 is the item for the tool calling that a failure), so EVERY run
-	# ends INCOMPLETE and anything behind that check is measured on no run at all.
-	if not _rocks_report():
-		return
-	if not _missing.is_empty():
-		_incomplete = true
-		var said := PackedStringArray()
-		for name in _missing:
-			said.append("%s: %s" % [name, ", ".join(_missing[name] as PackedStringArray)])
-		_finish(false, "; ".join(said))
-		return
-	_finish(true, "")
+	# INCOMPLETE WHEN THE ONLY NEWS IS THAT A PICTURE MISSED ITS SUBJECT; FAIL the moment a layout leg
+	# fails too, because that is a screen doing something it may not do rather than a shot that could
+	# not frame everything. Both exit 1, and both now carry every failing leg instead of the first.
+	_incomplete = not hard
+	_finish(false, "; ".join(failures))
+
+
+## **DID EACH SHOT CONTAIN THE THING IT WAS NAMED FOR** -- this tool's primary question, and until
+## ASSA-185 the one that could be silenced by any of the other three (ASSA-116/117 is why it exists).
+##
+## ABSENT, NOT CUT: `_missing` is filled only for a section that was not in the frame at all, while a
+## section the screen is deliberately clipping goes to `_clipped` and rides on the green line
+## (ASSA-149). So this leg has nothing to say about today's legitimately clipped `04-pack.png`.
+func _subject_report() -> Dictionary:
+	if _missing.is_empty():
+		return _passed()
+	var said := PackedStringArray()
+	for name in _missing:
+		said.append("%s: %s" % [name, ", ".join(_missing[name] as PackedStringArray)])
+	return _refused("; ".join(said))
 
 
 func _finish(ok: bool, why: String) -> void:
