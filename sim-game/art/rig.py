@@ -381,7 +381,7 @@ def lamp(color="cyan"):
 # ---------------------------------------------------------------- scene setup
 
 class Rig:
-    def __init__(self, samples=64, outlines=True):
+    def __init__(self, samples=64, outlines=True, line_px=1):
         bpy.ops.wm.read_factory_settings(use_empty=True)
         _mats.clear()
         self.scene = sc = bpy.context.scene
@@ -498,8 +498,23 @@ class Rig:
             ls.select_silhouette = ls.select_border = ls.select_crease = True
             ls.select_by_collection = True; ls.collection = self.model
             ls.linestyle.color = srgb(PALETTE["line"])
-            # ~1px after the SS downscale
-            sc.render.line_thickness = ls.linestyle.thickness = 0.35 * SS
+            # `line_px` AUTHORED pixels after the SS downscale -- and AUTHORED is not the last
+            # word, which is why this is a parameter now (ASSA-159).
+            #
+            # The default of 1 is what every asset has always had, and the old comment here
+            # ("~1px after the SS downscale") was true and stopped one step too early. A sheet is
+            # authored at TILE_PX=64 per tile; `scene_view.gd::_place` then draws it at
+            # `TILE_PX 32 / authored 64` = SCALE 0.5, with `default_texture_filter=0` -- NEAREST
+            # (`client/project.godot`). A half-size nearest draw keeps every other authored pixel,
+            # so a 1px line arrives on about two thirds of the silhouette and is missing from the
+            # rest. Measured on the shipped part rows, downscaled exactly as `_place` does:
+            # 1px reaches 278 of 402 silhouette pixels (69%), 2px reaches 402 of 402.
+            #
+            # So a mark that must SURVIVE TO THE SCREEN is authored at 2. A mark that only has to
+            # look right on the sheet stays at 1. This is per-asset and not global on purpose:
+            # thickness is a scene setting, and raising it everywhere would redraw the ore and the
+            # ground that were ruled on separately (ASSA-115, ASSA-153).
+            sc.render.line_thickness = ls.linestyle.thickness = 0.35 * SS * line_px
 
     # ------------------------------------------------------------ primitives
     def _place(self, o, coll, m, bev, seg=4):

@@ -31,7 +31,7 @@ def build(g):
     """One geometry, grade as a parameter (rig.GRADES). Nothing about the
     SHAPE depends on `g` -- only the ink -- which is the point: a part is one
     silhouette the player learns once, and grade is how good that part is."""
-    r = rig.Rig(samples=64)
+    r = rig.Rig(samples=64, line_px=2)  # ASSA-159: survives _place's half-size NEAREST draw
     # NO SHADOW CATCHER -- A BOUNCE PLANE INSTEAD, AND THAT IS THE DRAWING
     # SAYING SOMETHING (ASSA-64,
     # Maren's ruling). A contact shadow means "this part stands on the
