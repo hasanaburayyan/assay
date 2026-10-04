@@ -56,6 +56,13 @@ var _next_tick := 0.0
 var _samples: Array[Vector2] = []
 var _parts: Array[float] = []
 var _frames := 0
+## WHEN EACH SAMPLE WAS TAKEN, which is the premise nobody had checked before building a fix.
+##
+## The drawn step per frame cannot be smaller than the distance a correctly tweened body covers in
+## ONE FRAME. On a walk of one tile per tick at 10 tps, a 250 ms frame moves the body 2.5 tiles no
+## matter what the interpolation does -- so if the client's frames are that long, "biggest step well
+## under a tile" is unreachable by any renderer change and the defect is elsewhere. Marlow, ASSA-148.
+var _sampled_at: Array[float] = []
 
 
 func _initialize() -> void:
@@ -199,6 +206,57 @@ func _sample() -> void:
 		_samples.append(p["at"] as Vector2)
 		break
 	_parts.append(_screen._tick_gap)
+	_sampled_at.append(_now())
+
+
+## THE MOVING STRETCH, which is the only stretch this item is about (Maren's box 2, 07:47 UTC).
+##
+## A 25-tile walk takes about four seconds and the probe may watch for twelve, so most samples can be
+## a body standing still -- and a standing body is exactly on a tile in every frame. Any statistic
+## over ALL samples therefore measures HOW LONG WE WATCHED. These two indices bound the frames in
+## which the drawn position actually changed: `from` is the frame before the first change, `to` is the
+## frame of the last one. Returns an empty dictionary when nothing ever moved, which is a finding and
+## not an error -- it is what a refused `move_to` looks like, and it fooled this probe twice.
+func _moving_span() -> Dictionary:
+	var first := -1
+	var last := -1
+	for i in range(1, _samples.size()):
+		if not _samples[i].is_equal_approx(_samples[i - 1]):
+			if first < 0:
+				first = i - 1
+			last = i
+	if first < 0:
+		return {}
+	return {"from": first, "to": last}
+
+
+## Biggest step, distinct positions, whole-tile snaps and parked share over one span of samples.
+##
+## A SNAP IS COUNTED AT 0.9 TILES AND NOT AT 1.0, because the mechanism produces a step of one tile
+## plus or minus however far the tween had already travelled -- Maren measured 1.000 and 1.320 on the
+## same walk. A bar written at exactly 1.0 would miss a 0.98 and read as a pass.
+func _span_stats(from: int, to: int) -> Dictionary:
+	var distinct := {}
+	var biggest := 0.0
+	var snaps := 0
+	var on_tile := 0
+	for i in range(from, to + 1):
+		var at := _samples[i]
+		distinct[at] = true
+		if is_equal_approx(at.x, roundf(at.x)) and is_equal_approx(at.y, roundf(at.y)):
+			on_tile += 1
+		if i > from:
+			var step := (at - _samples[i - 1]).length()
+			biggest = maxf(biggest, step)
+			if step >= 0.9:
+				snaps += 1
+	return {
+		"frames": to - from + 1,
+		"distinct": distinct.size(),
+		"biggest": biggest,
+		"snaps": snaps,
+		"on_tile": on_tile,
+	}
 
 
 func _report() -> void:
@@ -223,6 +281,37 @@ func _report() -> void:
 	print("samples landing exactly on a tile: %d of %d (%.1f%%)"
 			% [on_tile, _samples.size(), 100.0 * on_tile / _samples.size()])
 	print("biggest step between consecutive frames: %.3f tiles (1.000 = a whole-tile jump)" % biggest)
+	# THE FRAME CLOCK FIRST, because it bounds what any tween can do. See `_sampled_at`.
+	if _sampled_at.size() > 2:
+		var flo := _sampled_at[1] - _sampled_at[0]
+		var fhi := flo
+		var ftotal := 0.0
+		for i in range(1, _sampled_at.size()):
+			var dt := _sampled_at[i] - _sampled_at[i - 1]
+			flo = minf(flo, dt)
+			fhi = maxf(fhi, dt)
+			ftotal += dt
+		print("FRAMES AS THEY RAN: %d gaps, mean %.4fs (%.0f fps), min %.4fs, max %.4fs"
+				% [_sampled_at.size() - 1, ftotal / float(_sampled_at.size() - 1),
+				float(_sampled_at.size() - 1) / maxf(ftotal, 0.0001), flo, fhi])
+	# THE MOVING STRETCH, which is Maren's box 2: every statistic above is over the whole window and
+	# a window that outlasts the walk measures standing still.
+	var span := _moving_span()
+	if span.is_empty():
+		print("MOVING STRETCH: none -- the drawn position never changed. The walk was refused or the"
+				+ " body never got a tick; this is a finding about the run, not about the tween.")
+	else:
+		var from := int(span["from"])
+		var to := int(span["to"])
+		var s := _span_stats(from, to)
+		print("MOVING STRETCH: frames %d..%d of %d (%.2fs of %.1fs), walked %.2f tiles"
+				% [from, to, _samples.size(), _sampled_at[to] - _sampled_at[from], _seconds,
+				(_samples[to] - _samples[from]).length()])
+		print("  biggest step %.3f tiles · WHOLE-TILE SNAPS (>=0.9) %d of %d steps · distinct"
+				% [s["biggest"], s["snaps"], int(s["frames"]) - 1]
+				+ " positions %d · on an exact tile %d of %d (%.1f%%)"
+				% [s["distinct"], s["on_tile"], s["frames"],
+				100.0 * float(s["on_tile"]) / float(s["frames"])])
 	if not _gaps.is_empty():
 		var lo := _gaps[0]
 		var hi := _gaps[0]
