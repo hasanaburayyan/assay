@@ -3327,13 +3327,13 @@ mod tests {
         let mut by_grade: std::collections::BTreeMap<char, Vec<String>> = Default::default();
         for facts in sim.species_facts() {
             let species = &world.species[facts.id as usize];
-            if let Some(grade) = sim::ladder::fuel_grade(species) {
-                if sim::ladder::hand_minable(species) {
-                    by_grade
-                        .entry(grade.letter())
-                        .or_default()
-                        .push(facts.fuel.clone().expect("a fuel row with no tag"));
-                }
+            if let Some(grade) = sim::ladder::fuel_grade(species)
+                && sim::ladder::hand_minable(species)
+            {
+                by_grade
+                    .entry(grade.letter())
+                    .or_default()
+                    .push(facts.fuel.clone().expect("a fuel row with no tag"));
             }
         }
         assert_eq!(
