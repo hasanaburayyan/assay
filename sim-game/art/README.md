@@ -574,3 +574,18 @@ row vertically, so the drawn scale depends on how many verbs a row has.
 NOT A GATE and deliberately thresholdless: it reports a spread (the same ore
 icon is 2.01 against the HUD's background in one species slot and 8.02 in
 another), and which spread is acceptable is the Director's call.
+
+**Regenerate it from a FRESH layout, never a cached `/tmp/layout.json`.** The
+sheet shipped for days saying `Frame` on four part rows while the client said
+`Mount` on two of them (ASSA-132) — not because anything read the wrong source,
+but because nobody re-ran it after ASSA-103 changed the word. The sheet is the
+artefact whose whole job is to be believed, so one that disagrees with the game
+is worse than none.
+
+`pack_icon_sheet.py` therefore **stamps the words it drew into the PNG**
+(`pack_words.py`, a `tEXt` chunk) and `art/check_pack_row_word.py` — in CI —
+asks the live engine for the same words and compares, as well as checking each
+part row's word against the catalogue's `is_frame`. If it goes red, regenerate;
+that is what rewrites the stamp. The stamp carries the sheet's **words and not
+its pixels**, on purpose: a re-rendered sprite would otherwise turn it red while
+every word was still true, and a check that cries wolf gets obeyed blind.
