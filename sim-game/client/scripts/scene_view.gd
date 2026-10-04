@@ -426,7 +426,11 @@ static func _composite_place(manifest: Dictionary, parts: Array, tile: Vector2i,
 	# THE FRAME'S SHEET DECIDES THE GEOMETRY, and the frame is `Assembly::parts()`' first entry --
 	# the sim's order, which `BuildingFacts::parts` preserves. `image_of` sizes every part to the
 	# first one's frame as well, so this reads the same sheet that file reads.
-	var spec: Dictionary = manifest.get(AssaySprites.SHEET_OF.get(
+	# ASSEMBLY_SHEET_OF, NOT SHEET_OF (ASSA-121): the geometry below is the assembly frame's --
+	# `frame_px` 128x102, `tiles` [2,1], `anchor_px` -- and `image_of` composites that same sheet. The
+	# pack row's items frame is 64x96 at `tiles` [1,1], so reading it here would scale every machine by
+	# the wrong factor and anchor it off its footprint tile.
+	var spec: Dictionary = manifest.get(AssaySprites.ASSEMBLY_SHEET_OF.get(
 			String((parts[0] as Dictionary).get("kind", "")).to_lower(), ""), {})
 	var frame_px: Array = spec.get("frame_px", [])
 	var tiles: Array = spec.get("tiles", [])

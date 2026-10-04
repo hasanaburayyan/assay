@@ -269,7 +269,11 @@ func _grades_the_sim_has() -> PackedStringArray:
 ## this test on the day it lands rather than the day someone remembers to add it here.
 func test_an_ore_stack_gets_a_frame_and_a_gear_does_not() -> bool:
 	var rows := {}
-	for kind in ["ore", "refined", "smelter"]:
+	# SEVEN KINDS, NOT THREE, SINCE ASSA-121: the four part kinds are items rows too, and this
+	# docstring already promised they would be covered "on the day it lands rather than the day
+	# someone remembers to add it here". With all seven here the collapse this guards against is a
+	# real risk rather than a theoretical one -- `handle` and `head` are adjacent rows of one sheet.
+	for kind in ["ore", "refined", "smelter", "handle", "head", "frame", "hopper"]:
 		var icon := AssaySprites.icon_for({"kind": kind, "species": 2, "grade": "B", "count": 7})
 		if icon == null:
 			return _fail("`%s` has a row in items.png and got no frame" % kind)
@@ -277,11 +281,16 @@ func test_an_ore_stack_gets_a_frame_and_a_gear_does_not() -> bool:
 			return _fail("`%s`'s frame has no sheet behind it" % kind)
 		if icon.region.size.x <= 0.0 or icon.region.size.y <= 0.0:
 			return _fail("`%s`'s frame is empty: %s" % [kind, icon.region])
-		var at := icon.region.position.y
+		# KEYED ON SHEET *AND* ROW, not on the row alone. Every kind here is an items row today, so
+		# `y` would be enough -- but it is only enough BECAUSE they share a sheet, and this loop no
+		# longer gets to assume that: when it covered three kinds they were all items, and the day a
+		# kind moves back off that sheet two different sheets' row 1 are both y 102 and this would
+		# report a collision that is not one. The claim is "no two kinds draw the same frame".
+		var at := "%s@%s" % [icon.atlas.resource_path, icon.region.position.y]
 		if rows.has(at):
-			return _fail(("`%s` and `%s` drew the SAME row of items.png (y %s). They take the same "
-					+ "tint and often the same species name in adjacent rows, so this would read as "
-					+ "a correct panel saying the wrong thing.") % [kind, rows[at], at])
+			return _fail(("`%s` and `%s` drew the SAME frame (%s). They take the same tint and often "
+					+ "the same species name in adjacent rows, so this would read as a correct panel "
+					+ "saying the wrong thing.") % [kind, rows[at], at])
 		rows[at] = kind
 	# AND THE KIND WITH NO ART STILL GETS NOTHING. Worth knowing WHICH mechanism holds this, because
 	# the obvious answer is wrong and it was mutation-tested: an entry in `SHEET_OF` is not enough on
@@ -296,20 +305,65 @@ func test_an_ore_stack_gets_a_frame_and_a_gear_does_not() -> bool:
 	return true
 
 
-## A PART'S FRAME FOLLOWS THE SIM'S GRADE LETTER, and nothing else picks it.
-func test_a_part_icon_takes_the_row_named_by_its_grade() -> bool:
+## A PART'S ASSEMBLY FRAME FOLLOWS THE SIM'S GRADE LETTER, and nothing else picks it.
+##
+## THIS TEST USED TO ASK `icon_for` AND ITS PREMISE MOVED (ASSA-121). It is rewritten rather than
+## deleted, because the claim is still true and still worth holding -- it just belongs to the
+## ASSEMBLY map now. The pack row's items drawing is one row per kind with the grade in the stack
+## sentence, which is the items convention; the C/B/A ladder lives on the assembly sheets, where a
+## machine is built out of it. The next test holds the other half.
+func test_a_part_assembly_frame_takes_the_row_named_by_its_grade() -> bool:
 	var seen := {}
 	for grade in ["C", "B", "A"]:
-		var icon := AssaySprites.icon_for({"kind": "head", "species": 0, "grade": grade})
+		var icon := AssaySprites.assembly_icon_for({"kind": "head", "species": 0, "grade": grade})
 		if icon == null:
-			return _fail("a %s head got no frame" % grade)
+			return _fail("a %s head got no assembly frame" % grade)
 		var key := str(icon.region.position.y)
 		if seen.has(key):
 			return _fail("grade %s drew the same row as %s: %s" % [grade, seen[key], icon.region])
 		seen[key] = grade
 	# AND AN UNKNOWN GRADE DRAWS NOTHING rather than guessing a row.
-	if AssaySprites.icon_for({"kind": "head", "species": 0, "grade": "Z"}) != null:
+	if AssaySprites.assembly_icon_for({"kind": "head", "species": 0, "grade": "Z"}) != null:
 		return _fail("an unknown grade picked a frame instead of drawing nothing")
+	return true
+
+
+## THE TWO SURFACES DRAW A PART FROM DIFFERENT SHEETS, which is the whole of ASSA-121.
+##
+## WHY THIS IS NOT A RESTATEMENT OF THE DICTIONARIES. The failure it exists to catch is the one the
+## item was nearly built as: point the pack rows at `items` and leave the machine composite reading
+## the same map, and every planted machine quietly redraws itself out of loose-part pictures whose
+## `frame_px` is 64x96 at `tiles` [1,1] -- so `part_layout.json`'s repeat offset lands in the wrong
+## space and the machine comes apart. Nothing else in the suite compares the two.
+##
+## MEASURED ON THE REGION, NOT ON A SHEET NAME: the region is what gets blitted, and the sheets have
+## different frame sizes, so a part asked for both ways must come back with different geometry. The
+## atlas path is asserted too, because two sheets could in principle agree on a frame size.
+func test_a_part_draws_from_items_in_the_pack_and_its_own_sheet_in_a_machine() -> bool:
+	for kind in ["handle", "head", "frame", "hopper"]:
+		var part := {"kind": kind, "species": 0, "grade": "B"}
+		var pack := AssaySprites.icon_for(part)
+		var machine := AssaySprites.assembly_icon_for(part)
+		if pack == null:
+			return _fail("`%s` got no pack icon; ASSA-112 put a row for it on items.png" % kind)
+		if machine == null:
+			return _fail("`%s` got no assembly frame; the machine composite needs one" % kind)
+		if pack.atlas == null or machine.atlas == null:
+			return _fail("`%s` got a frame with no sheet behind it" % kind)
+		var pack_sheet := String(pack.atlas.resource_path)
+		var machine_sheet := String(machine.atlas.resource_path)
+		if pack_sheet == machine_sheet:
+			return _fail(("`%s` draws its pack row and its machine frame from the SAME sheet (%s). "
+					+ "One of the two surfaces is reading the wrong map: a pack slot wants the loose "
+					+ "object, a machine wants the registered assembly frame.") % [kind, pack_sheet])
+		if not pack_sheet.ends_with("items.png"):
+			return _fail("`%s`'s PACK icon comes from %s, not items.png" % [kind, pack_sheet])
+		if not machine_sheet.ends_with("%s.png" % kind):
+			return _fail("`%s`'s MACHINE frame comes from %s, not %s.png" % [kind, machine_sheet, kind])
+		if pack.region.size == machine.region.size:
+			return _fail(("`%s` slices the same frame size (%s) both ways. The items frame is 64x96 "
+					+ "and the assembly frame 128x102; equal sizes mean one lookup silently fell "
+					+ "through to the other sheet.") % [kind, pack.region.size])
 	return true
 
 
