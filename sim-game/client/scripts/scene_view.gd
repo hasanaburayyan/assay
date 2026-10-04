@@ -59,6 +59,14 @@ const PLAYOUT_DELAY := 2.5
 ## WHAT A CLOCK THAT HAS NOT STARTED READS, and it is negative rather than 0.0 because 0.0 is a real
 ## sim tick -- the first one of every fresh world. See `playout_at`.
 const PLAYOUT_UNSTARTED := -1.0
+## How many bundle arrivals the measured tick rate averages over. See `playout_step` for why a dozen
+## and not the forty it was.
+const PLAYOUT_RATE_WINDOW := 12
+## HOW CLOSE TWO BUNDLE ARRIVALS HAVE TO BE TO HAVE COME OUT OF THE SAME SOCKET DRAIN, in seconds.
+## Measured in a real window: a pair lands **0.17 ms** apart and the frames they land in are 8 ms at
+## the very fastest this Mac draws. Two orders of magnitude between the two, so this is not a tuning
+## knob -- anything from a tenth of a millisecond to five would behave identically.
+const SAME_FRAME := 0.002
 ## How hard the clock leans on its error (per tick of error, as a fraction of rate) and the most it
 ## may ever bend. 10% of 10 tiles/s is 1 tile/s, well inside the bar the board's complaint set.
 const PLAYOUT_CATCHUP := 0.5
@@ -199,16 +207,46 @@ static func facing_of(step: Vector2i) -> String:
 ## series swings by a factor of ten, and it was the DENOMINATOR of the drawn fraction: the segment
 ## length itself jittered, so the body sprinted and stalled with the renderer's own frame rate.
 ##
-## A mean over the whole window is immune to the pairing (two bundles 0.17 ms apart still advance the
-## tick count by two) and still follows a real rate change in a second or so, which is what
+## A mean over a window is immune to the pairing and still follows a real rate change, which is what
 ## `sim-relay --tps N` needs. The fallback is for the first two arrivals, where there is no rate yet.
-static func playout_step(arrivals: Array[float], fallback: float) -> float:
-	if arrivals.size() < 3:
+##
+## **THE WINDOW IS SHORT, AND THAT IS THE HALF THAT FIXED A MEASURED DEFECT.** It was 40 arrivals --
+## four seconds -- and a real host does not hold its rate for four seconds. Measured in a real window
+## on a loaded Mac (`motion_speed_probe.gd`, 2026-10-04): **the client was using 99.0 ms while the
+## host had actually sent one every 110.5 ms, so the clock ran at 112% of true speed, outran the
+## host, emptied its own buffer and held the body still for 12 frames of a 1.5 s walk.** A four-second
+## mean trails a drifting rate by more than `PLAYOUT_NUDGE` (10% of rate) can correct, so past that
+## point the clock cannot hold its buffer whatever it does. A dozen ticks is enough averaging and
+## converges on a rate change in 1.2 s instead of 4.
+##
+## **AND THE DENOMINATOR IS THE SIM'S OWN TICK SPAN RATHER THAN THE NUMBER OF ARRIVALS, which is
+## correctness by construction and not a fix for the numbers above.** This divided by
+## `arrivals.size() - 1`, which is only the tick count while every bundle carries exactly one tick.
+## That is true of `sim-relay` today, so it was not what went wrong here -- but it is an assumption
+## about the HOST living in the renderer's arithmetic, and the day a bundle carries two ticks the
+## client halves its idea of a tick and outruns the host by 100%. `ticks` is the sim tick each
+## arrival carried, so the answer is seconds per TICK whatever the delivery did.
+static func playout_step(arrivals: Array[float], ticks: Array[int], fallback: float) -> float:
+	if arrivals.size() < 3 or ticks.size() != arrivals.size():
 		return fallback
-	var span := arrivals[arrivals.size() - 1] - arrivals[0]
-	if span <= 0.0:
+	# **ONE SAMPLE PER FRAME, NOT PER BUNDLE, AND THIS IS THE 10% (ASSA-197).** See above: a window
+	# of n entries over bundles that arrive in PAIRS spans n-2 ticks of wall clock while the tick
+	# numbers at its ends differ by n-1, so the estimate comes out at (n-2)/(n-1) of the truth
+	# whatever the denominator is. Collapsing each frame's drain to its FIRST bundle makes both ends
+	# of the window the same kind of instant, and then span and tick count describe one interval.
+	var times: Array[float] = []
+	var at: Array[int] = []
+	for i in arrivals.size():
+		if times.is_empty() or arrivals[i] - times[times.size() - 1] > SAME_FRAME:
+			times.append(arrivals[i])
+			at.append(ticks[i])
+	if times.size() < 2:
 		return fallback
-	return clampf(span / float(arrivals.size() - 1), MIN_PLAYOUT_STEP, 1.0)
+	var span := times[times.size() - 1] - times[0]
+	var over := at[at.size() - 1] - at[0]
+	if span <= 0.0 or over <= 0:
+		return fallback
+	return clampf(span / float(over), MIN_PLAYOUT_STEP, 1.0)
 
 
 ## **WHERE THE PLAYOUT CLOCK IS NOW, IN SIM TICKS** (ASSA-197). The board, twice: *"the lerp is not

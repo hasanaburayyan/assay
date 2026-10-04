@@ -1195,6 +1195,145 @@ func test_a_player_south_of_a_smelter_is_drawn_in_front_of_it() -> bool:
 	return true
 
 
+## **NOTHING UNIT-TESTED THE CLOCK THE BOARD'S COMPLAINT IS ABOUT** (ASSA-197). `playout_step` and
+## `playout_at` are pure static arithmetic and had no test of any kind; every number on this item came
+## from a probe against a live relay, which is slow, loaded and unrepeatable. These two are the
+## arithmetic, pinned.
+##
+## THE RATE. Two claims, and they fail differently:
+##
+## 1. **A dozen arrivals at a steady rate answer that rate exactly**, and a window that still holds
+##    an older rate answers the average of two. That is what went wrong in a real window: a
+##    four-second window had the client using 99.0 ms while the host was sending one every 110.5, so
+##    the clock ran at 112% of true speed and emptied its own buffer.
+## 2. **The answer is seconds per TICK, not per bundle.** A bundle carrying two ticks must not halve
+##    it. No host does that today, so this is the assumption being removed rather than a defect being
+##    fixed -- and an assumption about the host inside the renderer's arithmetic is worth a test
+##    whether or not it is currently true.
+func test_the_measured_tick_rate_is_per_tick_and_tracks_a_drifting_host() -> bool:
+	var window := AssayScene.PLAYOUT_RATE_WINDOW
+	# A HOST AT A STEADY 110.5 ms, DELIVERED IN PAIRS: two bundles 0.17 ms apart in one frame and
+	# none in the next, which is what a real window measured (the client drains its socket once a
+	# frame). Pairing must not move the answer at all.
+	var arrivals: Array[float] = []
+	var ticks: Array[int] = []
+	var at := 10.0
+	for i in window:
+		arrivals.append(at if i % 2 == 0 else at + 0.00017)
+		ticks.append(i)
+		if i % 2 == 1:
+			at += 0.221
+	# **THE EXPECTATION IS THE RATE THE FIXTURE WAS BUILT FROM, NOT ONE DERIVED FROM IT.** This read
+	# `span / (window - 1)`, which is the estimator's own arithmetic -- so it agreed with the 10/11
+	# answer the pairing produces and could not see the defect at all. A test that asks the code what
+	# to expect is the shape I keep writing; 0.1105 is a number the fixture puts in by construction.
+	var steady := AssayScene.playout_step(arrivals, ticks, 0.1)
+	var want := 0.1105
+	if absf(steady - want) > 0.0005:
+		return _fail(("a host delivering two bundles a frame at a true %.1f ms a tick was measured "
+				+ "at %.1f ms (%.0f%% of it). The clock divides frame time by that, so it plays out "
+				+ "%.0f%% fast, drains its buffer and holds the body still")
+				% [want * 1000.0, steady * 1000.0, steady / want * 100.0,
+				(want / steady - 1.0) * 100.0])
+	# THE SAME SERIES WITH AN OLDER, FASTER RATE IN FRONT OF IT -- which is what a long window holds
+	# after the host slows down. The estimate must be the NEW rate, not a blend.
+	var long_arrivals: Array[float] = []
+	var long_ticks: Array[int] = []
+	for i in 28:
+		long_arrivals.append(float(i) * 0.09)
+		long_ticks.append(i)
+	var shift := long_arrivals[long_arrivals.size() - 1] + want - arrivals[0]
+	for i in arrivals.size():
+		long_arrivals.append(arrivals[i] + shift)
+		long_ticks.append(28 + ticks[i])
+	var blended := AssayScene.playout_step(long_arrivals, long_ticks, 0.1)
+	if absf(blended - want) <= absf(steady - want) + 0.005:
+		return _fail(("a window holding 28 arrivals at 90 ms in front of the host's real %.1f ms "
+				+ "answered %.1f ms, and the short window answered %.1f. The long window is not the "
+				+ "worse answer, so this test is not measuring the convergence it claims to")
+				% [want * 1000.0, blended * 1000.0, steady * 1000.0])
+	# AND WHICH WAY IT IS WRONG IS THE WHOLE DEFECT, so it is asserted rather than left to the
+	# reader: a window still holding a FASTER past underestimates how long a tick is, and the clock
+	# divides frame time by that number -- so it plays out faster than the host produces, drains its
+	# own buffer and holds the body still. The other direction would only add latency.
+	if blended >= want:
+		return _fail(("the stale window answered %.1f ms against a real %.1f: this test's premise is "
+				+ "that it UNDER-estimates the tick, which is what makes the clock run fast")
+				% [blended * 1000.0, want * 1000.0])
+	# AND THE DENOMINATOR. The same arrivals, each carrying two ticks: the host is twice as fast and
+	# the answer must halve. Dividing by the arrival count instead gives the unchanged number.
+	var doubled: Array[int] = []
+	for t in ticks:
+		doubled.append(t * 2)
+	var per_tick := AssayScene.playout_step(arrivals, doubled, 0.1)
+	if absf(per_tick - want * 0.5) > 0.0005:
+		return _fail(("bundles carrying two ticks each were measured at %.1f ms a tick; the same "
+				+ "arrivals one tick each are %.1f ms, so this is counting bundles and not ticks")
+				% [per_tick * 1000.0, want * 1000.0])
+	# NO RATE YET IS THE FALLBACK AND NOT A GUESS, including when the caller's two arrays disagree:
+	# a rate derived from mismatched arrays would be arithmetic on an accident.
+	for bad: Array in [[[] as Array[float], [] as Array[int]],
+			[[10.0, 10.1, 10.2] as Array[float], [0, 1] as Array[int]],
+			[[10.0, 10.0, 10.0] as Array[float], [0, 1, 2] as Array[int]],
+			[[10.0, 10.1, 10.2] as Array[float], [3, 3, 3] as Array[int]]]:
+		if not is_equal_approx(AssayScene.playout_step(bad[0], bad[1], 0.077), 0.077):
+			return _fail("playout_step(%s, %s) did not fall back to the caller's rate" % bad)
+	return true
+
+
+## **THE CLOCK WAITS FOR A BUFFER BEFORE IT STARTS, AND NEVER READS PAST THE NEWEST POSITION HELD**
+## (ASSA-197).
+##
+## The init branch read `maxf(newest - delay, oldest)`, so with one position held it started the clock
+## AT the newest -- zero buffer, the thing its own comment forbids -- and `PLAYOUT_NUDGE` needs 25
+## ticks to win 2.5 back. `tools/playout_trace.gd` caught it on a real walk: 4 of the first 12 ticks
+## came back `starved`, each a frame where the body holds still. Maren's bar on this item is zero.
+##
+## THE SECOND HALF IS MAREN'S ASSA-119 RULING, WHICH DOES NOT BEND: the drawn position is always
+## between two positions the sim produced, never toward one it has not. So no `play_tick` this
+## function returns may exceed the newest tick held, at any dt, including a dt longer than the whole
+## buffer.
+func test_the_playout_clock_waits_for_a_buffer_and_never_runs_past_the_newest() -> bool:
+	var delay: float = AssayScene.PLAYOUT_DELAY
+	var step := 0.1
+	# A SESSION THAT HAS JUST JOINED: positions arrive one tick at a time from tick 0, which is the
+	# number the old sentinel could not tell from "not started".
+	var play: float = AssayScene.PLAYOUT_UNSTARTED
+	var ticks: Array[int] = []
+	for tick in 8:
+		ticks.append(tick)
+		var cursor := AssayScene.playout_at(play, ticks, step, step, delay)
+		play = float(cursor["play_tick"])
+		var deep := float(ticks[ticks.size() - 1] - ticks[0])
+		if deep < delay:
+			if play != AssayScene.PLAYOUT_UNSTARTED:
+				return _fail(("the clock started at tick %.3f with only %.1f ticks of history, and "
+						+ "the buffer it is meant to run behind is %.1f. A clock that starts with no "
+						+ "buffer starves on its next frame") % [play, deep, delay])
+			if bool(cursor["starved"]):
+				return _fail("a clock that has not started yet reported STARVED, which is a stalled"
+						+ " host and a different thing from a buffer still filling")
+			continue
+		if play < 0.0:
+			return _fail("the clock is still unstarted with %.1f ticks of history and a %.1f delay"
+					% [deep, delay])
+		if play > float(ticks[ticks.size() - 1]) + 0.001:
+			return _fail("the clock reads %.3f and the newest position held is tick %d: it is"
+					+ " drawing toward a position the sim has not produced"
+					% [play, ticks[ticks.size() - 1]])
+	# A FRAME LONGER THAN THE WHOLE BUFFER, which is a hitch on a loaded machine and the one case
+	# where "clamp it" is the whole of the safety.
+	var hitched := AssayScene.playout_at(play, ticks, 5.0, step, delay)
+	if float(hitched["play_tick"]) > float(ticks[ticks.size() - 1]) + 0.001:
+		return _fail(("a 5 s frame carried the clock to %.3f past a newest tick of %d: the body is "
+				+ "drawn where the sim has not been") % [hitched["play_tick"],
+				ticks[ticks.size() - 1]])
+	if not bool(hitched["starved"]):
+		return _fail("a frame that outran the whole buffer did not report STARVED, so a stalled host"
+				+ " is indistinguishable from a healthy one")
+	return true
+
+
 ## **A WALKING BODY'S OWN RECTANGLE MOVES WITH IT, SUB-TILE** (ASSA-197, and ASSA-200 is the
 ## measurement).
 ##
