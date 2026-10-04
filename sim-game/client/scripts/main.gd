@@ -237,6 +237,17 @@ var _world := AssayWorldLayer.new()
 var _view_toggle := Button.new()
 var _close_up := true
 
+## WHAT THE MAP SAYS WHILE THERE IS NO WORLD ON IT (Maren's ruling 1, ASSA-127). Built in
+## `_build_ui`, worded by `AssayHud.empty_map_line`, shown exactly when `_world.view` is empty.
+##
+## A LABEL AND NOT A `draw_string` IN `world_layer.gd`, on purpose. That file's own docstring says
+## everything checkable is arithmetic in `AssayScene` and what is left there is a blit loop with no
+## judgement in it to get wrong -- a string drawn in `_draw` would put the one sentence a stranger
+## reads into the one file no test can question. A `Label` placed at absolute coordinates can be
+## asked for its text, its rect and its alignment with no layout pass at all, which is what lets
+## `test_main_screen.gd` hold this to the map's rectangle headless.
+var _map_note: Label = null
+
 ## WHERE EVERY PLAYER WAS ONE TICK AGO, AND WHICH WAY THAT POINTED.
 ##
 ## MAREN'S MOTION RULING (ASSA-119, 18:07 UTC) IS WHY THIS EXISTS, and it is the sharpest statement
@@ -320,8 +331,12 @@ func _ready() -> void:
 	# **TWO DOORS, SOLO FIRST** (Maren, ASSA-113). This used to read "enter a host address and join",
 	# which sent a stranger to the one door that needs information they do not have -- and it survived
 	# the whole of ASSA-106 because I never re-read the item between the branch and the PR.
-	_say("Press Play solo to start your own world, or enter a host address to join someone.",
-			AssayHud.Say.IDLE)
+	#
+	# **THE SENTENCE MOVED, IT DID NOT GO** (Maren's ruling 1, ASSA-127). It is the same words, now in
+	# `AssayHud.empty_map_line` on the map itself, because here it was ~1.5% of the window sitting
+	# above a silent 59%. One sentence in one place, and the status line goes back to being what it is
+	# everywhere else in this client: what just happened, not what to do.
+	_say("", AssayHud.Say.IDLE)
 
 
 ## WHETHER `_ready` HAS ALREADY RUN. `tests/test_main_screen.gd` and `tools/button_session.gd` both
@@ -345,6 +360,22 @@ func _build_ui() -> void:
 	_world.position = world.position
 	_world.size = world.size
 	add_child(_world)
+	# **THE BIGGEST SURFACE IN THE GAME NAMES WHICH KIND OF EMPTY IT IS** (Maren, ASSA-127). Over the
+	# world's own rectangle and added straight after it, so it covers exactly the surface it explains
+	# and draws on top of the background `_world` paints.
+	#
+	# `MOUSE_FILTER_IGNORE` IS NOT DECORATION: this control spans 912x600 of the window, and the map
+	# is clicked through `_unhandled_input`. A label that answered the mouse would swallow every
+	# click on the world and the failure would be "Play solo does nothing", nowhere near this line.
+	_map_note = _note(AssayHud.empty_map_line())
+	_map_note.position = world.position
+	_map_note.size = world.size
+	_map_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_map_note.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_map_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_map_note.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_map_note)
+
 	_view_toggle.position = world.end - Vector2(152.0, 36.0)
 	_view_toggle.custom_minimum_size = Vector2(144.0, 0.0)
 	_view_toggle.tooltip_text = ("the close-up follows you at 32px a tile; the whole world is the"
@@ -1818,10 +1849,22 @@ func _clear(box: Node) -> void:
 ## one that matters for correctness: the suite and every probe run inside `SceneTree._initialize`
 ## where `_process` never fires, so a camera that only existed on a frame would mean no headless test
 ## could ever click the scene. `_process` adds the frames between ticks, which is only ever motion.
+## THE MAP'S NOTE IS SHOWN EXACTLY WHEN THE MAP HAS NOTHING ON IT, read off `_world.view` rather
+## than off a second idea of "is there a world yet".
+##
+## `world_layer.gd` already states that an empty `view` IS the no-world state, and it is the thing
+## that decides whether anything is painted. Asking `_sim.running()` here instead would be a second
+## condition for one fact, and the frame where the two disagree is a sentence over a drawn world or
+## a bare rectangle with no sentence -- both of which look like the bug this item is about.
+func _refresh_map_note() -> void:
+	_map_note.visible = _world.view.is_empty()
+
+
 func _refresh_world() -> void:
 	if not _sim.running():
 		_world.view = {}
 		_world.me = null
+		_refresh_map_note()
 		_world.queue_redraw()
 		return
 	if _manifest.is_empty():
@@ -1869,6 +1912,7 @@ func _refresh_world() -> void:
 		"seconds": now,
 	}
 	_world.me = me
+	_refresh_map_note()
 	_world.queue_redraw()
 
 

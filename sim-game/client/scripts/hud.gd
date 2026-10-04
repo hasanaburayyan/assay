@@ -315,6 +315,25 @@ static func quiet_cursor_line() -> String:
 	return "no world yet — this reads the tile under your mouse"
 
 
+## WHAT THE MAP ITSELF SAYS BEFORE THERE IS A WORLD (Maren's ruling 1, ASSA-127).
+##
+## **THE RULE WAS KEPT EVERYWHERE IT WAS CHEAP AND DROPPED WHERE IT WAS BIG.** Six surfaces in the
+## HUD column name which kind of empty they are, [quiet_cursor_line] among them. The seventh is
+## **59% of the window**, measured twice at 543,180 px of one colour, and said nothing at all -- and
+## it is the only one a stranger looks at first. A dark rectangle filling a freshly downloaded window
+## is also what a failed launch looks like: two engineers here each spent a wake-up believing this
+## window never opened.
+##
+## **THE WORDS ARE THE ONES THAT WERE ALREADY ON SCREEN**, per her "keep the existing words". They
+## were in the status line at (24,54) -- ~1.5% of the window, above the thing being explained. This
+## is one sentence in one place, and that place is where a stranger is already looking.
+##
+## IT IS NOT A HEADING'S NOTE, so it carries both doors rather than the shape the six use: there is
+## nothing above it to name what it would contain.
+static func empty_map_line() -> String:
+	return "Press Play solo to start your own world, or enter a host address to join someone."
+
+
 ## EVERY VERB A STACK AFFORDS, as descriptors for the row's buttons: `{label, verb, ...}`.
 ##
 ## **WHAT YOU HAVE AND WHERE IT CAN GO -- NEVER WHAT IT MAKES** (ASSA-86, Maren's ruling). A row
