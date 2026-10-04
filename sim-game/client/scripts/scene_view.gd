@@ -40,6 +40,30 @@ const TILE_PX := 32.0
 const FLOOR := 0
 const STANDING := 1
 
+## HOW FAR BEHIND THE NEWEST PRODUCED POSITION THE PLAYOUT CLOCK RUNS, in ticks (ASSA-197).
+##
+## THIS IS THE ONE NUMBER THAT COSTS SOMETHING. Every tick of buffer is 100 ms of latency on your own
+## body, and ASSA-197 box 5 caps the ADDED latency at 250 ms. It also buys the only protection
+## against a late bundle: with no buffer, any gap longer than a frame starves the clock and the body
+## stops dead. Measured on this Mac the host's bundles land in pairs with p95 gaps of ~257 ms, so a
+## buffer under two ticks starves on a normal frame.
+##
+## **2.5 IS MEASURED AND THE MEASUREMENT IS THE ARGUMENT.** At 2.0 the clock starved 9 to 13 times in
+## a six-second walk -- each starve is a freeze of up to 140 ms and then a catch-up -- and 64-76% of
+## moving frames landed inside the bar. At 2.5, on the same machine minutes later, it starved ONCE in
+## 184 frames and 97.3% were inside. What it costs is stated rather than hidden: `PLAYOUT_DELAY x
+## tick length` of latency on your own body, 250 ms here, paid because this client may not predict
+## (ASSA-119). ASSA-197 box 5 caps added latency at 250 ms, so this sits exactly ON the cap and not
+## under it; whether that passes is Wren's call and not a thing to round quietly.
+const PLAYOUT_DELAY := 2.5
+## WHAT A CLOCK THAT HAS NOT STARTED READS, and it is negative rather than 0.0 because 0.0 is a real
+## sim tick -- the first one of every fresh world. See `playout_at`.
+const PLAYOUT_UNSTARTED := -1.0
+## How hard the clock leans on its error (per tick of error, as a fraction of rate) and the most it
+## may ever bend. 10% of 10 tiles/s is 1 tile/s, well inside the bar the board's complaint set.
+const PLAYOUT_CATCHUP := 0.5
+const PLAYOUT_NUDGE := 0.1
+
 ## THE SHORTEST A PLAYED-OUT STEP MAY BE, in seconds. See `playout`.
 ##
 ## A FLOOR AND NOT A CHOICE OF RATE: the rate is measured from the bundles that arrive, because
@@ -61,8 +85,9 @@ const MIN_PLAYOUT_STEP := 0.01
 ## DOWN, away from the panel; `at.x` is safe because the panel owns a whole band, not a corner.
 ##
 ## **AND WHY A CONSTANT BOUND IS THE ONLY MECHANISM THAT KEEPS THE CENTRING** -- this is a derivation
-## and not a taste call, so it is written down. `_standing` floors a body to a tile; the camera does
-## not. For a body in row N the camera may sit no lower than `N * TILE_PX - overhang - ceiling`, so a
+## and not a taste call, so it is written down. For a body in row N the camera may sit no lower than
+## `N * TILE_PX - overhang - ceiling` (the row is fractional since ASSA-197, which only makes the
+## bound tighter at every point between two rows rather than changing its shape), so a
 ## bound that tracks N binds through every one of rows 0..7, pins the body at the ceiling and jerks
 ## the WORLD 32px per step -- the exact defect the camera exists to prevent (`main.gd`, "the camera is
 ## on your drawn position"). A bound at the WORST row instead (`headroom`, from `north_headroom`)
@@ -165,6 +190,100 @@ static func facing_of(step: Vector2i) -> String:
 ##
 ## `drawing` is false before the first position has ever been promoted, and then the first one is
 ## taken immediately: a world that has just been joined draws the player where the Welcome put them.
+## **HOW MANY TICKS A SECOND THE HOST IS ACTUALLY SENDING**, from the times its bundles landed.
+##
+## **A WINDOWED MEAN AND NOT AN EMA, AND THAT CHANGE IS HALF OF ASSA-197.** The old estimator was
+## `lerpf(gap, measured, 0.25)` over the gap between consecutive arrivals -- and measured on a real
+## window those gaps are 0.17 ms, 0.17 ms, 257 ms, 386 ms, because the client drains its socket once
+## a frame and at 17 fps that means two bundles in one frame and none in the next. An EMA over that
+## series swings by a factor of ten, and it was the DENOMINATOR of the drawn fraction: the segment
+## length itself jittered, so the body sprinted and stalled with the renderer's own frame rate.
+##
+## A mean over the whole window is immune to the pairing (two bundles 0.17 ms apart still advance the
+## tick count by two) and still follows a real rate change in a second or so, which is what
+## `sim-relay --tps N` needs. The fallback is for the first two arrivals, where there is no rate yet.
+static func playout_step(arrivals: Array[float], fallback: float) -> float:
+	if arrivals.size() < 3:
+		return fallback
+	var span := arrivals[arrivals.size() - 1] - arrivals[0]
+	if span <= 0.0:
+		return fallback
+	return clampf(span / float(arrivals.size() - 1), MIN_PLAYOUT_STEP, 1.0)
+
+
+## **WHERE THE PLAYOUT CLOCK IS NOW, IN SIM TICKS** (ASSA-197). The board, twice: *"the lerp is not
+## correct and its very jumpy"*. Measured before this existed: a body whose true speed is 10 tiles/s
+## drawn at anything from 0.00 to 55.76 tiles/s, with 10-19% of moving frames inside +/-25% of true.
+##
+## **THE OLD CLOCK WAS MADE OF ARRIVALS AND THIS ONE IS MADE OF TIME.** `playout` (ASSA-148, above,
+## now gone from `main.gd`) advanced one whole segment per arrival and floored each segment at its
+## own data's arrival time. That never teleports -- which was ASSA-148's bar and it passed -- but a
+## segment that gets its full step of time in 60 ms of frames and then waits 200 ms for the next
+## bundle draws a tile's worth of movement and then nothing. Fast, stop, fast, stop. Jumpy is the
+## right word and it is what the arithmetic has to answer for, not the tween.
+##
+## So the drawn position is a function of TIME: `play_tick` advances by `dt / step` every frame, and
+## the body is drawn between the two produced positions that bracket it. Frame length stops mattering
+## -- a 130 ms frame moves the body 1.3 tiles and a 16 ms frame 0.16, which is one constant speed
+## sampled at two rates.
+##
+## **IT STAYS A FIXED DELAY BEHIND THE NEWEST PRODUCED POSITION**, `delay` ticks of buffer, so a late
+## bundle is absorbed by the buffer instead of by the body's legs. The clock is nudged toward that
+## delay by at most `PLAYOUT_NUDGE` -- a few per cent of rate, never a jump -- because a clock that
+## corrected itself in one frame would be the sprint it exists to remove.
+##
+## **STILL HISTORY, NEVER PREDICTION (ASSA-119, Maren's ruling, which does not bend).** `play_tick`
+## is clamped to the newest tick we hold, so the drawn position is always between two positions the
+## sim produced. When the buffer runs dry the body HOLDS on the newest one and `starved` says so --
+## that is a stalled host, and the only honest thing to draw is where the player really is.
+##
+## `ticks` is the sim's own tick number for each held position, oldest first, so a dropped position
+## is interpolated ACROSS rather than sprinted through: two tick-times for a two-tick segment.
+static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: float,
+		delay: float) -> Dictionary:
+	if ticks.is_empty():
+		return {"play_tick": play_tick, "index": -1, "part": 1.0, "starved": true, "rate": 1.0}
+	var newest := float(ticks[ticks.size() - 1])
+	var oldest := float(ticks[0])
+	var at := play_tick
+	var rate := 1.0
+	if at < 0.0:
+		# **THE CLOCK DOES NOT START UNTIL THE BUFFER IS `delay` TICKS DEEP**, and getting this wrong
+		# is what a trace of a real walk caught (ASSA-197, `tools/playout_trace.gd`). This read
+		# `at = maxf(newest - delay, oldest)`, so with one position held it started the clock AT the
+		# newest -- zero buffer, exactly what the sentence below it forbids -- and the only way back
+		# is `PLAYOUT_NUDGE`, 10% of rate, which needs 25 ticks to win 2.5 back. Measured before the
+		# fix: the clock was `starved` on 4 of the first 12 ticks of a walk, each one a frame where
+		# the body held still because `_pending` had been drained to a single entry. Maren's bar for
+		# this item is ZERO dry frames.
+		#
+		# So while the buffer is shallow the clock WAITS: the body is drawn on the oldest position
+		# held, the sim runs ahead, and nothing moves until there is `delay` of history to play out.
+		# That costs a quarter of a second of standing still at the start of a session and buys a
+		# buffer the rest of the session spends.
+		if newest - oldest < delay:
+			return {"play_tick": PLAYOUT_UNSTARTED, "index": 0, "part": 0.0,
+					"starved": false, "rate": 1.0}
+		at = newest - delay
+	else:
+		# The error is in ticks and the correction is in rate. `PLAYOUT_CATCHUP` decides how hard we
+		# lean on it and `PLAYOUT_NUDGE` caps it, so the worst speed error this clock can introduce
+		# is a few per cent -- against the +/-25% the bar allows.
+		rate = clampf(1.0 + (newest - delay - at) * PLAYOUT_CATCHUP,
+				1.0 - PLAYOUT_NUDGE, 1.0 + PLAYOUT_NUDGE)
+		at += dt / maxf(step, MIN_PLAYOUT_STEP) * rate
+	var starved := at > newest
+	at = clampf(at, oldest, newest)
+	var index := 0
+	while index + 1 < ticks.size() and float(ticks[index + 1]) <= at:
+		index += 1
+	var part := 1.0
+	if index + 1 < ticks.size():
+		var span := float(ticks[index + 1] - ticks[index])
+		part = clampf((at - float(ticks[index])) / maxf(span, 1.0), 0.0, 1.0)
+	return {"play_tick": at, "index": index, "part": part, "starved": starved, "rate": rate}
+
+
 static func playout(seg_at: float, step_seconds: float, now: float, arrived: Array[float],
 		drawing: bool) -> Dictionary:
 	var step := maxf(step_seconds, MIN_PLAYOUT_STEP)
@@ -425,7 +544,7 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 	for y in range(window.position.y, window.end.y):
 		for x in range(window.position.x, window.end.x):
 			var at := Vector2i(x, y)
-			var place := _place(manifest, "ground", ground_row(manifest, at), at, origin,
+			var place := _place(manifest, "ground", ground_row(manifest, at), Vector2(at), origin,
 					Color.WHITE, seconds)
 			if not place.is_empty():
 				place["layer"] = FLOOR
@@ -437,7 +556,7 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 		var tile: Dictionary = ore[key]
 		var row := ore_row(String(tile["grade"]), bool(tile["depleted"]), at,
 				manifest)
-		var place := _place(manifest, "ore", row, at, origin,
+		var place := _place(manifest, "ore", row, Vector2(at), origin,
 				AssayHud.species_tint(int(tile["species"])), seconds)
 		if not place.is_empty():
 			place["layer"] = FLOOR
@@ -452,7 +571,7 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 	var pad := _standing(manifest, "spawn", "pad", Vector2(view["spawn"]),
 			Color.WHITE, true)
 	if not pad.is_empty():
-		var place := _place(manifest, "spawn", "pad", pad["tile"], origin, pad["tint"], seconds)
+		var place := _place(manifest, "spawn", "pad", pad["corner"], origin, pad["tint"], seconds)
 		if not place.is_empty():
 			place["layer"] = FLOOR
 			out.append(place)
@@ -504,7 +623,9 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 			# species -- and that put a fire in a channel the species owns. The lit state is now
 			# a SECOND placement below, so the row drawn here is the same whether it burns or not.
 			"row": "body",
-			"tile": at,
+			# A WHOLE NUMBER, and it must stay one: a building's position is a rules fact on the
+			# tile grid. Only a body that moves between ticks is ever drawn off it (`_place`).
+			"corner": Vector2(at),
 			# THE SPECIES TINT THE ITEM WORE IN YOUR PACK (Maren's ruling 2 on ASSA-131): "the thing
 			# you placed and the thing standing there are one object and must read as one". I had
 			# this as `Color.WHITE` and was wrong -- the sheets are authored species-neutral on
@@ -532,7 +653,7 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 			var light := light_row(manifest, kind, "body")
 			if light != "":
 				standing.append({
-					"asset": kind, "row": light, "tile": at, "tint": Color.WHITE,
+					"asset": kind, "row": light, "corner": Vector2(at), "tint": Color.WHITE,
 					"bottom": float(at.y) + float(foot.y), "above": 1,
 				})
 
@@ -560,7 +681,7 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 			out.append(entry)
 			continue
 		var place := _place(manifest, String(entry["asset"]), String(entry["row"]),
-				entry["tile"], origin, entry["tint"], seconds)
+				entry["corner"], origin, entry["tint"], seconds)
 		if not place.is_empty():
 			place["layer"] = STANDING
 			out.append(place)
@@ -615,17 +736,36 @@ static func player_ceiling(manifest: Dictionary, view: Vector2) -> float:
 	# HEADROOM 0.0, AND THAT IS NOT A DEFAULT I AM SHRUGGING AT (ASSA-184). `at` is the middle of a
 	# 1000x1000 world, where no bound of any sign binds -- and it must stay that way, because
 	# `north_headroom` is derived from THIS answer and a camera that read it back would be circular.
-	var place := _place(manifest, "player", player_row("", false), Vector2i(at.floor()),
+	var place := _place(manifest, "player", player_row("", false), at,
 			camera_origin(at, Vector2i(1000, 1000), view, 0.0), Color.WHITE, 0.0)
 	if place.is_empty():
 		return -1.0
-	# MINUS ONE WHOLE TILE, AND THAT TERM IS THE DEFECT A PANEL SIZED OFF ONE FRAME WOULD HAVE.
-	# `_standing` floors a body's fractional position to a tile and the camera does not floor, so
-	# between `at.y = N` and `at.y = N + 1` the camera descends 32px while the sprite's tile stays
-	# put: the body climbs a whole tile up the window and then drops back as the floor catches up.
-	# The highest it reaches is the limit at `frac -> 1`, which is never attained -- so a panel that
-	# ends exactly here touches the body's rectangle at worst and never overlaps it.
-	return (place["dest"] as Rect2).position.y - TILE_PX
+	# **ONE FRAME IS NOW THE WHOLE ANSWER, and until ASSA-197 it was a whole tile short of it.** This
+	# read `- TILE_PX`, and that term was not slack: `_standing` floored a body's fractional position
+	# to a tile while the camera did not, so between `at.y = N` and `at.y = N + 1` the camera
+	# descended 32 px with the sprite's tile standing still and the body climbed a whole tile up the
+	# window before dropping back. A panel sized off one frame would have been overlapped by 32 px of
+	# body; the term bought exactly that back.
+	#
+	# The floor is gone (`_place` takes a fractional corner), so `dest.y` is linear in `at.y` and
+	# `camera_origin` subtracts the same term: under a CENTRING camera this measurement is exact for
+	# every row and every fraction of a row. Two tests in `test_scene_view.gd` said so before this
+	# comment did -- `..._is_the_highest_a_body_is_ever_drawn` went red on the 32 px of room nothing
+	# used, and `test_the_north_edge_rows_...` went red because the slack made `north_headroom` 32 px
+	# too generous and the north clamp then bound at row 1.25, pinning the body and jerking the world
+	# a tile per step.
+	#
+	# **IT IS WORTH ONE MORE LINE OF THE EVENT LOG, measured on the real 912x600 map**: ceiling
+	# 220 -> 252 px, `north_headroom` 252 -> 284, `AssayHud.log_lines_that_fit` 8 -> 9 of 14 at
+	# today's 22 px pitch (`tools/ceiling_numbers.gd` prints all four). So the board's "logs are hard
+	# on the eyes" gets a little better out of a motion fix rather than out of a layout change.
+	#
+	# WHAT THAT COSTS, SAID PLAINLY: the panel now ends exactly where the player's sprite begins
+	# instead of a tile above it, so a full log is flush with your head rather than clear of it. That
+	# is a taste call and it is no longer hidden inside a geometric bound -- air between the two
+	# belongs in the `chrome` term `log_lines_that_fit` already takes, where whoever sizes the panel
+	# can see it. This function answers only where the body is.
+	return (place["dest"] as Rect2).position.y
 
 
 ## HOW FAR ABOVE THE WORLD THE CAMERA MAY GO so that the north clamp cannot slide a body under the
@@ -647,7 +787,7 @@ static func north_headroom(manifest: Dictionary, view: Vector2) -> float:
 	var ceiling := player_ceiling(manifest, view)
 	if ceiling < 0.0:
 		return 0.0
-	var place := _place(manifest, "player", player_row("", false), Vector2i.ZERO, Vector2.ZERO,
+	var place := _place(manifest, "player", player_row("", false), Vector2.ZERO, Vector2.ZERO,
 			Color.WHITE, 0.0)
 	if place.is_empty():
 		return 0.0
@@ -733,7 +873,17 @@ static func _composite_place(manifest: Dictionary, parts: Array, tile: Vector2i,
 ## makes its sprite disappear, and nothing draws the wrong frame. The scale is DERIVED -- authored
 ## pixels per tile come out of the manifest (`frame_px / tiles`) -- so a re-render at a different
 ## authoring size still draws a 32 px tile instead of silently changing the zoom.
-static func _place(manifest: Dictionary, asset: String, row: String, tile: Vector2i,
+##
+## **`corner` IS IN TILES AND MAY BE FRACTIONAL, and that is the whole of ASSA-197's second half.**
+## It used to be a `Vector2i`, so every body on the scene was drawn on a whole-tile grid while the
+## camera slid continuously under it. Maren measured what that does to a walking player
+## (`tools/maren_snap_probe.gd`, ASSA-200): the body's own rectangle saw-tooths **32 px
+## peak-to-peak at the tick rate** against a uniformly sliding ground, and separates from its own
+## camera-locked foot mark by 34.2 px -- more than a whole tile, ten times a second. `main.gd` was
+## lerping the position and this function floored the lerp away before anything reached the screen.
+## A tile that really is on the grid (ground, ore, a building) passes a whole number and is drawn
+## exactly where it always was.
+static func _place(manifest: Dictionary, asset: String, row: String, corner: Vector2,
 		origin: Vector2, tint: Color, seconds: float) -> Dictionary:
 	if not manifest.has(asset):
 		return {}
@@ -760,7 +910,7 @@ static func _place(manifest: Dictionary, asset: String, row: String, tile: Vecto
 		"row": row,
 		"frame": frame,
 		"src": Rect2(Vector2(float(frame) * size.x, float(index) * size.y), size),
-		"dest": Rect2(Vector2(tile) * TILE_PX - offset - origin, size * scale),
+		"dest": Rect2(corner * TILE_PX - offset - origin, size * scale),
 		"tint": tint,
 	}
 
@@ -787,7 +937,9 @@ static func _standing(manifest: Dictionary, asset: String, row: String, at: Vect
 	return {
 		"asset": asset,
 		"row": row,
-		"tile": Vector2i(corner.floor()),
+		# **NOT FLOORED (ASSA-197).** This read `Vector2i(corner.floor())`, which threw away the
+		# fractional tile a walking body spends nine frames out of ten in; see `_place`.
+		"corner": corner,
 		"tint": tint,
 		"bottom": at.y + span.y,
 	}
