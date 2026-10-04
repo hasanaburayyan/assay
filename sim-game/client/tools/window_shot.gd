@@ -74,7 +74,7 @@ const TICKS_PER_FRAME := 32
 const DEFAULT_SEED := "777042"
 
 enum Phase { SETTLE_JOIN, SHOOT_JOIN, PLAY, SETTLE_PACK, SHOOT_PACK, SETTLE_PLAY, SHOOT_PLAY,
-		SETTLE_MENUS, SHOOT_MENUS, DONE }
+		SETTLE_FOLD, MEASURE_CONTROLS, SETTLE_MENUS, SHOOT_MENUS, DONE }
 ## What `_play_frames` did with its last tick.
 enum Ticked { AGAIN, OVER, DEAD }
 
@@ -100,6 +100,10 @@ var _left := 0
 ## High-water mark of pack rows + crafting rows, and the tick it was reached on. See `04-pack.png`.
 var _rows_best := 0
 var _rows_tick := -1
+## WHERE EVERY CONTROL STOOD BEFORE THE LOG WAS OPENED (ASSA-147). Keyed by node path so two buttons
+## reading "Craft" cannot be mistaken for one, and taken with the crafting menu already folded so the
+## only difference between this and the after reading is the log. See `_controls_report`.
+var _controls_before := {}
 var _done := false
 
 
@@ -156,7 +160,19 @@ func _process(_delta: float) -> bool:
 			# THE OTHER STATE, and it has to be the OPPOSITE of whatever the loop left behind.
 			# `AssayButtonPlay` folds the log away and opens the menu as it plays, so asking for
 			# that state again photographs the same screen twice.
+			#
+			# **THE TWO PRESSES ARE NO LONGER ONE STEP, AND THAT IS ASSA-147'S VERDICT NEEDING AN
+			# HONEST BASELINE.** Folding the crafting menu legitimately moves every control below it;
+			# opening the log must move none. Pressed together, the only measurement available would
+			# be the sum of the two, which would read as a moved control whatever the log did. So the
+			# menu folds here, the controls are measured once that has settled, and only then does the
+			# log open.
 			_screen._show_make(false)
+			_phase = Phase.SETTLE_FOLD
+		Phase.SETTLE_FOLD:
+			_settle(Phase.MEASURE_CONTROLS)
+		Phase.MEASURE_CONTROLS:
+			_controls_before = _controls_now()
 			_screen._show_log(true)
 			_phase = Phase.SETTLE_MENUS
 		Phase.SETTLE_MENUS:
@@ -338,12 +354,18 @@ func _shoot(name: String, subjects: PackedStringArray, guard_repeat := true) -> 
 			_missing[name] = said
 
 
-## THE SECTIONS OF THE HUD COLUMN, by the name a person would use for them. One list, because the
-## fold report and the subject check have to be asking about the same thing.
+## THE SECTIONS OF THE SCREEN, by the name a person would use for them. One list, because the fold
+## report and the subject check have to be asking about the same thing.
+##
+## SIX OF THEM ARE THE HUD COLUMN AND THE SEVENTH IS NOT ANY MORE (ASSA-147): `event log` is
+## `_log_box`, the panel over the map, and it is named here as the SURFACE rather than as the lines
+## inside it. That is the node a player sees and the node `_show_log` raises, so "the log is on
+## screen" is a question about it. Asking `_log` instead would be asking a child whose own rect is
+## honest about a panel that may not be up.
 func _sections() -> Array:
 	return [["crafting menu", _screen._make], ["you", _screen._carrying], ["do", _screen._actions],
 			["bench", _screen._bench], ["rocks", _screen._species], ["cursor", _screen._cursor],
-			["event log", _screen._log]]
+			["event log", _screen._log_box]]
 
 
 func _section(named: String) -> Control:
@@ -375,7 +397,15 @@ func _frame_for(control: Control) -> Rect2:
 	return frame
 
 
-## `visible`, `in the window` and `a person can see it` are three questions. This is the third.
+## WHERE A CONTROL STANDS: `hidden`, `OFF SCREEN`, `CLIPPED` or `on screen`.
+##
+## **IT ASKS THE NODE'S OWN `visible` FLAG, NOT `is_visible_in_tree`, AND THE DIFFERENCE MATTERS FOR
+## EXACTLY ONE READER.** Every section this reports on is a direct child of the column or of the
+## screen, so its own flag and its tree visibility agree. The controls INSIDE a folded container do
+## not -- a Craft button in a hidden crafting menu is `visible` with nothing on screen -- so
+## `_controls_now` asks the stronger question for itself rather than widening this one, which three
+## verdicts in this file already depend on. The docstring used to claim this answered "a person can
+## see it"; it answers "is this node's rect inside the rect it could be seen in".
 func _standing(control: Control) -> String:
 	if not control.visible:
 		return "hidden"
@@ -435,18 +465,25 @@ func _fold_report() -> void:
 ## IT ASKS `_frame_for` AND NOT THE SCROLL BOX. Marlow and I wrote the same clip-rect fix within the
 ## hour (ASSA-123, #165); theirs walks every clipping ancestor instead of naming one node, so a second
 ## clipping container one day is already covered and this verdict inherits that for free.
+##
+## **SINCE ASSA-147 THE LOG IS NOT IN THE SCROLL BOX AT ALL**, so there is no scroll offset to read
+## back and the heading cannot be scrolled anywhere. The two properties survive unchanged -- the
+## heading has to be on screen, and the newest line has to be whole -- and a third is added, because
+## the log is now a panel over the map and a panel that outgrew its region would cover the HUD column
+## or run off the top of the window. That bound is measured here rather than written into a constant.
 func _reveal_report() -> bool:
-	var scroll: ScrollContainer = _screen._scroll as ScrollContainer
 	var heading: Label = _screen._log_heading as Label
-	if scroll == null or heading == null:
-		_finish(false, "no scroll box or no log heading on the screen, so the reveal cannot be judged")
+	var box: Control = _screen._log_box as Control
+	if box == null or heading == null:
+		_finish(false, "no log panel or no log heading on the screen, so the reveal cannot be judged")
 		return false
 	var clip := _frame_for(heading)
-	var bar := scroll.get_v_scroll_bar()
 	var head := heading.get_global_rect()
 	var body := (_screen._log as Control).get_global_rect()
-	print("  reveal: scrolled to %d of %d; seen-in y %d..%d; heading y %d..%d; body top y %d"
-			% [scroll.scroll_vertical, int(bar.max_value - bar.page), clip.position.y, clip.end.y,
+	var panel := box.get_global_rect()
+	var map := AssayHud.world_rect()
+	print("  reveal: panel %s %s in the map's %s %s; seen-in y %d..%d; heading y %d..%d; body top y %d"
+			% [panel.position, panel.size, map.position, map.size, clip.position.y, clip.end.y,
 			head.position.y, head.end.y, body.position.y])
 	if not clip.encloses(head):
 		_finish(false, ("the log's own heading is at y %d..%d, outside the rect it can be seen in "
@@ -457,7 +494,99 @@ func _reveal_report() -> bool:
 		_finish(false, ("the log's first line starts at y %d, above the y %d it can be seen from, so "
 				+ "the NEWEST line is the one clipped in half") % [body.position.y, clip.position.y])
 		return false
+	# THE PANEL'S OWN BOUND, GROWN FROM ITS CONTENT AND THEREFORE NOT GUARANTEED BY ARITHMETIC. The
+	# height is whatever fourteen lines need at this font and width -- 350-odd px of the 600 the map
+	# gives it when it was measured -- so a bigger font, a longer line or a higher `LOG_LINES` is what
+	# would push it out, and this is the line that would say so instead of a reader noticing.
+	if not map.grow(1.0).encloses(panel):
+		_finish(false, ("the log's panel is %s %s, outside the map's %s %s: it has outgrown the "
+				+ "surface it is drawn over, so it is covering the HUD column or the window's edge")
+				% [panel.position, panel.size, map.position, map.size])
+		return false
 	return true
+
+
+## **DOES OPENING THE EVENT LOG TAKE A CONTROL OFF THE SCREEN** (ASSA-147, Maren's box 4 in the shape
+## she wrote it: *a test fails if any control leaves the screen when the log is toggled*).
+##
+## WHAT IT IS ABOUT, measured on this tool before the fix: at seed 14247 tick 519 with the log open,
+## `you` was at y -1046..-894, `do` (Mine, Stop, Assay) at y -852..-802 and `bench` at y -690..-549.
+## The log was the last section of a 2023px column in a 650px scroll box, so revealing it scrolled
+## 1120px to the bottom and took every control with it.
+##
+## TWO FAILURES, AND THE SECOND IS THE STRICTER ONE ON PURPOSE. A control whose standing gets WORSE
+## is Maren's defect exactly. A control that merely MOVED is the mechanism of it: on this seed the
+## column happens to be long enough that a scroll carries the controls clean off, but on a shorter one
+## the same bug would move them a little and read as green. So a move fails too, and the sentence says
+## which of the two it is -- a deliberate future design that moves a control on this toggle should
+## have to come and change this line.
+##
+## IT CANNOT PASS VACUOUSLY: an empty before-set is a failure, because a run that found no controls
+## would otherwise be the quietest green in this file.
+func _controls_report() -> bool:
+	var after := _controls_now()
+	print("  controls: %d before the log opened, %d after" % [_controls_before.size(), after.size()])
+	if _controls_before.is_empty():
+		_finish(false, "no controls were measured before the log opened, so 'the log moves no "
+				+ "control' is a claim about nothing")
+		return false
+	var worse := PackedStringArray()
+	var moved := PackedStringArray()
+	for key in _controls_before:
+		var was: Dictionary = _controls_before[key]
+		if not after.has(key):
+			worse.append("%s is gone from the screen entirely" % was["said"])
+			continue
+		var now: Dictionary = after[key]
+		if was["where"] == "on screen" and now["where"] != "on screen":
+			worse.append("%s was on screen and is now %s (y %d..%d, was y %d..%d)"
+					% [was["said"], now["where"], (now["rect"] as Rect2).position.y,
+					(now["rect"] as Rect2).end.y, (was["rect"] as Rect2).position.y,
+					(was["rect"] as Rect2).end.y])
+		elif not (was["rect"] as Rect2).is_equal_approx(now["rect"]):
+			moved.append("%s moved from y %d to y %d" % [was["said"],
+					(was["rect"] as Rect2).position.y, (now["rect"] as Rect2).position.y])
+	for key in _controls_before:
+		var was: Dictionary = _controls_before[key]
+		print("    %-28s y %5d..%-5d  %s" % [was["said"], (was["rect"] as Rect2).position.y,
+				(was["rect"] as Rect2).end.y, was["where"]])
+	if not worse.is_empty():
+		_finish(false, "opening the event log took controls off the screen: %s"
+				% "; ".join(worse))
+		return false
+	if not moved.is_empty():
+		_finish(false, "opening the event log moved controls that stayed on screen: %s. They are "
+				% "; ".join(moved) + "reachable, but the log is not allowed to move them at all")
+		return false
+	return true
+
+
+## EVERY CONTROL ON THE SCREEN, WHERE IT STANDS, AND A NAME A PERSON CAN READ.
+##
+## `find_children` RATHER THAN A WALK OF MY OWN OR A LIST OF THE ONES I REMEMBER: the buttons are
+## built in four different places (the chrome, the `do` section, the bench rows, the crafting rows)
+## and a hand-written list would be a check that stops covering whatever is added next.
+##
+## KEYED BY PATH, LABELLED BY TEXT. Several rows read "Craft" and two read "Take", so the text cannot
+## be the key; the path cannot be the label, because `@VBoxContainer@31/@Button@47` tells a reader
+## nothing about which button left the screen.
+func _controls_now() -> Dictionary:
+	var found := {}
+	for node in _screen.find_children("*", "Button", true, false):
+		var button := node as Button
+		var key := String(_screen.get_path_to(button))
+		# THE STRONGER QUESTION THAN `_standing`'S, and this is the one reader that needs it: a
+		# button in a FOLDED container carries `visible` true over a container nobody can see, so its
+		# own flag would call a hidden row "on screen". `is_visible_in_tree` is only meaningful
+		# because this tool has a real window -- under `tests/run_tests.gd` it is false for
+		# everything, which is half of why this verdict cannot live in the suite.
+		var where := "hidden" if not button.is_visible_in_tree() else _standing(button)
+		found[key] = {
+			"said": "\"%s\"" % button.text if button.text != "" else "a button at %s" % key,
+			"rect": button.get_global_rect(),
+			"where": where,
+		}
+	return found
 
 
 ## WHAT WAS DRAWN FOR EACH BUILDING, AND WHERE (ASSA-138).
@@ -517,6 +646,11 @@ func _report() -> void:
 	# measurement of whether the reveal worked -- two different questions, and the second one never
 	# asked on exactly the runs where it matters most.
 	if not _reveal_report():
+		return
+	# AND THE CONTROLS, for the same reason the reveal verdict goes before the incomplete check: a
+	# shot that could not contain its subject would otherwise skip the only measurement of whether
+	# reading the log costs you your buttons.
+	if not _controls_report():
 		return
 	if not _missing.is_empty():
 		_incomplete = true
