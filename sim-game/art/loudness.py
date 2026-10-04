@@ -145,6 +145,12 @@ import sys
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Record the shipped art this sheet composites, so the committed PNG can say whether it is
+# still current (ASSA-144). BEFORE the `species_probe` import, not merely before the first
+# read in this file: that module loads `manifest.json` at ITS module level, and importing it
+# is already a read of shipped art this sheet's numbers depend on.
+import review_sources
+review_sources.start()
 from species_tints import SPECIES_TINTS
 from species_probe import DISTINCT, GRADE_ROWS, GAME, dE, dAB, lab, seen_flat
 
@@ -351,7 +357,7 @@ def sheet(loud, conf, ore_surfaces, floor_name):
             s = tile.resize((32 * scale, 32 * scale), Image.NEAREST)
             out.alpha_composite(s, (x + ox, pad + (96 - 32 * scale)))
         x += cellw + pad
-    out.save(os.path.join(REVIEW, "loudness.png"))
+    out.save(os.path.join(REVIEW, "loudness.png"), pnginfo=review_sources.png_info())
     print("\nwrote assets/review/loudness.png: the quietest and loudest ore in")
     print("the game, then every surface that beat the quiet one, each on the")
     print("real ground at 3x and at 1x. Judge it at the 1x column.")

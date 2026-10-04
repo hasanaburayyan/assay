@@ -9,7 +9,12 @@ No image is edited by hand. To change the look, edit the script and rebuild.
 art/build.py             # render everything, pack, write the contact sheet
 art/build.py ore head    # only these assets
 art/build.py --pack      # skip Blender, repack art/out
+art/build.py --contact-only   # redraw the contact sheet only; reads shipped art, never writes it
 ```
+
+**Use `--contact-only` to refresh `contact.png`.** `--pack` also does it, and
+carries the stale-cache hazard below; `--contact-only` opens shipped art
+read-only and writes exactly one file.
 
 Needs Blender 5.1+ at `/Applications/Blender.app` (or `BLENDER=/path`), and
 `uv` (the script pulls in Pillow itself). A full build takes a few minutes

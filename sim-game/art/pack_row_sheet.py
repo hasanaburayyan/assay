@@ -54,6 +54,10 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import review_sources  # noqa: E402  the shipped art this sheet composites, stamped into it
+review_sources.start()  # before the first read of shipped art (ASSA-144)
+
 HERE = Path(__file__).resolve().parent.parent
 LAYOUT = json.load(open(sys.argv[1] if len(sys.argv) > 1 else "/tmp/cove-layout99.json"))
 OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else HERE / "assets/review/pack_rows.png"
@@ -235,7 +239,7 @@ d.text((PAD, cap_h), "THE PACK, AT 1:1, EXACTLY AS THE CLIENT DRAWS IT", font=ca
        fill=(210, 210, 210))
 sheet.alpha_composite(column, (PAD, cap_h + 20))
 OUT.parent.mkdir(parents=True, exist_ok=True)
-sheet.convert("RGB").save(OUT)
+sheet.convert("RGB").save(OUT, pnginfo=review_sources.png_info())
 
 for line, total, h, a in summary:
     print("%-28s %d verbs  %dpx  cannot be first: %s" % (line, total, h, a))

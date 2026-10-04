@@ -95,6 +95,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import review_sources  # noqa: E402  the shipped art this sheet composites, stamped into it
+review_sources.start()  # before the first read -- `species_probe` reads art on import (ASSA-144)
 # The engine's sampling, the composite and the two-measure comparison, once, shared with
 # `check_icon_kinds.py` -- the CI guard on what this file measures (ASSA-111). A probe and
 # the check that enforces its finding must not be able to disagree about the pixels.
@@ -334,5 +336,5 @@ for iou, de, n, a, b in pairs[:rows_shown + 3]:
     y += 14
 
 img = img.crop((0, 0, W, min(H, y + 8)))
-img.save(OUT)
+img.save(OUT, pnginfo=review_sources.png_info())
 print("\nwrote %s (%dx%d)" % (OUT, img.width, img.height))
