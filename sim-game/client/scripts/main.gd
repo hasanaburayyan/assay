@@ -2643,9 +2643,22 @@ func _draw() -> void:
 			continue
 		var at := MARGIN + Vector2(deposit.get("center", Vector2i.ZERO) as Vector2i) * _cell
 		var radius := maxf(_cell, float(int(deposit.get("radius", 1))) * _cell)
-		var colour := AssayHud.deposit_color(int(deposit.get("species", 0)),
-				int(deposit.get("purity", 1)))
-		draw_circle(at, radius, colour)
+		# **SOLID IF YOU CAN WORK THE ROCK, AN OUTLINE IF NOTHING CAN** (ASSA-187). Three channels
+		# were already spoken for -- hue is the species, brightness is the purity, radius is the
+		# radius -- and the fact that decides whether a 40-tile walk pays had none, on the one
+		# surface whose whole job is choosing where to walk. Fill is geometry, so it is also the only
+		# answer that survives a greyscale copy of the shot, which Maren's box 3 asks for.
+		#
+		# THE DECISION IS `AssayHud.deposit_disc`'S AND NOT THIS LOOP'S, so a headless test can read
+		# it: nothing here can be asked what it painted. This function only paints what it is told,
+		# including the glyph's ink, which differs between the two states because the letter sits on
+		# a different surface in each.
+		var disc := AssayHud.deposit_disc(deposit, radius)
+		var colour: Color = disc["colour"]
+		if bool(disc["filled"]):
+			draw_circle(at, radius, colour)
+		else:
+			draw_circle(at, radius, colour, false, float(disc["stroke"]), true)
 		var symbol := String(deposit.get("symbol", ""))
 		var glyph := AssayHud.glyph_size(radius)
 		if glyph > 0 and not symbol.is_empty() and font != null:
@@ -2653,7 +2666,7 @@ func _draw() -> void:
 			# vertical nudge is the usual "half the cap height" for a baseline-drawn capital.
 			var wide := font.get_string_size(symbol, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph).x
 			draw_string(font, at + Vector2(-wide * 0.5, float(glyph) * 0.36), symbol,
-					HORIZONTAL_ALIGNMENT_LEFT, -1, glyph, AssayHud.glyph_color(colour))
+					HORIZONTAL_ALIGNMENT_LEFT, -1, glyph, disc["ink"])
 
 	# EVERY PLAYER, AT A SIZE THAT DOES NOT COME FROM THE TILE (ASSA-119 box 6, Maren's finding 1).
 	# This mark used to be two cells square, which made it 18 px on this world and would make it 36 on

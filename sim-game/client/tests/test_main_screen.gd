@@ -1002,6 +1002,55 @@ func test_the_empty_sections_say_the_in_world_kind_once_a_world_arrives() -> boo
 	return ok
 
 
+## **THE SCHEMATIC HAS THE FACT ITS DISCS ARE DRAWN FROM, ON THE REAL SCREEN** (ASSA-187).
+##
+## This is the wiring half, and it is the half that cannot be checked in `test_hud.gd`:
+## `AssayHud.deposit_disc` being right buys nothing until the list `main.gd::_draw` iterates actually
+## carries `hand_minable`, and it reads that key WITHOUT A DEFAULT on purpose. So a binding that
+## stopped sending it does not draw a wrong map, it draws NO map -- the frame aborts on the first
+## disc, and the one surface for crossing a 96x64 world goes blank. That is a failure mode worth a
+## test of its own, because the pure test above and the shot below would both survive it: the shot
+## would be of an empty rectangle and nobody would know which of fifty things did it.
+##
+## It drives the real screen into the real schematic through `_show_close_up(false)` -- the same
+## setter the (V) toggle calls -- rather than assigning `_close_up`, so the state under test is one a
+## player can reach.
+##
+## **WHAT IT CANNOT SEE, SAID PLAINLY: whether `_draw` branches on any of it.** Nothing in a headless
+## suite can read a `draw_circle`, and `--headless` has no frame to photograph. The picture is
+## `client/tools/schematic_minability_shot.gd` plus `shared/assay/assa187_measure.py`, run with a real
+## window and measured in greyscale, and that is the evidence for Maren's boxes 1 to 3.
+func test_the_schematic_has_the_minability_of_every_disc_it_draws() -> bool:
+	var screen := _joined_screen()
+	screen._show_close_up(false)
+	if screen._close_up or not screen._sim.running():
+		screen.queue_free()
+		return _fail(("premise: close_up %s and running %s, so `_draw` would return before a disc "
+				+ "and this test is about nothing") % [screen._close_up, screen._sim.running()])
+	var ok := true
+	var states := {}
+	var drawn := 0
+	for entry in screen._sim.deposits():
+		var deposit: Dictionary = entry
+		if int(deposit.get("amount", 0)) <= 0:
+			continue
+		drawn += 1
+		if not deposit.has("hand_minable"):
+			ok = _fail(("the screen is about to draw a deposit with no `hand_minable` on it: %s. "
+					+ "`deposit_disc` reads that key with no default, so this is a blank schematic.")
+					% [deposit.keys()])
+			break
+		var disc := AssayHud.deposit_disc(deposit, 18.0)
+		states[bool(disc["filled"])] = true
+	if ok and (drawn < 2 or states.size() != 2):
+		ok = _fail(("premise: %d discs and %d distinct fill states on seed 777042. The Game "
+				+ "Director counted 6 of 13 unminable there; one state means this world cannot "
+				+ "show the distinction and the assertions above are vacuous")
+				% [drawn, states.size()])
+	screen.queue_free()
+	return ok
+
+
 ## ONE SECTION'S IN-WORLD SENTENCE, named in the failure so three sections do not report as one.
 func _reads_in_world(section: Node, named: String, want: String) -> bool:
 	var said := _lone_note(section)

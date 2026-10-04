@@ -187,6 +187,82 @@ func test_the_species_letter_always_takes_the_higher_contrast_colour() -> bool:
 	return true
 
 
+## **A ROCK NOTHING CAN MINE IS A HOLLOW DISC, AND IT PAYS FOR THAT OUT OF NO OTHER CHANNEL**
+## (ASSA-187, Maren's ruling). Hue is the species, brightness is the purity, radius is the radius; the
+## fourth fact — whether anything you can build gets the ore out — had nowhere to go, on the one
+## surface whose job is choosing where to walk.
+##
+## **SWEPT, AND THE SWEEP IS THE POINT.** All six tints x purity 1..100 x both states: `colour` must
+## be bit-identical to `deposit_color` in BOTH, which is box 4 ("the existing three channels are not
+## traded away for the new one") expressed as an identity rather than an opinion. A fix that dimmed
+## or re-tinted the unminable disc fails here, and that is the fix the ruling forbids.
+##
+## **THE INK IS CHECKED FOR OPTIMALITY, NOT AGAINST A NUMBER**, exactly as
+## `test_the_species_letter_always_takes_the_higher_contrast_colour` argues: picking the better of two
+## is optimal by construction, so the invariant cannot rot when a tint moves. What IS asserted as a
+## number is that the hollow state is no worse than the filled family's worst (4.5), because the
+## letter sits on `MAP_BG` there rather than on the species colour -- a hollow disc with an ink chosen
+## for a fill that is not there would be the obvious way to break box 4 while passing everything else.
+## Measured: 17.06 on the bare map against 4.52 at the worst fill, so the letter reads BETTER hollow.
+##
+## WHAT THIS CANNOT SEE: that `main.gd::_draw` consumes any of it. `test_main_screen.gd` holds the
+## wiring and the shot holds the picture; a painter that ignored `filled` leaves this green.
+func test_a_rock_nothing_can_mine_is_hollow_and_trades_no_other_channel() -> bool:
+	var checked := 0
+	var worst_hollow := 99.0
+	var worst_filled := 99.0
+	for species in range(AssayHud.SPECIES_TINTS.size()):
+		for purity in range(1, 101):
+			var want := AssayHud.deposit_color(species, purity)
+			for minable: bool in [true, false]:
+				var deposit := {"species": species, "purity": purity, "hand_minable": minable}
+				var disc := AssayHud.deposit_disc(deposit, 18.0)
+				var colour: Color = disc["colour"]
+				if colour != want:
+					return _fail(("species %d at purity %d, minable %s: the disc is %s and "
+							+ "`deposit_color` says %s. Species and purity are the other two reads "
+							+ "and this item may not spend them.") % [species, purity, minable,
+							colour, want])
+				if bool(disc["filled"]) != minable:
+					return _fail(("species %d at purity %d: minable %s was drawn filled=%s. Fill "
+							+ "IS the channel; inverted, every dead end reads as a patch worth a "
+							+ "40-tile walk.") % [species, purity, minable, disc["filled"]])
+				# THE SURFACE THE LETTER SITS ON, which is the whole reason the ink differs: a
+				# hollow disc shows `MAP_BG` through itself, so coverage is 0 there.
+				var lit := AssayHud.MAP_BG.lerp(Color(colour.r, colour.g, colour.b),
+						1.0 if minable else 0.0)
+				var dark := _wcag_ratio(lit, AssayHud.GLYPH_DARK)
+				var light := _wcag_ratio(lit, AssayHud.GLYPH_LIGHT)
+				var ink: Color = disc["ink"]
+				var took: float = dark if ink == AssayHud.GLYPH_DARK else light
+				if took < maxf(dark, light) - 1e-6:
+					return _fail(("species %d at purity %d, minable %s: the letter took the ink "
+							+ "worth %f when %f was there. An ink chosen for a fill that is not "
+							+ "drawn is how the hollow disc would lose its letter.")
+							% [species, purity, minable, took, maxf(dark, light)])
+				if minable:
+					worst_filled = minf(worst_filled, took)
+				else:
+					worst_hollow = minf(worst_hollow, took)
+				checked += 1
+	if checked != 1200:
+		return _fail("swept %d states, expected 1200" % checked)
+	if worst_hollow < 4.5:
+		return _fail(("the letter on a hollow disc is worth only %f, under the %f the worst FILLED "
+				+ "disc manages. Box 4 is that the species letter still reads.")
+				% [worst_hollow, worst_filled])
+	print("    disc letter: worst %f filled, %f hollow (hollow sits on MAP_BG, so it reads better)"
+			% [worst_filled, worst_hollow])
+	# AND THE OUTLINE IS THICK ENOUGH TO CARRY A COLOUR. A 1px ring at a few per cent coverage reads
+	# as grey, which would spend the purity channel to buy this one.
+	for radius: float in [9.0, 18.0, 36.0, 200.0]:
+		var stroke := float(AssayHud.deposit_disc(
+				{"species": 0, "purity": 50, "hand_minable": false}, radius)["stroke"])
+		if stroke < 2.0 or stroke > 6.0 or absf(stroke - clampf(radius * 0.2, 2.0, 6.0)) > 1e-6:
+			return _fail("a radius-%f disc outlines at %f px" % [radius, stroke])
+	return true
+
+
 ## AND THE ENGINE'S LINEARISATION IS THE ONE WCAG SPECIFIES, which the rule above leans on entirely.
 ## `AssayHud.relative_luminance` uses `Color.srgb_to_linear()`; this checks it against the formula
 ## written out in `_wcag_luminance`, over every value an 8-bit channel can hold. Measured rather than
