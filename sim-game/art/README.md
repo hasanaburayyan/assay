@@ -60,6 +60,22 @@ that are easy to undo by accident:
 - **The neutral base has to be LIGHT and genuinely hueless.** Multiply
   cannot brighten, so the base's lightness is the budget every species
   spends, and any hue it carries is added to all six.
+- **LIGHT IS NOT MATERIAL, and a light row is how it leaves the multiply**
+  (ASSA-137). Maren's rule: *a quantity the sim treats as independent of
+  species may not be drawn in a channel species multiplies.* A wall is made
+  of the species and is right to be tinted; a fire is not, and a multiply can
+  only subtract, so on the shipped smelter the brightest pixel of a burning
+  fire measured BELOW the ground's median luminance in three of the six
+  species — and the one the demo plants cleared it by 11.7. There is no
+  emission strength that fixes that, which is the tell: when no amount of a
+  thing can move a number, the thing is in the wrong channel. So an asset
+  calls `Asset.light_row(name, body=…, lit=…)`, `build.py` subtracts the two
+  rendered states into an RGBA layer whose alpha is the light's share of each
+  pixel, and the row ships with `"light": true, "over": "<body row>"`. The
+  client draws `over` tinted and the light row on top of it at `Color.WHITE`.
+  `check_light_rows.py` is the guard, `check_headroom.py` skips these rows
+  (its premise is a tint they never meet), and the untinted picture is
+  unchanged by the split, so nothing has to be re-judged.
 
 - **The purity ladder is the sim's: C / B / A**, read out of
   `sim/src/tuning.rs` at build time rather than retyped. The art used to
