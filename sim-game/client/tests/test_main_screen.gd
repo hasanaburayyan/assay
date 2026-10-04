@@ -1753,33 +1753,54 @@ func test_the_log_panel_stops_above_the_body_the_camera_centres() -> bool:
 	var ok := true
 	var map := AssayHud.world_rect()
 	var ceiling := AssayScene.player_ceiling(AssaySprites.manifest(), map.size)
-	var lines := PackedStringArray()
-	for i in 14:
-		lines.append("%d · you mined 20 of Tonore ore (A) at (74, 36)" % (400 + i))
-	screen._events = lines
-	screen._rebuild_log()
-	var drawn: Array = screen._log.find_children("*", "Label", true, false)
-	var style: StyleBox = screen._log_box.get_theme_stylebox(&"panel")
-	var inside: Control = screen._log_box.get_child(0)
-	var head: Font = screen._log_heading.get_theme_font(&"font", &"Heading")
-	var tall: float = style.get_margin(SIDE_TOP) + style.get_margin(SIDE_BOTTOM)
-	tall += head.get_height(screen._log_heading.get_theme_font_size(&"font_size", &"Heading"))
-	tall += float(inside.get_theme_constant(&"separation"))
-	var sep := float(screen._log.get_theme_constant(&"separation"))
-	for i in drawn.size():
-		tall += (drawn[i] as Control).get_combined_minimum_size().y
-		if i > 0:
-			tall += sep
 	if ceiling <= 0.0:
-		ok = _fail(("the scene cannot say where a body is drawn (ceiling %.1f), so the log's panel "
-				+ "has no bound at all and ASSA-156 is unfixed rather than fixed") % ceiling)
-	elif drawn.size() >= lines.size():
-		ok = _fail(("fourteen events drew %d lines in a panel with %.0fpx of room above the player: "
-				+ "the cap is not in force, so the panel still owns the map's centre")
-				% [drawn.size(), ceiling])
-	elif tall > ceiling:
-		ok = _fail(("the log's panel will be %.0fpx tall and your own body is drawn from y %.0f of "
-				+ "the map: %.0fpx of it is over your head, which is what Maren's 777042 shot "
-				+ "measured as zero player pixels on screen") % [tall, ceiling, tall - ceiling])
+		screen.queue_free()
+		return _fail(("the scene cannot say where a body is drawn (ceiling %.1f), so the log's "
+				+ "panel has no bound at all and ASSA-156 is unfixed rather than fixed") % ceiling)
+	# TWO FIXTURES, AND THE SECOND IS THE ONE THAT PAYS FOR THIS TEST. A newest line long enough to
+	# wrap is measured through the TextServer here, NOT off the Label's own minimum height, because
+	# that minimum says 18px for a 36px line until a layout has happened -- so a panel sized as if
+	# every line were one row is a panel a row taller than it measured, over the head of the player
+	# this item is about. Asking `_log_lines_that_fit` for the expected count instead would be this
+	# test agreeing with the arithmetic it is checking, which is how I shipped exactly that hole
+	# twice (ASSA-135, and the first version of this file an hour ago).
+	var long := ("your design broke: mass 1078 of 705 budget · holds 210 · speed 78 (bare hands 25)"
+			+ " · frame(Tonore A 385) + head(Tonore A 120) + hopper(Souktulore B 140) x4")
+	for newest in ["you mined 20 of Tonore ore (A) at (74, 36)", long]:
+		var lines := PackedStringArray()
+		for i in 13:
+			lines.append("%d · you mined 20 of Tonore ore (A) at (74, 36)" % (400 + i))
+		lines.append("413 · %s" % newest)
+		screen._events = lines
+		screen._rebuild_log()
+		var drawn: Array = screen._log.find_children("*", "Label", true, false)
+		var style: StyleBox = screen._log_box.get_theme_stylebox(&"panel")
+		var inside: Control = screen._log_box.get_child(0)
+		var head: Font = screen._log_heading.get_theme_font(&"font", &"Heading")
+		var body: Font = screen._log.get_theme_font(&"font", &"Label")
+		var body_size: int = screen._log.get_theme_font_size(&"font_size", &"Label")
+		var tall: float = style.get_margin(SIDE_TOP) + style.get_margin(SIDE_BOTTOM)
+		tall += head.get_height(screen._log_heading.get_theme_font_size(&"font_size", &"Heading"))
+		tall += float(inside.get_theme_constant(&"separation"))
+		var sep := float(screen._log.get_theme_constant(&"separation"))
+		for i in drawn.size():
+			if i == 0:
+				# THE WIDTH THE PANEL WILL GIVE IT: the map, less the stylebox's own left and right.
+				tall += body.get_multiline_string_size((drawn[0] as Label).text,
+						HORIZONTAL_ALIGNMENT_LEFT, map.size.x - style.get_margin(SIDE_LEFT)
+						- style.get_margin(SIDE_RIGHT), body_size).y
+			else:
+				tall += (drawn[i] as Control).get_combined_minimum_size().y + sep
+		if drawn.size() >= lines.size():
+			ok = _fail(("fourteen events drew %d lines in a panel with %.0fpx of room above the "
+					+ "player: the cap is not in force, so the panel still owns the map's centre")
+					% [drawn.size(), ceiling])
+		elif tall > ceiling:
+			ok = _fail(("with a %d-character newest line the log's panel will be %.0fpx tall and "
+					+ "your own body is drawn from y %.0f of the map: %.0fpx of it is over your "
+					+ "head, which is what Maren's 777042 shot measured as zero player pixels")
+					% [newest.length(), tall, ceiling, tall - ceiling])
+		if not ok:
+			break
 	screen.queue_free()
 	return ok
