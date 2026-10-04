@@ -54,6 +54,13 @@ var _done := false
 var _started_at := 0.0
 var _next_tick := 0.0
 var _samples: Array[Vector2] = []
+## A FRAME SHORTER THAN THIS CANNOT HONESTLY DRAW A WHOLE TILE. The sim steps a walking player one
+## tile per tick (`sim/src/step.rs`) and the relay's default clock is 10 ticks/s, so the body's true
+## speed is one tile per ~100 ms. In a longer frame a whole-tile step is REQUIRED of any renderer
+## that does not predict (banned, ASSA-119); in a shorter one it is the renderer outrunning elapsed
+## time, which is the ASSA-148 defect. 95 ms leaves a little room under the nominal 100.
+const SHORT_FRAME := 0.095
+
 var _parts: Array[float] = []
 var _frames := 0
 ## WHEN EACH SAMPLE WAS TAKEN, which is the premise nobody had checked before building a fix.
@@ -248,6 +255,8 @@ func _span_stats(from: int, to: int) -> Dictionary:
 	var biggest := 0.0
 	var snaps := 0
 	var on_tile := 0
+	var biggest_at := from
+	var snaps_in_short_frames := 0
 	for i in range(from, to + 1):
 		var at := _samples[i]
 		distinct[at] = true
@@ -255,14 +264,24 @@ func _span_stats(from: int, to: int) -> Dictionary:
 			on_tile += 1
 		if i > from:
 			var step := (at - _samples[i - 1]).length()
-			biggest = maxf(biggest, step)
+			if step > biggest:
+				biggest = step
+				biggest_at = i
 			if step >= 0.9:
 				snaps += 1
+				# THE BAR (ASSA-148, corrected): a whole tile inside a frame SHORTER than a tick
+				# gap is the renderer outrunning elapsed time. In a frame longer than a tick gap
+				# the sim's own one-tile-per-tick motion requires it, so it is a dropped frame
+				# (ASSA-167) and not a snap. `SHORT_FRAME` is the sim's rate, not a taste.
+				if _sampled_at[i] - _sampled_at[i - 1] < SHORT_FRAME:
+					snaps_in_short_frames += 1
 	return {
 		"frames": to - from + 1,
 		"distinct": distinct.size(),
 		"biggest": biggest,
+		"biggest_at": biggest_at,
 		"snaps": snaps,
+		"snaps_short": snaps_in_short_frames,
 		"on_tile": on_tile,
 	}
 
@@ -329,16 +348,54 @@ func _report() -> void:
 					+ " frames (a depth of d is ~d x %.0f ms of latency on your own body)"
 					% [1000.0 * _parts[-1]])
 		# IS THE BIGGEST STEP THE TWEEN'S FAULT OR THE FRAME'S? A body crossing one tile per
-		# `_tick_gap` covers `dt / gap` tiles in a frame of `dt`, and no renderer can beat that. So
-		# the bar the biggest step has to clear is the LONGEST FRAME's own share -- compared frame by
-		# frame instead, the 1 ms clock and the two reads being one node apart swamp a 7 ms frame.
-		# For scale: a whole-tile snap in a 7 ms frame is fourteen times its frame's share.
+		# `_tick_gap` covers `dt / gap` tiles in a frame of `dt`, and no renderer can beat that. The
+		# sim moves one tile per tick (`sim/src/step.rs`), so a frame longer than a tick gap MUST
+		# draw a whole tile and a step measured in TILES reports the frame, not the tween (ASSA-148).
+		#
+		# IT IS COMPARED AT THE FRAME THE BIGGEST STEP LANDED IN, and that is the fix of ASSA-171.
+		# This used to pair the worst step with the LONGEST frame's share, which is the most
+		# forgiving denominator in the run and usually a different frame -- so a step could sit a
+		# couple of percent over and still read as a pass. One step, one frame, one comparison.
+		#
+		# NOT a max over per-frame ratios, which is what I proposed first and withdrew: at 7 ms a
+		# frame the 1 ms clock and the two reads being one node apart carry about 14%, so a max over
+		# every frame's ratio is a max over noise and prints false reds. That caveat has not gone
+		# away -- it is why `dt` is printed beside the ratio. Read a 7 ms frame's ratio as soft and a
+		# 100 ms one as solid. For scale: a whole-tile snap in a 7 ms frame is fourteen times its
+		# frame's share.
 		var longest := 0.0
 		for i in range(from + 1, to + 1):
 			longest = maxf(longest, _sampled_at[i] - _sampled_at[i - 1])
-		print("  FRAME-PACED? biggest step %.3f tiles against the longest frame's own share %.3f"
-				% [s["biggest"], longest / maxf(_parts[-1], 0.01)]
-				+ " tiles (%.1f ms at %.0f ms a tile)" % [1000.0 * longest, 1000.0 * _parts[-1]])
+		var hit := int(s["biggest_at"])
+		var hit_dt := _sampled_at[hit] - _sampled_at[maxi(hit - 1, 0)] if hit > from else 0.0
+		var hit_part: float = _parts[hit] if hit < _parts.size() else _parts[-1]
+		var hit_share := hit_dt / maxf(hit_part, 0.01)
+		print("  FRAME-PACED? biggest step %.3f tiles in frame %d, whose own share is %.3f"
+				% [s["biggest"], hit, hit_share]
+				+ " tiles (%.1f ms at %.0f ms a tile) -> ratio %.2f"
+				% [1000.0 * hit_dt, 1000.0 * hit_part, s["biggest"] / maxf(hit_share, 0.0001)])
+		print("    (old pairing, for comparison with logs before ASSA-171: against the LONGEST"
+				+ " frame's share %.3f tiles, %.1f ms at %.0f ms a tile)"
+				% [longest / maxf(_parts[-1], 0.01), 1000.0 * longest, 1000.0 * _parts[-1]])
+		# THE BAR ITSELF, and it needs no estimated tick gap: a whole tile inside a frame shorter
+		# than one.
+		#
+		# WHY THE RATIO LINES ABOVE ARE NOT THE BAR, measured rather than assumed. Their
+		# denominator is an EMA of arrival gaps (`_tick_gap`), not the instantaneous playout rate,
+		# and catch-up on a deep queue legitimately beats it: two clean headless runs on
+		# `18d3dd6`+this, zero whole-tile steps in both, printed ratios of 1.47 and 4.13. So the
+		# ratio cannot carry a pass/fail at the few-percent level -- I ruled a 5% tolerance on it
+		# at 08:20 and withdrew it an hour later on these two runs. Do not put a bar on a number
+		# whose denominator is an estimate.
+		#
+		# IT IS STILL INFORMATIVE AS AN ORDER OF MAGNITUDE, and 4.13 is not EMA error: a 67 ms
+		# estimate against a true ~100 ms is a factor of 1.5, not 4. That run moved 0.741 tiles in
+		# a 12 ms frame -- about 61 tiles/s against a true 10 -- which is sub-tile and so invisible
+		# to the bar. Whether a 24 px hop is felt is a design question and mine; see ASSA-167.
+		print("  WHOLE-TILE STEPS IN A FRAME UNDER %.0f ms: %d  <-- THE BAR, must be 0"
+				% [1000.0 * SHORT_FRAME, int(s["snaps_short"])]
+				+ " (of %d whole-tile steps in all; the rest are dropped frames, ASSA-167)"
+				% [int(s["snaps"])])
 		print("  biggest step %.3f tiles · WHOLE-TILE SNAPS (>=0.9) %d of %d steps · distinct"
 				% [s["biggest"], s["snaps"], int(s["frames"]) - 1]
 				+ " positions %d · on an exact tile %d of %d (%.1f%%)"
