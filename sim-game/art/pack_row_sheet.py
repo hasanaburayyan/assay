@@ -57,9 +57,16 @@ from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import review_sources  # noqa: E402  the shipped art this sheet composites, stamped into it
 review_sources.start()  # before the first read of shipped art (ASSA-144)
+import review_layout  # noqa: E402  the client layout this sheet draws, stamped into it
 
 HERE = Path(__file__).resolve().parent.parent
-LAYOUT = json.load(open(sys.argv[1] if len(sys.argv) > 1 else "/tmp/cove-layout99.json"))
+# THROUGH `review_layout.load`, NOT `json.load` (ASSA-151). This sheet is a picture of the pack
+# PANEL, and its content is the engine's layout rather than any sprite -- so the sources stamp,
+# which only sees shipped art, named `items.png` and `ui_theme.json` and could not go red when a
+# row's scale moved. Reading the layout through the recorder is what makes the stamp a fact about
+# the run: a sheet cannot be drawn from a layout it does not record.
+LAYOUT = review_layout.load(sys.argv[1] if len(sys.argv) > 1 else "/tmp/cove-layout99.json",
+                            probe="pack_icon_layout.gd")
 OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else HERE / "assets/review/pack_rows.png"
 SPRITES = HERE / "client/assets/sprites"
 
@@ -239,7 +246,7 @@ d.text((PAD, cap_h), "THE PACK, AT 1:1, EXACTLY AS THE CLIENT DRAWS IT", font=ca
        fill=(210, 210, 210))
 sheet.alpha_composite(column, (PAD, cap_h + 20))
 OUT.parent.mkdir(parents=True, exist_ok=True)
-sheet.convert("RGB").save(OUT, pnginfo=review_sources.png_info())
+sheet.convert("RGB").save(OUT, pnginfo=review_layout.png_info(review_sources.png_info()))
 
 for line, total, h, a in summary:
     print("%-28s %d verbs  %dpx  cannot be first: %s" % (line, total, h, a))
