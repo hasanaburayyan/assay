@@ -25,7 +25,7 @@ def build(g):
     """One geometry, grade as a parameter (`rig.GRADES`). Nothing about the
     SHAPE depends on `g` -- only the ink. That is the point: a part is one
     silhouette the player learns once, and grade is how good that part is."""
-    r = rig.Rig(samples=64, fill=rig.MACHINE_FILL)
+    r = rig.Rig(samples=64)
     r.shadow_catcher()
     gun, rubber = mat("gun"), mat("rubber")
     grey = rig.graded("grey", g)

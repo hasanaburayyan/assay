@@ -28,7 +28,7 @@ CX, DECK = -0.60, 0.47     # centred on the frame's deck, standing on its plate
 
 def build(g):
     """One geometry, grade as a parameter (`rig.GRADES`). Shape never varies."""
-    r = rig.Rig(samples=64, fill=rig.MACHINE_FILL)
+    r = rig.Rig(samples=64)
     # NO SHADOW CATCHER, A BOUNCE PLANE INSTEAD: a hopper is MOUNTED and never
     # touches the ground
     # (ASSA-64). It carried the most shadow of the four parts, 2621 pixels per

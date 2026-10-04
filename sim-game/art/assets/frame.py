@@ -26,7 +26,7 @@ def build(g):
 
     Orange is this part's warm accent, so it is the one that glints at A --
     on a machine the chassis IS the mark, where the head wears brass."""
-    r = rig.Rig(samples=64, fill=rig.MACHINE_FILL)
+    r = rig.Rig(samples=64)
     r.shadow_catcher()
     gun = mat("gun")
     # THE CHASSIS IS THE MARK, BUT THE WHOLE CHASSIS IS NOT THE GLINT, and

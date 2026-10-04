@@ -245,13 +245,6 @@ PART_HEADROOM = 0.6
 # whole number of subpixels at SS and the downscale cannot smear it.
 PART_SHIFT_PX = 3
 
-# HOW MUCH FILL LIGHT A MACHINE PART GETS, as a fraction of every other asset's
-# (ASSA-159). One number in rig.py rather than four in asset scripts, because the four
-# parts of one machine must be lit identically or an assembly reads as pieces from
-# different drawings. `Rig.__init__` has why the fill is the lever and the material is
-# not; `art/check_machine_vs_own_ore.py` is what holds it here.
-MACHINE_FILL = 0.35
-
 
 def srgb(h):
     r, g, b = (int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
@@ -388,7 +381,7 @@ def lamp(color="cyan"):
 # ---------------------------------------------------------------- scene setup
 
 class Rig:
-    def __init__(self, samples=64, outlines=True, fill=1.0):
+    def __init__(self, samples=64, outlines=True):
         bpy.ops.wm.read_factory_settings(use_empty=True)
         _mats.clear()
         self.scene = sc = bpy.context.scene
@@ -421,43 +414,13 @@ class Rig:
         # Fill light comes from shadowless lamps, not the sky: sky light would
         # make the shadow catcher record a soft AO halo that gets cut off at
         # the frame edge. The world stays black.
-        #
-        # `fill` SCALES BOTH FILL LAMPS AND NOTHING ELSE (ASSA-159). The key, the shadow
-        # caster and every material are untouched, so a part keeps the modelling and the
-        # colour it was approved with; what changes is how much light reaches the faces
-        # the key does not hit.
-        #
-        # WHY THAT IS THE LEVER FOR "A MACHINE READS AGAINST THE ORE OF ITS OWN SPECIES".
-        # A building and the ore of its species wear the SAME `modulate` colour by
-        # construction (scene_view.gd:239 and :314 -> sprites.gd:226 -> hud.gd:200), so
-        # the only thing separating them is the greyscale sheet underneath and the tint
-        # cancels out of the ratio. A part row's luminance histogram is BIMODAL -- key-lit
-        # faces in one mode, fill-only faces in the other -- so lowering the fill moves
-        # the dark mode down and leaves the bright mode where it is.
-        #
-        # AND THAT IS WHY IT IS THE FILL AND NOT THE MATERIAL. Darkening the material
-        # darkens every pixel, which is a multiply on the whole sheet: measured, that
-        # reaches the ratio only at x0.40, where the worst species pair falls to dE 7.7
-        # against species_probe's DISTINCT of 12 -- the species read dies before the
-        # separation arrives. Lowering the fill pays the ratio out of the pixels that name
-        # no material (the ones in shadow) and leaves the lit faces, which carry the most
-        # chroma under a multiply, alone. Rig rule 9 the right way round: light doing a
-        # light's job.
-        #
-        # THE SHADOW CASTER SCALES WITH THEM, and that is not symmetry for its own sake.
-        # The shadow comment at the top of this file says it: the catcher's alpha is the
-        # caster's SHARE of the total light, so dropping the fills alone would darken the
-        # contact shadow of every planted frame as a side effect of a change about ore.
-        # Scaling both keeps the share, and ASSA-11's bound -- at 1x no shadow may read as
-        # a part -- is left where Maren set it.
         sc.world = bpy.data.worlds.new("w"); sc.world.use_nodes = True
         sc.world.node_tree.nodes["Background"].inputs["Strength"].default_value = 0.0
-        sun.energy = SHADOW_ENERGY * fill
         for rot, energy, color in (((math.radians(20), math.radians(15), math.radians(150)), 1.4, (0.62, 0.74, 1.0)),
                                    ((0, 0, 0), 0.9, (0.75, 0.8, 0.95))):
-            fl = bpy.data.lights.new("fill", "SUN"); fl.energy = energy * fill; fl.color = color
-            fl.angle = math.radians(60); fl.use_shadow = False
-            f = bpy.data.objects.new("fill", fl); sc.collection.objects.link(f); f.rotation_euler = rot
+            fill = bpy.data.lights.new("fill", "SUN"); fill.energy = energy; fill.color = color
+            fill.angle = math.radians(60); fill.use_shadow = False
+            f = bpy.data.objects.new("fill", fill); sc.collection.objects.link(f); f.rotation_euler = rot
 
         sc.render.engine = "CYCLES"
         sc.cycles.samples = samples; sc.cycles.use_denoising = True
@@ -535,12 +498,7 @@ class Rig:
             ls.select_silhouette = ls.select_border = ls.select_crease = True
             ls.select_by_collection = True; ls.collection = self.model
             ls.linestyle.color = srgb(PALETTE["line"])
-            # ~1px after the SS downscale -- ON THE SHEET, WHICH IS NOT THE LAST DOWNSCALE
-            # (ASSA-172). `scene_view.gd::_place` draws parts at scale 0.5 with NEAREST
-            # filtering, so this line arrives on 278 of 402 silhouette pixels (69%) and is
-            # sampled away on the rest. Widening it is a separate item because it costs frame
-            # space: at 2px the body of `frame` and `handle` lands ON the west frame edge and
-            # `art/check_part_frame_fit.py` goes red.
+            # ~1px after the SS downscale
             sc.render.line_thickness = ls.linestyle.thickness = 0.35 * SS
 
     # ------------------------------------------------------------ primitives
