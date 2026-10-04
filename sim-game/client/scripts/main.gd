@@ -40,6 +40,13 @@ var _sim := AssaySimHost.new()
 var _solo_button := Button.new()
 var _host := LineEdit.new()
 var _name := LineEdit.new()
+## THE THREE CONTROLS NOTHING READS ONCE YOU ARE IN A WORLD, plus the two labels that name two of
+## them: `Play solo`, `host`, `name` (ASSA-175). Held as ONE container so the hide is one statement
+## and cannot leave a label standing over a field that is gone -- which is ASSA-127's defect
+## recreated by this fix. `Join` is deliberately NOT in here; see `_refresh_join_band`.
+var _join_band := HBoxContainer.new()
+## The door that stays in every stage. A field only so a test can assert it stayed.
+var _join_button := Button.new()
 var _status := Label.new()
 var _detail := Label.new()
 ## THE PACK, AS ROWS YOU CAN ACT ON (ASSA-37). A container and not a Label any more: a stack's row
@@ -474,6 +481,12 @@ func _build_ui() -> void:
 	row.add_theme_constant_override("separation", 8)
 	add_child(row)
 
+	# THE BAND INSIDE THE ROW: everything a player in a world can no longer use (ASSA-175). Same
+	# separation as the row it sits in, so the band is a grouping for the hide and not a layout change
+	# -- a `BoxContainer` skips invisible children, so the gap before `Join` closes when it goes.
+	_join_band.add_theme_constant_override("separation", 8)
+	row.add_child(_join_band)
+
 	# **PLAY SOLO: DOWNLOAD AND PLAY, WITH NOTHING TO TYPE** (ASSA-106, the board's own ask). The
 	# host box already defaults to `localhost`, so the shortest honest version of their request was
 	# never "a field with a better default" -- it was that nothing is listening on the other end.
@@ -496,27 +509,26 @@ func _build_ui() -> void:
 	_solo_button.focus_mode = Control.FOCUS_ALL
 	_solo_button.pressed.connect(_on_play_solo)
 	_solo_button.tree_entered.connect(_solo_button.grab_focus)
-	row.add_child(_solo_button)
+	_join_band.add_child(_solo_button)
 
 	var host_label := Label.new()
 	host_label.text = "host"
-	row.add_child(host_label)
+	_join_band.add_child(host_label)
 	_host.text = "localhost:%d" % AssayProtocol.DEFAULT_PORT
 	_host.custom_minimum_size = Vector2(240.0, 0.0)
 	_host.tooltip_text = "host, host:port, or [v6]:port. A bare address uses 7777."
-	row.add_child(_host)
+	_join_band.add_child(_host)
 
 	var name_label := Label.new()
 	name_label.text = "name"
-	row.add_child(name_label)
+	_join_band.add_child(name_label)
 	_name.text = OS.get_environment("USER")
 	_name.custom_minimum_size = Vector2(140.0, 0.0)
-	row.add_child(_name)
+	_join_band.add_child(_name)
 
-	var join := Button.new()
-	join.text = "Join"
-	join.pressed.connect(_on_join)
-	row.add_child(join)
+	_join_button.text = "Join"
+	_join_button.pressed.connect(_on_join)
+	row.add_child(_join_button)
 
 	_status.position = Vector2(24.0, 54.0)
 	add_child(_status)
@@ -905,6 +917,40 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_show_close_up(not _close_up)
 
 
+## **THE THREE CONTROLS NOTHING READS ANY MORE LEAVE THE SCREEN** (ASSA-175, Maren's ruling: "a
+## control that cannot do anything is worse than an absent one, because it reads as available" -- the
+## same ruling that took `whole world (V)` off the join screen).
+##
+## Measured before the fix: `_host.text` has exactly one reader (`_on_join`) and `_name.text` exactly
+## one (`_join_address`), and `_join_address` returns before either is used unless the stage is IDLE
+## or DEAD. So both boxes stayed editable for the whole session with nothing ever looking at them
+## again, and `Play solo` stood beside them refusing.
+##
+## **THE PREDICATE IS THE STAGE, AND IT IS `== JOINED` RATHER THAN "WE HAVE JOINED".** That is the
+## whole of Maren's second ruling and it cuts both ways:
+## - CONNECTING / GREETED: the band STAYS. The refusal is true in those stages (see `join_refusal`)
+##   and they last a moment.
+## - DEAD: the band COMES BACK, and this is the part worth not breaking. `_join_address` permits a
+##   join attempt at stage DEAD, so this band is the only reconnect affordance the client has; a
+##   predicate like `_sim.running()` or a latch on the welcome would have taken it away at exactly
+##   the moment a player reaches for it. Whether that reconnect works is ASSA-177, unanswered -- but
+##   a control that MIGHT work is not the class this item removes.
+##
+## `Join` IS NOT IN THE BAND for the same reason: it is the one control in the row that can still do
+## something, so it is the one that stays.
+##
+## HIDDEN, NOT DISABLED (Maren, same call she made on the view toggle): the screen already carries
+## five "no world yet" sentences and a sixth would be noise.
+##
+## CALLED FROM `_process`, NOT FROM A SIGNAL. There are four ways into DEAD (`refused`, `desynced`,
+## a read failure, a write failure) and only two of them reach a handler here that refreshes
+## anything, so a signal-driven hide would be a list to keep in step with `net_client.gd`. Asking the
+## stage every frame cannot miss a transition, and `CanvasItem.set_visible` early-returns when the
+## value is unchanged.
+func _refresh_join_band() -> void:
+	_join_band.visible = _client.stage != AssayNetClient.Stage.JOINED
+
+
 ## START A RELAY OF OUR OWN AND JOIN IT (ASSA-106).
 ##
 ## THE SAME JOIN PATH ONCE THE ADDRESS IS KNOWN, which is ruling 7 in one line: solo is co-op with
@@ -917,8 +963,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 ## nor writes it.
 func _on_play_solo() -> void:
 	if _client.stage != AssayNetClient.Stage.IDLE and _client.stage != AssayNetClient.Stage.DEAD:
-		_say("already joining; restart the client to start a world of your own",
-				AssayHud.Say.FAILED)
+		# THE SENTENCE NAMES THE STAGE WE ARE ACTUALLY IN (ASSA-176). Unreachable by mouse once
+		# ASSA-175 hides this button in a world -- and still fixed, because "the control is gone" is a
+		# reason a wrong sentence is not SEEN, not a reason it is not wrong.
+		_say(AssayHud.join_refusal(_client.stage == AssayNetClient.Stage.JOINED,
+				"restart the client to start a world of your own"), AssayHud.Say.FAILED)
 		return
 	if _solo != null:
 		_say("already starting a world of your own", AssayHud.Say.CONNECTING)
@@ -945,6 +994,8 @@ func _process(_delta: float) -> void:
 	# lands, which is every state it has.
 	if _close_up and _sim.running():
 		_refresh_world()
+	# ABOVE THE EARLY RETURN BELOW, which is about the solo relay and skips most frames of a session.
+	_refresh_join_band()
 	if _solo == null or _solo.address != "" or _solo.failure != "":
 		return
 	if _solo.poll():
@@ -980,8 +1031,11 @@ func _on_join() -> void:
 ## own relay reported, which is what keeps a typed host untouched (Maren, ASSA-113).
 func _join_address(address: String) -> void:
 	if _client.stage != AssayNetClient.Stage.IDLE and _client.stage != AssayNetClient.Stage.DEAD:
-		_say("already joining; restart the client to change host (no reconnect in the demo)",
-				AssayHud.Say.FAILED)
+		# ASSA-176, and this is the site that matters: `Join` is the control ASSA-175 deliberately
+		# leaves on screen, so this is the sentence a joined player gets when they press the one thing
+		# still there.
+		_say(AssayHud.join_refusal(_client.stage == AssayNetClient.Stage.JOINED,
+				"restart the client to change host (no reconnect in the demo)"), AssayHud.Say.FAILED)
 		return
 	# SAID BEFORE THE CALL, not after it: `join` does reach a socket, and a button that shows nothing
 	# until the answer comes back reads as a dead button. Maren's ruling, and she had the premise

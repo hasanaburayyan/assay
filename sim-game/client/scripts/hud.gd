@@ -148,6 +148,28 @@ static func view_toggle_text(close_up: bool) -> String:
 	return "whole world (V)" if close_up else "back to where I am (V)"
 
 
+## **A REFUSED JOIN NAMES THE STATE THE PLAYER IS ACTUALLY IN** (ASSA-176, Maren's ruling: "a
+## sentence claiming a state the player is not in is the class I keep ruling against", as in
+## ASSA-129's "5 of your 3").
+##
+## Both refusal sites in `main.gd` gated on "not IDLE and not DEAD" and said *already joining* for
+## all four remaining stages. CONNECTING and GREETED are the two that sentence is about. A player who
+## has been in a world for ten minutes was told they were joining -- and after ASSA-175 hides the
+## rest of the band, `Join` is the only control left there, so that was about to be the sentence this
+## screen says most often.
+##
+## **THE FIRST CLAUSE IS THE STATE, THE SECOND IS THE WAY OUT, AND THE CALLER OWNS THE WAY OUT.** The
+## two sites have different remedies (start a world of your own / change host) and the same two
+## states, so the state is the part worth having in one place where `test_hud.gd` can see both
+## halves at once.
+##
+## THE REMEDIES ARE UNTOUCHED, INCLUDING "no reconnect in the demo", which I believe and have not
+## measured: ASSA-177 is open on exactly that claim, and rewording it here would be asserting the
+## answer before the probe runs.
+static func join_refusal(joined: bool, remedy: String) -> String:
+	return "%s; %s" % ["already in a world" if joined else "already joining", remedy]
+
+
 ## A DEPOSIT'S COLOUR: THE SPECIES' SLOT, DIMMED BY PURITY. Purity may never move the hue.
 ##
 ## Second correction of this function, and the first one is worth keeping in view. Version one rode
