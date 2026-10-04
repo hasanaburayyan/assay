@@ -281,11 +281,40 @@ var _map_note: Label = null
 ## it is a second copy of the movement rule living outside `sim`, and it is wrong the moment they
 ## stop, change target or get refused.
 ##
-## SO THESE ARE A HISTORY, NOT A GUESS. `_was` is the snapshot's own answer from one tick ago; "now"
-## is the snapshot's answer today, read live. Nothing here extrapolates past it.
+## SO THESE ARE A HISTORY, NOT A GUESS. Both are positions the sim produced, and nothing here
+## extrapolates past them.
+##
+## THEY ARE THE SEGMENT BEING DRAWN, WHICH IS NOT ALWAYS THE NEWEST ONE (ASSA-148). It used to be:
+## `_seen` was whatever the last bundle said and `_was` the bundle before it. But bundles arrive in
+## pairs, and a pair applied between two drawn frames moved BOTH of these on and left the segment
+## between them undrawn -- a whole-tile teleport, 11 times in the demo walk's 25 steps. So produced
+## positions now wait in `_pending` and these two advance on the PLAYOUT clock
+## (`AssayScene.playout`), one segment at a time, in the order the sim produced them.
 var _was := {}
 var _seen := {}
 var _facing := {}
+## POSITIONS THE SIM HAS PRODUCED THAT THE SCREEN HAS NOT FINISHED DRAWING, oldest first, and when
+## the current segment started playing.
+##
+## CAPPED, AND THE CAP DEGRADES THE RIGHT WAY. A client that fell far behind would otherwise hold an
+## unbounded queue and draw a body minutes in the past. Over the cap the OLDEST unplayed position is
+## dropped, which makes the next segment span two tiles instead of one: the body then moves at double
+## speed for a tenth of a second, CONTINUOUSLY, and never teleports. That is the worst thing this fix
+## can do, and it is strictly better than the best thing the old code did on a real relay.
+##
+## THREE IS MEASURED, NOT PICKED. A real relay's worst gap is 0.254 s = 2.5 steps, so two would be
+## trimming during normal play; the queue only ever reaches three when production genuinely outruns
+## the clock, which on this machine means a test harness feeding ticks as fast as its loop runs.
+##
+## `_pending_at` IS THE ARRIVAL TIME OF EACH ENTRY and it is load-bearing, not diagnostics: a segment
+## may not start before its own data existed, which is what makes resuming after a dry queue
+## continuous (see `AssayScene.playout`). Two arrays rather than one array of pairs because they are
+## appended and popped in exactly two places, both in this file, and the playout wants the times as a
+## plain `Array[float]` with no per-frame copy.
+const PLAYOUT_QUEUE := 3
+var _pending: Array[Dictionary] = []
+var _pending_at: Array[float] = []
+var _seg_at := 0.0
 ## When the newest tick landed, and how far apart the last few were, both in seconds of wall clock.
 ##
 ## MEASURED RATHER THAN ASSUMED, and that is not fussiness: the relay's rate is a FLAG
@@ -1989,13 +2018,12 @@ func _refresh_world() -> void:
 		_layout = AssayAssembly.contract()
 	var size := _sim.size_tiles()
 	var now := float(Time.get_ticks_msec()) / 1000.0
-	# HOW FAR THROUGH THE GAP BETWEEN THE LAST TWO TICKS WE ARE. Clamped at 1, which is the whole
-	# safety of the thing: past the end of a gap the body stops on the newest position the sim
-	# produced rather than carrying on toward one it has not. 1.0 before any tick has landed, so an
-	# unplayed world draws everyone exactly where the Welcome put them.
-	var part := 1.0
-	if _tick_at > 0.0:
-		part = clampf((now - _tick_at) / maxf(_tick_gap, 0.01), 0.0, 1.0)
+	# HOW FAR THROUGH THE SEGMENT BEING DRAWN WE ARE, and whether the queue owes us a new one.
+	# Clamped at 1 inside `AssayScene.playout`, which is the whole safety of the thing: past the end
+	# of a segment the body stops on the newest position it has been given rather than carrying on
+	# toward one the sim has not produced. 1.0 before any tick has landed, so an unplayed world draws
+	# everyone exactly where the Welcome put them.
+	var part := _advance_playout(now)
 	var players: Array = []
 	var me: Variant = null
 	for entry in _sim.players():
@@ -2088,24 +2116,51 @@ func _ore_under(origin: Vector2, size: Vector2i) -> Dictionary:
 ## is remembered so a player who has stopped keeps looking the way they were going instead of
 ## snapping south.
 func _remember_positions() -> void:
-	_was = _seen
-	_seen = {}
+	var produced := {}
 	for entry in _sim.players():
 		var player: Dictionary = entry
-		var id := int(player.get("id", -1))
-		var at: Vector2i = player.get("pos", Vector2i.ZERO)
-		_seen[id] = at
-		if _was.has(id):
-			var way := AssayScene.facing_of(at - (_was[id] as Vector2i))
-			if way != "":
-				_facing[id] = way
+		produced[int(player.get("id", -1))] = player.get("pos", Vector2i.ZERO) as Vector2i
 	var now := float(Time.get_ticks_msec()) / 1000.0
+	_pending.append(produced)
+	_pending_at.append(now)
+	while _pending.size() > PLAYOUT_QUEUE:
+		_pending.pop_front()
+		_pending_at.pop_front()
 	if _tick_at > 0.0:
 		# SMOOTHED, because the gap between two bundles is a network measurement and a single late
 		# packet should not stretch one step across half a second. A quarter weight settles on a
 		# changed rate in a handful of ticks and ignores one hiccup.
 		_tick_gap = lerpf(_tick_gap, clampf(now - _tick_at, 0.01, 1.0), 0.25)
 	_tick_at = now
+	# ADVANCED ON THIS PATH TOO, not only on a drawn frame, and that is not belt-and-braces: every
+	# headless test and probe runs inside `SceneTree._initialize` where `_process` never fires, so a
+	# playout that only moved on a frame would leave the suite drawing a body that never starts.
+	_advance_playout(now)
+
+
+## MOVE THE DRAWN SEGMENT ON IF THE PLAYOUT CLOCK SAYS SO, and answer how far through it we are.
+##
+## THE DECISION IS `AssayScene.playout` AND NOT THIS FUNCTION. The arithmetic is where every other
+## renderer decision lives -- pure, static, and unit-tested without an engine clock or a socket --
+## because it is exactly the kind of thing that looks obviously right and is not: the resume rule
+## alone has two cases, and getting the second one wrong reproduces a smaller copy of the defect this
+## whole item is about. This half only moves dictionaries.
+##
+## THE FACING IS TAKEN AT PROMOTION, so the sprite faces the step it is DRAWING rather than one the
+## sim has produced but nobody has seen yet. Still the step they actually took, never a target.
+func _advance_playout(now: float) -> float:
+	var cursor := AssayScene.playout(_seg_at, _tick_gap, now, _pending_at, not _seen.is_empty())
+	for _i in range(int(cursor["promote"])):
+		_was = _seen if not _seen.is_empty() else _pending[0]
+		_seen = _pending.pop_front()
+		_pending_at.pop_front()
+		for id in _seen:
+			if _was.has(id):
+				var way := AssayScene.facing_of((_seen[id] as Vector2i) - (_was[id] as Vector2i))
+				if way != "":
+					_facing[id] = way
+	_seg_at = float(cursor["seg_at"])
+	return float(cursor["part"])
 
 
 func _my_tile() -> Vector2i:

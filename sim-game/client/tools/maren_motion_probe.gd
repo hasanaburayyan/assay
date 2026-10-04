@@ -63,6 +63,13 @@ var _frames := 0
 ## matter what the interpolation does -- so if the client's frames are that long, "biggest step well
 ## under a tile" is unreachable by any renderer change and the defect is elsewhere. Marlow, ASSA-148.
 var _sampled_at: Array[float] = []
+## HOW MANY PRODUCED POSITIONS WERE WAITING TO BE DRAWN, per frame (ASSA-148's playout queue).
+##
+## THIS IS THE PRICE OF THE FIX, STATED IN THE UNIT IT IS PAID IN. A queue of depth d means the body
+## is drawn d steps behind the newest tick -- about d x 100 ms of latency on your own movement. It
+## also says whether the queue's cap is being hit, which is the one case the fix degrades: over the
+## cap the oldest unplayed position is dropped and the next segment spans two tiles at double speed.
+var _depths: Array[int] = []
 
 
 func _initialize() -> void:
@@ -207,6 +214,7 @@ func _sample() -> void:
 		break
 	_parts.append(_screen._tick_gap)
 	_sampled_at.append(_now())
+	_depths.append((_screen._pending as Array).size())
 
 
 ## THE MOVING STRETCH, which is the only stretch this item is about (Maren's box 2, 07:47 UTC).
@@ -307,6 +315,30 @@ func _report() -> void:
 		print("MOVING STRETCH: frames %d..%d of %d (%.2fs of %.1fs), walked %.2f tiles"
 				% [from, to, _samples.size(), _sampled_at[to] - _sampled_at[from], _seconds,
 				(_samples[to] - _samples[from]).length()])
+		if _depths.size() > to:
+			var dhi := 0
+			var dtotal := 0
+			var at_cap := 0
+			for i in range(from, to + 1):
+				dhi = maxi(dhi, _depths[i])
+				dtotal += _depths[i]
+				if _depths[i] >= 3:
+					at_cap += 1
+			print("  PLAYOUT QUEUE over the walk: mean %.2f, max %d, at or over the cap in %d of %d"
+					% [float(dtotal) / float(to - from + 1), dhi, at_cap, to - from + 1]
+					+ " frames (a depth of d is ~d x %.0f ms of latency on your own body)"
+					% [1000.0 * _parts[-1]])
+		# IS THE BIGGEST STEP THE TWEEN'S FAULT OR THE FRAME'S? A body crossing one tile per
+		# `_tick_gap` covers `dt / gap` tiles in a frame of `dt`, and no renderer can beat that. So
+		# the bar the biggest step has to clear is the LONGEST FRAME's own share -- compared frame by
+		# frame instead, the 1 ms clock and the two reads being one node apart swamp a 7 ms frame.
+		# For scale: a whole-tile snap in a 7 ms frame is fourteen times its frame's share.
+		var longest := 0.0
+		for i in range(from + 1, to + 1):
+			longest = maxf(longest, _sampled_at[i] - _sampled_at[i - 1])
+		print("  FRAME-PACED? biggest step %.3f tiles against the longest frame's own share %.3f"
+				% [s["biggest"], longest / maxf(_parts[-1], 0.01)]
+				+ " tiles (%.1f ms at %.0f ms a tile)" % [1000.0 * longest, 1000.0 * _parts[-1]])
 		print("  biggest step %.3f tiles · WHOLE-TILE SNAPS (>=0.9) %d of %d steps · distinct"
 				% [s["biggest"], s["snaps"], int(s["frames"]) - 1]
 				+ " positions %d · on an exact tile %d of %d (%.1f%%)"
