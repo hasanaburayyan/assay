@@ -58,15 +58,83 @@ def render(name):
     print(f"  {name}: {n} frames in {time.time() - t:.0f}s")
 
 
+# A LIGHT ROW IS DERIVED, NOT RENDERED, and this is the one number in that
+# derivation that is a judgement (ASSA-137; `rig.Asset.light_row` says why the
+# row exists at all).
+#
+# The layer is the difference between two renders of the same scene, so every
+# pixel that Cycles sampled slightly differently is a "change". At a threshold
+# of zero, 58.2% of the smelter's inked pixels had moved -- against the 24.2%
+# that moved by more than 12, which is Maren's fire. Threshold-zero counting is
+# the mistake I keep making, so the threshold is built in from the start rather
+# than discovered afterwards.
+#
+# 4/255 on the largest channel. Measured on the smelter: the layer covers 36.5%
+# of the frame instead of 58.2%, and the worst a discarded pixel can be wrong by
+# is the threshold itself -- 4/255, under one step of the 8-bit ramp the eye can
+# see on a mid grey. Higher thresholds start dropping the warm spill on the wall
+# the fire is actually lighting, which is the part that says "the fire is in
+# THIS building".
+LIGHT_FLOOR = 4
+
+
+def light_layer(body, lit):
+    """`lit` split into the material it is made of and the light falling on it.
+
+    Returns the layer L for which `over(L, body) == lit`, with the SMALLEST alpha
+    that can do it:
+
+        a      = max over channels of (lit_c - body_c) / (255 - body_c)
+        L.rgb  = (lit - (1-a)*body) / a
+
+    Alpha is the light's share of the pixel, so a coal that burns to white comes
+    out opaque and keeps its own colour under any tint, while a wall the fire only
+    warms stays mostly its own species. Pixels that got DARKER keep the body: a
+    light layer may only add, and cold->lit darkening in a path-traced render is
+    sampling noise, not shadow.
+
+    Done at AUTHORING size, after the downscale, because that is the sheet the
+    client samples. Deriving at supersample size and then resizing would run a
+    straight-alpha layer through LANCZOS and fringe every coal.
+    """
+    out = Image.new("RGBA", body.size)
+    bd, ld = list(body.getdata()), list(lit.getdata())
+    px = []
+    for i in range(len(bd)):
+        b, l = bd[i], ld[i]
+        if l[3] == 0 or max(l[ch] - b[ch] for ch in range(3)) <= LIGHT_FLOOR:
+            px.append((0, 0, 0, 0))
+            continue
+        a = 0.0
+        for ch in range(3):
+            if 255 - b[ch] > 0:
+                a = max(a, (l[ch] - b[ch]) / (255 - b[ch]))
+        a = min(1.0, max(0.0, a))
+        a8 = max(1, int(round(a * 255)))
+        a = a8 / 255.0
+        px.append(tuple(int(round(min(255.0, max(0.0, (l[ch] - (1 - a) * b[ch]) / a))))
+                        for ch in range(3)) + (a8,))
+    out.putdata(px)
+    return out
+
+
 def pack(name):
     meta = json.load(open(os.path.join(OUT, name, "asset.json")))
     fw, fh = meta["frame_px"]
     cols = max(r["frames"] for r in meta["rows"])
+    derived = {d["row"]: d for d in meta.pop("derive", [])}
+
+    def authored(row, f):
+        im = Image.open(os.path.join(OUT, name, f"{row}_{f:02d}.png")).convert("RGBA")
+        return im.resize((fw, fh), Image.LANCZOS)
+
     sheet = Image.new("RGBA", (cols * fw, len(meta["rows"]) * fh), (0, 0, 0, 0))
     for y, row in enumerate(meta["rows"]):
         for f in range(row["frames"]):
-            im = Image.open(os.path.join(OUT, name, f"{row['name']}_{f:02d}.png")).convert("RGBA")
-            sheet.alpha_composite(im.resize((fw, fh), Image.LANCZOS), (f * fw, y * fh))
+            d = derived.get(row["name"])
+            im = light_layer(authored(d["body"], f), authored(d["lit"], f)) if d \
+                else authored(row["name"], f)
+            sheet.alpha_composite(im, (f * fw, y * fh))
     sheet.save(os.path.join(SPRITES, f"{name}.png"))
     meta["sheet"] = f"{name}.png"; meta["columns"] = cols
     return meta

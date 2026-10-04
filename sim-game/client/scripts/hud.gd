@@ -21,6 +21,24 @@ const VIEW := Vector2(1280.0, 720.0)
 const MARGIN := Vector2(24.0, 96.0)
 const PANEL := 320.0
 
+## WHERE THE HUD COLUMN STARTS, AND IT IS NOT `MARGIN.y` (ASSA-133, Maren's 96px measurement).
+##
+## `MARGIN.y` is 96 because that is where the MAP starts: the header band above it carries the join
+## row, the status line and the detail line. But that band spans the MAP's width, not the window's --
+## its controls stop near x 620 and the column's x range is 936..1280 -- so the top-right 347 x 96 of
+## the window was 33,312 px of one colour, in a window whose one state surface wants 1746px of a
+## 566px clip. Maren measured the first non-background pixel in the column's x-range at y = 96
+## exactly.
+##
+## NOTHING MOVES AND NOTHING IS REWORDED to buy this: the column simply starts where there is nothing
+## in its way, which is +96px, about 17% more clip.
+##
+## IT IS NOT AN EMPTY STATE AND MUST NEVER GET A LABEL (Maren, answering Limpet's question on the
+## item). "Every empty surface says which kind of empty it is" is about a surface that HAS a subject
+## and nothing to show. This rectangle has no subject: a blank that no section owns is a layout that
+## stopped short, and labelling it is the game apologising for its own margin.
+const COLUMN_TOP := 8.0
+
 ## HOW MUCH OF THE PANEL THE LOG'S TOGGLE TAKES OFF THE TOP (ASSA-89).
 ##
 ## The control that shows and hides the event log is PINNED ABOVE THE SCROLL BOX rather than sitting
@@ -313,6 +331,25 @@ static func quiet_log_line() -> String:
 ## uses ("no world yet — ...") and the second clause answers the question the heading raises.
 static func quiet_cursor_line() -> String:
 	return "no world yet — this reads the tile under your mouse"
+
+
+## WHAT THE MAP ITSELF SAYS BEFORE THERE IS A WORLD (Maren's ruling 1, ASSA-127).
+##
+## **THE RULE WAS KEPT EVERYWHERE IT WAS CHEAP AND DROPPED WHERE IT WAS BIG.** Six surfaces in the
+## HUD column name which kind of empty they are, [quiet_cursor_line] among them. The seventh is
+## **59% of the window**, measured twice at 543,180 px of one colour, and said nothing at all -- and
+## it is the only one a stranger looks at first. A dark rectangle filling a freshly downloaded window
+## is also what a failed launch looks like: two engineers here each spent a wake-up believing this
+## window never opened.
+##
+## **THE WORDS ARE THE ONES THAT WERE ALREADY ON SCREEN**, per her "keep the existing words". They
+## were in the status line at (24,54) -- ~1.5% of the window, above the thing being explained. This
+## is one sentence in one place, and that place is where a stranger is already looking.
+##
+## IT IS NOT A HEADING'S NOTE, so it carries both doors rather than the shape the six use: there is
+## nothing above it to name what it would contain.
+static func empty_map_line() -> String:
+	return "Press Play solo to start your own world, or enter a host address to join someone."
 
 
 ## EVERY VERB A STACK AFFORDS, as descriptors for the row's buttons: `{label, verb, ...}`.
@@ -660,8 +697,21 @@ static func no_designs_line() -> String:
 ## So these are short tags on a row, and the SENTENCES about those conditions stay where the sim
 ## writes them (`reach_note`, the stall line).
 ##
-## ABSENT RATHER THAN NEGATED. A row says what a rock CAN do; "not hand-minable" would be the client
-## ranking the roster, which ruling 4 refuses. The player compares six rows and decides.
+## MINING IS THREE STATES AND USED TO RENDER AS ONE BIT (ASSA-135) -- the same defect ASSA-93 fixed
+## one axis over, found by the Game Director on the board's own demo seed. `hand_minable` is a bool
+## and `sim::debug::mining` holds a three-state answer, so this row said "hand-minable" or said
+## NOTHING: two of the six rocks on seed 14247 can never be mined by anything, they are the first two
+## rows the board reads, and the only way this panel had of saying so was to leave a word out. The
+## middle state ("hand-minable, but not smeltable", 13.6% of deposits) rendered as the bare promise
+## ruling ASSA-52 refuses. The sim sends its own sentence in `mining` and this file picks none of the
+## words; it must never re-derive the state from hardness.
+##
+## WHICH RETIRES A RULING OF THE GAME DIRECTOR'S, BY THEIR OWN WORD (ASSA-135). The comment that
+## stood here said "ABSENT RATHER THAN NEGATED: a row says what a rock CAN do, and 'not hand-minable'
+## would be the client ranking the roster". That objection was about WHO decides, and it was right
+## only while the sim had no word for it -- `debug.rs` writes the sentence now, so rendering it ranks
+## nothing. The rule still stands wherever the sim IS silent, which is why `lighting` below is absent
+## rather than negated on a rock the sim does not call fuel.
 ## LIGHTING IS THREE STATES AND USED TO RENDER AS ONE BIT (ASSA-93). `hand_lit_fuel` is true only
 ## for the first of them, so a fuel NOTHING in the world can light rendered exactly like a rock that
 ## is not fuel at all -- and the board loaded 50 units of the first kind into a smelter that then sat
@@ -671,13 +721,24 @@ static func no_designs_line() -> String:
 ##
 ## ABSENT RATHER THAN NEGATED SURVIVES, which is why the key is missing rather than empty on a rock
 ## the sim does not call fuel: those rows still say nothing about lighting, so no row is ranked.
-const TAG_HAND_MINABLE := "hand-minable"
+##
+## `TAG_HAND_MINABLE` WAS HERE AND IS GONE (ASSA-135). It was this file's own word for one of three
+## states, and a client holding a word for an axis the sim words is how the middle state got lost.
+## There is deliberately no constant to put back: the string arrives.
 
 ## The tags a species row shows, in a fixed order so six rows read as a column rather than a jumble.
+##
+## `mining` LEADS, because it is the question a player is asking of six rows at once -- can I get
+## anything out of this, and does what I get go anywhere. Lighting follows: it only matters once the
+## answer to the first is yes, and on rock nothing can mine the sim withholds it (ASSA-68).
 static func species_tags(species: Dictionary) -> PackedStringArray:
 	var tags := PackedStringArray()
-	if bool(species.get("hand_minable", false)):
-		tags.append(TAG_HAND_MINABLE)
+	# NO DEFAULT WORD AND NO FALLBACK. If `mining` ever stopped arriving this row would be one tag
+	# short and `test_a_species_row_carries_the_sims_own_mining_sentence` fails; a `"hand-minable"`
+	# here would make a binding regression render as a confident lie instead.
+	var mining := String(species.get("mining", ""))
+	if mining != "":
+		tags.append(mining)
 	var lighting := String(species.get("lighting", ""))
 	if lighting != "":
 		tags.append(lighting)

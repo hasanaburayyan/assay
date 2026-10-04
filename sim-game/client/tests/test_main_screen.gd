@@ -232,20 +232,25 @@ func test_a_failure_does_not_look_like_the_instruction_it_replaces() -> bool:
 ## It used to read "enter a host address and join", which sent them to the one door that needs
 ## information they do not have -- and it survived the whole of ASSA-106 because I never re-read the
 ## item between cutting the branch and opening the PR.
+##
+## **THE RULE DID NOT MOVE; THE SURFACE DID** (Maren's ruling 1, ASSA-127). The sentence is the same
+## words, now centred on the map rather than in the status line above it, so this reads it off the
+## label that actually carries it. What it asserts is unchanged: both doors, solo first.
+##
+## The idle-COLOUR clause went with the sentence rather than being dropped: an empty status line has
+## no meaningful `status_color`, and the legibility of these words is now asserted where they are
+## drawn, against `MAP_BG`, by `test_the_empty_map_names_which_kind_of_empty_it_is`.
 func test_the_opening_line_offers_the_door_that_needs_nothing_typed() -> bool:
 	var screen := _screen()
-	var said: String = screen._status.text
-	var colour: Color = screen._status.modulate
+	var said: String = screen._map_note.text if screen._map_note != null else ""
 	screen.queue_free()
 	if not said.contains("Play solo"):
 		return _fail("the opening line does not mention Play solo at all: %s" % said)
 	if not said.contains("host address"):
 		return _fail("the opening line dropped the host door: %s" % said)
-	# SOLO FIRST, because the row reads left to right and so does the sentence above it.
+	# SOLO FIRST, because the row reads left to right and so does the sentence over it.
 	if said.find("Play solo") > said.find("host address"):
 		return _fail("the opening line puts the host door first: %s" % said)
-	if colour != AssayHud.status_color(AssayHud.Say.IDLE):
-		return _fail("the opening instruction is coloured %s, not the idle colour" % colour)
 	return true
 
 
@@ -611,42 +616,84 @@ func test_the_crafting_menu_is_open_on_first_join_and_its_control_names_the_key(
 	return ok
 
 
-## THE MENU FOLDS AND THE RUNNING CRAFT DOES NOT FOLD WITH IT (Maren's clause on ASSA-89, applied to
-## ASSA-88): a craft is a CONDITION, not a moment.
+## THE RUNNING BLOCK IS OUTSIDE THE SCROLL BOX, WHICH IS THE WHOLE OF MAREN'S RULING 1 (ASSA-133).
 ##
-## STRUCTURAL, AND THAT IS THE POINT. `test_buttons.gd` proves it with a real craft running; this
-## proves the countdown is not a CHILD of the thing the toggle hides, so the property holds whatever
-## a later edit does to the rows. Both, because the structural half is what makes the behavioural
-## half impossible to break by accident.
-func test_folding_the_crafting_menu_cannot_hide_the_running_craft() -> bool:
+## WHAT THIS REPLACES. It used to walk `_crafting`'s ancestors to prove the countdown was not a CHILD
+## of the container `_show_make` hides -- true, and arranged. The countdown is now in the chrome, so
+## the stronger property is available and is the one asserted: no ancestor of the running block is
+## the scroll box, so NOTHING in the column -- not the menu folding, not a section growing, not a
+## later edit -- can carry it off the bottom. "Announcing does not scroll" as a structural fact.
+##
+## `_halt_box` is held to the same bar in the same walk, because the two blocks are one ruling and a
+## test that watched only the new one would let the precedent rot.
+func test_what_is_running_and_what_has_stopped_are_both_outside_the_scroll_box() -> bool:
 	var screen := _screen()
 	var ok := true
-	var walk: Node = screen._crafting
-	while walk != null:
-		if walk == screen._make:
-			ok = _fail("the running craft lives inside the container the toggle hides")
+	for named in [["running", screen._running_box], ["stopped", screen._halt_box]]:
+		var label := String(named[0])
+		var box: Node = named[1]
+		if not is_instance_valid(box):
+			ok = _fail("the %s block does not exist" % label)
 			break
-		walk = walk.get_parent()
-	# AND IT SURVIVES A REBUILD OF THE ROWS. `_rebuild_make` CLEARS the container it owns, so a
-	# countdown that had been added to the rows would be freed and the walk above would find a node
-	# with no parent at all -- which is how a mutation that moved this line into the rows passed
-	# every test I had. The parent is therefore asserted, not just "not the menu".
-	if ok:
-		screen._make_showing = "not a shape any pack has"
-		screen._refresh_make()
-		if not is_instance_valid(screen._crafting):
-			ok = _fail("rebuilding the rows freed the running-craft line")
-		elif screen._crafting.get_parent() == null:
-			ok = _fail("rebuilding the rows took the running-craft line off the panel")
-	if ok:
-		screen._show_make(false)
-		if screen._make.visible:
-			ok = _fail("_show_make(false) left the rows visible")
-		elif not screen._crafting.visible and screen._crafting.text != "":
-			ok = _fail("folding the rows away hid a running craft")
-		elif screen._make_toggle.text != AssayHud.make_toggle_text(false):
-			ok = _fail("the control still says `%s` with the rows hidden"
-					% screen._make_toggle.text)
+		var walk: Node = box
+		var depth := 0
+		while walk != null:
+			if walk == screen._scroll:
+				ok = _fail(("the %s block is inside the scroll box, so a long enough column can "
+						+ "push it off the window") % label)
+				break
+			walk = walk.get_parent()
+			depth += 1
+		if not ok:
+			break
+		# AND IT IS ON THE PANEL AT ALL. A block with no parent passes the walk above for the wrong
+		# reason -- the loop ends immediately -- which is the shape of hole that let a countdown live
+		# in a freed container once already.
+		if depth < 2:
+			ok = _fail("the %s block is only %d deep, so the walk above proved nothing" % [label, depth])
+			break
+	screen.queue_free()
+	return ok
+
+
+## EMPTY IS EMPTY, FOR BOTH CHROME BLOCKS (ASSA-133 box 2). A window with nothing running and nothing
+## stopped must look exactly as it did before this item: no heading, no "nothing running", no pixels.
+## A fresh screen has never joined a world, so both are the empty case by construction.
+func test_the_chrome_blocks_take_no_space_when_they_have_nothing_to_say() -> bool:
+	var screen := _screen()
+	var ok := true
+	for named in [["running", screen._running_box], ["stopped", screen._halt_box]]:
+		var box: Control = named[1]
+		if box.visible:
+			ok = _fail(("nothing is %s and its block is visible. Empty is empty: a reassuring line "
+					+ "is the cry-wolf failure one step removed. If this reddens with the block "
+					+ "never rebuilt, the `_refresh_%s` call in `_build_ui` is what is missing -- a "
+					+ "PanelContainer is visible by default and the refresh only redraws on change.")
+					% [String(named[0]), String(named[0])])
+			break
+	screen.queue_free()
+	return ok
+
+
+## **A SECTION MAY NOT SIT ABOVE THE SECTION IT IS DERIVED FROM** (ASSA-133 ruling 2, box 4). The
+## crafting menu is generated from the pack and grows faster than it, so `make` goes below `you`.
+##
+## ASSERTED AS THE ORDER OF HEADINGS IN THE SHARED PARENT, not as pixel positions: the ruling is
+## about which section pushes which off the bottom, and that is child order. Reading the headings
+## rather than the bodies is deliberate -- a body can be hidden, and a hidden section still occupies
+## its place in the order a later edit would have to respect.
+func test_the_column_reads_you_do_make_bench_rocks_cursor_log() -> bool:
+	var screen := _screen()
+	var ok := true
+	var want := ["you", "do", "make", "bench", "rocks", "cursor", "event log"]
+	var column: Node = screen._carrying.get_parent()
+	var seen := PackedStringArray()
+	for child in column.get_children():
+		if child is Label and (child as Label).theme_type_variation == &"Heading":
+			seen.append((child as Label).text)
+	if Array(seen) != want:
+		ok = _fail(("the column reads %s; Maren ruled %s. A list derived from your pack may not sit "
+				+ "above it.") % [seen, want])
 	screen.queue_free()
 	return ok
 
@@ -667,27 +714,31 @@ func test_the_crafting_menu_says_why_it_is_empty_before_a_world_exists() -> bool
 	return ok
 
 
-## ASSA-107 / Maren's ASSA-88 RULING: THE CHOSEN PARTS LIVE IN THE CRAFTING MENU, UNDER THE RUNNING
-## CRAFT — not in the `do` section two sections away from the rows they were chosen on.
+## ASSA-107 / Maren's ASSA-88 RULING: THE CHOSEN PARTS LIVE IN THE CRAFTING MENU — not in the `do`
+## section two sections away from the rows they were chosen on.
 ##
-## ASSERTED AS ORDER IN A SHARED PARENT, not as pixel positions: the three parts of the menu have to
-## read top to bottom as one activity (what is running · what you are assembling · what you can
-## make), and that is a property of the column's child order which survives any restyling.
-func test_the_chosen_parts_sit_under_the_running_craft_inside_the_menu() -> bool:
+## THE RUNNING CRAFT USED TO BE THE FIRST OF THREE and this test read all three in order. It left the
+## column on ASSA-133, so what remains of the ruling is the part that was always about the menu: the
+## parts you have chosen sit at the menu's head, above the control and the rows it offers.
+##
+## ASSERTED AS ORDER IN A SHARED PARENT, not as pixel positions: the menu has to read top to bottom
+## as one activity (what you are assembling · the control · what you can make), and that is a
+## property of the column's child order which survives any restyling.
+func test_the_chosen_parts_sit_at_the_head_of_the_crafting_menu() -> bool:
 	var screen := _screen()
 	var ok := true
-	var column: Node = screen._crafting.get_parent()
+	var column: Node = screen._make.get_parent()
 	if screen._assembling.get_parent() != column:
-		ok = _fail("the chosen parts are not in the same container as the running craft")
-	elif screen._make.get_parent() != column:
-		ok = _fail("the menu's rows are not in that container either, so order proves nothing")
+		ok = _fail("the chosen parts are not in the same container as the menu's rows")
+	elif screen._make_toggle.get_parent() != column:
+		ok = _fail("the menu's control is not in that container either, so order proves nothing")
 	else:
-		var craft := column.get_children().find(screen._crafting)
 		var mid := column.get_children().find(screen._assembling)
+		var toggle := column.get_children().find(screen._make_toggle)
 		var rows := column.get_children().find(screen._make)
-		if not (craft < mid and mid < rows):
-			ok = _fail(("the menu does not read running craft (%d), assembling (%d), rows (%d)")
-					% [craft, mid, rows])
+		if not (mid < toggle and toggle < rows):
+			ok = _fail(("the menu does not read assembling (%d), control (%d), rows (%d)")
+					% [mid, toggle, rows])
 	# AND NOT IN THE `do` SECTION ANY MORE. Checked by walking `_actions` for the button, because
 	# that is what a player would still find there if the move were half done.
 	if ok and _button_under(screen._actions, "Assemble") != null:
@@ -1123,6 +1174,111 @@ func _carries_text(control: Control) -> bool:
 		if inner != null and inner.visible and _carries_text(inner):
 			return true
 	return false
+
+
+## **THE MAP NAMES WHICH KIND OF EMPTY IT IS, AND IT IS 59% OF THE WINDOW** (Maren's ruling 1,
+## ASSA-127).
+##
+## Six surfaces in the HUD column say which kind of empty they are -- the sweep above is that rule.
+## The seventh is the map, measured twice at **543,180 px of one colour = 58.9% of the window**, and
+## it said nothing; the sentence that explains it sat in the status line at ~1.5% of the window,
+## above the thing being explained.
+##
+## **THE CONTRAST IS ASSERTED HERE AND NOT BY THE COLUMN SWEEP, which is the trap this control walks
+## into.** `test_no_readout_in_the_column_is_below_wcag_aa_on_its_panel` iterates the column's
+## sections; this note is not in the column, and it sits on `MAP_BG` (0.10/0.11/0.13) rather than on
+## the panel's surface. A new readout on a new background escapes every guard we already had, and
+## `_drawn_color` is used rather than `font_color` because `modulate` multiplies what the theme chose
+## and is how 4.091:1 shipped once already.
+##
+## THE SPAN IS A PROPERTY, NOT A COORDINATE: enclosed by the map's rectangle and covering most of it,
+## with the text centred both ways. A one-line label parked in a corner would satisfy "the map has a
+## note" and would not be the thing Maren ruled for.
+func test_the_empty_map_names_which_kind_of_empty_it_is() -> bool:
+	var screen := _screen()
+	var ok := true
+	var note: Label = screen._map_note
+	var world := AssayHud.world_rect()
+	if note == null:
+		ok = _fail("the join screen's map has no note at all")
+	elif not note.visible:
+		ok = _fail("the map's note exists but is hidden on the first screen a stranger sees")
+	elif note.text != AssayHud.empty_map_line() or note.text.strip_edges() == "":
+		ok = _fail("the map's note is not the shipped sentence: '%s'" % note.text)
+	elif not world.encloses(Rect2(note.position, note.size)):
+		ok = _fail(("the map's note is not on the map it explains: note %s, map %s")
+				% [Rect2(note.position, note.size), world])
+	elif note.size.x * note.size.y < world.size.x * world.size.y * 0.5:
+		ok = _fail(("the map's note covers %d px of a %d px rectangle, so centring it says nothing "
+				+ "about where the words land") % [note.size.x * note.size.y,
+				world.size.x * world.size.y])
+	elif note.horizontal_alignment != HORIZONTAL_ALIGNMENT_CENTER \
+			or note.vertical_alignment != VERTICAL_ALIGNMENT_CENTER:
+		ok = _fail("Maren's ruling is a CENTRED line; this one is aligned %d/%d"
+				% [note.horizontal_alignment, note.vertical_alignment])
+	elif note.mouse_filter != Control.MOUSE_FILTER_IGNORE:
+		ok = _fail("a 912x600 label that answers the mouse swallows every click on the map, and "
+				+ "the bug would read as `Play solo does nothing`")
+	else:
+		var ratio := AssayHud.contrast_ratio(_drawn_color(note), AssayHud.MAP_BG)
+		if ratio < 4.5:
+			ok = _fail(("the map's note is drawn at %.3f:1 against MAP_BG, under the 4.5 floor "
+					+ "build_theme.gd refuses to write a theme at: %s")
+					% [ratio, _drawn_color(note)])
+		else:
+			print("    map note: %.3f:1 on MAP_BG" % ratio)
+	# ONE SENTENCE IN ONE PLACE, which is half of what the ruling asked for. Leaving it in the status
+	# line too would pass every assertion above and still be the thing she filed.
+	if ok and screen._status.text.strip_edges() == AssayHud.empty_map_line().strip_edges():
+		ok = _fail("the invitation is still in the status line as well as on the map")
+	screen.queue_free()
+	return ok
+
+
+## **THE NOTE IS SHOWN EXACTLY WHEN THE MAP HAS NOTHING ON IT**, asserted through `_refresh_world`
+## rather than by poking the flag (ASSA-127).
+##
+## The derivation lives in `_refresh_map_note`, which reads `_world.view.is_empty()` -- the same fact
+## `world_layer.gd` uses to decide whether to paint anything. **Both branches of `_refresh_world` are
+## driven here on purpose**: a test that only called the helper would pass with the helper wired to
+## nothing, which is exactly the shape of bug that has got past me before.
+func test_the_maps_note_is_shown_exactly_when_the_map_is_empty() -> bool:
+	var screen := _screen()
+	var ok := true
+	# Pre-join: no sim, so `_refresh_world` takes its early return. Seeded wrong first, so a missing
+	# call cannot look like a pass.
+	screen._map_note.visible = false
+	screen._refresh_world()
+	if not screen._map_note.visible:
+		ok = _fail("with no world, _refresh_world left the map silent")
+	screen.queue_free()
+
+	var joined := _joined_screen()
+	if ok and joined._sim.running():
+		joined._map_note.visible = true
+		joined._refresh_world()
+		if joined._world.view.is_empty():
+			ok = _fail("the welcomed screen drew no world, so this half proves nothing")
+		elif joined._map_note.visible:
+			ok = _fail("the map has a world on it and still says there is no world yet")
+	elif ok:
+		ok = _fail("could not build an offline world, so the in-world half proves nothing: %s"
+				% joined._sim.fail_reason)
+	joined.queue_free()
+	return ok
+
+
+## A live screen welcomed into a fresh offline world, the way `test_buttons.gd::_joined` does it:
+## `_ready` by hand because the suite works inside `SceneTree._initialize`.
+func _joined_screen(seed_text := "777042") -> Node:
+	var screen: Node = load("res://scenes/main.tscn").instantiate()
+	runner.root_node.add_child(screen)
+	screen._ready()
+	var welcome := AssaySimHost.fresh_welcome_json(seed_text, "limpet")
+	if welcome != "":
+		screen._client.play_offline()
+		screen._client.feed_offline(welcome)
+	return screen
 
 
 ## A STACK SHAPED LIKE A FRAME PART, out of the sim's own catalogue of kinds. The first part of an

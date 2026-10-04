@@ -772,3 +772,50 @@ func test_the_themes_borrowed_colours_are_still_the_ones_they_say_they_borrowed(
 				+ "%s over MAP_BG %s is now %v, was %v. If the map moved, move the panel with it; "
 				+ "if the panel moved, say so here") % [surface, AssayHud.MAP_BG, scale, was])
 	return true
+
+
+## THE CLIENT WORDS NOTHING ABOUT THE MINING AXIS, PROVED BY CONTRADICTION (ASSA-135, box 3).
+##
+## A grep for "hand-minable" in this file would pass the day someone wrote `if hand_minable` with a
+## different word, so this asserts the BEHAVIOUR the grep is a proxy for: hand the row a `mining`
+## sentence that disagrees with `hand_minable`, and the row must follow the sentence. There is no
+## honest world where those two disagree -- the binding builds both from the same roster -- which is
+## exactly why it is a usable probe: only a client that re-derived the state from the bool can tell
+## the difference, and only such a client fails this.
+func test_a_species_row_carries_the_sims_own_mining_sentence() -> bool:
+	# Not one of the sim's three notes on purpose. A fixture may say anything; what is being tested
+	# is that this client passes it through rather than recognising it.
+	var invented := "this rock is made of cheese"
+	var tags := AssayHud.species_tags({"name": "alpha", "hand_minable": true, "mining": invented})
+	if not Array(tags).has(invented):
+		return _fail(("the row dropped the sim's mining sentence and kept its own idea: %s")
+				% [tags])
+
+	# THE CONTRADICTION. `hand_minable` says yes and the sim's sentence says nothing can mine it.
+	# A client reading the bool shows "hand-minable"; a client rendering the sentence shows the
+	# sentence. Only one of those is this file's job.
+	var dead := "too hard for anything you can build"
+	tags = AssayHud.species_tags({"name": "beta", "hand_minable": true, "mining": dead})
+	if not Array(tags).has(dead):
+		return _fail("the row preferred the bool to the sim's sentence: %s" % [tags])
+	for tag in tags:
+		if String(tag) == "hand-minable":
+			return _fail(("the row composed `hand-minable` from the bool while the sim said `%s`")
+					% [dead])
+
+	# AND THE THREE STATES ARE THREE ROWS (box 2). Whatever the sim says, a row says it; nothing
+	# here collapses two of them into one appearance.
+	var seen := {}
+	for note in [dead, "hand-minable, but not smeltable", "hand-minable"]:
+		var row := AssayHud.species_tags({"name": "s", "hand_minable": true, "mining": note})
+		seen[" ".join(PackedStringArray(row))] = note
+	if seen.size() != 3:
+		return _fail("three mining states rendered as %d distinct rows: %s" % [seen.size(), seen])
+
+	# NO WORD WHERE THE SIM SENT NONE. If the binding ever stopped sending `mining`, a row one tag
+	# short is a visible defect; a confident "hand-minable" invented here would not be.
+	tags = AssayHud.species_tags({"name": "gamma", "hand_minable": true})
+	for tag in tags:
+		if String(tag).contains("minable"):
+			return _fail("the row invented a mining tag with no sim sentence to render: %s" % [tags])
+	return true

@@ -659,10 +659,15 @@ func test_the_shipped_manifest_draws_the_building_kinds_the_sim_can_place() -> b
 	var rows := []
 	for row in ((manifest["smelter"] as Dictionary).get("rows", []) as Array):
 		rows.append(String((row as Dictionary).get("name", "")))
-	for want in ["cold", "lit"]:
-		if not rows.has(want):
-			return _fail("`smelter` ships no `%s` row, and the view asks for it by name: %s"
-					% [want, rows])
+	if not rows.has("body"):
+		return _fail("`smelter` ships no `body` row, and the view asks for it by name: %s" % [rows])
+	# AND THE LIGHT ROW IS FOUND THE WAY THE VIEW FINDS IT -- by the manifest's own `light`/`over`
+	# fields, not by the word "fire" typed here. A sheet that stopped flagging the row would leave
+	# `light_row` returning "" and a burning smelter drawing nothing but walls, silently (ASSA-137).
+	var light := AssayScene.light_row(manifest, "smelter", "body")
+	if light == "":
+		return _fail("no row of `smelter` is flagged `light` over `body`, so a burning smelter has "
+				+ "no fire to draw: %s" % [rows])
 	return true
 
 
@@ -716,23 +721,66 @@ func test_a_placed_smelter_is_drawn_across_its_whole_footprint() -> bool:
 	return true
 
 
-## COLD AND LIT ARE TWO DIFFERENT ROWS OF THE SAME SHEET, and `lit` is the only thing that picks.
-## Asserted on the source rectangle as well as the row name, because a name that resolves to the same
-## strip is a renamed nothing.
-func test_the_fire_in_a_smelter_chooses_the_row() -> bool:
+## A BURNING SMELTER IS TWO PLACEMENTS: THE WALLS, AND THE LIGHT ON THEM (ASSA-137).
+##
+## This used to be one sprite picked by `lit`, both states multiplied by the species tint -- and a
+## multiply can only subtract, so the brightest pixel of a fire came out darker than the dirt in
+## three of six species. The walls keep the tint because they are made of the species; the fire is
+## a second placement at `Color.WHITE` because light is not.
+##
+## Asserted on the source rectangle as well as the row name: a name that resolves to the same strip
+## is a renamed nothing. And on the TINT of each, which is the whole property -- a fire drawn with
+## the body's tint would pass every other assertion in this file.
+func test_a_burning_smelter_draws_its_fire_untinted_over_its_tinted_walls() -> bool:
 	var cold := _of(AssayScene.placements(_view({"buildings": [_smelter(Vector2i(10, 5))]})),
 			"smelter")
 	var lit := _of(AssayScene.placements(_view({"buildings": [_smelter(Vector2i(10, 5), true)]})),
 			"smelter")
-	if cold.size() != 1 or lit.size() != 1:
-		return _fail("expected one placement each, got %d and %d" % [cold.size(), lit.size()])
-	if String((cold[0] as Dictionary)["row"]) != "cold":
-		return _fail("an unlit smelter draws row `%s`" % (cold[0] as Dictionary)["row"])
-	if String((lit[0] as Dictionary)["row"]) != "lit":
-		return _fail("a burning smelter draws row `%s`" % (lit[0] as Dictionary)["row"])
-	if (cold[0] as Dictionary)["src"] == (lit[0] as Dictionary)["src"]:
-		return _fail("both rows read the same strip of the sheet: %s"
-				% (cold[0] as Dictionary)["src"])
+	if cold.size() != 1:
+		return _fail("an unlit smelter should draw once, drew %d" % cold.size())
+	if lit.size() != 2:
+		return _fail("a burning smelter should draw its body and its fire, drew %d" % lit.size())
+	var body: Dictionary = cold[0]
+	if String(body["row"]) != "body":
+		return _fail("an unlit smelter draws row `%s`" % body["row"])
+	if String((lit[0] as Dictionary)["row"]) != "body":
+		return _fail("a burning smelter draws `%s` first, not its body"
+				% (lit[0] as Dictionary)["row"])
+	var fire: Dictionary = lit[1]
+	if String(fire["row"]) != AssayScene.light_row(_manifest(), "smelter", "body"):
+		return _fail("the second placement is `%s`, which is not the sheet's light row"
+				% fire["row"])
+	if fire["src"] == body["src"]:
+		return _fail("the fire reads the same strip of the sheet as the walls: %s" % body["src"])
+	if fire["dest"] != body["dest"]:
+		return _fail("the fire lands at %s and the walls at %s, so it is not on them"
+				% [fire["dest"], body["dest"]])
+	if fire["tint"] != Color.WHITE:
+		return _fail("the fire is drawn tinted %s; a multiply can only subtract, so the species "
+				% fire["tint"] + "would cap how bright a fire can be")
+	if (lit[0] as Dictionary)["tint"] != body["tint"]:
+		return _fail("lighting the fire changed the walls' tint to %s"
+				% (lit[0] as Dictionary)["tint"])
+	return true
+
+
+## AND THE FIRE STAYS ON TOP WHEN SOMETHING ELSE SHARES ITS BOTTOM EDGE (Maren's hazard, ASSA-137).
+##
+## The two placements have exactly equal sort keys, and `Array.sort_custom` is NOT stable, so
+## without the second key the renderer is free to draw the walls over their own fire -- and free to
+## do it on some array lengths and not others, which is a wrong picture nobody can reproduce. The
+## player here has the smelter's own bottom edge (6 + 1 == 5 + 2), so all three sort equal.
+func test_a_fire_is_drawn_after_its_walls_even_when_a_body_sorts_equal_to_it() -> bool:
+	var smelter := _smelter(Vector2i(10, 5), true)
+	var player := {"at": Vector2(14, 6), "facing": "S", "moving": false}
+	var all := AssayScene.placements(_view({"buildings": [smelter], "players": [player]}))
+	var rows := []
+	for place in all:
+		if String((place as Dictionary).get("asset", "")) == "smelter":
+			rows.append(String((place as Dictionary)["row"]))
+	var light := AssayScene.light_row(_manifest(), "smelter", "body")
+	if rows != ["body", light]:
+		return _fail("the smelter drew %s; the fire has to come after the walls it is on" % [rows])
 	return true
 
 

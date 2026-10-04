@@ -1129,6 +1129,77 @@ pub fn walls_clause(world: &World, recipe: &crate::recipe::Recipe, input: Item) 
     )
 }
 
+/// HOW FAR A SPECIES GETS IF YOU GO AND SWING AT IT: the three states a
+/// player plans from, as one answer instead of two bools a host must combine.
+///
+/// **WHY THIS ENUM IS HERE AND NOT IN `ladder`** (ASSA-135). The two
+/// decisions are already `ladder`'s and stay there — `hand_minable` is a
+/// hardness comparison and `usable_from_bare_hands` walks rung zero. Nothing
+/// in the rules branches on the three-way; only the wording does, and
+/// `RULES_ID` is a hash of every `sim/src` file except this one. So a type
+/// that exists to be *said* belongs on the side of that line where a new
+/// variant cannot make two peers refuse each other. Prose cannot desync.
+///
+/// What this DOES buy is the thing the bools could not: a fourth state fails
+/// to compile in [`mining_note`], and no host can collapse three states into
+/// two by accident. That is exactly how it was lost — the window appended
+/// "hand-minable" on a bool and appended nothing when it was false, so the
+/// half of the roster nothing can mine, and the 13.6% whose ore dead-ends,
+/// both rendered as the absence of a word.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Mining {
+    /// Hardness is past anything a player can swing.
+    TooHard,
+    /// A pick gets the ore out, and the ore is where it ends.
+    ByHandNotSmeltable,
+    /// A pick gets the ore out and the ore goes somewhere.
+    ByHand,
+}
+
+/// Which of the three [`Mining`] states a species is in, for a roster.
+///
+/// The roster is needed and not just the sheet: "can this ore be smelted"
+/// is a question about which fires THIS WORLD can build, which is rung zero
+/// and therefore every species at once — the same reason
+/// [`crate::ladder::lighting`] takes the slice.
+pub fn mining(species: &[MineralSpecies], id: SpeciesId) -> Mining {
+    let s = &species[usize::from(id.0)];
+    if !crate::ladder::hand_minable(s) {
+        Mining::TooHard
+    } else if !crate::ladder::usable_from_bare_hands(species, id) {
+        Mining::ByHandNotSmeltable
+    } else {
+        Mining::ByHand
+    }
+}
+
+/// The three states in words, and **THE ONLY WORDING OF THEM ANYWHERE**
+/// (ASSA-135, Game Director).
+///
+/// One wording and not a `tag`/`clause` pair like [`lighting_tag`] and
+/// [`lighting_clause`], because the Game Director asked for the window's
+/// sentence to be byte-identical to the table's: the species panel and the
+/// `species` table are the same surface at two widths, and a player who read
+/// one and then the other must not have to work out whether two phrasings
+/// mean one thing. `species_table_says_what_the_panel_says` pins it.
+///
+/// - **`TooHard`**: the absence of a note used to be the only cue, and
+///   absence is not a cue. This is the half of the roster nothing can mine.
+/// - **`ByHandNotSmeltable`**: **BARE "hand-minable" READ AS A PROMISE**
+///   (Game Director, ASSA-52). It is the truth about the swing and says
+///   nothing about the ore, and for 13.6% of deposits the ore is where it
+///   ends. The row still BEGINS "hand-minable" because that part is true and
+///   a player comparing rows is comparing swings. Terse on purpose: a row is
+///   read against five others, and the full explanation belongs on the
+///   deposit line, where a player is standing on the thing.
+pub fn mining_note(m: Mining) -> &'static str {
+    match m {
+        Mining::TooHard => "too hard for anything you can build",
+        Mining::ByHandNotSmeltable => "hand-minable, but not smeltable",
+        Mining::ByHand => "hand-minable",
+    }
+}
+
 /// Table of every species with its sheet as the players know it (rough
 /// bands until assayed), plus what the sheet means for the rules that
 /// exist today. Notes use the exact values: the ground knows what it is.
@@ -1149,26 +1220,14 @@ pub fn species_table(world: &World) -> String {
                 .map_or(format!("player {}", d.0), |p| p.name.clone());
             notes.push(format!("found by {who}"));
         }
+        // THE THREE MINING STATES AND THEIR WORDS BOTH LIVE IN `mining` AND
+        // `mining_note` NOW (ASSA-135). They were an if/else chain here, which
+        // made this table the only surface that could say the middle state at
+        // all: the species panel was handed `hand_minable` and composed its own
+        // word from it, so three states arrived as two. The note the window
+        // shows is this same string, byte for byte.
         let minable = crate::ladder::hand_minable(s);
-        if !minable {
-            // The absence of a note used to be the only cue, and absence is not
-            // a cue: this is the half of the roster nothing can mine.
-            notes.push("too hard for anything you can build".to_string());
-        } else if !crate::ladder::usable_from_bare_hands(&world.species, s.id) {
-            // **BARE "hand-minable" READ AS A PROMISE** (Game Director,
-            // ASSA-52). It is the truth about the swing and says nothing about
-            // the ore, and for 13.6% of deposits the ore is where it ends. The
-            // row still begins "hand-minable" because that part is true and a
-            // player comparing rows is comparing swings.
-            // Terse here on purpose: a table row is read against five other
-            // rows, and the full explanation belongs on the deposit line where
-            // a player is standing on the thing. "hand-minable" still leads,
-            // because that half is true and is what a player comparing swings
-            // is comparing.
-            notes.push("hand-minable, but not smeltable".to_string());
-        } else {
-            notes.push("hand-minable".to_string());
-        }
+        notes.push(mining_note(mining(&world.species, s.id)).to_string());
         // **"FUEL" USED TO BE A PURE REACTIVITY TEST AND NEVER ASKED WHETHER
         // THE PLAYER COULD SET THE THING ALIGHT** (Game Director, ASSA-58).
         // Over 5000 worlds half of these labels would not light a cold

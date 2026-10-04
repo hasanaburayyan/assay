@@ -28,11 +28,12 @@ import json
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, PngImagePlugin
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ask_layout import kind_of  # noqa: E402  one reader of what a row holds
 from pack_icon_draw import nearest_blit  # noqa: E402  the engine's own sampling, defined once
+from pack_words import png_info  # noqa: E402  the words this sheet claims, stamped into it
 
 HERE = Path(__file__).resolve().parent.parent
 LAYOUT = json.load(open(sys.argv[1] if len(sys.argv) > 1 else "/tmp/cove-layout.json"))
@@ -347,7 +348,11 @@ dt.text((0, 4), "pack rows 1:1, on the viewport's own clear colour #%02X%02X%02X
 dt.text((PANEL + GAP, 4), "the 32px slot at 4x", font=f12, fill=(200, 200, 205))
 dt.text((PANEL + GAP + zoom_w + GAP, 4), CAP_CMP, font=f12, fill=(200, 200, 205))
 OUT.parent.mkdir(parents=True, exist_ok=True)
-sheet.save(OUT)
+# STAMPED WITH THE WORDS IT DREW (ASSA-132). This sheet said "Frame" on four part rows for days
+# after the client started saying "Mount" on two of them -- not because anything here read the
+# wrong source, but because nobody re-ran it. `check_pack_row_word.py` asks the live engine and
+# compares against this stamp, so the sheet going stale is a red check instead of a discovery.
+sheet.save(OUT, pnginfo=png_info(ROWS))
 
 # ---------------------------------------------------------------------------- the numbers
 print("background %s, luminance %.4f" % (BG, luminance(BG)))

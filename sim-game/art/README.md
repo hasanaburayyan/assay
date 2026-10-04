@@ -60,6 +60,22 @@ that are easy to undo by accident:
 - **The neutral base has to be LIGHT and genuinely hueless.** Multiply
   cannot brighten, so the base's lightness is the budget every species
   spends, and any hue it carries is added to all six.
+- **LIGHT IS NOT MATERIAL, and a light row is how it leaves the multiply**
+  (ASSA-137). Maren's rule: *a quantity the sim treats as independent of
+  species may not be drawn in a channel species multiplies.* A wall is made
+  of the species and is right to be tinted; a fire is not, and a multiply can
+  only subtract, so on the shipped smelter the brightest pixel of a burning
+  fire measured BELOW the ground's median luminance in three of the six
+  species — and the one the demo plants cleared it by 11.7. There is no
+  emission strength that fixes that, which is the tell: when no amount of a
+  thing can move a number, the thing is in the wrong channel. So an asset
+  calls `Asset.light_row(name, body=…, lit=…)`, `build.py` subtracts the two
+  rendered states into an RGBA layer whose alpha is the light's share of each
+  pixel, and the row ships with `"light": true, "over": "<body row>"`. The
+  client draws `over` tinted and the light row on top of it at `Color.WHITE`.
+  `check_light_rows.py` is the guard, `check_headroom.py` skips these rows
+  (its premise is a tint they never meet), and the untinted picture is
+  unchanged by the split, so nothing has to be re-judged.
 
 - **The purity ladder is the sim's: C / B / A**, read out of
   `sim/src/tuning.rs` at build time rather than retyped. The art used to
@@ -574,3 +590,18 @@ row vertically, so the drawn scale depends on how many verbs a row has.
 NOT A GATE and deliberately thresholdless: it reports a spread (the same ore
 icon is 2.01 against the HUD's background in one species slot and 8.02 in
 another), and which spread is acceptable is the Director's call.
+
+**Regenerate it from a FRESH layout, never a cached `/tmp/layout.json`.** The
+sheet shipped for days saying `Frame` on four part rows while the client said
+`Mount` on two of them (ASSA-132) — not because anything read the wrong source,
+but because nobody re-ran it after ASSA-103 changed the word. The sheet is the
+artefact whose whole job is to be believed, so one that disagrees with the game
+is worse than none.
+
+`pack_icon_sheet.py` therefore **stamps the words it drew into the PNG**
+(`pack_words.py`, a `tEXt` chunk) and `art/check_pack_row_word.py` — in CI —
+asks the live engine for the same words and compares, as well as checking each
+part row's word against the catalogue's `is_frame`. If it goes red, regenerate;
+that is what rewrites the stamp. The stamp carries the sheet's **words and not
+its pixels**, on purpose: a re-rendered sprite would otherwise turn it red while
+every word was still true, and a check that cries wolf gets obeyed blind.
