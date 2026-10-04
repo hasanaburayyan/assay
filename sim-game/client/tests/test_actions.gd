@@ -370,6 +370,32 @@ func test_the_target_line_says_where_a_button_will_act() -> bool:
 		return _fail("a chosen tile with a building on it should name it: %s" % chosen)
 	if chosen.contains("where you stand"):
 		return _fail("a chosen tile should not still read as where you stand: %s" % chosen)
+	# **THE BARE TILE READS `clear ground`** (Maren's ruling on ASSA-146, 2026-10-04). The literal is
+	# asserted because the phrase is the ruling: this line said `empty ground` -- the exact wording
+	# ASSA-146 deleted from the sim for carrying two facts -- on the same screen as the `no deposit
+	# here` that replaced it. A sentence a director has ruled on and nothing tests is how ASSA-176
+	# happened. What is NOT here is the ban guard she left open ("a guard encoding one approved phrase
+	# argues with the next wording change"): nothing asserts the absence of `empty ground` anywhere.
+	if not standing.contains("clear ground"):
+		return _fail(("a bare in-bounds tile should read `clear ground`, which is the ruled phrase "
+				+ "that shares no words with the sim's rock vocabulary: %s") % standing)
+	# AND THE THREE KINDS OF TILE READ AS THREE DIFFERENT THINGS, which is the property under the
+	# wording: a target line that cannot distinguish bare ground from a deposit from a building is
+	# back to one phrase carrying several facts, whatever the phrase is.
+	#
+	# ONE TILE AND ONE `chosen` FLAG ACROSS ALL THREE, so the only thing that can make them differ is
+	# the tile facts. `chosen` above is a different tile AND chosen, so it would have read differently
+	# whatever this function did with the facts -- comparing against it would be a lever that cannot
+	# fail, which is the trap this whole check exists to close.
+	var deposit := AssayHud.target_line(Vector2i(40, 31), false, {"in_bounds": true,
+			"deposit": {"id": 9}})
+	var built := AssayHud.target_line(Vector2i(40, 31), false, {"in_bounds": true,
+			"building": {"kind": "smelter", "id": 3}})
+	var readings := [standing, deposit, built]
+	for i in readings.size():
+		for j in range(i + 1, readings.size()):
+			if String(readings[i]) == String(readings[j]):
+				return _fail("two kinds of tile read identically: \"%s\"" % readings[i])
 	return true
 
 
