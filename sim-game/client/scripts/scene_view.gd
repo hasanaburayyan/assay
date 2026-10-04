@@ -62,6 +62,11 @@ const PLAYOUT_UNSTARTED := -1.0
 ## How many bundle arrivals the measured tick rate averages over. See `playout_step` for why a dozen
 ## and not the forty it was.
 const PLAYOUT_RATE_WINDOW := 12
+## HOW CLOSE TWO BUNDLE ARRIVALS HAVE TO BE TO HAVE COME OUT OF THE SAME SOCKET DRAIN, in seconds.
+## Measured in a real window: a pair lands **0.17 ms** apart and the frames they land in are 8 ms at
+## the very fastest this Mac draws. Two orders of magnitude between the two, so this is not a tuning
+## knob -- anything from a tenth of a millisecond to five would behave identically.
+const SAME_FRAME := 0.002
 ## How hard the clock leans on its error (per tick of error, as a fraction of rate) and the most it
 ## may ever bend. 10% of 10 tiles/s is 1 tile/s, well inside the bar the board's complaint set.
 const PLAYOUT_CATCHUP := 0.5
@@ -224,8 +229,21 @@ static func facing_of(step: Vector2i) -> String:
 static func playout_step(arrivals: Array[float], ticks: Array[int], fallback: float) -> float:
 	if arrivals.size() < 3 or ticks.size() != arrivals.size():
 		return fallback
-	var span := arrivals[arrivals.size() - 1] - arrivals[0]
-	var over := ticks[ticks.size() - 1] - ticks[0]
+	# **ONE SAMPLE PER FRAME, NOT PER BUNDLE, AND THIS IS THE 10% (ASSA-197).** See above: a window
+	# of n entries over bundles that arrive in PAIRS spans n-2 ticks of wall clock while the tick
+	# numbers at its ends differ by n-1, so the estimate comes out at (n-2)/(n-1) of the truth
+	# whatever the denominator is. Collapsing each frame's drain to its FIRST bundle makes both ends
+	# of the window the same kind of instant, and then span and tick count describe one interval.
+	var times: Array[float] = []
+	var at: Array[int] = []
+	for i in arrivals.size():
+		if times.is_empty() or arrivals[i] - times[times.size() - 1] > SAME_FRAME:
+			times.append(arrivals[i])
+			at.append(ticks[i])
+	if times.size() < 2:
+		return fallback
+	var span := times[times.size() - 1] - times[0]
+	var over := at[at.size() - 1] - at[0]
 	if span <= 0.0 or over <= 0:
 		return fallback
 	return clampf(span / float(over), MIN_PLAYOUT_STEP, 1.0)
