@@ -78,23 +78,50 @@ static func image_of(parts: Array, rules: Dictionary = {}) -> Image:
 		if frame == null:
 			return null
 		frames.append(frame)
-	# THE CANVAS IS THE UNION OF WHERE THE PARTS LAND. The vertical offset is negative -- repeats
-	# climb -- so the box grows upward and every placement is shifted down by however far the last
-	# repeat climbed. Sizing to one frame would crop the parts that make the machine readable.
-	var size := Vector2i(frames[0].get_width(), frames[0].get_height())
+	var box := canvas_of(parts, Vector2i(frames[0].get_width(), frames[0].get_height()), offset)
+	if box.size.x <= 0 or box.size.y <= 0:
+		return null
+	var out := Image.create(box.size.x, box.size.y, false, Image.FORMAT_RGBAF)
+	out.fill(Color(0.0, 0.0, 0.0, 0.0))
+	for i in range(parts.size()):
+		_composite(out, frames[i], (placed[i] as Vector2i) - box.position,
+				AssaySprites.tint_for(parts[i] as Dictionary), ceiling)
+	return out
+
+
+## THE BOX THE COMPOSITE FILLS, IN AUTHORING PIXELS, AS ARITHMETIC ALONE.
+##
+## `position` is where the box starts relative to the FRAME's own top-left -- zero or negative, since
+## repeats climb -- and `size` is how big the finished image is. The union of where the parts land:
+## the vertical offset is negative, so the box grows upward, and sizing to one frame would crop the
+## parts that make the machine readable.
+##
+## **IT IS SEPARATE FROM `image_of` BECAUSE A RENDERER HAS TO KNOW WHERE A MACHINE WILL BE BEFORE IT
+## HAS ITS PIXELS.** `AssayScene` decides every rectangle in the world view headless, with no sheets
+## decoded and no engine (that is the whole reason `test_scene_view.gd` can hold the picture to
+## account), and it cannot ask an `Image` how tall a drill is. So the size comes from the manifest's
+## `frame_px` here, and `image_of` above derives the same box from the REAL sheet -- which is what
+## makes `the_manifest_agrees_with_the_sheet_about_a_drills_canvas` a test worth having rather than a
+## tautology: the two numbers come from different files and CI is the only thing holding them equal.
+##
+## `position` is also the whole of the anchor answer. A caller that knows where a lone frame sprite
+## would go subtracts `position` to put the composite's frame in exactly that place, and the repeats
+## then hang above and to the east of the footprint tile -- which they are allowed to do (ASSA-30/38:
+## a sprite may overhang its tile and says nothing about which tile it stands on).
+static func canvas_of(parts: Array, frame_px: Vector2i, offset: Vector2i) -> Rect2i:
+	if frame_px.x <= 0 or frame_px.y <= 0:
+		return Rect2i()
+	var placed := _placements(parts, offset)
+	if placed.is_empty():
+		return Rect2i()
 	var lo := Vector2i.ZERO
-	var hi := size
+	var hi := frame_px
 	for at: Vector2i in placed:
 		lo.x = mini(lo.x, at.x)
 		lo.y = mini(lo.y, at.y)
-		hi.x = maxi(hi.x, at.x + size.x)
-		hi.y = maxi(hi.y, at.y + size.y)
-	var out := Image.create(hi.x - lo.x, hi.y - lo.y, false, Image.FORMAT_RGBAF)
-	out.fill(Color(0.0, 0.0, 0.0, 0.0))
-	for i in range(parts.size()):
-		_composite(out, frames[i], (placed[i] as Vector2i) - lo,
-				AssaySprites.tint_for(parts[i] as Dictionary), ceiling)
-	return out
+		hi.x = maxi(hi.x, at.x + frame_px.x)
+		hi.y = maxi(hi.y, at.y + frame_px.y)
+	return Rect2i(lo, hi - lo)
 
 
 ## WHERE EACH PART GOES: `n * repeat_offset_px` for the nth part OF THAT KIND, n from 0, in the order

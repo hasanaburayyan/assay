@@ -252,13 +252,28 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 	# tile (ASSA-30/38) -- so if they ever part, what the thing COVERS decides what stands in
 	# front of it, and the drawing can overhang as it likes.
 	#
-	# A KIND WITH NO SHEET DRAWS NOTHING, which is today's honest answer for `machine`: one is
-	# "parts stacked by `part_layout.stack`" and no single frame exists for it. `_place` returns
-	# empty for an asset the manifest does not have, so this needs no list of what is drawable.
+	# A KIND WITH NO SHEET DRAWS NOTHING, and for every building but a machine that is still the
+	# honest answer: `_place` returns empty for an asset the manifest does not have, so this needs
+	# no list of what is drawable.
+	#
+	# A MACHINE HAS NO SHEET AND IS DRAWN ANYWAY, FROM ITS PARTS (ASSA-138). It is the one building
+	# the pipeline cannot draw as a frame, because a machine is a DESIGN the player invented --
+	# "parts stacked by `part_layout.stack`" -- and there is no single picture of a thing nobody
+	# authored. `_composite_place` works out its rectangle exactly as `_place` works out a sprite's;
+	# what goes INSIDE that rectangle is `AssayAssembly.image_of`, and the pixels are the renderer's
+	# business alone. `parts` is non-empty for a machine and empty for a smelter, which is the sim's
+	# own answer to "is this an assembly" rather than a kind name matched here.
 	for entry in view.get("buildings", []):
 		var building: Dictionary = entry
 		var foot: Vector2i = building.get("footprint", Vector2i.ONE)
 		var at: Vector2i = building.get("pos", Vector2i.ZERO)
+		var parts: Array = building.get("parts", [])
+		if not parts.is_empty():
+			var machine := _composite_place(manifest, parts, at, origin, view.get("layout", {}))
+			if not machine.is_empty():
+				machine["bottom"] = float(at.y) + float(foot.y)
+				standing.append(machine)
+			continue
 		standing.append({
 			"asset": String(building.get("kind", "")),
 			"row": "lit" if bool(building.get("lit", false)) else "cold",
@@ -283,6 +298,15 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 		return float(a.get("bottom", 0.0)) < float(b.get("bottom", 0.0)))
 	for entry in standing:
 		if entry.is_empty():
+			continue
+		# A COMPOSITE ARRIVES FINISHED, because there is no sheet to look a row up in: its rectangle
+		# was settled by `_composite_place` before the sort, and the sort is the only reason it waited
+		# in `standing` at all. `bottom` is dropped here so every placement handed to the renderer has
+		# the same keys whatever made it.
+		if bool(entry.get("composite", false)):
+			entry.erase("bottom")
+			entry["layer"] = STANDING
+			out.append(entry)
 			continue
 		var place := _place(manifest, String(entry["asset"]), String(entry["row"]),
 				entry["tile"], origin, entry["tint"], seconds)
@@ -317,6 +341,74 @@ static func foot_mark(at: Vector2, origin: Vector2) -> Rect2:
 	var centre := (at + Vector2(0.5, 0.9)) * TILE_PX - origin
 	return Rect2(centre - Vector2(TILE_PX * 0.42, TILE_PX * 0.18),
 			Vector2(TILE_PX * 0.84, TILE_PX * 0.36))
+
+
+## A MACHINE'S RECTANGLE, or {} when its parts have no art or the contract will not read.
+##
+## **FOOTPRINT IS A RULES FACT, NOT A DRAWING SIZE** (Maren's ruling, ASSA-138). `building.rs:282`
+## gives a machine a 1x1 footprint and says why in its own words -- "One tile, so a drill sits on the
+## deposit tile it works" -- which answers WHICH DEPOSIT IT WORKS and nothing about how big it looks.
+## So this scales the composite by exactly what `_place` scales a part sprite by, and lets it be
+## taller and wider than the tile it stands on, which is the standing rule for every sprite here
+## (ASSA-30/38, and the smelter is already 2x2 of art reaching above its tile).
+##
+## WHAT SQUEEZING IT INTO 32x32 WOULD HAVE DONE, measured by Maren before anything was built: the
+## composite's canvas GROWS with each repeat, so a fixed box scales every part down by a further 16%
+## -- 437 opaque px at one hopper falling to 377 at four. Hopper count IS capacity, so the one
+## quantity the drawing carries would have moved backwards, and all four would read as one dark lump.
+## That defect is not avoided by care here; it is avoided by the scale being a constant.
+##
+## THE SCALE IS THE FRAME'S OWN, DERIVED, NEVER A LITERAL. `_place` reads authored-pixels-per-tile out
+## of the manifest (`frame_px / tiles`) so a re-render at a different authoring size still draws a
+## 32 px tile; a composite drawn at a scale of its own would be the one sprite in the world that
+## changed size when the pipeline did.
+##
+## AND THE ANCHOR IS THE FRAME'S. `canvas_of().position` is where the box starts relative to the
+## frame part's top-left -- zero or negative, since repeats climb north-east -- so subtracting it puts
+## the FRAME exactly where a lone frame sprite would have gone, on the footprint tile, and the
+## repeats hang above and east of it. Anchoring on the box instead would walk the whole machine south
+## as you added hoppers, which is the same defect as the squeeze wearing different clothes.
+static func _composite_place(manifest: Dictionary, parts: Array, tile: Vector2i, origin: Vector2,
+		layout: Dictionary) -> Dictionary:
+	if parts.is_empty() or layout.is_empty():
+		return {}
+	var offset: Vector2i = layout.get("repeat_offset_px", Vector2i.ZERO)
+	# THE FRAME'S SHEET DECIDES THE GEOMETRY, and the frame is `Assembly::parts()`' first entry --
+	# the sim's order, which `BuildingFacts::parts` preserves. `image_of` sizes every part to the
+	# first one's frame as well, so this reads the same sheet that file reads.
+	var spec: Dictionary = manifest.get(AssaySprites.SHEET_OF.get(
+			String((parts[0] as Dictionary).get("kind", "")).to_lower(), ""), {})
+	var frame_px: Array = spec.get("frame_px", [])
+	var tiles: Array = spec.get("tiles", [])
+	if frame_px.size() != 2 or tiles.size() != 2 or float(tiles[0]) <= 0.0:
+		return {}
+	var authored := float(frame_px[0]) / float(tiles[0])
+	if authored <= 0.0:
+		return {}
+	var scale := TILE_PX / authored
+	var box := AssayAssembly.canvas_of(parts,
+			Vector2i(int(frame_px[0]), int(frame_px[1])), offset)
+	if box.size.x <= 0 or box.size.y <= 0:
+		return {}
+	var anchor: Array = spec.get("anchor_px", [0, 0])
+	var at := Vector2.ZERO
+	if anchor.size() == 2:
+		at = Vector2(float(anchor[0]), float(anchor[1]))
+	return {
+		"asset": "",
+		"composite": true,
+		# THE PARTS GO WITH THE RECTANGLE, so the renderer has no reason to go back to the sim for
+		# them -- and `key` is what it caches the finished image under. An assembly changes when a
+		# player builds or places, never per tick, so this is composited once per design.
+		"parts": parts,
+		"key": AssayAssembly.key_of(parts),
+		"dest": Rect2(Vector2(tile) * TILE_PX - (at - Vector2(box.position)) * scale - origin,
+				Vector2(box.size) * scale),
+		# WHITE, AND THAT IS NOT A MISSING TINT. Every part is tinted by its OWN species inside
+		# `image_of`, because a drill can be built from two materials and one `modulate` over the
+		# finished image would repaint the whole machine in the frame's.
+		"tint": Color.WHITE,
+	}
 
 
 ## ONE SPRITE'S RECTANGLES, or {} when the manifest has no such asset or row.

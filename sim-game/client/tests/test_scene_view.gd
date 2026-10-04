@@ -51,6 +51,7 @@ func _view(extra := {}) -> Dictionary:
 		"ore": {},
 		"players": [],
 		"manifest": _manifest(),
+		"layout": AssayAssembly.contract(),
 		"seconds": 0.0,
 	}
 	for key in extra:
@@ -736,17 +737,205 @@ func test_the_fire_in_a_smelter_chooses_the_row() -> bool:
 	return true
 
 
-## A KIND NO SHEET DRAWS IS SKIPPED, AND THE SCENE AROUND IT STILL DRAWS. A machine has no single
-## frame -- it is parts stacked by `part_layout.stack` -- so today the honest answer is nothing, and
-## the thing that must not happen is a missing asset taking the ground down with it.
+## A KIND NO SHEET DRAWS IS SKIPPED, AND THE SCENE AROUND IT STILL DRAWS.
+##
+## THE FIXTURE HERE HAS NO PARTS AND THAT IS THE WHOLE CASE: since ASSA-138 a machine IS drawn, from
+## its parts, so the only way left to be a building with no picture is to be one the sim never
+## reported parts for. That is not hypothetical -- it is what every machine looked like to this
+## client before tonight, and what a building kind added after today will look like until it has
+## art. The thing that must not happen is a missing asset taking the ground down with it.
 func test_a_building_kind_with_no_sheet_draws_nothing_and_breaks_nothing() -> bool:
 	var view := _view({"buildings": [{"kind": "machine", "pos": Vector2i(10, 5),
 			"footprint": Vector2i(1, 1), "lit": false}]})
 	var all := AssayScene.placements(view)
 	if _of(all, "machine").size() != 0:
 		return _fail("something was drawn for a kind the sheets have no art for")
+	if _composites(all).size() != 0:
+		return _fail("a building that reported no parts was composited out of nothing")
 	if _of(all, "ground").is_empty():
 		return _fail("a building with no sheet stopped the ground being drawn")
+	return true
+
+
+# ---------------------------------------------------------------------------
+# A PLANTED MACHINE (ASSA-138)
+# ---------------------------------------------------------------------------
+
+## A DRILL AS THE SIM REPORTS ONE: frame first, then the mounted parts, each with its own material.
+## `hoppers` is the dial Maren measured the defect on, because hopper count IS capacity.
+func _drill(at: Vector2i, hoppers: int, species := 2, grade := "A") -> Dictionary:
+	var parts := [{"kind": "frame", "species": species, "grade": grade},
+			{"kind": "head", "species": species, "grade": grade}]
+	for _i in range(hoppers):
+		parts.append({"kind": "hopper", "species": species, "grade": grade})
+	return {"kind": "machine", "pos": at, "footprint": Vector2i(1, 1), "lit": false,
+			"species": species, "parts": parts}
+
+
+func _composites(places: Array) -> Array:
+	var found := []
+	for place in places:
+		if bool((place as Dictionary).get("composite", false)):
+			found.append(place)
+	return found
+
+
+## What one part sprite is drawn at, read from the manifest the way `_place` reads it: authored
+## pixels per tile, then `TILE_PX` over that. Never a literal, so a re-render cannot pass this.
+func _part_scale() -> float:
+	var spec: Dictionary = _manifest().get("frame", {})
+	var frame_px: Array = spec.get("frame_px", [])
+	var tiles: Array = spec.get("tiles", [])
+	if frame_px.size() != 2 or tiles.size() != 2 or float(tiles[0]) <= 0.0:
+		return 0.0
+	return AssayScene.TILE_PX / (float(frame_px[0]) / float(tiles[0]))
+
+
+## **ADDING A HOPPER MAY NEVER MAKE ANY PART OF THE MACHINE DRAW SMALLER** (Maren's ruling, ASSA-138,
+## and the box she wrote for this file).
+##
+## THIS IS THE ARITHMETIC OF THE DEFECT SHE MEASURED, pointed the other way. Squeezed into the 1x1
+## footprint, a drill's 437 opaque pixels at one hopper fell to 377 at four: capacity up, picture
+## down, and all four reading as one dark lump. The cause is that the canvas GROWS with each repeat,
+## so a fixed box divides by a bigger number every time.
+##
+## SO THE PROPERTY IS A CONSTANT SCALE, and the test is in those terms rather than in pixel counts:
+## one part occupies the same screen rectangle however many siblings it has, and the machine's own
+## rectangle grows to hold them. A test that only checked the total area would pass on a drill that
+## grew while every bar inside it shrank, which is the exact picture being refused.
+func test_adding_a_hopper_never_makes_any_part_of_a_machine_draw_smaller() -> bool:
+	var scale := _part_scale()
+	if scale <= 0.0:
+		return _fail("premise: the manifest will not say what a part sprite is drawn at")
+	var spec: Dictionary = _manifest().get("frame", {})
+	var frame_px := Vector2(float((spec["frame_px"] as Array)[0]),
+			float((spec["frame_px"] as Array)[1]))
+	var offset: Vector2i = AssayAssembly.contract().get("repeat_offset_px", Vector2i.ZERO)
+	if offset == Vector2i.ZERO:
+		return _fail("premise: the contract's repeat offset is zero, so no repeat ever moves")
+	var seen := []
+	for hoppers in [1, 2, 3, 4]:
+		var places := _composites(AssayScene.placements(
+				_view({"buildings": [_drill(Vector2i(10, 5), hoppers)]})))
+		if places.size() != 1:
+			return _fail("a planted %d-hopper drill drew %d times" % [hoppers, places.size()])
+		var dest: Rect2 = (places[0] as Dictionary)["dest"]
+		# EVERY PART IS STILL A WHOLE PART SPRITE. The canvas is the union of the parts' boxes, so
+		# the box minus the climb of the last repeat IS one part's rectangle -- if that comes out
+		# smaller than `frame_px * scale`, something scaled the parts down to fit.
+		var box: Rect2i = AssayAssembly.canvas_of((_drill(Vector2i(10, 5), hoppers)["parts"] as
+				Array), Vector2i(int(frame_px.x), int(frame_px.y)), offset)
+		var climb := Vector2(box.size) - frame_px
+		if climb.x < 0.0 or climb.y < 0.0:
+			return _fail("the canvas for %d hoppers is %s, smaller than one part's %s"
+					% [hoppers, box.size, frame_px])
+		if not is_equal_approx(dest.size.x, float(box.size.x) * scale) \
+				or not is_equal_approx(dest.size.y, float(box.size.y) * scale):
+			return _fail("a %d-hopper drill is drawn at %s; its canvas %s at the part scale %.3f "
+					% [hoppers, dest.size, box.size, scale] + "is %s"
+					% [Vector2(box.size) * scale])
+		seen.append({"hoppers": hoppers, "size": dest.size,
+				"part": frame_px * scale, "climb": climb * scale})
+	# AND THE PICTURE ACTUALLY GROWS. Without this the test above is satisfied by a machine whose
+	# canvas never changes, which is what a renderer ignoring the repeat offset would produce --
+	# every hopper on top of the last, invisible, capacity unreported (contract rule 1).
+	for i in range(1, seen.size()):
+		var now: Vector2 = (seen[i] as Dictionary)["size"]
+		var before: Vector2 = (seen[i - 1] as Dictionary)["size"]
+		if now.x <= before.x or now.y <= before.y:
+			return _fail("%d hoppers draw %s and %d draw %s: adding one changed nothing, so the "
+					% [int((seen[i - 1] as Dictionary)["hoppers"]), before,
+					int((seen[i] as Dictionary)["hoppers"]), now]
+					+ "repeats are stacked on each other and cannot be counted")
+	return true
+
+
+## **FOOTPRINT IS A RULES FACT, NOT A DRAWING SIZE** (Maren's ruling 1). A 1x1 footprint says which
+## deposit a drill works; it does not say the picture is 32 px.
+##
+## TWO HALVES, AND THE SECOND IS THE ONE THAT CATCHES AN ANCHOR BUG. The drawing must be bigger than
+## the tile (the squeeze is refused), and the FRAME must land exactly where a lone frame sprite
+## standing on that tile would have landed -- so the machine is anchored on its footprint and the
+## extra canvas hangs off it. Anchoring on the box instead walks the whole machine south-west as you
+## add hoppers, which passes a size check and is still the wrong picture.
+func test_a_planted_machine_is_drawn_at_the_part_scale_anchored_on_its_footprint() -> bool:
+	var at := Vector2i(10, 5)
+	var scale := _part_scale()
+	var spec: Dictionary = _manifest().get("frame", {})
+	var anchor: Array = spec.get("anchor_px", [0, 0])
+	var offset: Vector2i = AssayAssembly.contract().get("repeat_offset_px", Vector2i.ZERO)
+	var frame_px := Vector2i(int((spec["frame_px"] as Array)[0]),
+			int((spec["frame_px"] as Array)[1]))
+	for hoppers in [1, 4]:
+		var drill := _drill(at, hoppers)
+		var places := _composites(AssayScene.placements(_view({"buildings": [drill]})))
+		if places.size() != 1:
+			return _fail("a planted drill drew %d times" % places.size())
+		var dest: Rect2 = (places[0] as Dictionary)["dest"]
+		if dest.size.x <= AssayScene.TILE_PX or dest.size.y <= AssayScene.TILE_PX:
+			return _fail("a drill is drawn at %s, inside its own 1x1 footprint: the picture was "
+					% dest.size + "squeezed to the tile, which is what ASSA-138 refuses")
+		# WHERE A LONE FRAME SPRITE WOULD HAVE GONE, by `_place`'s own rule: the tile, less the
+		# sheet's anchor at the drawn scale.
+		var box: Rect2i = AssayAssembly.canvas_of(drill["parts"] as Array, frame_px, offset)
+		var lone := Vector2(at) * AssayScene.TILE_PX
+		lone -= Vector2(float(anchor[0]), float(anchor[1])) * scale
+		var frame_at := dest.position - Vector2(box.position) * scale
+		if not frame_at.is_equal_approx(lone):
+			return _fail("with %d hoppers the frame lands at %s; a lone frame sprite on tile %s "
+					% [hoppers, frame_at, at] + "lands at %s, so the machine is not anchored on "
+					% lone + "its footprint tile")
+	return true
+
+
+## **THE MANIFEST AND THE SHEET AGREE ABOUT HOW BIG A DRILL IS**, which is the one thing holding the
+## rectangle and the picture together.
+##
+## `AssayScene` sizes a machine from the manifest's `frame_px`, headless, with no sheet decoded --
+## that is what lets every test above run without a screen. `AssayAssembly.image_of` sizes the same
+## machine from the REAL sheet's pixels. Nothing makes those two agree except this, and if they ever
+## part the drill is drawn into a rectangle of the wrong shape and simply looks a bit squashed, which
+## is exactly the class of defect a screenshot does not catch.
+func test_the_manifest_agrees_with_the_sheet_about_a_drills_canvas() -> bool:
+	var offset: Vector2i = AssayAssembly.contract().get("repeat_offset_px", Vector2i.ZERO)
+	var spec: Dictionary = _manifest().get("frame", {})
+	var frame_px := Vector2i(int((spec["frame_px"] as Array)[0]),
+			int((spec["frame_px"] as Array)[1]))
+	for hoppers in [1, 4]:
+		var parts: Array = _drill(Vector2i(10, 5), hoppers)["parts"]
+		var image := AssayAssembly.image_of(parts)
+		if image == null:
+			return _fail("the shipped sheets cannot composite a %d-hopper drill, so a planted one "
+					% hoppers + "draws nothing")
+		var box: Rect2i = AssayAssembly.canvas_of(parts, frame_px, offset)
+		if image.get_size() != box.size:
+			return _fail("the sheet composites a %d-hopper drill at %s and the manifest says %s"
+					% [hoppers, image.get_size(), box.size])
+	return true
+
+
+## A MACHINE MADE OF SOMETHING WITH NO ART DRAWS NOTHING, and takes nothing with it. `gear` is the
+## real case: Maren ruled on ASSA-84 that nothing consumes a gear, so it has no sheet on purpose.
+func test_a_machine_whose_parts_have_no_art_draws_nothing() -> bool:
+	var drill := _drill(Vector2i(10, 5), 2)
+	(drill["parts"] as Array).append({"kind": "gear", "species": 2, "grade": "A"})
+	var all := AssayScene.placements(_view({"buildings": [drill]}))
+	# The rectangle is still worked out -- it comes from the FRAME's sheet -- and the renderer is
+	# the half that finds out there are no pixels. What must not happen is the scene falling over.
+	if _of(all, "ground").is_empty():
+		return _fail("a machine with an undrawable part stopped the ground being drawn")
+	if AssayAssembly.image_of(drill["parts"] as Array) != null:
+		return _fail("a part with no sheet composited into an image anyway")
+	return true
+
+
+## WITHOUT THE CONTRACT, NOTHING IS DRAWN -- the same refusal `assembly.gd` makes, for the same
+## reason (ASSA-54): a client that falls back to geometry it invented draws a wrong machine
+## confidently, and the only honest answer is a loud gap.
+func test_a_machine_is_not_drawn_from_geometry_this_client_invented() -> bool:
+	var view := _view({"buildings": [_drill(Vector2i(10, 5), 4)], "layout": {}})
+	if _composites(AssayScene.placements(view)).size() != 0:
+		return _fail("a machine was placed with no part contract to place it by")
 	return true
 
 

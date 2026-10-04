@@ -40,6 +40,18 @@ const PARTS := [["handle", 1], ["head", 2], ["frame", 1], ["hopper", 4]]
 
 var screen: Node
 var rank := 0
+## HOW MANY HOPPERS GET MOUNTED, and the only knob on this loop.
+##
+## -1 is the loop's own answer and the default: every hopper `PARTS` makes, which is ASSA-37's
+## WILL-BREAK case and what every existing caller still gets. A caller sets this to compare DRILLS
+## -- ASSA-138 asks whether a player can count 1 against 2 against 4 bars on a planted machine, and
+## that comparison needs worlds that differ in nothing else.
+##
+## IT CHANGES WHAT IS MOUNTED, NOT WHAT IS MADE. The loop still crafts the full `PARTS` order, so
+## the mining, the smelting and the fuel are the same run either way and the spare hoppers stay in
+## the pack. Making fewer would move the pack, the fire and the tick count too, and then the
+## pictures would differ in more than the one thing they are being compared on.
+var hoppers := -1
 var step: Step = Step.WALK_TO_MATERIAL
 ## Why it stopped, or "" while it is still going.
 var failed := ""
@@ -407,6 +419,8 @@ func _drill() -> void:
 
 
 func _hoppers_wanted() -> int:
+	if hoppers >= 0:
+		return hoppers
 	for order in PARTS:
 		if String(order[0]) == "hopper":
 			return int(order[1])
