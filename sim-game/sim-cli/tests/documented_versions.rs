@@ -111,10 +111,17 @@ fn the_claim_about_which_saves_refuse_to_load_is_still_true() {
          deliberately rewritten, update this test and say why; if it was reflowed away, the \
          sentence about which saves refuse to load went with it."
     );
+    // READ OFF THE DOCUMENT'S OWN NUMBER, NOT THE CONSTANT, and that is a better test than the
+    // version CI rejected. `sim::save::OLDEST_SAVE_VERSION > 9` is a constant expression — clippy's
+    // `assertions_on_constants` is right that it can never vary at run time, and my local toolchain
+    // (clippy 0.1.95) does not fire it where CI's (1.99) does. The claim this file is actually making is
+    // about the DOCUMENT being internally consistent: the sentence and the number live in the same
+    // file and must agree with each other. The test above has already pinned that number to the
+    // code, so this says the same thing and says it about the right subject.
+    let oldest = documented("OLDEST_SAVE_VERSION");
     assert!(
-        sim::save::OLDEST_SAVE_VERSION > 9,
-        "the document says {claim:?} and that versions 1–8 do not load, but \
-         OLDEST_SAVE_VERSION is {} — this build now accepts a save the document says it refuses.",
-        sim::save::OLDEST_SAVE_VERSION
+        oldest > 9,
+        "the document says {claim:?} and that versions 1–8 do not load, but it also says this \
+         build loads saves back to {oldest} — those two sentences cannot both be true."
     );
 }
