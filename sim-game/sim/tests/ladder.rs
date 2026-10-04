@@ -2,7 +2,8 @@
 //! and abundant rung zero next to spawn.
 
 use sim::ladder::{
-    JUDGED_AT, hand_lit_fuel, hand_minable, rungs, starter_pick_speed, starter_species,
+    JUDGED_AT, burn_temperature_at, hand_lit_fuel, hand_minable, pair_smelts, rungs,
+    starter_pick_speed, starter_species,
 };
 use sim::mineral::Property;
 use sim::tuning::{
@@ -349,5 +350,158 @@ fn the_roster_reroll_stays_cheap() {
         "WORLDGEN HAS GOT EXPENSIVE: {mean:.3} rolls per world, was 3.44 \
          when ASSA-35 landed. A condition added to `starter_roster_ok` \
          multiplies this; if it is wanted, measure it and move the bound."
+    );
+}
+
+// =====================================================================
+// ASSA-139: the pair the ladder hands out must actually smelt.
+// =====================================================================
+
+/// **THE GUARANTEE, AND IT IS THE WHOLE POINT OF THE LADDER.** Rung-zero
+/// membership is judged against the best walls and the hottest chained fire
+/// in the roster; the starter pair gets one hand-lit fuel and a smelter built
+/// out of the material. Over 2000 worlds the pair could not light at all in
+/// 1.8% of them and the player's only guaranteed path ended at a smelter
+/// stalled forever.
+///
+/// Judged twice, and the second is the one that matters: at [`JUDGED_AT`],
+/// which is the grade `starter_roster_ok` rerolls on, and then at the grade
+/// the deposit worldgen actually puts beside spawn holds — because a
+/// guarantee stated at a grade nobody can reach is not one. They agree today
+/// only because `STARTER_MIN_PURITY` grades at or above `JUDGED_AT`, which is
+/// its own test below.
+#[test]
+fn the_starter_pair_smelts_in_every_world() {
+    const PAIR_SEEDS: u64 = 2000;
+    for seed in 0..PAIR_SEEDS {
+        let w = world(seed);
+        let (material, fuel) = starter_species(&w.species).expect("a starter pair");
+        let (ms, fs) = (w.species(material), w.species(fuel));
+        assert!(
+            pair_smelts(ms, fs, JUDGED_AT),
+            "seed {seed}: {} needs {} and {} burns at {:?} at grade {}",
+            ms.name(),
+            ms.sheet.heat_tolerance,
+            fs.name(),
+            burn_temperature_at(fs, JUDGED_AT),
+            JUDGED_AT.letter(),
+        );
+        // ...and at the grade the guaranteed deposit really holds.
+        let (dx, dy) = STARTER_CHUNKS[1];
+        let chunk = ChunkPos::new(w.spawn.x + dx, w.spawn.y + dy);
+        let fuel_deposit = w
+            .deposits
+            .iter()
+            .find(|d| d.center.chunk() == chunk)
+            .unwrap_or_else(|| panic!("seed {seed}: no guaranteed fuel deposit"));
+        assert_eq!(fuel_deposit.species, fuel, "seed {seed}");
+        assert!(
+            pair_smelts(ms, fs, fuel_deposit.grade()),
+            "seed {seed}: the GUARANTEED fuel deposit is grade {} and will not \
+             melt {} (needs {})",
+            fuel_deposit.grade().letter(),
+            ms.name(),
+            ms.sheet.heat_tolerance,
+        );
+    }
+}
+
+/// **THE TWO CONSTANTS THE GUARANTEE RESTS ON, AND NOTHING ELSE TIED THEM.**
+/// `starter_roster_ok` rerolls until the pair smelts at [`JUDGED_AT`];
+/// `worldgen::deposit_in_chunk` floors the two starter deposits at
+/// `STARTER_MIN_PURITY`. The promise is true only while the second grades at
+/// least as high as the first — lower `STARTER_MIN_PURITY` to 39 and every
+/// world still passes every other test in this file while the guaranteed fuel
+/// quietly burns 20% cooler than the grade it was cleared at.
+///
+/// This is the answer to "which grade is the guarantee stated at": the one
+/// worldgen can deliver next to spawn, which is a LOCATED promise and not an
+/// idealised one. Demanding the pair smelt at grade C instead — so that *any*
+/// deposit of those species would do — costs 22.4% of rosters, measured on
+/// ASSA-139, and buys a different guarantee than ADR 0001 decided on.
+#[test]
+fn the_judged_grade_is_one_worldgen_can_deliver_beside_spawn() {
+    let floored = Grade::from_purity(STARTER_MIN_PURITY as u8);
+    assert!(
+        floored >= JUDGED_AT,
+        "STARTER_MIN_PURITY {STARTER_MIN_PURITY} grades {} but the ladder \
+         judges at {}, so the pair is cleared at a grade the guaranteed \
+         deposit does not hold",
+        floored.letter(),
+        JUDGED_AT.letter(),
+    );
+}
+
+/// **THE FUEL IS PICKED ON THE ONE PROPERTY ITS JOB READS.** It was
+/// `species.iter().find(hand_lit_fuel)` — roster order — which is the exact
+/// defect the doc comment above `starter_species` describes for the material's
+/// own history, left on the fuel line.
+///
+/// The premise is asserted too, and it is not decoration: if the hottest
+/// hand-lit fuel were always also the first one in roster order, this test
+/// would pass against the code it is here to reject.
+#[test]
+fn the_starter_fuel_is_the_hottest_hand_lit_species() {
+    let mut roster_order_would_differ = 0u32;
+    for seed in 0..SEEDS {
+        let w = world(seed);
+        let (_, fuel) = starter_species(&w.species).expect("a starter pair");
+        let hottest = w
+            .species
+            .iter()
+            .filter(|s| hand_lit_fuel(s))
+            .filter_map(|s| burn_temperature_at(s, JUDGED_AT))
+            .max()
+            .expect("a hand-lit fuel");
+        assert_eq!(
+            burn_temperature_at(w.species(fuel), JUDGED_AT),
+            Some(hottest),
+            "seed {seed}: the starter fuel is not the hottest hand-lit species"
+        );
+        let first = w
+            .species
+            .iter()
+            .find(|s| hand_lit_fuel(s))
+            .expect("a hand-lit fuel")
+            .id;
+        if first != fuel {
+            roster_order_would_differ += 1;
+        }
+    }
+    assert!(
+        roster_order_would_differ > SEEDS as u32 / 10,
+        "only {roster_order_would_differ} of {SEEDS} worlds have a hottest \
+         hand-lit fuel that is not simply the first one in roster order, so \
+         this test cannot tell the two picks apart"
+    );
+    println!("the pick differs from roster order in {roster_order_would_differ} of {SEEDS} worlds");
+}
+
+/// Ties break by lowest id on the fuel line as they do on the material's, or
+/// two peers roll different worlds from one seed.
+#[test]
+fn a_tie_for_hottest_fuel_breaks_by_lowest_species_id() {
+    let mut w = world(7);
+    let fuel_sheet = |hardness, reactivity| sim::Sheet {
+        density: 50,
+        strength: 50,
+        hardness,
+        heat_tolerance: 10, // lights from cold
+        reactivity,
+        conductivity: 50,
+    };
+    // Everything unminable, then three hand-lit fuels: two tied hottest and
+    // one cooler, with the tie NOT first in roster order.
+    for s in &mut w.species {
+        s.sheet = fuel_sheet(100, 60);
+    }
+    w.species[0].sheet = fuel_sheet(10, 50);
+    w.species[1].sheet = fuel_sheet(10, 90);
+    w.species[2].sheet = fuel_sheet(10, 90);
+    let (_, fuel) = starter_species(&w.species).expect("a starter pair");
+    assert_eq!(
+        fuel, w.species[1].id,
+        "the hottest fuel must win and a tie must break by lowest id, not by \
+         whichever `max_by_key` saw last"
     );
 }
