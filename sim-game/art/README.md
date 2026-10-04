@@ -658,3 +658,59 @@ part row's word against the catalogue's `is_frame`. If it goes red, regenerate;
 that is what rewrites the stamp. The stamp carries the sheet's **words and not
 its pixels**, on purpose: a re-rendered sprite would otherwise turn it red while
 every word was still true, and a check that cries wolf gets obeyed blind.
+
+### A window shot cannot be rebuilt from the sheet (ASSA-115 box 2)
+
+Measuring a window capture usually means asking "which sprite is this tile?",
+and the obvious way to answer is to downscale the 64 px sheet row to the 32 px
+the client draws and compare. **That comparison fails, and it fails in a way
+that looks exactly like a renderer bug.**
+
+On seed 14247 tick 301, matching the map rect against a PIL `NEAREST` downscale
+of `ground.png` said only **2 of the 6** ground variants were ever drawn — which
+reads as "the client ships four rows to nobody", the same defect `ore_row` really
+did have before ASSA-115. It is not true. The window draws six distinct ground
+bitmaps over 428 tiles; all six arrived.
+
+What is actually happening: every window pixel IS one of the four source pixels
+in its own 2×2 block (0 of 1024 outside it, on all six variants), so the client
+samples nearest and nothing is blended or tinted — but **the phase varies within
+a tile**, so no single fixed phase reproduces the tile. Two variants happened to
+come out phase-invariant and matched; four did not.
+
+So:
+
+- To ask **which** sprite a tile is, compare window tiles to each other
+  (distinct bitmaps, repeat counts), or test each pixel against its 2×2 source
+  block. Never against one downscale.
+- To ask **what a player sees** — a seam, a repeat, a contrast — measure it on
+  the window shot. A number modelled from the sheet is a number about the sheet.
+- The sheet is still the source of truth for what was authored; it is simply not
+  a pixel-level prediction of the frame.
+
+`shared/assay/cove_box2_*.py` are the three probes this came out of.
+
+### And two window shots only diff cleanly where nothing animates (ASSA-121)
+
+The other half of the same trap. `main.gd` builds the view with
+`"seconds": Time.get_ticks_msec() / 1000.0`, and `scene_view.gd::frame_of`
+picks an animation frame from it — so **which frame of the player, the spawn
+pad or a lit smelter a shot catches is a function of wall clock, not of the
+tick.** Two shots at the same seed and the same tick can legitimately differ.
+
+This is easy to miss because the capture *looks* deterministic: two runs of the
+same build, back to back, came back bit-identical (0 differing pixels in the map
+rect). That is two runs taking the same time, not a guarantee.
+
+So when diffing two window shots to attribute a change:
+
+- **Static content diffs cleanly** — ground, ore, buildings' bodies, HUD text.
+- **Animated content does not.** On ASSA-121 the two shots differed by 809 px
+  inside the map rect and the cause was the player standing on a different idle
+  frame; the commit under test could not touch the player at all.
+- If you need an animated sprite compared, compare it against the SHEET's rows
+  (which frame is this?) rather than against another shot.
+
+Scale, so this is not read as worse than it is: the player is ~800 px of the
+908×600 map rect, **0.15%**, so percentile statistics over the whole rect are
+unaffected. It is attribution of a *located* difference that this breaks.
