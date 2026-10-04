@@ -1432,8 +1432,9 @@ func _refresh_assembling() -> void:
 ## on grade A) and is shown, because absence is never a cue -- the player holding grade A ore is
 ## exactly the one wondering why they cannot refine it.
 ##
-## SAME SIGNATURE RULE AS THE PACK, and the fast path matters MORE here: every row's sentence carries
-## "of your N", which climbs every mining cycle. The shape is what a row IS (its catalogue row and its
+## SAME SIGNATURE RULE AS THE PACK, and the fast path matters MORE here: every row's sentence ends
+## with "you have N", which climbs every mining cycle (ASSA-129 reshaped that clause; the sim still
+## owns every word of it). The shape is what a row IS (its catalogue row and its
 ## material); the count is text, re-set every refresh without rebuilding a button under the pointer.
 func _refresh_make() -> void:
 	var offers := _sim.make_offers(_client.player_id) if _client != null else []
@@ -1492,7 +1493,7 @@ func _rebuild_make(offers: Array) -> void:
 		# menu whose only job is choosing between five things.
 		#
 		# THE INPUT IS NOT LOST AND NEVER NEEDED ART: it is identical on every row of a material's
-		# block and the sentence names it in words ("2 of your 8 Tonore refined"), so the icon spends
+		# block and the sentence names it in words ("2 Tonore refined (A), you have 8"), so the icon spends
 		# its 32px on the half the player cannot otherwise see.
 		#
 		# `makes` IS THE SIM'S, out of `make_offers`, and absent on a row that makes nothing (`sort`
