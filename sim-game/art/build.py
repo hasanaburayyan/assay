@@ -126,7 +126,36 @@ def pack(name):
     cols = max(r["frames"] for r in meta["rows"])
     derived = {d["row"]: d for d in meta.pop("derive", [])}
 
+    # A SLICED ASSET IS ONE RENDER CUT INTO ROWS, AND THE CUT COMES AFTER THE RESIZE.
+    #
+    # `rig.Asset.slice_from` says why it exists: a cell rendered on its own is denoised and
+    # resampled as an image, so it carries a border, and on a block that border IS a tile
+    # seam (+0.401 of 255 across a cell boundary, enough to leave the tile offset rank 1 of
+    # 32 on Maren's findability test). Here the whole field is downsampled first and the
+    # cells are cut out of the finished picture, so no cell ever has an edge of its own.
+    # Cutting first would reintroduce exactly what this removes, which is the one thing
+    # about this function that must not be "tidied".
+    sliced = meta.pop("slice", None)
+    cells = {}
+    if sliced:
+        bw, bh = meta["block"]
+        whole = Image.open(os.path.join(OUT, name, f"{sliced['source']}_00.png")).convert("RGBA")
+        # The render carries `margin` authoring px of the NEIGHBOURING field on every side
+        # (the geometry wraps, so it is the true continuation). Resize WITH it, then cut it
+        # off: that way the image edge -- the one border the resize cannot see past -- is
+        # never inside the shipped field. The field's own wrap join measured +0.844 of 255
+        # without this and +0.078 at an interior cell boundary.
+        m = int(sliced.get("margin", 0))
+        whole = whole.resize((bw * fw + 2 * m, bh * fh + 2 * m), Image.LANCZOS)
+        if m:
+            whole = whole.crop((m, m, m + bw * fw, m + bh * fh))
+        for i in range(bw * bh):
+            cx, cy = i % bw, i // bw
+            cells[f"v{i}"] = whole.crop((cx * fw, cy * fh, (cx + 1) * fw, (cy + 1) * fh))
+
     def authored(row, f):
+        if row in cells:
+            return cells[row]
         im = Image.open(os.path.join(OUT, name, f"{row}_{f:02d}.png")).convert("RGBA")
         return im.resize((fw, fh), Image.LANCZOS)
 

@@ -226,14 +226,35 @@ for cell in range(BLOCK * BLOCK):
     # 3. SPECKS: dither under the patches.
     wrapped(r, scatter(12, 0.015, 0.03, light=0), squash=0.5)
 
-# THE CELLS, IN THE ORDER THE CLIENT INDEXES THEM: row-major, v[cy * BLOCK + cx],
-# cx growing east and cy growing SOUTH, because that is how a tile coordinate grows
-# in the view. The field spans [-BLOCK/2, BLOCK/2] in Blender, where +y is NORTH, so
-# cy counts down from the top.
-for cy in range(BLOCK):
-    for cx in range(BLOCK):
-        centre = (cx - (BLOCK - 1) / 2.0, (BLOCK - 1) / 2.0 - cy)
-        r.frame(1, 1, center=centre)
-        r.render(asset.path(f"v{cy * BLOCK + cx}"), transparent=False)
-        asset.add(f"v{cy * BLOCK + cx}", 1)
+# ONE RENDER, THEN SIXTEEN... SIXTY-FOUR SLICES, AND THE ORDER OF THOSE TWO MATTERS.
+#
+# Rendering each cell separately looked equivalent and was not. A cell rendered alone is
+# its own image: Cycles denoises it as an image and `build.py` LANCZOS-downsamples it as
+# an image, and both of those are truncated at its border. Measured on that sheet, two
+# rows across a cell boundary stepped +0.401 of 255 more than two rows inside a cell
+# (columns +0.160), and that residue was enough to leave the true tile offset RANK 1 of 32
+# on Maren's findability test -- by 0.10 of 255, but rank 1. The geometry was continuous;
+# the pipeline put a seam back in.
+#
+# So the field is rendered ONCE at BLOCK x BLOCK tiles (2048 px at SS=4), and the cells are
+# cut out of it AFTER the downsample, by `build.py::pack` -- which is where the cutting has
+# to happen, because Blender ships no PIL and a crop before the resize would reintroduce
+# exactly the border this is removing. Same pixel count, same render time, no cell edges.
+# AND THE RENDER IS WIDER THAN THE FIELD, because the image's own edge is the last
+# border left. With the field rendered exactly, the one join that still measured was
+# where the field WRAPS onto itself -- +0.844 of 255 against +0.078 at an interior cell
+# boundary, because the downsample's kernel is truncated at the image edge and nowhere
+# else. So a quarter-tile of the NEIGHBOURING copy is rendered on every side (the
+# geometry already wraps, so that margin is the true continuation) and `pack()` cuts it
+# off after the resize. Then no pixel of the shipped field was ever near an edge.
+MARGIN = 0.25
+r.frame(BLOCK + 2 * MARGIN, BLOCK + 2 * MARGIN)
+r.render(asset.path("field"), transparent=False)
+asset.slice_from("field", margin_px=int(MARGIN * rig.TILE_PX))
+for i in range(BLOCK * BLOCK):
+    # Row-major, v[cy * BLOCK + cx], cx growing east and cy growing SOUTH, because that is
+    # how a tile coordinate grows in the view. The render's +y is NORTH and its top row is
+    # the field's north edge, so cell 0 is the north-west corner and `scene_view.gd`'s
+    # posmod(y, h) * w + posmod(x, w) lands on the same picture the field was laid out as.
+    asset.add(f"v{i}", 1)
 asset.write()
