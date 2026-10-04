@@ -1729,3 +1729,57 @@ func _a_part_stack() -> Dictionary:
 			return {"kind": kind, "species": 0, "species_name": "Testore", "grade": "C",
 					"count": 1, "name": kind}
 	return {}
+
+
+## **THE PANEL STOPS ABOVE THE BODY THE CAMERA CENTRES (ASSA-156, box 6).**
+##
+## Maren's measurement: seed 777042 with the log open had ZERO player pixels anywhere in the map
+## rect, against 199 with it closed, and the panel was INSIDE the map the whole time -- the bound it
+## already had was the wrong bound. An unclamped camera puts your body in the map's centre and the
+## panel owns the map's top, so the panel's height is the only free variable.
+##
+## **WHAT THIS TEST CANNOT SEE, SAID OUT LOUD, because a green tick here is not the fix.** The suite
+## runs inside `SceneTree._initialize`: nothing is laid out, and `Control.update_minimum_size` is
+## deferred, so `_log_box` honestly reports 12px for a 342px panel (measured in
+## `tools/log_room_probe.gd`). There is no real rectangle to ask. So this sums the height the engine
+## WILL give the panel out of the nodes it will lay out -- the stylebox's margins, the heading at its
+## own type's font size, the separations, and every Label actually added -- and compares that to the
+## ceiling. It is a different computation from the division in `AssayHud.log_lines_that_fit`, which
+## is what lets it catch an off-by-one there; it is NOT independent of the terms, so a wrong chrome
+## term would pass here. The laid-out rect is checked in `tools/window_shot.gd::_reveal_report`, on
+## a real window, which is the only place it can be.
+func test_the_log_panel_stops_above_the_body_the_camera_centres() -> bool:
+	var screen := _screen()
+	var ok := true
+	var map := AssayHud.world_rect()
+	var ceiling := AssayScene.player_ceiling(AssaySprites.manifest(), map.size)
+	var lines := PackedStringArray()
+	for i in 14:
+		lines.append("%d · you mined 20 of Tonore ore (A) at (74, 36)" % (400 + i))
+	screen._events = lines
+	screen._rebuild_log()
+	var drawn: Array = screen._log.find_children("*", "Label", true, false)
+	var style: StyleBox = screen._log_box.get_theme_stylebox(&"panel")
+	var inside: Control = screen._log_box.get_child(0)
+	var head: Font = screen._log_heading.get_theme_font(&"font", &"Heading")
+	var tall: float = style.get_margin(SIDE_TOP) + style.get_margin(SIDE_BOTTOM)
+	tall += head.get_height(screen._log_heading.get_theme_font_size(&"font_size", &"Heading"))
+	tall += float(inside.get_theme_constant(&"separation"))
+	var sep := float(screen._log.get_theme_constant(&"separation"))
+	for i in drawn.size():
+		tall += (drawn[i] as Control).get_combined_minimum_size().y
+		if i > 0:
+			tall += sep
+	if ceiling <= 0.0:
+		ok = _fail(("the scene cannot say where a body is drawn (ceiling %.1f), so the log's panel "
+				+ "has no bound at all and ASSA-156 is unfixed rather than fixed") % ceiling)
+	elif drawn.size() >= lines.size():
+		ok = _fail(("fourteen events drew %d lines in a panel with %.0fpx of room above the player: "
+				+ "the cap is not in force, so the panel still owns the map's centre")
+				% [drawn.size(), ceiling])
+	elif tall > ceiling:
+		ok = _fail(("the log's panel will be %.0fpx tall and your own body is drawn from y %.0f of "
+				+ "the map: %.0fpx of it is over your head, which is what Maren's 777042 shot "
+				+ "measured as zero player pixels on screen") % [tall, ceiling, tall - ceiling])
+	screen.queue_free()
+	return ok
