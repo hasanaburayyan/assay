@@ -2793,35 +2793,48 @@ func _draw() -> void:
 		if target != null:
 			draw_line(at, MARGIN + (Vector2(target as Vector2i) + Vector2(0.5, 0.5)) * _cell,
 					Color(colour.r, colour.g, colour.b, 0.35 if mine else 0.25), 1.0)
-		draw_rect(Rect2(at - mark * 0.5, mark), colour, true)
+		# **A KEYLINE ON A PERSON, WHICH IS MAREN'S SECOND RULING ON ASSA-189 AND A DEFECT THAT WAS
+		# ALREADY SHIPPING.** `THEIRS` is a pale near-white, and with no rim a partner standing on a
+		# deposit with a light species letter fuses with that letter into one blob -- Cove found it
+		# hunting for a control for their own keyline-0 diamond, which failed the same way. Drawn
+		# UNDER the body and growing outwards, so the 16 px Maren set from a measurement is untouched
+		# in pixels and the rim is not paid for out of the body. See `AssayHud.mark_keyline_rect`.
+		var body := Rect2(at - mark * 0.5, mark)
+		draw_rect(AssayHud.mark_keyline_rect(body), AssayHud.MAP_BG, true)
+		draw_rect(body, colour, true)
 		if mine:
 			draw_rect(Rect2(at - mark * 0.8, mark * 1.6), colour, false, 2.0)
 
 	# EVERY FACTORY, WHICH THIS VIEW DID NOT DRAW AT ALL UNTIL ASSA-189.
 	#
-	# **AFTER THE PLAYERS, AND IT IS MEASURED RATHER THAN CHOSEN.** I drew these first, reasoning that
-	# you are the mark you look for and a 2x2 building is bigger than you are. Then I measured the
-	# demo's own shot: the loop plants a machine on the tile you are STANDING on (`_targeted` false is
-	# "where you stand"), so the 1x1 machine's 12 px mark and your 16 px square were at the same point
-	# to the pixel and the 12x12 box held nothing but your yellow. Two buildings in the sim, one on
-	# screen -- this item's own defect surviving its own fix.
+	# **AFTER THE PLAYERS, WHICH IS THE ONE CLAUSE OF THE APPROVED DESIGN I HAVE NOT APPLIED, AND IT
+	# IS OPEN ON ASSA-203 FOR MAREN TO RULE.** Cove's hand-off and her 17:40 ruling both say
+	# deposits -> buildings -> players, for a reason I agree with as a sentence: *a drill must be
+	# visible on the rock it works, and a person must never be hidden by a thing.*
 	#
-	# **AND THE ORDER ONLY WORKS BECAUSE OF THE SHAPE.** A diamond leaves its bounding box's corners
-	# alone, so a player under a building still shows four triangles of `MINE` around it, and your own
-	# hollow ring (1.6x the body, outside the mark entirely) is untouched at any footprint. A filled
-	# rect on top -- Maren's banned shape -- would have hidden the player instead, which is why
-	# "buildings last" is not an option on the shape she ruled out.
+	# The measurement is that on this world it costs the first half to buy the second. The play loop
+	# plants on the tile you are STANDING on (`_targeted` false is "where you stand"), so a machine's
+	# mark and your body are at the same point TO THE PIXEL, and the mark is `BUILDING_MARK_PX` 16
+	# against a 16 px filled square: at the approved size a diamond is exactly INSCRIBED in the body
+	# that would be painted over it. Not mostly hidden -- gone. The keyline does not rescue it either:
+	# its four points clear the body by 2.8 px and they are `MAP_BG` drawn on a `MAP_BG` background.
+	# `shared/assay/limpet-assa203-both-orders-14247/` has both frames at 1x and the surviving-pixel
+	# count for each.
+	#
+	# **AND THE ORDER ONLY WORKS AT ALL BECAUSE OF THE SHAPE.** A diamond leaves its bounding box's
+	# corners alone, so a player under a building still shows four triangles of their own colour --
+	# half the body's area -- and your hollow ring (1.6x the body, outside the mark entirely) is
+	# untouched at any footprint. A filled rect on top, Maren's banned shape, really would hide the
+	# person, which is why "buildings last" is only an option on the shape Cove picked.
 	#
 	# THE DECISION IS `AssayHud.building_mark`'S, like the disc's above, and this loop only paints what
 	# `_building_marks` hands it -- see that function for why a test can read it and this cannot.
 	for shape_entry in _building_marks(_sim.buildings()):
 		var shape: Dictionary = shape_entry
-		var points: PackedVector2Array = shape["points"]
-		draw_colored_polygon(points, shape["colour"])
-		# Closed, so the ring goes all the way round rather than leaving the last side bare.
-		var ring := PackedVector2Array(points)
-		ring.append(points[0])
-		draw_polyline(ring, shape["edge"], float(shape["edge_width"]), true)
+		# TWO POLYGONS, NOT A STROKE. The rim is a bigger diamond UNDER the mark, so the mark keeps
+		# every pixel of its own size; a 2 px stroke on the mark's edge would spend one of them.
+		draw_colored_polygon(shape["keyline_points"], shape["keyline"])
+		draw_colored_polygon(shape["points"], shape["colour"])
 
 	# THE TILE THE BUTTONS ACT ON, AND IT IS A SHAPE NOW, NOT A THINNER YOU (ASSA-119 box 6).
 	#

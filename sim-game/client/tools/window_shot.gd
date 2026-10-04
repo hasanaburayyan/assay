@@ -1174,7 +1174,12 @@ func _write_marks_table() -> void:
 		"shot": "08-whole-world.png",
 		"cell": _screen._cell,
 		"map_bg": [AssayHud.MAP_BG.r, AssayHud.MAP_BG.g, AssayHud.MAP_BG.b],
-		"built": [AssayHud.BUILT.r, AssayHud.BUILT.g, AssayHud.BUILT.b],
+		# **`mark`, NOT `built`, AND IT IS `HOVER` NOW** (ASSA-203). The approved mark spends no new
+		# hue, so the colour a measuring script looks for is one this map already had -- and a key
+		# called `built` naming a constant that no longer exists is how a table outlives its picture.
+		# The keyline's colour is `map_bg` above, which is the whole point of it.
+		"mark": [AssayHud.HOVER.r, AssayHud.HOVER.g, AssayHud.HOVER.b],
+		"keyline_px": AssayHud.MARK_KEYLINE_PX,
 		"buildings": rows,
 		"players": people,
 	}
