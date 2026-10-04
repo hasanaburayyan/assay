@@ -34,6 +34,18 @@ const MIN_CONTRAST := 4.5
 ## Muted text is still text. AA large-text (3.0) would let a 14px readout through, so it is held to
 ## the same bar as body: "secondary" describes importance, never legibility.
 const MIN_MUTED_CONTRAST := 4.5
+## THE TWO INKS MUST STAY TELLABLE APART (ASSA-152 box 4, Maren).
+##
+## Her constraint on the fix: *"the ratio is not bought by moving INK_MUTED towards INK -- two inks
+## that stop being distinguishable would trade a legibility defect for the loss of the hierarchy
+## that tells a player what to read first."* The cheap way to pass a contrast floor is to brighten
+## the dimmer ink until it is the brighter one, and every check above would go green while the
+## column lost the thing that says which line to read.
+##
+## MEASURED, NOT CHOSEN: `INK` against `INK_MUTED` is **1.80:1** today. The floor is 1.5 so an
+## ordinary retune of either ink does not trip it and a COLLAPSE does. It is deliberately not held
+## near 1.80 -- a guard that fires on every nudge gets raised rather than obeyed.
+const MIN_INK_SEPARATION := 1.5
 
 # ---------------------------------------------------------------------------
 # THE TYPE SCALE. Four sizes, and the reason there are four is that `main.gd` currently reaches for
@@ -68,6 +80,16 @@ func _initialize() -> void:
 		for line in problems:
 			print("  ", line)
 		_fail("the theme's own text fails WCAG AA on the surface it is drawn on")
+		return
+	# THE HIERARCHY, SEPARATELY AND ON PURPOSE. This is NOT appended to `_contrast_problems`: every
+	# pair in that list is an ink on a surface a player actually sees it drawn on, and its own
+	# comment says a pair nobody draws would be a test of nothing. INK against INK_MUTED is not a
+	# pairing on the screen, it is a requirement ABOUT the two inks. Putting it in that list would
+	# have made that comment false, which is the way these files rot.
+	var separation := AssayHud.contrast_ratio(INK, INK_MUTED)
+	if separation < MIN_INK_SEPARATION:
+		print("  body vs secondary: %.2f:1, needs %.1f:1" % [separation, MIN_INK_SEPARATION])
+		_fail("the two inks have collapsed into one, so nothing tells a player what to read first")
 		return
 
 	var theme := Theme.new()

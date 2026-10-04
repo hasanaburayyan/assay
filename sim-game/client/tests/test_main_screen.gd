@@ -958,6 +958,128 @@ func _drawn_color(label: Label) -> Color:
 	return Color(c.r * m.r, c.g * m.g, c.b * m.b, c.a * m.a)
 
 
+## THE SURFACE ACTUALLY BEHIND A LABEL, ASKED OF THE BUILT TREE (ASSA-152, Maren's amended box 3).
+##
+## **THE OLD READING WAS OF THE GENERATOR AND THAT IS THE WHOLE DEFECT CLASS.** `_panel_surface()`
+## returns what the theme DECLARES its panel to be. Maren's ASSA-117 ruling: *"the theme refusing to
+## WRITE below 4.5 while the window could still RENDER below it is the defect class, not the
+## symptom. A check that guards the generator and not the output is a check I have never seen fire."*
+## It did not fire. `build_theme.gd::_style_panel` styles `Panel` and `PanelContainer`, the HUD
+## column was a VBox inside a ScrollContainer inside a VBox, and SURFACE was painted on **zero
+## pixels** -- so every line in the column rendered on Godot's default clear colour (77,77,77) and
+## INK_MUTED came out at 3.86:1 where the guard had verified 6.74:1.
+##
+## So this climbs the REAL ancestors and asks each whether IT resolves a panel stylebox. A `Label`
+## answers no (the theme has no `panel` entry for `Label`), a `VBoxContainer` answers no, a `Panel`
+## or `PanelContainer` answers yes. The first yes going up is what is painted behind the label.
+## `null` means nothing in its whole chain paints anything, which is not a gap in this check -- it
+## is the bug, and the sweep below fails on it by name.
+##
+## THE RECT IS NEVER CONSULTED, deliberately: the test runner builds the screen in
+## `SceneTree._initialize`, so containers have not laid out and every child rect is zero. A
+## geometric "which panel is under this label" would be reading zeros and calling it a surface.
+## Ancestry is the one relationship that is true before layout.
+func _surface_behind(label: Label) -> Variant:
+	var node: Node = label.get_parent()
+	while node != null:
+		var control := node as Control
+		if control != null and control.has_theme_stylebox(&"panel"):
+			var box := control.get_theme_stylebox(&"panel") as StyleBoxFlat
+			if box != null:
+				return box.bg_color
+		node = node.get_parent()
+	return null
+
+
+## EVERY READOUT IN THE COLUMN CLEARS WCAG AA ON THE SURFACE THE TREE ACTUALLY PUTS BEHIND IT
+## (ASSA-152). The sweep below is the ASSA-117 one re-aimed: same labels, same `modulate` arithmetic,
+## but the second colour now comes from `_surface_behind` instead of from the theme file.
+##
+## **THE BOARD COMPLAINED AT 4.091:1 AND THIS SCREEN HAS BEEN AT 3.86:1 EVER SINCE.** INK_MUTED is
+## every section heading, every crafting row and the `acting on ...` line -- the surface where a
+## player decides what to build.
+func test_every_readout_clears_aa_on_the_surface_behind_it() -> bool:
+	var screen := _screen()
+	var ok := true
+	var checked := 0
+	var unpainted := PackedStringArray()
+	var worst := 99.0
+	var worst_said := ""
+	for section in [screen._make, screen._carrying, screen._actions, screen._bench,
+			screen._species, screen._cursor, screen._log, screen._halt]:
+		for node in section.find_children("*", "Label", true, false):
+			var label := node as Label
+			# The glyph letter: centred inside a Panel of its own, which is the tint disc, not the
+			# column. `art/check_glyph_contrast.py` fails CI at 4.52 for the worst species and
+			# purity, so excluding it here is honest -- something else can fail for it.
+			if label.get_parent() is Panel:
+				continue
+			checked += 1
+			var behind: Variant = _surface_behind(label)
+			if behind == null:
+				# NOT SKIPPED. A label with nothing painted behind it is the defect, and a sweep
+				# that passed over it is how this shipped: it sits on the engine's clear colour,
+				# which no theme guard can reach.
+				unpainted.append("'%s'" % label.text.substr(0, 30))
+				continue
+			var ratio := AssayHud.contrast_ratio(_drawn_color(label), behind as Color)
+			if ratio < worst:
+				worst = ratio
+				worst_said = "'%s' at %s on %s" % [label.text.substr(0, 40), _drawn_color(label),
+						behind]
+	if checked == 0:
+		ok = _fail("the sweep found no labels at all, so it would pass over anything")
+	elif not unpainted.is_empty():
+		ok = _fail(("%d of %d readouts have NO painted surface in their whole ancestor chain, so "
+				+ "they render on the engine's clear colour: %s")
+				% [unpainted.size(), checked, " ".join(unpainted)])
+	elif worst < 4.5:
+		ok = _fail(("a readout is drawn at %.3f:1 against the surface actually behind it, under "
+				+ "the 4.5 floor: %s") % [worst, worst_said])
+	screen.queue_free()
+	return ok
+
+
+## THE PAINTED SURFACE MOVES NOTHING (ASSA-152). Maren ruled a SIBLING `Panel` to avoid reflow and I
+## built a PARENT instead, because her own amended box 3 climbs ancestors and a sibling is never one.
+## A parent is only safe if `Panel` really does lay out no children -- so that is asserted here
+## rather than believed, against the arrangement she ruled.
+##
+## `chrome` must end up at the SAME GLOBAL RECT it had as a sibling: position `(VIEW.x - PANEL -
+## MARGIN.x, COLUMN_TOP)`, size `(PANEL, VIEW.y - COLUMN_TOP - 24)`. If a `Panel` ever started
+## imposing margins the way a `PanelContainer` does, that global rect is where it would show.
+func test_the_painted_surface_moves_no_control() -> bool:
+	var screen := _screen()
+	var ok := true
+	var surface := screen.get_node_or_null(NodePath(screen.COLUMN_SURFACE)) as Panel
+	if surface == null:
+		screen.queue_free()
+		return _fail("no %s in the screen, so the column has no painted surface at all"
+				% screen.COLUMN_SURFACE)
+	if surface.mouse_filter != Control.MOUSE_FILTER_IGNORE:
+		ok = _fail("the column's surface would swallow clicks on empty column: filter %d"
+				% surface.mouse_filter)
+	var want_pos := Vector2(AssayHud.VIEW.x - AssayHud.PANEL - AssayHud.MARGIN.x,
+			AssayHud.COLUMN_TOP)
+	var want_size := Vector2(AssayHud.PANEL, AssayHud.VIEW.y - AssayHud.COLUMN_TOP - 24.0)
+	if surface.position != want_pos or surface.size != want_size:
+		ok = _fail("the surface is not the column's rect: %s %s, wanted %s %s"
+				% [surface.position, surface.size, want_pos, want_size])
+	# THE COLUMN ITSELF, in GLOBAL coordinates, because that is the number a sibling would have had
+	# and the only one a player can see.
+	var chrome := surface.get_child(0) as Control
+	if chrome == null:
+		ok = _fail("the surface has no column inside it")
+	elif ok:
+		var at := surface.position + chrome.position
+		if at != want_pos or chrome.size != want_size:
+			ok = _fail(("the column moved when it gained a painted parent: global %s size %s, "
+					+ "wanted %s %s. A `Panel` is not a `Container` and must impose nothing.")
+					% [at, chrome.size, want_pos, want_size])
+	screen.queue_free()
+	return ok
+
+
 ## EVERY READOUT IN THE COLUMN CLEARS WCAG AA ON THE PANEL IT SITS ON (ASSA-117).
 ##
 ## **THIS IS THE BOARD'S OWN COMPLAINT AS A NUMBER.** "logs are hard on the eyes" (10-02) was a true

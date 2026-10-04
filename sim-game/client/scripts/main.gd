@@ -195,6 +195,10 @@ const SPECIES_LINE := "SpeciesLine"
 ## My first test for that read the whole row and tripped over the `hand-minable` TAG's hyphen, which
 ## is the same mistake as measuring a shadow with a statistic the outline also satisfies.
 const SPECIES_READINGS := "SpeciesReadings"
+## The `Panel` behind the HUD column (ASSA-152). Named so a test and a probe can find it without
+## counting children -- the thing it is named for is a SURFACE, and the whole defect was that the
+## surface could not be found because it did not exist.
+const COLUMN_SURFACE := "ColumnSurface"
 
 ## The map glyph's disc in a species row. Big enough for a 12px letter to sit in, which is above the
 ## 10px floor `glyph_size` refuses to draw under.
@@ -491,10 +495,48 @@ func _build_ui() -> void:
 	# `COLUMN_TOP`, NOT `MARGIN.y`: the header band spans the map's width, not the window's, so the
 	# column starts at the top of the window and the 347 x 96 of empty chrome in the corner becomes
 	# clip. See `AssayHud.COLUMN_TOP` for the measurement and for why that rectangle gets no label.
-	chrome.position = Vector2(VIEW.x - PANEL - MARGIN.x, AssayHud.COLUMN_TOP)
-	chrome.size = Vector2(PANEL, VIEW.y - AssayHud.COLUMN_TOP - 24.0)
+	var column_rect := Rect2(Vector2(VIEW.x - PANEL - MARGIN.x, AssayHud.COLUMN_TOP),
+			Vector2(PANEL, VIEW.y - AssayHud.COLUMN_TOP - 24.0))
+	# THE COLUMN'S TEXT USED TO SIT ON NOTHING, AND "NOTHING" IS A COLOUR (ASSA-152, Maren).
+	#
+	# The theme styles `Panel` and `PanelContainer` (`build_theme.gd::_style_panel`) and this column
+	# was neither -- `chrome`, `scroll` and `column` are a VBox, a ScrollContainer and a VBox. So
+	# SURFACE was painted on ZERO pixels of the screen and every line in here rendered on Godot's
+	# default clear colour, 0.3 grey = exactly (77,77,77). Measured on two real window shots:
+	# INK_MUTED came out at 3.86:1, UNDER the 4.5 floor, where the guard had verified 6.74:1 against
+	# the surface the theme declares. The board called the log "hard on the eyes" at 4.091:1; every
+	# section heading, every crafting row and the status line have been worse than that ever since.
+	#
+	# A plain `Panel`, NOT a `PanelContainer` (Maren's ruling, and her reason is reflow): a
+	# `PanelContainer` imposes its stylebox's content margins and re-lays everything inside it, and
+	# the column's layout is what ASSA-147 just finished settling.
+	#
+	# **SHE RULED A SIBLING AND THIS IS A PARENT. I CHANGED THAT ONE THING AND SAID SO ON THE ITEM.**
+	# Her amended box 3 asks the guard to "climb each Label's ancestors until one resolves a panel
+	# stylebox" -- and a SIBLING is never an ancestor, so the two halves of her ruling cannot both be
+	# built. A parent satisfies the reason she gave for the sibling: `Panel` is NOT a `Container`, so
+	# it lays its children out exactly never; `chrome` keeps its own position and size and nothing
+	# reflows. That is measured, not reasoned -- `test_the_painted_surface_moves_no_control` holds
+	# every section's rect against the sibling arrangement, and `window_shot`'s fold report says the
+	# same from a real window.
+	#
+	# IGNORE on the mouse because a `Panel` is a Control that would otherwise swallow clicks on empty
+	# column; `MOUSE_FILTER_IGNORE` does not apply to children, so every button inside still gets its
+	# events. This is the opposite choice to the log panel's STOP (ASSA-147), and deliberately: that
+	# one is a surface a player reads ON TOP of the map and must not click through; this one is the
+	# floor the column already stood on.
+	var surface := Panel.new()
+	surface.position = column_rect.position
+	surface.size = column_rect.size
+	surface.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	surface.name = COLUMN_SURFACE
+	add_child(surface)
+	# ZERO, because `chrome` is now positioned inside `surface` and `surface` carries the offset. The
+	# column's GLOBAL rect is unchanged, which is the thing that must not move.
+	chrome.position = Vector2.ZERO
+	chrome.size = column_rect.size
 	chrome.add_theme_constant_override("separation", 6)
-	add_child(chrome)
+	surface.add_child(chrome)
 	_log_toggle.pressed.connect(func(): _show_log(not _log_shown))
 	chrome.add_child(_log_toggle)
 	# WHAT IS RUNNING, THEN WHAT HAS STOPPED, both above the scroll and never inside it (ASSA-133).
