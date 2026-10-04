@@ -137,20 +137,16 @@ why determinism rules are non-negotiable.
   if its heat tolerance ≤ 30 (hand spark); ore smelts when the fire reaches
   its heat tolerance, 20 ticks per unit; gears need hardness ≥ 20 at grade;
   reach 3 tiles. The starter ladder is judged at grade B.
-- Save format `SAVE_VERSION = 12`, and this build loads
-  `OLDEST_SAVE_VERSION = 10` and newer, migrating forward. Versions 1–8
+- Save format `SAVE_VERSION = 12`, and `OLDEST_SAVE_VERSION = 10` is the
+  oldest `from_json` still migrates forward (`sim/src/save.rs`). Versions 1–8
   (named ores) do not load: the cut-over had no compatibility shim by
-  decision; v9 never shipped.
+  decision; v9 never shipped. **Ask the source for these two numbers, never
+  this file**: it said 10 and protocol 4 for days after they were 12 and 9,
+  and a stale constant here reads as fact to anyone who has not grepped.
 - `PROTOCOL_VERSION = 9`. Bump it whenever `World` or a message changes
-  shape; the relay refuses mismatched clients.
-- **Those three numbers are checked, not remembered.** They were two and
-  five versions out of date in this file until 2026-10-04 (ASSA-174), in the
-  document whose first line is "Read this first", so
-  `sim-cli/tests/documented_versions.rs` reads this file with `include_str!`
-  and fails when a sentence here disagrees with the constant it describes.
-  Edit the constant and the test tells you to come back here. The version
-  numbers inside `docs/adr/` are deliberately NOT checked: an ADR records
-  what one decision did on its own date and is meant to go out of date.
+  shape; the relay refuses mismatched clients. A running relay will tell you
+  what it speaks: `sim-relay --bogus` prints `RELAY STARTED protocol <n>
+  rules <id>` before it complains.
 - Golden determinism hash lives in `sim/tests/determinism.rs`. It changes
   whenever rules change; update it only for intentional changes and say so
   in the commit.

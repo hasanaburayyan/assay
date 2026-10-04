@@ -714,3 +714,72 @@ So when diffing two window shots to attribute a change:
 Scale, so this is not read as worse than it is: the player is ~800 px of the
 908×600 map rect, **0.15%**, so percentile statistics over the whole rect are
 unaffected. It is attribution of a *located* difference that this breaks.
+
+### So stop diffing: ask the client which pixels it drew (`art/window_alpha.py`, ASSA-181)
+
+Both traps above are the same trap. A difference mask answers *"did these two
+runs differ here"*, and every window question we actually ask is *"is this pixel
+the machine / the ore / the player"*. **On 2026-10-04 four masks built on that
+confusion were wrong in one day** — three mine, one Maren's. A difference mask
+has **holes** wherever two variants agree, so its boundary is not a silhouette
+(317 of 399 of my "edge" pixels were interior hole rims, reading the drill's
+glint as its outline); its outer ring is the **antialiased fringe over the
+ground** (433 px at alpha 0.09, 91% ground, and it reported a rim making the
+edge *brighter*); and it picks up **anything else that moved**, which on this
+screen means the player.
+
+The replacement is arithmetic, not a better heuristic. Every sprite is drawn by
+`world_layer.gd` with `draw_texture_rect_region(tex, dest, src, tint)`, so
+
+    screen = bg*(1 - a) + c*a
+
+Shoot the same frame twice with **one sheet** altered and nothing else:
+
+```bash
+art/shoot_window_alpha.sh player 777042 800 4   # -> /tmp/wa181/player/{bg,black}.png
+art/shoot_window_alpha.sh control               # the known-alpha control, prints a verdict
+```
+
+* `bg` — that sheet **blanked** (alpha 0, same size) → the background, exactly.
+* `black` — its **RGB zeroed, alpha kept** → `K = bg*(1-a)`, so `a = 1 - K/bg`.
+  Black is the probe colour because `tint` is a per-channel multiply and **black
+  times any species tint is still black**; white would come back multiplied by
+  the tint.
+
+`bg` is an integer read off a real shot, so `K = round(bg*(1-a))` pins `a` to an
+interval of width `1/bg` per channel, and the tool **intersects the three** and
+reports the half-width per pixel. What that buys over an estimate:
+
+* the silhouette is the alpha mask's own edge, with the same 4-neighbour
+  definition `art/check_machine_vs_own_ore.py` uses, so a window number is
+  comparable with a sheet number;
+* the **unblended** colour `c = bg + (screen - bg)/a` — the colour the sheet
+  handed over, before the ground showed through it;
+* `UNSTABLE` pixels, where `K > bg`: a pixel that got *brighter* with pure black
+  drawn over it, which cannot happen, so something other than this sheet moved
+  between the runs. Point it at a mismatched pair and 1,581 px say so.
+
+**The player is one of the sheets it isolates, and that is not an afterthought:
+the player is what burned three of the four masks.** `facing`/`moving`/the wall
+clock pick its frame, so it is the one sprite that differs between two runs of
+the same build — which makes it both the thing you must subtract (blank it in
+every run, as ASSA-159 did) and, through this tool, a thing you can measure on
+purpose: "where is the player's body on screen, in map-rect pixels" is one
+`shoot_window_alpha.sh player` away, and no difference mask can answer it at all.
+Measured that way on seed 777042 tick 800: **472 drawn px, 687 of fringe, a
+220 px silhouette, in an 18×41 box** at x469..486 y362..402.
+
+Limits, stated rather than discovered later. Where `bg` is dark the interval is
+wide (`1/bg`), so alpha over near-black is **reported as refused, not guessed** —
+the player stands on its own drill, and the 345 pixels whose background is below
+24 come back red in `alpha.png` rather than as holes in a silhouette. Two
+overlapping draws of the same sheet compound to `1-(1-a₁)(1-a₂)`, so this says
+how much of the sheet is in a pixel, not how many times it was drawn. And one
+pair of shots answers for one sheet.
+
+It is **not** a `check_*.py` and must not be renamed into one: it needs a GUI
+Godot run, and `build.yml` runs `--headless` where `window_shot.gd` writes a
+blank frame and still exits SUCCESS. Same rule as `art/grid_findability.py`.
+What *does* run anywhere is `python3 art/window_alpha.py --selftest`, which
+round-trips 8,704 simulated pixels through the client's own blend and fails if
+the reported interval is wrong in either direction.

@@ -7,7 +7,14 @@
 //! that reads as authoritative — a specific, true-sounding historical detail
 //! ("v9 never shipped") sitting next to a number that had moved twice.
 //!
-//! **WHY THIS IS A TEST AND NOT A CORRECTION.** Changing 10 to 12 leaves the
+//! **THE DIGITS WERE FIXED WITHOUT ME, BY ASSA-188 (#252), AND THAT IS THE
+//! ARGUMENT FOR THIS FILE RATHER THAN AGAINST IT.** That change corrected the
+//! numbers and added the advice "ask the source for these two numbers, never
+//! this file" — which is true, and is a rule a reader has to remember. This is
+//! the half it did not do: the rule enforced. I take the prose from #252 as it
+//! stands and add nothing to it.
+//!
+//! **WHY A TEST AND NOT A CORRECTION.** Changing 10 to 12 leaves the
 //! mechanism that let it rot: the next bump is somebody editing a constant in
 //! `sim/src/save.rs` with no reason to open a markdown file two directories up.
 //! It is the third committed description this week that could not say what it
