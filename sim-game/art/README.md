@@ -558,6 +558,52 @@ the C hopper falls under L\* 35 and its gap from the head drops to 7.7.
 - Review at 1× game size (the small copies on the contact sheet). If it
   doesn't read there, it doesn't matter how it looks zoomed in.
 
+## Animation: what makes a loop read as a settle rather than a flicker
+
+Two of ASSA-115's boxes were animation timing, and both of my first readings were
+wrong in the same way, so the rules are here rather than in a commit message.
+
+**A FLICKER IS THE SHAPE OF THE TRANSITION, NOT ITS AREA.** The spawn blink moved
+only **1.3%** of its displayed pixels by more than 24 and it still strobed on a 3×3
+landmark; the player idle moved 25–29% and was a twitch. Those two numbers are not
+comparable and neither of them is the defect. What decided both was *how* the pixels
+moved: the blink was keyed `(i + f) % 2`, which is a **square wave** — every lamp
+flipped its full range every frame, frames 0/2 and 1/3 came out byte-identical, and
+four frames at 4 fps meant four hard transitions a second. Measured at the displayed
+size the worst consecutive step was 154 of 255.
+
+So, before judging an animation:
+
+- **Report which frames are identical.** `N frames / M distinct` is the first fact.
+  A 4-frame row with 2 distinct poses is a two-state alternation wearing four frames,
+  and a `% 2` in the keying loop is the usual cause.
+- **Measure the worst CONSECUTIVE step, at 32px/tile, not at authoring size.**
+  `shared/assay/cove_blink_at_32px.py` is the shape of it: composite over the shipped
+  ground, downscale to display size, then diff frame *i* against *i+1* at thresholds
+  `>0 / >8 / >24` and report the max |ΔL|. A threshold of zero counts one-LSB noise as
+  motion and will tell you 84% of a sprite is moving.
+- **Even steps beat small ones.** Maren's ruling on the blink: *more frames, never a
+  slower cadence*. The blink fix keeps the two poses that shipped as frames 0
+  and 2 and adds a middle — a triangle `A / mid / B / mid` instead of a square wave.
+  Worst step 154 → 83, and all four transitions equal. Frames 1 ≡ 3 is correct there
+  and is not the defect being fixed: a ping-pong passes through its middle in both
+  directions, where `0 ≡ 2` had no middle to pass through.
+- **Cross-fading rather than re-posing means nothing approved gets re-judged.** The
+  endpoints are byte-identical to what shipped; only the steps between them are new.
+
+**AND THE PARAMETER IS NOT LINEAR IN WHAT A PLAYER SEES.** `spawn.py`'s lamp mixes
+toward the dead lens and scales `emit` together, and emission clips, so the visible
+range is nearly all spent in the first tenth:
+
+```
+t      0.00   0.12   0.22   0.32   0.42   0.50   1.00
+lum    87.2  157.8  172.2  181.4  187.7  192.3  208.5
+```
+
+The midpoint of the two poses is 147.8, which is **t ≈ 0.10**. My first pass used 0.5
+because it reads as "half" and bought almost nothing — a 16-luminance step beside a
+105 one. **Render a few values and read the pixels; never interpolate the parameter.**
+
 ## Adding an asset
 
 1. Copy the closest script in `assets/`. Build shapes with `r.box`,
@@ -566,7 +612,9 @@ the C hopper falls under L\* 35 and its gap from the head drops to 7.7.
 2. Call `r.frame(tiles_w, tiles_h, headroom)` with headroom for anything
    tall (roughly 0.6 × height in units).
 3. Render rows with `asset.path(row, frame)` and register them with
-   `asset.add`; `asset.anim` records fps.
+   `asset.add`; `asset.anim` records fps. If the asset moves, read
+   "Animation: what makes a loop read as a settle rather than a flicker"
+   above before choosing a keying — a `% 2` in the frame loop is a square wave.
 4. Add the name to `ORDER` in `build.py`, build, check `contact.png`.
 
 ## Looking at art the client has already drawn
