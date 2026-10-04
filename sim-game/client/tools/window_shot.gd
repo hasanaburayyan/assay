@@ -532,6 +532,22 @@ func _reveal_report() -> bool:
 				+ "surface it is drawn over, so it is covering the HUD column or the window's edge")
 				% [panel.position, panel.size, map.position, map.size])
 		return false
+	# **AND IT MAY NOT REACH YOUR OWN BODY (ASSA-156).** The panel is inside the map and was still
+	# covering the one tile the camera guarantees you are standing on: Maren shot seed 777042 and
+	# counted ZERO player pixels anywhere in the map with the log open, against 199 with it closed.
+	#
+	# THIS IS THE ONLY PLACE THE CLAIM CAN BE CHECKED AGAINST A LAID-OUT PANEL. `_log_box`'s height
+	# is the engine's answer to its content and `Control.update_minimum_size` is deferred, so in the
+	# suite -- inside `SceneTree._initialize`, no idle frame -- the box reports 12px for a 342px
+	# panel. Every headless test about this bound is a test of the arithmetic that chose the line
+	# count; this is the rectangle the player gets.
+	var ceiling := AssayScene.player_ceiling(AssaySprites.manifest(), map.size)
+	if ceiling > 0.0 and panel.end.y > map.position.y + ceiling + 0.5:
+		_finish(false, ("the log's panel ends at y %d, below the y %d your own body is drawn from "
+				+ "at an unclamped camera: the log is covering the tile you are standing on, which "
+				+ "is the tile its newest line is usually about (ASSA-156)")
+				% [panel.end.y, map.position.y + ceiling])
+		return false
 	return true
 
 

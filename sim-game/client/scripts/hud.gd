@@ -570,6 +570,31 @@ static func trimmed_log(lines: PackedStringArray, limit: int) -> PackedStringArr
 	return lines.slice(lines.size() - limit)
 
 
+## HOW MANY LOG LINES FIT IN `room` PIXELS (ASSA-156), AND THE NEWEST ONE ALWAYS DOES.
+##
+## Never 0 and never more than `limit`. `room <= 0` means nobody has a bound to offer, and the answer
+## is then `limit` -- a missing measurement must not silently shrink the log to one line.
+##
+## WHY THIS IS ARITHMETIC AND NOT A LOOP ASKING THE PANEL ITS OWN MINIMUM HEIGHT, which is what I
+## wrote first: `Control.update_minimum_size` is DEFERRED. Measured in `tools/log_room_probe.gd` --
+## with fourteen 18px lines in it, `_log_box.get_combined_minimum_size()` returns 12.0, the
+## stylebox's margins and nothing else, until an idle frame has gone by. A drop-until-it-fits loop
+## reads that 12 and keeps every line, and the test for it passes for the same reason. So the parts
+## come from the engine (`Font.get_height`, the theme's separations, the stylebox's margins) and the
+## one sum that is mine is here, where a test can see it.
+##
+## `newest` IS ITS OWN TERM BECAUSE THE NEWEST LINE IS THE ONE THAT WRAPS (ASSA-117 box 8: age 0
+## keeps its wrapping, every older line is cut to one row). Same probe: a 272-character line is 36px
+## at the panel's width and the Label's own minimum height still says 18, so a sum that treated every
+## line alike would draw a panel a row taller than it measured -- back onto the head of the player
+## this item is about, by exactly the margin nobody would look for.
+static func log_lines_that_fit(room: float, chrome: float, newest: float, pitch: float,
+		limit: int) -> int:
+	if room <= 0.0 or pitch <= 0.0:
+		return limit
+	return clampi(1 + int(floorf((room - chrome - newest) / pitch)), 1, limit)
+
+
 ## HOW OLD A LOG LINE LOOKS (ASSA-117). `age` 0 is the newest line and gets `ink`; the oldest gets
 ## `muted`; everything between is on the straight line from one to the other.
 ##

@@ -488,6 +488,37 @@ static func foot_mark(at: Vector2, origin: Vector2) -> Rect2:
 			Vector2(TILE_PX * 0.84, TILE_PX * 0.36))
 
 
+## HOW FAR DOWN THE MAP A PANEL ANCHORED TO ITS TOP MAY REACH BEFORE IT COVERS YOU (ASSA-156).
+##
+## Map-local pixels, and -1.0 when there is no player art to ask, because a claim about where a
+## sprite is drawn has no meaning when there is no sprite.
+##
+## WHY THERE IS A SINGLE ANSWER AT ALL, and it is the whole reason this is a layout constant rather
+## than a per-frame measurement: an UNCLAMPED camera is one that is centring, and a centred camera
+## draws you in the same place in every world. So `at` below is a tile far from every edge and WHICH
+## tile it is cannot matter -- if it ever did, this function would be wrong rather than imprecise, and
+## `test_scene_view.gd` samples several to say so.
+##
+## MAREN'S MEASUREMENT (ASSA-156) IS WHAT THIS IS FOR: the event log's panel took 341 of the map's
+## 600px from the top, the camera puts your body at 348..412, and on seed 777042 the log announced
+## `you planted machine 1 at (74, 36)` over a panel that was covering tile (74, 36). The panel's
+## height used to be the engine's answer to "how tall is my content"; it is now the smaller of that
+## and this.
+static func player_ceiling(manifest: Dictionary, view: Vector2) -> float:
+	var at := Vector2(500.0, 500.0)
+	var place := _place(manifest, "player", player_row("", false), Vector2i(at.floor()),
+			camera_origin(at, Vector2i(1000, 1000), view), Color.WHITE, 0.0)
+	if place.is_empty():
+		return -1.0
+	# MINUS ONE WHOLE TILE, AND THAT TERM IS THE DEFECT A PANEL SIZED OFF ONE FRAME WOULD HAVE.
+	# `_standing` floors a body's fractional position to a tile and the camera does not floor, so
+	# between `at.y = N` and `at.y = N + 1` the camera descends 32px while the sprite's tile stays
+	# put: the body climbs a whole tile up the window and then drops back as the floor catches up.
+	# The highest it reaches is the limit at `frac -> 1`, which is never attained -- so a panel that
+	# ends exactly here touches the body's rectangle at worst and never overlaps it.
+	return (place["dest"] as Rect2).position.y - TILE_PX
+
+
 ## A MACHINE'S RECTANGLE, or {} when its parts have no art or the contract will not read.
 ##
 ## **FOOTPRINT IS A RULES FACT, NOT A DRAWING SIZE** (Maren's ruling, ASSA-138). `building.rs:282`

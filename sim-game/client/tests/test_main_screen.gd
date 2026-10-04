@@ -1260,17 +1260,27 @@ func test_the_newest_log_line_is_the_brightest_and_the_oldest_is_still_readable(
 	screen._rebuild_log()
 	var drawn: Array = screen._log.find_children("*", "Label", true, false)
 	var ok := true
-	if drawn.size() != lines.size():
-		ok = _fail("%d lines went in and %d Labels came out" % [lines.size(), drawn.size()])
+	# **FOURTEEN GO IN AND THE ROOM DECIDES HOW MANY COME OUT (ASSA-156).** The panel is capped to
+	# the room above the player's own body, so this is no longer `lines.size()`; what it still is, is
+	# a CONTIGUOUS block starting at the newest, and the two `contains` below are what say so. The
+	# bug they catch is real and I shipped it into this branch for an hour: indexing the block off
+	# the drawn count instead of off `_events.size()` walks AWAY from the newest line and draws the
+	# eighth-oldest at the top, in correct newest-first order, looking entirely plausible.
+	var holds := mini(lines.size(), screen._log_lines_that_fit())
+	if drawn.size() != holds:
+		ok = _fail("%d lines went in, the room holds %d and %d Labels came out"
+				% [lines.size(), holds, drawn.size()])
 		screen.queue_free()
 		return ok
 	# THE NEWEST EVENT IS AT THE TOP.
 	if not (drawn[0] as Label).text.contains("event number 13"):
 		ok = _fail(("the first line in the log is '%s'; the newest event is the one a player who "
 				+ "can see two rows of this section must get") % (drawn[0] as Label).text)
-	elif not (drawn[drawn.size() - 1] as Label).text.contains("event number 0"):
-		ok = _fail("the last line is '%s', not the oldest event"
-				% (drawn[drawn.size() - 1] as Label).text)
+	elif not (drawn[drawn.size() - 1] as Label).text.contains(
+			"event number %d" % (lines.size() - drawn.size())):
+		ok = _fail(("the last line is '%s', which is not the oldest of the %d the room holds: the "
+				+ "lines on screen are not one run ending at the newest")
+				% [(drawn[drawn.size() - 1] as Label).text, drawn.size()])
 	if ok:
 		var previous := 999.0
 		for i in drawn.size():
@@ -1434,8 +1444,12 @@ func test_an_old_log_line_is_one_row_and_the_newest_is_whole() -> bool:
 	screen._rebuild_log()
 	var drawn: Array = screen._log.find_children("*", "Label", true, false)
 	var ok := true
-	if drawn.size() != lines.size():
-		ok = _fail("%d lines went in and %d Labels came out" % [lines.size(), drawn.size()])
+	# THE ROOM DECIDES THE COUNT SINCE ASSA-156, and with a newest line this long it decides one
+	# fewer: the newest keeps its wrapping, so it is two rows and the panel pays for both.
+	var holds := mini(lines.size(), screen._log_lines_that_fit())
+	if drawn.size() != holds:
+		ok = _fail("%d lines went in, the room holds %d and %d Labels came out"
+				% [lines.size(), holds, drawn.size()])
 	else:
 		# NEWEST FIRST, so index 0 is the exempt one.
 		var newest := drawn[0] as Label
