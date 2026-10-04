@@ -137,10 +137,16 @@ why determinism rules are non-negotiable.
   if its heat tolerance ≤ 30 (hand spark); ore smelts when the fire reaches
   its heat tolerance, 20 ticks per unit; gears need hardness ≥ 20 at grade;
   reach 3 tiles. The starter ladder is judged at grade B.
-- Save format `SAVE_VERSION = 10`. Versions 1–8 (named ores) do not load:
-  the cut-over had no compatibility shim by decision; v9 never shipped.
-- `PROTOCOL_VERSION = 4`. Bump it whenever `World` or a message changes
-  shape; the relay refuses mismatched clients.
+- Save format `SAVE_VERSION = 12`, and `OLDEST_SAVE_VERSION = 10` is the
+  oldest `from_json` still migrates forward (`sim/src/save.rs`). Versions 1–8
+  (named ores) do not load: the cut-over had no compatibility shim by
+  decision; v9 never shipped. **Ask the source for these two numbers, never
+  this file**: it said 10 and protocol 4 for days after they were 12 and 9,
+  and a stale constant here reads as fact to anyone who has not grepped.
+- `PROTOCOL_VERSION = 9`. Bump it whenever `World` or a message changes
+  shape; the relay refuses mismatched clients. A running relay will tell you
+  what it speaks: `sim-relay --bogus` prints `RELAY STARTED protocol <n>
+  rules <id>` before it complains.
 - Golden determinism hash lives in `sim/tests/determinism.rs`. It changes
   whenever rules change; update it only for intentional changes and say so
   in the commit.
