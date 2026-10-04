@@ -66,6 +66,17 @@ var _last_bundle := 0.0
 ## Frames where the renderer had published no drawn position for us. A sampler that reads the wrong
 ## field is silent in exactly the way a body that never moved is; this counts the difference.
 var _blind := 0
+## **THE RECTANGLE THE RENDERER BLITTED, in world pixels (`dest.position + origin`), and the foot
+## mark's beside it.** This is the column Maren's ASSA-200 says box 1 and box 3 have to be read off:
+## `_at` below is the lerp's OUTPUT, which `AssayScene._place` used to floor away before anything
+## reached the screen, so every number on this item before 2026-10-04 was measured on the input to
+## the broken step. World pixels and not map pixels because a centring camera holds the body still
+## in the WINDOW while the ground slides -- the quantity a player perceives is the body against the
+## world, and adding `origin` back recovers it exactly as the renderer computed it.
+var _drawn: Array[Vector2] = []
+var _foot: Array[Vector2] = []
+## Frames the renderer drew with no single body on the scene (see `WorldLayer.drawn_body`).
+var _unlit := 0
 ## The clock's own state at each sample, so a frozen frame can be told from a starved one.
 var _play: Array[float] = []
 var _starved: Array[bool] = []
@@ -193,6 +204,17 @@ func _sample(delta: float, now: float) -> void:
 		_blind += 1
 		return
 	var mine := mine_at as Vector2
+	# THE DRAWN RECT IS TAKEN FIRST AND IT CAN VETO THE SAMPLE. An empty `drawn_body` means the layer
+	# refused to say which body was yours, and a row with a lerp but no rectangle would quietly
+	# compare the two columns across different frames.
+	var body: Rect2 = _screen._world.drawn_body
+	var foot: Rect2 = _screen._world.drawn_foot
+	if body.size == Vector2.ZERO:
+		_unlit += 1
+		return
+	var origin: Vector2 = (_screen._world.view as Dictionary).get("origin", Vector2.ZERO)
+	_drawn.append(body.position + origin)
+	_foot.append(foot.position + origin)
 	_at.append(mine)
 	_origin.append(view.get("origin", Vector2.ZERO) as Vector2)
 	_dt.append(delta)
@@ -267,16 +289,38 @@ func _report() -> void:
 	var from: int = span["from"]
 	var to: int = span["to"]
 	var body: Array[float] = []
+	var drawn: Array[float] = []
+	var apart: Array[float] = []
 	var wall: Array[float] = []
 	var camera: Array[float] = []
 	var frames: Array[float] = []
+	var dry: Array[float] = []
 	var within := 0
+	var within_drawn := 0
 	var within_wall := 0
 	var tile_px: float = AssayScene.TILE_PX
+	var offset: Vector2 = _drawn[from] - _foot[from]
 	for i in range(from + 1, to + 1):
 		var dt: float = _dt[i]
 		if dt <= 0.0:
 			continue
+		# **A DRY FRAME IS COUNTED AND EXCLUDED, on Maren's wording (ASSA-197).** The mechanism
+		# permits a hold -- when the buffer runs out the only honest thing to draw is the newest
+		# position the sim produced -- and box 1 forbids a 0-speed frame. Both stand: a held frame is
+		# not a speed the renderer chose, so it does not belong in a speed distribution, and the bar
+		# on it is ZERO of them, reported with its duration.
+		if _starved[i]:
+			dry.append(dt * 1000.0)
+			continue
+		# **THE RECTANGLE THAT WAS BLITTED.** This is the verdict column.
+		drawn.append((_drawn[i] - _drawn[i - 1]).length() / tile_px / dt)
+		if absf(drawn[drawn.size() - 1] - TRUE_SPEED) <= TRUE_SPEED * TOLERANCE:
+			within_drawn += 1
+		# **BOX 3, MEASURED RATHER THAN BUILT.** The camera is on the drawn position (`main.gd`) and
+		# the foot mark is drawn from it, so the body and its own mark must keep a fixed offset. Any
+		# deviation is the body and the camera disagreeing about where you are -- Maren measured 34.2
+		# px of it, more than a whole tile, with the floor in place.
+		apart.append(((_drawn[i] - _foot[i]) - offset).length())
 		var speed := (_at[i] - _at[i - 1]).length() / dt
 		body.append(speed)
 		# **THE SAME DISTANCE OVER THE WALL CLOCK BETWEEN THE TWO SAMPLES**, which is not the same
@@ -297,8 +341,10 @@ func _report() -> void:
 			within += 1
 	print("  true speed %.2f tiles/s (one tile per %.0f ms tick), bar is +/-%d%%"
 			% [TRUE_SPEED, TICK_SECONDS * 1000.0, int(TOLERANCE * 100.0)])
-	_say("body tiles/s", _percentiles(body))
-	_say("body (wall)", _percentiles(wall))
+	_say("DRAWN tiles/s", _percentiles(drawn))
+	_say("body-vs-mark px", _percentiles(apart))
+	_say("lerp tiles/s", _percentiles(body))
+	_say("lerp (wall)", _percentiles(wall))
 	_say("camera tiles/s", _percentiles(camera))
 	_say("frame ms", _percentiles(frames))
 	_say("bundle gap ms", _percentiles(_scaled(_bundle_gaps, 1000.0)))
@@ -344,15 +390,43 @@ func _report() -> void:
 			print("  %5d %6.1f %8.3f %7.2f %10.3f %7d %5d %s"
 					% [i, _dt[i] * 1000.0, _at[i].x, (_at[i] - _at[i - 1]).length() / maxf(_dt[i], 1e-6),
 					_play[i], _sim_tick[i], _held[i], _starved[i]])
-	var share := 0.0 if body.is_empty() else float(within) / float(body.size())
-	print("  WITHIN THE BAR: %d of %d moving frames (%.1f%%)" % [within, body.size(), share * 100.0])
+	# **EVERY DISTRIBUTION CARRIES ITS FRAME RATE (Wren, ASSA-197 ruling 1).** "A speed number
+	# without its frame rate is half a number", and on this Mac the frame time swings by 4x between
+	# runs minutes apart depending on how many of us are awake. The label is the run's own, so
+	# whoever reads this knows what the box was doing.
+	var ms := _percentiles(frames)
+	var rate := "frame ms median %.1f / p95 %.1f (%.0f fps median), load: %s" % [
+			float(ms.get("median", 0.0)), float(ms.get("p95", 0.0)),
+			1000.0 / maxf(float(ms.get("median", 0.0)), 1e-6), _label]
+	var share := 0.0 if drawn.is_empty() else float(within_drawn) / float(drawn.size())
+	print("  WITHIN THE BAR, ON THE DRAWN RECT: %d of %d moving frames (%.1f%%), %s"
+			% [within_drawn, drawn.size(), share * 100.0, rate])
+	var share_lerp := 0.0 if body.is_empty() else float(within) / float(body.size())
+	print("  ... the same frames on the LERP's output, which is what every number before 2026-10-04"
+			+ " was read off: %d of %d (%.1f%%)" % [within, body.size(), share_lerp * 100.0])
 	var share_wall := 0.0 if wall.is_empty() else float(within_wall) / float(wall.size())
-	print("  ... measured against the wall clock between samples: %d of %d (%.1f%%)"
+	print("  ... the lerp against the wall clock between samples: %d of %d (%.1f%%)"
 			% [within_wall, wall.size(), share_wall * 100.0])
+	# DRY FRAMES, EACH WITH ITS DURATION (Maren's wording). The bar is zero of them.
+	if dry.is_empty():
+		print("  DRY FRAMES: 0 -- the buffer never ran out across %d moving frames" % drawn.size())
+	else:
+		var longest := 0.0
+		var total := 0.0
+		for d in dry:
+			longest = maxf(longest, d)
+			total += d
+		print(("  DRY FRAMES: %d, holding %.0f ms in total, longest %.1f ms. The bar on this item "
+				+ "is ZERO. Durations: %s") % [dry.size(), total, longest, dry])
+	if _unlit > 0:
+		print(("  %d frames drew no single body, so no rectangle could be attributed; see "
+				+ "`WorldLayer.drawn_body`") % _unlit)
 	if _walk_at > 0.0 and span.has("raw_from"):
 		print("  input latency on your own body: %.0f ms (press -> first drawn movement)"
 				% ((_clock[int(span["raw_from"]) + 1] - _walk_at) * 1000.0))
-	print("  VERDICT: %s" % ("WITHIN BAR" if share >= 1.0 else "OUTSIDE BAR"))
+	# **BOTH HALVES, OR IT IS NOT A PASS.** Box 1 is every moving frame inside the bar AND no dry
+	# frame; a run that holds for 200 ms and then draws beautifully is the thing the board felt.
+	print("  VERDICT: %s" % ("WITHIN BAR" if share >= 1.0 and dry.is_empty() else "OUTSIDE BAR"))
 
 
 func _as_floats(values: Array[int]) -> Array[float]:

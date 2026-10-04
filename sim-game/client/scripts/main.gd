@@ -1515,13 +1515,20 @@ func _refresh() -> void:
 	# was made and how a stranger opens the game. `AssaySimHost.counted` is `sim::debug::counted`,
 	# so this line and the terminal's cannot drift. `tiles` and `species` are left alone: one is
 	# always >= 2 and the other is invariant in English.
+	#
+	# **AND THE FRAME RATE, LAST** (Wren's ruling 3 on ASSA-197). Not for us -- every probe measures
+	# its own `dt` -- but so that one demo request can ask one thing: how does the walk feel, and
+	# what does the fps number say. We cannot know the board's frame rate and every speed number on
+	# this item is half a number without it. It goes on the line the debug readouts already live on;
+	# ASSA-198 decides where a player-facing one belongs.
 	_detail.text = ("world seed %s, %d x %d tiles, %d species, %s · tick %d, hash %s · "
-			+ "%s applied, %s reported") % [
+			+ "%s applied, %s reported · %d fps") % [
 			_sim.seed_text(), size.x, size.y, _sim.species_names().size(),
 			AssaySimHost.counted(_sim.players().size(), "player", "players"),
 			_sim.tick(), _sim.hash_hex(),
 			AssaySimHost.counted(_sim.applied, "bundle", "bundles"),
-			AssaySimHost.counted(_hashes_sent, "hash", "hashes")]
+			AssaySimHost.counted(_hashes_sent, "hash", "hashes"),
+			int(Engine.get_frames_per_second())]
 	_refresh_make()
 	_refresh_assembling()
 	_refresh_pack()
