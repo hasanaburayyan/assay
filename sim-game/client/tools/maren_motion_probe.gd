@@ -3,7 +3,13 @@ extends SceneTree
 ## tile at a time? The board said the movement is choppy. Nerite checked and said correctly that a
 ## still cannot answer it, and asked who owns the check. This is the check.
 ##
-##   godot --headless --path client --script res://tools/maren_motion_probe.gd -- <seed> [seconds] [whole]
+##   godot --headless --path client --script res://tools/maren_motion_probe.gd -- <seed> [seconds] [whole|solo]
+##
+## `solo` IS THE ONE THAT ANSWERS THE BOARD. It presses the screen's own `Play solo`, which starts a
+## REAL `sim-relay` process and joins it over a REAL socket -- the player's actual path, with the
+## relay owning the clock. The offline modes above feed ticks from this script, so they can say the
+## tween arithmetic works and nothing about whether ticks ARRIVE evenly. This mode also records the
+## wall-clock gap between arriving ticks, which is the jitter I said I could not measure.
 ##
 ## WHAT IT READS, AND WHY NOT MY OWN ARITHMETIC. `main.gd::_refresh_world` publishes each player's
 ## DRAWN position into `_world.view["players"][i]["at"]` -- `Vector2(_was).lerp(Vector2(_seen),
@@ -32,6 +38,11 @@ var _seed := "14247"
 var _seconds := 4.0
 ## `whole` runs the same walk in the SCHEMATIC view, which is the hypothesis above under test.
 var _whole := false
+var _solo := false
+var _joined := false
+## Wall-clock gaps between ticks as they ARRIVED, not as anyone intended them.
+var _gaps: Array[float] = []
+var _last_tick_at := 0.0
 var _started := false
 var _done := false
 var _started_at := 0.0
@@ -46,6 +57,7 @@ func _initialize() -> void:
 	_seed = String(argv[0]) if argv.size() > 0 else "14247"
 	_seconds = float(argv[1]) if argv.size() > 1 else 4.0
 	_whole = argv.size() > 2 and String(argv[2]) == "whole"
+	_solo = argv.size() > 2 and String(argv[2]) == "solo"
 	_screen = load("res://scenes/main.tscn").instantiate()
 	root.add_child(_screen)
 	_screen._ready()
@@ -65,6 +77,19 @@ func _process(_delta: float) -> bool:
 			print("PROBE DEAD: no world on seed %s" % _seed)
 			_done = true
 			return true
+		if _solo:
+			# The button, not the handler: a probe that called `_on_play_solo` directly would skip
+			# whatever the screen does on a press, and the press is the thing a player performs.
+			var button := _find_button(_screen, "Play solo")
+			if button == null:
+				print("PROBE DEAD: no Play solo button")
+				_done = true
+				return true
+			button.pressed.emit()
+			_started = true
+			_started_at = _now()
+			print("view=close-up, pressed Play solo; waiting for the relay to listen and welcome us")
+			return false
 		_screen._client.play_offline()
 		_screen._client.feed_offline(welcome)
 		_started = true
@@ -78,6 +103,32 @@ func _process(_delta: float) -> bool:
 		_screen._client.submit(AssayActions.move_to(me + Vector2i(WALK, 0)))
 		print("walking from %s to %s" % [me, me + Vector2i(WALK, 0)])
 	var now := _now()
+	if _solo:
+		if not _joined:
+			if not _screen._sim.running() or _screen._client.player_id < 0:
+				if now - _started_at > 30.0:
+					print("PROBE DEAD: no world after 30s of waiting")
+					_done = true
+					return true
+				return false
+			_joined = true
+			_started_at = now
+			var here := _me_tile()
+			var to := _walk_target(here)
+			_screen._client.submit(AssayActions.move_to(to))
+			print("joined as player %d at %s; walking to %s"
+					% [_screen._client.player_id, here, to])
+			return false
+		if _screen._tick_at != _last_tick_at:
+			if _last_tick_at > 0.0:
+				_gaps.append(_screen._tick_at - _last_tick_at)
+			_last_tick_at = _screen._tick_at
+		if now - _started_at > _seconds:
+			_screen.stop_solo_relay()
+			_report()
+			return true
+		_sample()
+		return false
 	if now - _started_at > _seconds:
 		_report()
 		return true
@@ -92,6 +143,36 @@ func _process(_delta: float) -> bool:
 		_screen._client.feed_offline(JSON.stringify({"Tick": {"tick": at, "inputs": inputs}}))
 	_sample()
 	return false
+
+
+func _find_button(node: Node, label: String) -> Button:
+	if node is Button and (node as Button).text == label:
+		return node as Button
+	for child in node.get_children():
+		var found := _find_button(child, label)
+		if found != null:
+			return found
+	return null
+
+
+## WHERE TO WALK, CLAMPED INTO THE WORLD. The solo relay keeps its save, so a second run joins a
+## world where the player is wherever the FIRST run left them -- and `here + 25` east then lands off
+## a 96x64 map, the sim refuses it, and the probe reports a body that never moved. It did that to me
+## twice before I read the first/last line: a bug in the instrument that looks exactly like a
+## finding about the subject.
+func _walk_target(here: Vector2i) -> Vector2i:
+	var size: Vector2i = _screen._sim.size_tiles()
+	if here.x + WALK < size.x - 1:
+		return here + Vector2i(WALK, 0)
+	return here - Vector2i(WALK, 0)
+
+
+func _me_tile() -> Vector2i:
+	for entry in _screen._sim.players():
+		var p: Dictionary = entry
+		if int(p.get("id", -1)) == _screen._client.player_id:
+			return p["pos"] as Vector2i
+	return _screen._sim.spawn_tile() as Vector2i
 
 
 func _sample() -> void:
@@ -129,5 +210,15 @@ func _report() -> void:
 	print("samples landing exactly on a tile: %d of %d (%.1f%%)"
 			% [on_tile, _samples.size(), 100.0 * on_tile / _samples.size()])
 	print("biggest step between consecutive frames: %.3f tiles (1.000 = a whole-tile jump)" % biggest)
+	if not _gaps.is_empty():
+		var lo := _gaps[0]
+		var hi := _gaps[0]
+		var total := 0.0
+		for g in _gaps:
+			lo = minf(lo, g)
+			hi = maxf(hi, g)
+			total += g
+		print("TICKS AS THEY ARRIVED: %d gaps, mean %.3fs, min %.3fs, max %.3fs, spread %.3fs"
+				% [_gaps.size(), total / _gaps.size(), lo, hi, hi - lo])
 	print("first %s last %s" % [_samples[0], _samples[-1]])
 	print("PROBE OK")
