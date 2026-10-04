@@ -33,6 +33,8 @@ extends SceneTree
 ##   E. Join after only the SOCKET died, with the host still up and still holding the world -- which is
 ##      the drop a player actually gets (a blip, a sleep, a wifi change) and the one where nothing
 ##      about the world should have moved backwards
+##   F. No press at all: a host that goes SILENT without closing the socket. Can a person at this
+##      window tell? That one was a reading of the code in my ASSA-177 notes until this measured it.
 ##
 ## Prints `RECONNECT PROBE VERDICT: ...` LAST, with YES or NO in it, and exits 0 on either: a
 ## no-reconnect answer is a result, not a probe failure. Only a probe that could not ASK exits 1.
@@ -45,6 +47,15 @@ const PLAY_SECONDS := 3.0
 const JOIN_DEADLINE := 12.0
 const DEAD_DEADLINE := 8.0
 const LISTEN_DEADLINE := 10.0
+## How long a wedged host gets to be noticed. The relay ticks ten times a second, so eight seconds is
+## ~80 bundles that did not arrive -- far past anything a slow frame could explain.
+const SILENCE_SECONDS := 8.0
+## **A CEILING ON THE WHOLE RUN, AND I ADDED IT BECAUSE I LEFT AN ORPHAN.** A SCRIPT ERROR in
+## `_initialize` does not stop a `SceneTree`: `_process` keeps returning false with `_step` at 0 and
+## nothing to advance it, so the engine ran for 45 minutes on my own machine after a typo. `quit` is
+## reachable from exactly one place, so every path has to arrive at it -- including the paths that
+## never started.
+const RUN_CEILING := 120.0
 
 var _screen: Node = null
 var _binary := ""
@@ -59,6 +70,11 @@ var _relay_said := PackedStringArray()
 
 var _step := 0
 var _until := 0.0
+## **SET WHERE `_initialize` CANNOT FAIL BEFORE IT**, which is the whole point: a member initializer
+## runs when the object is built, so a runtime error anywhere inside `_initialize` still leaves a
+## clock running. My first version set this at the END of `_initialize` and skipped the check while it
+## was zero -- a guard that was absent in exactly the case it was written for.
+var _ceiling := Time.get_unix_time_from_system() + RUN_CEILING
 var _done := false
 var _lines := PackedStringArray()
 
@@ -71,6 +87,8 @@ var _after_blip := {}
 var _host_restart_ok := false
 var _blip_ok := false
 ## The join band at the drop, read twice on purpose. See `_wait_for_the_drop`.
+var _before_silence := {}
+var _noticed_the_silence := false
 var _band_at_the_drop := false
 var _band_after := false
 ## Every sentence the screen said, in order, so a refusal that scrolled past is still evidence.
@@ -117,6 +135,12 @@ func _initialize() -> void:
 func _process(_delta: float) -> bool:
 	if _done:
 		return true
+	# THE CEILING FIRST. `_step == 0` means `_initialize` never finished, which is the case that used
+	# to run for ever -- so this is checked before the step table rather than inside it.
+	if _now() >= _ceiling:
+		_bail("the probe ran past its %ds ceiling at step %d: nothing advanced it"
+				% [int(RUN_CEILING), _step])
+		return true
 	match _step:
 		1:
 			_wait_for_listening_then_join()
@@ -146,6 +170,8 @@ func _process(_delta: float) -> bool:
 			_wait_for_the_reconnect_after_the_blip()
 		14:
 			_watch_the_world_after_the_blip()
+		16:
+			_watch_the_silence()
 	return _done
 
 
@@ -362,6 +388,59 @@ func _watch_the_world_after_the_blip() -> void:
 	var lost := int(_before_blip.get("relay_tick", -1)) - int(_after_blip.get("relay_tick", -1))
 	_lines.append("   ticks lost to the blip: %d (relay tick %d before, %d on the welcome)"
 			% [lost, _before_blip.get("relay_tick", -1), _after_blip.get("relay_tick", -1)])
+	_step = 16
+	_before_silence = _snapshot()
+	_stop_relay_without_closing_it()
+	_until = _now() + SILENCE_SECONDS
+
+
+# ---------------------------------------------------------------- the drop nobody can see
+
+
+## STEP 16: **THE DROP THE CLIENT CANNOT SEE.** Everything above is a socket that CLOSES: the kernel
+## says so, `get_status()` changes, and `_fail` runs. A link that stops carrying bytes WITHOUT
+## closing -- a sleeping laptop, a wifi handover, a host wedged rather than killed -- changes no
+## status at all. That case had been a reading of the code in my own ASSA-177 notes, and a reading is
+## not a measurement, so here it is measured.
+##
+## **`SIGSTOP`, NOT A KILL.** A stopped process keeps its sockets open and its connections
+## ESTABLISHED; it simply stops answering. That is the closest thing to a silent link I can cause on
+## loopback, and it is one signal rather than a whole network harness. `OS.kill` sends SIGKILL, which
+## is the opposite of what this case is about, so the signal goes through `/bin/kill`.
+func _stop_relay_without_closing_it() -> void:
+	var out := []
+	var code := OS.execute("/bin/kill", PackedStringArray(["-STOP", str(_relay_pid)]), out, true)
+	_lines.append("F. THE SILENT DROP: SIGSTOP on relay pid %d (exit %d%s) at %s"
+			% [_relay_pid, code, "" if out.is_empty() else ", " + String(out[0]).strip_edges(),
+			_describe(_before_silence)])
+
+
+## STEP 16, SECOND HALF: watch the client believe. The question is not whether it recovers -- nothing is coming --
+## but whether a person at this window could TELL, and how long they would be told nothing.
+func _watch_the_silence() -> void:
+	if _now() < _until:
+		if _screen._client.stage == AssayNetClient.Stage.DEAD:
+			_lines.append("   NOTICED after %.1fs: \"%s\""
+					% [SILENCE_SECONDS - (_until - _now()), _screen._status.text])
+			_noticed_the_silence = true
+			_finish_the_silence()
+		return
+	_finish_the_silence()
+
+
+func _finish_the_silence() -> void:
+	var after := _snapshot()
+	if not _noticed_the_silence:
+		_lines.append(("   NOT NOTICED after %ds: stage still %d (JOINED), screen still says \"%s\", "
+				+ "%s") % [int(SILENCE_SECONDS), _screen._client.stage, _screen._status.text,
+				_describe(after)])
+		_lines.append(("   the world stopped at tick %d while the client went on believing it was "
+				+ "live: %d bundles before the silence, %d after")
+				% [after.get("sim_tick", -1), _before_silence.get("bundles", -1),
+				after.get("bundles", -1)])
+	# **RESUMED, ALWAYS.** A SIGSTOPped relay left behind is a process holding a port that cannot be
+	# killed by a polite kill, which is a worse mess than the one this probe exists to avoid.
+	OS.execute("/bin/kill", PackedStringArray(["-CONT", str(_relay_pid)]))
 	_report()
 
 
@@ -498,6 +577,11 @@ func _report() -> void:
 	print("  the screen's sentences, in order:")
 	for line in _said:
 		print("    %s" % line)
+	if _before_silence.is_empty():
+		print("  the silent drop was never reached, so nothing here says whether it is noticed")
+	else:
+		print("  silent drop (SIGSTOP, %ds): noticed by the client: %s"
+				% [int(SILENCE_SECONDS), _noticed_the_silence])
 	var verdict := "NO"
 	if _host_restart_ok and _blip_ok:
 		verdict = "YES"
