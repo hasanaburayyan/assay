@@ -20,18 +20,31 @@ cries wolf is a check that gets regenerated blind". The generators stamp the ide
 SOURCES instead (`review_sources.py`), so re-drawing a sheet from unchanged art is green and
 moving the art under a sheet nobody re-drew is red.
 
-THREE STATES, AND THE MIDDLE ONE IS WHY THIS IS NOT ONE LINE.
+FOUR STATES, AND THE MIDDLE TWO ARE WHY THIS IS NOT ONE LINE.
   CURRENT     every file the sheet recorded is byte-identical to the shipped art today.
-  NO SOURCES  the sheet recorded an EMPTY list. `design_rows.png` draws an engine layout and
-              composites no sprites, so it cannot go stale against them. Green, and it is a
-              measured empty rather than an assumed one: that script records too, so the day it
-              blits an icon the stamp grows by itself and this check starts holding it to one.
-  UNSTAMPED   no chunk at all. RED, and deliberately not merged with the case above: a sheet
-              that cannot say what it reviewed is the exact condition this item is about, and
+  NO SOURCES  the sheet recorded an EMPTY list -- a run that opened no shipped art, so it
+              cannot go stale against it. Green, and a MEASURED empty rather than an assumed
+              one: every generator records, so the day one starts blitting an icon the stamp
+              grows by itself and this check starts holding it to one.
+  NO ART PATH the one narrow exemption, for a sheet with no stamp whose generator cannot reach
+              shipped art at all. `design_rows.png` only. Keyed to a measured property of the
+              script rather than an allowlist, fails safe, and designed to become dead code --
+              see `composites_no_art`, which states the hole it leaves.
+  UNSTAMPED   no chunk at all. RED, and deliberately not merged with NO SOURCES: a sheet that
+              cannot say what it reviewed is the exact condition this item is about, and
               reading it as "composited nothing" would hand every pre-ASSA-144 sheet a clean
               bill. That is also why the stamping and this check had to land in one commit --
               on the commit before, all nine were UNSTAMPED and this check would have been red
               on a tree nobody had broken.
+
+ONE HONEST LIMIT ON WHAT A RED MEANS. The stamp is per-FILE identity, so a sheet goes red when
+a file it opened changes even if that change could not have altered THIS picture --
+`manifest.json` growing a smelter row turns `species_probe.png` red though it only draws ore
+and ground. That is the conservative direction on purpose (red means "look", not "the picture
+is wrong") and it is cheap to clear: redraw the sheet, and if the pixels do not move, only the
+stamp does. The alternative -- recording which BYTES of a source a sheet actually read -- buys
+precision with a far more fragile recorder, and a check nobody can explain is a check that gets
+regenerated blind.
 
 THE ANTI-VACUITY CHECKS, because "no source moved" is trivially true of a sheet that recorded
 nothing, and this check's whole value rests on a recorder it cannot see run.
@@ -71,6 +84,65 @@ from review_sources import ABSENT, CURRENT, EMPTY, KEY, STALE  # noqa: E402
 
 #: Perturb one shipped file's digest as a re-render would. See the docstring.
 FAKE_MOVE = os.environ.get("REVIEW_SOURCES_FAKE_MOVE")
+
+#: Which script draws which sheet. Needed anyway -- a red that does not say what to re-run is a
+#: red people route around -- and a new sheet landing without an entry is NO VERDICT rather
+#: than a silent pass, which is the forward case `check_ci_runs_every_check.py` worries about.
+GENERATOR = {
+    "assembled.png": "assemble.py",
+    "contact.png": "build.py",
+    "design_rows.png": "design_row_sheet.py",
+    "loudness.png": "loudness.py",
+    "mock_scene.png": "mock_scene.py",
+    "pack_icon_kinds.png": "pack_icon_kinds.py",
+    "pack_icons.png": "pack_icon_sheet.py",
+    "pack_rows.png": "pack_row_sheet.py",
+    "species_probe.png": "species_probe.py",
+}
+
+#: How a generator spells the shipped-art folder. All eight that read art contain one of these.
+SPRITE_PATH_MARKS = ('assets/sprites', 'assets", "sprites')
+
+NOT_A_COMPOSITE = "NO ART PATH"
+
+
+def composites_no_art(sheet):
+    """Can this sheet's generator reach shipped art AT ALL?
+
+    THE ONE NARROW EXEMPTION, and it is worth stating exactly what it buys and what it cannot.
+
+    `design_rows.png` is the only committed sheet drawn before stamping existed that cannot be
+    redrawn here: it needs a `bench_read.gd` dump from a LIVE relay with designs in the bench,
+    the original dump was a `/tmp` file and is gone, and hand-writing one would invent the
+    masses, budgets and verdicts that `design_row_layout.gd` exists to take from the sim. So it
+    carries no stamp, and UNSTAMPED is red -- correctly, but red on a sheet nobody broke.
+
+    Rather than an allowlist of sheets to skip, the exemption is keyed to a MEASURED property
+    of the generator: `design_row_sheet.py` contains no reference to the shipped-art path and
+    is the only one of the nine that does not (8 of 9 reference it, measured). A sheet whose
+    script cannot name the art folder cannot have composited art, so it cannot be stale against
+    it.
+
+    IT FAILS IN THE SAFE DIRECTION, which is the whole reason it is allowed to exist. It can
+    only ever excuse a sheet that has NO stamp; a stamped sheet is held to its stamp whatever
+    its script says. And the day somebody teaches that script to blit an icon, the reference
+    appears, the exemption evaporates, and the sheet goes red until it is redrawn.
+
+    WHAT IT IS NOT: a test of behaviour. A generator that read art through a helper holding the
+    path would be wrongly exempted. That is a real hole and it is bounded by the paragraph
+    above -- and it closes by itself the first time this sheet is redrawn, because then it will
+    carry a measured empty stamp and take the EMPTY path instead. This function is designed to
+    become dead code.
+    """
+    script = GENERATOR.get(sheet)
+    if not script:
+        return False
+    path = os.path.join(ART, script)
+    if not os.path.exists(path):
+        return False
+    with open(path) as fh:
+        text = fh.read()
+    return not any(mark in text for mark in SPRITE_PATH_MARKS)
 
 
 class CannotCheck(Exception):
@@ -144,6 +216,16 @@ def main():
     sheets = sorted(f for f in os.listdir(REVIEW) if f.endswith(".png"))
     if not sheets:
         raise CannotCheck("there are no review sheets in %s to check." % REVIEW)
+    unmapped = [s for s in sheets if s not in GENERATOR]
+    if unmapped:
+        raise CannotCheck(
+            "no generator recorded for %s. A new review sheet needs an entry in GENERATOR, or\n"
+            "its red cannot say what to re-run -- and the exemption below cannot be measured\n"
+            "for it either. Add it rather than letting it ride." % ", ".join(unmapped))
+    missing = [n for n, s in sorted(GENERATOR.items()) if not os.path.exists(os.path.join(ART, s))]
+    if missing:
+        raise CannotCheck("GENERATOR names a script that does not exist, for: %s"
+                          % ", ".join(missing))
 
     if FAKE_MOVE:
         print("\n  [RED RUN] pretending client/assets/sprites/%s was re-rendered; every sheet\n"
@@ -176,6 +258,15 @@ def main():
         else:
             state, lines = review_sources.verdict(path)
 
+        # The one narrow exemption, and only ever for a sheet with NO stamp. See
+        # `composites_no_art`: keyed to a measured property of the generator, fails safe, and
+        # designed to become dead code the first time that sheet is redrawn.
+        if state == ABSENT and composites_no_art(name):
+            state = NOT_A_COMPOSITE
+            lines = ["%s names no shipped-art path, so this sheet composites none and cannot\n"
+                     "      be stale against it. It carries no stamp because it predates\n"
+                     "      stamping and needs a live bench to redraw." % GENERATOR[name]]
+
         states[name] = state
         stamp = review_sources.read_stamp(path)
         if stamp:
@@ -199,7 +290,8 @@ def main():
 
     print("\n  %d sheets: %s" % (len(sheets), ", ".join(
         "%d %s" % (sum(1 for v in states.values() if v == s), s)
-        for s in (CURRENT, EMPTY, STALE, ABSENT) if any(v == s for v in states.values()))))
+        for s in (CURRENT, EMPTY, NOT_A_COMPOSITE, STALE, ABSENT)
+        if any(v == s for v in states.values()))))
 
     if bad:
         print("\nVERDICT: FAIL (exit 1)")
@@ -212,8 +304,19 @@ def main():
               "                                         # that repacks from a local cache\n"
               "  Then `python3 art/review_sources.py` to read the verdict back off the file.")
         return 1
-    print("\nVERDICT: PASS (exit 0). Every committed review sheet names the shipped art it\n"
-          "  composited, and every one of those files is byte-identical to what ships today.")
+    held = sum(1 for v in states.values() if v == CURRENT)
+    print("\nVERDICT: PASS (exit 0). %d sheet(s) name the shipped art they composited, and every\n"
+          "  one of those files is byte-identical to what ships today." % held)
+    for name, state in sorted(states.items()):
+        # Say out loud which sheets this pass is NOT a statement about, or the green reads as
+        # a stronger claim than it is -- the exact way a review sheet got believed in the
+        # first place.
+        if state == NOT_A_COMPOSITE:
+            print("  %s is exempt and carries no stamp: %s names no shipped-art path. This pass\n"
+                  "    says nothing about whether that picture is current."
+                  % (name, GENERATOR[name]))
+        elif state == EMPTY:
+            print("  %s recorded an empty source list, so there is nothing to compare." % name)
     return 0
 
 
