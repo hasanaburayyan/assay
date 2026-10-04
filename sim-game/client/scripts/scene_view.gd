@@ -161,6 +161,27 @@ static func ore_row(grade: String, depleted: bool, at: Vector2i, manifest: Dicti
 	return "%s_full_v%d" % [letter, variant_of(at, _ore_variants(manifest, letter))]
 
 
+## THE ROW OF `asset` THAT IS LIGHT FALLING ON `body`, or "" when the sheet has none.
+##
+## LIGHT IS NOT MATERIAL (Maren, ASSA-137). The tint above is a per-channel MULTIPLY, which is the
+## right answer for a wall -- the wall is made of the species -- and has no bottom for a pixel that
+## stands for emitted light: a multiply can only subtract, so the brightest pixel of a burning fire
+## measured BELOW the ground's median luminance in three of the six species, and the one the demo
+## plants cleared it by 11.7. No emission strength in Blender can move that number.
+##
+## So a sheet may carry a row flagged `light`, which says what it sits `over`. The caller draws
+## `over` with the species tint and this row on top of it at `Color.WHITE`. Both fields come out of
+## the manifest rather than out of a name here, for `ore_row`'s reason one screen up: a client that
+## knows the word "fire" ships the next light row to nobody.
+static func light_row(manifest: Dictionary, asset: String, body: String) -> String:
+	var rows: Array = ((manifest.get(asset, {}) as Dictionary).get("rows", []) as Array)
+	for entry in rows:
+		var row: Dictionary = entry
+		if bool(row.get("light", false)) and String(row.get("over", "")) == body:
+			return String(row.get("name", ""))
+	return ""
+
+
 static func _ore_variants(manifest: Dictionary, letter: String) -> int:
 	var rows: Array = ((manifest.get("ore", {}) as Dictionary).get("rows", []) as Array)
 	var n := 0
@@ -259,9 +280,14 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 		var building: Dictionary = entry
 		var foot: Vector2i = building.get("footprint", Vector2i.ONE)
 		var at: Vector2i = building.get("pos", Vector2i.ZERO)
+		var kind := String(building.get("kind", ""))
 		standing.append({
-			"asset": String(building.get("kind", "")),
-			"row": "lit" if bool(building.get("lit", false)) else "cold",
+			"asset": kind,
+			# THE BODY IS THE ONLY THING THE SPECIES TINT TOUCHES (ASSA-137). This read
+			# `"lit" if lit else "cold"` -- one sprite for both states, both multiplied by the
+			# species -- and that put a fire in a channel the species owns. The lit state is now
+			# a SECOND placement below, so the row drawn here is the same whether it burns or not.
+			"row": "body",
 			"tile": at,
 			# THE SPECIES TINT THE ITEM WORE IN YOUR PACK (Maren's ruling 2 on ASSA-131): "the thing
 			# you placed and the thing standing there are one object and must read as one". I had
@@ -273,6 +299,26 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 			"tint": AssaySprites.tint_for(building),
 			"bottom": float(at.y) + float(foot.y),
 		})
+		# THE FIRE, UNTINTED AND ON TOP. `light_row` finds it in the manifest, so a sheet without
+		# one draws nothing extra and this needs no list of what can burn.
+		#
+		# `above` EXISTS BECAUSE `sort_custom` IS NOT STABLE (Maren's hazard on ASSA-137). These two
+		# placements share a bottom edge exactly, and a sort that is free to swap equal elements is
+		# free to draw the body over its own fire -- intermittently, on some array lengths and not
+		# others, which is the worst kind of wrong picture to be handed. It is a second sort key and
+		# not a hope: everything else leaves it 0.
+		#
+		# WHAT IT DOES NOT FIX, said out loud: it is a key on the whole standing list, so a PLAYER
+		# whose bottom edge is exactly a lit smelter's now sorts under that smelter's fire. Equal
+		# bottoms were already arbitrary there and this makes them at least deterministic; a wall
+		# over its own fire is the worse of the two and the one with a cause.
+		if bool(building.get("lit", false)):
+			var light := light_row(manifest, kind, "body")
+			if light != "":
+				standing.append({
+					"asset": kind, "row": light, "tile": at, "tint": Color.WHITE,
+					"bottom": float(at.y) + float(foot.y), "above": 1,
+				})
 
 	for entry in view.get("players", []):
 		var player: Dictionary = entry
@@ -280,7 +326,11 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 		standing.append(_standing(manifest, "player", row, player.get("at", Vector2.ZERO),
 				Color.WHITE, false))
 	standing.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		return float(a.get("bottom", 0.0)) < float(b.get("bottom", 0.0)))
+		var ab := float(a.get("bottom", 0.0))
+		var bb := float(b.get("bottom", 0.0))
+		if ab != bb:
+			return ab < bb
+		return int(a.get("above", 0)) < int(b.get("above", 0)))
 	for entry in standing:
 		if entry.is_empty():
 			continue

@@ -336,12 +336,14 @@
   ],
   "rows": [
    {
-    "name": "cold",
+    "name": "body",
     "frames": 1
    },
    {
-    "name": "lit",
-    "frames": 1
+    "name": "fire",
+    "frames": 1,
+    "light": true,
+    "over": "body"
    }
   ],
   "animations": {},

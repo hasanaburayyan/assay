@@ -134,6 +134,23 @@ jobs:
       # with 25 rows over, player/walk_SW worst at 47.6%. Stdlib only, ~3s.
       - name: No shipped surface sits on the ceiling
         run: python3 art/check_headroom.py
+      # A FIRE IS NOT MADE OF THE WALLS (ASSA-137). The check above guards the
+      # surfaces the species tint MAY shade; this one guards the rows it may
+      # not touch at all. The client tints a world sprite with `modulate`, a
+      # per-channel multiply, which is right for a wall made of the species and
+      # has no bottom for a pixel standing for emitted light: Maren measured the
+      # shipped smelter and the brightest pixel of a burning fire came out BELOW
+      # the ground's median luminance in three of the six species, and the one
+      # the demo actually plants cleared it by 11.7. The fire is now its own
+      # manifest row flagged `light`, drawn untinted over the tinted body.
+      #
+      # This fails if that comes undone: the derivation stops giving the hot
+      # core alpha 1, or a renderer puts a light row back through a tint. Its
+      # can-fail control is the defect itself -- it re-multiplies the light rows
+      # every run and must be rejected -- and doing that reproduces Maren's
+      # table to the decimal. Stdlib only, ~2s.
+      - name: Light rows are not made of the species
+        run: python3 art/check_light_rows.py
       # THE ENGINE CAN REACH THE ART. For the pipeline's whole life the sheets
       # sat in `assets/sprites/`, the Godot project's SIBLING -- and `res://` is
       # the project folder and nothing above it, so no client script could load

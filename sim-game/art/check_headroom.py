@@ -71,13 +71,10 @@ ALLOWED = {
     "handle/A":                   6.8,
     "player/idle_SW":             6.4,
     "player/walk_SW":             6.4,
-    # THE ONE ROW HERE THAT IS SUPPOSED TO BE AT THE CEILING, and the second
-    # after the grade-A glint. `smelter/lit` is a fire: the hearth's embers
-    # emit, and this file's own header says the honest limit is not zero for
-    # exactly this reason. The COLD row is absent, which is the real check --
-    # a smelter that is not burning has no excuse, and the first version of
-    # that row was red at 4.2% until its wall caps came off `ore_hi`.
-    "smelter/lit":                6.3,
+    # `smelter/lit` WAS HERE AT 6.3 and is gone, not quieter: ASSA-137 split it
+    # into `smelter/body`, which is absent from this table like any other row
+    # with no excuse, and `smelter/fire`, which this check now EXEMPTS by name
+    # of its manifest flag rather than allows by a number. See LIGHT ROWS below.
     "player/idle_SE":             5.8,
     "player/walk_SE":             5.8,
     "player/idle_E":              4.9,
@@ -111,7 +108,25 @@ class CannotCheck(Exception):
     pass
 
 
-def rows_of(sprites):
+# LIGHT ROWS ARE NOT MEASURED HERE, AND IT IS THE PREMISE THAT FAILS, NOT THE
+# NUMBER (ASSA-137). This file's whole argument is the first paragraph: a pinned
+# channel matters because `modulate` is a multiply, so it "renders as exactly
+# the tint hex". A row carrying `"light": true` in the manifest is the one kind
+# of row the client may never multiply by anything -- that flag IS the contract
+# -- so a pinned channel in it renders as white, which is what a fire is.
+#
+# An allowance would have been dishonest twice over. `smelter/fire` measures
+# 100.0% blown and always will, by construction: `build.py`'s `light_layer`
+# picks the smallest alpha that reproduces the lit render, and at that alpha the
+# channel which set it comes out at exactly 255. "100.0" in the ALLOWED table
+# would read as a measurement of an exposure when it is a property of the
+# subtraction, and it would hide a real regression -- a light row that got
+# DIMMER cannot be caught by a ceiling check at all.
+#
+# Exempt by the flag and never by a name, so this can only ever apply to a row
+# the client is also forbidden to tint. `art/check_light_rows.py` is the guard
+# that does have teeth on these rows.
+def rows_of(sprites, exempt=None):
     """(row name, opaque pixels) for every row in the shipped manifest.
 
     Pixels come from `stdlib_image`, which is the vendored stdlib decoder every
@@ -139,6 +154,10 @@ def rows_of(sprites):
         # vendored once), so this is a loop moved, not a second reader.
         _w, _h, px = read_rgba(sheet)
         for ri, row in enumerate(a["rows"]):
+            if row.get("light"):
+                if exempt is not None:
+                    exempt.append("%s/%s" % (name, row["name"]))
+                continue
             opaque = [p for line in px[ri * fh:(ri + 1) * fh]
                       for p in line[:fw] if p[3] > OPAQUE]
             out.append(("%s/%s" % (name, row["name"]), opaque))
@@ -169,7 +188,8 @@ def judge(measured):
 
 
 def main(argv):
-    rows = rows_of(SPRITES)
+    exempt = []
+    rows = rows_of(SPRITES, exempt)
     measured = [(n, blown(px)) for n, px in rows if px]
     if len(measured) < len(rows):
         raise CannotCheck("%d row(s) had no opaque pixels at all -- a blank sheet "
@@ -213,6 +233,10 @@ def main(argv):
     allhot = sum(sum(1 for p in px if max(p[0], p[1], p[2]) >= CLIP) for _, px in rows)
     print("\n%d of %d opaque pixels across every sheet are pinned (%.1f%%)."
           % (allhot, allpx, 100.0 * allhot / allpx))
+    if exempt:
+        print("\nNOT MEASURED -- light rows, which the client may not multiply by anything,\n"
+              "so a pinned channel in them renders as white and not as the tint hex.\n"
+              "`art/check_light_rows.py` is what judges these: %s" % ", ".join(exempt))
 
     if bad:
         print("\n%d ROW(S) LOST SHADING THEY ARE ON RECORD FOR:" % len(bad))

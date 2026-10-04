@@ -1,4 +1,10 @@
-"""A planted smelter, 2x2, in the world. Two rows: `cold` and `lit`.
+"""A planted smelter, 2x2, in the world. Two rows: `body` and `fire`.
+
+A cold smelter is `body` alone; a burning one is `fire` drawn over it. `body` is
+material and carries the species tint; `fire` is light and carries no tint at
+all (ASSA-137, and see the bottom of this file). The sheet has no "lit smelter"
+on it on purpose -- a whole lit sprite can only be drawn tinted, and that is the
+defect.
 
 WHY IT IS ITS OWN SPRITE AND NOT A COMPOSITE (Maren, ASSA-126). `sim`'s
 `BuildingKind` has two arms and only `Machine` holds an `Assembly`;
@@ -47,11 +53,13 @@ itself and against the near-black mouth beside it -- not a flame read
 against the walls. The hearth is therefore large and the walls are thick
 enough to frame it rather than compete with it.
 
-CONSEQUENCE WORTH KNOWING: under `#3333FF` and `#7A29CC` the whole smelter
-is darker than the ground it stands on (fire ceiling 74 and 84 against the
-ground's 136.5). That is fine -- it reads as a dark block on olive, and the
-hearth still reads inside it -- but nothing drawn here can be made to glow
-"brightly" for those two species, and no amount of emission changes it.
+CONSEQUENCE WORTH KNOWING, AND IT IS WHAT ASSA-137 FIXED: under `#3333FF` and
+`#7A29CC` the whole smelter is darker than the ground it stands on (ceiling 74
+and 84 against the ground's 136.5). For the WALLS that is still fine -- a dark
+block on olive is a strong silhouette, and materials differ. For the FIRE it
+was not, and "no amount of emission changes it" was the tell I wrote down and
+did not act on: when no amount of a thing can fix a number, the thing is in the
+wrong channel. The fire left the multiply; the walls stayed in it.
 
 IT STANDS ON THE GROUND, so it carries a contact shadow (rig rule: a shadow
 means it stands on the ground). A planted smelter is the one building that
@@ -161,20 +169,41 @@ r.box((MOUTH * 2, 0.06, 0.10), (0, -(OUTER - WALL / 2), 0.09), dark, bev=0.01)
 asset = rig.Asset("smelter", out, (2, 2), headroom=0.25)
 r.frame(2, 2, headroom=0.25)
 
-# COLD first, so the only difference between the two renders is the hearth's
-# material. Anything else that moved between them would be a second variable
-# in the one measurement this sprite exists to pass.
-r.render(asset.path("cold"))
-asset.add("cold", 1)
+# THE BODY, which is also the cold state: the walls, the hearth and nine dead
+# coals. This is the only row the species multiply touches, because it is the
+# only row made of the species. Rendered first so that the one difference
+# between the two renders is the hearth's material; anything else that moved
+# between them would be a second variable inside the subtraction below.
+r.render(asset.path("body"))
+asset.add("body", 1)
 
-# LIT. `fire` is its own palette entry and deliberately NOT `glint`
-# (#FFFFFF), which rig.py reserves: a white blowout means "grade changes a
-# number in sim" and a fire means a state. Warm enough to read as fire before
-# the tint, bright enough to sit at the ceiling after it.
+# LIT, which is now an INPUT and not a shipped row (ASSA-137). `fire` is its own
+# palette entry and deliberately NOT `glint` (#FFFFFF), which rig.py reserves: a
+# white blowout means "grade changes a number in sim" and a fire means a state.
 glow = mat("fire", emit=5)
 for c in coals:
     c.data.materials[0] = glow
 r.render(asset.path("lit"))
-asset.add("lit", 1)
+
+# THE FIRE IS NOT MADE OF THE WALLS (Maren, ASSA-137). What shipped before was
+# `body` and `lit` as two whole sprites, each tinted by the species -- and a
+# multiply can only subtract, so the brightest pixel of a burning fire came out
+# BELOW the ground's median luminance in three of the six species (#3333FF
+# -82.4, #7A29CC -77.9, #FF3333 -52.8) and a wash in two more. The demo's own
+# smelter is the +11.7 one.
+#
+# The docstring's arithmetic above was right about the ceiling and wrong about
+# what to do with it. "A fire can never out-shine these walls by more than a
+# quarter, in any species" is true only while the fire is drawn in the same
+# channel as the walls. It is the fire that has to leave, not the walls that
+# have to get darker: `build.py` subtracts these two renders into a layer the
+# client draws at Color.WHITE over the tinted body.
+#
+# The 8.7x hearth ratio that chose this design still holds -- it was measured
+# inside the sprite, and the split does not touch it -- but it is no longer the
+# only thing carrying the state. Against the ground, which is where a player
+# reads it from across a field, the fire now clears the dirt by the same
+# +106.9 in all six species instead of in one.
+asset.light_row("fire", body="body", lit="lit")
 
 asset.write()

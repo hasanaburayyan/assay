@@ -639,6 +639,7 @@ class Asset:
         self.anchor = [int(anchor_x), int(round(headroom * TILE_PX))]
         self.rows = []
         self.animations = {}
+        self.derive = []
 
     def path(self, row, frame=0):
         return os.path.join(self.dir, f"{row}_{frame:02d}.png")
@@ -646,13 +647,44 @@ class Asset:
     def add(self, row, frames):
         self.rows.append({"name": row, "frames": frames})
 
+    def light_row(self, row, body, lit):
+        """A row that is EMITTED LIGHT rather than material (ASSA-137, Maren's rule).
+
+        The client tints a placement with Godot `modulate`, a per-channel MULTIPLY by the
+        species colour. That is right for a wall, which is made of the species, and wrong
+        for a fire, which is not: a multiply can only subtract, so a pixel standing for
+        emitted light gets capped by a quantity it has nothing to do with. Measured on the
+        shipped smelter, the brightest pixel of a burning fire came out DARKER than the
+        ground in three of the six species. Maren's tripwire: a quantity the sim treats as
+        independent of species may not be drawn in a channel species multiplies.
+
+        So the lit state is split in two. `body` is the material and keeps its tint; this
+        row is the light and is drawn over it at `Color.WHITE`. It is DERIVED rather than
+        rendered -- `build.py` subtracts the two rendered rows at authoring size -- so the
+        untinted picture is bit-for-bit the one that was approved, not a new one to judge.
+
+        The row carries `"light": true` and `"over": <body row>` into the manifest, and
+        those two are the whole contract: a renderer draws `over` with the species tint
+        and this row on top of it at `Color.WHITE`, never the other way round and never
+        with a tint on this one. The pairing is in the data because the client needs it
+        to place the second draw, and because a guard that had to guess which row a light
+        row belongs to would be guessing about the thing it is checking.
+
+        IF THE DERIVATION EVER STOPS BEING FAITHFUL, the principled replacement is a Cycles
+        LIGHT GROUP on the emitter rendered as its own AOV, composited additively. It needs
+        a blend mode the client does not have yet, which is the only reason it is not this.
+        """
+        self.derive.append({"row": row, "kind": "light", "body": body, "lit": lit})
+        self.rows.append({"name": row, "frames": 1, "light": True, "over": body})
+
     def anim(self, name, frames, fps):
         self.animations[name] = {"frames": frames, "fps": fps}
 
     def write(self):
         with open(os.path.join(self.dir, "asset.json"), "w") as f:
             json.dump({"name": self.name, "tiles": self.tiles, "frame_px": self.frame_px,
-                       "anchor_px": self.anchor, "rows": self.rows, "animations": self.animations}, f, indent=1)
+                       "anchor_px": self.anchor, "rows": self.rows,
+                       "animations": self.animations, "derive": self.derive}, f, indent=1)
 
 
 def args():
