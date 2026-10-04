@@ -13,7 +13,7 @@ use crate::building::{
 use crate::command::{Event, PlayerCommand, RejectReason, StopReason};
 use crate::item::{Item, ItemKind, ItemStack};
 use crate::ladder::Lighting;
-use crate::mineral::{MineralSpecies, NameError, Property, Sheet, SpeciesId};
+use crate::mineral::{Grade, MineralSpecies, NameError, Property, Sheet, SpeciesId};
 use crate::ore::OreDeposit;
 use crate::recipe::{RECIPES, Station};
 // `YIELD_BY_GRADE` was here until ASSA-94: this file used it to work out for
@@ -1264,14 +1264,22 @@ pub fn species_table(world: &World) -> String {
             // ASSA-58's "every fuel row says which lighting state it is" is
             // amended, not broken — the slot is still occupied, so a missing
             // clause still cannot become the cue for "won't light".
+            // THE GRADE AND THE CONDITIONAL ARE WORDED BY `fuel_tag` AND NOT
+            // HERE (ASSA-143). They used to be two `format!`s inside this
+            // loop, so this table was the only surface in the game that could
+            // say at which grade a rock burns — the window was handed
+            // `fuel_grade(..).is_some()` and dropped the threshold on the
+            // line that computed it. What is left here is the one part that
+            // is genuinely the table's: a prose row binds the lighting clause
+            // onto the fuel claim, and a column of tags cannot.
             let clause = if minable {
                 format!(
-                    "fuel at {} or better{}",
-                    grade.letter(),
+                    "{}{}",
+                    fuel_tag(grade, minable),
                     lighting_clause(crate::ladder::lighting(&world.species, s.id))
                 )
             } else {
-                format!("fuel at {} or better if you could mine it", grade.letter())
+                fuel_tag(grade, minable)
             };
             notes.push(clause);
         }
@@ -1594,6 +1602,39 @@ pub fn lighting_tag(l: Lighting) -> &'static str {
         Lighting::FromCold => "lights from cold",
         Lighting::FromAHotterFire => "needs a hotter fire",
         Lighting::NothingBurnsHotEnough => "nothing here can light it",
+    }
+}
+
+/// THE FUEL CLAIM, CARRYING THE GRADE IT IS CONDITIONAL ON — the one place in
+/// the game that words "this rock is fuel" (ASSA-143).
+///
+/// **A CONDITIONAL CLAIM MUST CARRY ITS CONDITION** (Game Director, ASSA-143,
+/// on ASSA-52's rule). `fuel_grade` holds the cheapest grade that burns, and
+/// 18.8% of the rows the window tags as fuel name a grade other than C: a
+/// player reading a bare "fuel" walks to the nearest deposit, mines a stack,
+/// feeds the smelter and the fire does not light, with no surface having said
+/// purity was the variable. The threshold is computed to decide whether to say
+/// anything at all, so saying "fuel" without it throws away the more useful
+/// half of the answer.
+///
+/// **ONE FUNCTION, BOTH SURFACES, UNLIKE THE LIGHTING PAIR ABOVE.** The
+/// lighting axis needs two renderings because a prose clause binds a sentence
+/// (", lights from cold") and a tag cannot. The fuel claim does not: "fuel at
+/// B or better" reads as both, and `species_table` composes its prose row by
+/// appending [`lighting_clause`] to this. So a window tag is byte-identical to
+/// the head of the table's clause by construction rather than by agreement —
+/// `the_species_panels_fuel_tag_is_the_tables_own_words` holds that.
+///
+/// `minable` is NOT a second thought about the fuel claim: it is the
+/// difference between fuel and a rock whose fuel rating the player can never
+/// collect, and ASSA-68 is why the clause says so here rather than letting the
+/// lighting slot answer it. No comma before the "if" — the conditional binds
+/// the whole claim, which is its status, not a trailing remark.
+pub fn fuel_tag(grade: Grade, minable: bool) -> String {
+    if minable {
+        format!("fuel at {} or better", grade.letter())
+    } else {
+        format!("fuel at {} or better if you could mine it", grade.letter())
     }
 }
 

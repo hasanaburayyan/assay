@@ -368,7 +368,13 @@ impl AssaySim {
                 // ABSENT, not empty, when the sim does not call this rock fuel
                 // (ASSA-93) -- the same shape `durability` and the design note
                 // use, so a panel cannot print a blank tag for a rock that
-                // simply is not fuel.
+                // simply is not fuel. `fuel` leads `lighting` for the reason
+                // the table's prose puts it first: at which grade it burns is
+                // the question, and how it lights only matters once that is
+                // answered (ASSA-143).
+                if let Some(fuel) = &species.fuel {
+                    row.set("fuel", &gstring(fuel).to_variant());
+                }
                 if let Some(lighting) = &species.lighting {
                     row.set("lighting", &gstring(lighting).to_variant());
                 }
@@ -1604,6 +1610,25 @@ pub struct SpeciesFacts {
     /// of something that can never enter an inventory is physics about a thing
     /// the player cannot touch, and the row already says it cannot be mined.
     pub lighting: Option<String>,
+    /// **AT WHICH GRADE THIS ROCK IS FUEL AT ALL**, in the sim's own words, or
+    /// `None` when no grade of it burns (ASSA-143).
+    ///
+    /// `lighting` above used to be computed from
+    /// `fuel_grade(species).is_some()`: the binding called the function that
+    /// holds the threshold and kept one bit of it, **on the line that computed
+    /// it**. So the window said a rock was fuel and how it lit, and never at
+    /// which grade — and on 18.8% of the rows it tags as fuel, grade C does
+    /// not burn. A player reads "fuel, lights from cold", mines the nearest
+    /// deposit and the fire stays cold.
+    ///
+    /// `sim::debug::fuel_tag` words all of it, including the "if you could
+    /// mine it" conditional on rock nothing can mine; this crate words none of
+    /// it and GDScript must never derive a grade from `readings`. Unlike
+    /// `lighting` this is PRESENT on an unminable row, because the sim's own
+    /// table says the fuel claim there too — ASSA-68 withheld the *lighting*
+    /// of an untouchable rock, not the fact that it is fuel, and the clause
+    /// carries its own conditional instead.
+    pub fuel: Option<String>,
 }
 
 // Plain Rust, no engine types: everything here is reachable from `cargo test`.
@@ -1863,6 +1888,12 @@ impl AssaySim {
                     species.id,
                 ))
                 .to_string(),
+                // ONE CALL TO `fuel_grade`, AND THE GRADE SURVIVES IT
+                // (ASSA-143). This was `fuel_grade(species).is_some()` twice
+                // over, which is how the threshold came to be computed and
+                // dropped on one line.
+                fuel: sim::ladder::fuel_grade(species)
+                    .map(|grade| sim::debug::fuel_tag(grade, sim::ladder::hand_minable(species))),
                 lighting: (sim::ladder::fuel_grade(species).is_some()
                     && sim::ladder::hand_minable(species))
                 .then(|| {
@@ -3169,6 +3200,164 @@ mod tests {
             too_hard > 10 && unsmeltable > 3 && usable > 10,
             "a state never came up, so the panel never rendered it: \
              too_hard {too_hard}, unsmeltable {unsmeltable}, usable {usable}"
+        );
+    }
+
+    /// **THE PANEL'S FUEL CLAIM CARRIES THE GRADE, AND IT IS THE TABLE'S OWN
+    /// WORDS** (ASSA-143, Game Director). The panel used to be handed
+    /// `fuel_grade(species).is_some()` — the threshold computed and thrown
+    /// away on one line — so it said "fuel" and never at which grade, and on
+    /// 18.8% of the rows it tags as fuel grade C does not burn.
+    ///
+    /// Same place and same reason as the mining test above: `sim/tests` can
+    /// see the table but not what the binding sends, and the client suite can
+    /// see what arrives but has no table to compare it with. The two surfaces
+    /// meet in this crate, which is where a dropped clause is visible.
+    ///
+    /// **A NONE IS ASSERTED AS HARD AS A SOME.** "The sim does not call this
+    /// rock fuel" and "the sim does and the panel lost it" would both show up
+    /// as a missing tag, so the absent case is pinned to `fuel_grade` being
+    /// `None` rather than merely tolerated.
+    #[test]
+    fn the_species_panels_fuel_tag_is_the_tables_own_words() {
+        use sim::debug::{fuel_tag, species_table};
+
+        // Every case the clause has, counted, because an assertion that never
+        // ran is not a green: three grades times minable-or-not, and the
+        // not-fuel rows that must carry no tag at all.
+        let (mut at_c, mut at_b, mut at_a, mut unminable, mut not_fuel) = (0, 0, 0, 0, 0);
+        for seed in 1..60 {
+            let sim = AssaySim::from_world(sim_net::fresh_world(seed));
+            let world = sim.world();
+            let table = species_table(world);
+            for facts in sim.species_facts() {
+                let species = &world.species[facts.id as usize];
+                let row = table
+                    .lines()
+                    .find(|l| l.contains(&facts.name))
+                    .unwrap_or_else(|| panic!("seed {seed}: no table row for {}", facts.name));
+                match sim::ladder::fuel_grade(species) {
+                    None => {
+                        not_fuel += 1;
+                        // THE PANEL MAY NOT CALL A ROCK FUEL THAT THE SIM DOES
+                        // NOT, which is the other half of the claim and the
+                        // half a literal-free test would miss.
+                        assert!(
+                            facts.fuel.is_none(),
+                            "seed {seed} {}: no grade of this burns and the panel said {:?}",
+                            facts.name,
+                            facts.fuel
+                        );
+                        assert!(
+                            !row.contains("fuel at"),
+                            "seed {seed} {}: the table claims fuel where the ladder has none: {row}",
+                            facts.name
+                        );
+                    }
+                    Some(grade) => {
+                        let minable = sim::ladder::hand_minable(species);
+                        if minable {
+                            match grade {
+                                sim::Grade::C => at_c += 1,
+                                sim::Grade::B => at_b += 1,
+                                sim::Grade::A => at_a += 1,
+                            }
+                        } else {
+                            unminable += 1;
+                        }
+                        let tag = facts.fuel.as_deref().unwrap_or_else(|| {
+                            panic!(
+                                "seed {seed} {}: the sim burns this at {} and the panel said nothing",
+                                facts.name,
+                                grade.letter()
+                            )
+                        });
+                        // AGAINST THE SIM'S FUNCTION, not against a literal: a
+                        // literal keeps passing after the wording moves, and
+                        // the whole defect was one surface wording its own.
+                        assert_eq!(
+                            tag,
+                            fuel_tag(grade, minable),
+                            "seed {seed} {}: the panel worded the fuel claim itself",
+                            facts.name
+                        );
+                        // AND AGAINST THE TABLE'S SHIPPED TEXT, so rewording
+                        // either surface alone reddens.
+                        assert!(
+                            row.contains(tag),
+                            "seed {seed} {}: the panel says {tag:?} and the table row reads {row}",
+                            facts.name
+                        );
+                        // THE GRADE IS ON THE SURFACE AND NOT MERELY IMPLIED.
+                        // This is the one literal in here and it is the item's
+                        // actual claim: a player can read the letter.
+                        assert!(
+                            tag.contains(grade.letter()),
+                            "seed {seed} {}: {tag:?} does not name grade {}",
+                            facts.name,
+                            grade.letter()
+                        );
+                    }
+                }
+            }
+        }
+        assert!(
+            at_c > 10 && at_b > 3 && at_a > 3 && unminable > 3 && not_fuel > 10,
+            "a case never came up, so the panel never rendered it: at_c {at_c}, at_b {at_b}, \
+             at_a {at_a}, unminable {unminable}, not_fuel {not_fuel}"
+        );
+    }
+
+    /// **A ROCK THAT BURNS ONLY ABOVE GRADE C LOOKS DIFFERENT FROM ONE THAT
+    /// BURNS AT C** (ASSA-143 box 4). The point of the item: these two rows
+    /// were identical on screen, and one of them is a player walking to a
+    /// deposit for nothing.
+    ///
+    /// Asserted as a PARTITION over a whole roster rather than on two chosen
+    /// rows — if any two species with different thresholds ever rendered the
+    /// same tag, this fails, and no hand-picked pair can hide it.
+    #[test]
+    fn two_fuels_with_different_thresholds_do_not_render_alike() {
+        // Seed 152's roster carries all three thresholds AND the unminable
+        // conditional: Riomite C, Zernrosine B, Nerdunite and Valium A, with
+        // Bakase and Torgoline fuel nobody can mine. It is the seed on this
+        // item's window shot, so the picture and this test are about one world.
+        let sim = AssaySim::from_world(sim_net::fresh_world(152));
+        let world = sim.world();
+        let mut by_grade: std::collections::BTreeMap<char, Vec<String>> = Default::default();
+        for facts in sim.species_facts() {
+            let species = &world.species[facts.id as usize];
+            if let Some(grade) = sim::ladder::fuel_grade(species) {
+                if sim::ladder::hand_minable(species) {
+                    by_grade
+                        .entry(grade.letter())
+                        .or_default()
+                        .push(facts.fuel.clone().expect("a fuel row with no tag"));
+                }
+            }
+        }
+        assert_eq!(
+            by_grade.len(),
+            3,
+            "seed 152 is on the window shot BECAUSE it holds all three thresholds; it now holds \
+             {by_grade:?} and either the shot or this seed needs replacing"
+        );
+        // One wording per threshold, and no wording shared across two.
+        for (grade, tags) in &by_grade {
+            let first = &tags[0];
+            assert!(
+                tags.iter().all(|t| t == first),
+                "two rocks that both burn at {grade} are described differently: {tags:?}"
+            );
+        }
+        let mut wordings: Vec<&String> = by_grade.values().map(|tags| &tags[0]).collect();
+        wordings.sort();
+        wordings.dedup();
+        assert_eq!(
+            wordings.len(),
+            3,
+            "three thresholds rendered as {} distinct rows: {by_grade:?}",
+            wordings.len()
         );
     }
 
