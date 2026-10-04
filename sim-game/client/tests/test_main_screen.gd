@@ -2144,8 +2144,17 @@ func test_the_camera_keeps_you_below_the_panel_in_the_north_rows() -> bool:
 	var ok := true
 	var rooms := {}
 	for row: int in [0, 3, 7, 40]:
-		screen._seen = {id: Vector2i(48, row)}
-		screen._was = screen._seen.duplicate()
+		# **THE BODY IS PLACED THROUGH THE PLAYOUT BUFFER, NOT BY SETTING `_was`/`_seen`** (ASSA-197).
+		# Those two are now DERIVED every frame from the positions the clock is between, so a test
+		# that assigned them was overwritten before `_refresh_world` drew anything -- it reported a
+		# body at spawn and a camera aimed somewhere else, which is how this test caught the change.
+		# One held position with the clock parked on it is a standing body: `from == to`, part 1.
+		# TYPED, because `_pending` is an `Array[Dictionary]` and assigning a bare array literal to
+		# one aborts the test mid-function -- which the runner reports as "returned false and said
+		# nothing", a failure with no message and no line.
+		var held: Array[Dictionary] = [{"at": 0.0, "tick": 1, "where": {id: Vector2i(48, row)}}]
+		screen._pending = held
+		screen._play_tick = 1.0
 		screen._refresh_world()
 		var view: Dictionary = screen._world.view
 		var players: Array = view.get("players", [])
@@ -2416,16 +2425,80 @@ func test_the_schematic_is_handed_every_building_the_sim_reports() -> bool:
 					+ "ASSA-189 exactly: the mark is right and the schematic still draws no factory")
 		elif source.find("_building_marks(_sim.buildings())") \
 				< source.rfind("for entry in _sim.players():"):
-			# **AND IT IS PAINTED AFTER THE PLAYERS, WHICH I GOT WRONG FIRST TIME AND MEASURED.** The
-			# play loop plants a machine on the tile you are STANDING on, so on the demo's own shot a
-			# 1x1 machine's 12px mark and the 16px player square were at the same point to the pixel and
-			# the machine was invisible: two buildings in the sim, one on screen. The order survives
-			# only because a diamond leaves the box's corners alone, so the player still reads under it.
+			# **AND IT IS PAINTED AFTER THE PLAYERS, WHICH IS THE ONE CLAUSE OF THE APPROVED DESIGN MAIN
+			# DOES NOT FOLLOW, AND IT IS OPEN ON ASSA-203.** Cove's hand-off and Maren's 17:40 ruling
+			# both say deposits -> buildings -> players, so that a person is never hidden by a thing.
+			# The measurement is that on this world it costs the other half: the play loop plants on
+			# the tile you are STANDING on, so a mark and your body land at the same point TO THE
+			# PIXEL, and at the approved `BUILDING_MARK_PX` 16 the diamond is exactly inscribed in a
+			# 16px filled square. Gone, not merely dimmed; the keyline's four points clear the body by
+			# 2.8px and are MAP_BG on a MAP_BG background. On the demo's own shot at 12px the sim held
+			# 2 buildings and the schematic showed 1.
+			#
+			# **THIS ASSERTION IS THEREFORE A PIN, NOT A RULING.** It holds main at the measured order
+			# so a flip is never silent, and it carries the reason either way. If Maren rules for her
+			# clause, this test and one line of `_draw` move together -- and the right fix then is a
+			# player mark that is not a solid block, which is a change to a read she owns.
 			#
 			# A SOURCE ORDER AND NOT A CLAIM ABOUT THE ENGINE: `_draw`'s calls happen in the order they
 			# are written, which is the one frame-ordering fact in here I do not have to ask about.
 			ok = _fail("main.gd paints the building marks BEFORE the players, so a machine on the tile "
-					+ "you stand on is covered by your own 16px mark -- measured on the demo shot, where "
-					+ "the sim held 2 buildings and the schematic showed 1")
+					+ "you stand on is covered whole by your own 16px mark -- see ASSA-203, where both "
+					+ "orders are photographed at 1x and the ruling is Maren's")
 	screen.queue_free()
 	return ok
+
+
+## **A PARTNER ON A LIGHT SPECIES LETTER FUSES WITH IT INTO ONE BLOB** (Maren's second ruling on
+## ASSA-189, 17:40; Cove's finding, `assa-193-player-vs-mark-on-a-letter-3x.png` panel 3).
+##
+## `THEIRS` is a pale near-white (0.75,0.78,0.85) and a player's body carried no rim, so a partner
+## standing on a deposit whose letter is drawn in a light ink stopped being a person and became part
+## of the glyph. Cove hit the identical failure with a keyline-0 diamond and fixed it with 2px of
+## `MAP_BG`; the ruling is that both player marks get the same two lines. **It is a defect that was
+## shipping, not polish** -- the one view co-op exists for, failing at telling a person from a rock.
+##
+## **THE GEOMETRY HALF IS THAT THE RIM GROWS OUTWARDS.** `PLAYER_MARK_PX` is 16 because Maren measured
+## the consequence of the old tile-derived size (ASSA-119 box 6), so a rim paid for out of the body
+## would quietly re-tune her number. 16 in, 20 out, and your own 1.6x hollow ring is clear of it.
+##
+## **AND THE WIRING HALF IS A SOURCE SCAN, because nothing headless can read a canvas back.** The
+## order matters as much as the call: the rim drawn AFTER the body is a 2px dark frame ON the person,
+## which is a different mark and not the ruling. `_draw`'s statements run in written order, so the
+## scan is about this file and not about the engine. The picture is `tools/window_shot.gd`'s
+## whole-world shot; this is what notices if the call goes away.
+func test_both_player_marks_carry_the_maps_own_keyline() -> bool:
+	var body := Rect2(Vector2(100.0, 200.0), Vector2(AssayHud.PLAYER_MARK_PX, AssayHud.PLAYER_MARK_PX))
+	var rim := AssayHud.mark_keyline_rect(body)
+	if absf(rim.size.x - body.size.x - 2.0 * AssayHud.MARK_KEYLINE_PX) > 1e-4 \
+			or absf(rim.size.y - body.size.y - 2.0 * AssayHud.MARK_KEYLINE_PX) > 1e-4:
+		return _fail(("a %.0fpx body gets a %s keyline rect; %.0fpx of rim on every side makes it %.0f "
+				+ "square") % [body.size.x, rim.size, AssayHud.MARK_KEYLINE_PX,
+				body.size.x + 2.0 * AssayHud.MARK_KEYLINE_PX])
+	if not rim.encloses(body):
+		return _fail(("the keyline rect %s does not enclose the body %s, so the rim is being paid for "
+				+ "out of a size Maren set from a measurement") % [rim, body])
+	# CLEAR OF YOUR OWN RING, which is 1.6x the body drawn hollow at 2px -- its inner edge is 11.8px
+	# from the centre against the rim's 10. Two marks that met would read as one thick frame.
+	var ring_inner := AssayHud.PLAYER_MARK_PX * 0.8 - 1.0
+	if AssayHud.PLAYER_MARK_PX * 0.5 + AssayHud.MARK_KEYLINE_PX >= ring_inner:
+		return _fail(("the keyline reaches %.1fpx from a player's centre and your own ring's inner "
+				+ "edge is at %.1fpx: they would meet and read as one frame")
+				% [AssayHud.PLAYER_MARK_PX * 0.5 + AssayHud.MARK_KEYLINE_PX, ring_inner])
+	var source := FileAccess.get_file_as_string("res://scripts/main.gd")
+	if source == "":
+		return _fail("could not read res://scripts/main.gd, so nothing was scanned")
+	var call_at := source.find("draw_rect(AssayHud.mark_keyline_rect(body), AssayHud.MAP_BG, true)")
+	if call_at < 0:
+		return _fail("no player mark in main.gd draws `AssayHud.mark_keyline_rect` in MAP_BG, so a "
+				+ "partner on a light species letter still fuses with it (Maren's ASSA-189 ruling 2)")
+	# **UNDER THE BODY AND NOT OVER IT.** Both bodies: one `draw_rect(body, colour, true)` serves
+	# MINE and THEIRS, so the rim is on the partner by construction rather than by a second call.
+	var body_at := source.find("draw_rect(body, colour, true)")
+	if body_at < 0:
+		return _fail("main.gd no longer paints a player body as `draw_rect(body, colour, true)`, so "
+				+ "this scan cannot say whether the keyline is under it")
+	if call_at > body_at:
+		return _fail("main.gd draws the player keyline AFTER the body, which is a dark frame ON the "
+				+ "person rather than a rim behind them")
+	return true

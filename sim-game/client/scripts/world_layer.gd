@@ -42,6 +42,23 @@ var view := {}
 ## the client, not about the world.
 var me: Variant = null
 
+## **THE RECTANGLES THIS FUNCTION ACTUALLY BLITTED LAST FRAME, for the probes only** (ASSA-197).
+## Map pixels. Nothing here reads them and no decision depends on them; `_draw` writes them on its
+## way past.
+##
+## WHY A PROBE MUST NOT RECOMPUTE THEM INSTEAD. `AssayScene.placements` is pure, so a probe can call
+## it beside the renderer and get an answer -- and then it is measuring its own copy of the renderer
+## on its own copy of the view, which is exactly the mistake that let a whole-tile saw-tooth live in
+## this file for a fortnight: every assertion we owned read `view["players"][i]["at"]`, the lerp's
+## INPUT to the thing that was broken (Maren, ASSA-200). It also costs a second pass over ~580
+## placements inside the frame whose length the probe is trying to measure.
+##
+## **EMPTY UNLESS THERE IS EXACTLY ONE BODY ON THE SCENE**, and that is a refusal rather than a
+## guess: a view's player entries carry no `id`, so with two players there is no honest way to say
+## from here which rectangle is yours. The probe reads an empty rect as a blind frame and says so.
+var drawn_body := Rect2()
+var drawn_foot := Rect2()
+
 
 func _init() -> void:
 	clip_contents = true
@@ -53,9 +70,18 @@ func _init() -> void:
 
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), AssayHud.MAP_BG, true)
+	drawn_body = Rect2()
+	drawn_foot = Rect2()
 	if view.is_empty():
 		return
 	var all := AssayScene.placements(view)
+	var bodies := 0
+	for place in all:
+		if String(place.get("asset", "")) == "player":
+			bodies += 1
+			drawn_body = place["dest"]
+	if bodies != 1:
+		drawn_body = Rect2()
 	for place in all:
 		if int(place.get("layer", AssayScene.FLOOR)) == AssayScene.FLOOR:
 			_blit(place)
@@ -64,7 +90,8 @@ func _draw() -> void:
 		# schematic has used for "yours" since ASSA-7 rather than in a new one, because Maren's
 		# ruling-3 correction is that this client already holds 21 colour literals nobody chose as a
 		# set, and a 22nd for the same meaning would be the same mistake again.
-		draw_rect(AssayScene.foot_mark(me, view.get("origin", Vector2.ZERO)),
+		drawn_foot = AssayScene.foot_mark(me, view.get("origin", Vector2.ZERO))
+		draw_rect(drawn_foot,
 				Color(AssayHud.MINE.r, AssayHud.MINE.g, AssayHud.MINE.b, 0.55), true)
 	for place in all:
 		if int(place.get("layer", AssayScene.FLOOR)) == AssayScene.STANDING:

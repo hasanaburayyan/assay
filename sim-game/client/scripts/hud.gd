@@ -71,23 +71,46 @@ const THEIRS := Color(0.75, 0.78, 0.85)
 const HOVER := Color(0.95, 0.95, 0.95)
 const SPAWN_PAD := Color(0.35, 0.33, 0.20)
 
-## **A FIFTH MARK, BECAUSE THE SCHEMATIC DREW NO FACTORIES AT ALL** (ASSA-189, Maren's P1). Green, and
-## it is the one free hue on this map: `SPECIES_TINTS` spends purple, red, pink, yellow, blue and sky
-## blue, `MINE` is the yellow, `THEIRS` the pale grey-blue, `SPAWN_PAD` the olive and `HOVER` white.
-##
-## IT IS A PLACEHOLDER AND THE ARTIST'S TO CHANGE, which is why it is ONE constant and why
-## [building_mark] decides the whole mark in one place. Maren ruled the SHAPE and left the mark to
-## Cove; this value is mine until they pick one, and the hard case is not the dark background -- a
-## drill is planted ON a deposit, so the mark is judged over six tints as well as over `MAP_BG`.
-const BUILT := Color(0.38, 0.92, 0.60)
-
-## HOW BIG THE SMALLEST BUILDING MARK MAY GET, in screen pixels, for `PLAYER_MARK_PX`'s reason.
+## HOW BIG A BUILDING'S MARK IS, in screen pixels, as a FLOOR under the footprint (Cove, ASSA-193).
 ##
 ## A machine is a 1x1 footprint, which is 9 px on the 96x64 world and 4.5 px on a world twice as wide:
 ## a mark that scales only with the tile disappears exactly as the world gets big enough to need a
-## map. So the footprint sets the size and this is the floor. BELOW `PLAYER_MARK_PX` on purpose -- a
-## one-tile machine must not end up drawn bigger than a person.
-const BUILDING_MARK_MIN_PX := 12.0
+## map. So the footprint sets the size and this is the floor.
+##
+## **16 IS THE SAME NUMBER AS `PLAYER_MARK_PX` AND THAT IS THE POINT, NOT A COINCIDENCE.** Cove's
+## reason: a building and a person occupy the SAME BOX, so the SHAPE does all the telling -- and shape
+## is the half that survives a greyscale copy, which is what Maren's box asks for. They rendered the
+## alternatives: at 14 the diamond reads lighter than a player, at 20 it outweighs one
+## (`shared/assay/cove-assa193/assa-193-diamond-sizes-1x.png`).
+##
+## **AND IT IS A FLOOR, NOT A FOOTPRINT READ.** On this world `_cell` is 9, so the rule gives 16 px
+## for a 1x1 and 18 px for a 2x2 -- and Maren's own item says a 2 px difference is not a separation.
+## It becomes a read only on a small world (`_cell` 18: 18 px against 36 px). Telling a smelter from a
+## drill is not what this view is for.
+##
+## **I SHIPPED 12 HERE FIRST AND IT WAS NOT A JUDGEMENT CALL I WAS ENTITLED TO** (ASSA-203): I built
+## ASSA-189 from my own placeholder and pushed it an hour after Maren settled this, without re-reading
+## the item. The old constant argued the floor must stay BELOW the player's 16 "so a one-tile machine
+## is not drawn bigger than a person", which is a real concern and is answered by equality, not by
+## being smaller: the same box, two shapes.
+const BUILDING_MARK_PX := 16.0
+
+## THE KEYLINE ON A MAP MARK, in screen pixels, PERPENDICULAR to the edge it rims.
+##
+## **IT IS `MAP_BG` AND THAT IS NOT A NEW COLOUR**, which is the whole reason this mark spends no 22nd
+## literal (Maren counted 21 on ASSA-116). A ring of the map's own ground colour separates a mark from
+## whatever it is standing on, and over open ground it is correctly invisible, because it *is* the
+## ground.
+##
+## **WHAT IT IS FOR IS A DEFECT A PIXEL COUNT COULD NOT SEE** (Cove, ASSA-193). A white mark on a disc
+## with a white species letter FUSES INTO ONE BLOB -- the letter stops being a letter -- and the count
+## said 63% of the glyph survived. Coverage is not legibility; the picture is what said so.
+##
+## **NOT `BUILDING_KEYLINE_PX`, WHICH IS WHAT COVE'S HAND-OFF CALLS IT, BECAUSE MAREN'S SECOND RULING
+## GAVE IT TO THE PLAYER MARKS TOO** (ASSA-189, 17:40): `THEIRS` is a pale near-white with no keyline,
+## so a partner standing on a light letter fuses with it exactly as the keyline-0 diamond did. Same
+## thickness, same colour, same reason -- a building-specific name would now be a false one.
+const MARK_KEYLINE_PX := 2.0
 
 ## HOW BIG A PLAYER'S MARK IS ON THE SCHEMATIC, IN SCREEN PIXELS AND NOT IN TILES (ASSA-119 box 6).
 ##
@@ -407,35 +430,71 @@ static func deposit_disc(deposit: Dictionary, drawn_radius: float) -> Dictionary
 ## and the 45-degree point a circle contains is OUTSIDE it. `tests/test_hud.gd` asserts both of those
 ## as geometry rather than as taste.
 ##
-## **THE EDGE IS `MAP_BG` AND THAT IS NOT A NEW COLOUR.** A drill is planted on a deposit, so this
-## mark is drawn over a bright species tint as often as over the background; a ring of the map's own
-## ground colour separates the mark from whatever it stands on, and over `MAP_BG` itself it is
-## correctly invisible because there is nothing to separate from.
+## **THE COLOUR AND THE SIZE ARE COVE'S AND APPROVED, AND MINE WERE NEITHER** (ASSA-193, approved by
+## Maren at 1x on `assa-193-building-mark-proof.png`; the conformance bill is ASSA-203). `HOVER` with a
+## `MARK_KEYLINE_PX` rim of `MAP_BG`, at `BUILDING_MARK_PX` or the footprint, whichever is bigger. What
+## I shipped first was a green of my own at a 12 px floor with a 1.08 px polyline -- a 22nd colour
+## literal on a map whose named set exists precisely to stop that, when the shape Cove picked needs no
+## new hue at all. The rim is what makes the white affordable: a drill is planted ON a deposit, so this
+## mark is drawn over a bright species tint as often as over the background.
+##
+## **THE KEYLINE IS A PERPENDICULAR THICKNESS AND THE ARITHMETIC IS NOT THE OBVIOUS ONE.** A diamond's
+## edge sits `h/sqrt(2)` from its centre, so growing the DIAGONAL by `2t*sqrt(2)` grows the rim by `t`:
+## Cove's note, and a "2 px keyline" written as `span + 4.0` would really be 1.41 px. It is a SECOND
+## POLYGON under the first, not a stroke on the first, because a stroke straddles the edge it is given
+## and would eat a pixel of the mark to pay for a pixel of rim.
 ##
 ## **`pos` AND `footprint` ARE READ WITHOUT A DEFAULT** (ASSA-141's rule, and ASSA-196's bill for
 ## breaking it on players): `pos` is the TOP-LEFT of the footprint and a binding that stopped sending
 ## either must empty the frame rather than draw every factory in the world on top of each other at
-## the corner. `tests/test_main_screen.gd` is what notices.
+## the corner. `tests/test_main_screen.gd` is what notices. Cove's hand-off sketches these with
+## `get(..., Vector2i.ONE)`; that is the one line of it I did not take, and the reason is that rule.
 static func building_mark(building: Dictionary, cell: float, origin: Vector2) -> Dictionary:
 	var pos: Vector2i = building["pos"]
 	var foot: Vector2i = building["footprint"]
-	var span := Vector2(maxf(float(foot.x) * cell, BUILDING_MARK_MIN_PX),
-			maxf(float(foot.y) * cell, BUILDING_MARK_MIN_PX))
+	# SQUARE, off the LONGER side, and not per-axis: Cove's rule is one `s`. A per-axis floor turns a
+	# footprint that is not square into a rhombus, which states a facing the sim does not have -- the
+	# reason their chevron candidate lost.
+	var span := maxf(float(maxi(foot.x, foot.y)) * cell, BUILDING_MARK_PX)
 	# The footprint's CENTRE, from its top-left corner tile plus half its extent in tiles, so a 2x2
 	# sits on the join of its four tiles and a 1x1 in the middle of its one.
 	var at := origin + (Vector2(pos) + Vector2(foot) * 0.5) * cell
-	var half := span * 0.5
 	return {
-		"points": PackedVector2Array([at + Vector2(0.0, -half.y), at + Vector2(half.x, 0.0),
-				at + Vector2(0.0, half.y), at + Vector2(-half.x, 0.0)]),
-		"colour": BUILT,
-		"edge": MAP_BG,
-		# One pixel at the 9 px a tile this world draws at, and never less: the ring is there to
-		# separate the mark from a deposit it may be standing on, and a sub-pixel line does not.
-		"edge_width": maxf(1.0, cell * 0.12),
+		"points": diamond(at, span),
+		"colour": HOVER,
+		"keyline_points": diamond(at, span + 2.0 * MARK_KEYLINE_PX * sqrt(2.0)),
+		"keyline": MAP_BG,
 		"at": at,
-		"span": span,
+		"span": Vector2(span, span),
 	}
+
+
+## A diamond of diagonal [param span] about [param at]: points at the edge midpoints, corners empty.
+##
+## Here rather than in `main.gd::_draw` for [deposit_disc]'s reason -- nothing in a headless suite can
+## read a `draw_colored_polygon` back off a canvas, so geometry computed inside the paint loop is
+## checkable only by a human looking at a PNG, which is how the schematic went a month with no
+## factories on it.
+static func diamond(at: Vector2, span: float) -> PackedVector2Array:
+	var h := span * 0.5
+	return PackedVector2Array([at + Vector2(0.0, -h), at + Vector2(h, 0.0),
+			at + Vector2(0.0, h), at + Vector2(-h, 0.0)])
+
+
+## The `MAP_BG` keyline behind an axis-aligned mark: [param body] grown by `MARK_KEYLINE_PX` all round.
+##
+## **MAREN'S SECOND RULING ON ASSA-189, AND IT IS A DEFECT THAT SHIPS TODAY, NOT A POLISH ITEM.**
+## `THEIRS` is a pale near-white and a player's body carries no rim, so a partner standing on a deposit
+## with a light species letter FUSES WITH THAT LETTER INTO ONE BLOB -- the same failure Cove's
+## keyline-0 diamond made before they added the rim, found while they were hunting for a control
+## (`shared/assay/cove-assa193/assa-193-player-vs-mark-on-a-letter-3x.png`, panel 3).
+##
+## **IT GROWS OUTWARDS, SO THE BODY IS UNTOUCHED IN PIXELS.** `PLAYER_MARK_PX` stays 16 and the mark
+## occupies 20; the alternative is a rim paid for out of the body, which would quietly re-tune a size
+## Maren set from a measurement (ASSA-119 box 6). Your own 1.6x hollow ring sits at 12.8 px from the
+## centre and so is clear of the rim's 10 px at every tile size.
+static func mark_keyline_rect(body: Rect2) -> Rect2:
+	return body.grow(MARK_KEYLINE_PX)
 
 
 ## The status line's colour for a state. Neutral idle, amber connecting, red failed, green joined.

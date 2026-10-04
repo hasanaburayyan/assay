@@ -356,9 +356,27 @@ var _facing := {}
 ## times while keeping the pop of the positions -- and all 229 client tests stayed green. A caller's
 ## bookkeeping is invisible to a test of the arithmetic, so the way to close it was to make the two
 ## impossible to separate rather than to write a check nobody would run.
-const PLAYOUT_QUEUE := 3
+## **HOW MANY PRODUCED POSITIONS THE SCREEN KEEPS AROUND THE ONE IT IS DRAWING** (ASSA-197). The
+## clock runs `AssayScene.PLAYOUT_DELAY` ticks behind the newest, so the buffer must hold at least
+## that many plus the longest burst; eight is 800 ms of history, which covers the 386 ms worst gap
+## measured on this Mac with room over. Over the cap the OLDEST is dropped and the clock interpolates
+## ACROSS the hole -- two tick-times for a two-tick segment, continuous, never a sprint.
+const PLAYOUT_QUEUE := 8
 var _pending: Array[Dictionary] = []
-var _seg_at := 0.0
+## WHERE THE CLOCK IS, as a fractional SIM TICK. **NEGATIVE UNTIL THE BUFFER HAS FILLED**, which is
+## `AssayScene.playout_at`'s "not started" state and not a tick number -- it was 0.0, and 0.0 is the
+## first tick of a fresh world, so the clock re-initialised itself on every frame of the first second
+## of every session.
+var _play_tick := AssayScene.PLAYOUT_UNSTARTED
+## When the clock was last advanced, so a frame's own elapsed time drives it.
+var _played_at := 0.0
+## Whether the buffer ran dry on the last advance: the body is holding on the newest position the sim
+## produced, which is a stalled host and not a renderer decision.
+var _starved := false
+## The last few bundle ARRIVAL times, for the measured tick rate. See `AssayScene.playout_step`.
+var _tick_times: Array[float] = []
+## The sim tick each of those arrivals carried, so the rate is seconds per TICK and not per bundle.
+var _tick_numbers: Array[int] = []
 ## When the newest tick landed, and how far apart the last few were, both in seconds of wall clock.
 ##
 ## MEASURED RATHER THAN ASSUMED, and that is not fussiness: the relay's rate is a FLAG
@@ -1499,13 +1517,20 @@ func _refresh() -> void:
 	# was made and how a stranger opens the game. `AssaySimHost.counted` is `sim::debug::counted`,
 	# so this line and the terminal's cannot drift. `tiles` and `species` are left alone: one is
 	# always >= 2 and the other is invariant in English.
+	#
+	# **AND THE FRAME RATE, LAST** (Wren's ruling 3 on ASSA-197). Not for us -- every probe measures
+	# its own `dt` -- but so that one demo request can ask one thing: how does the walk feel, and
+	# what does the fps number say. We cannot know the board's frame rate and every speed number on
+	# this item is half a number without it. It goes on the line the debug readouts already live on;
+	# ASSA-198 decides where a player-facing one belongs.
 	_detail.text = ("world seed %s, %d x %d tiles, %d species, %s · tick %d, hash %s · "
-			+ "%s applied, %s reported") % [
+			+ "%s applied, %s reported · %d fps") % [
 			_sim.seed_text(), size.x, size.y, _sim.species_names().size(),
 			AssaySimHost.counted(_sim.players().size(), "player", "players"),
 			_sim.tick(), _sim.hash_hex(),
 			AssaySimHost.counted(_sim.applied, "bundle", "bundles"),
-			AssaySimHost.counted(_hashes_sent, "hash", "hashes")]
+			AssaySimHost.counted(_hashes_sent, "hash", "hashes"),
+			int(Engine.get_frames_per_second())]
 	_refresh_make()
 	_refresh_assembling()
 	_refresh_pack()
@@ -2485,14 +2510,21 @@ func _remember_positions() -> void:
 		var player: Dictionary = entry
 		produced[int(player.get("id", -1))] = player.get("pos", Vector2i.ZERO) as Vector2i
 	var now := float(Time.get_ticks_msec()) / 1000.0
-	_pending.append({"at": now, "where": produced})
+	# **STAMPED WITH THE SIM'S OWN TICK NUMBER** (ASSA-197), which is the timeline the clock runs on.
+	# The arrival time stays for diagnostics and for the rate, but it no longer decides when a
+	# segment may start -- that was the arrival-driven playout the board felt as jumpy.
+	_pending.append({"at": now, "tick": _sim.tick(), "where": produced})
 	while _pending.size() > PLAYOUT_QUEUE:
 		_pending.pop_front()
-	if _tick_at > 0.0:
-		# SMOOTHED, because the gap between two bundles is a network measurement and a single late
-		# packet should not stretch one step across half a second. A quarter weight settles on a
-		# changed rate in a handful of ticks and ignores one hiccup.
-		_tick_gap = lerpf(_tick_gap, clampf(now - _tick_at, 0.01, 1.0), 0.25)
+	# THE RATE, OVER A WINDOW RATHER THAN AN EMA. Arrivals come in pairs 0.17 ms apart at this frame
+	# rate; an EMA of consecutive gaps swings by a factor of ten and used to be the denominator the
+	# whole tween was divided by. `playout_step` takes the mean over the window instead.
+	_tick_times.append(now)
+	_tick_numbers.append(_sim.tick())
+	while _tick_times.size() > AssayScene.PLAYOUT_RATE_WINDOW:
+		_tick_times.pop_front()
+		_tick_numbers.pop_front()
+	_tick_gap = AssayScene.playout_step(_tick_times, _tick_numbers, _tick_gap)
 	_tick_at = now
 	# ADVANCED ON THIS PATH TOO, not only on a drawn frame, and that is not belt-and-braces: every
 	# headless test and probe runs inside `SceneTree._initialize` where `_process` never fires, so a
@@ -2511,20 +2543,37 @@ func _remember_positions() -> void:
 ## THE FACING IS TAKEN AT PROMOTION, so the sprite faces the step it is DRAWING rather than one the
 ## sim has produced but nobody has seen yet. Still the step they actually took, never a target.
 func _advance_playout(now: float) -> float:
-	var arrived: Array[float] = []
+	if _pending.is_empty():
+		return 1.0
+	var ticks: Array[int] = []
 	for entry in _pending:
-		arrived.append(float(entry["at"]))
-	var cursor := AssayScene.playout(_seg_at, _tick_gap, now, arrived, not _seen.is_empty())
-	for _i in range(int(cursor["promote"])):
-		var where: Dictionary = _pending.pop_front()["where"]
-		_was = _seen if not _seen.is_empty() else where
-		_seen = where
-		for id in _seen:
-			if _was.has(id):
-				var way := AssayScene.facing_of((_seen[id] as Vector2i) - (_was[id] as Vector2i))
+		ticks.append(int(entry["tick"]))
+	# THE FRAME'S OWN ELAPSED TIME, clamped. This function also runs when a bundle lands (see
+	# `_remember_positions`), so `dt` is "time since the clock last moved" rather than a frame delta,
+	# which is the same quantity on a drawn frame and the right one on a headless tick.
+	var dt := 0.0 if _played_at <= 0.0 else clampf(now - _played_at, 0.0, 1.0)
+	_played_at = now
+	var cursor := AssayScene.playout_at(_play_tick, ticks, dt, _tick_gap, AssayScene.PLAYOUT_DELAY)
+	_play_tick = float(cursor["play_tick"])
+	_starved = bool(cursor["starved"])
+	var index := int(cursor["index"])
+	# EVERYTHING THE CLOCK HAS GONE PAST IS DROPPED, except the position being drawn FROM. `_pending`
+	# keeps its documented meaning for the probes that read its depth: produced positions the screen
+	# has not finished drawing.
+	for _i in range(index):
+		_pending.pop_front()
+	var from: Dictionary = _pending[0]["where"]
+	var to: Dictionary = _pending[1]["where"] if _pending.size() > 1 else from
+	# THE FACING IS TAKEN WHEN THE SEGMENT CHANGES, not every frame, and it is still the step the
+	# body is DRAWING rather than one the sim has produced but nobody has seen (ASSA-119).
+	if _seen != to or _was != from:
+		for id in to:
+			if from.has(id):
+				var way := AssayScene.facing_of((to[id] as Vector2i) - (from[id] as Vector2i))
 				if way != "":
 					_facing[id] = way
-	_seg_at = float(cursor["seg_at"])
+	_was = from
+	_seen = to
 	return float(cursor["part"])
 
 
@@ -2744,35 +2793,48 @@ func _draw() -> void:
 		if target != null:
 			draw_line(at, MARGIN + (Vector2(target as Vector2i) + Vector2(0.5, 0.5)) * _cell,
 					Color(colour.r, colour.g, colour.b, 0.35 if mine else 0.25), 1.0)
-		draw_rect(Rect2(at - mark * 0.5, mark), colour, true)
+		# **A KEYLINE ON A PERSON, WHICH IS MAREN'S SECOND RULING ON ASSA-189 AND A DEFECT THAT WAS
+		# ALREADY SHIPPING.** `THEIRS` is a pale near-white, and with no rim a partner standing on a
+		# deposit with a light species letter fuses with that letter into one blob -- Cove found it
+		# hunting for a control for their own keyline-0 diamond, which failed the same way. Drawn
+		# UNDER the body and growing outwards, so the 16 px Maren set from a measurement is untouched
+		# in pixels and the rim is not paid for out of the body. See `AssayHud.mark_keyline_rect`.
+		var body := Rect2(at - mark * 0.5, mark)
+		draw_rect(AssayHud.mark_keyline_rect(body), AssayHud.MAP_BG, true)
+		draw_rect(body, colour, true)
 		if mine:
 			draw_rect(Rect2(at - mark * 0.8, mark * 1.6), colour, false, 2.0)
 
 	# EVERY FACTORY, WHICH THIS VIEW DID NOT DRAW AT ALL UNTIL ASSA-189.
 	#
-	# **AFTER THE PLAYERS, AND IT IS MEASURED RATHER THAN CHOSEN.** I drew these first, reasoning that
-	# you are the mark you look for and a 2x2 building is bigger than you are. Then I measured the
-	# demo's own shot: the loop plants a machine on the tile you are STANDING on (`_targeted` false is
-	# "where you stand"), so the 1x1 machine's 12 px mark and your 16 px square were at the same point
-	# to the pixel and the 12x12 box held nothing but your yellow. Two buildings in the sim, one on
-	# screen -- this item's own defect surviving its own fix.
+	# **AFTER THE PLAYERS, WHICH IS THE ONE CLAUSE OF THE APPROVED DESIGN I HAVE NOT APPLIED, AND IT
+	# IS OPEN ON ASSA-203 FOR MAREN TO RULE.** Cove's hand-off and her 17:40 ruling both say
+	# deposits -> buildings -> players, for a reason I agree with as a sentence: *a drill must be
+	# visible on the rock it works, and a person must never be hidden by a thing.*
 	#
-	# **AND THE ORDER ONLY WORKS BECAUSE OF THE SHAPE.** A diamond leaves its bounding box's corners
-	# alone, so a player under a building still shows four triangles of `MINE` around it, and your own
-	# hollow ring (1.6x the body, outside the mark entirely) is untouched at any footprint. A filled
-	# rect on top -- Maren's banned shape -- would have hidden the player instead, which is why
-	# "buildings last" is not an option on the shape she ruled out.
+	# The measurement is that on this world it costs the first half to buy the second. The play loop
+	# plants on the tile you are STANDING on (`_targeted` false is "where you stand"), so a machine's
+	# mark and your body are at the same point TO THE PIXEL, and the mark is `BUILDING_MARK_PX` 16
+	# against a 16 px filled square: at the approved size a diamond is exactly INSCRIBED in the body
+	# that would be painted over it. Not mostly hidden -- gone. The keyline does not rescue it either:
+	# its four points clear the body by 2.8 px and they are `MAP_BG` drawn on a `MAP_BG` background.
+	# `shared/assay/limpet-assa203-both-orders-14247/` has both frames at 1x and the surviving-pixel
+	# count for each.
+	#
+	# **AND THE ORDER ONLY WORKS AT ALL BECAUSE OF THE SHAPE.** A diamond leaves its bounding box's
+	# corners alone, so a player under a building still shows four triangles of their own colour --
+	# half the body's area -- and your hollow ring (1.6x the body, outside the mark entirely) is
+	# untouched at any footprint. A filled rect on top, Maren's banned shape, really would hide the
+	# person, which is why "buildings last" is only an option on the shape Cove picked.
 	#
 	# THE DECISION IS `AssayHud.building_mark`'S, like the disc's above, and this loop only paints what
 	# `_building_marks` hands it -- see that function for why a test can read it and this cannot.
 	for shape_entry in _building_marks(_sim.buildings()):
 		var shape: Dictionary = shape_entry
-		var points: PackedVector2Array = shape["points"]
-		draw_colored_polygon(points, shape["colour"])
-		# Closed, so the ring goes all the way round rather than leaving the last side bare.
-		var ring := PackedVector2Array(points)
-		ring.append(points[0])
-		draw_polyline(ring, shape["edge"], float(shape["edge_width"]), true)
+		# TWO POLYGONS, NOT A STROKE. The rim is a bigger diamond UNDER the mark, so the mark keeps
+		# every pixel of its own size; a 2 px stroke on the mark's edge would spend one of them.
+		draw_colored_polygon(shape["keyline_points"], shape["keyline"])
+		draw_colored_polygon(shape["points"], shape["colour"])
 
 	# THE TILE THE BUTTONS ACT ON, AND IT IS A SHAPE NOW, NOT A THINNER YOU (ASSA-119 box 6).
 	#
