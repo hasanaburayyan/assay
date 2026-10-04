@@ -138,6 +138,37 @@ static func variant_of(at: Vector2i, count: int) -> int:
 	return posmod(hash >> 8, count)
 
 
+## WHICH DRAWING A GROUND TILE GETS, and why that is no longer `variant_of` alone.
+##
+## A TILE SHEET'S ROWS MAY BE A BLOCK RATHER THAN A BAG, and only the sheet knows which:
+## `manifest.ground.block == [8, 8]` says its sixty-four rows are the row-major cells of ONE
+## continuous 8x8-tile picture, rendered from a single Blender scene with the camera moved
+## sixty-four times, so a patch crossing a cell boundary is the SAME object in both cells
+## (`art/assets/ground.py`). Cells like that are not interchangeable. Hash-picking them
+## would cut every patch that crosses a boundary and come out WORSE than the six
+## independent variants that shipped -- the ones QA could point at (ASSA-115 box 2).
+##
+## So a block is placed BY POSITION, cell (x mod w, y mod h) at tile (x, y). Inside a block
+## there is no tile lattice to find, because there is no join; what repeats is the block, on
+## a 256 px period at 32 px/tile instead of a 32 px one. `posmod` and not `%` because a
+## tile coordinate goes negative and a negative cell must continue the picture, not snap to
+## row 0.
+##
+## WITHOUT `block` NOTHING CHANGES: interchangeable rows, hash-picked, which is still right
+## for `ore` and for any later sheet of loose variants. A block bigger than the rows it has
+## falls back the same way rather than drawing nothing: a mismatched manifest is a build
+## error, and it may not take the whole floor down with it.
+static func ground_row(manifest: Dictionary, at: Vector2i) -> String:
+	var rows := _rows_in(manifest, "ground")
+	var block: Array = ((manifest.get("ground", {}) as Dictionary).get("block", []) as Array)
+	if block.size() == 2:
+		var w := int(block[0])
+		var h := int(block[1])
+		if w > 0 and h > 0 and w * h <= rows:
+			return "v%d" % (posmod(at.y, h) * w + posmod(at.x, w))
+	return "v%d" % variant_of(at, rows)
+
+
 ## WHICH ROW OF `ore.png` A TILE OF A DEPOSIT GETS.
 ##
 ## THE GRADE PICKS THE ROW AND THE SPECIES PICKS THE TINT (`art/mock_scene.py`, Maren ASSA-19/20), so
@@ -224,8 +255,8 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 	for y in range(window.position.y, window.end.y):
 		for x in range(window.position.x, window.end.x):
 			var at := Vector2i(x, y)
-			var place := _place(manifest, "ground", "v%d" % variant_of(at, _rows_in(manifest,
-					"ground")), at, origin, Color.WHITE, seconds)
+			var place := _place(manifest, "ground", ground_row(manifest, at), at, origin,
+					Color.WHITE, seconds)
 			if not place.is_empty():
 				place["layer"] = FLOOR
 				out.append(place)

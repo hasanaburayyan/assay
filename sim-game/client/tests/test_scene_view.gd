@@ -270,6 +270,47 @@ func test_a_tiles_variant_is_fixed_to_the_tile_and_not_to_all_tiles() -> bool:
 	return true
 
 
+## A BLOCK IS PLACED BY POSITION, WHICH IS THE WHOLE OF ASSA-115 BOX 2.
+##
+## `ground.png` stopped being interchangeable tiles: it is ONE 8x8-tile picture rendered from
+## one Blender scene and cut into 64 cells, so a cell means a PLACE. Hash-picking one would
+## cut every patch that crosses a cell boundary and come out worse than the six variants QA
+## could point at. The sheet declares it (`manifest.ground.block`) and this asserts the client
+## obeys: the cell repeats on the block's period, and a NEGATIVE coordinate continues the
+## picture rather than snapping to row 0, which is the one thing `%` would get wrong.
+##
+## Read against the SHIPPED manifest on purpose. A fixture would let the sheet and the client
+## disagree forever, which is the failure this whole box is about.
+func test_a_ground_block_is_placed_by_position_and_not_by_hash() -> bool:
+	var man := _manifest()
+	var block: Array = ((man.get("ground", {}) as Dictionary).get("block", []) as Array)
+	if block.size() != 2:
+		return _fail("the shipped ground sheet declares no block, so this check is asleep")
+	var w := int(block[0])
+	var h := int(block[1])
+	if w <= 1 or h <= 1:
+		return _fail("a %dx%d block is not a block" % [w, h])
+	for y in range(-2 * h, 2 * h):
+		for x in range(-2 * w, 2 * w):
+			var want := "v%d" % (posmod(y, h) * w + posmod(x, w))
+			var got := AssayScene.ground_row(man, Vector2i(x, y))
+			if got != want:
+				return _fail("tile (%d,%d) drew ground/%s, not its cell %s" % [x, y, got, want])
+
+	# WITHOUT a block, nothing changes: loose rows are still hash-picked, which is what
+	# `ore` and any later set of interchangeable variants depend on.
+	var loose := {"ground": {"rows": [{"name": "v0", "frames": 1}, {"name": "v1", "frames": 1},
+			{"name": "v2", "frames": 1}, {"name": "v3", "frames": 1}]}}
+	var seen := {}
+	for y in range(20):
+		for x in range(20):
+			seen[AssayScene.ground_row(loose, Vector2i(x, y))] = true
+	if seen.size() < 4:
+		return _fail("with no block the rows must still be hash-picked; 400 tiles used %d of 4"
+				% seen.size())
+	return true
+
+
 ## THE CAMERA CENTRES YOU, AND STOPS AT THE EDGE rather than showing void beside the world.
 func test_the_camera_centres_you_and_clamps_at_the_world_edge() -> bool:
 	var world := Vector2i(96, 64)

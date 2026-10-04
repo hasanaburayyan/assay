@@ -166,6 +166,31 @@ def contact(manifest):
         fw, fh = meta["frame_px"]
         sheet = Image.open(os.path.join(SPRITES, meta["sheet"])).convert("RGBA")
         rows = meta["rows"]
+        # A BLOCK IS ONE PICTURE, SO THE SHEET SHOWS IT AS ONE (ASSA-115 box 2).
+        #
+        # `meta["block"]` means these w*h rows are the row-major cells of a single
+        # continuous w x h-tile render and a client places them by position
+        # (`rig.Asset.block`, `scene_view.gd::ground_row`). Drawn the normal way that
+        # is 64 unlabelled green squares, which is not the asset and cannot be judged:
+        # the whole question about a ground block is whether its 8x8 repeat is
+        # findable, and that is a question about the assembled picture. So it is
+        # assembled here, at authoring size and at 1x, exactly like every other row.
+        if meta.get("block"):
+            bw, bh = meta["block"]
+            field = Image.new("RGBA", (bw * fw, bh * fh))
+            for i in range(min(bw * bh, len(rows))):
+                field.alpha_composite(sheet.crop((0, i * fh, fw, (i + 1) * fh)),
+                                      ((i % bw) * fw, (i // bw) * fh))
+            line = Image.new("RGBA", (label_w + field.width + field.width // 2 + 3 * pad,
+                                      field.height + pad), bg)
+            ImageDraw.Draw(line).text((4, 4), "%s/%dx%d block" % (name, bw, bh),
+                                      fill=(220, 220, 220, 255))
+            line.alpha_composite(field, (label_w, 0))
+            line.alpha_composite(field.resize((field.width // 2, field.height // 2),
+                                              Image.LANCZOS),
+                                 (label_w + field.width + pad, field.height // 2))
+            blocks.append(line)
+            continue
         # animated assets: show every frame of each row; static: 8 rows per line
         per_line = 1 if meta["columns"] > 1 else 8
         for i in range(0, len(rows), per_line):
