@@ -151,6 +151,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # is already a read of shipped art this sheet's numbers depend on.
 import review_sources
 review_sources.start()
+import review_layout  # noqa: E402  this sheet's declaration that it draws no layout
+# NOT A PICTURE OF A CLIENT PANEL, SAID OUT LOUD (CO-6). `check_review_layout.py`
+# used to print `NO LAYOUT` here and pass, so this sheet and a panel sheet that had
+# FORGOTTEN its stamp were the same state -- and two sheets really were the second
+# thing. The claim is the sheet's own, so a copy of it carries the reason with it.
+ART_ONLY = review_layout.art_only(
+    "a picture of the shipped sprites measured against each other; every number in it comes from the sheets, not from anything the client lays out")
 from species_tints import SPECIES_TINTS
 from species_probe import DISTINCT, GRADE_ROWS, GAME, dE, dAB, lab, seen_flat
 
@@ -357,7 +364,9 @@ def sheet(loud, conf, ore_surfaces, floor_name):
             s = tile.resize((32 * scale, 32 * scale), Image.NEAREST)
             out.alpha_composite(s, (x + ox, pad + (96 - 32 * scale)))
         x += cellw + pad
-    out.save(os.path.join(REVIEW, "loudness.png"), pnginfo=review_sources.png_info())
+    out.save(os.path.join(REVIEW, "loudness.png"),
+             pnginfo=review_layout.png_info(review_sources.png_info(),
+                                            layouts=ART_ONLY))
     print("\nwrote assets/review/loudness.png: the quietest and loudest ore in")
     print("the game, then every surface that beat the quiet one, each on the")
     print("real ground at 3x and at 1x. Judge it at the 1x column.")

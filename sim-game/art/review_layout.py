@@ -48,8 +48,21 @@ import json
 #: differently-keyed claims can ride one sheet.
 KEY = "assay-review-layout"
 
-#: probe name -> canonical digest of the answer this process was given. A dict rather than a
-#: single value because a sheet drawn from two probes should stamp both; nothing does today.
+#: THE ONE KEY INSIDE THE STAMP THAT IS NOT A PROBE: a sheet saying out loud that it is a picture
+#: of ART, with no client layout behind any part of it and so nothing to go stale against.
+#:
+#: **IT EXISTS BECAUSE SILENCE WAS THE DEFAULT** (QA, CO-6). `check_review_layout.py` printed
+#: `NO LAYOUT` for seven of nine committed sheets and exited 0, so "this sheet is art" and "this
+#: sheet forgot to record the layout it was drawn from" were the same state -- and two of those
+#: seven turned out to be the second thing. A declaration cannot be fallen into.
+#:
+#: It can never be mistaken for a probe, and that is CHECKED rather than agreed: a probe is a
+#: `.gd` file and [`classify`] refuses any other key.
+ART_ONLY = "art-only"
+
+#: probe name -> canonical digest of the answer this process was given, or `ART_ONLY` -> the
+#: reason. A dict rather than a single value because a sheet drawn from two probes should stamp
+#: both; nothing does today.
 _given = {}
 
 
@@ -84,6 +97,60 @@ def load(path, probe):
 
 def remember(probe, answer):
     _given[str(probe)] = digest(answer)
+
+
+def art_only(reason):
+    """The stamp for a sheet that is a picture of ART: no engine layout answered for any of it.
+
+    The counterpart of [`load`] and the other way a generator may satisfy the check. It takes a
+    REASON and not a flag because the reason is the whole value of the declaration: the check
+    prints it, so the next person reads why this sheet is exempt instead of inferring it from
+    the exemption's existence.
+
+    **IT RETURNS THE STAMP INSTEAD OF RECORDING IT, WHICH THE FIRST VERSION GOT WRONG AND A RUN
+    CAUGHT.** Written as `_given[ART_ONLY] = reason` it was module STATE, and these generators
+    import each other -- `pack_icon_kinds.py` reads `species_probe.DISTINCT`, so importing it
+    ran its declaration -- which meant whichever call ran LAST owned the stamp. Three sheets
+    came out carrying `species_probe.py`'s sentence about itself, and `pack_icon_kinds.png`
+    came out declaring art-only AND a layout at once. A claim about one sheet does not belong
+    in state every other sheet's process shares: it is passed at the save, beside the picture
+    it is about.
+
+    Pass it as `png_info(..., layouts=art_only(...))`. A generator still may not say both --
+    [`classify`] refuses a stamp carrying a reason and a probe, which is what caught this.
+    """
+    return {ART_ONLY: str(reason)}
+
+
+def classify(layouts):
+    """Which claim a parsed stamp is making: `(ART_ONLY, reason)` or `("layout", {probe: digest})`.
+
+    ONE DEFINITION FOR THE WRITER AND THE READER. The generators write these stamps and
+    `check_review_layout.py` reads them, so the shape rules live here and neither side gets its
+    own opinion about what a stamp means.
+
+    Raises `ValueError` for a stamp that is neither or both, which the check turns into NO
+    VERDICT: an unreadable declaration must not be read as the harmless one.
+    """
+    if not isinstance(layouts, dict) or not layouts:
+        raise ValueError("not a non-empty object")
+    reason = layouts.get(ART_ONLY)
+    probes = {k: v for k, v in layouts.items() if k != ART_ONLY}
+    if reason is not None and probes:
+        raise ValueError(
+            "declares both %r and the layout(s) %s. A sheet is a picture of art or of a "
+            "layout; it cannot be exempt from a thing it records" % (ART_ONLY, sorted(probes)))
+    if reason is not None:
+        if not str(reason).strip():
+            raise ValueError("declares %r with no reason" % ART_ONLY)
+        return ART_ONLY, str(reason)
+    # EVERY OTHER KEY MUST LOOK LIKE A PROBE, so a future declaration key cannot land in here
+    # and be silently re-asked as a probe -- `answer_now` would call it NO VERDICT, which is
+    # safe, but it would be the wrong sentence about the wrong problem.
+    odd = sorted(k for k in probes if not str(k).endswith(".gd"))
+    if odd:
+        raise ValueError("names %s, which is neither a probe (`*.gd`) nor %r" % (odd, ART_ONLY))
+    return "layout", probes
 
 
 def recorded():

@@ -97,6 +97,7 @@ from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import review_sources  # noqa: E402  the shipped art this sheet composites, stamped into it
 review_sources.start()  # before the first read -- `species_probe` reads art on import (ASSA-144)
+import review_layout  # noqa: E402  the client layout this sheet draws, stamped into it
 # The engine's sampling, the composite and the two-measure comparison, once, shared with
 # `check_icon_kinds.py` -- the CI guard on what this file measures (ASSA-111). A probe and
 # the check that enforces its finding must not be able to disagree about the pixels.
@@ -110,7 +111,13 @@ SPRITES = HERE / "client/assets/sprites"
 REVIEW = HERE / "assets/review"
 os.makedirs(REVIEW, exist_ok=True)
 
-LAYOUT = json.load(open(sys.argv[1] if len(sys.argv) > 1 else "/tmp/cove-layout.json"))
+# THROUGH `review_layout.load`, NOT `json.load` (CO-6). This sheet draws the engine's own rows --
+# it reads `LAYOUT["rows"]` and compares the icon it composites against the one the client drew --
+# so a row that moves makes this picture wrong in exactly the way `pack_icons.png` goes wrong.
+# It carried no layout stamp until CO-6 and sat in a class that passed by default: the check said
+# `NO LAYOUT` about a sheet whose whole subject is a layout.
+LAYOUT = review_layout.load(sys.argv[1] if len(sys.argv) > 1 else "/tmp/cove-layout.json",
+                            probe="pack_icon_layout.gd")
 OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else REVIEW / "pack_icon_kinds.png"
 
 ROWS = [r for r in LAYOUT["rows"] if "icon" in r]
@@ -336,5 +343,5 @@ for iou, de, n, a, b in pairs[:rows_shown + 3]:
     y += 14
 
 img = img.crop((0, 0, W, min(H, y + 8)))
-img.save(OUT, pnginfo=review_sources.png_info())
+img.save(OUT, pnginfo=review_layout.png_info(review_sources.png_info()))
 print("\nwrote %s (%dx%d)" % (OUT, img.width, img.height))
