@@ -889,11 +889,8 @@ fn at(s: &Session, args: &Args) -> Result<(), String> {
     );
     if let Some(b) = s.world.building_at(pos) {
         out!(
-            "({x}, {y}): {} {} at ({}, {}) · {}",
-            b.kind.name(),
-            b.id.0,
-            b.pos.x,
-            b.pos.y,
+            "({x}, {y}): {} · {}",
+            debug::building_address(&s.world, b),
             debug::building_status(&s.world, b)
         );
     }

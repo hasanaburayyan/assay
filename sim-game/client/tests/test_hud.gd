@@ -318,6 +318,32 @@ func test_a_depleted_deposit_and_a_building_and_who_is_here_all_show() -> bool:
 	return true
 
 
+## A BUILDING IS NAMED THE WAY EVERY OTHER OBJECT IS (Maren, ASSA-136). The words are the sim's
+## (`debug::building_name`, which the halted table and sim-cli's tile line also call); this only
+## pins that the window SHOWS them, because the species in that name is the one that caps the fire,
+## the one that comes back in your pack, and the one a sprite's tint is claiming.
+func test_a_standing_building_is_named_by_its_material_and_not_by_its_kind() -> bool:
+	var tile := _tile_with({})
+	tile["building"] = {"id": 2, "kind": "smelter", "name": "Tonore smelter (A)",
+			"pos": Vector2i(10, 9), "status": "walls 73 · no fuel"}
+	var lines := "\n".join(AssayHud.tile_lines(tile))
+	if not lines.contains("Tonore smelter (A) 2"):
+		return _fail("the building is not named: %s" % lines)
+	if not lines.contains("walls 73"):
+		return _fail("the status went missing with the rename: %s" % lines)
+	# THE OLD SHAPE MUST BE GONE, not merely accompanied: `smelter 2` beside the name would be the
+	# bare noun still being shown, which is the thing this fixes.
+	if lines.contains("\nsmelter 2") or lines.begins_with("smelter 2"):
+		return _fail("the bare kind is still being shown: %s" % lines)
+	# AND A DICT WITHOUT A NAME STILL READS. A host older than this field is a protocol mismatch
+	# the client already refuses, so this is belt and braces, not a supported state.
+	var old := _tile_with({})
+	old["building"] = {"id": 7, "kind": "machine", "pos": Vector2i(1, 1), "status": "idle"}
+	if not "\n".join(AssayHud.tile_lines(old)).contains("machine 7"):
+		return _fail("a building with no name must still be addressable")
+	return true
+
+
 func test_empty_ground_and_spawn_are_told_apart() -> bool:
 	var ground := AssayHud.tile_lines({"in_bounds": true, "pos": Vector2i(1, 2),
 			"chunk": Vector2i(0, 0), "chunks_from_spawn": 3, "is_spawn": false})

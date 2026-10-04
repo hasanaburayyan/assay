@@ -672,13 +672,7 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
                 chunk.distance(world.spawn)
             ))];
             if let Some(b) = world.building_at(t) {
-                lines.push(Line::from(format!(
-                    "{} {} at ({},{})",
-                    b.kind.name(),
-                    b.id.0,
-                    b.pos.x,
-                    b.pos.y
-                )));
+                lines.push(Line::from(debug::building_address(world, b)));
                 lines.push(Line::from(debug::building_status(world, b)));
             }
             match world.deposit_at(t) {
