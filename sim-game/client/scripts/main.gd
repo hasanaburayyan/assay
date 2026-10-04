@@ -1105,10 +1105,18 @@ func _refresh() -> void:
 	# same promise is `_refresh_world`'s camera, built on the same tick and for the same reason.
 	_cell = AssayHud.map_cell(size)
 	_refresh_world()
-	_detail.text = ("world seed %s, %d x %d tiles, %d species, %d players · tick %d, hash %s · "
-			+ "%d bundles applied, %d hashes reported") % [
-			_sim.seed_text(), size.x, size.y, _sim.species_names().size(), _sim.players().size(),
-			_sim.tick(), _sim.hash_hex(), _sim.applied, _hashes_sent]
+	# COUNTS AGREE WITH THEIR NOUNS, FROM THE SIM (ASSA-145). `1 players` was the second line of
+	# every screenshot of Assay that exists -- solo is `Play solo`, which is how every window shot
+	# was made and how a stranger opens the game. `AssaySimHost.counted` is `sim::debug::counted`,
+	# so this line and the terminal's cannot drift. `tiles` and `species` are left alone: one is
+	# always >= 2 and the other is invariant in English.
+	_detail.text = ("world seed %s, %d x %d tiles, %d species, %s · tick %d, hash %s · "
+			+ "%s applied, %s reported") % [
+			_sim.seed_text(), size.x, size.y, _sim.species_names().size(),
+			AssaySimHost.counted(_sim.players().size(), "player", "players"),
+			_sim.tick(), _sim.hash_hex(),
+			AssaySimHost.counted(_sim.applied, "bundle", "bundles"),
+			AssaySimHost.counted(_hashes_sent, "hash", "hashes")]
 	_refresh_make()
 	_refresh_assembling()
 	_refresh_pack()
