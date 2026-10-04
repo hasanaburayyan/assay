@@ -107,6 +107,13 @@ MOUNTED_PARTS_CARRY_NO_SHADOW = (
 # silhouette by the client's NEAREST half-scale draw (a dotted line is not a mark);
 # 3 px takes the worst species pair to dE 11.25 and the species read is lost. The k
 # window is [0, ~0.19] and box 3 wants it HIGH, so 0.15 sits near the top of it.
+#
+# AND THE ALPHA MASK IT WALKS IN FROM IS PARTLY FREESTYLE'S (ASSA-172), which is
+# not obvious and changes what "two rings of the silhouette" means. Measured by
+# rendering the four parts with the outline pass ON and OFF and differencing: 1203
+# to 1577 px PER PART change ALPHA, so the line extends past the geometry rather
+# than sitting inside it. The outer rings are therefore partly line pixels that
+# were already dark. Re-derive this width against that, not against the model.
 RIM_PX = 2
 RIM_K = 0.15
 
