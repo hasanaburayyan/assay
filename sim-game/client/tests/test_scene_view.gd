@@ -316,24 +316,45 @@ func test_a_ground_block_is_placed_by_position_and_not_by_hash() -> bool:
 	return true
 
 
-## THE CAMERA CENTRES YOU, AND STOPS AT THE EDGE rather than showing void beside the world.
+## THE CAMERA CENTRES YOU, AND STOPS AT THE EDGE rather than showing void beside the world -- in
+## three directions out of four. **The north bound is `headroom` ABOVE the world (ASSA-184)**, and
+## the assertion this test used to carry (`== Vector2.ZERO` in the north-west corner) is the one that
+## encoded the defect: that camera is exactly the one that slid the player's body up behind the event
+## log's panel in rows 0..7.
 func test_the_camera_centres_you_and_clamps_at_the_world_edge() -> bool:
 	var world := Vector2i(96, 64)
-	var middle := AssayScene.camera_origin(Vector2(48.0, 32.0), world, WINDOW)
+	var room := AssayScene.north_headroom(_manifest(), WINDOW)
+	if room <= 0.0:
+		return _fail(("north_headroom answered %f for the real manifest, so there is no north bound "
+				+ "to check and every assertion below about row 0 is vacuous") % room)
+	var middle := AssayScene.camera_origin(Vector2(48.0, 32.0), world, WINDOW, room)
 	var want := Vector2(48.5 * 32.0 - 320.0, 32.5 * 32.0 - 160.0)
 	if not middle.is_equal_approx(want):
 		return _fail("centred on (48, 32) the camera is at %s and the middle is %s" % [middle, want])
-	if AssayScene.camera_origin(Vector2.ZERO, world, WINDOW) != Vector2.ZERO:
-		return _fail("standing in the north-west corner the camera went to %s, past the world"
-				% AssayScene.camera_origin(Vector2.ZERO, world, WINDOW))
-	var far := AssayScene.camera_origin(Vector2(95.0, 63.0), world, WINDOW)
+	# THE NORTH-WEST CORNER, ONE AXIS AT A TIME, because the two axes now answer differently and a
+	# `Vector2` comparison would not say which one moved.
+	var corner := AssayScene.camera_origin(Vector2.ZERO, world, WINDOW, room)
+	if corner.x != 0.0:
+		return _fail("walking into the WEST edge the camera went to x %f, past the world" % corner.x)
+	if not is_equal_approx(corner.y, -room):
+		return _fail(("standing in row 0 the camera stopped at y %f and ASSA-184 bounds it at %f; "
+				+ "at y 0 the body is drawn from y %f with the panel owning the top %f")
+				% [corner.y, -room, -AssayScene.TILE_PX,
+				AssayScene.player_ceiling(_manifest(), WINDOW)])
+	# NO PLAYER ART, NO VOID: at headroom 0 this is the camera the client had before ASSA-184, which
+	# is the honest answer when `player_ceiling` has nothing to measure and keeps all fourteen lines.
+	if AssayScene.camera_origin(Vector2.ZERO, world, WINDOW, 0.0) != Vector2.ZERO:
+		return _fail("with no headroom the north-west corner must still be the world's own corner")
+	var far := AssayScene.camera_origin(Vector2(95.0, 63.0), world, WINDOW, room)
 	var edge := Vector2(96.0 * 32.0, 64.0 * 32.0) - WINDOW
 	if not far.is_equal_approx(edge):
 		return _fail("in the south-east corner the camera is at %s and the last full view is %s"
 				% [far, edge])
-	# A world smaller than the view has no clamp to make, so it is centred instead.
-	var tiny := AssayScene.camera_origin(Vector2(2.0, 2.0), Vector2i(4, 4), WINDOW)
-	if not tiny.is_equal_approx((Vector2(128.0, 128.0) - WINDOW) * 0.5):
+	# A world smaller than the view has no clamp to make, so it is centred instead -- but never
+	# ABOVE the bound. `camera_origin` carries one invariant with no footnote: no camera it returns
+	# lifts a body above the ceiling. A 4x4 world is drawn below its centre as the price.
+	var tiny := AssayScene.camera_origin(Vector2(2.0, 2.0), Vector2i(4, 4), WINDOW, room)
+	if not tiny.is_equal_approx(Vector2((128.0 - WINDOW.x) * 0.5, -room)):
 		return _fail("a world smaller than the window put the camera at %s" % tiny)
 	return true
 
@@ -719,8 +740,11 @@ func test_the_ore_drawn_is_the_tiles_the_sim_names_and_not_a_bounding_box() -> b
 			continue
 		var centre: Vector2i = deposit.get("center", Vector2i.ZERO)
 		radius = int(deposit["radius"])
+		# HEADROOM 0.0: this is about which ore tiles a window covers, and a deposit's centre is the
+		# camera's target. Giving it the real bound would only change the answer for a deposit in
+		# rows 0..8, which is a different question (`test_the_north_edge_...` below).
 		found = screen._ore_under(AssayScene.camera_origin(Vector2(centre), world,
-				screen._world.size), world)
+				screen._world.size, 0.0), world)
 		if found.has(centre):
 			# A radius-r patch is a circle, so the corners of its bounding box are outside it.
 			for step: Vector2i in [Vector2i(radius, radius), Vector2i(-radius, radius),
@@ -1176,7 +1200,10 @@ func test_the_player_ceiling_is_the_highest_a_body_is_ever_drawn() -> bool:
 	var highest := INF
 	for step in steps:
 		var at := Vector2(48.0, 32.0 + float(step) / float(steps))
-		var origin := AssayScene.camera_origin(at, Vector2i(96, 64), WINDOW)
+		# HEADROOM 0.0, AND THE GUARD BELOW IS WHY IT IS SAFE: this walks one INTERIOR tile, the
+		# assertion refuses to run if any bound binds, and the whole claim is about a camera that is
+		# centring. ASSA-184's north bound cannot reach row 32.
+		var origin := AssayScene.camera_origin(at, Vector2i(96, 64), WINDOW, 0.0)
 		if origin.y <= 0.0 or origin.y >= float(64 * 32) - WINDOW.y:
 			return _fail("the camera clamped at %s, so this test is about the wrong case" % at)
 		var bodies := _of(AssayScene.placements(_view({"origin": origin,
@@ -1203,7 +1230,9 @@ func test_the_player_ceiling_is_the_highest_a_body_is_ever_drawn() -> bool:
 func test_the_player_ceiling_does_not_depend_on_which_interior_tile_you_stand_on() -> bool:
 	var ceiling := AssayScene.player_ceiling(_manifest(), WINDOW)
 	for at in [Vector2(20.0, 10.0), Vector2(48.0, 32.0), Vector2(70.0, 50.0), Vector2(11.0, 6.0)]:
-		var origin := AssayScene.camera_origin(at, Vector2i(96, 64), WINDOW)
+		# HEADROOM 0.0: every tile here is interior and the assertion is that the camera CENTRES, so
+		# a bound of any sign binding would be the thing this test is written to catch.
+		var origin := AssayScene.camera_origin(at, Vector2i(96, 64), WINDOW, 0.0)
 		var bodies := _of(AssayScene.placements(_view({"origin": origin,
 				"players": [{"at": at, "facing": "S", "moving": false}]})), "player")
 		if bodies.size() != 1:
@@ -1213,6 +1242,76 @@ func test_the_player_ceiling_does_not_depend_on_which_interior_tile_you_stand_on
 			return _fail(("a body standing on tile %s is drawn from y %f; the ceiling is %f, so the "
 					+ "camera is not centring there and one bound cannot serve every tile")
 					% [at, top, ceiling])
+	return true
+
+
+## **AT THE WORLD'S NORTH EDGE THE CLAMP USED TO PUT YOUR BODY BEHIND THE PANEL** (ASSA-184).
+##
+## Maren's measurement on the real `placements()`: 6 of 64 rows drew the player WHOLLY above the log
+## panel's ceiling and 2 more cut them in half, because `player_ceiling`'s single answer is derived
+## from a camera that is CENTRING and the north clamp is a camera that has stopped. 12.5% of a
+## world's deposits are centred in rows 0..7; on seed 777042 both grade-A Minyte deposits are.
+##
+## **WHAT MAKES THIS MORE THAN THE ARITHMETIC I ALREADY WROTE IN `camera_origin`.** It walks the
+## whole north band through the real camera and the real `placements`, at four positions inside each
+## row, and asserts three different things that a wrong `north_headroom` breaks differently:
+##
+## 1. no body is drawn above the ceiling -- the defect;
+## 2. no body leaves the map rect at all -- row 0 used to draw from y -32, so you saw your legs;
+## 3. every row from 1 south is still drawn at EXACTLY the centred position -- which is the half a
+##    generous bound would silently cost, because a bound that binds in rows 1..8 pins the body and
+##    jerks the world 32px per step instead.
+func test_the_north_edge_rows_draw_a_whole_body_below_the_panel() -> bool:
+	var world := Vector2i(96, 64)
+	var ceiling := AssayScene.player_ceiling(_manifest(), WINDOW)
+	var room := AssayScene.north_headroom(_manifest(), WINDOW)
+	if ceiling <= 0.0 or room <= 0.0:
+		return _fail(("ceiling %f and headroom %f: one of them has nothing to say, so every "
+				+ "assertion below is vacuous") % [ceiling, room])
+	# THE CENTRED ANSWER, COMPUTED A SECOND WAY and not read back off the camera: this is the
+	# position an interior body is drawn at, which `test_..._does_not_depend_on_which_interior_tile`
+	# pins to `ceiling + TILE_PX`. Assertion 3 compares against it, so a camera that quietly stopped
+	# centring would fail here rather than agreeing with itself.
+	var centred := ceiling + AssayScene.TILE_PX
+	for row in 11:
+		for quarter in 4:
+			var at := Vector2(48.0, float(row) + float(quarter) * 0.25)
+			var origin := AssayScene.camera_origin(at, world, WINDOW, room)
+			var bodies := _of(AssayScene.placements(_view({"origin": origin,
+					"players": [{"at": at, "facing": "S", "moving": quarter != 0}]})), "player")
+			if bodies.size() != 1:
+				return _fail(("a body at %s drew %d sprites, not one -- it was culled, which is the "
+						+ "same picture as being hidden") % [at, bodies.size()])
+			var body: Rect2 = (bodies[0] as Dictionary)["dest"]
+			if body.position.y < ceiling - 0.01:
+				return _fail(("standing at %s your body is drawn from y %.1f and the log panel owns "
+						+ "the map's top %.1f: %.1fpx of you is behind it, which is Maren's zero "
+						+ "player pixels") % [at, body.position.y, ceiling,
+						ceiling - body.position.y])
+			if body.position.y < -0.01 or body.end.y > WINDOW.y + 0.01:
+				return _fail(("standing at %s your body is drawn y %.1f..%.1f and the map rect is "
+						+ "0..%.1f: part of you is outside the picture") % [at, body.position.y,
+						body.end.y, WINDOW.y])
+			if row >= 1 and absf(body.position.y - (centred - AssayScene.TILE_PX
+					* float(quarter) * 0.25)) > 0.01:
+				return _fail(("at %s the body is drawn from y %.1f; a centring camera draws it at "
+						+ "%.1f. The north bound is binding south of row 1, so it pins the body and "
+						+ "the WORLD jerks a tile per step instead") % [at, body.position.y,
+						centred - AssayScene.TILE_PX * float(quarter) * 0.25])
+	# AND THE SOUTH CLAMP IS UNTOUCHED, which is the direction that was always safe: it pushes you
+	# DOWN, away from a panel anchored to the top. Rows 59..63 clamp here (320px of a 2048px world).
+	for row in range(54, 64):
+		var at := Vector2(48.0, float(row))
+		var origin := AssayScene.camera_origin(at, world, WINDOW, room)
+		var bodies := _of(AssayScene.placements(_view({"origin": origin,
+				"players": [{"at": at, "facing": "N", "moving": false}]})), "player")
+		if bodies.size() != 1:
+			return _fail("a body in the south band at %s drew %d sprites" % [at, bodies.size()])
+		var body: Rect2 = (bodies[0] as Dictionary)["dest"]
+		if body.position.y < ceiling - 0.01 or body.end.y > WINDOW.y + 0.01:
+			return _fail(("the SOUTH clamp moved a body out of the picture at %s: y %.1f..%.1f "
+					+ "against a ceiling of %.1f and a map %.1f tall")
+					% [at, body.position.y, body.end.y, ceiling, WINDOW.y])
 	return true
 
 

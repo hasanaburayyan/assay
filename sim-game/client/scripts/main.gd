@@ -115,6 +115,13 @@ var _log_box: PanelContainer = null
 ## about the LAYOUT -- a bound that changed as you walked would be a panel that resized while you
 ## read it, which is worse than a short one.
 var _log_room := -1.0
+## HOW FAR ABOVE ROW 0 THE CAMERA MAY GO, in map pixels, so the north clamp cannot slide your body
+## under that panel (ASSA-184, Maren's measurement: 6 of 64 rows hid the player completely and
+## 12.5% of a world's deposits are in them). Read from the same manifest and the same rect as
+## `_log_room`, in the same place and for the same reason -- these two numbers are one decision, and
+## a camera bound computed somewhere else is a camera bound that drifts from the panel it exists to
+## clear. 0.0 means "never leave the world", which is the camera this client had before.
+var _north_room := 0.0
 ## THE BOX THAT SCROLLS THE COLUMN. Held since ASSA-117 and still held, for `window_shot.gd`'s clip
 ## report and for `test_main_screen.gd`'s invariant that the log is NOT inside it. What it is no
 ## longer held for is scrolling to the log: that whole mechanism is gone with ASSA-147, because the
@@ -801,6 +808,7 @@ func _build_log_over_the_map(world: Rect2) -> void:
 	if _manifest.is_empty():
 		_manifest = AssaySprites.manifest()
 	_log_room = AssayScene.player_ceiling(_manifest, world.size)
+	_north_room = AssayScene.north_headroom(_manifest, world.size)
 	_log_region = VBoxContainer.new()
 	_log_region.position = world.position
 	_log_region.size = world.size
@@ -2278,8 +2286,11 @@ func _refresh_world() -> void:
 	# THE CAMERA IS ON YOUR DRAWN POSITION, not on your tile, or the world would jerk 32 px under a
 	# body that is moving smoothly over it. Spawn when you have no player yet, which is the state
 	# `--selfcheck` and a mid-join frame are both in.
+	# `_north_room` IS WHY YOU ARE STILL ON SCREEN IN ROW 0 (ASSA-184). The y clamp used to stop at
+	# the world's edge, which is where the event log's panel is: standing in the top eight rows slid
+	# your body up behind it. The bound is the panel's, derived from the same manifest.
 	var origin := AssayScene.camera_origin(me if me != null else Vector2(_sim.spawn_tile()),
-			size, _world.size)
+			size, _world.size, _north_room)
 	_world.view = {
 		"world_tiles": size,
 		"origin": origin,
