@@ -54,7 +54,12 @@ func _initialize() -> void:
 		var disc := AssayHud.deposit_disc(deposit, radius)
 		rows.append({"symbol": String(deposit["symbol"]), "species": int(deposit["species"]),
 				"purity": int(deposit["purity"]), "minable": bool(deposit["hand_minable"]),
-				"filled": bool(disc["filled"]), "stroke": float(disc["stroke"]),
+				# **`dead_end` IS THE MARK'S PREDICATE AND `minable` IS NOT** (ASSA-199). They are
+				# not opposites: a rock can be dug and not smelted, and both are in the table so a
+				# measurement can tell "the mark moved" from "the world changed".
+				"dead_end": not String(deposit["reach_note"]).is_empty(),
+				"hatch": bool(disc["hatch"]), "filled": bool(disc["filled"]),
+				"hatch_width": float(disc["hatch_width"]), "stroke": float(disc["stroke"]),
 				"x": at.x, "y": at.y, "r": radius,
 				"colour": [disc["colour"].r, disc["colour"].g, disc["colour"].b]})
 	var table := {"seed": seed_text, "cell": cell, "margin": [margin.x, margin.y],

@@ -2747,22 +2747,33 @@ func _draw() -> void:
 			continue
 		var at := MARGIN + Vector2(deposit.get("center", Vector2i.ZERO) as Vector2i) * _cell
 		var radius := maxf(_cell, float(int(deposit.get("radius", 1))) * _cell)
-		# **SOLID IF YOU CAN WORK THE ROCK, AN OUTLINE IF NOTHING CAN** (ASSA-187). Three channels
-		# were already spoken for -- hue is the species, brightness is the purity, radius is the
-		# radius -- and the fact that decides whether a 40-tile walk pays had none, on the one
-		# surface whose whole job is choosing where to walk. Fill is geometry, so it is also the only
-		# answer that survives a greyscale copy of the shot, which Maren's box 3 asks for.
+		# **HATCHED IF NOTHING CAN GET THE ORE OUT, CLEAN IF THE ROCK PAYS** (ASSA-199, Maren's
+		# ruling on Cove's sheet; it replaces the outline ASSA-187 shipped). Three channels were
+		# already spoken for -- hue is the species, brightness is the purity, radius is the radius --
+		# and the fact that decides whether a 40-tile walk pays had none, on the one surface whose
+		# whole job is choosing where to walk. The answer is geometry, so it survives a greyscale
+		# copy of the shot, which Maren's box 3 asks for; and it is SUBTRACTIVE, so the clean disc
+		# is what the eye picks out, which is the right way round when 55.1% of rocks are dead.
 		#
 		# THE DECISION IS `AssayHud.deposit_disc`'S AND NOT THIS LOOP'S, so a headless test can read
 		# it: nothing here can be asked what it painted. This function only paints what it is told,
-		# including the glyph's ink, which differs between the two states because the letter sits on
-		# a different surface in each.
+		# and the geometry of the hatch is `AssayHud.hatch_segments`, a pure function of the circle.
 		var disc := AssayHud.deposit_disc(deposit, radius)
 		var colour: Color = disc["colour"]
-		if bool(disc["filled"]):
-			draw_circle(at, radius, colour)
-		else:
-			draw_circle(at, radius, colour, false, float(disc["stroke"]), true)
+		# **ALWAYS SOLID NOW** (ASSA-199 box 4). #259 drew a dead end as a hollow ring, which
+		# spent the fill that purity's brightness and the species hue both live in; Maren ruled
+		# Cove's hatch instead, and the hollow is GONE rather than left underneath it.
+		draw_circle(at, radius, colour)
+		if bool(disc["hatch"]):
+			# **BEFORE THE LETTER, WHICH IS WHAT KEEPS THE LETTER.** Cove's constraint is that the
+			# hatch repaints only pixels already inside the disc: the strokes are cut to the chord
+			# so the edge survives, and the glyph simply goes on last. An ORDER, not a clip -- and
+			# the one frame-ordering fact in here I do not have to ask the engine about.
+			var strokes := AssayHud.hatch_segments(at, radius)
+			var ink: Color = disc["hatch_ink"]
+			var thick := float(disc["hatch_width"])
+			for i in range(0, strokes.size(), 2):
+				draw_line(strokes[i], strokes[i + 1], ink, thick)
 		var symbol := String(deposit.get("symbol", ""))
 		var glyph := AssayHud.glyph_size(radius)
 		if glyph > 0 and not symbol.is_empty() and font != null:

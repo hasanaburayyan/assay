@@ -187,79 +187,123 @@ func test_the_species_letter_always_takes_the_higher_contrast_colour() -> bool:
 	return true
 
 
-## **A ROCK NOTHING CAN MINE IS A HOLLOW DISC, AND IT PAYS FOR THAT OUT OF NO OTHER CHANNEL**
-## (ASSA-187, Maren's ruling). Hue is the species, brightness is the purity, radius is the radius; the
-## fourth fact — whether anything you can build gets the ore out — had nowhere to go, on the one
-## surface whose job is choosing where to walk.
+## **A ROCK NOTHING CAN GET THE ORE OUT OF IS HATCHED, AND IT PAYS FOR THAT OUT OF NO OTHER CHANNEL**
+## (ASSA-199, Maren's ruling on Cove's sheet; it replaces the hollow disc of ASSA-187). Hue is the
+## species, brightness is the purity, radius is the radius; the fourth fact had nowhere to go, on the
+## one surface whose job is choosing where to walk.
 ##
 ## **SWEPT, AND THE SWEEP IS THE POINT.** All six tints x purity 1..100 x both states: `colour` must
-## be bit-identical to `deposit_color` in BOTH, which is box 4 ("the existing three channels are not
-## traded away for the new one") expressed as an identity rather than an opinion. A fix that dimmed
-## or re-tinted the unminable disc fails here, and that is the fix the ruling forbids.
+## be bit-identical to `deposit_color` in BOTH, which is box 6 ("purity, radius and the letter all
+## still read") expressed as an identity rather than an opinion. A fix that dimmed or re-tinted the
+## dead disc fails here, and that is the fix the ruling forbids.
 ##
-## **THE INK IS CHECKED FOR OPTIMALITY, NOT AGAINST A NUMBER**, exactly as
-## `test_the_species_letter_always_takes_the_higher_contrast_colour` argues: picking the better of two
-## is optimal by construction, so the invariant cannot rot when a tint moves. What IS asserted as a
-## number is that the hollow state is no worse than the filled family's worst (4.5), because the
-## letter sits on `MAP_BG` there rather than on the species colour -- a hollow disc with an ink chosen
-## for a fill that is not there would be the obvious way to break box 4 while passing everything else.
-## Measured: 17.06 on the bare map against 4.52 at the worst fill, so the letter reads BETTER hollow.
+## **AND `filled` IS TRUE IN BOTH STATES, WHICH IS BOX 4.** The old version of this test asserted
+## `filled == minable` and measured the letter's contrast on `MAP_BG` for the hollow case. Both are
+## gone on purpose: a hollow disc spends the fill, and the fill is where two of the three older reads
+## live. The hollow being GONE rather than left underneath is a box of its own, so it is asserted here
+## as well as in the picture.
 ##
-## WHAT THIS CANNOT SEE: that `main.gd::_draw` consumes any of it. `test_main_screen.gd` holds the
-## wiring and the shot holds the picture; a painter that ignored `filled` leaves this green.
-func test_a_rock_nothing_can_mine_is_hollow_and_trades_no_other_channel() -> bool:
+## **THE PREDICATE IS `reach_note`, NOT `hand_minable`, AND THAT IS THE OTHER HALF OF THE ITEM.** A
+## rock can be minable and still unsmeltable -- 16.3% of them over Maren's 30 seeds -- and those drew
+## exactly like good ore. So the sweep runs both keys independently and asserts the mark follows the
+## NOTE: a `hand_minable` rock carrying a note must still be hatched, which is the state the shipped
+## code got wrong and the one a test keyed on `hand_minable` cannot see.
+##
+## WHAT THIS CANNOT SEE: that `main.gd::_draw` consumes any of it, or what the hatch LOOKS like.
+## `test_main_screen.gd` holds the wiring, `test_the_hatch_stays_inside_its_disc` holds the geometry,
+## and the picture is a GUI shot measured by `shared/assay/assa187_measure.py`.
+func test_a_dead_end_rock_is_hatched_and_trades_no_other_channel() -> bool:
 	var checked := 0
-	var worst_hollow := 99.0
-	var worst_filled := 99.0
+	var worst_ink := 99.0
 	for species in range(AssayHud.SPECIES_TINTS.size()):
 		for purity in range(1, 101):
 			var want := AssayHud.deposit_color(species, purity)
-			for minable: bool in [true, false]:
-				var deposit := {"species": species, "purity": purity, "hand_minable": minable}
+			# BOTH KEYS, INDEPENDENTLY. The pair that matters is minable=true with a note: a rock you
+			# can dig and cannot smelt. Keying the mark on `hand_minable` passes every other case.
+			for case in [{"minable": true, "note": ""}, {"minable": false, "note": "too hard to mine"},
+					{"minable": true, "note": "nothing here can smelt it"},
+					{"minable": false, "note": "out of reach"}]:
+				var note := String(case["note"])
+				var deposit := {"species": species, "purity": purity,
+						"hand_minable": case["minable"], "reach_note": note}
 				var disc := AssayHud.deposit_disc(deposit, 18.0)
 				var colour: Color = disc["colour"]
 				if colour != want:
-					return _fail(("species %d at purity %d, minable %s: the disc is %s and "
+					return _fail(("species %d at purity %d, note %s: the disc is %s and "
 							+ "`deposit_color` says %s. Species and purity are the other two reads "
-							+ "and this item may not spend them.") % [species, purity, minable,
+							+ "and this item may not spend them.") % [species, purity, note,
 							colour, want])
-				if bool(disc["filled"]) != minable:
-					return _fail(("species %d at purity %d: minable %s was drawn filled=%s. Fill "
-							+ "IS the channel; inverted, every dead end reads as a patch worth a "
-							+ "40-tile walk.") % [species, purity, minable, disc["filled"]])
-				# THE SURFACE THE LETTER SITS ON, which is the whole reason the ink differs: a
-				# hollow disc shows `MAP_BG` through itself, so coverage is 0 there.
-				var lit := AssayHud.MAP_BG.lerp(Color(colour.r, colour.g, colour.b),
-						1.0 if minable else 0.0)
-				var dark := _wcag_ratio(lit, AssayHud.GLYPH_DARK)
-				var light := _wcag_ratio(lit, AssayHud.GLYPH_LIGHT)
+				if not bool(disc["filled"]):
+					return _fail(("species %d at purity %d, note %s: the disc is not filled. The "
+							+ "hollow of #259 is GONE (box 4); the hatch keeps the fill so radius "
+							+ "and purity carry at full strength.") % [species, purity, note])
+				if bool(disc["hatch"]) != (note != ""):
+					return _fail(("species %d at purity %d: hand_minable %s with note `%s` was "
+							+ "hatched=%s. The mark follows the NOTE -- a rock you can dig and "
+							+ "cannot smelt is a dead end too, and that is the one `hand_minable` "
+							+ "misses.") % [species, purity, case["minable"], note, disc["hatch"]])
+				if disc["hatch_ink"] != AssayHud.MAP_BG:
+					return _fail("the hatch ink is %s and not MAP_BG, which is a new colour on a map "
+							+ "whose named set exists to stop that" % disc["hatch_ink"])
+				# THE LETTER SITS ON THE FILL IN BOTH STATES NOW, so the ink is simply the better of
+				# the two -- optimal by construction, which is an invariant a moved tint cannot rot.
+				var dark := _wcag_ratio(colour, AssayHud.GLYPH_DARK)
+				var light := _wcag_ratio(colour, AssayHud.GLYPH_LIGHT)
 				var ink: Color = disc["ink"]
 				var took: float = dark if ink == AssayHud.GLYPH_DARK else light
 				if took < maxf(dark, light) - 1e-6:
-					return _fail(("species %d at purity %d, minable %s: the letter took the ink "
-							+ "worth %f when %f was there. An ink chosen for a fill that is not "
-							+ "drawn is how the hollow disc would lose its letter.")
-							% [species, purity, minable, took, maxf(dark, light)])
-				if minable:
-					worst_filled = minf(worst_filled, took)
-				else:
-					worst_hollow = minf(worst_hollow, took)
+					return _fail(("species %d at purity %d: the letter took the ink worth %f when "
+							+ "%f was there.") % [species, purity, took, maxf(dark, light)])
+				worst_ink = minf(worst_ink, took)
 				checked += 1
-	if checked != 1200:
-		return _fail("swept %d states, expected 1200" % checked)
-	if worst_hollow < 4.5:
-		return _fail(("the letter on a hollow disc is worth only %f, under the %f the worst FILLED "
-				+ "disc manages. Box 4 is that the species letter still reads.")
-				% [worst_hollow, worst_filled])
-	print("    disc letter: worst %f filled, %f hollow (hollow sits on MAP_BG, so it reads better)"
-			% [worst_filled, worst_hollow])
-	# AND THE OUTLINE IS THICK ENOUGH TO CARRY A COLOUR. A 1px ring at a few per cent coverage reads
-	# as grey, which would spend the purity channel to buy this one.
-	for radius: float in [9.0, 18.0, 36.0, 200.0]:
-		var stroke := float(AssayHud.deposit_disc(
-				{"species": 0, "purity": 50, "hand_minable": false}, radius)["stroke"])
-		if stroke < 2.0 or stroke > 6.0 or absf(stroke - clampf(radius * 0.2, 2.0, 6.0)) > 1e-6:
-			return _fail("a radius-%f disc outlines at %f px" % [radius, stroke])
+	if checked != 2400:
+		return _fail("swept %d states, expected 2400" % checked)
+	print("    disc letter: worst %f over every tint and purity, on the fill in both states"
+			% worst_ink)
+	return true
+
+
+## **THE HATCH ONLY EVER REPAINTS PIXELS INSIDE ITS OWN DISC, AND AT THE RULED DENSITY** (ASSA-199
+## box 2 and Cove's constraint). The ink is `MAP_BG`, so a stroke that overshot the circle would paint
+## the map's own ground over a neighbour, over a player, or over the antialiased edge the whole mark
+## is supposed to leave alone -- and on open ground it would be invisible while doing it.
+##
+## **THE DENSITY IS CHECKED AS AREA, WHICH IS THE NUMBER MAREN RULED ON.** Cove's sheet is the pixel
+## rule `(x + y) % 7 < 2` = 2/7 = 28.6% of a disc, and they measured 22.2-27.1% on real hatched discs.
+## Their prose also says "2px wide", which PERPENDICULAR would be 40% -- half again as much ink as the
+## picture she approved. So the strokes' area over the disc's area has to land near 2/7, and the
+## tolerance is wide because the chord inset and the rasteriser both take a little off.
+func test_the_hatch_stays_inside_its_disc() -> bool:
+	for radius: float in [9.0, 18.0, 27.0, 36.0]:
+		for at: Vector2 in [Vector2(100.0, 200.0), Vector2(541.5, 631.5), Vector2(64.3, 17.9)]:
+			var strokes := AssayHud.hatch_segments(at, radius)
+			if strokes.size() < 4 or strokes.size() % 2 != 0:
+				return _fail(("a radius-%.0f disc at %s got %d hatch points: it must be pairs, and a "
+						+ "disc with no strokes is a dead end drawn as good ore")
+						% [radius, at, strokes.size()])
+			var width := float(AssayHud.HATCH_ON) / sqrt(2.0)
+			var area := 0.0
+			for i in range(0, strokes.size(), 2):
+				var a := strokes[i]
+				var b := strokes[i + 1]
+				# EVERY CORNER OF THE STROKE'S QUAD, because `draw_line` is a quad and it is the
+				# CORNERS that leave a circle, not the endpoints a reader checks.
+				var out := (b - a).normalized().orthogonal() * width * 0.5
+				for corner: Vector2 in [a + out, a - out, b + out, b - out]:
+					if corner.distance_to(at) > radius + 0.01:
+						return _fail(("a hatch stroke on the radius-%.0f disc at %s reaches %s, "
+								+ "%.2fpx outside it. MAP_BG outside a disc paints the map's own "
+								+ "ground over whatever is there.")
+								% [radius, at, corner, corner.distance_to(at) - radius])
+				area += a.distance_to(b) * width
+			var share := area / (PI * radius * radius)
+			var want := float(AssayHud.HATCH_ON) / float(AssayHud.HATCH_PERIOD)
+			if absf(share - want) > 0.06:
+				return _fail(("the hatch covers %.1f%% of the radius-%.0f disc at %s; the ruled "
+						+ "density is %d in %d = %.1f%%. Cove's prose says 2px wide, which "
+						+ "perpendicular would be 40%% -- this is the sheet's density, not that.")
+						% [share * 100.0, radius, at, AssayHud.HATCH_ON, AssayHud.HATCH_PERIOD,
+						want * 100.0])
 	return true
 
 
