@@ -108,6 +108,65 @@ fn the_guard_reads_event_line_and_not_the_tables() {
     );
 }
 
+/// **NO ENTRY THAT PERSISTS NAMES A DESIGN SLOT (ASSA-130).** The same
+/// mechanical shape as the backtick guard above, and for the same reason: the
+/// thing to prevent is the next one.
+///
+/// A design's index is a **slot, not a name**. `Equip` does
+/// `assemblies.remove(i)` (`step.rs`) and pushes whatever was in hand onto the
+/// end, so every later design shifts down one. `event_line`'s output is the one
+/// prose a host renders verbatim **into a scrollback that outlives the slot** —
+/// `sim-cli`'s console and the Godot client's event log — so an entry that
+/// names `#1` is an entry that names a different design a tick later. The live
+/// surfaces are fine and are not in scope: `built_table` is read at a prompt
+/// now, and `main.gd` re-reads the index from `designs_of` every snapshot.
+///
+/// This caught the Game Director's own correction to her filing: she ruled the
+/// *Equipped* line down to a verdict and froze the *Assembled* line as
+/// "unchanged", and that one was already printing `assembled #{assembly}`.
+#[test]
+fn no_event_line_entry_prints_a_design_slot() {
+    let body = event_line_body();
+    for (n, line) in body.lines().enumerate() {
+        if line.trim_start().starts_with("//") {
+            continue;
+        }
+        assert!(
+            !line.contains('#'),
+            "event_line prints a '#' on body line {n}: {line}\n\
+             A design index is a slot and not a name: `Equip` removes from the \
+             Vec, so every later design shifts down one, and this function's \
+             output persists in a scrollback (ASSA-130). Identify a design by \
+             the sheet printed on the same line."
+        );
+    }
+    // NON-VACUITY, AND IT PINS THE SCOPE AT THE SAME TIME. Zero is the passing
+    // answer, so "I found none" proves nothing on its own -- the scan has to be
+    // shown capable of finding one. `command_phrase` is the right witness
+    // because it legitimately still has two (`taking #N in hand`, `planting #N
+    // at`) and is deliberately OUT of scope: a command echo is current when it
+    // prints and does not age, which is the whole distinction this guard rests
+    // on. If those ever go, this witness must be replaced and not deleted.
+    let start = DEBUG_RS
+        .find("pub fn command_phrase")
+        .expect("command_phrase is still called that");
+    let rest = &DEBUG_RS[start..];
+    let end = rest[1..]
+        .find("\npub fn ")
+        .map_or(rest.len(), |i| i + 1 + 1);
+    let echoes = &rest[..end];
+    assert_eq!(
+        echoes.matches("#{").count(),
+        2,
+        "the command echoes are this guard's proof that it can see a slot \
+         number at all, and that an echo is allowed one"
+    );
+    assert!(
+        !body.contains("taking #"),
+        "the echoes must be outside the slice being scanned"
+    );
+}
+
 fn world() -> World {
     World::new(WorldConfig {
         seed: 9,

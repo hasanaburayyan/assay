@@ -540,18 +540,45 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
                 .player(*player)
                 .and_then(|p| p.assemblies.get(*assembly as usize))
                 .map(|b| assembly_readout(world, b));
+            // NO SLOT NUMBER IN SCROLLBACK (ASSA-130, the Game Director's
+            // correction to her own box). This used to read `assembled
+            // #{assembly}`, and `assembly` is a Vec index: `Equip` does
+            // `assemblies.remove(i)` (`step.rs`), so every later design
+            // shifts down one. An entry that stays on screen would then name
+            // a different design than the one it was written about. The sheet
+            // is on this very line, so the sheet is the identification.
+            //
+            // The noun is read off the frame, not fixed: `Assembled` fires
+            // for a planted drill as well as a held pick, and `debug.rs`
+            // already words the difference as "a handle for a tool, a frame
+            // to plant" in `assembly_error_phrase`.
+            let noun = match world
+                .player(*player)
+                .and_then(|p| p.assemblies.get(*assembly as usize))
+                .and_then(|b| b.assembly.mount())
+            {
+                Some(Mount::Held) => "a tool",
+                _ => "a machine",
+            };
             match readout {
-                Some(r) => format!("{} assembled #{assembly}: {r}", who(player)),
-                None => format!("{} assembled #{assembly}", who(player)),
+                Some(r) => format!("{} assembled {noun}: {r}", who(player)),
+                None => format!("{} assembled {noun}", who(player)),
             }
         }
         Event::Equipped { player } => {
-            let readout = world
+            // THE VERDICT ONLY, ONE ROW (ASSA-130). The sheet is not news
+            // here: `Assembled` printed it one tick earlier -- the normal
+            // flow, not an edge, as `sim-cli/tests/first_pick.rs` shows -- and
+            // the designs panel holds it standing. Four wrapped rows repeated
+            // were a third of the readable log in the window shot that filed
+            // this. The verdict stays because it is the part that bears on the
+            // act: am I about to swing something that will break.
+            let verdict = world
                 .player(*player)
                 .and_then(|p| p.tool.as_ref())
-                .map(|b| assembly_readout(world, b));
-            match readout {
-                Some(r) => format!("{} equipped a tool: {r}", who(player)),
+                .map(|b| b.assembly.stat_range(&world.species).verdict().label());
+            match verdict {
+                Some(v) => format!("{} equipped a tool: {v}", who(player)),
                 None => format!("{} equipped a tool", who(player)),
             }
         }
