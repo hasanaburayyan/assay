@@ -342,3 +342,78 @@ func test_a_world_with_nothing_built_reports_nothing_stopped() -> bool:
 				+ "when the factory is healthy is the cry-wolf failure one step removed.")
 				% [(stopped as PackedStringArray).size(), stopped])
 	return true
+
+
+## **WHAT A REAL PLAYER DICT CARRIES, ASKED OF THE RUNNING BINDING** (ASSA-196).
+##
+## Marlow found the defect in `main.gd`: five reads of `player.get("id")` / `player.get("pos")` with
+## silent defaults, on dicts that come straight out of `AssaySim.players()`. A binding that stopped
+## sending `pos` draws every player on the world's corner and nothing anywhere says so -- not the
+## renderer's boundary check (by then `at` is composed and present), not a test, not the screen.
+##
+## **THE RUNNING BINDING AND NOT A FIXTURE, which is the whole point.** A fixture I typed would agree
+## with my assumption; a Rust-side guard would pass against a stale `.dylib`, which is the failure
+## that has bitten Marlow and me twice this week. This asks the library that is actually loaded.
+func test_a_real_player_dict_carries_every_fact_the_client_reads() -> bool:
+	if not ClassDB.class_exists("AssaySim"):
+		return _fail("no AssaySim class; see the failure above")
+	var sim := AssaySimHost.new()
+	if not sim.start(AssaySimHost.fresh_welcome_json("777042", "limpet")):
+		return _fail("could not make a world to ask: %s" % sim.fail_reason)
+	var players: Array = sim.players()
+	# A WORLD WITH NO PLAYERS WOULD PASS EVERY LOOP BELOW, so it fails here instead: a fresh welcome
+	# carries the joiner, and an empty list means this test measured nothing at all.
+	if players.is_empty():
+		return _fail("a fresh welcome produced no players, so this test would pass over an empty list")
+	var missing := PackedStringArray()
+	for i in players.size():
+		var player: Dictionary = players[i]
+		for fact in AssaySimHost.PLAYER_FACTS:
+			if not player.has(fact):
+				# NAMED THE WAY `AssayScene.missing_sim_facts` NAMES ITS OWN, so one habit covers both
+				# layers: `player[0 of 2].pos` is a thing a reader can act on.
+				missing.append("player[%d of %d].%s" % [i, players.size(), String(fact)])
+	if not missing.is_empty():
+		return _fail(("the binding's player dict is missing %s. `main.gd` reads those with silent "
+				+ "defaults, so the window would draw every player on tile (0, 0) and say nothing. "
+				+ "The dict it did send: %s") % [", ".join(missing), (players[0] as Dictionary).keys()])
+	return true
+
+
+## **AND THE LIST IS HELD AGAINST THE READER'S SOURCE, so it cannot go stale quietly** (ASSA-196,
+## the shape of Marlow's fix for ASSA-141 and of my own CO-6 note).
+##
+## The test above walks `PLAYER_FACTS`, so a key deleted from `PLAYER_FACTS` is a key it stops asking
+## about: the list would be both the subject and the oracle, and dropping `pos` from it would turn the
+## guard green over exactly the defect it exists to catch. So this reads the other direction -- every
+## `player.get("x")` in `main.gd` must be DECLARED -- and the two together are what make either worth
+## running.
+##
+## A PLAIN SCAN OF THE SOURCE, blunt on purpose (the same reason `test_shipped_scripts.gd` greps for a
+## class name): it cannot be fooled by a read made through a variable, and the cost of being blunt is
+## that a reader renaming the loop variable escapes it. That is the next hole and it is a cheaper one
+## than the hole this closes.
+func test_every_player_fact_main_reads_is_declared() -> bool:
+	var source := FileAccess.get_file_as_string("res://scripts/main.gd")
+	if source == "":
+		return _fail("could not read res://scripts/main.gd, so nothing was scanned")
+	var reads := RegEx.new()
+	reads.compile("player\\.get\\(\"([a-z_]+)\"")
+	var found := PackedStringArray()
+	var undeclared := PackedStringArray()
+	for hit in reads.search_all(source):
+		var key := hit.get_string(1)
+		if not found.has(key):
+			found.append(key)
+		if not AssaySimHost.PLAYER_FACTS.has(key) and not undeclared.has(key):
+			undeclared.append(key)
+	# THE SCAN ITSELF HAS TO HAVE WORKED. Zero reads found means the regex or the file moved, and an
+	# empty set satisfies the check below about nothing -- the quietest green in this file.
+	if found.is_empty():
+		return _fail(("no player.get(\"...\") reads found in main.gd at all, so this scan proves "
+				+ "nothing. The reads moved or the pattern did."))
+	if not undeclared.is_empty():
+		return _fail(("main.gd reads %s off a player dict and AssaySimHost.PLAYER_FACTS does not "
+				+ "declare them, so nothing asks the binding whether they are there: %s is declared, "
+				+ "%s is read.") % [", ".join(undeclared), AssaySimHost.PLAYER_FACTS, found])
+	return true
