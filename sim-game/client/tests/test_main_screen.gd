@@ -1018,8 +1018,9 @@ func test_the_empty_sections_say_the_in_world_kind_once_a_world_arrives() -> boo
 ##
 ## **WHAT IT CANNOT SEE, SAID PLAINLY: whether `_draw` branches on any of it.** Nothing in a headless
 ## suite can read a `draw_circle`, and `--headless` has no frame to photograph. The picture is
-## `client/tools/schematic_minability_shot.gd` plus `shared/assay/assa187_measure.py`, run with a real
-## window and measured in greyscale, and that is the evidence for Maren's boxes 1 to 3.
+## `tools/maren_whole_world_shot.gd` (a GUI run) measured by `shared/assay/assa187_measure.py` against
+## the geometry `tools/schematic_disc_table.gd` prints, and that is the evidence for boxes 1 to 3:
+## solid discs 99.3-100% lit inside, hollow 0-15.4%, with hue discarded.
 func test_the_schematic_has_the_minability_of_every_disc_it_draws() -> bool:
 	var screen := _joined_screen()
 	screen._show_close_up(false)
