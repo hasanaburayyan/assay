@@ -689,3 +689,28 @@ So:
   a pixel-level prediction of the frame.
 
 `shared/assay/cove_box2_*.py` are the three probes this came out of.
+
+### And two window shots only diff cleanly where nothing animates (ASSA-121)
+
+The other half of the same trap. `main.gd` builds the view with
+`"seconds": Time.get_ticks_msec() / 1000.0`, and `scene_view.gd::frame_of`
+picks an animation frame from it — so **which frame of the player, the spawn
+pad or a lit smelter a shot catches is a function of wall clock, not of the
+tick.** Two shots at the same seed and the same tick can legitimately differ.
+
+This is easy to miss because the capture *looks* deterministic: two runs of the
+same build, back to back, came back bit-identical (0 differing pixels in the map
+rect). That is two runs taking the same time, not a guarantee.
+
+So when diffing two window shots to attribute a change:
+
+- **Static content diffs cleanly** — ground, ore, buildings' bodies, HUD text.
+- **Animated content does not.** On ASSA-121 the two shots differed by 809 px
+  inside the map rect and the cause was the player standing on a different idle
+  frame; the commit under test could not touch the player at all.
+- If you need an animated sprite compared, compare it against the SHEET's rows
+  (which frame is this?) rather than against another shot.
+
+Scale, so this is not read as worse than it is: the player is ~800 px of the
+908×600 map rect, **0.15%**, so percentile statistics over the whole rect are
+unaffected. It is attribution of a *located* difference that this breaks.
