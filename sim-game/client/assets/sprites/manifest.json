@@ -37,9 +37,245 @@
    {
     "name": "v5",
     "frames": 1
+   },
+   {
+    "name": "v6",
+    "frames": 1
+   },
+   {
+    "name": "v7",
+    "frames": 1
+   },
+   {
+    "name": "v8",
+    "frames": 1
+   },
+   {
+    "name": "v9",
+    "frames": 1
+   },
+   {
+    "name": "v10",
+    "frames": 1
+   },
+   {
+    "name": "v11",
+    "frames": 1
+   },
+   {
+    "name": "v12",
+    "frames": 1
+   },
+   {
+    "name": "v13",
+    "frames": 1
+   },
+   {
+    "name": "v14",
+    "frames": 1
+   },
+   {
+    "name": "v15",
+    "frames": 1
+   },
+   {
+    "name": "v16",
+    "frames": 1
+   },
+   {
+    "name": "v17",
+    "frames": 1
+   },
+   {
+    "name": "v18",
+    "frames": 1
+   },
+   {
+    "name": "v19",
+    "frames": 1
+   },
+   {
+    "name": "v20",
+    "frames": 1
+   },
+   {
+    "name": "v21",
+    "frames": 1
+   },
+   {
+    "name": "v22",
+    "frames": 1
+   },
+   {
+    "name": "v23",
+    "frames": 1
+   },
+   {
+    "name": "v24",
+    "frames": 1
+   },
+   {
+    "name": "v25",
+    "frames": 1
+   },
+   {
+    "name": "v26",
+    "frames": 1
+   },
+   {
+    "name": "v27",
+    "frames": 1
+   },
+   {
+    "name": "v28",
+    "frames": 1
+   },
+   {
+    "name": "v29",
+    "frames": 1
+   },
+   {
+    "name": "v30",
+    "frames": 1
+   },
+   {
+    "name": "v31",
+    "frames": 1
+   },
+   {
+    "name": "v32",
+    "frames": 1
+   },
+   {
+    "name": "v33",
+    "frames": 1
+   },
+   {
+    "name": "v34",
+    "frames": 1
+   },
+   {
+    "name": "v35",
+    "frames": 1
+   },
+   {
+    "name": "v36",
+    "frames": 1
+   },
+   {
+    "name": "v37",
+    "frames": 1
+   },
+   {
+    "name": "v38",
+    "frames": 1
+   },
+   {
+    "name": "v39",
+    "frames": 1
+   },
+   {
+    "name": "v40",
+    "frames": 1
+   },
+   {
+    "name": "v41",
+    "frames": 1
+   },
+   {
+    "name": "v42",
+    "frames": 1
+   },
+   {
+    "name": "v43",
+    "frames": 1
+   },
+   {
+    "name": "v44",
+    "frames": 1
+   },
+   {
+    "name": "v45",
+    "frames": 1
+   },
+   {
+    "name": "v46",
+    "frames": 1
+   },
+   {
+    "name": "v47",
+    "frames": 1
+   },
+   {
+    "name": "v48",
+    "frames": 1
+   },
+   {
+    "name": "v49",
+    "frames": 1
+   },
+   {
+    "name": "v50",
+    "frames": 1
+   },
+   {
+    "name": "v51",
+    "frames": 1
+   },
+   {
+    "name": "v52",
+    "frames": 1
+   },
+   {
+    "name": "v53",
+    "frames": 1
+   },
+   {
+    "name": "v54",
+    "frames": 1
+   },
+   {
+    "name": "v55",
+    "frames": 1
+   },
+   {
+    "name": "v56",
+    "frames": 1
+   },
+   {
+    "name": "v57",
+    "frames": 1
+   },
+   {
+    "name": "v58",
+    "frames": 1
+   },
+   {
+    "name": "v59",
+    "frames": 1
+   },
+   {
+    "name": "v60",
+    "frames": 1
+   },
+   {
+    "name": "v61",
+    "frames": 1
+   },
+   {
+    "name": "v62",
+    "frames": 1
+   },
+   {
+    "name": "v63",
+    "frames": 1
    }
   ],
   "animations": {},
+  "block": [
+   8,
+   8
+  ],
   "sheet": "ground.png",
   "columns": 1
  },

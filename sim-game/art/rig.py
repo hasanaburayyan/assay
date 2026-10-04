@@ -643,7 +643,7 @@ class Asset:
     footprint's top-left tile corner sits in the frame, in authoring px.
     """
 
-    def __init__(self, name, out_root, tiles, headroom=0.0, anchor_x=0):
+    def __init__(self, name, out_root, tiles, headroom=0.0, anchor_x=0, block=None):
         self.name = name
         self.dir = os.path.join(out_root, name)
         os.makedirs(self.dir, exist_ok=True)
@@ -653,6 +653,15 @@ class Asset:
         # PART_SHIFT_PX west, the footprint's corner sits that many px east in the frame.
         # Letting these two disagree would draw every machine off its tile (rule 4b).
         self.anchor = [int(anchor_x), int(round(headroom * TILE_PX))]
+        # A TILE SHEET'S ROWS ARE A BLOCK, NOT A BAG, and the sheet is the only thing
+        # that knows which (ASSA-115 box 2). `block` = (w, h) says: these w*h rows are
+        # row-major cells of ONE continuous w x h-tile picture, so a renderer must place
+        # cell (x mod w, y mod h) at tile (x, y) and may NOT pick one at random. The
+        # alternative was a literal in the client, which is `scene_view.gd::ore_row`'s
+        # recorded mistake: a count hardcoded there silently shipped new rows to nobody.
+        # Absent (the normal case) the rows are interchangeable and a hash picks one.
+        self.block = list(block) if block else None
+        self.slice = None
         self.rows = []
         self.animations = {}
         self.derive = []
@@ -693,14 +702,42 @@ class Asset:
         self.derive.append({"row": row, "kind": "light", "body": body, "lit": lit})
         self.rows.append({"name": row, "frames": 1, "light": True, "over": body})
 
+    def slice_from(self, row, margin_px=0):
+        """THE ROWS ARE CUT OUT OF ONE RENDER, AFTER IT IS DOWNSAMPLED. (ASSA-115 box 2)
+
+        For a `block`: rendering each cell on its own looked equivalent to rendering the
+        field once, and was not. A cell rendered alone is its own IMAGE -- Cycles denoises
+        it as an image, `build.py` resamples it as an image -- and both are truncated at its
+        border. On the sheet that made, two rows across a cell boundary stepped +0.401 of
+        255 more than two rows inside a cell, enough to leave the true tile offset rank 1 of
+        32 on the findability test. The geometry was continuous and the pipeline put the
+        seam back.
+
+        So the asset script renders the whole field to ONE raw frame and names it here, and
+        `pack()` downsamples that frame and then cuts the cells. The order is the whole
+        point: cropping first would reintroduce the border this removes.
+
+        `margin_px` is authoring px of NEIGHBOURING field rendered on every side and
+        thrown away after the resize, so the image's own edge -- the last border in the
+        pipeline -- falls outside the shipped picture. Without it the field's wrap join
+        measured +0.844 of 255 against +0.078 at an interior cell boundary.
+        """
+        self.slice = {"source": row, "margin": int(margin_px)}
+
     def anim(self, name, frames, fps):
         self.animations[name] = {"frames": frames, "fps": fps}
 
     def write(self):
+        meta = {"name": self.name, "tiles": self.tiles, "frame_px": self.frame_px,
+                "anchor_px": self.anchor, "rows": self.rows,
+                "animations": self.animations, "derive": self.derive}
+        # Only when there IS one, so no other asset's manifest entry moves a byte.
+        if self.block:
+            meta["block"] = self.block
+        if self.slice:
+            meta["slice"] = self.slice
         with open(os.path.join(self.dir, "asset.json"), "w") as f:
-            json.dump({"name": self.name, "tiles": self.tiles, "frame_px": self.frame_px,
-                       "anchor_px": self.anchor, "rows": self.rows,
-                       "animations": self.animations, "derive": self.derive}, f, indent=1)
+            json.dump(meta, f, indent=1)
 
 
 def args():

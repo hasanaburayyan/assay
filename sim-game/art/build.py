@@ -126,7 +126,36 @@ def pack(name):
     cols = max(r["frames"] for r in meta["rows"])
     derived = {d["row"]: d for d in meta.pop("derive", [])}
 
+    # A SLICED ASSET IS ONE RENDER CUT INTO ROWS, AND THE CUT COMES AFTER THE RESIZE.
+    #
+    # `rig.Asset.slice_from` says why it exists: a cell rendered on its own is denoised and
+    # resampled as an image, so it carries a border, and on a block that border IS a tile
+    # seam (+0.401 of 255 across a cell boundary, enough to leave the tile offset rank 1 of
+    # 32 on Maren's findability test). Here the whole field is downsampled first and the
+    # cells are cut out of the finished picture, so no cell ever has an edge of its own.
+    # Cutting first would reintroduce exactly what this removes, which is the one thing
+    # about this function that must not be "tidied".
+    sliced = meta.pop("slice", None)
+    cells = {}
+    if sliced:
+        bw, bh = meta["block"]
+        whole = Image.open(os.path.join(OUT, name, f"{sliced['source']}_00.png")).convert("RGBA")
+        # The render carries `margin` authoring px of the NEIGHBOURING field on every side
+        # (the geometry wraps, so it is the true continuation). Resize WITH it, then cut it
+        # off: that way the image edge -- the one border the resize cannot see past -- is
+        # never inside the shipped field. The field's own wrap join measured +0.844 of 255
+        # without this and +0.078 at an interior cell boundary.
+        m = int(sliced.get("margin", 0))
+        whole = whole.resize((bw * fw + 2 * m, bh * fh + 2 * m), Image.LANCZOS)
+        if m:
+            whole = whole.crop((m, m, m + bw * fw, m + bh * fh))
+        for i in range(bw * bh):
+            cx, cy = i % bw, i // bw
+            cells[f"v{i}"] = whole.crop((cx * fw, cy * fh, (cx + 1) * fw, (cy + 1) * fh))
+
     def authored(row, f):
+        if row in cells:
+            return cells[row]
         im = Image.open(os.path.join(OUT, name, f"{row}_{f:02d}.png")).convert("RGBA")
         return im.resize((fw, fh), Image.LANCZOS)
 
@@ -166,6 +195,31 @@ def contact(manifest):
         fw, fh = meta["frame_px"]
         sheet = Image.open(os.path.join(SPRITES, meta["sheet"])).convert("RGBA")
         rows = meta["rows"]
+        # A BLOCK IS ONE PICTURE, SO THE SHEET SHOWS IT AS ONE (ASSA-115 box 2).
+        #
+        # `meta["block"]` means these w*h rows are the row-major cells of a single
+        # continuous w x h-tile render and a client places them by position
+        # (`rig.Asset.block`, `scene_view.gd::ground_row`). Drawn the normal way that
+        # is 64 unlabelled green squares, which is not the asset and cannot be judged:
+        # the whole question about a ground block is whether its 8x8 repeat is
+        # findable, and that is a question about the assembled picture. So it is
+        # assembled here, at authoring size and at 1x, exactly like every other row.
+        if meta.get("block"):
+            bw, bh = meta["block"]
+            field = Image.new("RGBA", (bw * fw, bh * fh))
+            for i in range(min(bw * bh, len(rows))):
+                field.alpha_composite(sheet.crop((0, i * fh, fw, (i + 1) * fh)),
+                                      ((i % bw) * fw, (i // bw) * fh))
+            line = Image.new("RGBA", (label_w + field.width + field.width // 2 + 3 * pad,
+                                      field.height + pad), bg)
+            ImageDraw.Draw(line).text((4, 4), "%s/%dx%d block" % (name, bw, bh),
+                                      fill=(220, 220, 220, 255))
+            line.alpha_composite(field, (label_w, 0))
+            line.alpha_composite(field.resize((field.width // 2, field.height // 2),
+                                              Image.LANCZOS),
+                                 (label_w + field.width + pad, field.height // 2))
+            blocks.append(line)
+            continue
         # animated assets: show every frame of each row; static: 8 rows per line
         per_line = 1 if meta["columns"] > 1 else 8
         for i in range(0, len(rows), per_line):
