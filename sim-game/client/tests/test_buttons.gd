@@ -1073,7 +1073,7 @@ func test_a_rebuilt_row_carries_the_sims_sentence_before_any_refresh() -> bool:
 	return ok
 
 
-## THE COUNT IN A ROW'S SENTENCE CLIMBS WITHOUT THE ROW BEING REBUILT. Every row says "N of your M",
+## THE COUNT IN A ROW'S SENTENCE CLIMBS WITHOUT THE ROW BEING REBUILT. Every row ends "you have M",
 ## and M is the pack's count, which rises every mining cycle. The shape-signature path exists so a
 ## button under the pointer is not destroyed ten times a second, and the cost of that is a sentence
 ## that must be re-TEXTED instead -- which is the half that silently stopped working on the pack rows

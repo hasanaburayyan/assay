@@ -93,6 +93,49 @@ fn the_output_grade_is_the_recipes_and_not_the_inputs() {
     );
 }
 
+/// **THE SENTENCE A PLAYER MEETS FIRST, AND THE ONE NOBODY TESTED** (ASSA-129).
+///
+/// A row exists for every stack you hold and a smelter costs five ore, so from
+/// your FIRST ore to your FIFTH the first thing this game says about making
+/// anything is a row you cannot yet afford. The old shape was
+/// `{cost} of your {have} {item}` — a partitive, which asserts you hold at
+/// least `have` and are taking `cost` of them. Both numbers were right and
+/// "5 of your 3 Tonore ore (A)" is not a sentence. Every `of your` the Director
+/// could find in the tests was an affordable row; that is how it shipped.
+///
+/// **BOTH DIRECTIONS IN ONE TEST, which is the ruling itself.** One shape has
+/// to read whether you can afford the thing or not, with no branch on
+/// `have >= cost`: affordability changes tick to tick and `step` answers it at
+/// the press, so a describer that picked its words by comparing them would be a
+/// second opinion about affordability. Three counts across the boundary, same
+/// shape, and the only thing that moves is the figure.
+#[test]
+fn a_row_reads_as_english_when_you_cannot_afford_it() {
+    for (have, expect) in [(3u32, "you have 3"), (5, "you have 5"), (7, "you have 7")] {
+        let (mut world, me) = world_with_player();
+        give(&mut world, me, ore(X, Grade::B), have);
+
+        let offer = debug::make_offers(&world, me)
+            .into_iter()
+            .find(|o| o.what == MakeWhat::Recipe(RecipeId::Smelter))
+            .expect("a smelter offer");
+        let made = world.item_name(offer.makes.unwrap());
+        let spent = world.item_name(offer.input);
+
+        assert_eq!(
+            offer.cost, 5,
+            "the recipe's cost does not depend on the pack"
+        );
+        assert_eq!(offer.have, have);
+        assert_eq!(offer.line, format!("{made} — 5 {spent}, {expect}"));
+        assert!(
+            !offer.line.contains("of your"),
+            "a partitive claims you hold what you are spending: {}",
+            offer.line
+        );
+    }
+}
+
 /// WHAT IT MAKES COMES BEFORE WHAT IT COSTS, and the cost is the recipe's
 /// while the count is the pack's. Those two numbers swapping places is the
 /// mistake a row of digits invites.
@@ -110,7 +153,7 @@ fn a_row_names_the_output_first_then_spends_out_of_what_you_hold() {
 
     assert_eq!(offer.cost, 5);
     assert_eq!(offer.have, 7);
-    assert_eq!(offer.line, format!("{made} — 5 of your 7 {spent}"));
+    assert_eq!(offer.line, format!("{made} — 5 {spent}, you have 7"));
     assert!(
         offer.line.find(&made) < offer.line.find(&spent),
         "consequence first: {}",
@@ -388,7 +431,7 @@ fn a_part_row_reads_as_the_part_it_makes_then_the_material() {
         .expect("a head offer");
     assert_eq!(
         offer.line,
-        format!("{species} head (B) — {size} of your 9 {species} refined (B)")
+        format!("{species} head (B) — {size} {species} refined (B), you have 9")
     );
 }
 

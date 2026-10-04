@@ -2402,10 +2402,25 @@ fn offer_line(
     cost: u32,
     from: &ItemStack,
 ) -> String {
+    // **ONE SHAPE WHETHER YOU CAN AFFORD IT OR NOT** (Maren's ruling, ASSA-129).
+    // `{cost} of your {have} {item}` is a PARTITIVE: it asserts you hold at
+    // least `have` and are taking `cost` of them. Both numbers are correct and
+    // the sentence is false the moment you cannot afford the thing -- "5 of
+    // your 3 Tonore ore (A)", which is what the game says to a player holding
+    // their first ore, about the first thing they can build. The state where a
+    // cost line has work to do is the state it garbled.
+    //
+    // NO BRANCH ON `from.count >= cost`, and that is the half of the ruling
+    // that matters. Affordability changes tick to tick and `step` answers it at
+    // the press; a sentence that picked its words by comparing them would be a
+    // second opinion about affordability living in the describer. The trailing
+    // clause is a FIGURE and not a limit, so ASSA-88 ("the limit binds the verb,
+    // never trailing after a comma") is untouched: every blocker still binds
+    // its verb ahead of the dash.
     let spend = format!(
-        "{cost} of your {} {}",
-        from.count,
-        world.item_name(from.item)
+        "{cost} {}, you have {}",
+        world.item_name(from.item),
+        from.count
     );
     // **THE LIMIT BINDS THE CLAIM IT KILLS, WITH NO COMMA BEFORE THE "IF"**
     // (Maren's ruling on ASSA-88, the shape `species_table` already uses for
