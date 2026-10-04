@@ -222,6 +222,24 @@ jobs:
       # "handle CUT west 19 px / frame CUT west 58 px" per grade row. Stdlib only.
       - name: A part fits inside its own frame
         run: python3 art/check_part_frame_fit.py
+      # A PLANTED MACHINE READS AGAINST THE ORE OF ITS OWN SPECIES (ASSA-159, Maren's ask).
+      # A drill must stand ON a deposit to run, and a building and the ore of its species
+      # are modulated by the IDENTICAL `Color` (scene_view.gd:239 and :314 -> sprites.gd:226
+      # -> hud.gd:200), with no purity dim on that path. So the only thing stopping the
+      # first machine a player builds from being camouflaged against the ground it stands
+      # on is the greyscale art underneath -- which a re-render can walk back with nothing
+      # going red.
+      #
+      # It needs no window shot, which is the whole reason it may be a `check_` at all: the
+      # shared tint cancels in a RATIO, so the measurement falls out of the shipped sheets
+      # and SPECIES_TINTS, headless, in under a second. Contrast `art/grid_findability.py`,
+      # which judges a window shot and therefore cannot be wired here.
+      #
+      # Its red control is a real commit rather than a synthetic sheet:
+      # FAKE_PART_SHEETS=<a checkout of main before ASSA-159> reports 1.49 against the
+      # 3.00 bar -- the camouflaged drill itself. Stdlib only.
+      - name: A planted machine reads against its own ore
+        run: python3 art/check_machine_vs_own_ore.py
       # A COMMITTED REVIEW SHEET STILL MATCHES THE ART IT DREW (ASSA-144, Maren's ruling).
       # `assets/review/` holds nine tracked PNGs and this repo's own CLAUDE.md says to
       # judge the art off one of them, so a stale one is believed -- and it is believed
