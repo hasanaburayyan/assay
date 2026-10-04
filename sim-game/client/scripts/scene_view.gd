@@ -286,6 +286,76 @@ static func _ore_variants(manifest: Dictionary, letter: String) -> int:
 	return maxi(n, 1)
 
 
+## **A RENDERER MAY NEVER SUBSTITUTE A VALUE FOR A SIM FACT IT DID NOT RECEIVE** (ASSA-141, Maren's
+## ruling, and it is the general one). A sim fact is either present or the client is broken, and
+## broken must be LOUD. Defaults are for what the renderer owns -- a settle count, a tint, the
+## camera, the manifest -- and never for state.
+##
+## THIS LIST IS THE CONTRACT BELOW, MADE EXECUTABLE. The prose under `placements` described these
+## keys before this existed, and prose is not a mechanism: `lit` was read as
+## `get("lit", false)`, so a dylib built before `lit` existed (#184) drew EVERY smelter in the world
+## cold, forever, with every test passing. That is not hypothetical -- it cost a wake-up on ASSA-137,
+## where three honest screenshots from a correct branch reported a state that is LIT for 379 of 435
+## ticks on the same seed. `client/bin` is git-ignored, so the dylib each of us runs is whatever we
+## last built and no commit pins it.
+##
+## Keyed by the dictionary a fact arrives in, because the per-ENTRY facts are the dangerous ones: a
+## missing collection draws an empty world, which anybody notices, while a missing `lit` draws a
+## confident lie.
+##
+## `origin`, `size`, `seconds`, `manifest` and `layout` are deliberately NOT here. They are the
+## renderer's own and a default for them is correct.
+const SIM_FACTS := {
+	"view": ["world_tiles", "spawn", "ore", "players", "buildings"],
+	"ore tile": ["species", "grade", "depleted"],
+	"building": ["pos", "footprint", "kind", "species", "parts", "lit"],
+	"player": ["at", "facing", "moving"],
+	# A MACHINE'S PARTS ARE SIM FACTS TOO, and checking them HERE is why `assembly.gd` did not have
+	# to be rewritten: `_composite_place` reads `parts[0].kind` and `AssayAssembly` reads each
+	# part's `kind`, `species` and `grade`, all three with defaults of their own. A default
+	# downstream cannot fire once the fact is known present at the boundary, so one check covers
+	# every reader instead of one edit per reader.
+	"machine part": ["kind", "species", "grade"],
+}
+
+## WHICH SIM FACTS THE VIEW FAILED TO CARRY, named well enough to act on: `building[0].lit`.
+##
+## AN EMPTY VIEW IS NOT A BROKEN ONE. `{}` is the state before any world exists -- `--selfcheck` and
+## a mid-join frame are both in it -- and `main.gd` holds the view empty until a snapshot lands.
+## There is nothing to be missing from a question nobody asked yet.
+##
+## Only the FIRST offending entry of each collection is reported. A stale binding omits a key from
+## every entry it sends, so the alternative is one line per building in the world saying the same
+## thing, and the count is in the message instead.
+static func missing_sim_facts(view: Dictionary) -> PackedStringArray:
+	var missing := PackedStringArray()
+	if view.is_empty():
+		return missing
+	for key in SIM_FACTS["view"]:
+		if not view.has(key):
+			missing.append("view.%s" % String(key))
+	var every_part: Array = []
+	for entry in (view.get("buildings", []) as Array):
+		for part in ((entry as Dictionary).get("parts", []) as Array):
+			every_part.append(part)
+	var collections := {
+		"ore tile": (view.get("ore", {}) as Dictionary).values(),
+		"building": view.get("buildings", []),
+		"player": view.get("players", []),
+		"machine part": every_part,
+	}
+	for what in collections:
+		var entries: Array = collections[what]
+		for key in SIM_FACTS[what]:
+			for i in entries.size():
+				var entry: Dictionary = entries[i]
+				if not entry.has(key):
+					missing.append("%s[%d of %d].%s" % [String(what), i, entries.size(),
+							String(key)])
+					break
+	return missing
+
+
 ## EVERYTHING TO DRAW, IN THE ORDER TO DRAW IT.
 ##
 ## `view` is the whole question, so that this function has no way to ask anything else:
@@ -307,9 +377,22 @@ static func _ore_variants(manifest: Dictionary, letter: String) -> int:
 static func placements(view: Dictionary) -> Array[Dictionary]:
 	var manifest: Dictionary = view.get("manifest", {})
 	var out: Array[Dictionary] = []
+	# **BROKEN MUST BE LOUD, AND NOTHING IS LOUDER THAN AN EMPTY WORLD.** Refusing to draw is the
+	# whole point: a frame that is missing a sim fact cannot be drawn honestly, and the failure
+	# mode this replaces -- every smelter cold, every building white, every body facing south --
+	# is a picture nobody can tell from a correct one. `push_error` reaches the editor, the
+	# `--headless` log and CI's stderr; the blank frame reaches whoever is looking.
+	var missing := missing_sim_facts(view)
+	if not missing.is_empty():
+		push_error(("AssayScene: the view is missing sim facts %s, so this frame is NOT DRAWN. "
+				+ "A renderer may not substitute a value for a sim fact it did not receive "
+				+ "(ASSA-141). The usual cause is a stale `libsim_godot.dylib`: `client/bin` is "
+				+ "git-ignored, so run `make client-lib` from the repo root and try again.")
+				% [missing])
+		return out
 	if manifest.is_empty():
 		return out
-	var world: Vector2i = view.get("world_tiles", Vector2i.ZERO)
+	var world: Vector2i = view["world_tiles"]
 	var origin: Vector2 = view.get("origin", Vector2.ZERO)
 	var size: Vector2 = view.get("size", Vector2.ZERO)
 	var seconds := float(view.get("seconds", 0.0))
@@ -325,14 +408,14 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 				place["layer"] = FLOOR
 				out.append(place)
 
-	var ore: Dictionary = view.get("ore", {})
+	var ore: Dictionary = view["ore"]
 	for key in ore:
 		var at: Vector2i = key
 		var tile: Dictionary = ore[key]
-		var row := ore_row(String(tile.get("grade", "C")), bool(tile.get("depleted", false)), at,
+		var row := ore_row(String(tile["grade"]), bool(tile["depleted"]), at,
 				manifest)
 		var place := _place(manifest, "ore", row, at, origin,
-				AssayHud.species_tint(int(tile.get("species", 0))), seconds)
+				AssayHud.species_tint(int(tile["species"])), seconds)
 		if not place.is_empty():
 			place["layer"] = FLOOR
 			out.append(place)
@@ -343,7 +426,7 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 	# the pad's footprint ends one row south of the player's, so a player standing on spawn sorted
 	# BEHIND it and vanished completely. On seed 14247 that is the whole of your first second in the
 	# game. Nothing in `mock_scene.py` was wrong; it simply never put a player on the pad.
-	var pad := _standing(manifest, "spawn", "pad", Vector2(view.get("spawn", Vector2i.ZERO)),
+	var pad := _standing(manifest, "spawn", "pad", Vector2(view["spawn"]),
 			Color.WHITE, true)
 	if not pad.is_empty():
 		var place := _place(manifest, "spawn", "pad", pad["tile"], origin, pad["tint"], seconds)
@@ -379,18 +462,18 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 	# what goes INSIDE that rectangle is `AssayAssembly.image_of`, and the pixels are the renderer's
 	# business alone. `parts` is non-empty for a machine and empty for a smelter, which is the sim's
 	# own answer to "is this an assembly" rather than a kind name matched here.
-	for entry in view.get("buildings", []):
+	for entry in view["buildings"]:
 		var building: Dictionary = entry
-		var foot: Vector2i = building.get("footprint", Vector2i.ONE)
-		var at: Vector2i = building.get("pos", Vector2i.ZERO)
-		var parts: Array = building.get("parts", [])
+		var foot: Vector2i = building["footprint"]
+		var at: Vector2i = building["pos"]
+		var parts: Array = building["parts"]
 		if not parts.is_empty():
 			var machine := _composite_place(manifest, parts, at, origin, view.get("layout", {}))
 			if not machine.is_empty():
 				machine["bottom"] = float(at.y) + float(foot.y)
 				standing.append(machine)
 			continue
-		var kind := String(building.get("kind", ""))
+		var kind := String(building["kind"])
 		standing.append({
 			"asset": kind,
 			# THE BODY IS THE ONLY THING THE SPECIES TINT TOUCHES (ASSA-137). This read
@@ -422,7 +505,7 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 		# whose bottom edge is exactly a lit smelter's now sorts under that smelter's fire. Equal
 		# bottoms were already arbitrary there and this makes them at least deterministic; a wall
 		# over its own fire is the worse of the two and the one with a cause.
-		if bool(building.get("lit", false)):
+		if bool(building["lit"]):
 			var light := light_row(manifest, kind, "body")
 			if light != "":
 				standing.append({
@@ -430,10 +513,10 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 					"bottom": float(at.y) + float(foot.y), "above": 1,
 				})
 
-	for entry in view.get("players", []):
+	for entry in view["players"]:
 		var player: Dictionary = entry
-		var row := player_row(String(player.get("facing", "")), bool(player.get("moving", false)))
-		standing.append(_standing(manifest, "player", row, player.get("at", Vector2.ZERO),
+		var row := player_row(String(player["facing"]), bool(player["moving"]))
+		standing.append(_standing(manifest, "player", row, player["at"],
 				Color.WHITE, false))
 	standing.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		var ab := float(a.get("bottom", 0.0))

@@ -50,6 +50,11 @@ func _view(extra := {}) -> Dictionary:
 		"spawn": Vector2i(48, 32),
 		"ore": {},
 		"players": [],
+		# EMPTY, BUT PRESENT. This fixture had no `buildings` key at all until ASSA-141, and
+		# `placements` read it as `get("buildings", [])` -- so the fixture and the real view
+		# disagreed about the contract and nothing could say so. Nineteen tests in this file went
+		# red the moment the contract was checked, which is the item's own argument about fixtures.
+		"buildings": [],
 		"manifest": _manifest(),
 		"layout": AssayAssembly.contract(),
 		"seconds": 0.0,
@@ -804,8 +809,11 @@ func test_the_shipped_manifest_draws_the_building_kinds_the_sim_can_place() -> b
 
 
 func _smelter(at: Vector2i, lit := false, species := 2) -> Dictionary:
+	# `parts` EMPTY AND PRESENT, as `BuildingFacts` sends it: "non-empty for a machine and empty for
+	# a smelter, which is the sim's own answer to `is this an assembly`". `_drill` below always
+	# carried it; this fixture never did.
 	return {"kind": "smelter", "pos": at, "footprint": Vector2i(2, 2), "lit": lit,
-			"species": species}
+			"species": species, "parts": []}
 
 
 ## **THE THING YOU PLACED AND THE THING STANDING THERE ARE ONE OBJECT** (Maren, ASSA-131 ruling 2).
@@ -924,8 +932,15 @@ func test_a_fire_is_drawn_after_its_walls_even_when_a_body_sorts_equal_to_it() -
 ## client before tonight, and what a building kind added after today will look like until it has
 ## art. The thing that must not happen is a missing asset taking the ground down with it.
 func test_a_building_kind_with_no_sheet_draws_nothing_and_breaks_nothing() -> bool:
+	# **A MISSING ASSET AND A MISSING SIM FACT ARE NOT THE SAME THING ANY MORE** (ASSA-141). This
+	# fixture used to express "no art for this kind" by leaving `parts` and `species` OFF the
+	# dictionary, and that is now a broken view rather than a drawable one: `BuildingFacts` always
+	# sends `parts`, empty for anything that is not an assembly. The sim facts are all here and the
+	# ART is what is absent -- the manifest has no `machine` sheet, because since ASSA-138 a machine
+	# is composited from its parts -- which is the case this test is actually about. A sheet is the
+	# renderer's own and may be missing; a fact may not.
 	var view := _view({"buildings": [{"kind": "machine", "pos": Vector2i(10, 5),
-			"footprint": Vector2i(1, 1), "lit": false}]})
+			"footprint": Vector2i(1, 1), "lit": false, "species": 2, "parts": []}]})
 	var all := AssayScene.placements(view)
 	if _of(all, "machine").size() != 0:
 		return _fail("something was drawn for a kind the sheets have no art for")
