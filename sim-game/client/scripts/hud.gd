@@ -195,6 +195,21 @@ static func silent_host_line(where: String, seconds: int) -> String:
 			% [where, seconds])
 
 
+## **THE WORD AT TWO SECONDS, WHICH IS NOT THE SENTENCE AT TEN** (ASSA-191). Maren's wording,
+## verbatim, and the differences from `silent_host_line` above are all hers and all deliberate.
+##
+## **IT NAMES NO ADDRESS AND NO CONTROL, and both omissions are the point.** This is reversible: no
+## stage change, no band, Join still refused, and the line goes the moment a bundle lands. So it must
+## not read like news -- a sentence naming a host and a button is a sentence about a decision this
+## client has not made yet. "the host" and a number going up is all a player can act on anyway: they
+## cannot check "the network", but they can see that the count is climbing and know it is not them.
+##
+## WHOLE SECONDS, and the count is the gap rather than the threshold -- see
+## `AssayNetClient.quiet_seconds` for why a 2900ms gap must read as "2s".
+static func quiet_host_line(seconds: int) -> String:
+	return "the host has gone quiet — nothing for %ds" % seconds
+
+
 ## A DEPOSIT'S COLOUR: THE SPECIES' SLOT, DIMMED BY PURITY. Purity may never move the hue.
 ##
 ## Second correction of this function, and the first one is worth keeping in view. Version one rode

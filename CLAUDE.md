@@ -261,8 +261,22 @@ after the paragraph above puts the player back in the same slot. The timeout is
 checked AFTER the socket is drained, so a frozen client (a slept laptop, a
 breakpoint) reads its own freeze plus a socket full of what it missed and
 survives; `client/tools/reconnect_probe.gd` case H measures that and case F
-measures the drop. **Still true: `sim-cli` has no timeout of its own**, and the
-threshold and the sentence are the Game Director's call, not a measured number.
+measures the drop.
+
+**And the silence is spoken about before it is acted on** (ASSA-191, which was
+the half of ASSA-179 that did not ship first time: for the first ten seconds of
+a wedged host the window still looked exactly like a running game). At
+`AssayNetClient.QUIET_MS` — 2s — the status line carries `the host has gone
+quiet — nothing for 3s` with the number going up, and **nothing else changes**:
+no stage, no join band, no closed socket, and the line goes the moment a bundle
+lands. Crossing `SILENCE_MS` is what drops you. Both numbers are the Game
+Director's call and both now rest on a measurement rather than on taste:
+`client/tools/maren_bundle_gap_probe.gd` timed every bundle ARRIVAL for
+60s against a real relay on the studio Mac and the worst healthy gap was 263 ms
+(p50 100 ms, the tick rate exactly), so the reversible warning sits at 7.6x that
+and the irreversible drop at 38x. Neither has been measured over a real network;
+a bundle gap over 3 s on wifi or Tailscale would move the 10 s. **Still true:
+`sim-cli` has no timeout and no warning of its own.**
 
 ## People
 

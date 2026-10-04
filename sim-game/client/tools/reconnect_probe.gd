@@ -38,6 +38,12 @@ extends SceneTree
 ##   F. No press at all: a host that goes SILENT without closing the socket. Can a person at this
 ##      window tell? That one was a reading of the code in my ASSA-177 notes until this measured it.
 ##      It read NOT NOTICED for as long as it existed, which is what ASSA-179 was filed as.
+##      **AND WHAT THE SCREEN SAYS IN THE SECONDS BEFORE THE DROP** (ASSA-191): the first ten seconds
+##      of a silent host used to look exactly like a running game, which is the same defect at 90% of
+##      its size. So the count on screen is read every frame while the host is wedged -- when it first
+##      appeared, how many distinct seconds it showed (a line frozen at its first count says
+##      "something happened once" rather than "it is ongoing"), and that NOTHING ELSE moved while it
+##      was up: the stage is still JOINED and the join band is still hidden.
 ##   G. The press AFTER the silence: the whole point of noticing is that Join is live again, so the
 ##      probe presses it. A timeout that only changes the wording would leave the player where F left
 ##      them -- a screen with no control that does anything.
@@ -45,6 +51,9 @@ extends SceneTree
 ##      host: the main loop is blocked for longer than the client's own threshold while the relay goes
 ##      on sending. A detector that reads its clock before draining the socket calls this a dead host,
 ##      so this leg is the one that fails if the ordering in `net_client.gd::_process` is ever flipped.
+##      It carries the WARNING's control too: a frozen client must not be told its host went quiet
+##      either, and a one-frame flash of that sentence is still a false positive, so the two seconds
+##      after the freeze are watched rather than slept through.
 ##
 ## Prints `RECONNECT PROBE VERDICT: ...` LAST -- YES, PARTLY or NO, and every leg named with `yes`,
 ## `NO` or `not run` beside it -- and exits 0 on all of them: a no-reconnect answer is a result, not a
@@ -105,11 +114,33 @@ var _blip_ok := false
 var _before_silence := {}
 var _noticed_the_silence := false
 var _silence_said := ""
+## **THE WARNING BEFORE THE DROP** (ASSA-191). Every distinct count the screen showed while the host
+## was wedged, so "the number goes up" is a measurement and not one sample; when the first one
+## appeared; and what had NOT changed when it did, which is the whole of Maren's "say something,
+## change nothing".
+var _quiet_counts := PackedInt32Array()
+var _first_warning_at := -1.0
+var _stage_at_warning := -1
+var _band_at_warning := false
+var _warned_before_the_drop := false
+## **HOW LONG THE WARNING IS WAITED FOR, DERIVED FROM THE CLIENT'S OWN NUMBER.** A written constant
+## here would be a second threshold to keep in step with `QUIET_MS`; 1.5s of slack because the count
+## is whole seconds and this probe reads it once a frame.
+var _warning_deadline: float = float(AssayNetClient.QUIET_MS) / 1000.0 + 1.5
+## The silence leg ran at all: the host was wedged AND the warning is switched on. A `QUIET_MS` of 0
+## is the detector deliberately off, and a leg that could not happen must read `not run`, never `NO`.
+var _silence_watch_ran := false
 var _after_silence := {}
 var _silence_rejoin_ok := false
 ## The control: a frozen CLIENT against a live host, which must NOT be called a drop.
 var _before_freeze := {}
 var _freeze_ok := false
+## **THE WARNING'S OWN CONTROL** (ASSA-191): the count a frozen client showed, which must be none.
+## Watched through the two seconds after the freeze and read again at the end, because a warning that
+## appeared on the frame the loop resumed and went on the next is a false positive a single read at
+## the end cannot see.
+var _freeze_warned_at := 0
+var _freeze_unwarned := false
 ## **DID IT RUN, as opposed to pass?** A leg that never happened must not read as a leg that failed:
 ## case H needs a joined client, and a run where an earlier case never got one says nothing about the
 ## false positive rather than reporting one. The verdict counts only legs that ran.
@@ -470,6 +501,21 @@ func _stop_relay_without_closing_it() -> void:
 ## but whether a person at this window could TELL, and how long they would be told nothing.
 func _watch_the_silence() -> void:
 	if _now() < _until:
+		# **THE SECONDS BEFORE THE DROP, WHICH USED TO LOOK LIKE A RUNNING GAME** (ASSA-191). Read
+		# every frame and BEFORE the stage check below: the warning is reversible and `_fail` takes it
+		# down, so a single read after the drop would find the drop's own sentence and conclude the
+		# player was told nothing for ten seconds.
+		var count := _quiet_count_on_screen()
+		if count > 0 and not _quiet_counts.has(count):
+			_quiet_counts.append(count)
+			if _first_warning_at < 0.0:
+				_first_warning_at = SILENCE_SECONDS - (_until - _now())
+				# WHAT HAD NOT CHANGED WHEN IT APPEARED. The band is `main._process`'s value from the
+				# previous frame (the staleness `_band_at_the_drop` documents), which is immaterial
+				# here: this sample is taken ~2s into a silence whose state change is 8s away, so a
+				# frame either side of it reads the same thing.
+				_stage_at_warning = _screen._client.stage
+				_band_at_warning = _screen._join_band.visible
 		if _screen._client.stage == AssayNetClient.Stage.DEAD:
 			_silence_said = String(_screen._status.text)
 			_lines.append("   NOTICED after %.1fs: \"%s\""
@@ -480,8 +526,42 @@ func _watch_the_silence() -> void:
 	_finish_the_silence()
 
 
+## WHICH COUNT THE STATUS LINE IS SHOWING, or 0 when it is not the warning.
+##
+## **COMPARED AGAINST THE SENTENCE'S OWN FUNCTION, not against a word of mine.** A probe that grepped
+## for "quiet" would also match `silent_host_line` ("went quiet: nothing from it for 10s"), which is
+## the sentence this leg is measured BESIDE -- so the grep version would report that the player was
+## warned at the moment they were dropped. Equality against `AssayHud.quiet_host_line` cannot confuse
+## the two, and the WORDS are `tests/test_link_silence.gd`'s business, not this file's.
+func _quiet_count_on_screen() -> int:
+	var said := String(_screen._status.text)
+	for seconds in range(1, int(SILENCE_SECONDS) + 2):
+		if said == AssayHud.quiet_host_line(seconds):
+			return seconds
+	return 0
+
+
 func _finish_the_silence() -> void:
 	var after := _snapshot()
+	_silence_watch_ran = AssayNetClient.QUIET_MS > 0
+	if not _silence_watch_ran:
+		_lines.append(("   the warning is switched off (QUIET_MS 0), so nothing here says whether a "
+				+ "player would be told before the drop"))
+	elif _first_warning_at < 0.0:
+		# THE WATCH'S REAL LENGTH AND NOT THE CONSTANT: this ends early when the client drops, so
+		# printing `SILENCE_SECONDS` here would claim 16s of watching after 10s of it.
+		_lines.append(("   NEVER WARNED: %.1fs of a wedged host and the status line never carried a "
+				+ "count. It reads \"%s\". The window looks exactly like a running game until the "
+				+ "drop.") % [SILENCE_SECONDS - maxf(_until - _now(), 0.0), _screen._status.text])
+	else:
+		_warned_before_the_drop = _first_warning_at <= _warning_deadline \
+				and _quiet_counts.size() >= 2 \
+				and _stage_at_warning == AssayNetClient.Stage.JOINED \
+				and not _band_at_warning
+		_lines.append(("   WARNED at %.1fs (threshold %dms, deadline %.1fs): %d distinct counts %s. "
+				+ "AND NOTHING ELSE MOVED: stage %d at the first warning, join band on screen %s")
+				% [_first_warning_at, AssayNetClient.QUIET_MS, _warning_deadline,
+				_quiet_counts.size(), _quiet_counts, _stage_at_warning, _band_at_warning])
 	if not _noticed_the_silence:
 		_lines.append(("   NOT NOTICED after %ds: stage still %d (JOINED), screen still says \"%s\", "
 				+ "%s") % [int(SILENCE_SECONDS), _screen._client.stage, _screen._status.text,
@@ -598,16 +678,28 @@ func _freeze_the_client_not_the_host() -> void:
 
 func _read_the_link_after_the_freeze() -> void:
 	if _now() < _until:
+		# **A ONE-FRAME FLASH IS STILL A FALSE POSITIVE** (ASSA-191), so these two seconds are watched
+		# rather than slept through. The frame that resumes drains a socket full of what it missed and
+		# the count goes back to 0 in the same frame, so a client that warned on the way through would
+		# be invisible to a single read at the end -- and it would be exactly the sentence this
+		# control exists to refuse: "the host has gone quiet" about a host that never stopped talking.
+		var flashed := _quiet_count_on_screen()
+		if flashed > 0:
+			_freeze_warned_at = flashed
 		return
 	var after := _snapshot()
 	var joined: bool = _screen._client.stage == AssayNetClient.Stage.JOINED
 	var moving: bool = int(after.get("bundles", -1)) > int(_before_freeze.get("bundles", -1))
 	_freeze_ok = joined and moving
+	_freeze_unwarned = _freeze_warned_at == 0 and _quiet_count_on_screen() == 0
 	_lines.append("   two seconds on: %s" % _describe(after))
 	_lines.append(("   verdict terms after a %dms FROZEN CLIENT: still joined %s · bundles still "
-			+ "arriving %s (%d before the freeze, %d after) · screen says \"%s\"")
+			+ "arriving %s (%d before the freeze, %d after) · never warned about the host %s%s · "
+			+ "screen says \"%s\"")
 			% [_freeze_ms, joined, moving, _before_freeze.get("bundles", -1),
-			after.get("bundles", -1), _screen._status.text])
+			after.get("bundles", -1), _freeze_unwarned,
+			"" if _freeze_warned_at == 0 else " (flashed \"%s\")"
+					% AssayHud.quiet_host_line(_freeze_warned_at), _screen._status.text])
 	_report()
 
 
@@ -764,8 +856,10 @@ func _report() -> void:
 		["host restarted", _host_restart_ok, true],
 		["socket dropped with the host up", _blip_ok, true],
 		["silent host noticed", _noticed_the_silence, not _before_silence.is_empty()],
+		["warned before the drop, changing nothing", _warned_before_the_drop, _silence_watch_ran],
 		["rejoined after the silence", _silence_rejoin_ok, _noticed_the_silence],
 		["a %dms frozen client survived" % _freeze_ms, _freeze_ok, _freeze_ran],
+		["a frozen client was not warned", _freeze_unwarned, _freeze_ran],
 	]
 	var ran := 0
 	var passed := 0
