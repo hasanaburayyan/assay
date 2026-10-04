@@ -40,6 +40,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # still current (ASSA-144). Before the first read of shipped art, below.
 import review_sources
 review_sources.start()
+import review_layout  # noqa: E402  this sheet's declaration that it draws no layout
+# NOT A PICTURE OF A CLIENT PANEL, SAID OUT LOUD (CO-6). `check_review_layout.py`
+# used to print `NO LAYOUT` here and pass, so this sheet and a panel sheet that had
+# FORGOTTEN its stamp were the same state -- and two sheets really were the second
+# thing. The claim is the sheet's own, so a copy of it carries the reason with it.
+ART_ONLY = review_layout.art_only(
+    "a MOCK of a scene drawn in Pillow from the sprite manifest -- it is deliberately not the client's own layout, which is what window_shot.gd is for")
 from species_tints import SPECIES_TINTS
 from part_layout import PART_REPEAT_OFFSET, stack
 
@@ -214,5 +221,6 @@ for asset, row, x, y, f in sorted(ents, key=lambda e: e[3] + man[e[0]]["tiles"][
 out = Image.new("RGBA", (W * T, H * T + H * T // 2 + 8), (30, 32, 30, 255))
 out.alpha_composite(img, (0, 0))
 out.alpha_composite(img.resize((W * T // 2, H * T // 2), Image.LANCZOS), (0, H * T + 8))
-out.save(os.path.join(REVIEW, "mock_scene.png"), pnginfo=review_sources.png_info())
+out.save(os.path.join(REVIEW, "mock_scene.png"),
+         pnginfo=review_layout.png_info(review_sources.png_info(), layouts=ART_ONLY))
 print("wrote assets/review/mock_scene.png")

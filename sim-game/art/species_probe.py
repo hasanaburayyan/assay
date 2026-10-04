@@ -46,6 +46,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # recording before importing it, and starting twice is a no-op.
 import review_sources
 review_sources.start()
+import review_layout  # noqa: E402  this sheet's declaration that it draws no layout
+# NOT A PICTURE OF A CLIENT PANEL, SAID OUT LOUD (CO-6). `check_review_layout.py`
+# used to print `NO LAYOUT` here and pass, so this sheet and a panel sheet that had
+# FORGOTTEN its stamp were the same state -- and two sheets really were the second
+# thing. The claim is the sheet's own, so a copy of it carries the reason with it.
+ART_ONLY = review_layout.art_only(
+    "a picture of the generated species sprites compared with each other; no engine layout answers for any part of it")
 from species_tints import SPECIES_TINTS
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1268,7 +1275,8 @@ def main():
     sheet_img = full
 
     sheet_img.save(os.path.join(REVIEW, "species_probe.png"),
-                   pnginfo=review_sources.png_info())
+                   pnginfo=review_layout.png_info(review_sources.png_info(),
+                                                  layouts=ART_ONLY))
     print("\nwrote assets/review/species_probe.png: 6 species x 3 grades, then the")
     print("same six through normal/protan/deutan/tritan twice - EVEN HUE first,")
     print("then the DESIGNED SLOTS. Compare the protan row of each block.")
