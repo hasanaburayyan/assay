@@ -151,6 +151,27 @@ func _initialize() -> void:
 	if argv.size() > 3:
 		_play.hoppers = int(argv[3])
 	print("window %s, viewport %s" % [DisplayServer.window_get_size(), root.size])
+	# **WHAT THIS PICTURE IS EVIDENCE ABOUT** (ASSA-141 box 3, Maren's ruling).
+	#
+	# Until now this report named the window size, the shots and the fold verdict, and nothing about
+	# the RULES the shot was taken on -- so a screenshot could be filed, argued over and acted on
+	# without anyone able to say which build drew it. `client/bin` is git-ignored, so the
+	# `libsim_godot` each of us runs is whatever we last built and no commit pins it. On ASSA-137
+	# that cost a wake-up and nearly cost a design reversal: three honest screenshots on a correct
+	# branch showed a fire state that is LIT for 379 of 435 ticks on main.
+	#
+	# IT COST ME ONE TODAY TOO, and that is why this line is one `print` and not a discussion. My own
+	# dylib predated the merge of #231 by seven minutes; the client suite came back red on a key the
+	# binding had just started sending, and for a minute I had a red `main` and a message half
+	# written to the person who merged it. `test_hud.gd::test_the_tile_fixture_still_matches_a_real_
+	# tile` is what caught it -- a test that asks the BINDING what a tile looks like instead of
+	# trusting a fixture. That is the shape ASSA-141 box 4 asks for, and it already exists.
+	#
+	# BOTH NUMBERS COME FROM THE BINDING, never from a constant on this side (`protocol.gd`'s own
+	# rule): a provenance line that could be stale would be worse than none, because it would make a
+	# stale shot look pinned.
+	print("rules %s, protocol %d, godot %s" % [AssayProtocol.rules_id(),
+			AssayProtocol.protocol_version(), Engine.get_version_info()["string"]])
 
 
 func _process(_delta: float) -> bool:
