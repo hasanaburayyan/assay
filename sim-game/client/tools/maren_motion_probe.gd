@@ -43,6 +43,12 @@ var _joined := false
 ## Wall-clock gaps between ticks as they ARRIVED, not as anyone intended them.
 var _gaps: Array[float] = []
 var _last_tick_at := 0.0
+## Ticks counted on the client's OWN `tick_bundle` signal, which fires once per bundle. Sampling
+## `_tick_at` once a frame cannot tell one late tick from two that arrived in the same frame, and
+## the difference decides whether delivery is bursty or my sampling was blind.
+var _bundles := 0
+var _bundle_gaps: Array[float] = []
+var _last_bundle := 0.0
 var _started := false
 var _done := false
 var _started_at := 0.0
@@ -62,6 +68,13 @@ func _initialize() -> void:
 	root.add_child(_screen)
 	_screen._ready()
 	_screen._client.asked.connect(func(command: Variant) -> void: _asked.append(command))
+	_screen._client.tick_bundle.connect(func(_t: int, _i: Array, _r: String) -> void:
+		var at := _now()
+		if _joined:
+			_bundles += 1
+			if _last_bundle > 0.0:
+				_bundle_gaps.append(at - _last_bundle)
+			_last_bundle = at)
 
 
 func _now() -> float:
@@ -220,5 +233,16 @@ func _report() -> void:
 			total += g
 		print("TICKS AS THEY ARRIVED: %d gaps, mean %.3fs, min %.3fs, max %.3fs, spread %.3fs"
 				% [_gaps.size(), total / _gaps.size(), lo, hi, hi - lo])
+	if _bundles > 0:
+		var blo := _bundle_gaps[0] if not _bundle_gaps.is_empty() else 0.0
+		var bhi := blo
+		var btotal := 0.0
+		for g in _bundle_gaps:
+			blo = minf(blo, g)
+			bhi = maxf(bhi, g)
+			btotal += g
+		print("BUNDLES ON THE SIGNAL: %d in %.1fs = %.2f/s; gap mean %.3fs min %.3fs max %.3fs"
+				% [_bundles, _seconds, _bundles / _seconds,
+				btotal / maxf(float(_bundle_gaps.size()), 1.0), blo, bhi])
 	print("first %s last %s" % [_samples[0], _samples[-1]])
 	print("PROBE OK")
