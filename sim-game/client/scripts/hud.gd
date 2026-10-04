@@ -536,10 +536,18 @@ static func tile_lines(tile: Dictionary) -> PackedStringArray:
 			cue = "sheet is rough"
 		lines.append("purity %d (grade %s) · %s"
 				% [int(d.get("purity", 0)), String(d.get("grade", "?")), cue])
-	elif bool(tile.get("is_spawn", false)):
-		lines.append("spawn")
 	else:
-		lines.append("empty ground")
+		# THE GROUND IS THE SIM'S WORD, NOT THIS FILE'S (Maren, ASSA-146). This block spelled out
+		# `spawn` / `empty ground` itself, and so did sim-cli's `at` and the inspector's tile panel
+		# -- three copies of one sentence, and the bare one was WRONG here: it called the tile empty
+		# on the line directly above the smelter standing on it, because the building below is
+		# appended by a block that does not know this one ran. `ground_note` is about ROCK and only
+		# rock ("no deposit here"), so it has nothing left to contradict. Same contract as
+		# `reach_note` above: EMPTY means the sim has nothing to say, and an empty line in a readout
+		# of four is a line a player has to account for.
+		var ground := String(tile.get("ground_note", ""))
+		if ground != "":
+			lines.append(ground)
 
 	# A BUILDING IS NAMED THE WAY EVERY OTHER OBJECT IS (Maren, ASSA-136): `Tonore smelter (A)`,
 	# not `smelter`. The words are the sim's -- `debug::building_name`, the same call the halted

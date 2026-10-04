@@ -323,6 +323,7 @@ impl AssaySim {
             "chunk" => Vector2i::new(facts.chunk.0, facts.chunk.1),
             "chunks_from_spawn" => facts.chunks_from_spawn,
             "is_spawn" => facts.is_spawn,
+            "ground_note" => &gstring(&facts.ground_note).to_variant(),
             "deposit" => &match &facts.deposit {
                 Some(deposit) => deposit_dict(deposit).to_variant(),
                 None => Variant::nil(),
@@ -1470,6 +1471,20 @@ pub struct TileFacts {
     pub chunk: (i32, i32),
     pub chunks_from_spawn: i64,
     pub is_spawn: bool,
+    /// The sim's word for the GROUND here, EMPTY when it has none: `spawn`,
+    /// `no deposit here`, or nothing at all on a tile whose deposit does the
+    /// talking (`sim::debug::ground_note`).
+    ///
+    /// Same contract as [`DepositFacts::reach_note`] — wording the sim owns and
+    /// a host only renders — and it is here for the reason that field is:
+    /// `hud.gd` spelled "empty ground" itself, so the cursor section called a
+    /// tile empty on the line above the smelter standing on it (ASSA-146),
+    /// while `sim-cli` and the inspector each held their own copy of the same
+    /// sentence.
+    ///
+    /// **`is_spawn` STAYS, and is not this.** A caller that must BRANCH on the
+    /// tile being spawn needs the bool; this is the one to show a player.
+    pub ground_note: String,
     pub deposit: Option<DepositFacts>,
     pub building: Option<BuildingFacts>,
     pub players_here: Vec<String>,
@@ -1824,6 +1839,7 @@ impl AssaySim {
             chunk: (chunk.x, chunk.y),
             chunks_from_spawn: chunk.distance(self.world.spawn) as i64,
             is_spawn: at == self.world.spawn_tile(),
+            ground_note: sim::debug::ground_note(&self.world, at).to_string(),
             deposit: if in_bounds {
                 self.world.deposit_at(at).map(|deposit| DepositFacts {
                     id: deposit.id.0 as i64,

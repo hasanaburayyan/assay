@@ -699,8 +699,10 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
                         lines.push(Line::from(why));
                     }
                 }
-                None if t == world.spawn_tile() => lines.push(Line::from("spawn")),
-                None => lines.push(Line::from("empty ground")),
+                // The sim's word for the ground (ASSA-146), not this panel's:
+                // the building two lines up is drawn by the block above and
+                // this line used to call the same tile empty.
+                None => lines.push(Line::from(debug::ground_note(world, t))),
             }
             let here: Vec<&str> = world
                 .players

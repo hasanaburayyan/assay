@@ -344,13 +344,98 @@ func test_a_standing_building_is_named_by_its_material_and_not_by_its_kind() -> 
 	return true
 
 
-func test_empty_ground_and_spawn_are_told_apart() -> bool:
-	var ground := AssayHud.tile_lines({"in_bounds": true, "pos": Vector2i(1, 2),
-			"chunk": Vector2i(0, 0), "chunks_from_spawn": 3, "is_spawn": false})
-	if not "\n".join(ground).contains("empty ground"):
-		return _fail("a bare tile read as %s" % [ground])
-	var spawn := AssayHud.tile_lines({"in_bounds": true, "pos": Vector2i(48, 32),
-			"chunk": Vector2i(3, 2), "chunks_from_spawn": 0, "is_spawn": true})
+## One bare tile, with `extra` overriding any field: no deposit, nothing on it, and the sim's own
+## word for its ground. `ground_note` is held to the real binding by
+## `test_the_tile_fixture_still_matches_a_real_tile`.
+func _bare_tile(extra: Dictionary) -> Dictionary:
+	var tile := {"in_bounds": true, "pos": Vector2i(1, 2), "chunk": Vector2i(0, 0),
+			"chunks_from_spawn": 3, "is_spawn": false, "ground_note": "no deposit here",
+			"deposit": null, "building": null, "players_here": PackedStringArray()}
+	for key in extra:
+		tile[key] = extra[key]
+	return tile
+
+
+## THE GROUND LINE IS THE SIM'S WORD, AND A BUILDING CANNOT MAKE IT FALSE (Maren, ASSA-146).
+##
+## This file used to assert the literal `empty ground`, which was the bug: the phrase carried two
+## facts (*no deposit* and *nothing here*) and the building below it is appended by a block that
+## does not know this one ran, so the cursor section read "empty ground" directly above
+## "Minyte smelter (B) 0 · walls 29 · …". Three surfaces spelled that phrase; now none do.
+func test_the_ground_line_never_calls_an_occupied_tile_empty() -> bool:
+	var bare := AssayHud.tile_lines(_bare_tile({}))
+	if bare.size() != 2 or not String(bare[1]).contains("no deposit here"):
+		return _fail("a bare tile read as %s" % [bare])
+
+	# THE BUG ITSELF, AS A COMPARISON RATHER THAN A SEARCH. Putting a building on the tile must
+	# APPEND a line and change nothing above it -- which says both halves at once: the ground
+	# fact is still there (it is not deleted to buy the silence) and it is the same sentence a
+	# bare tile gets, so it cannot have been a claim about occupancy.
+	#
+	# Not a search for "empty" across the read, either: a smelter's own status says `in empty ·
+	# … · out empty` about its two SLOTS -- true, and nothing to do with the tile. That check
+	# would fail on the fix.
+	var occupied := AssayHud.tile_lines(_bare_tile({"building": {"id": 0, "kind": "smelter",
+			"name": "Minyte smelter (B)", "pos": Vector2i(1, 2),
+			"status": "walls 29 · in empty · fuel 9 Minyte ore (B) · out empty · idle"}}))
+	if occupied.size() != bare.size() + 1:
+		return _fail("a building should add one line to %s, got %s" % [bare, occupied])
+	for i in range(bare.size()):
+		if occupied[i] != bare[i]:
+			return _fail("line %d changed when a building appeared: %s became %s"
+					% [i, bare[i], occupied[i]])
+	if String(occupied[1]).contains("empty"):
+		return _fail("the ground line calls an occupied tile empty: %s" % occupied[1])
+	if not String(occupied[2]).contains("Minyte smelter (B) 0"):
+		return _fail("the fixture must still name the building, or this proves nothing: %s"
+				% [occupied])
+
+	# VERBATIM, OR THE CLIENT IS STILL WORDING THE GROUND. A sentence no file in this repo
+	# composes can only have come from the dict, so this fails the moment hud.gd starts
+	# deciding the words again -- which is the shape the bug had.
+	var sentinel := "GROUND-SENTINEL-7"
+	if not "\n".join(AssayHud.tile_lines(_bare_tile({"ground_note": sentinel}))).contains(sentinel):
+		return _fail("the ground line is not rendered verbatim from the sim")
+
+	# EMPTY MEANS SILENT, NOT BLANK. `ground_note` is empty on a deposit tile (the deposit line
+	# is the ground line there), and a blank row in a four-line readout is a line a player has
+	# to account for.
+	for line in AssayHud.tile_lines(_bare_tile({"ground_note": ""})):
+		if String(line).strip_edges() == "":
+			return _fail("an empty ground note left a blank line in the readout")
+	return true
+
+
+## BOX 3 OF ASSA-146: THE CASE THAT WAS ALREADY RIGHT. A deposit under a building composes
+## ("deposit 4 · kuri · 37 ore left" over a smelter reads correctly) and that is the half of this
+## readout the fix must not touch -- the risk in wording the ground once is wording it twice.
+func test_a_deposit_under_a_building_gains_no_ground_line() -> bool:
+	var tile := _tile_with({})
+	tile["building"] = {"id": 0, "kind": "smelter", "name": "kuri smelter (B)",
+			"pos": Vector2i(10, 9), "status": "walls 41 · in empty · out empty · idle"}
+	var lines := AssayHud.tile_lines(tile)
+	var joined := "\n".join(lines)
+	if not joined.contains("deposit 4 · kuri · 37 ore left"):
+		return _fail("the deposit line went missing: %s" % joined)
+	if not joined.contains("kuri smelter (B) 0"):
+		return _fail("the building line went missing: %s" % joined)
+	if joined.contains("no deposit here"):
+		return _fail("a tile WITH a deposit was told it has none: %s" % joined)
+	# And the same comparison the occupied-bare case makes: the building only ever appends.
+	var without := AssayHud.tile_lines(_tile_with({}))
+	for i in range(without.size()):
+		if lines[i] != without[i]:
+			return _fail("line %d changed when a building appeared: %s became %s"
+					% [i, without[i], lines[i]])
+	return true
+
+
+## Spawn is unchanged by ASSA-146: it says what the tile IS and never claimed to be bare, so it
+## composed over a building before and composes now. The word is the sim's either way.
+func test_the_spawn_tile_says_spawn() -> bool:
+	var spawn := AssayHud.tile_lines(_bare_tile({"pos": Vector2i(48, 32),
+			"chunk": Vector2i(3, 2), "chunks_from_spawn": 0, "is_spawn": true,
+			"ground_note": "spawn"}))
 	if not "\n".join(spawn).contains("spawn"):
 		return _fail("the spawn tile read as %s" % [spawn])
 	return true
@@ -407,9 +492,12 @@ func _tile_with(extra: Dictionary) -> Dictionary:
 			"assayed": false, "hand_minable": true, "reach_note": ""}
 	for key in extra:
 		deposit[key] = extra[key]
+	# `ground_note` EMPTY is what the sim sends for a tile whose deposit does the talking: the
+	# deposit line IS the ground line there (ASSA-146). A fixture carrying a sentence here would
+	# be testing a state `AssaySim::tile_at` cannot produce.
 	return {"in_bounds": true, "pos": Vector2i(10, 9), "chunk": Vector2i(0, 0),
-			"chunks_from_spawn": 3, "is_spawn": false, "deposit": deposit, "building": null,
-			"players_here": PackedStringArray()}
+			"chunks_from_spawn": 3, "is_spawn": false, "ground_note": "", "deposit": deposit,
+			"building": null, "players_here": PackedStringArray()}
 
 
 ## REACH IS STATED BEFORE ANY ASSAY CUE, AND A ROCK NOTHING CAN MINE IS NEVER INVITED TO BE ASSAYED.
@@ -531,6 +619,50 @@ func test_the_deposit_fixture_still_matches_a_real_deposit() -> bool:
 		return _fail("`hand_minable` is not a bool: %s" % [real["hand_minable"]])
 	if typeof(real["reach_note"]) != TYPE_STRING:
 		return _fail("`reach_note` is not a String: %s" % [real["reach_note"]])
+	return true
+
+
+## THE SAME CHECK ONE LEVEL UP, FOR THE KEY THE GROUND LINE NOW DEPENDS ON (ASSA-146).
+##
+## `hud.gd` reads `tile.get("ground_note", "")` and appends nothing when it is empty, so a binding
+## that never sent the key would make the ground line DISAPPEAR from the window and every test in
+## this file would still pass -- they all read dictionaries I typed. That is the exact shape of a
+## test agreeing with its own bug, so the fact comes off a real world: a bare in-bounds tile must
+## carry a NON-EMPTY note, and a deposit tile must carry an empty one.
+func test_the_tile_fixture_still_matches_a_real_tile() -> bool:
+	var host := AssaySimHost.new()
+	if not host.start(AssaySimHost.fresh_welcome_json("777042", "limpet")):
+		return _fail("could not build a world from fresh_welcome_json: %s" % host.fail_reason)
+	for key in _bare_tile({}):
+		if not host.tile_at(Vector2i(1, 2)).has(key):
+			return _fail(("the fixture carries `%s` and a real tile does not. Real keys: %s")
+					% [key, host.tile_at(Vector2i(1, 2)).keys()])
+
+	# A bare tile: search rather than pin, because worldgen decides where the deposits are.
+	var bare := Vector2i(-1, -1)
+	var covered := Vector2i(-1, -1)
+	for y in range(0, 40):
+		for x in range(0, 40):
+			var at := Vector2i(x, y)
+			var tile: Dictionary = host.tile_at(at)
+			if not bool(tile.get("in_bounds", false)):
+				continue
+			if tile.get("deposit") != null:
+				covered = at
+			elif not bool(tile.get("is_spawn", false)):
+				bare = at
+	if bare == Vector2i(-1, -1) or covered == Vector2i(-1, -1):
+		return _fail("a real world gave no bare tile and no deposit tile to compare")
+
+	var note: Variant = host.tile_at(bare).get("ground_note")
+	if typeof(note) != TYPE_STRING:
+		return _fail("`ground_note` is not a String: %s" % [note])
+	if String(note) == "":
+		return _fail(("a real bare tile %s sent an EMPTY ground_note, so the window shows no "
+				+ "ground line at all") % bare)
+	if String(host.tile_at(covered).get("ground_note", "x")) != "":
+		return _fail("a real deposit tile %s sent a ground note as well as its deposit line: %s"
+				% [covered, host.tile_at(covered).get("ground_note")])
 	return true
 
 
