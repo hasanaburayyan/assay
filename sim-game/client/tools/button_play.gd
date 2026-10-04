@@ -61,6 +61,13 @@ var finished := false
 var planted_verdict := ""
 ## What the placement actually did: a machine on the map, or a design that came apart.
 var outcome := ""
+## WHICH OUTCOME, in one word the report can branch on: "mining", "stopped" or "broke".
+## `outcome` is prose for a person; this is so `button_session` can stop printing one OK line
+## for a machine that works and a design that came apart (ASSA-140). Read from the sim, never
+## parsed back out of the sentence above.
+var outcome_kind := ""
+## True when no reachable tile held ore, so the drill had to be planted off it.
+var _off_ore := false
 ## Every button pressed and every tile clicked, in order. The evidence that this was a person's path
 ## through the client and not a script's path around it.
 var pressed := PackedStringArray()
@@ -441,11 +448,18 @@ func _hoppers_wanted() -> int:
 ## PLACE WAS NEVER DISABLED AND NEVER REFUSED ON THIS SIDE, whatever the verdict above says.
 func _planting() -> void:
 	if _world().tile_at(_drill_at).get("building") != null if _drill_at.x >= 0 else false:
-		outcome = "planted: a machine stands at %s" % _drill_at
+		# WHETHER IT IS WORKING IS THE SIM'S WORD, not "a building exists here" (ASSA-140). A machine
+		# that stands and does nothing was reported as a success for weeks, and `button_session`
+		# printed the same OK line for that as for a design that came apart.
+		var status := _planted_status()
+		outcome_kind = "stopped" if _planted_is_stopped() else "mining"
+		outcome = ("planted: a machine stands at %s and the sim says: %s"
+				% [_drill_at, status if status != "" else "nothing"])
 		step = Step.DONE
 		return
 	if _done.has("planted"):
 		if _planted_design().is_empty():
+			outcome_kind = "broke"
 			outcome = ("broke: the %s design came apart at %s and the parts came back"
 					% [planted_verdict, _drill_at])
 			step = Step.DONE
@@ -454,7 +468,16 @@ func _planting() -> void:
 			_stop(false, "pressed Place on the drill and it is neither on the map nor gone")
 		return
 	var me := _my_pos()
-	_drill_at = AssayDemoPlan.smelter_spot(me, _world().size_tiles(), _buildings_near(me))
+	# A DRILL GOES ON ORE AND A SMELTER DOES NOT (ASSA-140). This used `smelter_spot`, so the demo's
+	# own payoff landed off the deposit in three worlds out of four and was stopped on arrival with
+	# `idle: no deposit underneath`. The fallback is kept so the loop still reaches an end on a world
+	# with no reachable ore, but `_off_ore` records that it happened and the outcome says so: a
+	# stopped machine is a different result from a working one and must not read as the same.
+	_drill_at = AssayDemoPlan.drill_spot(me, _world().size_tiles(), _buildings_near(me),
+			_ore_under(me))
+	_off_ore = _drill_at.x < 0
+	if _off_ore:
+		_drill_at = AssayDemoPlan.smelter_spot(me, _world().size_tiles(), _buildings_near(me))
 	if _drill_at.x < 0:
 		_stop(false, "no free tile within reach of %s to plant a drill on" % me)
 		return
@@ -692,6 +715,40 @@ func _smelter_is_idle() -> bool:
 func _smelter_holds_input() -> bool:
 	var status := _smelter_status()
 	return status != "" and not status.contains("idle: nothing to refine")
+
+
+## THE SIM'S OWN WORD ON THE PLANTED MACHINE, the same `status` string the HUD shows.
+func _planted_status() -> String:
+	var building: Variant = _world().tile_at(_drill_at).get("building")
+	return "" if building == null else String((building as Dictionary).get("status", ""))
+
+
+## HAS THE PLANTED MACHINE STOPPED — the SIM's bool (`building_state(b).halted()`), not a guess at
+## the shape of its status sentence. I wrote `status.begins_with("mining")` first and it called every
+## working drill stopped, because the sentence reads `holding 0 of 210 · mining Minyte · …`. A client
+## that branches on prose is deriving a rule from a rendering; `stopped` is the fact.
+##
+## No default: a dict with no `stopped` key is a stale dylib and says so (Maren's ASSA-141 ruling).
+func _planted_is_stopped() -> bool:
+	var building: Variant = _world().tile_at(_drill_at).get("building")
+	if building == null:
+		return true
+	var facts: Dictionary = building
+	assert(facts.has("stopped"),
+		"the building dict carries no `stopped` key: rebuild libsim_godot (`make client-lib`)")
+	return bool(facts["stopped"])
+
+
+## WHICH TILES NEAR `at` HOLD ORE, as the sim reports them. The same shape `stand_tile` takes,
+## and for the same reason: what a deposit covers is sim state, not a radius computed here.
+func _ore_under(at: Vector2i) -> Dictionary:
+	var cover := {}
+	for dx in range(-3, 4):
+		for dy in range(-3, 4):
+			var tile := at + Vector2i(dx, dy)
+			var deposit: Variant = _world().tile_at(tile).get("deposit")
+			cover[tile] = deposit != null and int((deposit as Dictionary).get("amount", 0)) > 0
+	return cover
 
 
 func _buildings_near(at: Vector2i) -> Array:
