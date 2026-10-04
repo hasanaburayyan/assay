@@ -41,10 +41,24 @@ pub fn hand_minable(s: &MineralSpecies) -> bool {
     u32::from(s.sheet.hardness) <= HAND_MINE_MAX_HARDNESS
 }
 
+/// How hot this species burns **at one named grade**, if it counts as fuel at
+/// that grade at all.
+///
+/// **ONE PLACE DECIDES HOW HOT A ROCK BURNS.** There were three copies of this
+/// comparison: this function at [`JUDGED_AT`], [`fuel_grade`]'s loop over every
+/// grade, and `World::fuel_temperature` for an item in a slot. They agreed, but
+/// only by hand — and ASSA-139 is what you get when one caller needs the answer
+/// at a grade the others never ask about and writes a fourth copy to get it.
+/// Reactivity is the one fuel property grade scales, so the grade is never
+/// optional; [`burn_temperature`] names [`JUDGED_AT`] rather than defaulting it.
+pub fn burn_temperature_at(s: &MineralSpecies, grade: Grade) -> Option<u32> {
+    let t = s.effective(Property::Reactivity, grade);
+    (t >= FUEL_MIN_REACTIVITY).then_some(t)
+}
+
 /// How hot this species burns at the judged grade, if it counts as fuel.
 pub fn burn_temperature(s: &MineralSpecies) -> Option<u32> {
-    let t = s.effective(Property::Reactivity, JUDGED_AT);
-    (t >= FUEL_MIN_REACTIVITY).then_some(t)
+    burn_temperature_at(s, JUDGED_AT)
 }
 
 /// The cheapest grade at which a species counts as fuel at all, or `None` if
@@ -63,7 +77,7 @@ pub fn burn_temperature(s: &MineralSpecies) -> Option<u32> {
 pub fn fuel_grade(s: &MineralSpecies) -> Option<Grade> {
     Grade::ALL
         .into_iter()
-        .find(|g| s.effective(Property::Reactivity, *g) >= FUEL_MIN_REACTIVITY)
+        .find(|g| burn_temperature_at(s, *g).is_some())
 }
 
 /// Whether a fire burning at `fire` sets this species alight, counting the
@@ -222,6 +236,38 @@ pub fn usable_from_bare_hands(species: &[MineralSpecies], id: SpeciesId) -> bool
         .is_some_and(|rung_zero| rung_zero.contains(&id))
 }
 
+/// Does this exact pair smelt — a smelter built **out of `material`**, fed
+/// `fuel` mined at `grade`?
+///
+/// **[`rungs`] ASKS A STRICTLY EASIER QUESTION AND THAT IS THE WHOLE OF
+/// ASSA-139.** Rung zero counts a species usable if the *best* walls in the
+/// roster survive the *hottest chained* fire, so membership says "somebody
+/// could smelt this here". The starter pair promises far more: one hand-lit
+/// fuel, and walls made of the material itself, because that is the only
+/// smelter a player with nothing else can build. A pair can sit in rung zero
+/// and still never light — 1.8% of worlds did.
+///
+/// The fire is `min(fuel temperature, walls)` and the walls are the material's
+/// own heat tolerance, which is also exactly what its ore needs. So the `min`
+/// can never bite today and the comparison reduces to the fuel; it is written
+/// as the real rule anyway, because the day a smelter's walls stop being its
+/// material's heat tolerance this still answers correctly.
+///
+/// **NO TEST CAN CATCH A CHANGE TO THAT `min`, and I would rather say so than
+/// let a green run read as cover.** `walls` and `needs` are the same number,
+/// so `min` and `max` give the same answer on every input the game can
+/// produce; I mutated it to `max` and all 14 ladder tests stayed green. The
+/// clause is here for the reader and for the day the two stop being equal,
+/// and on that day it needs a test of its own.
+///
+/// Heat only. Whether the player can light it at all is [`hand_lit_fuel`]'s
+/// question, and [`starter_species`] asks both.
+pub fn pair_smelts(material: &MineralSpecies, fuel: &MineralSpecies, grade: Grade) -> bool {
+    let walls = u32::from(material.sheet.heat_tolerance);
+    let needs = u32::from(material.sheet.heat_tolerance);
+    burn_temperature_at(fuel, grade).unwrap_or(0).min(walls) >= needs
+}
+
 /// Rung zero's two guaranteed deposits: a species to mine, smelt and build
 /// with, and a fuel the player can light by hand. May be the same species.
 ///
@@ -235,6 +281,21 @@ pub fn usable_from_bare_hands(species: &[MineralSpecies], id: SpeciesId) -> bool
 /// [`starter_roster_ok`] also rerolls; see
 /// `docs/design-notes/2026-10-01-hardness-gears-and-alloys.md`.
 ///
+/// **AND THE FUEL IS THE HOTTEST HAND-LIT SPECIES**, at the judged grade, ties
+/// by lowest id (ASSA-139). It used to be `species.iter().find(hand_lit_fuel)`
+/// — roster order, first match, with nothing asking whether that fuel melts
+/// *that* material. The paragraph above says why that is wrong and it was
+/// fixed for the material and left on the fuel line: temperature is the only
+/// property a fuel's job reads, so selecting on anything else here is again
+/// selecting on nothing. Over 2000 worlds the pair could not smelt in 1.8%,
+/// and a player following the one path the game guarantees reached a smelter
+/// stalled forever at `fire 44 too cool for ore needing 54`.
+///
+/// Hottest and not merely hot-enough, deliberately: it keeps the pick a
+/// best-of-one-property answer like the material's, so neither line needs to
+/// know about the other, and [`starter_roster_ok`] can then ask one question
+/// — does the best pair this roster affords smelt — instead of searching.
+///
 /// Ties must break deterministically or two peers disagree about the world.
 pub fn starter_species(species: &[MineralSpecies]) -> Option<(SpeciesId, SpeciesId)> {
     let rung0 = rungs(species).into_iter().next()?;
@@ -245,7 +306,11 @@ pub fn starter_species(species: &[MineralSpecies]) -> Option<(SpeciesId, Species
             id.0,
         )
     })?;
-    let fuel = species.iter().find(|s| hand_lit_fuel(s))?.id;
+    let fuel = species
+        .iter()
+        .filter(|s| hand_lit_fuel(s))
+        .min_by_key(|s| (std::cmp::Reverse(burn_temperature(s).unwrap_or(0)), s.id.0))?
+        .id;
     Some((material, fuel))
 }
 
@@ -282,14 +347,39 @@ pub fn starter_pick_speed(species: &[MineralSpecies], material: SpeciesId) -> u3
 ///    With one, assaying is decoration — five property sheets and nothing to
 ///    compare them against, so no material decision anywhere.
 ///
+/// 4. **The pair actually smelts** — [`pair_smelts`] at [`JUDGED_AT`]
+///    (ASSA-139). Rung-zero membership is not this: it is judged against the
+///    best walls and the hottest chained fire in the roster, where the pair
+///    gets one hand-lit fuel and walls made of the material. With the fuel
+///    picked on temperature this rejects a further **0.7%** of rosters, so it
+///    is close to free; before that fix the same condition would have rejected
+///    1.8%, and rejecting is the wrong fix for a bad pick.
+///
+/// **WHY [`JUDGED_AT`] IS THE RIGHT GRADE HERE AND NOT GRADE C.** The promise
+/// is located, not idealised: `worldgen::deposit_in_chunk` puts the pair in the
+/// two `STARTER_CHUNKS` beside spawn with purity floored at
+/// `STARTER_MIN_PURITY`, which grades B or better — 0 of 2000 worlds put a
+/// guaranteed starter deposit below B. `tests/ladder.rs` pins that floor to
+/// this grade, because the whole guarantee rests on the two constants agreeing.
+/// Demanding the pair smelt at grade C instead would widen the promise to
+/// *every* deposit of those species and costs 22.4% of rosters, measured; that
+/// is a different and much more expensive guarantee than the one ADR 0001
+/// bought, and the surface fix for a player who walks to a poorer deposit is
+/// ASSA-143 (the window naming the grade) rather than deleting those worlds.
+///
 /// Together these accept 70.9% of rosters that already pass (1), measured
 /// over 2000 seeds, and the guarantee is the **starter species only**: every
 /// other species stays a gamble you have to assay to read.
 pub fn starter_roster_ok(species: &[MineralSpecies]) -> bool {
-    let Some((material, _fuel)) = starter_species(species) else {
+    let Some((material, fuel)) = starter_species(species) else {
         return false;
     };
     rungs(species).len() >= MIN_STARTER_RUNGS
         && starter_pick_speed(species, material) > HAND_WORK_PER_TICK
         && species.iter().filter(|s| hand_minable(s)).count() >= MIN_HAND_MINABLE_SPECIES
+        && pair_smelts(
+            &species[usize::from(material.0)],
+            &species[usize::from(fuel.0)],
+            JUDGED_AT,
+        )
 }

@@ -15,8 +15,7 @@
 use sim::tuning::{
     FRAME_BUDGET_PER_STRENGTH, GEAR_MIN_HARDNESS, HEAD_SIZE, HOPPER_SIZE, PLANTED_FRAME_SIZE,
 };
-use sim::worldgen::STARTER_CHUNKS;
-use sim::{ChunkPos, OreDeposit, Property, TilePos, World};
+use sim::{OreDeposit, Property, TilePos, World};
 
 /// Chebyshev distance: ticks it takes to walk between two tiles.
 pub fn walk(from: TilePos, to: TilePos) -> i32 {
@@ -67,17 +66,21 @@ pub fn starters(seed: u64) -> (World, OreDeposit, OreDeposit) {
     // the doc comment above only stays true while one place decides the shape
     // (ASSA-53).
     let world = sim_net::fresh_world(seed);
-    let at = |i: usize| {
-        let (dx, dy) = STARTER_CHUNKS[i];
-        let chunk = ChunkPos::new(world.spawn.x + dx, world.spawn.y + dy);
+    // ASKS THE SIM WHICH DEPOSITS THE GUARANTEE POINTS AT (ASSA-139). This
+    // hand-rolled the chunk walk, and so did `tests/ladder.rs` and the demo —
+    // three copies of "where is the starter patch", one of which was wrong.
+    let (material, fuel) = world
+        .starter_deposits()
+        .expect("every world has a starter pair");
+    let at = |id| {
         world
             .deposits
             .iter()
-            .find(|d| d.center.chunk() == chunk)
+            .find(|d| d.id == id)
             .cloned()
             .expect("starter deposit")
     };
-    let (material, fuel) = (at(0), at(1));
+    let (material, fuel) = (at(material), at(fuel));
     (world, material, fuel)
 }
 
@@ -100,7 +103,12 @@ pub fn supports_the_loop(w: &World, m: &OreDeposit, f: &OreDeposit) -> bool {
         * FRAME_BUDGET_PER_STRENGTH
         * ms.effective(Property::Strength, m.grade());
     ms.effective(Property::Hardness, m.grade()) >= GEAR_MIN_HARDNESS
-        && fs.effective(Property::Reactivity, f.grade()) >= u32::from(ms.sheet.heat_tolerance)
+        // ASKS THE SIM, not a fifth copy of the comparison. This line used to
+        // re-derive "the fuel melts the material" and it was the fourth copy
+        // of it in the tree (ASSA-139); it also omitted the fuel-threshold
+        // half, so it counted a rock with reactivity 20 as fuel when the sim
+        // would not light it at all.
+        && sim::ladder::pair_smelts(ms, fs, f.grade())
         && m.species != f.species
         && drill_mass <= frame_budget
 }

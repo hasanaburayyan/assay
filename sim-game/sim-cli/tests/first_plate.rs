@@ -19,6 +19,7 @@ use std::process::{Command, Stdio};
 
 use common::walk;
 use sim::ladder::starter_species;
+use sim::tuning::YIELD_BY_GRADE;
 
 #[test]
 fn fresh_world_through_the_whole_demo_loop_on_the_plain_prompt() {
@@ -245,7 +246,19 @@ quit
         format!("+ hopper({m} {g}"),
         "you planted machine 1".to_string(),
         // It produces into its buffer, and the ore comes back out.
-        format!("machine 1 mined 2 {m} ore ({g})"),
+        //
+        // THE YIELD COMES OUT OF THE SIM'S OWN TABLE AND NOT OUT OF THIS
+        // LITERAL, which until ASSA-139 said `mined 2`. `demo_seed` searches
+        // for a world rather than pinning one, so the material's grade is
+        // whatever the first supporting seed rolled — and this line quietly
+        // asserted that it rolls B forever. Changing the starter FUEL pick
+        // moved the search to a seed whose material is grade A, the drill
+        // mined 3 as the rules say it must, and the whole play-through went
+        // red on a number no rule had changed.
+        format!(
+            "machine 1 mined {} {m} ore ({g})",
+            YIELD_BY_GRADE[material.grade() as usize]
+        ),
         "from building 1".to_string(),
     ] {
         assert!(
