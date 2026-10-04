@@ -805,6 +805,149 @@ fn equipping_or_planting_something_unbuilt_is_refused() {
 }
 
 // ---------------------------------------------------------------------------
+// ASSA-130: what the log says about a design, and what the panels hold
+// ---------------------------------------------------------------------------
+
+/// Build `design` through the real command and return its slot together with
+/// the line a host renders for it, **worded against the world as it stands at
+/// that moment** — which is how a host describes an event: as it arrives,
+/// before anything later moves the list it points into.
+fn assemble_and_read(world: &mut World, me: PlayerId, design: &Assembly) -> (u32, String) {
+    give_parts(world, me, design);
+    let events = send(
+        world,
+        me,
+        PlayerCommand::Assemble {
+            frame: design.frame.as_item(),
+            mounted: design.mounted.iter().map(Part::as_item).collect(),
+        },
+    );
+    assert_eq!(rejection(&events), None, "assemble was rejected");
+    let event = events
+        .iter()
+        .find(|e| matches!(e, Event::Assembled { .. }))
+        .expect("Assemble emits Assembled");
+    let line = debug::event_line(world, Some(me), event);
+    let Event::Assembled { assembly, .. } = event else {
+        unreachable!("found by matches!")
+    };
+    (*assembly, line)
+}
+
+/// **THE SHEET IS NEWS ONCE.** On `Assembled` the readout IS the news — the
+/// verdict is what assaying was for. One tick later `Equipped` printed the
+/// same four wrapped rows again, which was a third of the readable log in the
+/// window shot that filed this item, and the pair is the NORMAL flow
+/// (`sim-cli/tests/first_pick.rs` plays it).
+///
+/// The verdict stays on the equip line because it is the part that bears on
+/// the act: am I about to swing something that will break.
+#[test]
+fn the_sheet_is_printed_on_assembling_and_not_again_on_equipping() {
+    let (mut world, me) = world_with_player();
+    let design = pick(LIGHT, LIGHT);
+    let (index, assembled) = assemble_and_read(&mut world, me, &design);
+
+    // The sheet is taken from where it is composed rather than spelled out
+    // here, so this test still knows what to look for when the readout grows
+    // a column.
+    let p = world.player(me).unwrap();
+    let sheet = debug::assembly_readout(&world, &p.assemblies[index as usize]);
+
+    let events = send(&mut world, me, PlayerCommand::Equip { assembly: index });
+    let equipped = events
+        .iter()
+        .find(|e| matches!(e, Event::Equipped { .. }))
+        .map(|e| debug::event_line(&world, Some(me), e))
+        .expect("Equip emits Equipped");
+
+    assert!(
+        assembled.contains(&sheet),
+        "the assembled entry keeps the whole readout:\n{assembled}\nwanted: {sheet}"
+    );
+    assert_eq!(
+        equipped,
+        format!(
+            "you equipped a tool: {}",
+            design.stat_range(&world.species).verdict().label()
+        ),
+        "the equipped entry is one row: a verdict and nothing else"
+    );
+    // **EVERY MARKER IS ASSERTED PRESENT IN THE SHEET BEFORE IT IS ASSERTED
+    // ABSENT FROM THE LINE**, so no absence here can pass for free. Without
+    // this half the test would stay green if `assembly_readout` stopped saying
+    // "mass" — and then it would be measuring nothing at all.
+    for marker in [
+        "mass ",
+        "budget",
+        "durability",
+        "speed ",
+        "handle(",
+        "head(",
+    ] {
+        assert!(
+            sheet.contains(marker),
+            "premise: the readout is supposed to carry {marker:?}, so that its \
+             absence from the equip line means something: {sheet}"
+        );
+        assert!(
+            !equipped.contains(marker),
+            "the equipped entry reprints the sheet's {marker:?}: {equipped}"
+        );
+    }
+}
+
+/// **THE SLOT SHIFTS UNDER AN ENTRY THAT IS STILL ON SCREEN.** This is the
+/// mechanism behind the Game Director's correction to her own filing, and the
+/// reason the fix is to drop the number rather than to print a better one.
+#[test]
+fn an_entry_outlives_the_slot_it_was_written_about() {
+    let (mut world, me) = world_with_player();
+    let first = pick(LIGHT, LIGHT);
+    let second = pick(LIGHT, HEAVY);
+    let (a, _) = assemble_and_read(&mut world, me, &first);
+    let (b, scrollback) = assemble_and_read(&mut world, me, &second);
+    assert_eq!((a, b), (0, 1), "the premise: two designs, slots 0 and 1");
+
+    send(&mut world, me, PlayerCommand::Equip { assembly: a });
+
+    // THE PREMISE OF THE WHOLE ITEM, MEASURED AND NOT ASSUMED: `Equip` does a
+    // Vec remove, so the slot that entry was written about now holds a
+    // different design.
+    let p = world.player(me).unwrap();
+    assert_eq!(p.assemblies.len(), 1, "the equipped one left the list");
+    assert_eq!(
+        p.assemblies[0].assembly, second,
+        "the second design slid from slot 1 to slot 0, which is what makes a \
+         printed slot number a lie"
+    );
+    assert!(
+        !scrollback.contains('#'),
+        "an entry that outlives the slot still names it: {scrollback}"
+    );
+}
+
+/// **THE NOUN IS READ OFF THE FRAME, AND THAT IS MY ONE DEPARTURE FROM THE
+/// RULING AS WRITTEN.** The Game Director ruled the line to `you assembled a
+/// tool: <readout>` from a transcript where the design happened to be a pick.
+/// `Assembled` fires for a planted drill from the same command — that is
+/// decision 6, tested above — so a fixed "tool" would mislabel every machine
+/// the demo builds, which is the same class of untruth as the slot number.
+/// `debug.rs` already words the difference: "a handle for a tool, a frame to
+/// plant".
+#[test]
+fn an_assembled_entry_names_a_tool_or_a_machine_by_its_frame() {
+    let (mut world, me) = world_with_player();
+    let (_, held) = assemble_and_read(&mut world, me, &pick(LIGHT, LIGHT));
+    let (_, planted) = assemble_and_read(&mut world, me, &drill(LIGHT, 1));
+    assert!(held.starts_with("you assembled a tool: "), "{held}");
+    assert!(
+        planted.starts_with("you assembled a machine: "),
+        "a drill is not a tool: {planted}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Decision 5 and 9: capacity is a sum, through the real commands
 // ---------------------------------------------------------------------------
 
