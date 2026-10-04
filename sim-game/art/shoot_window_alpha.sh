@@ -43,14 +43,36 @@ SRC="$SPR/$SHEET.png"
 
 DIR="$OUT/$MODE"
 mkdir -p "$DIR"
-cp "$SRC" "$DIR/REAL_$SHEET.png"
+
+# THE BACKUP COMES FROM `HEAD`, NOT FROM THE WORKING TREE, AND THAT IS A BUG NERITE FOUND BY
+# BEING BITTEN BY IT (ASSA-181 QA, 2026-10-04). Their first run was cut off with the probe sheet
+# still installed; the second run then copied THAT as `REAL_player.png`, "restored" it, and the
+# control ran on a contaminated sheet and printed RED on a tool that was fine. A backup taken
+# from a tree this script is itself in the habit of dirtying is not a backup.
+#
+# AND IF THE TREE IS ALREADY DIRTY HERE, THE ANSWER IS TO STOP. A modified sheet is either
+# somebody's unmerged art or the wreckage of a killed run, and nothing on this machine can tell
+# me which -- so restoring from HEAD would risk deleting real work and restoring from the tree is
+# the bug above. Refusing is the only option that cannot destroy something.
+REL="sim-game/client/assets/sprites/$SHEET.png"
+if [ -n "$(git -C "$REPO" status --porcelain -- "$REL")" ]; then
+  echo "NO VERDICT: $REL differs from HEAD before this run even starts."
+  echo "  Either it is art you have not committed, or a previous run of this script was killed"
+  echo "  with a probe sheet installed. I cannot tell which, and guessing wrong deletes your work."
+  echo "  Commit it, or \`git checkout HEAD -- $REL\`, then run this again."
+  exit 2
+fi
+git -C "$REPO" show "HEAD:$REL" > "$DIR/REAL_$SHEET.png" \
+  || { echo "NO VERDICT: cannot read $REL out of HEAD"; exit 2; }
 
 restore () {
   cp "$DIR/REAL_$SHEET.png" "$SRC"
   echo "--- git status for the sprites (MUST LIST NOTHING) ---"
   git -C "$REPO" status --short -- sim-game/client/assets/sprites/
 }
-trap restore EXIT
+# INT and TERM as well as EXIT: an EXIT trap alone does not fire when the run is killed, which is
+# exactly how the sheet got left swapped in the first place.
+trap restore EXIT INT TERM
 
 shoot () {            # $1 label   $2 the sheet to install
   [ -f "$2" ] || { echo "NO VERDICT: probe sheet $2 was not written"; exit 2; }
