@@ -425,9 +425,12 @@ func test_the_bench_is_wired_into_the_column_and_says_when_it_is_empty() -> bool
 	elif bench.get_child_count() != 1:
 		ok = _fail("an empty bench should hold one line, holds %d" % bench.get_child_count())
 	else:
+		# THE NO-WORLD HALF, because this screen never joins one (ASSA-186). What the sentence may
+		# not be is the in-world route -- that is the rule, and it is swept over the whole screen in
+		# `test_no_section_on_the_join_screen_asks_for_a_world_it_has_not_got`.
 		var line: Label = bench.get_child(0) as Label
-		if line == null or not line.text.contains("nothing built"):
-			ok = _fail("an empty bench must say so, shows '%s'"
+		if line == null or line.text != AssayHud.no_designs_line(false):
+			ok = _fail("an empty bench must say which kind of empty, shows '%s'"
 					% ("" if line == null else line.text))
 	screen.queue_free()
 	return ok
@@ -859,10 +862,154 @@ func test_the_crafting_menu_says_why_it_is_empty_before_a_world_exists() -> bool
 	for child in screen._make.get_children():
 		if child is Label:
 			said = (child as Label).text
-	if said != AssayHud.nothing_to_make_line():
+	if said != AssayHud.nothing_to_make_line(false):
 		ok = _fail("the empty menu says `%s`" % said)
 	screen.queue_free()
 	return ok
+
+
+## THE ONE SENTENCE A SECTION IS SHOWING, or "" if it is not showing exactly one.
+##
+## Shared by the two ASSA-186 tests so they cannot drift into reading this column differently, and it
+## COUNTS rather than taking the first child: a section holding two notes is a different screen from
+## the one under test and must not read as the first of them. Visibility is asked of the ancestor
+## chain (`_on_screen`), because the log lives in a box its toggle raises and lowers.
+func _lone_note(section: Node) -> String:
+	var said := ""
+	var notes := 0
+	for child in section.find_children("*", "Label", true, false):
+		var label := child as Label
+		if _on_screen(label) and label.text.strip_edges() != "":
+			notes += 1
+			said = label.text
+	return said if notes == 1 else ""
+
+
+## **NOTHING ON THE JOIN SCREEN MAY ASK FOR A WORLD IT HAS NOT GOT** (ASSA-186, Maren's ruling).
+## Three of the six sections did: the bench said "mine, smelt and make parts first", the crafting menu
+## "mine some rock first", and the event log answered as a world that had not spoken yet. Two of them
+## with no key pressed, on the first screen a stranger ever sees.
+##
+## **A SWEEP OVER THE WHOLE SCREEN RATHER THAN THREE NAMED ASSERTIONS**, for the reason the heading
+## sweeps give: three assertions are a test about the three sections Maren happened to read, and the
+## defect is a CLASS -- a sentence written for a world, drawn where there is none. A seventh section
+## shipping "mine some rock first" fails this with nobody remembering this item.
+##
+## **THE FORBIDDEN PHRASES ARE THE RULING'S OWN, NOT `AssayHud`'s.** A sweep that asked the wording
+## functions what to expect would agree with any wording they returned, which is the self-agreeing
+## test I have shipped twice this week. These are the three the acceptance box names, bare `smelt`
+## included -- on this screen there is no smelting to mention at all.
+##
+## **TWO ASSERTIONS, BECAUSE THE PHRASE SWEEP ALONE HAS A HOLE I MEASURED.** Reverting the log's
+## no-world wording leaves "nothing has happened yet" on the join screen, which contains none of the
+## three phrases and is still the wrong kind of empty -- so each of the three sections must also NAME
+## THE DOOR. And the premise is checked before either: pressing (L) before this item revealed a
+## visible heading over an empty section, which is a worse defect than a wrong sentence and would
+## have passed a sweep that only read what was there.
+##
+## WHAT IT CANNOT SEE, and `test_the_empty_sections_say_the_in_world_kind_once_a_world_arrives` owns:
+## deleting the in-world sentences, or never re-saying them when a world arrives, leaves this green.
+func test_no_section_on_the_join_screen_asks_for_a_world_it_has_not_got() -> bool:
+	var screen := _screen()
+	# PRESSED, because the log is folded at build and its sentence is one press away on a live
+	# control. Through the button's own signal rather than `_show_log`, so this is what a click does.
+	screen._log_toggle.emit_signal("pressed")
+	var ok := true
+	# THE PREMISE FIRST: the three sections each show exactly one sentence before a join. Without
+	# this a sweep over an empty column passes by having nothing to read -- and an empty section
+	# under a visible heading is its own defect (ASSA-134), not a pass.
+	var sentences := {"the bench": _lone_note(screen._bench),
+			"the crafting menu": _lone_note(screen._make),
+			"the event log": _lone_note(screen._log)}
+	for named: String in sentences:
+		if String(sentences[named]) == "":
+			ok = _fail(("premise: %s is not showing exactly one sentence before a join, so the "
+					+ "sweep below has nothing to read there") % named)
+	if not ok:
+		screen.queue_free()
+		return false
+	# **AND EACH OF THE THREE POINTS AT THE DOOR**, which is the half a forbidden-phrase sweep cannot
+	# see: "nothing has happened yet" instructs nobody and is still an answer about a world that does
+	# not exist. `do` and `rocks` were already right this way, and Maren's wordings mirror them. The
+	# word rather than the sentence, so a rewording that still names the door passes.
+	for named: String in sentences:
+		if not String(sentences[named]).contains("join"):
+			ok = _fail(("before a join %s says '%s', which names neither the door nor what is "
+					+ "missing") % [named, String(sentences[named])])
+	# AND NOW THE WHOLE SCREEN, not only those three. Every label a stranger can see.
+	for child in screen.find_children("*", "Label", true, false):
+		var label := child as Label
+		if not _on_screen(label):
+			continue
+		for instruction: String in ["mine some rock first", "smelt", "make parts first"]:
+			if label.text.contains(instruction):
+				ok = _fail(("the join screen says `%s`, which needs a world: '%s'. Every empty "
+						+ "section must say WHICH kind of empty it is (hud.gd), and with no world "
+						+ "the kind is a missing world") % [instruction, label.text])
+	screen.queue_free()
+	return ok
+
+
+## **AND THE FRAME A WORLD ARRIVES, ALL THREE SAY THE OTHER KIND OF EMPTY** (ASSA-186 box 3).
+##
+## This is the half the join-screen sweep cannot see, and it is not a wording question. Every section
+## in this column caches what it drew by SHAPE, and **an empty section has the same shape either side
+## of a join**: no designs is "" before and after, so is an empty menu, so is an empty log. A fix that
+## only changed the wordings would leave "join a world and the machines you build appear here" on the
+## bench of a world you are standing in, for as long as the bench stays empty -- which on a fresh
+## world is the first minutes of play, and the whole of the demo's first stretch.
+##
+## It drives the real transition: a screen built with no world, a real `Welcome` fed through the real
+## client, then ONE `_refresh()` -- the call `_process` makes every frame and the only place either
+## side of the early return can notice. The expected sentences are LITERALS of what shipped before
+## this item, because box 3 is exactly that they do not change in a world.
+##
+## SEPARATION FROM THE SWEEP, which is what makes two tests honest rather than one duplicated:
+## dropping `_resay_the_empty_sections` reddens THIS alone (the sweep never reaches a world); keeping
+## it and wording the no-world half as an instruction reddens the SWEEP alone (this test reads only
+## in-world sentences). Neither covers the other.
+func test_the_empty_sections_say_the_in_world_kind_once_a_world_arrives() -> bool:
+	var screen := _screen()
+	screen._log_toggle.emit_signal("pressed")
+	var welcome := AssaySimHost.fresh_welcome_json("777042", "marlow")
+	var before := _lone_note(screen._bench)
+	if welcome == "" or before != AssayHud.no_designs_line(false):
+		screen.queue_free()
+		return _fail(("premise: with no world the bench reads '%s' and the welcome is %d bytes, so "
+				+ "this test is not starting where it thinks") % [before, welcome.length()])
+	screen._client.play_offline()
+	screen._client.feed_offline(welcome)
+	screen._refresh()
+	var id: int = screen._client.player_id
+	if not screen._sim.running() or id < 0:
+		screen.queue_free()
+		return _fail("premise: nothing is being simulated, so this is the join screen a second time")
+	# AND THE SECTIONS MUST STILL BE EMPTY IN THAT WORLD, or they would be showing rows and this
+	# test would be reading a row rather than the sentence under test.
+	if not screen._sim.designs_of(id).is_empty() or not screen._sim.make_offers(id).is_empty() \
+			or not screen._events.is_empty():
+		screen.queue_free()
+		return _fail(("premise: a fresh world arrives with %d designs, %d offers and %d events, so "
+				+ "these sections are not empty") % [screen._sim.designs_of(id).size(),
+				screen._sim.make_offers(id).size(), screen._events.size()])
+	var ok := true
+	ok = _reads_in_world(screen._bench, "bench",
+			"nothing built yet — mine, smelt and make parts first") and ok
+	ok = _reads_in_world(screen._make, "crafting menu",
+			"nothing you are carrying can be worked by hand — mine some rock first") and ok
+	ok = _reads_in_world(screen._log, "event log", "nothing has happened yet") and ok
+	screen.queue_free()
+	return ok
+
+
+## ONE SECTION'S IN-WORLD SENTENCE, named in the failure so three sections do not report as one.
+func _reads_in_world(section: Node, named: String, want: String) -> bool:
+	var said := _lone_note(section)
+	if said == want:
+		return true
+	return _fail(("in a world the %s reads '%s'. Before ASSA-186 it read '%s', and that sentence is "
+			+ "right here -- either it changed or the no-world one was never re-said")
+			% [named, said, want])
 
 
 ## ASSA-107 / Maren's ASSA-88 RULING: THE CHOSEN PARTS LIVE IN THE CRAFTING MENU — not in the `do`
@@ -1490,7 +1637,7 @@ func test_an_empty_log_says_nothing_has_happened_rather_than_nothing() -> bool:
 	var said := _log_text(screen)
 	if said.strip_edges() == "":
 		ok = _fail("the event log is a blank space under a heading")
-	elif said != AssayHud.quiet_log_line():
+	elif said != AssayHud.quiet_log_line(false):
 		ok = _fail("the empty log reads '%s', which is not the words `quiet_log_line` owns" % said)
 	screen.queue_free()
 	return ok

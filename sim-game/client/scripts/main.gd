@@ -252,6 +252,12 @@ var _pack_showing := UNBUILT
 var _make_showing := UNBUILT
 var _assembling_showing := UNBUILT
 var _actions_showing := UNBUILT
+## WHETHER THE COLUMN'S EMPTY SENTENCES WERE WRITTEN FOR A WORLD (ASSA-186). The five lines above
+## cache a shape; this caches the one thing a shape cannot carry, because an empty section looks the
+## same either side of a join. **FALSE IS THE TRUTH ON THE JOIN SCREEN, not a sentinel**: `_build_ui`
+## draws these sections before anything has been joined, so a first `_refresh` with no world must see
+## no transition and leave them alone. See `_resay_the_empty_sections`.
+var _world_shown := false
 ## THE TILE EVERY PLACEMENT LANDS ON. `_targeted` false means "where you stand", which is not a
 ## placeholder: your own tile is the one tile every player has, and planting beside yourself is the
 ## common case. Right-click chooses another; left-click still walks, because walking is the thing a
@@ -746,6 +752,14 @@ func _build_ui() -> void:
 	# is the labelled-empty-gap defect ASSA-134 spent a whole item on.
 	_refresh_halt()
 	_refresh_running()
+	# **AND THE EVENT LOG, FOR THE SAME REASON ONE PRESS LATER** (ASSA-186). It is folded at build and
+	# its toggle is live before any join, and `_show_log` only raises the box -- so pressing (L) on
+	# the join screen revealed a visible heading over NOTHING. Measured on the real screen: 0 children
+	# in `_log` after the button's own `pressed`, and `_refresh_log` is below `_refresh`'s early
+	# return, so no frame ever built it. **The item said this section read "nothing has happened yet"
+	# before a join; that sentence came from the probe's own `_rebuild_log()` call, and the real
+	# screen was the emptier defect of the two.** This is the one call that gives it its line.
+	_refresh_log()
 	# AND THE CRAFTING MENU IS OPEN ON FIRST JOIN, which is the opposite call for the opposite
 	# reason: the board asked for a crafting menu, and a menu nobody finds is the clunk restated.
 	_show_make(true)
@@ -1166,9 +1180,10 @@ func _refresh_log() -> void:
 func _rebuild_log() -> void:
 	_clear(_log)
 	if _events.is_empty():
-		# WHICH KIND OF EMPTY. A blank section reads as a game with nothing to say; this one says the
-		# world has not spoken yet. Same reason the pack and the bench name their own emptiness.
-		_log.add_child(_note(AssayHud.quiet_log_line()))
+		# WHICH KIND OF EMPTY -- AND THERE ARE TWO OF THEM (ASSA-186). A blank section reads as a game
+		# with nothing to say; in a world this one says the world has not spoken yet, and on the join
+		# screen that a world is what it is missing. Same reason the pack and the bench name theirs.
+		_log.add_child(_note(AssayHud.quiet_log_line(_has_world())))
 		return
 	var ink := _log.get_theme_color(&"font_color", &"Label")
 	var muted := _log.get_theme_color(&"font_color", &"Muted")
@@ -1338,6 +1353,48 @@ func _say(line: String, level: int) -> void:
 	print(line)
 
 
+## **WHETHER THERE IS A WORLD TO TALK ABOUT**, which is the question the three "which kind of empty"
+## sentences in the column turn on (ASSA-186: the bench, the crafting menu and the event log).
+##
+## `_sim.running()` AND NOT THE JOIN EVENT, which is Maren's ruling and also the argument `_refresh`
+## already makes about `_view_toggle` a few lines down: a join that is accepted and simulates nothing
+## is a real state this screen handles, and in it "mine some rock first" is the same defect wearing a
+## different cause. What the renderer can draw is the question; whether a handshake succeeded is a
+## proxy for it. ONE PREDICATE FOR ALL THREE because it is one fact, and three copies of it is how
+## two sections end up disagreeing about whether a world exists.
+func _has_world() -> bool:
+	return _sim.running()
+
+
+## **THE THREE EMPTY SECTIONS SAY THEIR LINE AGAIN, BECAUSE NOTHING ELSE WOULD MAKE THEM** (ASSA-186).
+##
+## Every section in this column caches what it last drew by SHAPE -- `_bench_shape`, `_make_shape`,
+## and the log's joined lines -- so that fourteen Labels are not rebuilt ten times a second. **An
+## empty section has the same shape either side of a join**: no designs is `""` before and after, and
+## so is an empty log. So the one thing that changed, whether a world exists, is invisible to all
+## three caches, and without this the join screen's "join a world and the machines you build appear
+## here" would still be on the bench of a world you are standing in, and the in-world wording would
+## outlive the world after a drop.
+##
+## A FOURTH TERM IN EACH SHAPE KEY WOULD ALSO WORK and is worse: `_bench_shape` is documented as what
+## the panel looks like given its designs, world-ness is not a property of a design list, and three
+## keys to keep in step is three chances to forget one. This is one place, and it is the place that
+## already knows the transition happened.
+##
+## IT ASKS THE SIM FOR NOTHING WHEN THERE IS NO WORLD. Going the other way -- a desync or a dropped
+## host -- this runs with the sim stopped, and `designs_of`/`make_offers` would be questions about a
+## world that is gone; the honest answer on the join screen is the empty list it draws there.
+func _resay_the_empty_sections() -> void:
+	var asking := _world_shown and _client != null
+	var designs: Array = _sim.designs_of(_client.player_id) if asking else []
+	var offers: Array = _sim.make_offers(_client.player_id) if asking else []
+	_bench_showing = _bench_shape(designs)
+	_make_showing = _make_shape(offers)
+	_rebuild_bench(designs)
+	_rebuild_make(offers)
+	_rebuild_log()
+
+
 func _refresh() -> void:
 	# THE VIEW TOGGLE TRACKS WHETHER THERE IS A WORLD, and it is set HERE, above the early return,
 	# because everything below this line runs only when there IS one (ASSA-142 box 3 / ASSA-161).
@@ -1348,6 +1405,12 @@ func _refresh() -> void:
 	# not exist, which is the defect again wearing a different cause. Asking what the renderer can
 	# actually draw is the question; asking whether a handshake succeeded is a proxy for it.
 	_view_toggle.visible = _sim.running()
+	# AND SO DOES WHICH KIND OF EMPTY THE COLUMN IS SAYING (ASSA-186), for the same reason and in the
+	# same place: this is the one stretch of `_refresh` that runs on both sides of the early return,
+	# so it is the only place a world appearing or going away can be noticed at all.
+	if _has_world() != _world_shown:
+		_world_shown = _has_world()
+		_resay_the_empty_sections()
 	if not _sim.running():
 		var joined: Dictionary = _client.joined_world
 		if joined.is_empty():
@@ -1525,7 +1588,7 @@ func _bench_shape(designs: Array) -> String:
 func _rebuild_bench(designs: Array) -> void:
 	_clear(_bench)
 	if designs.is_empty():
-		_bench.add_child(_note(AssayHud.no_designs_line()))
+		_bench.add_child(_note(AssayHud.no_designs_line(_has_world())))
 		return
 	for entry in designs:
 		var design: Dictionary = entry
@@ -1678,7 +1741,7 @@ func _make_shape(offers: Array) -> String:
 func _rebuild_make(offers: Array) -> void:
 	_clear(_make)
 	if offers.is_empty():
-		_make.add_child(_note(AssayHud.nothing_to_make_line()))
+		_make.add_child(_note(AssayHud.nothing_to_make_line(_has_world())))
 		return
 	for entry in offers:
 		var offer: Dictionary = entry

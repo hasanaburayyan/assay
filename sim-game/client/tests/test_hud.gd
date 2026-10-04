@@ -924,9 +924,20 @@ func test_a_part_row_carries_four_things_and_the_rows_sum_to_the_headline() -> b
 
 ## A heading over an empty space reads as a bug. Until the craft chain runs every player has zero
 ## designs, so this is the panel's normal state today and it has to say which it is.
+##
+## **AND THERE ARE TWO KINDS OF EMPTY BENCH** (ASSA-186). In a world the route is real; with no world
+## "mine, smelt and make parts first" is three instructions a stranger cannot act on, so the no-world
+## half must name the door instead and carry none of them. The in-world half is checked for the words
+## it has always had, because box 3 of that item is that it does NOT change in a world.
 func test_an_empty_bench_says_so_rather_than_showing_nothing() -> bool:
-	if not AssayHud.no_designs_line().contains("nothing built"):
-		return _fail("got %s" % AssayHud.no_designs_line())
+	if not AssayHud.no_designs_line(true).contains("nothing built"):
+		return _fail("in a world: got %s" % AssayHud.no_designs_line(true))
+	var adrift := AssayHud.no_designs_line(false)
+	if not adrift.contains("join a world"):
+		return _fail("with no world the bench must name the door, got %s" % adrift)
+	for instruction in ["mine", "smelt", "make parts"]:
+		if adrift.contains(instruction):
+			return _fail("with no world the bench still says `%s`: %s" % [instruction, adrift])
 	return true
 
 

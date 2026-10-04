@@ -164,7 +164,9 @@ func _report() -> void:
 	print("  the bench, as the panel builds it (%d design(s) for player %d):"
 			% [designs.size(), _client.player_id])
 	if designs.is_empty():
-		print("    %s" % AssayHud.no_designs_line())
+		# `true`: this probe has joined a world, so the panel's in-world wording is the one it would
+		# show here (ASSA-186 gave the empty bench a second sentence for the join screen).
+		print("    %s" % AssayHud.no_designs_line(true))
 	for entry in designs:
 		var design: Dictionary = entry
 		print("    [%s]" % String(design.get("verdict", "?")))
@@ -174,7 +176,7 @@ func _report() -> void:
 		_finish(false, ("the bench is empty for player %d, and this run required rows. The board "
 				+ "would open the panel on '%s'. Either the session probe did not play under this "
 				+ "account, or it is still holding it open and we landed on a fresh player.")
-				% [_client.player_id, AssayHud.no_designs_line()])
+				% [_client.player_id, AssayHud.no_designs_line(true)])
 		return
 
 	# 3. EVERY UNASSAYED READING IS A BAND. The sim decides; this fails if a single number ever
