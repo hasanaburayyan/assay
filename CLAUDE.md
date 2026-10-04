@@ -252,9 +252,21 @@ up (losing nothing). Nobody built this; it falls out of the relay's account map
 worth saying: `sim-cli` has no reconnect (it tells you to restart, and nothing
 here measured otherwise), and a DESYNC is not a drop — it leaves the Godot
 client joined, so Join is refused and restarting really is the only way back.
-What the probe does NOT cover is a *silent* drop: it closes the socket, so the
-client sees the status change. A blip that never closes the connection leaves a
-lockstep peer waiting with no timeout of its own.
+**A silent drop is noticed too, as of ASSA-179, and it was not when the
+paragraph above was written.** Every case the first probe covered closes the
+socket, so the client sees the status change; a host that is stopped rather than
+killed keeps the connection ESTABLISHED and simply stops answering, and the
+client sat in that state for as long as it was left running (measured: the
+screen still said "joined as player 0" after 80 missing bundles). The Godot
+client now keeps its own clock on the link — `AssayNetClient.SILENCE_MS`, 10s by
+default, roughly 100 bundles at the relay's ten ticks a second — and reaching it
+ends the link with a sentence that names the host and says to press Join, which
+after the paragraph above puts the player back in the same slot. The timeout is
+checked AFTER the socket is drained, so a frozen client (a slept laptop, a
+breakpoint) reads its own freeze plus a socket full of what it missed and
+survives; `client/tools/reconnect_probe.gd` case H measures that and case F
+measures the drop. **Still true: `sim-cli` has no timeout of its own**, and the
+threshold and the sentence are the Game Director's call, not a measured number.
 
 ## People
 

@@ -24,13 +24,25 @@ extends Node
 ## round, by `tools/reconnect_probe.gd`: after the host restarts (you lose the ticks since its last
 ## autosave) and after the socket alone dies with the host still up (you lose nothing).
 ##
-## **WHAT IS STILL ABSENT, AND IT IS NOT RECONNECT.** (1) A *silent* drop. Everything above goes
-## through `_process` noticing the socket's status change; a connection that stops carrying bytes
-## without closing leaves this node waiting, because nothing here keeps its own clock on the link.
-## (2) A desync, which does not come here at all -- `desynced` leaves the stage JOINED, so Join is
-## refused and restarting really is the only way back. Nothing in this file resets `bundles_seen`,
-## `last_tick`, `player_id` or `_reader` on a second `join`, which the probe shows is harmless today
-## (the reader was empty at the drop) and is where to look first if a reconnect ever reads garbage.
+## **THE SILENT DROP IS NOTICED NOW, AND IT USED NOT TO BE** (ASSA-179). Every failure above is the
+## socket's status CHANGING: the kernel says the connection died and `_process` calls `_fail`. A link
+## that stops carrying bytes without closing -- a slept laptop, a wifi handover, a host wedged rather
+## than killed -- changes no status at all, so this node believed it was playing for as long as it was
+## left running. Measured, not argued: `tools/reconnect_probe.gd` SIGSTOPs the relay, and before this
+## existed the screen still said "joined as player 0" after 80 missing bundles. So the node keeps its
+## own clock on the link: `SILENCE_MS` without a word from the relay is a dead link, and saying so is
+## what brings the join band back (ASSA-175) and makes Join live (ASSA-176/177) -- one press back into
+## the same slot, which is the whole reason a timeout is worth having.
+##
+## **WHAT IS STILL ABSENT.** (1) A relay that accepts the socket and never answers `Hello`: the clock
+## below starts at the `Welcome`, so a client stuck at GREETED is not timed by it. Deliberate -- an
+## unanswered connect is the OS's business and a cold start must not be called a drop -- and not
+## measured either way. (2) A desync, which does not come here at all: `desynced` leaves the stage
+## JOINED, and the relay sends `Desync` without dropping the peer or stopping its clock (read, not
+## measured: `sim-relay/src/main.rs:382` is the only place it is sent and it closes nothing), so the
+## bundles keep coming, the clock below is refreshed, and restarting really is the only way back. Nothing in this file resets `bundles_seen`, `last_tick`, `player_id` or
+## `_reader` on a second `join`, which the probe shows is harmless today (the reader was empty at the
+## drop) and is where to look first if a reconnect ever reads garbage.
 
 ## Accepted: our slot, the world to start from, and the message's own text for the sim. The next
 ## bundle is for `world.tick`.
@@ -55,6 +67,26 @@ signal asked(command: Variant)
 
 enum Stage { IDLE, CONNECTING, GREETED, JOINED, DEAD }
 
+## **HOW LONG A JOINED CLIENT WAITS FOR A WORD FROM THE RELAY BEFORE IT CALLS THE LINK DEAD.**
+##
+## THIS NUMBER AND THE SENTENCE ARE THE GAME DIRECTOR'S, NOT MINE (ASSA-179 part 2): 10s is my
+## default, it is one constant and one string on purpose, and a ruling is a one-line change.
+##
+## **THE FLOOR IS MEASURED AND IT IS NOT MINE.** I said a number I picked alone would be tuned to my
+## own harness, and Maren answered it with `tools/maren_bundle_gap_probe.gd` rather than with taste: a
+## live relay and a live screen for 60s, every `tick_bundle` arrival timed, on the machine running six
+## agents. **Worst gap 263ms over 599 bundles; p50 100ms, exactly the tick rate.** So 10s is 38x the
+## worst gap a healthy session has ever been measured producing, and ~100 bundles that did not arrive.
+##
+## **WHICH MEANS THE REMAINING QUESTION IS NOT SAFETY, IT IS PATIENCE.** Anything above a second or so
+## clears that distribution, so the cost of a shorter threshold is not false drops -- it is the one
+## ASSA-177 bounded (one press of Join, same slot, nothing lost). What is left to rule on is how long
+## a player should stare at a world that has stopped before being told, and that is a design call.
+##
+## The one case this number does NOT have to cover is a frozen main loop: that is handled by WHERE the
+## check runs (see `_process`), not by the size of the number, which is why it can afford to be short.
+const SILENCE_MS := 10000
+
 var stage: Stage = Stage.IDLE
 ## Our slot in the world, once welcomed. -1 while unknown; `PlayerId` is a slot, not an identity.
 var player_id := -1
@@ -64,6 +96,17 @@ var joined_world: Dictionary = {}
 ## even before anything can be applied.
 var bundles_seen := 0
 var last_tick := -1
+
+## **THE ENGINE CLOCK AT THE LAST THING THE RELAY SAID**, or -1 while nothing is being timed.
+##
+## `Time.get_ticks_msec` and not a frame count or a tick count: ticks are the thing that stopped
+## arriving, so counting them cannot measure their absence. It is monotonic and it keeps running while
+## this process is stopped, which is what makes a slept laptop measurable at all.
+##
+## -1 IS "NOT BEING TIMED", NOT "HEARD AT TIME ZERO" -- see `link_is_silent`. A client that has not
+## been welcomed has no link to time, and treating -1 as a timestamp would make every cold start a
+## drop the moment `SILENCE_MS` elapsed after launch.
+var _last_heard_msec := -1
 
 var _socket := StreamPeerTCP.new()
 var _reader := AssayFrameReader.new()
@@ -161,15 +204,7 @@ func feed_offline(json_text: String) -> void:
 		push_error("feed_offline on a client that is not offline; call play_offline() first")
 		return
 	_reader.feed(AssayProtocol.encode_text(json_text))
-	while true:
-		var msg: Variant = _reader.next_message()
-		if msg == null:
-			if _reader.error != "":
-				_fail(_reader.error)
-			return
-		_handle(msg)
-		if stage == Stage.DEAD:
-			return
+	_drain_reader()
 
 
 func _process(_delta: float) -> void:
@@ -201,21 +236,73 @@ func _process(_delta: float) -> void:
 			_fail("lost the connection to %s while reading" % _where)
 			return
 		_reader.feed(chunk[1])
+	if not _drain_reader():
+		return
+
+	# **THE SILENCE IS CHECKED AFTER THE DRAIN, AND THAT ORDERING IS THE WHOLE FALSE-POSITIVE
+	# DEFENCE.** A frozen main loop -- a slow frame, a breakpoint, a laptop lid, this process
+	# SIGSTOPped -- does not stop the kernel buffering what the relay sent meanwhile. So the frame
+	# that resumes reads a gap of however long the freeze was AND a socket holding every bundle of
+	# it: draining first turns that into a fresh timestamp, and the check that follows sees no gap.
+	# Checked before the drain it would call every freeze a dead host, which is the one thing this
+	# must not do. Measured, not asserted: `tools/reconnect_probe.gd` case H freezes the client for
+	# longer than `SILENCE_MS` against a live relay and the link survives.
+	if link_is_silent(stage, _last_heard_msec, Time.get_ticks_msec(), SILENCE_MS):
+		# THE SENTENCE IS `AssayHud`'s, not this file's, and the four above it are not: see
+		# `AssayHud.silent_host_line` for why this one moved and they did not.
+		_fail(AssayHud.silent_host_line(_where, SILENCE_MS / 1000))
+
+
+## **HAS THE LINK GONE QUIET?** Static and pure, because the rule is the part worth testing and the
+## cases that matter most cannot be driven from a headless test otherwise: a client that has not been
+## welcomed has no socket to wait on, and a real 10-second gap takes 10 real seconds.
+##
+## Three ways to be not-silent, and each is a case that bit: the stage is not JOINED (nothing has been
+## joined yet, or the link already finished and `_fail` must not run twice), nothing is being timed
+## (`heard_msec < 0`), or no limit is set (`limit_msec <= 0` turns the detector off rather than
+## declaring every link dead on its first frame, which is what a zeroed constant would otherwise do).
+static func link_is_silent(at_stage: Stage, heard_msec: int, now_msec: int, limit_msec: int) -> bool:
+	if at_stage != Stage.JOINED or heard_msec < 0 or limit_msec <= 0:
+		return false
+	return now_msec - heard_msec >= limit_msec
+
+
+## Hand every whole message in the reader to `_handle`. False when the link is finished and the
+## caller must stop: a reader error, or a message that killed the stage.
+##
+## One copy, used by the socket path and by `feed_offline`, which is the point -- an offline harness
+## with its own drain loop would prove nothing about the real one (see `play_offline`).
+func _drain_reader() -> bool:
 	while true:
 		var msg: Variant = _reader.next_message()
 		if msg == null:
 			if _reader.error != "":
 				_fail(_reader.error)
-			return
+				return false
+			return true
 		_handle(msg)
 		if stage == Stage.DEAD:
-			return
+			return false
+	# **UNREACHABLE AND REQUIRED ANYWAY, which I got the wrong way round first.** I left this out on
+	# the reasoning that `project.godot` promotes unreachable code to an error; the engine's answer was
+	# "Not all code paths return a value" on a `while true` with no `break`. The analyser does not
+	# prove the loop never exits, so it wants the return and does not call it unreachable.
+	return true
 
 
 func _handle(msg: Variant) -> void:
 	var tagged := AssayProtocol.variant_of(msg)
 	var kind: String = tagged[0]
 	var body: Variant = tagged[1]
+	# **THE RELAY SAID SOMETHING, SO THE LINK IS ALIVE: STAMPED HERE FOR EVERY MESSAGE, NOT ONLY
+	# BUNDLES.** Today the only thing that arrives repeatedly IS the bundle (`Tick`), so this is the
+	# bundle clock ASSA-179 asked for. It is stamped one level up anyway, because the claim the
+	# timeout makes to a player is "your host has gone quiet", and a relay that is talking at all has
+	# not. The narrower rule would call a desynced-but-chatty link dead and blame the host for it.
+	# WHAT THIS DOES NOT CATCH, and it is a different item if it ever exists: a relay that keeps
+	# talking while its world stops advancing. Nothing in `sim-relay` can do that today -- the clock
+	# and the send are the same loop.
+	_last_heard_msec = Time.get_ticks_msec()
 	# The bytes this message arrived as. Taken before anything else, because `_handle` may be given a
 	# dictionary directly by a test, in which case there is no text and the sim is not involved.
 	var raw := _reader.last_text
