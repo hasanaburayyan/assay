@@ -151,6 +151,36 @@ jobs:
       # table to the decimal. Stdlib only, ~2s.
       - name: Light rows are not made of the species
         run: python3 art/check_light_rows.py
+      # ground.png IS STILL ONE PICTURE (ASSA-115 box 2, ASSA-168). The sixty-four
+      # rows of that sheet are not variants, they are the row-major cells of ONE
+      # continuous 8x8-tile render, and `scene_view.gd::ground_row` places them BY
+      # POSITION because a patch crossing a cell boundary is the same object in
+      # both cells. Re-render the field as sixty-four independent images and every
+      # tile join in the game becomes a seam between strangers -- the mosaic of
+      # strangers QA could point at before #220, which measured Z +10.2 against
+      # its interior offsets.
+      #
+      # WHY CI CAN RUN THIS AT ALL, since ASSA-162 says it cannot: that item is
+      # about a WINDOW shot, and `window_shot.gd` under `--headless` writes a
+      # blank frame and still exits SUCCESS. A seam at a cell join is a property
+      # of the SHEET, so it needs no camera, no downsample and no placement rule
+      # -- it is measured at the native 64 px with the bar IMPORTED from
+      # `grid_findability.py`, the same 3-sd magnitude that judges a real shot.
+      #
+      # Its can-fail control runs every pass and is arithmetic rather than a
+      # shuffle: a shuffle can leave cells field-adjacent by luck and I measured
+      # one going green. Lifting a checkerboard of cells by 8 L steps every join
+      # in both directions by construction, and if that is not caught this exits
+      # 2 instead of reporting a pass. It also refuses to go to sleep: the block
+      # shape is read from the shipped manifest, and a manifest that stops
+      # declaring one is NO VERDICT, not green.
+      #
+      # WHAT ONLY THIS STEP GUARDS is the ART. The other half -- the client
+      # changing its mind about placement -- is `test_scene_view.gd`'s block test
+      # in the suite above, which reads the same manifest. Neither covers the
+      # other. Stdlib only, no Godot, no Pillow, ~0.7s.
+      - name: The ground sheet is still one picture
+        run: python3 art/check_ground_block.py
       # THE ENGINE CAN REACH THE ART. For the pipeline's whole life the sheets
       # sat in `assets/sprites/`, the Godot project's SIBLING -- and `res://` is
       # the project folder and nothing above it, so no client script could load
