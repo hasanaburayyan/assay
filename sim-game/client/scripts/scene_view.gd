@@ -163,6 +163,7 @@ static func ore_row(grade: String, depleted: bool, at: Vector2i) -> String:
 ##   spawn        Vector2i    the sim's one spawn tile
 ##   ore          Dictionary  Vector2i -> {species, grade, depleted}, from `tile_at` per tile
 ##   players      Array       [{at: Vector2 (tiles, fractional), facing, moving, mine}]
+##   buildings    Array       `AssaySim.buildings()` as it comes: {kind, pos, footprint, lit, ...}
 ##   manifest     Dictionary  `assets/sprites/manifest.json`, parsed
 ##   seconds      float       wall clock, for the gaits
 ##
@@ -219,6 +220,40 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 
 	# WHAT STANDS ON THE GROUND, sorted by bottom edge, so the nearer body wins.
 	var standing: Array[Dictionary] = []
+
+	# WHAT THE PLAYER HAS BUILT. Until now the one machine in the demo was invisible: the smelter
+	# that refines everything stood three tiles from you at (59, 61) for 435 ticks of the pinned
+	# seed's play and nothing was drawn there (Maren, ASSA-119 box 11).
+	#
+	# `pos` IS THE TOP-LEFT OF THE FOOTPRINT, never a centre -- `Building::pos`'s own meaning, and
+	# the thing `every_building_is_listed_with_the_footprint_the_sim_gave_it` pins in Rust. So no
+	# `centred` here: the spawn pad is centred because the sim has ONE spawn tile and the art is
+	# 3x3, and a building has no such disagreement.
+	#
+	# THE SORT KEY IS THE SIM'S FOOTPRINT, NOT THE SHEET'S `tiles`. They agree today (2x2 and
+	# 2x2) and the test says so out loud, but occupancy is sim state and a sprite may overhang its
+	# tile (ASSA-30/38) -- so if they ever part, what the thing COVERS decides what stands in
+	# front of it, and the drawing can overhang as it likes.
+	#
+	# A KIND WITH NO SHEET DRAWS NOTHING, which is today's honest answer for `machine`: one is
+	# "parts stacked by `part_layout.stack`" and no single frame exists for it. `_place` returns
+	# empty for an asset the manifest does not have, so this needs no list of what is drawable.
+	for entry in view.get("buildings", []):
+		var building: Dictionary = entry
+		var foot: Vector2i = building.get("footprint", Vector2i.ONE)
+		var at: Vector2i = building.get("pos", Vector2i.ZERO)
+		standing.append({
+			"asset": String(building.get("kind", "")),
+			"row": "lit" if bool(building.get("lit", false)) else "cold",
+			"tile": at,
+			# NO SPECIES TINT, unlike ore. A deposit is a rock of one material and the tint is how
+			# you tell two patches apart; a smelter is a built thing whose sprite Cove authored
+			# whole, and multiplying it by a species colour would be this file deciding what it
+			# looks like. If the walls should carry their material, that is an art ruling.
+			"tint": Color.WHITE,
+			"bottom": float(at.y) + float(foot.y),
+		})
+
 	for entry in view.get("players", []):
 		var player: Dictionary = entry
 		var row := player_row(String(player.get("facing", "")), bool(player.get("moving", false)))

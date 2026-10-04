@@ -1821,6 +1821,10 @@ func _refresh_world() -> void:
 		"spawn": _sim.spawn_tile(),
 		"ore": _ore_under(origin, size),
 		"players": players,
+		# STRAIGHT FROM THE SIM, UNCHANGED AND UNCACHED. The list is one dictionary per building and
+		# there are single digits of them; `_ore_under` is cached because it is ~580 `tile_at` calls
+		# over the window, which is a different problem.
+		"buildings": _sim.buildings(),
 		"manifest": _manifest,
 		"seconds": now,
 	}
