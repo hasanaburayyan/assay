@@ -1024,3 +1024,49 @@ func test_a_species_row_carries_the_sims_own_fuel_clause() -> bool:
 		if String(tag).contains("C or better"):
 			return _fail("the row derived grade C from reactivity 100: %s" % [tags])
 	return true
+
+
+## **THE LINE COUNT IS A BOUND IN BOTH DIRECTIONS** (ASSA-156). The log's panel is capped to the room
+## above the player's own body and `log_lines_that_fit` is the only arithmetic in that fix, so both
+## ways of being wrong are checked here: a count whose panel overflows the room puts the panel back
+## on the player's head, and a count one line timid costs a player a line of their own history for
+## nothing. The second clause is the one a `- 1` somewhere in that expression would fail.
+##
+## THE TERMS ARE THE REAL ONES, measured off the engine in `tools/log_room_probe.gd` against the
+## shipped theme: a row is 18px, separation 4, the panel's margins 12, the heading 22, and the room
+## at 912x600 is 220. `chrome + newest + (n - 1) * pitch` is the panel's height, which is the same
+## sum `main.gd` leaves to the engine -- the model is checked against a laid-out window in
+## `window_shot.gd::_reveal_report`, because no headless test in this repo can see a real rect.
+func test_the_log_line_count_fills_the_room_without_overflowing_it() -> bool:
+	var pitch := 22.0
+	var chrome := 38.0
+	for entry in [220.0, 219.0, 100.0, 76.0, 60.0, 40.0, 1.0, 600.0]:
+		var room := float(entry)
+		for tallest in [18.0, 36.0, 54.0]:
+			var newest := float(tallest)
+			var fits := AssayHud.log_lines_that_fit(room, chrome, newest, pitch, 14)
+			var tall := chrome + newest + float(fits - 1) * pitch
+			if fits < 1 or fits > 14:
+				return _fail("a room of %.0fpx asked for %d log lines, outside 1..14" % [room, fits])
+			if fits > 1 and tall > room:
+				return _fail(("%d lines need %.0fpx of a %.0fpx room (newest %.0f), so the panel "
+						+ "draws taller than the room it was given and lands back on the player")
+						% [fits, tall, room, newest])
+			if fits < 14 and tall + pitch <= room:
+				return _fail(("%d lines use %.0f of a %.0fpx room and another whole line would fit "
+						+ "in %.0f: the player is losing their own history to nothing")
+						% [fits, tall, room, tall + pitch])
+	return true
+
+
+## A ROOM NOBODY MEASURED MUST NOT SHRINK THE LOG. `player_ceiling` answers -1.0 when there is no
+## player art to bound a panel by, and a `0` or a negative arriving here has to read as "no claim"
+## rather than as "no space" -- a missing manifest showing one log line would be a defect nobody
+## would trace back to a sprite sheet.
+func test_a_log_with_no_measured_room_keeps_every_line() -> bool:
+	for entry in [-1.0, 0.0]:
+		if AssayHud.log_lines_that_fit(float(entry), 38.0, 18.0, 22.0, 14) != 14:
+			return _fail("a room of %.0f cut the log down instead of leaving it alone" % entry)
+	if AssayHud.log_lines_that_fit(220.0, 38.0, 18.0, 0.0, 14) != 14:
+		return _fail("a line height of 0 divided the log by nothing and cut it anyway")
+	return true

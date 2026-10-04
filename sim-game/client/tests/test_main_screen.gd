@@ -1260,17 +1260,27 @@ func test_the_newest_log_line_is_the_brightest_and_the_oldest_is_still_readable(
 	screen._rebuild_log()
 	var drawn: Array = screen._log.find_children("*", "Label", true, false)
 	var ok := true
-	if drawn.size() != lines.size():
-		ok = _fail("%d lines went in and %d Labels came out" % [lines.size(), drawn.size()])
+	# **FOURTEEN GO IN AND THE ROOM DECIDES HOW MANY COME OUT (ASSA-156).** The panel is capped to
+	# the room above the player's own body, so this is no longer `lines.size()`; what it still is, is
+	# a CONTIGUOUS block starting at the newest, and the two `contains` below are what say so. The
+	# bug they catch is real and I shipped it into this branch for an hour: indexing the block off
+	# the drawn count instead of off `_events.size()` walks AWAY from the newest line and draws the
+	# eighth-oldest at the top, in correct newest-first order, looking entirely plausible.
+	var holds := mini(lines.size(), screen._log_lines_that_fit())
+	if drawn.size() != holds:
+		ok = _fail("%d lines went in, the room holds %d and %d Labels came out"
+				% [lines.size(), holds, drawn.size()])
 		screen.queue_free()
 		return ok
 	# THE NEWEST EVENT IS AT THE TOP.
 	if not (drawn[0] as Label).text.contains("event number 13"):
 		ok = _fail(("the first line in the log is '%s'; the newest event is the one a player who "
 				+ "can see two rows of this section must get") % (drawn[0] as Label).text)
-	elif not (drawn[drawn.size() - 1] as Label).text.contains("event number 0"):
-		ok = _fail("the last line is '%s', not the oldest event"
-				% (drawn[drawn.size() - 1] as Label).text)
+	elif not (drawn[drawn.size() - 1] as Label).text.contains(
+			"event number %d" % (lines.size() - drawn.size())):
+		ok = _fail(("the last line is '%s', which is not the oldest of the %d the room holds: the "
+				+ "lines on screen are not one run ending at the newest")
+				% [(drawn[drawn.size() - 1] as Label).text, drawn.size()])
 	if ok:
 		var previous := 999.0
 		for i in drawn.size():
@@ -1434,8 +1444,12 @@ func test_an_old_log_line_is_one_row_and_the_newest_is_whole() -> bool:
 	screen._rebuild_log()
 	var drawn: Array = screen._log.find_children("*", "Label", true, false)
 	var ok := true
-	if drawn.size() != lines.size():
-		ok = _fail("%d lines went in and %d Labels came out" % [lines.size(), drawn.size()])
+	# THE ROOM DECIDES THE COUNT SINCE ASSA-156, and with a newest line this long it decides one
+	# fewer: the newest keeps its wrapping, so it is two rows and the panel pays for both.
+	var holds := mini(lines.size(), screen._log_lines_that_fit())
+	if drawn.size() != holds:
+		ok = _fail("%d lines went in, the room holds %d and %d Labels came out"
+				% [lines.size(), holds, drawn.size()])
 	else:
 		# NEWEST FIRST, so index 0 is the exempt one.
 		var newest := drawn[0] as Label
@@ -1715,3 +1729,78 @@ func _a_part_stack() -> Dictionary:
 			return {"kind": kind, "species": 0, "species_name": "Testore", "grade": "C",
 					"count": 1, "name": kind}
 	return {}
+
+
+## **THE PANEL STOPS ABOVE THE BODY THE CAMERA CENTRES (ASSA-156, box 6).**
+##
+## Maren's measurement: seed 777042 with the log open had ZERO player pixels anywhere in the map
+## rect, against 199 with it closed, and the panel was INSIDE the map the whole time -- the bound it
+## already had was the wrong bound. An unclamped camera puts your body in the map's centre and the
+## panel owns the map's top, so the panel's height is the only free variable.
+##
+## **WHAT THIS TEST CANNOT SEE, SAID OUT LOUD, because a green tick here is not the fix.** The suite
+## runs inside `SceneTree._initialize`: nothing is laid out, and `Control.update_minimum_size` is
+## deferred, so `_log_box` honestly reports 12px for a 342px panel (measured in
+## `tools/log_room_probe.gd`). There is no real rectangle to ask. So this sums the height the engine
+## WILL give the panel out of the nodes it will lay out -- the stylebox's margins, the heading at its
+## own type's font size, the separations, and every Label actually added -- and compares that to the
+## ceiling. It is a different computation from the division in `AssayHud.log_lines_that_fit`, which
+## is what lets it catch an off-by-one there; it is NOT independent of the terms, so a wrong chrome
+## term would pass here. The laid-out rect is checked in `tools/window_shot.gd::_reveal_report`, on
+## a real window, which is the only place it can be.
+func test_the_log_panel_stops_above_the_body_the_camera_centres() -> bool:
+	var screen := _screen()
+	var ok := true
+	var map := AssayHud.world_rect()
+	var ceiling := AssayScene.player_ceiling(AssaySprites.manifest(), map.size)
+	if ceiling <= 0.0:
+		screen.queue_free()
+		return _fail(("the scene cannot say where a body is drawn (ceiling %.1f), so the log's "
+				+ "panel has no bound at all and ASSA-156 is unfixed rather than fixed") % ceiling)
+	# TWO FIXTURES, AND THE SECOND IS THE ONE THAT PAYS FOR THIS TEST. A newest line long enough to
+	# wrap is measured through the TextServer here, NOT off the Label's own minimum height, because
+	# that minimum says 18px for a 36px line until a layout has happened -- so a panel sized as if
+	# every line were one row is a panel a row taller than it measured, over the head of the player
+	# this item is about. Asking `_log_lines_that_fit` for the expected count instead would be this
+	# test agreeing with the arithmetic it is checking, which is how I shipped exactly that hole
+	# twice (ASSA-135, and the first version of this file an hour ago).
+	var long := ("your design broke: mass 1078 of 705 budget · holds 210 · speed 78 (bare hands 25)"
+			+ " · frame(Tonore A 385) + head(Tonore A 120) + hopper(Souktulore B 140) x4")
+	for newest in ["you mined 20 of Tonore ore (A) at (74, 36)", long]:
+		var lines := PackedStringArray()
+		for i in 13:
+			lines.append("%d · you mined 20 of Tonore ore (A) at (74, 36)" % (400 + i))
+		lines.append("413 · %s" % newest)
+		screen._events = lines
+		screen._rebuild_log()
+		var drawn: Array = screen._log.find_children("*", "Label", true, false)
+		var style: StyleBox = screen._log_box.get_theme_stylebox(&"panel")
+		var inside: Control = screen._log_box.get_child(0)
+		var head: Font = screen._log_heading.get_theme_font(&"font", &"Heading")
+		var body: Font = screen._log.get_theme_font(&"font", &"Label")
+		var body_size: int = screen._log.get_theme_font_size(&"font_size", &"Label")
+		var tall: float = style.get_margin(SIDE_TOP) + style.get_margin(SIDE_BOTTOM)
+		tall += head.get_height(screen._log_heading.get_theme_font_size(&"font_size", &"Heading"))
+		tall += float(inside.get_theme_constant(&"separation"))
+		var sep := float(screen._log.get_theme_constant(&"separation"))
+		for i in drawn.size():
+			if i == 0:
+				# THE WIDTH THE PANEL WILL GIVE IT: the map, less the stylebox's own left and right.
+				tall += body.get_multiline_string_size((drawn[0] as Label).text,
+						HORIZONTAL_ALIGNMENT_LEFT, map.size.x - style.get_margin(SIDE_LEFT)
+						- style.get_margin(SIDE_RIGHT), body_size).y
+			else:
+				tall += (drawn[i] as Control).get_combined_minimum_size().y + sep
+		if drawn.size() >= lines.size():
+			ok = _fail(("fourteen events drew %d lines in a panel with %.0fpx of room above the "
+					+ "player: the cap is not in force, so the panel still owns the map's centre")
+					% [drawn.size(), ceiling])
+		elif tall > ceiling:
+			ok = _fail(("with a %d-character newest line the log's panel will be %.0fpx tall and "
+					+ "your own body is drawn from y %.0f of the map: %.0fpx of it is over your "
+					+ "head, which is what Maren's 777042 shot measured as zero player pixels")
+					% [newest.length(), tall, ceiling, tall - ceiling])
+		if not ok:
+			break
+	screen.queue_free()
+	return ok
