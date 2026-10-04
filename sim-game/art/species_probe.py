@@ -40,6 +40,12 @@ import sys
 from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Record the shipped art this sheet composites, so the committed PNG can say whether it is
+# still current (ASSA-144). Before the first read: `man` below is one, and `frame_of` opens a
+# sheet every time it is called. This module is also imported BY `loudness.py`, which starts
+# recording before importing it, and starting twice is a no-op.
+import review_sources
+review_sources.start()
 from species_tints import SPECIES_TINTS
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1261,7 +1267,8 @@ def main():
     full.alpha_composite(strip, (0, sheet_img.height + bar))
     sheet_img = full
 
-    sheet_img.save(os.path.join(REVIEW, "species_probe.png"))
+    sheet_img.save(os.path.join(REVIEW, "species_probe.png"),
+                   pnginfo=review_sources.png_info())
     print("\nwrote assets/review/species_probe.png: 6 species x 3 grades, then the")
     print("same six through normal/protan/deutan/tritan twice - EVEN HUE first,")
     print("then the DESIGNED SLOTS. Compare the protan row of each block.")

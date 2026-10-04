@@ -33,6 +33,15 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+# THE ONE SHEET THAT COMPOSITES NO SHIPPED ART (ASSA-144). It draws an engine layout and its
+# own fonts, so it records nothing and stamps an EMPTY source list -- which is a real answer,
+# not a missing one: this picture cannot go stale against the sprites because it does not
+# depend on them. Recording anyway, rather than hard-coding "empty", so the day it starts
+# blitting an icon the stamp grows by itself and the check begins holding it to one.
+import review_sources  # noqa: E402
+review_sources.start()
+
 HERE = Path(__file__).resolve().parent.parent
 LAYOUT = json.load(open(sys.argv[1] if len(sys.argv) > 1 else "/tmp/cove-dlayout.json"))
 OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else HERE / "assets/review/design_rows.png"
@@ -148,7 +157,7 @@ sheet.paste(one, (PAD, y))
 d.text((PAD * 2 + one.width, y - 15), "2x", font=small, fill=(176, 176, 176))
 sheet.paste(two, (PAD * 2 + one.width, y))
 OUT.parent.mkdir(parents=True, exist_ok=True)
-sheet.save(OUT)
+sheet.save(OUT, pnginfo=review_sources.png_info())
 
 for r in ROWS:
     b = r["body"]

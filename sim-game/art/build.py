@@ -4,6 +4,7 @@
     art/build.py            # everything
     art/build.py ore head   # only these assets
     art/build.py --pack     # skip rendering, just repack art/out
+    art/build.py --contact-only   # redraw assets/review/contact.png, touch no shipped art
 
 Pipeline: assets/<name>.py runs inside Blender and writes raw SSx frames to
 art/out/<name>/ plus asset.json. This script downscales them to authoring
@@ -30,6 +31,7 @@ import json, os, subprocess, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from PIL import Image, ImageDraw
+import review_sources
 
 ART = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(ART)
@@ -224,7 +226,24 @@ def contact(manifest):
     out = Image.new("RGBA", (W, H), bg); y = 0
     for b in blocks:
         out.alpha_composite(b, (0, y)); y += b.height
-    out.save(os.path.join(REVIEW, "contact.png"))
+    out.save(os.path.join(REVIEW, "contact.png"), pnginfo=review_sources.png_info())
+
+
+def draw_contact(manifest_path):
+    """The contact sheet's whole drawing pass, recorded, and the ONLY way it is ever drawn.
+
+    ONE FUNCTION BECAUSE THE STAMP MUST NOT DEPEND ON WHICH FLAG YOU PASSED (ASSA-144). My
+    first cut recorded a wider block in the full build than in `--contact-only`, and it was
+    wrong twice over: the two paths would stamp different source sets for identical art, so
+    the check would flip on the flag rather than on the art -- and the full build read
+    `manifest.json` BEFORE `pack()` rewrote it, stamping the digest of a manifest that no
+    longer existed, which turns the check red the moment a real build succeeds.
+
+    So the manifest is re-read here, after any packing, inside the recording: what the sheet
+    composited is the manifest that SHIPPED, not the one that was on disk when the run began.
+    """
+    with review_sources.recording():
+        contact(json.load(open(manifest_path)))
 
 
 def write_part_contract():
@@ -299,11 +318,30 @@ def write_ui_theme():
 
 def main(argv):
     names = [a for a in argv if not a.startswith("--")] or ORDER
+    manifest_path = os.path.join(SPRITES, "manifest.json")
+
+    # --contact-only: REDRAW THE REVIEW SHEET WITHOUT TOUCHING SHIPPED ART (ASSA-144).
+    #
+    # Every other path through this script repacks. `--pack` looked like the cheap way to
+    # refresh `contact.png`, and it is the documented hazard at the top of `art/README.md`:
+    # `art/out/` is git-ignored, so it holds whatever THIS machine last rendered, and packing
+    # from a stale or empty cache silently rewrites sheets merged from someone else's
+    # checkout. That cost a ruled-on `frame.png` row once already.
+    #
+    # ASSA-144 made that a trap rather than a hazard: stamping the contact sheet with the art
+    # it composited is a reason to re-run this script, and the only available way to do it
+    # also risked replacing the art. So there is now a path that only READS shipped art.
+    if "--contact-only" in argv:
+        if not os.path.exists(manifest_path):
+            sys.exit("--contact-only needs a packed %s; run a real build first." % manifest_path)
+        draw_contact(manifest_path)
+        print(f"wrote {REVIEW}/contact.png  (shipped art read, never written)")
+        return
+
     os.makedirs(OUT, exist_ok=True)
     os.makedirs(SPRITES, exist_ok=True); os.makedirs(REVIEW, exist_ok=True)
     if "--pack" not in argv:
         for n in names: render(n)
-    manifest_path = os.path.join(SPRITES, "manifest.json")
     manifest = json.load(open(manifest_path)) if os.path.exists(manifest_path) else {}
     for n in names:
         if os.path.exists(os.path.join(OUT, n, "asset.json")):
@@ -312,7 +350,7 @@ def main(argv):
     json.dump(manifest, open(manifest_path, "w"), indent=1)
     write_part_contract()
     write_ui_theme()
-    contact(manifest)
+    draw_contact(manifest_path)
     print(f"wrote {SPRITES}/manifest.json")
     print(f"wrote {SPRITES}/part_layout.json")
     print(f"wrote {SPRITES}/ui_theme.json")

@@ -31,6 +31,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, PngImagePlugin
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import review_sources  # noqa: E402  the shipped art this sheet composites, stamped into it
+review_sources.start()  # before the first read of shipped art (ASSA-144)
 from ask_layout import kind_of  # noqa: E402  one reader of what a row holds
 from pack_icon_draw import nearest_blit  # noqa: E402  the engine's own sampling, defined once
 from pack_words import png_info  # noqa: E402  the words this sheet claims, stamped into it
@@ -352,7 +354,11 @@ OUT.parent.mkdir(parents=True, exist_ok=True)
 # after the client started saying "Mount" on two of them -- not because anything here read the
 # wrong source, but because nobody re-ran it. `check_pack_row_word.py` asks the live engine and
 # compares against this stamp, so the sheet going stale is a red check instead of a discovery.
-sheet.save(OUT, pnginfo=png_info(ROWS))
+#
+# AND WITH THE SHIPPED ART IT COMPOSITED (ASSA-144), a second claim under its own key: the words
+# can be right while the pixels predate a re-render, which is what happened to this sheet's slot
+# plate. Both chunks ride one PNG and each check reads only its own.
+sheet.save(OUT, pnginfo=review_sources.png_info(png_info(ROWS)))
 
 # ---------------------------------------------------------------------------- the numbers
 print("background %s, luminance %.4f" % (BG, luminance(BG)))

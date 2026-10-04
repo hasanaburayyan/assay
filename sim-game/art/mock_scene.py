@@ -36,6 +36,10 @@ import json, os, random, sys
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Record the shipped art this sheet composites, so the committed PNG can say whether it is
+# still current (ASSA-144). Before the first read of shipped art, below.
+import review_sources
+review_sources.start()
 from species_tints import SPECIES_TINTS
 from part_layout import PART_REPEAT_OFFSET, stack
 
@@ -210,5 +214,5 @@ for asset, row, x, y, f in sorted(ents, key=lambda e: e[3] + man[e[0]]["tiles"][
 out = Image.new("RGBA", (W * T, H * T + H * T // 2 + 8), (30, 32, 30, 255))
 out.alpha_composite(img, (0, 0))
 out.alpha_composite(img.resize((W * T // 2, H * T // 2), Image.LANCZOS), (0, H * T + 8))
-out.save(os.path.join(REVIEW, "mock_scene.png"))
+out.save(os.path.join(REVIEW, "mock_scene.png"), pnginfo=review_sources.png_info())
 print("wrote assets/review/mock_scene.png")

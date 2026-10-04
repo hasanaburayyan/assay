@@ -59,6 +59,11 @@ from statistics import median
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Record the shipped art this sheet composites, so the committed PNG can say whether it is
+# still current (ASSA-144). BEFORE the `species_probe` import: that module reads
+# `manifest.json` at its own module level, so importing it is already a read.
+import review_sources
+review_sources.start()
 from part_layout import PART_REPEAT_OFFSET, SHADOW_CEILING, stack
 from species_probe import DISTINCT, GRADE_ROWS, OBSERVERS, dE, lab, seen_flat
 
@@ -793,7 +798,7 @@ def main():
     stacked.alpha_composite(sheet, (0, 0))
     stacked.alpha_composite(ladder, (0, sheet.height + pad))
     sheet = stacked
-    sheet.save(os.path.join(REVIEW, "assembled.png"))
+    sheet.save(os.path.join(REVIEW, "assembled.png"), pnginfo=review_sources.png_info())
     print("wrote assets/review/assembled.png  (%d machines, top row authoring size, bottom row true 1x)"
           % len(shots))
     return 0 if ok else 1
