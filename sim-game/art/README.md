@@ -777,9 +777,43 @@ overlapping draws of the same sheet compound to `1-(1-a₁)(1-a₂)`, so this sa
 how much of the sheet is in a pixel, not how many times it was drawn. And one
 pair of shots answers for one sheet.
 
-It is **not** a `check_*.py` and must not be renamed into one: it needs a GUI
-Godot run, and `build.yml` runs `--headless` where `window_shot.gd` writes a
-blank frame and still exits SUCCESS. Same rule as `art/grid_findability.py`.
-What *does* run anywhere is `python3 art/window_alpha.py --selftest`, which
-round-trips 8,704 simulated pixels through the client's own blend and fails if
-the reported interval is wrong in either direction.
+**Half of it is in CI and half of it cannot be.** `control` and `field` need a
+GUI Godot run — `build.yml` runs `--headless`, where `window_shot.gd` writes a
+blank frame and still exits SUCCESS — so this is **not** a `check_*.py` and must
+not be renamed into one. Same rule as `art/grid_findability.py`.
+
+`python3 art/window_alpha.py --selftest` is the half that runs anywhere, and
+`build.yml` runs it. No Godot, no shots, no pip, ~2 s: it round-trips 8,704
+simulated pixels through the client's own blend and fails if the reported
+interval is wrong in either direction, and it sweeps 32,768 bright
+background/alpha pairs for gate 4 below.
+
+### The four gates, and the one that catches widening
+
+The control's claim is an *interval*, so the gates have to punish a lazy one.
+
+1. **CONTAINMENT** — the true alpha is inside the interval reported for that pixel.
+2. **PRECISION** — the *median* reported bound is itself ≤ `--tol`.
+3. **CONDITIONAL** — among pixels claiming a bound ≤ `--tol`, *selected from
+   `bg` and `K` before the answer key is opened*, the worst error is ≤ `--tol`.
+4. **COVERAGE** — every pixel whose brightest `bg` channel is ≥ 128 must report
+   a bound ≤ 1/255. Maren's gate (ASSA-181), and derived rather than chosen:
+   `K = round(bg*(1-a))` pins `a` to a width of `1/bg`, so 1/255 is reachable
+   exactly when `bg ≥ 127.5`, and 128 is 255/2.
+
+Gate 4 closes a hole in the first three: an estimator honest on half the pixels
+and "no idea" on the rest passes all of them, because containment is free to a
+wide bound, a median survives widening fewer than half, and gate 3 only judges
+pixels that already claim to be precise. **A x10 widening mutant on `alpha_of`
+is caught by gate 4 alone** — containment, the colour arm and UNSTABLE all stay
+green on it, since widening a bound cannot make a contained value escape.
+
+**Gate 4 is a floor on the tool's coverage, not a description of it.** On the
+real control it names 1,233 pixels while the tool resolves 1,375 to 1/255. The
+142-pixel surplus is real precision the gate cannot see: `alpha_of` intersects
+three channels whose rounding offsets their intervals, so the overlap is
+strictly tighter than `127.5/max(bg)` — measured, 85 of the 142 are unclamped
+and *all* 85 have an intersection narrower than their best single channel; the
+other 57 sit at `a = 1`, where the clamp to [0,1] narrows it. What matters is
+the other direction, and it holds: **0 pixels are bright-only**, so gate 4 never
+names one the tool fails to resolve.

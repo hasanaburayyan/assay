@@ -15,8 +15,14 @@ globs `art/check_*.py` and requires `build.yml` to name every one. CI cannot run
 is a set of **window shots**, and `build.yml` runs Godot `--headless` with no xvfb, where
 `window_shot.gd` writes a blank frame and still exits SUCCESS. Same reason as
 `art/grid_findability.py`, same promotion route -- the day there is a GUI runner, rename and add a
-step. `--selftest` is the part that needs no Godot and no shot; it checks the arithmetic, not the
-art, and is run from the shoot script rather than from CI.
+step.
+
+**BUT `--selftest` IS IN CI, AND THE OLD SENTENCE HERE WAS A BOUND NAMED FOR THE WRONG SURFACE**
+(Maren's ruling, ASSA-181, 2026-10-04): "not wired, it needs a GUI run" is true of `control` and
+`field` and false of the arithmetic. `--selftest` needs no Godot, no shots and no pip, so
+`build.yml` runs it under *The window alpha probe still does its own arithmetic*. It checks the
+arithmetic, not the art -- which is precisely what has to keep working for the art answers to
+mean anything.
 
 **WHY IT EXISTS: ON 2026-10-04 FOUR MASKS LIED IN ONE DAY**, all of them difference masks, three
 mine and one Maren's (ASSA-181 has the four with times). A difference mask answers "did these two
@@ -81,6 +87,13 @@ MAP_RECT = (24, 96, 932, 696)
 ## interval on `a` is 1/8 of full scale, which is not an answer, and a confident wrong number is
 ## the failure this file exists to stop.
 MIN_BG = 24
+
+## THE BACKGROUND AT WHICH A BOUND OF 1/255 BECOMES REACHABLE, and it is derived rather than
+## chosen (Maren's gate 4, ASSA-181). `K = round(bg*(1-a))` pins `a` to an interval of width
+## `1/bg`, so the half-width is `0.5/bg` and `0.5/bg * 255 <= 1` exactly when `bg >= 127.5`.
+## 128 is 255/2, out of the same `round()` the rest of this file rests on. Measured at the
+## boundary: bg 127 reports 1.004/255 and bg 128 reports 0.996/255.
+BRIGHT_BG = 128
 
 ## DRAWN, matching `art/check_machine_vs_own_ore.py` so a window number is comparable with a sheet
 ## number. Everything between 0 and this is the fringe, which is named rather than hidden.
@@ -301,6 +314,43 @@ def run_bands(args):
 # ---------------------------------------------------------------------------------------------
 # selftest: the arithmetic, with no Godot and no shot. Simulates the client's own blend.
 # ---------------------------------------------------------------------------------------------
+def _coverage_sweep():
+    """GATE 4 WITH NO GODOT IN THE ROOM: every bright background the window can hold.
+
+    (n, worst bound in 255ths, how many exceed 1/255, where the worst was).
+
+    A control on real shots can only reach the backgrounds that world happens to contain, and the
+    boundary case -- `bg` exactly 128, where 127.5/128 = 0.9961 -- is the one a sampled sweep is
+    most likely to miss. My first version did miss it: its stride of 7 never lands on 128, so it
+    reported a worst of 0.9547 and would have been green on a tool that failed at the boundary.
+    This walks `bg` 128..255 x `a` 0..255, 32,768 pairs, which is Maren's own sweep, so her number
+    and this one are comparable rather than merely both green.
+
+    THE BRIGHT CHANNEL IS ALONE ON PURPOSE. `alpha_of` INTERSECTS the three channels' intervals,
+    and a dark channel's interval is wide, so putting the other two at `MIN_BG` is the case where
+    the bright channel gets no help. Any extra narrowing from them, or from the clamp to [0, 1],
+    can only make the bound smaller -- so this is the hardest version of the claim, not the
+    flattering one.
+    """
+    n, worst, bad, at = 0, 0.0, 0, None
+    for bgv in range(BRIGHT_BG, 256):
+        bg = (MIN_BG, MIN_BG, bgv)
+        for ai in range(0, 256):
+            a = ai / 255.0
+            k = tuple(int(round(bg[i] * (1.0 - a))) for i in range(3))
+            got = alpha_of(bg, k)
+            if got is None:
+                bad += 1
+                continue
+            n += 1
+            half = got[1] * 255.0
+            if half > worst:
+                worst, at = half, (bg, a)
+            if half > 1.0:
+                bad += 1
+    return n, worst, bad, at
+
+
 def selftest():
     """Round-trips every (bg, a) the window can hold through `round(bg*(1-a))` and back.
 
@@ -311,6 +361,7 @@ def selftest():
     worst, worst_at, n, outside = 0.0, None, 0, 0
     cworst, coutside, cn = 0.0, 0, 0
     truth = (208, 32, 160)
+    bright_n, bright_worst, bright_bad, bright_at = _coverage_sweep()
     for bgv in range(MIN_BG, 256, 7):
         bg = (bgv, max(MIN_BG, bgv - 13), min(255, bgv + 11))
         for ai in range(0, 256):
@@ -344,7 +395,10 @@ def selftest():
     print("  UNBLENDED COLOUR on %d of those: worst error %.2f of 255, %d outside the "
           "propagated bound" % (cn, cworst, coutside))
     print("  UNSTABLE fires at K = bg+2 and not at K = bg+1: %s" % ("yes" if fired else "NO"))
-    ok = outside == 0 and coutside == 0 and cn > 0 and fired
+    print("  COVERAGE (gate 4): %d pairs with a bg channel >= %d, worst reported bound "
+          "%.4f/255 at bg %s a %.4f, %d over 1/255"
+          % (bright_n, BRIGHT_BG, bright_worst, bright_at[0], bright_at[1], bright_bad))
+    ok = outside == 0 and coutside == 0 and cn > 0 and fired and bright_n > 0 and bright_bad == 0
     print("SELFTEST %s" % ("GREEN" if ok else "RED"))
     return 0 if ok else 1
 
@@ -442,6 +496,19 @@ def run_control(args):
       3. CONDITIONAL   among px whose reported bound is <= `--tol` -- selected from `bg` and `K`
                        alone, before the answer key is opened -- the worst error must be
                        <= `--tol`. "Where it claims 1/255, it delivers 1/255."
+      4. COVERAGE      every px whose BRIGHTEST `bg` channel is >= 128 must report a bound
+                       <= `--tol`. Maren's gate, ASSA-181, and it closes a hole in the three
+                       above that is my own 12:22 lesson one level up: an estimator honest on
+                       51% of pixels and "no idea" on the rest passes all three. Containment is
+                       free to a wide bound, a MEDIAN survives widening fewer than half, and
+                       gate 3 only ever judges pixels that already claim to be precise. Green,
+                       and useless -- the tool exists to say WHICH pixels the client drew.
+
+    GATE 4 IS DERIVED, NOT CHOSEN. The same `round()` the file rests on resolves `a` to one part
+    in `2*bg`, so a bound of 1/255 is reachable exactly when `bg >= 127.5`, and 128 is 255/2.
+    That is also why it is stated on the brightest channel: `alpha_of` INTERSECTS the three
+    channels' intervals, so the narrowest is the brightest channel's and the bound can only be
+    tighter than `127.5/max(bg)`.
 
     `--tol` is NOT a tolerance on the result; the result's tolerance is per-pixel and derived.
     It is the precision this control demands the tool ACHIEVE, and 1/255 is the figure ASSA-181
@@ -469,6 +536,7 @@ def run_control(args):
         print("CONTROL RED: the sheet was not drawn at all")
         return 1
     errs, bounds, tight, loose = [], [], [], []
+    tight_keys, bright_keys, bright_bad = set(), set(), []
     cerrs, cbounds, c_in = [], [], 0
     in_bound, hist = 0, {v: 0 for v in known["alphas"]}
     for (x, y), (a, half) in fld.items():
@@ -480,7 +548,17 @@ def run_control(args):
         if abs(a - near) <= half + 1e-9:
             in_bound += 1
         # SELECTED BEFORE THE ANSWER KEY IS OPENED: `half` comes from bg and K only.
-        (tight if half * 255.0 <= args.tol else loose).append(e)
+        is_tight = half * 255.0 <= args.tol
+        (tight if is_tight else loose).append(e)
+        if is_tight:
+            tight_keys.add((x, y))
+        # GATE 4's set is selected from `bg` ALONE -- not even from K. Keeping both
+        # sets lets the run report their symmetric difference, which is the thing
+        # Maren asked to see if the two are not the same pixels.
+        if max(bg[y][x][:3]) >= BRIGHT_BG:
+            bright_keys.add((x, y))
+            if not is_tight:
+                bright_bad.append((x, y, max(bg[y][x][:3]), half * 255.0))
         got = unblend_bound(sh[y][x], bg[y][x], a, half)
         if got:
             c, cw = got
@@ -503,6 +581,26 @@ def run_control(args):
           "%d (dark background) worst %.3f"
           % (len(tight), args.tol, max(tight) if tight else 0.0, len(loose),
              max(loose) if loose else 0.0))
+    print("  4 COVERAGE     %d px have a bg channel >= %d; %d of them report a bound > %.2f"
+          % (len(bright_keys), BRIGHT_BG, len(bright_bad), args.tol))
+    only_bright = bright_keys - tight_keys
+    only_tight = tight_keys - bright_keys
+    print("    gate 4's set vs gate 3's: %d bright-only, %d tight-only"
+          % (len(only_bright), len(only_tight)))
+    # GATE 4 IS A FLOOR ON THE TOOL'S COVERAGE, NOT A CHARACTERISATION OF IT, and the
+    # tight-only pixels are the proof. Maren expected the two sets to be the same; on the
+    # real control they are not, and `bright_only == 0` is the half that matters -- gate 4
+    # never names a pixel the tool fails to resolve. The surplus is real precision the gate
+    # cannot see: `alpha_of` INTERSECTS three channels whose rounding puts their intervals at
+    # different offsets, so the overlap is strictly tighter than `127.5/max(bg)`.
+    # MEASURED, not reasoned, on Nerite's control shots: of 142 tight-only px, 85 are
+    # unclamped and ALL 85 have an intersection strictly narrower than their best single
+    # channel; the other 57 sit at a = 1, where the clamp to [0, 1] does the narrowing.
+    if only_tight:
+        print("    (tight-only px are surplus precision gate 4 cannot see: the 3-channel "
+              "intersection, and the clamp at a = 1. Gate 4 is a FLOOR, not a description.)")
+    for x, y, b, h in bright_bad[:5]:
+        print("    (%d,%d) brightest bg %d but bound %.3f" % (x, y, b, h))
     if cerrs:
         print("  UNBLENDED COLOUR, worst channel vs the authored rgb:")
         print("    error median %.2f  p95 %.2f  worst %.2f;  propagated bound median %.2f "
@@ -515,6 +613,7 @@ def run_control(args):
     ok = (in_bound == len(errs)
           and pct(bounds, 0.5) <= args.tol
           and (not tight or max(tight) <= args.tol)
+          and not bright_bad
           and (not cerrs or c_in == len(cerrs))
           and bands_seen == len(hist))
     print("CONTROL %s" % ("GREEN" if ok else "RED"))
