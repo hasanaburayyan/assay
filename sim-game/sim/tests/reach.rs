@@ -1114,3 +1114,176 @@ fn every_lighting_state_has_a_clause_and_a_tag_and_they_are_not_the_same_word() 
     assert_eq!(clauses.len(), 3, "two states share a clause: {clauses:?}");
     assert_eq!(tags.len(), 3, "two states share a tag: {tags:?}");
 }
+
+/// **THE THREE MINING STATES ARE TOTAL AND DISTINCT** (ASSA-135). One wording
+/// and not a clause/tag pair like `Lighting` above: the Game Director asked
+/// for the window's sentence to be byte-identical to the table's, because the
+/// species panel and the `species` table are one surface at two widths.
+#[test]
+fn every_mining_state_has_its_own_words() {
+    use sim::debug::{Mining, mining_note};
+
+    let all = [Mining::TooHard, Mining::ByHandNotSmeltable, Mining::ByHand];
+    let mut notes = Vec::new();
+    for state in all {
+        let note = mining_note(state);
+        assert!(!note.trim().is_empty(), "{state:?} has no words");
+        // A TAG STANDS ALONE. This string goes in a table cell and in a `[...]`
+        // tag on a panel row, so it carries no separator of its own -- the
+        // mistake `lighting_clause` exists to keep out of `lighting_tag`.
+        assert!(
+            !note.starts_with(',') && !note.starts_with(' '),
+            "a tag must stand alone: {note:?}"
+        );
+        notes.push(note);
+    }
+    notes.sort_unstable();
+    notes.dedup();
+    assert_eq!(notes.len(), 3, "two states share their words: {notes:?}");
+}
+
+/// **THE TABLE'S MINING NOTE COMES OUT OF `mining_note` AND NOWHERE ELSE**,
+/// over every species of 60 worlds, with all three states exercised.
+///
+/// This is what reddens if the words are ever re-inlined here. They WERE
+/// inlined -- an if/else chain inside `species_table` -- which is how the
+/// species panel came to compose its own from a bool and arrive at two states
+/// (ASSA-135).
+///
+/// THE COUNTS ARE THE PREMISE AND ARE ASSERTED, not assumed: a run where some
+/// state never came up would pass every assertion over it and prove nothing
+/// about that state's row.
+#[test]
+fn a_species_row_says_which_of_the_three_mining_states_it_is_in() {
+    use sim::debug::{Mining, mining, mining_note, species_table};
+
+    let (mut too_hard, mut unsmeltable, mut usable) = (0, 0, 0);
+    for seed in 1..60 {
+        let w = host_world(seed);
+        let table = species_table(&w);
+        for s in &w.species {
+            let state = mining(&w.species, s.id);
+            match state {
+                Mining::TooHard => too_hard += 1,
+                Mining::ByHandNotSmeltable => unsmeltable += 1,
+                Mining::ByHand => usable += 1,
+            }
+            let row = table
+                .lines()
+                .find(|l| l.contains(s.name()))
+                .unwrap_or_else(|| panic!("seed {seed}: no row for {}", s.name()));
+            let note = mining_note(state);
+            assert!(
+                row.contains(note),
+                "seed {seed} {}: state {state:?} wants {note:?} and the row reads {row}",
+                s.name()
+            );
+            // AND A ROCK NOTHING CAN MINE MAY NOT ALSO SAY IT IS MINABLE.
+            // `contains` above is satisfied by a row carrying extra claims, so
+            // the one state that could contradict itself is checked for what
+            // it may not say as well as for what it must.
+            //
+            // THE MIDDLE STATE NEEDS NO SUCH GUARD AND I WROTE ONE FIRST:
+            // "hand-minable, but not smeltable" has the bare promise as its
+            // own prefix, so a `!contains("hand-minable")` can never hold, and
+            // the version of this that tried reddened on seed 1. It does not
+            // need it — if that row ever degraded to the bare promise, the
+            // `contains(note)` above fails, because the longer string is the
+            // one being looked for. The prefix relation does the work.
+            if state == Mining::TooHard {
+                assert!(
+                    !row.contains(mining_note(Mining::ByHand)),
+                    "seed {seed} {}: nothing can mine this and the row reads {row}",
+                    s.name()
+                );
+            }
+        }
+    }
+    assert!(
+        too_hard > 10 && unsmeltable > 5 && usable > 10,
+        "a state never came up, so its row was never checked: \
+         too_hard {too_hard}, unsmeltable {unsmeltable}, usable {usable}"
+    );
+}
+
+/// THE BOARD'S OWN DEMO SEED, which is where the Game Director found this:
+/// two of the six rocks on 14247 can never be mined by anything and they are
+/// the first two rows of the panel. The window said so by leaving a word out.
+#[test]
+fn the_demo_seeds_first_two_rocks_say_nothing_can_mine_them() {
+    use sim::debug::{Mining, mining, mining_note, species_table};
+
+    let w = host_world(14247);
+    let table = species_table(&w);
+    let dead: Vec<&str> = w
+        .species
+        .iter()
+        .filter(|s| mining(&w.species, s.id) == Mining::TooHard)
+        .map(|s| s.name())
+        .collect();
+    assert_eq!(
+        dead.len(),
+        2,
+        "14247 is the demo seed and its roster moved: {dead:?}"
+    );
+    for name in dead {
+        let row = table
+            .lines()
+            .find(|l| l.contains(name))
+            .expect("a row per species");
+        assert!(
+            row.contains(mining_note(Mining::TooHard)),
+            "{name} is unmineable and its row reads {row}"
+        );
+    }
+}
+
+/// **THE CLASSIFIER, AGAINST THE TWO LADDER FACTS, BOTH DIRECTIONS** — the
+/// shape `a_deposit_has_a_reach_note_exactly_when_nothing_can_mine_it` uses
+/// one surface over, and for the same reason.
+///
+/// THIS TEST EXISTS BECAUSE A MUTATION PROVED THE OTHERS COULD NOT SEE IT
+/// (ASSA-135). Collapsing `ByHandNotSmeltable` into `ByHand` inside `mining`
+/// — which is the bug this item is about, rebuilt one layer down — leaves the
+/// table and the species panel AGREEING ON THE WRONG ANSWER, so every
+/// byte-identity assertion between them stays green. The only thing that
+/// caught it was the premise count, which is a weaker signal than it looks:
+/// it reddens with "a state never came up" rather than naming the species it
+/// got wrong, and it would go quiet the day someone widened the counts.
+///
+/// So the mapping is pinned to `ladder`, which is where the two decisions
+/// actually live, and `debug` only words them.
+#[test]
+fn the_mining_state_is_exactly_what_the_ladder_says_it_is() {
+    use sim::debug::{Mining, mining};
+
+    let (mut too_hard, mut unsmeltable, mut usable) = (0, 0, 0);
+    for seed in 1..60 {
+        let w = host_world(seed);
+        for s in &w.species {
+            let minable = sim::ladder::hand_minable(s);
+            let smeltable = sim::ladder::usable_from_bare_hands(&w.species, s.id);
+            let state = mining(&w.species, s.id);
+            let expected = match (minable, smeltable) {
+                (false, _) => Mining::TooHard,
+                (true, false) => Mining::ByHandNotSmeltable,
+                (true, true) => Mining::ByHand,
+            };
+            assert_eq!(
+                state,
+                expected,
+                "seed {seed} {}: hand_minable={minable} usable_from_bare_hands={smeltable}",
+                s.name()
+            );
+            match state {
+                Mining::TooHard => too_hard += 1,
+                Mining::ByHandNotSmeltable => unsmeltable += 1,
+                Mining::ByHand => usable += 1,
+            }
+        }
+    }
+    assert!(
+        too_hard > 10 && unsmeltable > 5 && usable > 10,
+        "a state never came up: too_hard {too_hard}, unsmeltable {unsmeltable}, usable {usable}"
+    );
+}

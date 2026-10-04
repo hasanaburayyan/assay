@@ -651,8 +651,21 @@ static func no_designs_line() -> String:
 ## So these are short tags on a row, and the SENTENCES about those conditions stay where the sim
 ## writes them (`reach_note`, the stall line).
 ##
-## ABSENT RATHER THAN NEGATED. A row says what a rock CAN do; "not hand-minable" would be the client
-## ranking the roster, which ruling 4 refuses. The player compares six rows and decides.
+## MINING IS THREE STATES AND USED TO RENDER AS ONE BIT (ASSA-135) -- the same defect ASSA-93 fixed
+## one axis over, found by the Game Director on the board's own demo seed. `hand_minable` is a bool
+## and `sim::debug::mining` holds a three-state answer, so this row said "hand-minable" or said
+## NOTHING: two of the six rocks on seed 14247 can never be mined by anything, they are the first two
+## rows the board reads, and the only way this panel had of saying so was to leave a word out. The
+## middle state ("hand-minable, but not smeltable", 13.6% of deposits) rendered as the bare promise
+## ruling ASSA-52 refuses. The sim sends its own sentence in `mining` and this file picks none of the
+## words; it must never re-derive the state from hardness.
+##
+## WHICH RETIRES A RULING OF THE GAME DIRECTOR'S, BY THEIR OWN WORD (ASSA-135). The comment that
+## stood here said "ABSENT RATHER THAN NEGATED: a row says what a rock CAN do, and 'not hand-minable'
+## would be the client ranking the roster". That objection was about WHO decides, and it was right
+## only while the sim had no word for it -- `debug.rs` writes the sentence now, so rendering it ranks
+## nothing. The rule still stands wherever the sim IS silent, which is why `lighting` below is absent
+## rather than negated on a rock the sim does not call fuel.
 ## LIGHTING IS THREE STATES AND USED TO RENDER AS ONE BIT (ASSA-93). `hand_lit_fuel` is true only
 ## for the first of them, so a fuel NOTHING in the world can light rendered exactly like a rock that
 ## is not fuel at all -- and the board loaded 50 units of the first kind into a smelter that then sat
@@ -662,13 +675,24 @@ static func no_designs_line() -> String:
 ##
 ## ABSENT RATHER THAN NEGATED SURVIVES, which is why the key is missing rather than empty on a rock
 ## the sim does not call fuel: those rows still say nothing about lighting, so no row is ranked.
-const TAG_HAND_MINABLE := "hand-minable"
+##
+## `TAG_HAND_MINABLE` WAS HERE AND IS GONE (ASSA-135). It was this file's own word for one of three
+## states, and a client holding a word for an axis the sim words is how the middle state got lost.
+## There is deliberately no constant to put back: the string arrives.
 
 ## The tags a species row shows, in a fixed order so six rows read as a column rather than a jumble.
+##
+## `mining` LEADS, because it is the question a player is asking of six rows at once -- can I get
+## anything out of this, and does what I get go anywhere. Lighting follows: it only matters once the
+## answer to the first is yes, and on rock nothing can mine the sim withholds it (ASSA-68).
 static func species_tags(species: Dictionary) -> PackedStringArray:
 	var tags := PackedStringArray()
-	if bool(species.get("hand_minable", false)):
-		tags.append(TAG_HAND_MINABLE)
+	# NO DEFAULT WORD AND NO FALLBACK. If `mining` ever stopped arriving this row would be one tag
+	# short and `test_a_species_row_carries_the_sims_own_mining_sentence` fails; a `"hand-minable"`
+	# here would make a binding regression render as a confident lie instead.
+	var mining := String(species.get("mining", ""))
+	if mining != "":
+		tags.append(mining)
 	var lighting := String(species.get("lighting", ""))
 	if lighting != "":
 		tags.append(lighting)

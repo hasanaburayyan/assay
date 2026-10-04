@@ -237,14 +237,24 @@ func test_the_boolean_facts_show_as_tags_only_where_the_sim_says_true() -> bool:
 			ok = _fail(("species %s: the sim's lighting label is `%s` and the row reads `%s`")
 					% [species.get("name", "?"), lighting, text])
 			break
-		if text.contains(AssayHud.TAG_HAND_MINABLE) != bool(species.get("hand_minable", false)):
-			ok = _fail(("species %s: the sim says hand_minable=%s and the row reads `%s`")
-					% [species.get("name", "?"), species.get("hand_minable", false), text])
+		# WHAT MOVED AGAIN (ASSA-135): this used to compare the row against the BOOLEAN
+		# `hand_minable`, which is one of the sim's THREE mining states -- so rock nothing can mine
+		# and rock whose ore dead-ends both read as "hand-minable or nothing" and this test called
+		# that correct. Exactly the defect the lighting half of this test was rewritten for, one axis
+		# over, and this test is where it should have been caught. It now compares against the sim's
+		# own sentence, which covers all three.
+		var mining := String(species.get("mining", ""))
+		if mining == "":
+			ok = _fail("species %s arrived with no mining state at all" % species.get("name", "?"))
 			break
-		# NEVER NEGATED. "not hand-minable" would be this client ranking the roster, which ruling 4
-		# refuses: a row says what a rock CAN do and the player compares six of them.
-		if text.contains("not " + AssayHud.TAG_HAND_MINABLE):
-			ok = _fail("a row negates a fact instead of leaving the tag off: %s" % text)
+		if not text.contains(mining):
+			ok = _fail(("species %s: the sim's mining sentence is `%s` and the row reads `%s`")
+					% [species.get("name", "?"), mining, text])
+			break
+		# AND THE CLIENT DID NOT NEGATE OR RANK. "not hand-minable" would be this client having an
+		# opinion about the roster; the sim's own TooHard sentence is a statement about one rock.
+		if text.contains("not hand-minable"):
+			ok = _fail("a row negates a fact instead of rendering the sim's sentence: %s" % text)
 			break
 	if ok and seen_fuel == 0:
 		ok = _fail("no species in this world is fuel, so the lighting label was never exercised")
