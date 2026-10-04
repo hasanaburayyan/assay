@@ -1680,9 +1680,54 @@ pub fn building_status(world: &World, b: &Building) -> String {
     )
 }
 
+/// What a building IS, named the way every other object in this game is
+/// named: species, kind, grade.
+///
+/// **A BUILDING WAS THE ONE OBJECT THAT LOST ITS NAME WHEN YOU PUT IT DOWN**
+/// (Game Director, ASSA-136). A stack is a `Tonore ore (A)`, a part is a
+/// `Tonore frame (A)`, a deposit's line names its species — and the moment a
+/// smelter is standing on the ground every surface called it `smelter 0`. Its
+/// material is not decoration: it is the species whose heat tolerance caps the
+/// fire (`World::max_temperature`), and it is the exact `Item` that comes back
+/// in your pack when you pick the thing up (`step::Pickup`).
+///
+/// **THE KIND IS THE BUILDING'S, NOT THE ITEM'S, AND THAT IS NOT A DETAIL.**
+/// `Building::material` is whatever was placed: a `Smelter` item for a
+/// smelter, but `assembly.frame.refined()` for a machine. Reading
+/// `World::item_name` straight off it would name a planted drill
+/// `Tonore refined (A)`. So the species and grade come from the material and
+/// the noun comes from `BuildingKind::name`.
+///
+/// Grade is carried because it is the grade you get back, NOT because it
+/// changes what the building does — it cannot: heat tolerance is one of the
+/// two properties `Property::scales_with_grade` excludes, so an A smelter caps
+/// the fire exactly where a C one does. That is also why this name sits beside
+/// `walls N` rather than inside it; see `walls_clause`, which deliberately
+/// does not read grade at all.
+pub fn building_name(world: &World, b: &Building) -> String {
+    format!(
+        "{} {} ({})",
+        world.species(b.material.species).name(),
+        b.kind.name(),
+        b.material.grade.letter()
+    )
+}
+
 /// Where a building is, as a player would say it.
-fn building_address(b: &Building) -> String {
-    format!("{} {} at ({}, {})", b.kind.name(), b.id.0, b.pos.x, b.pos.y)
+///
+/// **ONE PLACE DECIDES HOW A BUILDING IS ADDRESSED.** This used to be private
+/// and `halt_lines` was its only caller, so `sim-cli`'s tile line, the TUI's
+/// tile panel and the Godot client each hand-rolled `kind + id + pos` of their
+/// own. Four copies of one decision is how ASSA-43, ASSA-52 and ASSA-128
+/// happened; the surfaces call this now.
+pub fn building_address(world: &World, b: &Building) -> String {
+    format!(
+        "{} {} at ({}, {})",
+        building_name(world, b),
+        b.id.0,
+        b.pos.x,
+        b.pos.y
+    )
 }
 
 /// Every building that has stopped, one line each, worst-placed first in
@@ -1703,7 +1748,7 @@ pub fn halt_lines(world: &World) -> Vec<String> {
         .map(|b| {
             format!(
                 "{} · {}",
-                building_address(b),
+                building_address(world, b),
                 building_state_line(world, b)
             )
         })
@@ -1746,7 +1791,12 @@ pub fn building_table(world: &World) -> String {
             b.id.0,
             b.kind.name(),
             format!("({}, {})", b.pos.x, b.pos.y),
-            world.item_name(b.material),
+            // WAS `world.item_name(b.material)`, AND THAT IS THE BUG THIS
+            // FUNCTION WAS CARRYING (ASSA-136). It happens to read correctly
+            // for a smelter, whose material IS a smelter item, and names a
+            // planted drill `Tonore refined (A)` — the material it was built
+            // from rather than the thing standing there.
+            building_name(world, b),
             building_status(world, b)
         );
     }

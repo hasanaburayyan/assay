@@ -984,6 +984,7 @@ fn building_fact(world: &World, building: &sim::building::Building) -> BuildingF
     BuildingFacts {
         id: building.id.0 as i64,
         kind: building.kind.name().to_string(),
+        name: sim::debug::building_name(world, building),
         pos: (building.pos.x, building.pos.y),
         status: sim::debug::building_status(world, building),
         footprint: building.kind.footprint(),
@@ -1013,6 +1014,7 @@ fn building_dict(building: &BuildingFacts) -> VarDictionary {
     vdict! {
         "id" => building.id,
         "kind" => &gstring(&building.kind).to_variant(),
+        "name" => &gstring(&building.name).to_variant(),
         "pos" => Vector2i::new(building.pos.0, building.pos.1),
         "status" => &gstring(&building.status).to_variant(),
         "footprint" => Vector2i::new(building.footprint.0, building.footprint.1),
@@ -1181,6 +1183,11 @@ pub struct DepositFacts {
 pub struct BuildingFacts {
     pub id: i64,
     pub kind: String,
+    /// What it IS, in the sim's words: `Tonore smelter (A)`. The same
+    /// `debug::building_name` every other surface uses, so the window and the
+    /// terminal cannot drift (ASSA-136). `kind` stays the bare noun for
+    /// anything that needs to BRANCH on it; this is the one to show a player.
+    pub name: String,
     pub pos: (i32, i32),
     pub status: String,
     /// How many tiles it occupies, from `pos` as the TOP-LEFT of the footprint.
@@ -3244,6 +3251,32 @@ mod tests {
             placed.status,
             sim::debug::building_status(sim.world(), theirs),
             "the status is the sim's sentence, not a second copy of the wording"
+        );
+        // THE NAME IS THE SIM'S TOO (ASSA-136). `kind` stays the bare noun for
+        // anything that branches; what a player is shown carries the species
+        // and grade, because that species is what caps the fire and what comes
+        // back in the pack — and after ASSA-131 it is also what the sprite's
+        // tint is claiming.
+        assert_eq!(
+            placed.name,
+            sim::debug::building_name(sim.world(), theirs),
+            "the name is the sim's words, not a second copy of them"
+        );
+        // Built from the item that was actually placed, never from a letter
+        // typed here: a check that hardcodes the quantity it is checking tests
+        // the typing (ASSA-98, and I have shipped that mistake myself).
+        assert_eq!(
+            placed.name,
+            format!(
+                "{} smelter ({})",
+                sim.world().species(smelter.species).name(),
+                smelter.grade.letter()
+            ),
+            "a player is shown species, kind and grade"
+        );
+        assert_ne!(
+            placed.name, placed.kind,
+            "and that is more than the bare noun `kind` already carried"
         );
         // EVERY TILE THE SIM OCCUPIES IS INSIDE THE REPORTED BLOCK. This is the
         // real content of "pos is the top-left", and it fails if `pos` were ever

@@ -504,10 +504,19 @@ static func tile_lines(tile: Dictionary) -> PackedStringArray:
 	else:
 		lines.append("empty ground")
 
+	# A BUILDING IS NAMED THE WAY EVERY OTHER OBJECT IS (Maren, ASSA-136): `Tonore smelter (A)`,
+	# not `smelter`. The words are the sim's -- `debug::building_name`, the same call the halted
+	# table and sim-cli's tile line make -- because the species in that name is the one that caps
+	# the fire and the one that comes back in your pack, and two surfaces spelling it apart is how
+	# ASSA-43 and ASSA-52 happened. `kind` is still in the dict for anything that must BRANCH on
+	# it; it is not what a player is shown.
 	var building: Variant = tile.get("building")
 	if building != null:
 		var b: Dictionary = building
-		lines.append("%s %d · %s" % [String(b.get("kind", "?")), int(b.get("id", -1)),
+		var named := String(b.get("name", ""))
+		if named == "":
+			named = String(b.get("kind", "?"))
+		lines.append("%s %d · %s" % [named, int(b.get("id", -1)),
 				String(b.get("status", ""))])
 
 	var here: PackedStringArray = tile.get("players_here", PackedStringArray())
