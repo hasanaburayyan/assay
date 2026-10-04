@@ -59,6 +59,9 @@ const PLAYOUT_DELAY := 2.5
 ## WHAT A CLOCK THAT HAS NOT STARTED READS, and it is negative rather than 0.0 because 0.0 is a real
 ## sim tick -- the first one of every fresh world. See `playout_at`.
 const PLAYOUT_UNSTARTED := -1.0
+## How many bundle arrivals the measured tick rate averages over. See `playout_step` for why a dozen
+## and not the forty it was.
+const PLAYOUT_RATE_WINDOW := 12
 ## How hard the clock leans on its error (per tick of error, as a fraction of rate) and the most it
 ## may ever bend. 10% of 10 tiles/s is 1 tile/s, well inside the bar the board's complaint set.
 const PLAYOUT_CATCHUP := 0.5
@@ -199,16 +202,33 @@ static func facing_of(step: Vector2i) -> String:
 ## series swings by a factor of ten, and it was the DENOMINATOR of the drawn fraction: the segment
 ## length itself jittered, so the body sprinted and stalled with the renderer's own frame rate.
 ##
-## A mean over the whole window is immune to the pairing (two bundles 0.17 ms apart still advance the
-## tick count by two) and still follows a real rate change in a second or so, which is what
+## A mean over a window is immune to the pairing and still follows a real rate change, which is what
 ## `sim-relay --tps N` needs. The fallback is for the first two arrivals, where there is no rate yet.
-static func playout_step(arrivals: Array[float], fallback: float) -> float:
-	if arrivals.size() < 3:
+##
+## **THE WINDOW IS SHORT, AND THAT IS THE HALF THAT FIXED A MEASURED DEFECT.** It was 40 arrivals --
+## four seconds -- and a real host does not hold its rate for four seconds. Measured in a real window
+## on a loaded Mac (`motion_speed_probe.gd`, 2026-10-04): **the client was using 99.0 ms while the
+## host had actually sent one every 110.5 ms, so the clock ran at 112% of true speed, outran the
+## host, emptied its own buffer and held the body still for 12 frames of a 1.5 s walk.** A four-second
+## mean trails a drifting rate by more than `PLAYOUT_NUDGE` (10% of rate) can correct, so past that
+## point the clock cannot hold its buffer whatever it does. A dozen ticks is enough averaging and
+## converges on a rate change in 1.2 s instead of 4.
+##
+## **AND THE DENOMINATOR IS THE SIM'S OWN TICK SPAN RATHER THAN THE NUMBER OF ARRIVALS, which is
+## correctness by construction and not a fix for the numbers above.** This divided by
+## `arrivals.size() - 1`, which is only the tick count while every bundle carries exactly one tick.
+## That is true of `sim-relay` today, so it was not what went wrong here -- but it is an assumption
+## about the HOST living in the renderer's arithmetic, and the day a bundle carries two ticks the
+## client halves its idea of a tick and outruns the host by 100%. `ticks` is the sim tick each
+## arrival carried, so the answer is seconds per TICK whatever the delivery did.
+static func playout_step(arrivals: Array[float], ticks: Array[int], fallback: float) -> float:
+	if arrivals.size() < 3 or ticks.size() != arrivals.size():
 		return fallback
 	var span := arrivals[arrivals.size() - 1] - arrivals[0]
-	if span <= 0.0:
+	var over := ticks[ticks.size() - 1] - ticks[0]
+	if span <= 0.0 or over <= 0:
 		return fallback
-	return clampf(span / float(arrivals.size() - 1), MIN_PLAYOUT_STEP, 1.0)
+	return clampf(span / float(over), MIN_PLAYOUT_STEP, 1.0)
 
 
 ## **WHERE THE PLAYOUT CLOCK IS NOW, IN SIM TICKS** (ASSA-197). The board, twice: *"the lerp is not

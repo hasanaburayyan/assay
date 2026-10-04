@@ -375,6 +375,8 @@ var _played_at := 0.0
 var _starved := false
 ## The last few bundle ARRIVAL times, for the measured tick rate. See `AssayScene.playout_step`.
 var _tick_times: Array[float] = []
+## The sim tick each of those arrivals carried, so the rate is seconds per TICK and not per bundle.
+var _tick_numbers: Array[int] = []
 ## When the newest tick landed, and how far apart the last few were, both in seconds of wall clock.
 ##
 ## MEASURED RATHER THAN ASSUMED, and that is not fussiness: the relay's rate is a FLAG
@@ -2518,9 +2520,11 @@ func _remember_positions() -> void:
 	# rate; an EMA of consecutive gaps swings by a factor of ten and used to be the denominator the
 	# whole tween was divided by. `playout_step` takes the mean over the window instead.
 	_tick_times.append(now)
-	while _tick_times.size() > 40:
+	_tick_numbers.append(_sim.tick())
+	while _tick_times.size() > AssayScene.PLAYOUT_RATE_WINDOW:
 		_tick_times.pop_front()
-	_tick_gap = AssayScene.playout_step(_tick_times, _tick_gap)
+		_tick_numbers.pop_front()
+	_tick_gap = AssayScene.playout_step(_tick_times, _tick_numbers, _tick_gap)
 	_tick_at = now
 	# ADVANCED ON THIS PATH TOO, not only on a drawn frame, and that is not belt-and-braces: every
 	# headless test and probe runs inside `SceneTree._initialize` where `_process` never fires, so a

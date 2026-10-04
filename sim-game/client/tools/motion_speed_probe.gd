@@ -75,6 +75,8 @@ var _blind := 0
 ## world, and adding `origin` back recovers it exactly as the renderer computed it.
 var _drawn: Array[Vector2] = []
 var _foot: Array[Vector2] = []
+## When the SCREEN last advanced its playout clock, per sample. See `_sample`.
+var _screen_at: Array[float] = []
 ## Frames the renderer drew with no single body on the scene (see `WorldLayer.drawn_body`).
 var _unlit := 0
 ## The clock's own state at each sample, so a frozen frame can be told from a starved one.
@@ -215,6 +217,14 @@ func _sample(delta: float, now: float) -> void:
 	var origin: Vector2 = (_screen._world.view as Dictionary).get("origin", Vector2.ZERO)
 	_drawn.append(body.position + origin)
 	_foot.append(foot.position + origin)
+	# **THE SCREEN'S OWN FRAME CLOCK, which is a different number from this probe's `delta` and the
+	# difference is the instrument.** `_played_at` is the `Time.get_ticks_msec()` reading the screen
+	# took when it last advanced the playout clock, so it is the instant the rectangle above was
+	# computed for. This probe's `_process` runs at a different point in the frame, so `delta` and
+	# the position I read are a frame boundary out of phase, and dividing one by the other reports
+	# speed errors in BOTH directions that nothing in the game did. Not an estimate (Wren's rule on
+	# this probe): it is wall clock, read where the drawing happened.
+	_screen_at.append(float(_screen._played_at))
 	_at.append(mine)
 	_origin.append(view.get("origin", Vector2.ZERO) as Vector2)
 	_dt.append(delta)
@@ -294,6 +304,7 @@ func _report() -> void:
 	var wall: Array[float] = []
 	var camera: Array[float] = []
 	var frames: Array[float] = []
+	var probe: Array[float] = []
 	var dry: Array[float] = []
 	var within := 0
 	var within_drawn := 0
@@ -312,10 +323,16 @@ func _report() -> void:
 		if _starved[i]:
 			dry.append(dt * 1000.0)
 			continue
-		# **THE RECTANGLE THAT WAS BLITTED.** This is the verdict column.
-		drawn.append((_drawn[i] - _drawn[i - 1]).length() / tile_px / dt)
-		if absf(drawn[drawn.size() - 1] - TRUE_SPEED) <= TRUE_SPEED * TOLERANCE:
-			within_drawn += 1
+		# **THE RECTANGLE THAT WAS BLITTED, OVER THE SCREEN'S OWN FRAME TIME.** This is the verdict
+		# column. `probe dt` below is the same distance over this script's `delta`, kept so the
+		# phase error between the two samplers stays visible rather than being tidied away.
+		var moved := (_drawn[i] - _drawn[i - 1]).length() / tile_px
+		var screen_dt: float = _screen_at[i] - _screen_at[i - 1]
+		if screen_dt > 0.0:
+			drawn.append(moved / screen_dt)
+			if absf(drawn[drawn.size() - 1] - TRUE_SPEED) <= TRUE_SPEED * TOLERANCE:
+				within_drawn += 1
+		probe.append(moved / dt)
 		# **BOX 3, MEASURED RATHER THAN BUILT.** The camera is on the drawn position (`main.gd`) and
 		# the foot mark is drawn from it, so the body and its own mark must keep a fixed offset. Any
 		# deviation is the body and the camera disagreeing about where you are -- Maren measured 34.2
@@ -342,6 +359,7 @@ func _report() -> void:
 	print("  true speed %.2f tiles/s (one tile per %.0f ms tick), bar is +/-%d%%"
 			% [TRUE_SPEED, TICK_SECONDS * 1000.0, int(TOLERANCE * 100.0)])
 	_say("DRAWN tiles/s", _percentiles(drawn))
+	_say("drawn/probe dt", _percentiles(probe))
 	_say("body-vs-mark px", _percentiles(apart))
 	_say("lerp tiles/s", _percentiles(body))
 	_say("lerp (wall)", _percentiles(wall))
