@@ -232,20 +232,25 @@ func test_a_failure_does_not_look_like_the_instruction_it_replaces() -> bool:
 ## It used to read "enter a host address and join", which sent them to the one door that needs
 ## information they do not have -- and it survived the whole of ASSA-106 because I never re-read the
 ## item between cutting the branch and opening the PR.
+##
+## **THE RULE DID NOT MOVE; THE SURFACE DID** (Maren's ruling 1, ASSA-127). The sentence is the same
+## words, now centred on the map rather than in the status line above it, so this reads it off the
+## label that actually carries it. What it asserts is unchanged: both doors, solo first.
+##
+## The idle-COLOUR clause went with the sentence rather than being dropped: an empty status line has
+## no meaningful `status_color`, and the legibility of these words is now asserted where they are
+## drawn, against `MAP_BG`, by `test_the_empty_map_names_which_kind_of_empty_it_is`.
 func test_the_opening_line_offers_the_door_that_needs_nothing_typed() -> bool:
 	var screen := _screen()
-	var said: String = screen._status.text
-	var colour: Color = screen._status.modulate
+	var said: String = screen._map_note.text if screen._map_note != null else ""
 	screen.queue_free()
 	if not said.contains("Play solo"):
 		return _fail("the opening line does not mention Play solo at all: %s" % said)
 	if not said.contains("host address"):
 		return _fail("the opening line dropped the host door: %s" % said)
-	# SOLO FIRST, because the row reads left to right and so does the sentence above it.
+	# SOLO FIRST, because the row reads left to right and so does the sentence over it.
 	if said.find("Play solo") > said.find("host address"):
 		return _fail("the opening line puts the host door first: %s" % said)
-	if colour != AssayHud.status_color(AssayHud.Say.IDLE):
-		return _fail("the opening instruction is coloured %s, not the idle colour" % colour)
 	return true
 
 
@@ -1123,6 +1128,111 @@ func _carries_text(control: Control) -> bool:
 		if inner != null and inner.visible and _carries_text(inner):
 			return true
 	return false
+
+
+## **THE MAP NAMES WHICH KIND OF EMPTY IT IS, AND IT IS 59% OF THE WINDOW** (Maren's ruling 1,
+## ASSA-127).
+##
+## Six surfaces in the HUD column say which kind of empty they are -- the sweep above is that rule.
+## The seventh is the map, measured twice at **543,180 px of one colour = 58.9% of the window**, and
+## it said nothing; the sentence that explains it sat in the status line at ~1.5% of the window,
+## above the thing being explained.
+##
+## **THE CONTRAST IS ASSERTED HERE AND NOT BY THE COLUMN SWEEP, which is the trap this control walks
+## into.** `test_no_readout_in_the_column_is_below_wcag_aa_on_its_panel` iterates the column's
+## sections; this note is not in the column, and it sits on `MAP_BG` (0.10/0.11/0.13) rather than on
+## the panel's surface. A new readout on a new background escapes every guard we already had, and
+## `_drawn_color` is used rather than `font_color` because `modulate` multiplies what the theme chose
+## and is how 4.091:1 shipped once already.
+##
+## THE SPAN IS A PROPERTY, NOT A COORDINATE: enclosed by the map's rectangle and covering most of it,
+## with the text centred both ways. A one-line label parked in a corner would satisfy "the map has a
+## note" and would not be the thing Maren ruled for.
+func test_the_empty_map_names_which_kind_of_empty_it_is() -> bool:
+	var screen := _screen()
+	var ok := true
+	var note: Label = screen._map_note
+	var world := AssayHud.world_rect()
+	if note == null:
+		ok = _fail("the join screen's map has no note at all")
+	elif not note.visible:
+		ok = _fail("the map's note exists but is hidden on the first screen a stranger sees")
+	elif note.text != AssayHud.empty_map_line() or note.text.strip_edges() == "":
+		ok = _fail("the map's note is not the shipped sentence: '%s'" % note.text)
+	elif not world.encloses(Rect2(note.position, note.size)):
+		ok = _fail(("the map's note is not on the map it explains: note %s, map %s")
+				% [Rect2(note.position, note.size), world])
+	elif note.size.x * note.size.y < world.size.x * world.size.y * 0.5:
+		ok = _fail(("the map's note covers %d px of a %d px rectangle, so centring it says nothing "
+				+ "about where the words land") % [note.size.x * note.size.y,
+				world.size.x * world.size.y])
+	elif note.horizontal_alignment != HORIZONTAL_ALIGNMENT_CENTER \
+			or note.vertical_alignment != VERTICAL_ALIGNMENT_CENTER:
+		ok = _fail("Maren's ruling is a CENTRED line; this one is aligned %d/%d"
+				% [note.horizontal_alignment, note.vertical_alignment])
+	elif note.mouse_filter != Control.MOUSE_FILTER_IGNORE:
+		ok = _fail("a 912x600 label that answers the mouse swallows every click on the map, and "
+				+ "the bug would read as `Play solo does nothing`")
+	else:
+		var ratio := AssayHud.contrast_ratio(_drawn_color(note), AssayHud.MAP_BG)
+		if ratio < 4.5:
+			ok = _fail(("the map's note is drawn at %.3f:1 against MAP_BG, under the 4.5 floor "
+					+ "build_theme.gd refuses to write a theme at: %s")
+					% [ratio, _drawn_color(note)])
+		else:
+			print("    map note: %.3f:1 on MAP_BG" % ratio)
+	# ONE SENTENCE IN ONE PLACE, which is half of what the ruling asked for. Leaving it in the status
+	# line too would pass every assertion above and still be the thing she filed.
+	if ok and screen._status.text.strip_edges() == AssayHud.empty_map_line().strip_edges():
+		ok = _fail("the invitation is still in the status line as well as on the map")
+	screen.queue_free()
+	return ok
+
+
+## **THE NOTE IS SHOWN EXACTLY WHEN THE MAP HAS NOTHING ON IT**, asserted through `_refresh_world`
+## rather than by poking the flag (ASSA-127).
+##
+## The derivation lives in `_refresh_map_note`, which reads `_world.view.is_empty()` -- the same fact
+## `world_layer.gd` uses to decide whether to paint anything. **Both branches of `_refresh_world` are
+## driven here on purpose**: a test that only called the helper would pass with the helper wired to
+## nothing, which is exactly the shape of bug that has got past me before.
+func test_the_maps_note_is_shown_exactly_when_the_map_is_empty() -> bool:
+	var screen := _screen()
+	var ok := true
+	# Pre-join: no sim, so `_refresh_world` takes its early return. Seeded wrong first, so a missing
+	# call cannot look like a pass.
+	screen._map_note.visible = false
+	screen._refresh_world()
+	if not screen._map_note.visible:
+		ok = _fail("with no world, _refresh_world left the map silent")
+	screen.queue_free()
+
+	var joined := _joined_screen()
+	if ok and joined._sim.running():
+		joined._map_note.visible = true
+		joined._refresh_world()
+		if joined._world.view.is_empty():
+			ok = _fail("the welcomed screen drew no world, so this half proves nothing")
+		elif joined._map_note.visible:
+			ok = _fail("the map has a world on it and still says there is no world yet")
+	elif ok:
+		ok = _fail("could not build an offline world, so the in-world half proves nothing: %s"
+				% joined._sim.fail_reason)
+	joined.queue_free()
+	return ok
+
+
+## A live screen welcomed into a fresh offline world, the way `test_buttons.gd::_joined` does it:
+## `_ready` by hand because the suite works inside `SceneTree._initialize`.
+func _joined_screen(seed_text := "777042") -> Node:
+	var screen: Node = load("res://scenes/main.tscn").instantiate()
+	runner.root_node.add_child(screen)
+	screen._ready()
+	var welcome := AssaySimHost.fresh_welcome_json(seed_text, "limpet")
+	if welcome != "":
+		screen._client.play_offline()
+		screen._client.feed_offline(welcome)
+	return screen
 
 
 ## A STACK SHAPED LIKE A FRAME PART, out of the sim's own catalogue of kinds. The first part of an
