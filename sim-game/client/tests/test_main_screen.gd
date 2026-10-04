@@ -1129,6 +1129,46 @@ func test_an_old_log_line_is_one_row_and_the_newest_is_whole() -> bool:
 ## reachable thing is legitimately its toggle and not a sentence.
 func test_no_visible_heading_on_the_join_screen_stands_over_nothing() -> bool:
 	var screen := _screen()
+	var ok := _sweep_headings(screen, "the join screen")
+	screen.queue_free()
+	return ok
+
+
+## **AND THE SAME RULE ONCE THERE IS A WORLD, WITH NOTHING UNDER THE MOUSE** (ASSA-127 box 3).
+##
+## THE BOX HAS TWO HALVES AND ONLY ONE OF THEM WAS EVER CHECKED. `quiet_cursor_line` covers the
+## pre-join half, and the sweep above holds it; the in-world half -- "after joining with nothing
+## hovered, say that kind of empty instead" -- had no test at all, and Nerite left the box open on
+## exactly that gap because neither shot in a window set shows it.
+##
+## **THE MOUSE HAS NOT BEEN OVER THE MAP**, which is the state this is about and the state a window
+## shot is always in: `_refresh` falls back to the tile you STAND on and says `where you stand`, so
+## the section is never empty in a world. If that fallback were dropped, the join-screen sweep would
+## stay green -- it never reaches a world -- and the cursor would be a heading over nothing for every
+## player who had not yet moved a mouse.
+##
+## STILL THE SWEEP AND NOT A TEST NAMED FOR THE CURSOR, for the reason the join-screen one gives: a
+## test about `cursor` is a test about the bug Maren happened to find. This one is about the rule, so
+## the next section added to this column cannot ship blank in a world either.
+func test_no_visible_heading_in_a_joined_world_stands_over_nothing() -> bool:
+	var screen := _joined_screen()
+	if not screen._sim.running():
+		screen.queue_free()
+		return _fail("premise: no world was joined, so this sweep is about the join screen again")
+	if screen._hovering:
+		screen.queue_free()
+		return _fail("premise: the mouse is already over the map, which is not the state under test")
+	var ok := _sweep_headings(screen, "a joined world (nothing hovered)")
+	screen.queue_free()
+	return ok
+
+
+## THE SWEEP ITSELF, over whatever state the caller put the screen in.
+##
+## Shared so the two states cannot drift into asking different questions -- the whole value of this
+## being a sweep is that it is ONE rule, and two copies of it would be two rules the day somebody
+## edited one.
+func _sweep_headings(screen: Node, where: String) -> bool:
 	var column: Node = screen._make.get_parent()
 	var ok := true
 	var heading := ""
@@ -1143,8 +1183,8 @@ func test_no_visible_heading_on_the_join_screen_stands_over_nothing() -> bool:
 		var is_heading: bool = control is Label and control.theme_type_variation == &"Heading"
 		if is_heading:
 			if heading != "" and not said:
-				ok = _fail(("the `%s` heading is visible on the join screen with nothing readable "
-						+ "under it: a stranger reads that as a game with nothing to say") % heading)
+				ok = _fail(("the `%s` heading is visible on %s with nothing readable under it: "
+						+ "a stranger reads that as a game with nothing to say") % [heading, where])
 				break
 			heading = (control as Label).text if control.visible else ""
 			said = false
@@ -1154,8 +1194,8 @@ func test_no_visible_heading_on_the_join_screen_stands_over_nothing() -> bool:
 		if _carries_text(control):
 			said = true
 	if ok and heading != "" and not said:
-		ok = _fail("the last section, `%s`, is a visible heading over nothing" % heading)
-	screen.queue_free()
+		ok = _fail("on %s the last section, `%s`, is a visible heading over nothing"
+				% [where, heading])
 	return ok
 
 
