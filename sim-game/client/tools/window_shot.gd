@@ -74,7 +74,8 @@ const TICKS_PER_FRAME := 32
 const DEFAULT_SEED := "777042"
 
 enum Phase { SETTLE_JOIN, SHOOT_JOIN, PLAY, SETTLE_PACK, SHOOT_PACK, SETTLE_PLAY, SHOOT_PLAY,
-		SETTLE_FOLD, MEASURE_CONTROLS, SETTLE_MENUS, SHOOT_MENUS, DONE }
+		SETTLE_FOLD, MEASURE_CONTROLS, SETTLE_MENUS, SHOOT_MENUS, SCROLL_ROCKS, SETTLE_ROCKS,
+		SHOOT_ROCKS, DONE }
 ## What `_play_frames` did with its last tick.
 enum Ticked { AGAIN, OVER, DEAD }
 
@@ -104,6 +105,14 @@ var _rows_tick := -1
 ## reading "Craft" cannot be mistaken for one, and taken with the crafting menu already folded so the
 ## only difference between this and the after reading is the log. See `_controls_report`.
 var _controls_before := {}
+## AND WHERE THEY STOOD THE FRAME THE LOG WAS OPEN, taken at the shot rather than read live in
+## `_report` (ASSA-143). The claim is about the moment after the log opened, so the reading has to be
+## from that moment: reading the screen at report time was only ever right because nothing touched
+## the screen afterwards, and the roster shot does -- it scrolls the column, which moved all eight
+## buttons and made the log look like it had evicted them. A baseline that is correct by luck is one
+## phase away from a confident false report, which is the same shape as measuring a log section
+## against the window when a scroll box 100px smaller is what clips it (ASSA-117).
+var _controls_after := {}
 var _done := false
 
 
@@ -179,6 +188,26 @@ func _process(_delta: float) -> bool:
 			_settle(Phase.SHOOT_MENUS)
 		Phase.SHOOT_MENUS:
 			_shoot("03-log.png", PackedStringArray(["event log"]))
+			# THE AFTER READING IS TAKEN HERE, in the settled frame the log is open and nothing else
+			# has moved. See `_controls_after`.
+			_controls_after = _controls_now()
+			_phase = Phase.SCROLL_ROCKS
+		Phase.SCROLL_ROCKS:
+			# THE LOG PANEL COMES BACK DOWN FIRST. It sits over the map, not over the column, so it
+			# does not clip the rocks -- but a picture of the roster with a log panel across the
+			# middle of it is a picture of two things, and the one being judged is the rows.
+			_screen._show_log(false)
+			_scroll_to_rocks()
+			_phase = Phase.SETTLE_ROCKS
+		Phase.SETTLE_ROCKS:
+			_settle(Phase.SHOOT_ROCKS)
+		Phase.SHOOT_ROCKS:
+			# NO SUBJECT, AND NOT BECAUSE THE CLAIM IS WEAKER. `rocks` is 713px in a 654px box, so
+			# `_standing` can only ever call it CLIPPED and a subject check here would be a box that
+			# cannot go green -- the opposite failure to 03-log's, which was green over an empty
+			# frame. `_rocks_report` guards it instead, and asks for MORE: two whole ROWS in the
+			# frame, which is the least a picture needs to show that two rocks differ.
+			_shoot("05-rocks.png", PackedStringArray())
 			_phase = Phase.DONE
 		Phase.DONE:
 			_report()
@@ -523,9 +552,91 @@ func _reveal_report() -> bool:
 ##
 ## IT CANNOT PASS VACUOUSLY: an empty before-set is a failure, because a run that found no controls
 ## would otherwise be the quietest green in this file.
+## THE ROSTER DOES NOT FIT IN THE COLUMN AND NEVER WILL, so a picture of it is a SCROLLED picture
+## (ASSA-143). Measured on seed 152: `rocks` is y 541..1254, a 713px section in a 654px scroll box,
+## so the unscrolled shots show about one row of six. A player scrolls to read the rest; so does
+## this.
+##
+## THE OFFSET IS ASKED OF THE ENGINE, NOT COMPUTED FROM WHAT I THINK THE LAYOUT IS: the section's
+## current top minus the box's top is how far it has to travel, added to where the box already is.
+## `ensure_control_visible` is deliberately NOT used -- it does the MINIMUM scroll, which for a
+## section TALLER than the box parks its BOTTOM at the bottom edge and cuts the first row off, and
+## the first row is as much a part of the roster as any other (I was bitten by exactly this
+## minimum-scroll behaviour on the log heading, ASSA-117).
+func _scroll_to_rocks() -> void:
+	var rocks: Control = _screen._species
+	var box: ScrollContainer = null
+	var node: Node = rocks.get_parent()
+	while node != null:
+		if node is ScrollContainer:
+			box = node as ScrollContainer
+			break
+		node = node.get_parent()
+	if box == null:
+		print("  rocks: no scroll box above the roster, so nothing was scrolled")
+		return
+	var was := box.scroll_vertical
+	box.scroll_vertical = was + int(rocks.get_global_rect().position.y
+			- box.get_global_rect().position.y)
+	print("  rocks: scrolled the column from %d to %d to bring the roster to the top of the box"
+			% [was, box.scroll_vertical])
+
+
+## WHAT THE WINDOW SAYS ABOUT EACH ROCK, IN ITS OWN LABELS, and how much of each row is in the frame
+## (ASSA-143 box 2: the window and `sim-cli` must say the same thing about a fuel-at-B and a
+## fuel-at-A species, shown rather than described).
+##
+## THE TEXT IS READ OFF THE LABELS RATHER THAN OFF THE BINDING, which is the only reading that can
+## contradict the binding. Asking `species_sheets()` again would print what the client was handed
+## and call it what the player sees -- the same mistake as a byte-identity check between two
+## surfaces that both compose from one wrong source (Marlow, ASSA-135).
+##
+## THE VERDICT IS "AT LEAST TWO ROWS WHOLE", not "the section is on screen", because the section
+## cannot be: it is taller than the box. Two is the smallest number that can show the thing a roster
+## panel exists for -- that two rocks are described differently. A guard of "one" would pass on a
+## picture that cannot answer any comparison, and a guard of "all six" could never pass at all.
+func _rocks_report() -> bool:
+	var rocks: Control = _screen._species
+	var frame := _frame_for(rocks)
+	var whole := 0
+	var rows := 0
+	for child in rocks.get_children():
+		var row := child as Control
+		if row == null:
+			continue
+		var titles := row.find_children("SpeciesLine", "Label", true, false)
+		if titles.is_empty():
+			continue
+		rows += 1
+		var said := PackedStringArray()
+		for label in row.find_children("*", "Label", true, false):
+			var text := String((label as Label).text)
+			if text != "":
+				said.append(text)
+		var rect := row.get_global_rect()
+		var standing := "whole"
+		if not frame.encloses(rect):
+			standing = "CUT" if frame.intersects(rect) else "OFF SCREEN"
+		else:
+			whole += 1
+		print("    row %-5s y %5d..%-5d  %s" % [standing, rect.position.y, rect.end.y,
+				" ".join(said)])
+	print("  rocks: %d rows, %d whole in the frame y %d..%d" % [rows, whole, frame.position.y,
+			frame.end.y])
+	if whole < 2:
+		_finish(false, ("the roster shot shows %d whole rows of %d, so no two rocks in it can be "
+				+ "compared") % [whole, rows])
+		return false
+	return true
+
+
 func _controls_report() -> bool:
-	var after := _controls_now()
+	var after := _controls_after
 	print("  controls: %d before the log opened, %d after" % [_controls_before.size(), after.size()])
+	if after.is_empty():
+		_finish(false, "no controls were measured while the log was open, so 'the log moves no "
+				+ "control' is a claim about nothing")
+		return false
 	if _controls_before.is_empty():
 		_finish(false, "no controls were measured before the log opened, so 'the log moves no "
 				+ "control' is a claim about nothing")
@@ -651,6 +762,12 @@ func _report() -> void:
 	# shot that could not contain its subject would otherwise skip the only measurement of whether
 	# reading the log costs you your buttons.
 	if not _controls_report():
+		return
+	# AND THE ROSTER, before the incomplete check and for the third time for the same reason: today
+	# 04-pack.png is legitimately CLIPPED (ASSA-133 ruling 2 says the crafting menu is the section
+	# that gives way, and ASSA-149 is the item for the tool calling that a failure), so EVERY run
+	# ends INCOMPLETE and anything behind that check is measured on no run at all.
+	if not _rocks_report():
 		return
 	if not _missing.is_empty():
 		_incomplete = true
