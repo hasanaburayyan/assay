@@ -666,8 +666,28 @@ func test_the_shipped_manifest_draws_the_building_kinds_the_sim_can_place() -> b
 	return true
 
 
-func _smelter(at: Vector2i, lit := false) -> Dictionary:
-	return {"kind": "smelter", "pos": at, "footprint": Vector2i(2, 2), "lit": lit}
+func _smelter(at: Vector2i, lit := false, species := 2) -> Dictionary:
+	return {"kind": "smelter", "pos": at, "footprint": Vector2i(2, 2), "lit": lit,
+			"species": species}
+
+
+## **THE THING YOU PLACED AND THE THING STANDING THERE ARE ONE OBJECT** (Maren, ASSA-131 ruling 2).
+## Asserted against the PACK's own function rather than a colour typed here: a literal would keep
+## passing after someone changes the table, which is the failure mode this whole file exists to
+## refuse. Two species must also differ, or "it is tinted" is satisfied by tinting everything grey.
+func test_a_standing_smelter_wears_the_tint_its_item_wore_in_the_pack() -> bool:
+	for species in [0, 3]:
+		var places := _of(AssayScene.placements(_view({"buildings":
+				[_smelter(Vector2i(10, 5), false, species)]})), "smelter")
+		if places.size() != 1:
+			return _fail("one smelter should draw once, drew %d" % places.size())
+		var want := AssaySprites.tint_for({"species": species})
+		if (places[0] as Dictionary)["tint"] != want:
+			return _fail("species %d stands in %s and sits in your pack in %s"
+					% [species, (places[0] as Dictionary)["tint"], want])
+	if AssaySprites.tint_for({"species": 0}) == AssaySprites.tint_for({"species": 3}):
+		return _fail("premise: two species share a tint, so this test cannot see a missing one")
+	return true
 
 
 ## A SMELTER IS DRAWN ON THE FOUR TILES THE SIM GAVE IT, not on one and not centred on two.
