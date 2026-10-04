@@ -132,12 +132,19 @@ func test_a_second_ready_does_not_replace_the_link() -> bool:
 ## EVERY SECTION IS BESIDE THE MAP, including the two that grew buttons (ASSA-37). A button over the
 ## map would be a click that means two things, which is the one thing the right-click target rule
 ## exists to avoid.
+##
+## THE EVENT LOG IS NO LONGER IN THIS LIST AND THAT IS ASSA-147, not an exemption I helped myself to.
+## Maren ruled the log out of the column and left the placement to me; it is now a panel over the map,
+## which this test would fail it for. The rule's own reason is what makes the exception safe -- the
+## log holds no control, so a click on it cannot mean two things -- and
+## `test_the_log_over_the_map_holds_no_control_and_eats_the_clicks_it_covers` is that sentence as a
+## lever rather than as this paragraph.
 func test_the_screen_builds_a_hud_column_beside_the_map() -> bool:
 	var screen := _screen()
 	var ok := true
 	var beside := AssayHud.VIEW.x - AssayHud.PANEL - AssayHud.MARGIN.x
 	for part in [["you", screen._carrying], ["do", screen._actions], ["bench", screen._bench],
-			["cursor", screen._cursor], ["last tick", screen._log],
+			["cursor", screen._cursor],
 			# The log's toggle, which sits above the column rather than in it (ASSA-89) and so is the
 			# one control that could have been placed over the map by arithmetic of its own.
 			["log toggle", screen._log_toggle]]:
@@ -445,9 +452,12 @@ func test_the_event_log_starts_hidden_behind_a_named_control() -> bool:
 ##
 ## WHAT THIS CANNOT CATCH, said rather than implied: a deferred `queue_free` on hide. The suite works
 ## inside `SceneTree._initialize` and there is no frame for the free to happen in, so the node would
-## still be valid here. The lever that does catch it is
-## `test_the_screen_builds_a_hud_column_beside_the_map`, which fails with "the last tick section was
-## never added to the screen" -- measured, not assumed.
+## still be valid here. An IMMEDIATE removal is caught, by the parent check below.
+##
+## **THAT PARAGRAPH USED TO NAME `test_the_screen_builds_a_hud_column_beside_the_map` as the lever,
+## and since ASSA-147 it is not one**: the log left the HUD column for a panel over the map, so it is
+## not in that test's list any more. A comment pointing at a check that no longer looks is worse than
+## no comment -- everyone who reads it stops looking -- and this is the second one of mine this week.
 ##
 ## The lines are planted rather than played because this file has no relay and no world; the real
 ## stream is covered by `test_buttons.gd`, which drives a refusal through a real sim.
@@ -682,10 +692,15 @@ func test_the_chrome_blocks_take_no_space_when_they_have_nothing_to_say() -> boo
 ## about which section pushes which off the bottom, and that is child order. Reading the headings
 ## rather than the bodies is deliberate -- a body can be hidden, and a hidden section still occupies
 ## its place in the order a later edit would have to respect.
-func test_the_column_reads_you_do_make_bench_rocks_cursor_log() -> bool:
+##
+## THE LIST IS ONE SHORTER SINCE ASSA-147: `event log` was last and is now a panel over the map, so
+## it is checked by the two tests below instead. The rest of Maren's order is untouched, and this
+## test now also says the log is not back in the column -- "the log left the column" is the fix, and
+## a fix that only lives in a docstring is one somebody re-adds a section to.
+func test_the_column_reads_you_do_make_bench_rocks_cursor() -> bool:
 	var screen := _screen()
 	var ok := true
-	var want := ["you", "do", "make", "bench", "rocks", "cursor", "event log"]
+	var want := ["you", "do", "make", "bench", "rocks", "cursor"]
 	var column: Node = screen._carrying.get_parent()
 	var seen := PackedStringArray()
 	for child in column.get_children():
@@ -694,6 +709,118 @@ func test_the_column_reads_you_do_make_bench_rocks_cursor_log() -> bool:
 	if Array(seen) != want:
 		ok = _fail(("the column reads %s; Maren ruled %s. A list derived from your pack may not sit "
 				+ "above it.") % [seen, want])
+	elif column.get_children().has(screen._log):
+		ok = _fail("the event log is back in the HUD column, which is ASSA-147: it is unbounded and "
+				+ "every other section is not, so in one scroll box it wins against the controls")
+	screen.queue_free()
+	return ok
+
+
+## **OPENING THE LOG MAY NOT MOVE A CONTROL** (ASSA-147, Maren's ruling: the event log leaves the HUD
+## column). The defect was measured on a real window at seed 14247 tick 519: with the log open, `do`
+## -- Mine, Stop and Assay -- sat at y -852..-802, off the top of the clip, because the log was the
+## last section of a 2023px column and revealing it scrolled 1120px to the bottom.
+##
+## **WHAT THIS TEST CAN AND CANNOT HOLD, SAID PLAINLY, BECAUSE THE DIFFERENCE IS WHERE I GET THIS
+## WRONG.** This suite works inside `SceneTree._initialize`: `_ready` never fires, no frame is drawn,
+## no container ever lays out, so every rect here is zero and a position assertion would be a test of
+## nothing. So this holds the STRUCTURE that makes the eviction impossible -- the log is not inside
+## the box that scrolls -- and the real-window verdict (every control's rect identical before and
+## after the toggle, which fails loudly on the shipped code) lives in `tools/window_shot.gd`, where
+## there is a window to measure.
+func test_the_event_log_is_outside_the_box_that_scrolls_the_controls() -> bool:
+	var screen := _screen()
+	var ok := true
+	var scroll := _scroll_enclosing(screen._log)
+	if scroll != null:
+		ok = _fail("the event log is inside the ScrollContainer the controls are in, so revealing "
+				+ "it scrolls them off the top: ASSA-147 exactly")
+	elif _scroll_enclosing(screen._actions) == null:
+		# THE OTHER HALF, OR THIS PASSES FOR THE WRONG REASON. "The log is not in the scroll box" is
+		# also true of a screen with no scroll box at all, and of one where the controls left instead.
+		ok = _fail("the `do` controls are not in a scroll box any more, so this test is green about "
+				+ "a column that no longer exists rather than about the log leaving it")
+	elif _scroll_enclosing(screen._log_box) != null:
+		ok = _fail("the log's panel is inside a scroll box, so its own surface can be scrolled away")
+	screen.queue_free()
+	return ok
+
+
+## THE ONE SURFACE ALLOWED OVER THE MAP CARRIES NO CONTROL, AND STOPS THE MOUSE.
+##
+## `test_the_screen_builds_a_hud_column_beside_the_map` is the rule this is the exception to, and the
+## rule's reason is the exception's constraint: a BUTTON over the map would be a click that means two
+## things. The log has no buttons -- its toggle stays in the column, where it is always reachable --
+## so the panel is allowed over the world, and this test is what keeps that true.
+##
+## AND IT STOPS THE MOUSE ON PURPOSE. The map is clicked through `_unhandled_input`, so an `IGNORE`
+## panel would let a click pass through the log onto the tile under it: a machine placed on a tile you
+## cannot see. `STOP` means the covered tiles are not clickable while the log is up. The region around
+## the box is `IGNORE`, because 912x600 of empty space answering the mouse is how
+## `_map_note`'s own comment says this goes wrong ("Play solo does nothing", nowhere near that line).
+func test_the_log_over_the_map_holds_no_control_and_eats_the_clicks_it_covers() -> bool:
+	var screen := _screen()
+	var ok := true
+	var map := AssayHud.world_rect()
+	var region: Control = screen._log_region
+	var box: Control = screen._log_box
+	var controls: Array = box.find_children("*", "Button", true, false)
+	if region == null or box == null:
+		ok = _fail("there is no log surface over the map, so ASSA-147's fix is not on the screen")
+	elif not controls.is_empty():
+		ok = _fail(("the log's panel over the map holds %d Button(s) (%s). A control over the map is "
+				+ "a click that means two things; the log's own toggle lives in the column.")
+				% [controls.size(), (controls[0] as Button).text])
+	elif region.position != map.position or region.size != map.size:
+		ok = _fail("the log's region is %s %s, not the map's %s %s: it either covers the HUD column "
+				% [region.position, region.size, map.position, map.size]
+				+ "or stops short of the surface it is drawn over")
+	elif box.size_flags_vertical != Control.SIZE_SHRINK_BEGIN:
+		ok = _fail("the log's panel does not shrink to its content, so it is a fixed rectangle over "
+				+ "the world: dead space when the log is short, a cut newest line when it is long")
+	elif box.mouse_filter != Control.MOUSE_FILTER_STOP:
+		ok = _fail("the log's panel passes the mouse through, so a click on a log line lands on the "
+				+ "tile underneath it -- placing a machine on a tile the player cannot see")
+	elif region.mouse_filter != Control.MOUSE_FILTER_IGNORE:
+		ok = _fail("the log's region answers the mouse over the whole map, so every click on the "
+				+ "world is swallowed by empty space around the panel")
+	screen.queue_free()
+	return ok
+
+
+## THE SURFACE AND THE LINES IN IT ARE ONE STATE (ASSA-147). `_show_log` writes three flags -- the
+## panel, the lines and the heading -- because the panel is what a player sees and `_log.visible` is
+## what every test, probe and tool in this repo asks. Three flags one function sets can still drift
+## the day somebody sets one of them somewhere else, and a log reading `visible` inside a hidden panel
+## is exactly the lie ASSA-117 was (a node answering honestly about a state the screen does not have).
+##
+## DRIVEN THROUGH ALL THREE DOORS, because that is where a fourth writer would appear: the button, the
+## L key, and the call `_build_ui` and `window_shot.gd` make directly.
+func test_the_log_panel_and_its_lines_can_never_disagree() -> bool:
+	var screen := _screen()
+	var ok := true
+	var key := InputEventKey.new()
+	key.keycode = KEY_L
+	key.pressed = true
+	var doors := {
+		"the first screen": func() -> void: pass,
+		"the button": func() -> void: screen._log_toggle.pressed.emit(),
+		"the L key": func() -> void: screen._unhandled_key_input(key),
+		"_show_log(true)": func() -> void: screen._show_log(true),
+		"_show_log(false)": func() -> void: screen._show_log(false),
+	}
+	for named in doors:
+		(doors[named] as Callable).call()
+		var surface: bool = screen._log_box.visible
+		if screen._log.visible != surface or screen._log_heading.visible != surface:
+			ok = _fail(("after %s the panel is %s, the lines are %s and the heading is %s. One of "
+					+ "them is lying about what is on screen.") % [named, surface,
+					screen._log.visible, screen._log_heading.visible])
+			break
+		elif screen._log_shown != surface:
+			ok = _fail("after %s `_log_shown` is %s and the panel is %s"
+					% [named, screen._log_shown, surface])
+			break
 	screen.queue_free()
 	return ok
 
