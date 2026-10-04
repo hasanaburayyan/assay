@@ -29,6 +29,23 @@ extends SceneTree
 
 const DEFAULT_SEED := "777042"
 const DEFAULT_PEER := "rainy"
+
+## OPTIONAL: a ROW and a COLUMN to walk us both to before shooting, or -1 for "wherever we spawn".
+##
+## **I FIRST TOOK A ROW ALONE AND SAID THE COLUMN DOES NOT MATTER. THE FIRST SHOT REFUTED THAT, so
+## the knob is here and the reason is written down rather than the claim.** The row decides whether
+## the camera's VERTICAL clamp binds, which is what ASSA-194's open box names. But what the box is
+## really asking is whether "mine is the one in the middle" survives — and at row 61, column 56, it
+## half survives: measured on `01-close-up-two.png`, my body's x runs 467..491 around a map rect
+## whose centre x is 477. **The south clamp takes one axis of the centring cue away and leaves the
+## other.** Only a CORNER takes both, so only a corner is the case the item reasons about.
+##
+## **WHY IT MATTERS THAT WE BOTH MOVE.** The partner is placed at `PEER_OFFSET` from ME, so walking
+## me is enough to put both bodies at the edge. The thing under test is that at a clamped edge the
+## camera does NOT centre you, so "mine is the one in the middle" stops being available and the foot
+## mark is all that is left.
+const DEFAULT_ROW := -1
+const DEFAULT_COL := -1
 const LISTEN_DEADLINE := 10.0
 const JOIN_DEADLINE := 12.0
 const PEER_DEADLINE := 20.0
@@ -48,6 +65,9 @@ var _cli_binary := ""
 var _out := ""
 var _seed := DEFAULT_SEED
 var _peer_name := DEFAULT_PEER
+var _row := DEFAULT_ROW
+var _col := DEFAULT_COL
+var _my_target := Vector2i.ZERO
 var _address := ""
 var _relay_pid := -1
 var _relay_stdio: FileAccess = null
@@ -76,6 +96,10 @@ func _initialize() -> void:
 		_seed = String(argv[1])
 	if argv.size() > 2:
 		_peer_name = String(argv[2])
+	if argv.size() > 3:
+		_row = int(argv[3])
+	if argv.size() > 4:
+		_col = int(argv[4])
 	DirAccess.make_dir_recursive_absolute(_out)
 	_relay_binary = AssaySoloRelay.find_binary()
 	if _relay_binary == "":
@@ -124,6 +148,10 @@ func _process(_delta: float) -> bool:
 			_start_the_peer()
 		4:
 			_wait_for_the_peer()
+		40:
+			_walk_me_to_the_row()
+		41:
+			_wait_for_my_arrival()
 		5:
 			_send_the_peer_walking()
 		6:
@@ -184,11 +212,61 @@ func _start_the_peer() -> void:
 func _wait_for_the_peer() -> void:
 	_drain_relay()
 	if _peer_welcomed and _screen._sim.players().size() >= 2:
-		_step = 5
+		# THE WALK IS MINE AND IT HAPPENS BEFORE THE PARTNER IS PLACED, because the partner is placed
+		# relative to where I end up. Walking after would frame the pair around my spawn.
+		_step = 40 if _row >= 0 else 5
 		return
 	if _now() >= _until:
 		_bail("the peer never appeared: welcomed=%s, players=%d"
 				% [_peer_welcomed, _screen._sim.players().size()])
+
+
+## WALK ME TO THE ASKED-FOR ROW, by the same submit path a person's left click takes.
+##
+## `AssayActions.move_to` is what `main.gd::_on_map_click` sends, so this is the shipped command and
+## not a teleport into the snapshot. One hop and not the zig-zag `maren_north_shot.gd` uses: that
+## script hops to FILL THE LOG, because its subject is the log panel's height. This one's subject is
+## two bodies and a camera, and neither cares how many lines are in the log.
+func _walk_me_to_the_row() -> void:
+	var found: Variant = _tile_of(true)
+	if found == null:
+		if _now() >= _ceiling:
+			_bail("the sim never reported my own player")
+		return
+	var me: Vector2 = found
+	var size: Vector2i = _screen._sim.size_tiles()
+	# THE PARTNER IS PLACED AT `PEER_OFFSET` FROM ME AND THAT OFFSET POINTS EAST, so a column near the
+	# WEST edge keeps both of us on screen while a column near the east edge would push them off it.
+	# Said here rather than clamped silently: a tool that quietly moved the partner would answer a
+	# different question than the one the caller asked.
+	_my_target = Vector2i(
+			clampi(_col, 0, size.x - 1) if _col >= 0 else int(me.x),
+			clampi(_row, 0, size.y - 1))
+	if not _screen._client.submit(AssayActions.move_to(_my_target)):
+		_bail("the client refused a MoveTo to %s" % _my_target)
+		return
+	print("  walking myself to %s (from %s)" % [_my_target, me])
+	_step = 41
+	_until = _now() + WALK_DEADLINE
+
+
+## **A SHORT WALK IS NOT A REASON TO BAIL, BUT THE WRONG ROW IS.**
+##
+## `_wait_for_the_peer_to_arrive` deliberately shoots where the partner stands if it is slow, because
+## two bodies anywhere still answers "are two people on one screen". This one may NOT do that: the
+## whole question is what the camera does at a CLAMPED row, and a shot taken half way there is a shot
+## of an unclamped camera that would read as an answer.
+func _wait_for_my_arrival() -> void:
+	_drain_relay()
+	var found: Variant = _tile_of(true)
+	if found != null:
+		var me: Vector2 = found
+		if Vector2i(int(me.x), int(me.y)) == _my_target:
+			print("  arrived at %s (row %d)" % [me, _my_target.y])
+			_step = 5
+			return
+	if _now() >= _until:
+		_bail("never reached row %d in %ds" % [_my_target.y, int(WALK_DEADLINE)])
 
 
 ## TYPED AT ITS STDIN, which is the same thing a person at a terminal does. `goto x y` is the command
