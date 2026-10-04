@@ -337,6 +337,12 @@ impl AssaySim {
                     "readings" => &readings.to_variant(),
                     "hand_minable" => species.hand_minable,
                     "hand_lit_fuel" => species.hand_lit_fuel,
+                    // ALWAYS PRESENT AND NEVER EMPTY, which is why it is here
+                    // rather than under the `if let` below: every rock is in
+                    // one of three mining states, so a row has no honest
+                    // reason to leave this out and "the key is missing" must
+                    // not become a fourth meaning.
+                    "mining" => &gstring(&species.mining).to_variant(),
                 };
                 // ABSENT, not empty, when the sim does not call this rock fuel
                 // (ASSA-93) -- the same shape `durability` and the design note
@@ -1333,8 +1339,30 @@ pub struct SpeciesFacts {
     /// Property name to reading: the exact value once assayed, the sim's band
     /// ("26-50") until then.
     pub readings: Vec<(String, String)>,
+    /// Still a bool and still sent, because two callers ask a yes/no question
+    /// and neither of them is wording anything: the scripted session plan
+    /// picks a deposit it can actually swing at, and the TILE line gates
+    /// ASSA-47's reach invitation on it. What it may NOT be is the species
+    /// panel's word for the mining axis — see `mining` below.
     pub hand_minable: bool,
     pub hand_lit_fuel: bool,
+    /// **WHICH OF THE THREE MINING STATES, IN THE SIM'S OWN SENTENCE**
+    /// (ASSA-135, Game Director). Byte-identical to what `species` prints in
+    /// the terminal for this species.
+    ///
+    /// `hand_minable` above is a bit and the sim holds a three-state answer,
+    /// so the window said "hand-minable" or said nothing: rock nothing can
+    /// mine was rendered as the ABSENCE of a word, on the first screen a
+    /// stranger reads, and 13.6% of deposits whose ore dead-ends were
+    /// promised a smelter. This is the same move `lighting` made on ASSA-93
+    /// for the ignition axis, and from the same function family.
+    ///
+    /// NOT optional, unlike `lighting`: every rock is in one of the three
+    /// states, so there is no "the sim is silent here" case and a panel can
+    /// never print a blank tag. The words come from
+    /// `sim::debug::mining_note`; this crate words none of it and GDScript
+    /// must never re-derive it from hardness.
+    pub mining: String,
     /// **WHICH OF THE THREE LIGHTING STATES**, in the sim's own short label, or
     /// `None` when the sim does not call this rock fuel at all (ASSA-93).
     ///
@@ -1602,6 +1630,11 @@ impl AssaySim {
                     .collect(),
                 hand_minable: sim::ladder::hand_minable(species),
                 hand_lit_fuel: sim::ladder::hand_lit_fuel(species),
+                mining: sim::debug::mining_note(sim::debug::mining(
+                    &self.world.species,
+                    species.id,
+                ))
+                .to_string(),
                 lighting: (sim::ladder::fuel_grade(species).is_some()
                     && sim::ladder::hand_minable(species))
                 .then(|| {
@@ -2854,6 +2887,75 @@ mod tests {
             after.symbol, before,
             "renaming to Zzzzqqq moved the map letter from {before} to {}",
             after.symbol
+        );
+    }
+
+    /// **THE PANEL'S MINING SENTENCE IS THE TABLE'S, BYTE FOR BYTE**
+    /// (ASSA-135, Game Director's box 1). The species panel and `sim-cli`'s
+    /// `species` table are one surface at two widths, and a player who read
+    /// one and then the other must not have to work out whether two phrasings
+    /// mean one thing.
+    ///
+    /// THIS IS THE TEST THAT COULD HAVE PREVENTED THE BUG and the reason it
+    /// lives in this crate: the two surfaces meet HERE. `sim/tests` can see
+    /// the table but not what the binding sends, and the client suite can see
+    /// what arrives but has no table to compare it with. The old field was a
+    /// bool, so there was nothing to compare and three states became two.
+    ///
+    /// Every seed is walked rather than one, with all three states asserted to
+    /// have come up: a world where some state never occurred would pass every
+    /// assertion over it.
+    #[test]
+    fn the_species_panels_mining_note_is_the_tables_own_words() {
+        use sim::debug::{Mining, mining, mining_note, species_table};
+
+        let (mut too_hard, mut unsmeltable, mut usable) = (0, 0, 0);
+        for seed in 1..40 {
+            let sim = AssaySim::from_world(sim_net::fresh_world(seed));
+            let world = sim.world();
+            let table = species_table(world);
+            for facts in sim.species_facts() {
+                let species = &world.species[facts.id as usize];
+                match mining(&world.species, species.id) {
+                    Mining::TooHard => too_hard += 1,
+                    Mining::ByHandNotSmeltable => unsmeltable += 1,
+                    Mining::ByHand => usable += 1,
+                }
+                // AGAINST THE TABLE'S SHIPPED TEXT, NOT AGAINST A LITERAL. A
+                // colour literal keeps passing after the table moves; this
+                // asserts the two surfaces agree, so rewording either one
+                // alone is what reddens.
+                let row = table
+                    .lines()
+                    .find(|l| l.contains(&facts.name))
+                    .unwrap_or_else(|| panic!("seed {seed}: no table row for {}", facts.name));
+                assert!(
+                    !facts.mining.is_empty(),
+                    "seed {seed} {}: every rock is in one of three states and this one said nothing",
+                    facts.name
+                );
+                assert!(
+                    row.contains(&facts.mining),
+                    "seed {seed} {}: the panel says {:?} and the table row reads {row}",
+                    facts.name,
+                    facts.mining
+                );
+                // AND IT IS ONE OF THE THREE, not a sentence this crate
+                // composed that happens to appear in the row.
+                assert!(
+                    [Mining::TooHard, Mining::ByHandNotSmeltable, Mining::ByHand]
+                        .iter()
+                        .any(|state| mining_note(*state) == facts.mining),
+                    "seed {seed} {}: {:?} is not one of the sim's three notes",
+                    facts.name,
+                    facts.mining
+                );
+            }
+        }
+        assert!(
+            too_hard > 10 && unsmeltable > 3 && usable > 10,
+            "a state never came up, so the panel never rendered it: \
+             too_hard {too_hard}, unsmeltable {unsmeltable}, usable {usable}"
         );
     }
 
