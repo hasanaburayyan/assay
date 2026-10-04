@@ -1919,7 +1919,14 @@ func _a_part_stack() -> Dictionary:
 ## the function and forgot to pass it" is a defect that leaves every scene-view assertion green.
 ##
 ## So it drives the real screen at the real 912x600 rect, puts the body in row 0, and reads the
-## camera out of the view the screen actually built. It also pins Maren's rule on ASSA-156, now
+## camera out of the view the screen actually built.
+##
+## **WHAT IT CANNOT SEE, MEASURED NOT GUESSED.** Its expectation is `-north_headroom(...)`, so it
+## agrees with that function about the VALUE and can only catch a camera that ignores it. Mutating
+## the headroom's own arithmetic (dropping the sprite's overhang, 252 -> 220) leaves this test green
+## and reddens `test_the_north_edge_rows_draw_a_whole_body_below_the_panel`, which measures the body
+## instead. Mutating `main.gd` to pass 0.0 reddens THIS one and only this one. Two tests, two
+## different holes, and neither covers the other. It also pins Maren's rule on ASSA-156, now
 ## hers: **the panel's room must not move as you walk.** A camera bound that fixed this by shortening
 ## the log would pass every assertion above and fail that one.
 func test_the_camera_keeps_you_below_the_panel_in_the_north_rows() -> bool:

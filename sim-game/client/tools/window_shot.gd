@@ -79,10 +79,15 @@ const PLAY_TICKS := 4000
 ## not laid them out until the next frame. So the loop yields, and this is how coarse that is.
 const TICKS_PER_FRAME := 32
 const DEFAULT_SEED := "777042"
+## Ticks to allow the body for the walk `row=<N>` asks for (ASSA-184). The sim steps a tile per move
+## tick, so 40 rows is ~40 of these; this is slack, and reaching it is a FAILED run rather than a
+## shorter walk, because a pair shot from the wrong row is a pair that answers nothing.
+const NORTH_WALK_TICKS := 600
 
 enum Phase { SETTLE_JOIN, SHOOT_JOIN, PLAY, SETTLE_PACK, SHOOT_PACK, SETTLE_PLAY, SHOOT_PLAY,
 		SETTLE_FOLD, MEASURE_CONTROLS, SETTLE_MENUS, SHOOT_MENUS, SCROLL_ROCKS, SETTLE_ROCKS,
-		SHOOT_ROCKS, DONE }
+		SHOOT_ROCKS, WALK_NORTH, SETTLE_NORTH_LOG, SHOOT_NORTH_LOG, SETTLE_NORTH_CLEAR,
+		SHOOT_NORTH_CLEAR, DONE }
 ## What `_play_frames` did with its last tick.
 enum Ticked { AGAIN, OVER, DEAD }
 
@@ -125,6 +130,19 @@ var _controls_before := {}
 ## against the window when a scroll box 100px smaller is what clips it (ASSA-117).
 var _controls_after := {}
 var _done := false
+## WHICH ROW THE NORTH-EDGE PAIR IS SHOT FROM, or -1 for "do not shoot it" (ASSA-184). Off by
+## default: this walks the body 30-odd tiles away from everything the other five shots are about.
+var _north_row := -1
+var _walk_sent := 0
+var _walk_ticks := 0
+## TICKS TO KEEP FEEDING AFTER THE BODY ARRIVES, and the first version of this had none, which cost
+## a shot. `main.gd` draws you at `lerp(_was, _seen, part)` and the playout only advances when a
+## tick lands: stopping the moment `pos` said row 0 photographed a body still tweening from row 2,
+## at y 236 instead of 220. Ten ticks with `_was == _seen` make the lerp degenerate, so the body is
+## drawn exactly where the sim says it is -- which is the only position a picture may be evidence
+## for. A SHOT OF A MOVING BODY IS NOT A SHOT OF WHERE IT STANDS.
+const WALK_HOLD_TICKS := 10
+var _walk_held := 0
 
 
 func _initialize() -> void:
@@ -132,9 +150,23 @@ func _initialize() -> void:
 	if argv.is_empty():
 		_finish(false, "usage: -- <out_dir> [seed] [ticks]")
 		return
-	_out = String(argv[0])
-	_seed = String(argv[1]) if argv.size() > 1 else DEFAULT_SEED
-	_ticks = int(argv[2]) if argv.size() > 2 else PLAY_TICKS
+	# `row=<N>` IS NAMED AND NOT POSITIONAL, unlike the three before it. Those are a sequence
+	# everybody here already types; a fifth slot after `hoppers` would be a number whose meaning
+	# depends on counting the ones in front of it, and I have watched that go wrong on this very
+	# tool's `ticks`. Named, it can also be given without `hoppers`.
+	var positional := PackedStringArray()
+	for raw in argv:
+		var arg := String(raw)
+		if arg.begins_with("row="):
+			_north_row = int(arg.substr(4))
+		else:
+			positional.append(arg)
+	_out = String(positional[0]) if not positional.is_empty() else ""
+	if _out == "":
+		_finish(false, "usage: -- <out_dir> [seed] [ticks] [hoppers] [row=N]")
+		return
+	_seed = String(positional[1]) if positional.size() > 1 else DEFAULT_SEED
+	_ticks = int(positional[2]) if positional.size() > 2 else PLAY_TICKS
 	_left = _ticks
 	if DirAccess.make_dir_recursive_absolute(_out) != OK:
 		_finish(false, "cannot write to %s" % _out)
@@ -148,8 +180,8 @@ func _initialize() -> void:
 	_screen._ready()
 	_screen._client.asked.connect(func(command: Variant) -> void: _asked.append(command))
 	_play = AssayButtonPlay.new(_screen, 0)
-	if argv.size() > 3:
-		_play.hoppers = int(argv[3])
+	if positional.size() > 3:
+		_play.hoppers = int(positional[3])
 	print("window %s, viewport %s" % [DisplayServer.window_get_size(), root.size])
 	# **WHAT THIS PICTURE IS EVIDENCE ABOUT** (ASSA-141 box 3, Maren's ruling).
 	#
@@ -240,6 +272,24 @@ func _process(_delta: float) -> bool:
 			# frame. `_rocks_report` guards it instead, and asks for MORE: two whole ROWS in the
 			# frame, which is the least a picture needs to show that two rocks differ.
 			_shoot("05-rocks.png", PackedStringArray())
+			_phase = Phase.WALK_NORTH if _north_row >= 0 else Phase.DONE
+		Phase.WALK_NORTH:
+			_walk_north()
+		Phase.SETTLE_NORTH_LOG:
+			_settle(Phase.SHOOT_NORTH_LOG)
+		Phase.SHOOT_NORTH_LOG:
+			# THE SUBJECT IS THE LOG, same as 03: a north-edge pair whose log is off-screen would be
+			# a picture of the case ASSA-184 is not about.
+			_shoot("06-north-log.png", PackedStringArray(["event log"]))
+			_screen._show_log(false)
+			_phase = Phase.SETTLE_NORTH_CLEAR
+		Phase.SETTLE_NORTH_CLEAR:
+			_settle(Phase.SHOOT_NORTH_CLEAR)
+		Phase.SHOOT_NORTH_CLEAR:
+			# THE OTHER HALF OF THE PAIR, AND IT IS THE CONTROL, not a bonus. Maren's ASSA-156
+			# measurement was zero player pixels WITH the log against 199 WITHOUT it, so a single
+			# shot cannot say whether the body is visible BECAUSE of the fix or because of the row.
+			_shoot("07-north-clear.png", PackedStringArray())
 			_phase = Phase.DONE
 		Phase.DONE:
 			_report()
@@ -317,6 +367,83 @@ func _tick_once() -> Ticked:
 		_finish(false, "the sim refused the bundle for tick %d" % at)
 		return Ticked.DEAD
 	return Ticked.AGAIN
+
+
+## **WALK TO ROW `_north_row` AND STOP** (ASSA-184). The pair shot after this is the only evidence
+## that can answer Maren's box 1, which asks for a judgement at 1x on a body standing in rows 0..7 --
+## and nothing else here goes near them: the play lands wherever the deposit was, 30-odd rows south.
+##
+## **THE DESTINATION IS SUBMITTED ONCE AND THE ARRIVAL IS READ OFF THE SIM.** `MoveTo` is a standing
+## destination, not a step, so re-sending it every tick would be a client arguing with itself; and a
+## walk counted in ticks instead of checked against `pos` is the mistake I made on Limpet's three
+## sampled ticks (ASSA-156) one layer down -- a number of ticks is not a state. Failing to arrive
+## ends the run, because a pair shot from the wrong row answers nothing and looks fine.
+func _walk_north() -> void:
+	var id: int = _screen._client.player_id
+	var here := _my_tile(id)
+	if _walk_sent == 0:
+		_walk_sent = 1
+		print("  walking from %s to row %d for the north-edge pair" % [here, _north_row])
+		_tick_plain([{"Player": {"player": id,
+				"command": AssayActions.move_to(Vector2i(here.x, _north_row))}}])
+		return
+	if here.y == _north_row and _walk_held < WALK_HOLD_TICKS:
+		for _i in range(WALK_HOLD_TICKS):
+			_walk_held += 1
+			if not _tick_plain([]):
+				return
+		return
+	if here.y == _north_row:
+		# THE BODY'S OWN RECTANGLE, OUT OF THE VIEW THE RENDERER JUST DREW, and not out of a
+		# pixel mask. Cove's ASSA-181 note is the reason: four window masks were wrong today, all
+		# of them difference masks that cannot tell a sprite's antialiased fringe -- or the player,
+		# whose idle frame differs between two Godot runs -- from the thing being measured. This is
+		# the same `placements()` the frame came from, so it says where the body IS, and the PNG
+		# beside it says what that looks like.
+		var body := Rect2()
+		for place in AssayScene.placements(_screen._world.view):
+			if String((place as Dictionary).get("asset", "")) == "player":
+				body = place["dest"]
+		print("  stood at %s after %d walked ticks; body y %.0f..%.0f, log panel owns the map's "
+				% [here, _walk_ticks, body.position.y, body.end.y]
+				+ "top %.0fpx of 600, ceiling %.0f -> %s" % [_screen._log_room, _screen._log_room,
+				"BEHIND THE PANEL" if body.position.y < _screen._log_room else "CLEAR"])
+		_screen._show_log(true)
+		_phase = Phase.SETTLE_NORTH_LOG
+		return
+	if _walk_ticks >= NORTH_WALK_TICKS:
+		_finish(false, "the body reached %s in %d ticks and never stood in row %d"
+				% [here, _walk_ticks, _north_row])
+		return
+	for _i in range(TICKS_PER_FRAME):
+		if _my_tile(id).y == _north_row or _walk_ticks >= NORTH_WALK_TICKS:
+			return
+		_walk_ticks += 1
+		if not _tick_plain([]):
+			return
+
+
+## WHERE MY BODY IS, from the sim. `-1` y if there is no such player, which `_walk_north` reads as
+## "not arrived" and then fails on the tick budget rather than shooting a pair of nothing.
+func _my_tile(id: int) -> Vector2i:
+	for entry in _screen._sim.players():
+		var player: Dictionary = entry
+		if int(player["id"]) == id:
+			return player["pos"]
+	return Vector2i(-1, -1)
+
+
+## ONE TICK WITH NO BUTTON PRESS. `_tick_once` is the play's tick and calls `_play.advance()`; the
+## walk happens after the play has FINISHED, so pressing on would run a spent plan. Same handshake
+## otherwise, including the refusal check: a bundle the sim will not apply is a dead run either way.
+func _tick_plain(inputs: Array) -> bool:
+	var at: int = _screen._sim.tick()
+	var before: int = _screen._sim.applied
+	_screen._client.feed_offline(JSON.stringify({"Tick": {"tick": at, "inputs": inputs}}))
+	if _screen._sim.applied == before:
+		_finish(false, "the sim refused the bundle for tick %d during the north walk" % at)
+		return false
+	return true
 
 
 func _rows_now() -> int:
