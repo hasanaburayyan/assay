@@ -1224,3 +1224,116 @@ func test_the_player_ceiling_refuses_to_answer_without_player_art() -> bool:
 	if AssayScene.player_ceiling({"ground": {"tiles": [1, 1]}}, WINDOW) >= 0.0:
 		return _fail("player_ceiling bounded a panel off a manifest with no player in it")
 	return true
+
+
+# ---------------------------------------------------------------------------
+# A SIM FACT IS NEVER DEFAULTED (ASSA-141)
+# ---------------------------------------------------------------------------
+
+## A COMPLETE VIEW WITH ONE BUILDING AND ONE PLAYER, so that dropping a single key is the only
+## difference between the two halves of every test below.
+func _whole_view() -> Dictionary:
+	return _view({
+		"ore": {Vector2i(9, 9): {"species": 1, "grade": "B", "depleted": false}},
+		"players": [{"at": Vector2(5.0, 5.0), "facing": "S", "moving": false}],
+		"buildings": [_smelter(Vector2i(10, 5), true), _drill(Vector2i(14, 6), 1)],
+	})
+
+
+## THE SAME VIEW WITH ONE FACT TAKEN OFF ONE ENTRY. Returns the view and what the loss should be
+## called, so the test asserts on the name as well as on the refusal.
+func _view_without(what: String, key: String) -> Dictionary:
+	var view := _whole_view()
+	match what:
+		"view":
+			view.erase(key)
+		"ore tile":
+			var tiles: Dictionary = (view["ore"] as Dictionary).duplicate(true)
+			(tiles.values()[0] as Dictionary).erase(key)
+			view["ore"] = tiles
+		"building":
+			var buildings: Array = (view["buildings"] as Array).duplicate(true)
+			(buildings[0] as Dictionary).erase(key)
+			view["buildings"] = buildings
+		"player":
+			var players: Array = (view["players"] as Array).duplicate(true)
+			(players[0] as Dictionary).erase(key)
+			view["players"] = players
+		"machine part":
+			var buildings: Array = (view["buildings"] as Array).duplicate(true)
+			var parts: Array = (buildings[1] as Dictionary)["parts"]
+			(parts[0] as Dictionary).erase(key)
+			view["buildings"] = buildings
+	return view
+
+
+## **THE PREMISE OF EVERY TEST BELOW, AND IT IS NOT A FORMALITY.** If the whole view were already
+## missing something, every "dropping X is noticed" test would pass without the drop doing anything
+## -- the shape of my own ASSA-156 mistake, where a test asked the function under test what to
+## expect. So: the complete view is clean, and it DRAWS the things the tests below watch disappear.
+func test_the_whole_view_fixture_satisfies_the_contract_and_draws() -> bool:
+	var missing := AssayScene.missing_sim_facts(_whole_view())
+	if not missing.is_empty():
+		return _fail("the fixture every test below starts from is itself incomplete: %s" % [missing])
+	var places := AssayScene.placements(_whole_view())
+	for asset in ["ground", "ore", "smelter", "player"]:
+		if _of(places, asset).is_empty():
+			return _fail("the complete fixture drew no `%s`, so nothing below can measure its loss"
+					% asset)
+	if _composites(places).is_empty():
+		return _fail("the complete fixture drew no machine, so a lost part fact measures nothing")
+	return true
+
+
+## **EVERY SIM FACT, NOT JUST `lit`.** The item's box 2: `footprint`, `pos`, `kind`, `species` and
+## the rest are read the same way `lit` was, so the rule has to be true for all of them or it is a
+## patch rather than a rule. Driven off `SIM_FACTS` itself, so a fact added to the contract
+## tomorrow is covered by this test the moment it is listed.
+func test_every_sim_fact_is_named_when_it_does_not_arrive() -> bool:
+	for what in AssayScene.SIM_FACTS:
+		for key in AssayScene.SIM_FACTS[what]:
+			var view := _view_without(String(what), String(key))
+			var missing := AssayScene.missing_sim_facts(view)
+			if missing.is_empty():
+				return _fail(("dropping `%s` from a %s was not noticed at all, so the renderer "
+						+ "would draw whatever its default invents") % [String(key), String(what)])
+			var named := false
+			for complaint in missing:
+				if String(complaint).begins_with(String(what)) \
+						and String(complaint).ends_with("." + String(key)):
+					named = true
+			if not named:
+				return _fail("dropping `%s` from a %s was reported as %s, which does not name it"
+						% [String(key), String(what), missing])
+	return true
+
+
+## **IT DRAWS NOTHING, RATHER THAN DRAWING COLD.** Box 1, and the measurement is the whole point: a
+## smelter whose `lit` never arrived used to draw the `cold` row -- a picture indistinguishable from
+## a fire that is genuinely out, for every smelter in the world, with every test green. The frame is
+## refused instead, which is a thing somebody notices.
+func test_a_building_with_no_lit_key_draws_nothing_instead_of_cold() -> bool:
+	var lit := _of(AssayScene.placements(_whole_view()), "smelter")
+	if lit.is_empty():
+		return _fail("the complete fixture drew no smelter, so this test cannot measure one")
+	var without := AssayScene.placements(_view_without("building", "lit"))
+	if not _of(without, "smelter").is_empty():
+		return _fail("a smelter with no `lit` fact was still drawn %d time(s): a renderer may not "
+				% _of(without, "smelter").size() + "substitute a value for a sim fact")
+	if not without.is_empty():
+		return _fail("the frame was not refused: %d placements survived a missing sim fact"
+				% without.size())
+	return true
+
+
+## AN EMPTY VIEW IS NOT A BROKEN ONE, and this is the line between the two. `{}` is the state before
+## a snapshot lands -- `--selfcheck` and a mid-join frame are both in it -- so it must stay silent,
+## while a view that claims to be a world and is missing one fact must not.
+func test_an_empty_view_is_silent_and_a_half_built_one_is_not() -> bool:
+	if not AssayScene.missing_sim_facts({}).is_empty():
+		return _fail("an empty view was called broken: %s" % [AssayScene.missing_sim_facts({})])
+	if AssayScene.placements({}).size() != 0:
+		return _fail("an empty view produced placements")
+	if AssayScene.missing_sim_facts({"world_tiles": Vector2i(96, 64)}).is_empty():
+		return _fail("a view with one key and no world was called complete")
+	return true
