@@ -53,6 +53,18 @@ THE THREE KINDS ARE THREE DIFFERENT SURFACES, not three silhouettes:
 
 A CONTACT SHADOW IS CORRECT HERE and is not the ASSA-64 case: these things
 stand on the ground, which is exactly what the shadow is allowed to mean.
+
+HEADROOM 0.30 GIVES AN ODD AUTHORED FRAME AND MUST CHANGE TO 0.3125 BEFORE THIS
+SHEET IS PACKED. `rig` rounds `headroom * 64` to 19, so the frame is 64x83 --
+and every sheet already on main is even in both axes (ground 64, items 96, parts
+102, player 128, smelter 144, spawn 208). The client halves an authored frame
+with NEAREST at `scale 0.5`, so 83 lands on 41.5 drawn px and an anchor of 19 on
+9.5: the halving keeps a different row than `build.py` and the ASSA-202
+composite kept. Sub-pixel, nothing visible has been seen, and the fix is this one
+constant -- 0.3125 is 20 px, frame 84, drawn 42, offset 10. NOT APPLIED YET on
+purpose: it costs a re-render of all nine rows and of the frame the Director is
+judging, and her density ruling costs the same re-render. One render, after the
+ruling, doing both.
 """
 import sys, os, math
 
