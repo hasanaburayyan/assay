@@ -71,7 +71,23 @@ PALETTE = {
     # rather than ground. Low chroma on purpose, like its two siblings: ore owns
     # saturation (rule 6) and the ground is 100% of the frame, so it is the surface
     # that can least afford to shout.
-    "ground": "#6E7A4E", "ground_dk": "#5F6B43", "ground_lt": "#717B56",
+    #
+    # AND THE LIGHT STEP WAS NOT A STEP (ASSA-115 box 11). Measured on the hexes
+    # themselves: `ground_dk` is -14.7 luminance from the base and `ground_lt` was
+    # **+1.9**. So "three tones" was two -- a base with dark blotches on it -- which is
+    # why the tile still read as one surface with specks however the patches moved. The
+    # light tone is now +14.0, the mirror of the dark one. Chroma did NOT come with it:
+    # 32.4% against the base's 36.1%, because a step up must not be bought in
+    # saturation on the surface rule 6 reserves for ore. It pays twice, which is why
+    # Wren asked for it: light patches are also the ground a DARK species tint has to
+    # be found against, and those are the species that were washing out.
+    #
+    # `ground_lt1` / `ground_lt2` ARE THE RAMP, NOT TWO MORE TONES. A light patch is
+    # drawn as three concentric discs, widest in `lt1`, so the +14 step arrives over a
+    # radius instead of at an edge. Spent at an edge it reads as an object and the tile
+    # becomes a cell -- which is what the first two renders of box 11 did.
+    "ground": "#6E7A4E", "ground_dk": "#5F6B43", "ground_lt": "#7C885C",
+    "ground_lt1": "#737F53", "ground_lt2": "#778357",
     "ground_ore": "#57603F",
     "skin": "#E0B48C", "suit": "#F08A24", "visor": "#3FD8FF",
     # ORE: one species-neutral set, base / dark / accent (accent is the

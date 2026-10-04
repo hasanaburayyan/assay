@@ -57,7 +57,7 @@ out = rig.args()
 VARIANTS = 6
 
 
-def wrapped(r, spots, squash):
+def wrapped(r, spots, squash, z=0.004):
     """Draw every spot in all nine tiles, so the tile wraps.
 
     `spots` are (x, y, radius, colour, rotation). The ROTATION IS THE CALLER'S,
@@ -67,7 +67,35 @@ def wrapped(r, spots, squash):
     for dx in (-1, 0, 1):
         for dy in (-1, 0, 1):
             for (x, y, s, color, rot) in spots:
-                r.rock(s, (x + dx, y + dy, 0.004), rig.mat(color), squash=squash, rot=rot)
+                r.rock(s, (x + dx, y + dy, z), rig.mat(color), squash=squash, rot=rot)
+
+
+def softened(spots, tones):
+    """A light patch, redrawn as concentric discs so it has no hard edge.
+
+    BOX 11 ASKS FOR THREE THINGS AND I DELIVERED ONE OF THEM TWICE. "Softer, larger,
+    lighter": a bigger disc at a bigger tone step is lighter and larger and HARDER, and
+    both renders of that read as camouflage at 32 px -- every tile its own cell, the
+    32 px lattice easier to find than before, not harder. Pictures, not an opinion:
+    `/tmp/cove-115-field*.png`.
+
+    So the step is spread over radius instead of being spent at one edge. Each light
+    patch becomes len(`tones`) discs on one centre and one rotation, the widest in the
+    gentlest tone, and the sprite is drawn at 64 px for a 32 px display, so a three-step
+    ramp over ~8 px of radius is about a pixel a step once it lands. A patch with a
+    gradient is a patch of ground; a patch with an edge is an object.
+
+    Each ring sits a hair above the last because they are coplanar otherwise and
+    z-fighting is not a soft edge.
+    """
+    out = []
+    for (x, y, s, color, rot) in spots:
+        if color != "ground_lt":
+            out.append([(x, y, s, color, rot)])
+            continue
+        out.append([(x, y, s * scale, tone, rot)
+                    for scale, tone in zip((1.0, 0.72, 0.45), tones)])
+    return out
 
 
 def scatter(n, rmin, rmax, light):
@@ -95,7 +123,17 @@ for v in range(VARIANTS):
     # light: the first render used 9-13 at up to r 0.34 with a free light/dark roll and
     # came out as camouflage -- near half the tile in the light tone, every tile reading
     # as its own cell. Ground is mottled, not patterned.
-    wrapped(r, scatter(5, 0.12, 0.26, light=2), squash=0.03)
+    # SOFTER, LARGER, LIGHTER (box 11), in that order of importance. Radius 0.12-0.26 ->
+    # 0.14-0.30 (9-19 px across at 32 px/tile), the light tone is a real +14 step instead
+    # of +1.9, and the step is spread over three concentric discs so the patch has no
+    # edge -- see `softened`. The COUNT stays at five with two light: the camouflage
+    # failure recorded above was eight patches at a wide step, and 0.16-0.36 at a hard
+    # edge reproduced it exactly. A tile has to stay mostly quiet.
+    rings = softened(scatter(5, 0.14, 0.30, light=2),
+                     ("ground_lt1", "ground_lt2", "ground_lt"))
+    for i in range(3):
+        wrapped(r, [spot[i] for spot in rings if len(spot) > i], squash=0.03,
+                z=0.004 + 0.0002 * i)
     # 2. GRIT: the layer with height, so the key light has something to catch.
     wrapped(r, scatter(18, 0.035, 0.075, light=4), squash=0.4)
     # 3. SPECKS: dither under the patches.
