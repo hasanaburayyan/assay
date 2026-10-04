@@ -40,8 +40,13 @@ extends SceneTree
 ## toggle in the picture reading "hide the event log". Nothing was blank and nothing repeated, so
 ## every check here passed and the file read as coverage of the half the board complained about. So a
 ## shot now DECLARES THE SECTION IT IS NAMED FOR and the run does not finish OK if that section was
-## not in the frame. The PNG is still written -- Maren's constraint, and the right one: the off-screen
-## fact is the most useful thing this tool has ever told us, and refusing the capture would hide it.
+## ABSENT from the frame. The PNG is still written -- Maren's constraint, and the right one: the
+## off-screen fact is the most useful thing this tool has ever told us, and refusing the capture
+## would hide it.
+##
+## AND "ABSENT" IS NOT "CUT" (ASSA-149). A section the screen is deliberately clipping is reported
+## and does not fail: ASSA-133 ruling 2 makes the crafting menu the section that gives way, so 04
+## reported INCOMPLETE on a screen obeying the Game Director, which is a verdict nobody can use.
 ##
 ## WHY 04 EXISTS AND WHY IT IS A MOMENT, NOT A TICK. ASSA-117 asks for a populated pack row and a
 ## populated crafting row to be judged on a window. Limpet shot ticks 120, 250 and 481 looking for
@@ -58,8 +63,10 @@ extends SceneTree
 ## are full of what a player's panels would hold, not of a fixture I typed. A shot of a world nobody
 ## played would flatter every panel that only looks wrong once it has rows in it.
 ##
-## Prints `WINDOW SHOT OK` LAST and only when every shot contained its subject, because Godot exits 0
-## even on a compile error. A set written but missing a subject ends `WINDOW SHOT INCOMPLETE`.
+## Prints `WINDOW SHOT OK` LAST and only when no shot was MISSING its subject, because Godot exits 0
+## even on a compile error. A set missing a subject ends `WINDOW SHOT INCOMPLETE` and exits 1; a set
+## whose subjects are all present but one is cut by the frame ends `WINDOW SHOT OK (cut, not missing
+## -- ...)` and exits 0, naming what was cut and how much of it was in frame.
 
 ## Frames to let pass before reading the viewport back. One is not enough: the screen is built from
 ## containers, and a container lays its children out on the frame AFTER they are added, so a capture
@@ -94,6 +101,10 @@ var _taken := {}
 ## rewritten on a re-take, because `04-pack.png` is taken several times and only the LAST one is the
 ## file on disk: a complaint about a version that was overwritten would be a lie about the set.
 var _missing := {}
+## Shot name -> which of its subjects the screen is CUTTING rather than omitting (ASSA-149). Same
+## keying and same re-take rule as `_missing`; the difference is that this one does not fail the
+## run, it is carried into the final line so a reader is told rather than left to find out.
+var _clipped := {}
 ## Set only by `_report`, so a dead run and a complete-but-blind set never wear each other's word.
 var _incomplete := false
 var _started := false
@@ -328,6 +339,10 @@ func _end_play() -> void:
 ## NAMED for is off the bottom of the window. Every other check passes. `03-log.png` was this for its
 ## whole life. The shot is still written; the run does not end OK.
 ##
+## SUBJECT CUT is the third of those and not a softer second (ASSA-149): the section IS in the frame
+## and the frame does not hold all of it. Reported with the share in frame, and the run still ends
+## OK -- see `_shoot` for why the crafting menu makes that the only honest reading.
+##
 ## `guard_repeat` is false for `04-pack.png` alone, and not as a favour to it: 04 is a moment the
 ## tool NOTICES, re-taken whenever the pack grows, so a duplicate frame there is a fact about the
 ## play (the fullest pack was also the final state) and not a state asked for twice. The repeat
@@ -367,6 +382,7 @@ func _shoot(name: String, subjects: PackedStringArray, guard_repeat := true) -> 
 	# THE SUBJECT CHECK, at the moment of the shot, because the geometry is only true then: 04 is
 	# taken mid-play and the column it photographs is a different height by the end.
 	_missing.erase(name)
+	_clipped.erase(name)
 	for subject in subjects:
 		var control := _section(subject)
 		if control == null:
@@ -374,10 +390,40 @@ func _shoot(name: String, subjects: PackedStringArray, guard_repeat := true) -> 
 					% [name, subject])
 			return
 		var where := _standing(control)
-		_shots.append("    subject %-14s y %5d..%-5d  %s"
-				% [subject, control.get_global_rect().position.y,
-				control.get_global_rect().end.y, where])
-		if where != "on screen":
+		var rect := control.get_global_rect()
+		# HOW MUCH OF IT THE FRAME ACTUALLY HOLDS, printed on the clipped rows, because "CLIPPED"
+		# covers everything from one cut pixel to one visible one and those are not the same news.
+		var share := ""
+		if where == "CLIPPED":
+			var held := _frame_for(control).intersection(rect)
+			var whole := maxf(1.0, rect.size.x * rect.size.y)
+			share = "  (%d%% of it in frame)" % int(round(100.0 * held.size.x * held.size.y / whole))
+		_shots.append("    subject %-14s y %5d..%-5d  %s%s"
+				% [subject, rect.position.y, rect.end.y, where, share])
+		# **THREE VERDICTS, NOT TWO** (ASSA-149; Maren's second option, which Marlow would also have
+		# built). `CLIPPED` and `OFF SCREEN` were one failure, and they are different facts:
+		#
+		#  - ABSENT -- `hidden`, or no intersection at all -- is the rule that earned this check its
+		#    keep, and it is UNCHANGED. `03-log.png` was advertised as the screen with the log open
+		#    and contained no log for its whole life: the section sat at y 1465..2134 of a 720px
+		#    window, 745px BELOW the bottom edge. No intersection, so that case is OFF SCREEN and
+		#    still fails today. Nothing here relaxes it to "the file was written".
+		#
+		#  - CLIPPED is a section the screen is deliberately cutting. ASSA-133 ruling 2 says the
+		#    crafting menu is the section that gives way, because `make_offers` grows faster than
+		#    the pack -- so `04-pack.png`, the shot this tool goes out of its way to find, reported
+		#    INCOMPLETE on a screen obeying the Game Director. **A verdict that is red whenever the
+		#    pack is full is red on most interesting runs, and a check that cries wolf gets
+		#    regenerated blind** (Cove, ASSA-132).
+		#
+		# So a cut section is REPORTED and does not fail. The information is kept, which is the
+		# whole difference between this and dropping the crafting menu as a subject -- that would
+		# have bought the green by spending the fact.
+		if where == "CLIPPED":
+			var cut: PackedStringArray = _clipped.get(name, PackedStringArray())
+			cut.append("its %s is cut, %s" % [subject, share.strip_edges().trim_prefix("(").trim_suffix(")")])
+			_clipped[name] = cut
+		elif where != "on screen":
 			var said: PackedStringArray = _missing.get(name, PackedStringArray())
 			said.append("its %s is %s" % [subject, where])
 			_missing[name] = said
@@ -786,7 +832,17 @@ func _finish(ok: bool, why: String) -> void:
 	if is_instance_valid(_screen) and _screen.has_method("stop_solo_relay"):
 		_screen.stop_solo_relay()
 	if ok:
-		print("WINDOW SHOT OK")
+		# **THE GREEN LINE CARRIES THE CUTS** (ASSA-149). A reader who sees `WINDOW SHOT OK` must
+		# not have to go back up the output to learn that a subject was only partly in frame. This
+		# is the half that stops "clipped no longer fails" from becoming "clipped is no longer
+		# said" -- which is the version of this change that would have been worth refusing.
+		var cut := PackedStringArray()
+		for shot_name in _clipped:
+			cut.append("%s: %s" % [shot_name, ", ".join(_clipped[shot_name] as PackedStringArray)])
+		if cut.is_empty():
+			print("WINDOW SHOT OK")
+		else:
+			print("WINDOW SHOT OK  (cut, not missing — %s)" % "; ".join(cut))
 	elif not _incomplete:
 		print("FAIL  %s" % why)
 	else:
