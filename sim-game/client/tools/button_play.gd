@@ -19,12 +19,25 @@ extends RefCounted
 ## (`AssayDemoPlan`), where a building fits (`AssayDemoPlan.smelter_spot`) -- and every verdict,
 ## including whether the design it plants comes apart, is read back from the sim.
 ##
-## WHY FOUR HOPPERS. ASSA-37's last box wants a WILL BREAK design PLANTED, and the designed dial for
-## mass is the hopper: `PART_SPECS` says of the planted frame's hopper slot "generous on purpose:
-## mass is what stops you stacking hoppers, not a slot count". So the drill is built with as many
-## hoppers as the frame takes, and then THE SIM'S OWN VERDICT IS REPORTED -- never asserted. Whether
-## a given world's material can be made over budget depends on its density against its strength, and
-## a session that claimed WILL BREAK would be this client holding an opinion about a rule.
+## **TWO JOBS, TWO RUNS, AND `job` SAYS WHICH** (ASSA-140, the Game Director's ruling).
+##
+## This used to mount four hoppers on every world -- as many as the frame takes -- because ASSA-37's
+## last box wants a WILL BREAK design PLANTED and the hopper is the designed dial for mass. The
+## reason was right and the result was a coin flip in both directions: four hoppers is SAFE in 55.1%
+## of worlds, so the break it exists to exercise did not happen in the majority of them, and on the
+## pinned showcase seed it went the other way -- WILL BREAK, 1078 mass against a 705 budget, so the
+## loop's last beat never happened at all. `button_session` printed one OK line for both.
+##
+## So the hopper count now comes from THE SIM'S OWN VERDICT PER COUNT, asked before anything is
+## mined for (`AssaySimHost.design_if_built`), and `AssayDemoPlan.hoppers_for_job` picks the end of
+## that list the job wants: the largest SAFE for `JOB_SHOWCASE`, the smallest WILL BREAK for
+## `JOB_BREAK`.
+##
+## NOTHING HERE ASSERTS A VERDICT, which was the right half of the old reasoning and is kept: a
+## session claiming WILL BREAK would be this client holding an opinion about a rule. What each run
+## asserts is that **WHAT THE SIM SAID WOULD HAPPEN DID HAPPEN** -- a SAFE design that came apart,
+## or a WILL BREAK design still standing, is a real defect whichever way round it is, and before
+## this nothing could see either.
 
 ## Where the loop is. One step, one decision, read off the world each tick.
 enum Step { WALK_TO_MATERIAL, MINING, CRAFTING, WALK_TO_FUEL, PLACING, LOADING_ORE, MINING_FUEL,
@@ -52,6 +65,21 @@ var rank := 0
 ## the pack. Making fewer would move the pack, the fire and the tick count too, and then the
 ## pictures would differ in more than the one thing they are being compared on.
 var hoppers := -1
+## WHICH JOB THIS RUN IS DOING: `AssayDemoPlan.JOB_SHOWCASE` or `JOB_BREAK`.
+##
+## SHOWCASE IS THE DEFAULT because every window shot, every picture the board has been shown and the
+## milestone's demo are showcases, and planting a design the sim has already condemned is the wrong
+## advertisement. The break test is asked for by name.
+##
+## `hoppers` above still wins when it is set, and the two do not fight: an explicit count is
+## ASSA-138's comparison, which needs worlds differing in nothing but the bar count, and this run
+## then says `job` only as a label.
+var job := AssayDemoPlan.JOB_SHOWCASE
+## The count the sim's verdicts chose for `job`, or -1 before it has been asked.
+var job_hoppers := -1
+## WHY THAT COUNT, in one line for the report: the job, the count, the sim's word for it, and the
+## whole list it was chosen out of. Evidence that the choice was the sim's.
+var job_note := ""
 var step: Step = Step.WALK_TO_MATERIAL
 ## Why it stopped, or "" while it is still going.
 var failed := ""
@@ -61,7 +89,9 @@ var finished := false
 var planted_verdict := ""
 ## What the placement actually did: a machine on the map, or a design that came apart.
 var outcome := ""
-## WHICH OUTCOME, in one word the report can branch on: "mining", "stopped" or "broke".
+## WHICH OUTCOME, in one word the report can branch on: "mining", "stopped", "broke" or
+## "no_such_design" (this world holds no drill that does `job`, which is the world's answer and not
+## a failure -- see `_resolve_hopper_count`).
 ## `outcome` is prose for a person; this is so `button_session` can stop printing one OK line
 ## for a machine that works and a design that came apart (ASSA-140). Read from the sim, never
 ## parsed back out of the sentence above.
@@ -400,6 +430,8 @@ func _pick() -> void:
 ## THE DRILL: a planted frame, its one head, and every hopper the frame will take. Its verdict is the
 ## sim's and it is read before anything is planted.
 func _drill() -> void:
+	if hoppers < 0 and job_hoppers < 0 and not _resolve_hopper_count():
+		return
 	var planted := _planted_design()
 	if not planted.is_empty():
 		planted_verdict = String(planted.get("verdict", "?"))
@@ -437,10 +469,65 @@ func _drill() -> void:
 func _hoppers_wanted() -> int:
 	if hoppers >= 0:
 		return hoppers
-	for order in PARTS:
-		if String(order[0]) == "hopper":
-			return int(order[1])
-	return 0
+	return job_hoppers
+
+
+## **ASK THE SIM WHICH DRILL THIS WORLD CARRIES**, once, before the first part is chosen.
+##
+## The grade is the one the `Frame` press is about to act on (`best_stack` is highest grade first, so
+## it is the same stack), and THE FRAME'S GRADE IS THE WHOLE ANSWER: mass is size times density and
+## density never scales with grade, while only a frame row contributes budget. So a head or hopper
+## that came out of the fire a grade lower weighs and carries exactly what this asked about. Pinned
+## in Rust (`only_the_frames_grade_moves_a_single_species_drill`) rather than assumed here.
+##
+## THE UPPER BOUND IS WHAT THIS LOOP MADE, not `MAX_HOPPER_SLOTS` retyped: if the two ever disagree
+## the sim refuses the ask and says so in its own phrase, which is the failure to want. `PARTS` is
+## still what gets made, so the mining, the smelting and the tick count do not move with the job --
+## the spare hoppers stay in the pack, the same licence an explicit `hoppers` takes.
+##
+## False and stopped on any failure, so the caller returns without pressing.
+func _resolve_hopper_count() -> bool:
+	var frame_stack := AssayDemoPlan.best_stack(_world().inventory_of(_me()), "frame", _material)
+	if frame_stack.is_empty():
+		_stop(false, "no frame in the pack to size the drill against")
+		return false
+	if not frame_stack.has("grade"):
+		_stop(false, "the pack's frame stack has no `grade`: %s" % frame_stack)
+		return false
+	var grade: String = String(frame_stack["grade"])
+	var made: int = _held("hopper", _material)
+	var verdicts := PackedStringArray()
+	for n in range(made + 1):
+		var mounted := PackedStringArray(["head"])
+		for _i in range(n):
+			mounted.append("hopper")
+		var facts: Dictionary = _world().design_if_built("frame", mounted, _material, grade)
+		# ASSERT THE KEY, NEVER DEFAULT IT (ASSA-141). A missing `verdict` read as "" would match no
+		# job and this run would report "no such design" about a world that had one.
+		for key in ["verdict", "fault"]:
+			if not facts.has(key):
+				_stop(false, "the sim's answer for %d hoppers has no `%s`: %s" % [n, key, facts])
+				return false
+		var fault: String = String(facts["fault"])
+		if fault != "":
+			_stop(false, ("the sim refuses a drill with %d hoppers, which this loop made %d of: %s"
+					% [n, made, fault]))
+			return false
+		verdicts.append(String(facts["verdict"]))
+	var want: int = AssayDemoPlan.hoppers_for_job(job, verdicts)
+	job_note = "job `%s`: %d of %d hoppers · the sim says %s" % [job, want, made, verdicts]
+	if want < 0:
+		# AN ANSWER, NOT A FAILURE, and the loop stops here rather than planting the other job's
+		# design: 18.8% of worlds hold no SAFE drill for the starter material and 55.1% hold no
+		# breaking one. The run is still a successful pass through every button; what it has is no
+		# subject, and `button_session` names that outcome instead of printing a bare OK.
+		outcome_kind = "no_such_design"
+		outcome = ("no drill in this world does the `%s` job · the sim says %s for 0..%d hoppers"
+				% [job, verdicts, made])
+		step = Step.DONE
+		return false
+	job_hoppers = want
+	return true
 
 
 ## PLANT IT, AND READ WHAT HAPPENED OUT OF THE WORLD. Either a machine stands on that tile or the
@@ -456,6 +543,7 @@ func _planting() -> void:
 		outcome = ("planted: a machine stands at %s and the sim says: %s"
 				% [_drill_at, status if status != "" else "nothing"])
 		step = Step.DONE
+		_keep_the_promise()
 		return
 	if _done.has("planted"):
 		if _planted_design().is_empty():
@@ -463,6 +551,7 @@ func _planting() -> void:
 			outcome = ("broke: the %s design came apart at %s and the parts came back"
 					% [planted_verdict, _drill_at])
 			step = Step.DONE
+			_keep_the_promise()
 			return
 		if _quiet > 200:
 			_stop(false, "pressed Place on the drill and it is neither on the map nor gone")
@@ -495,6 +584,40 @@ func _planting() -> void:
 		_done["planted"] = true
 		return
 	_stop(false, "nothing planted to place")
+
+
+## **WHAT THE SIM SAID WOULD HAPPEN HAD BETTER HAVE HAPPENED.** The only assertion either run makes
+## about a break (ASSA-140), and the reason the two-runs split is honest rather than this client
+## grading a rule: the verdict was read off the design BEFORE the press, so the placement has a
+## promise to keep and nothing here decides what the promise should have been.
+##
+## SAFE that comes apart and WILL BREAK that stands are both real defects, in the sim or in the
+## projection the run sized itself with, and before this nothing could see either -- `button_session`
+## printed one OK line for every ending. UNCERTAIN promises nothing and is left alone; the loop
+## assays its material, so it should not appear.
+##
+## AND THE JOB'S OWN PROMISE, which is the half Wren's bar is about: a showcase run's last beat is a
+## machine MINING, not one standing idle. `_off_ore` is excused because the world, not the run, chose
+## that -- no reachable tile held ore -- and the outcome already says so. An explicit `hoppers` is
+## excused too: that caller asked for a count, not for a job.
+func _keep_the_promise() -> void:
+	if planted_verdict == AssayDemoPlan.VERDICT_SAFE and outcome_kind == "broke":
+		_stop(false, ("THE SIM SAID SAFE AND THE DESIGN CAME APART at %s · %s"
+				% [_drill_at, job_note]))
+		return
+	if planted_verdict == AssayDemoPlan.VERDICT_WILL_BREAK and outcome_kind != "broke":
+		_stop(false, ("THE SIM SAID WILL BREAK AND THE MACHINE IS STANDING at %s · %s · %s"
+				% [_drill_at, job_note, outcome]))
+		return
+	if hoppers >= 0:
+		return
+	if job == AssayDemoPlan.JOB_SHOWCASE and outcome_kind != "mining" and not _off_ore:
+		_stop(false, ("A SHOWCASE RUN MUST END WITH A MACHINE MINING and this one did not · %s · %s"
+				% [job_note, outcome]))
+		return
+	if job == AssayDemoPlan.JOB_BREAK and outcome_kind != "broke":
+		_stop(false, ("A BREAK RUN MUST END WITH THE DESIGN COMING APART and this one did "
+				+ "not · %s · %s") % [job_note, outcome])
 
 
 func _planted_design() -> Dictionary:

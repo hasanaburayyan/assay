@@ -1,8 +1,8 @@
 extends SceneTree
 ## CAN A PERSON AT THE WINDOW PLAY THE DEMO LOOP? Headless, one line of verdict.
 ##
-##   godot --headless --path . --script res://tools/button_session.gd -- offline [seed] [rank]
-##   godot --headless --path . --script res://tools/button_session.gd -- localhost:7777 name [rank]
+##   godot --headless --path . --script res://tools/button_session.gd -- offline [seed] [rank] [job]
+##   godot --headless --path . --script res://tools/button_session.gd -- localhost:7777 name [rank] [job]
 ##
 ## `lockstep_probe.gd --session` plays the same loop by calling `submit`, which proves the sim, the
 ## wire and lockstep. It cannot prove ASSA-37's claim, which is about REACHABILITY: every command can
@@ -10,6 +10,13 @@ extends SceneTree
 ## So this presses the screen's own buttons and clicks its own map, and `AssayButtonPlay` holds the
 ## loop. If a button is missing, mislabelled, built over the map or wired to the wrong command, this
 ## stops on that step and says which.
+##
+## **AND TWO JOBS, WHICH IS A SEPARATE AXIS FROM THE MODE** (ASSA-140). `job` is `showcase`
+## (default) or `break`, and it decides which drill the loop plants: the largest part count the sim
+## calls SAFE, or the smallest it calls WILL BREAK. THEY CANNOT BE THE SAME RUN -- one ends with a
+## machine standing and mining, the other with a design in pieces -- so the gate runs this twice on
+## one seed and greps the suffix, not the prefix. Each run asserts only that the sim's own
+## prediction came true; see `AssayButtonPlay._keep_the_promise`.
 ##
 ## TWO MODES, ONE STATE MACHINE.
 ##  - `offline`: no socket and no relay. This script is the clock: it takes the commands the buttons
@@ -45,12 +52,18 @@ var _hashes: PackedStringArray = PackedStringArray()
 func _initialize() -> void:
 	var argv := OS.get_cmdline_user_args()
 	if argv.is_empty():
-		print("FAIL  usage: -- offline [seed] [rank] | host[:port] name [rank]")
+		print("FAIL  usage: -- offline [seed] [rank] [job] | host[:port] name [rank] [job]")
 		quit(1)
 		return
 	_offline = String(argv[0]) == "offline"
 	var seed_text := String(argv[1]) if argv.size() > 1 else "777042"
 	var rank := int(argv[2]) if argv.size() > 2 else 0
+	var job := String(argv[3]) if argv.size() > 3 else AssayDemoPlan.JOB_SHOWCASE
+	if job != AssayDemoPlan.JOB_SHOWCASE and job != AssayDemoPlan.JOB_BREAK:
+		print("FAIL  job must be `%s` or `%s`, not `%s`"
+				% [AssayDemoPlan.JOB_SHOWCASE, AssayDemoPlan.JOB_BREAK, job])
+		quit(1)
+		return
 
 	_screen = load("res://scenes/main.tscn").instantiate()
 	root.add_child(_screen)
@@ -64,6 +77,7 @@ func _initialize() -> void:
 		_finish(false, "the relay refused us: %s" % reason))
 	_screen._client.link_failed.connect(func(reason: String) -> void: _finish(false, reason))
 	_play = AssayButtonPlay.new(_screen, rank)
+	_play.job = job
 
 	if _offline:
 		_run_offline(seed_text)
@@ -220,7 +234,9 @@ func _report() -> void:
 		"mining": "MACHINE MINING",
 		"stopped": "MACHINE STOPPED",
 		"broke": "DESIGN BROKE",
+		"no_such_design": "NO SUCH DESIGN IN THIS WORLD",
 	}.get(_play.outcome_kind, "OUTCOME UNNAMED"))
+	print("  %s" % _play.job_note)
 	print("BUTTON SESSION OK · %s" % suffix)
 	_done = true
 	quit(0)

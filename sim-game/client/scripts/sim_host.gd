@@ -357,6 +357,29 @@ func designs_of(player: int) -> Array:
 	return _sim.designs_of(player) if _sim != null else []
 
 
+## **A COUNT AND ITS NOUN, AGREEING** (ASSA-145). `sim::debug::counted`, so the window and `sim-cli`
+## cannot drift on a sentence a player reads: "1 player" and "2 players" from one rule.
+##
+## STATIC AND WORLDLESS, unlike everything else here, because the counts that needed it are the
+## HOST's -- players, bundles applied, hashes reported -- and a client must be able to say them
+## before it has a world.
+static func counted(n: int, one: String, many: String) -> String:
+	return AssaySim.counted(n, one, many)
+
+
+## **WHAT THE SIM WOULD SAY ABOUT A DESIGN NOBODY HAS BUILT YET**: `verdict` (its own word),
+## `fault` (its own phrase when the rules refuse the design, "" otherwise) and the four numbers
+## `designs_of` returns. `frame` and `mounted` are `PartKind` names -- "frame", "handle", "head",
+## "hopper" -- and every part is made of one species at one grade.
+##
+## The verdict is still the sim's and still may not be derived here; see `designs_of` above. This
+## asks about a design that does not exist, which is the one question that list cannot answer, and
+## the caller is `tools/button_play.gd`: the scripted run has to know which drill THIS world carries
+## before it spends 500 ticks mining for one (ASSA-140).
+func design_if_built(frame: String, mounted: PackedStringArray, species: int, grade: String) -> Dictionary:
+	return _sim.design_if_built(frame, mounted, species, grade) if _sim != null else {}
+
+
 ## WHAT THIS PLAYER IS CRAFTING, in the sim's own sentence, or "" when nothing is (ASSA-49).
 ##
 ## The wording is `sim::debug::crafting_readout`, shared with `sim-cli` for the same reason

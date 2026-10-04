@@ -111,6 +111,57 @@ static func _grade_rank(grade: String) -> int:
 			return 0
 
 
+## THE TWO JOBS A SCRIPTED RUN CAN BE DOING, and they cannot be the same run (ASSA-140, the Game
+## Director's ruling). The demo was doing both at once and said which only by accident:
+##
+##  - `JOB_SHOWCASE` is what every window shot, every board-facing picture and the milestone's demo
+##    actually are. Its last beat is a machine standing on the map and mining, so it plants the
+##    LARGEST part count the sim calls SAFE.
+##  - `JOB_BREAK` is ASSA-37's last box, a test of the break rule. It plants the SMALLEST count the
+##    sim calls WILL BREAK and the run fails if that design stood.
+##
+## NEITHER ASSERTS A VERDICT. Each asserts that WHAT THE SIM SAID WOULD HAPPEN DID HAPPEN, which is
+## the honest version of the same test: a session claiming WILL BREAK would be this client holding an
+## opinion about a rule, and a session that reports "SAFE" and then watches the thing come apart has
+## found a real defect either way.
+const JOB_SHOWCASE := "showcase"
+const JOB_BREAK := "break"
+
+## The sim's three verdict words, as `sim::assembly::BreakVerdict::label` spells them. Here so the
+## policy below compares against one copy and a typo is a parse error rather than a run that quietly
+## never matches.
+const VERDICT_SAFE := "SAFE"
+const VERDICT_WILL_BREAK := "WILL BREAK"
+
+
+## HOW MANY HOPPERS A JOB WANTS, out of the sim's verdict for each count. -1 when this world holds no
+## design that does the job, WHICH IS AN ANSWER AND NOT A FAILURE: measured over 2000 worlds through
+## the same projection, 81.2% hold a SAFE drill for the starter material and only 44.9% hold a
+## breaking one, because `MAX_HOPPER_SLOTS` is 4 and mass is the only dial. THE CALLER MUST SAY SO
+## rather than fall back to a count that does the other job.
+##
+## `verdicts[n]` is the sim's word for n hoppers, so index IS the count. Mass rises with every hopper
+## and the budget does not move, so SAFE can never follow WILL BREAK -- "the largest SAFE" and "the
+## smallest WILL BREAK" are therefore the two ends of one ordered list, not a search.
+##
+## UNCERTAIN IS NEITHER JOB. The loop assays its material before it builds, so it should not appear;
+## if it does, a run that planted it would be demonstrating a guess.
+static func hoppers_for_job(job: String, verdicts: PackedStringArray) -> int:
+	match job:
+		JOB_SHOWCASE:
+			for n in range(verdicts.size() - 1, -1, -1):
+				if verdicts[n] == VERDICT_SAFE:
+					return n
+			return -1
+		JOB_BREAK:
+			for n in range(verdicts.size()):
+				if verdicts[n] == VERDICT_WILL_BREAK:
+					return n
+			return -1
+		_:
+			return -1
+
+
 ## WHERE TO PUT THE SMELTER: the first 2x2 spot beside us that is in bounds, inside reach and holds
 ## no building. `blocked` is the tiles the SIM says already have one, so this picks between facts
 ## rather than predicting them -- and three peers crafting at once do not fight over one tile.

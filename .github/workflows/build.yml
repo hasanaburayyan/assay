@@ -304,13 +304,36 @@ jobs:
       # on the same world hash every run, not a timing-sensitive integration test.
       # The marker is printed LAST and only on success, which is the only thing a
       # grep can trust when Godot exits 0 on a failed script.
+      #
+      # THREE RUNS, AND THE GREP IS ON THE SUFFIX (ASSA-140). One run greped for
+      # `^BUTTON SESSION OK`, which the loop printed whether it ended with a
+      # machine mining, a machine standing there stopped, or a design that came
+      # apart -- so a demo that paid off in 0% of worlds read green for weeks.
+      # Each run below names the outcome it requires and the loop now plants the
+      # drill the SIM says does that job, so neither outcome is the seed's choice.
+      #
+      # WHY THESE SEEDS, each catching something the others cannot:
+      #  - 777042 is where the drill used to land OFF the deposit and stand there
+      #    idle (the Game Director's measurement). Reverting that fix fails here
+      #    and is INVISIBLE on 14247, where the old spot happens to hold ore.
+      #  - 14247 is the pinned showcase seed: every window shot, every picture the
+      #    board has seen, and the bar Wren set -- a drill standing AND mining.
+      #  - 14247 again for the break, because it is one of the 44.9% of worlds
+      #    that hold an over-budget design at all; on 777042 nothing the frame
+      #    takes breaks, and that run honestly reports NO SUCH DESIGN.
       - name: The demo loop is reachable through the buttons
         working-directory: sim-game/client
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64"
           "$GODOT" --headless --path . --script res://tools/button_session.gd \
-            -- offline | tee session.log
-          grep -q '^BUTTON SESSION OK' session.log
+            -- offline 777042 0 showcase | tee session-deposit.log
+          grep -q '^BUTTON SESSION OK · MACHINE MINING' session-deposit.log
+          "$GODOT" --headless --path . --script res://tools/button_session.gd \
+            -- offline 14247 0 showcase | tee session-showcase.log
+          grep -q '^BUTTON SESSION OK · MACHINE MINING' session-showcase.log
+          "$GODOT" --headless --path . --script res://tools/button_session.gd \
+            -- offline 14247 0 break | tee session-break.log
+          grep -q '^BUTTON SESSION OK · DESIGN BROKE' session-break.log
       # THE LETTER ON A MAP DISC IS READABLE. Runs the client and scores what
       # `AssayHud.glyph_color` actually returned for all 600 species x purity
       # states (ASSA-39/44), rather than reimplementing the rule -- computing
@@ -445,6 +468,33 @@ jobs:
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
             python3 art/check_pack_row_word.py
+      # A REVIEW SHEET IS STILL A PICTURE OF THE CLIENT IT DREW (ASSA-151).
+      #
+      # `check_review_sources.py` above digests the shipped ART a sheet composited, which
+      # is the whole answer for the six sheets that are pictures of sprites. Two are
+      # pictures of a CLIENT PANEL: `pack_rows.png` and `pack_icons.png` are drawn from
+      # `pack_icon_layout.gd`'s answer -- row heights, icon scales, verbs, plate colours,
+      # the panel's width -- and none of that is a file, so the sources stamp named
+      # `items.png` and `ui_theme.json` and could not go red when a row's scale moved.
+      #
+      # IT WAS NOT BROKEN WHEN IT WAS FOUND, which is the point. ASSA-121 moved every pack
+      # row to scale 0.5 and both sheets were current, because the person who moved it
+      # remembered to redraw them. Maren's ruling 3 on ASSA-144: a rule that depends on
+      # remembering is a rule that fails on the wake-up somebody is tired.
+      #
+      # The generators stamp the canonical digest of the layout they were handed; this asks
+      # the live engine for the layout today and compares. Two anti-vacuity guards, both
+      # exit 2: the stamping cannot have been removed wholesale, and the two panel sheets
+      # must carry a stamp whatever their scripts say -- a mutation proved the measured
+      # half alone goes green when a generator is reverted AND its sheet redrawn.
+      #
+      # Lever: REVIEW_LAYOUT_FAKE_MOVE=1 must turn it red naming both sheets. Proved red
+      # for real too, by moving `ICON_PX` 32 -> 34 in the client with the sheets left
+      # alone, and restoring it.
+      - name: A review sheet is still a picture of the client it drew
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
+            python3 art/check_review_layout.py
 
   macos:
     name: macOS bundle

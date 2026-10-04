@@ -93,14 +93,19 @@ var _running_showing := "\nnothing yet\n"
 ## section under a visible heading is a labelled empty gap; see `_show_log`.
 var _log_toggle := Button.new()
 var _log_heading: Label = null
-## THE BOX THAT SCROLLS THE COLUMN. Held since ASSA-117, for one reason: revealing the log has to
-## MOVE THE VIEW to it. Maren verified in code that `ensure_control_visible` and `scroll_vertical`
-## appeared nowhere in this file, which is why pressing the toggle changed a button's label and
-## nothing a player could see -- the log is the last section of a column that already overflows.
+## THE SURFACE THE LOG IS NOW ON, AND IT IS NOT IN THE HUD COLUMN (ASSA-147, Maren's ruling).
+##
+## `_log_region` is the map's own rectangle with nothing in it; `_log_box` is the panel inside it that
+## holds the heading and the lines. Both are held because `_show_log` raises and lowers the box and
+## because `tools/window_shot.gd` measures it -- the surface is what a player sees, so the surface is
+## what a verdict has to be read off.
+var _log_region: VBoxContainer = null
+var _log_box: PanelContainer = null
+## THE BOX THAT SCROLLS THE COLUMN. Held since ASSA-117 and still held, for `window_shot.gd`'s clip
+## report and for `test_main_screen.gd`'s invariant that the log is NOT inside it. What it is no
+## longer held for is scrolling to the log: that whole mechanism is gone with ASSA-147, because the
+## log is not in this box any more and there is nothing to scroll to.
 var _scroll: ScrollContainer = null
-## A SCROLL THE NEXT FRAME OWES THE PLAYER. True between pressing the log's toggle and the view
-## actually moving to it; see `_show_log` for why those cannot be the same moment.
-var _scroll_to_log := false
 ## INITIALISED TO THE WRONG ANSWER ON PURPOSE. `_build_ui` calls `_show_log(false)`, and starting
 ## this at `false` would make "the log is hidden on first open" true before anything ran -- a test
 ## that passes by construction, which is the failure I keep writing down. At `true` the default-state
@@ -397,6 +402,8 @@ func _build_ui() -> void:
 	_map_note.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_map_note)
 
+	_build_log_over_the_map(world)
+
 	_view_toggle.position = world.end - Vector2(152.0, 36.0)
 	_view_toggle.custom_minimum_size = Vector2(144.0, 0.0)
 	_view_toggle.tooltip_text = ("the close-up follows you at 32px a tile; the whole world is the"
@@ -540,11 +547,10 @@ func _build_ui() -> void:
 	# in a 566px clip. The reorder moves the loss to the section that can afford it; it does not
 	# remove it.
 	_make_toggle.pressed.connect(func(): _show_make(not _make_shown))
-	# "event log", NOT "last tick" (Maren, ASSA-116 finding 4b/4c). Two defects in one word: the
-	# switch offered an "event log" and the section called itself something else, so even having
-	# scrolled to it you would not know you had found what you asked for -- and `LOG_LINES` keeps the
-	# last fourteen LINES, which span many ticks, so the old heading named a time window the content
-	# never had. A heading is this client's word; the LINES in it stay the sim's (ASSA-80/93).
+	# THE EVENT LOG IS NOT IN THIS LIST ANY MORE (ASSA-147). It was the last section; it is now a
+	# panel over the map, built by `_build_log_over_the_map`. Maren's reason in one line: it is the
+	# only CONSULTING surface in a column of ANNOUNCING ones, it is the only unbounded one, and in a
+	# shared scroll box the unbounded one always wins -- what it won against was Mine, Stop and Assay.
 	# WHICH KIND OF EMPTY THE `cursor` SECTION IS (Maren's ruling, ASSA-134). Every other section in
 	# this column plants its own empty note from its `_refresh_*`, but `cursor` is a bare Label written
 	# straight from `_refresh` -- which RETURNS before it on every not-joined path, so the heading sat
@@ -568,7 +574,6 @@ func _build_ui() -> void:
 		["bench", [_bench] as Array[Control]],
 		["rocks", [_species] as Array[Control]],
 		["cursor", [_cursor] as Array[Control]],
-		["event log", [_log] as Array[Control]],
 	]
 	for part in sections:
 		var heading := Label.new()
@@ -576,10 +581,6 @@ func _build_ui() -> void:
 		heading.theme_type_variation = &"Heading"
 		column.add_child(heading)
 		var bodies: Array[Control] = part[1]
-		# HELD, BECAUSE A HIDDEN SECTION WITH A VISIBLE HEADING IS A LABELLED EMPTY GAP. The headings
-		# are otherwise anonymous on purpose; this is the only one anything else has to reach.
-		if bodies.has(_log):
-			_log_heading = heading
 		for body in bodies:
 			if body is Label:
 				(body as Label).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -607,6 +608,78 @@ func _build_ui() -> void:
 	_refresh_species()
 
 
+## THE EVENT LOG'S OWN SURFACE, OVER THE MAP (ASSA-147, Maren's ruling: "the event log leaves the
+## HUD column").
+##
+## WHAT WAS WRONG, MEASURED ON THE REAL WINDOW rather than argued: with the log open at seed 14247
+## tick 519, `you` sat at y -1046..-894, `do` at y -852..-802 and `bench` at y -690..-549 -- four of
+## seven sections off the top of the clip, and `do` is Mine, Stop and Assay. The log was the LAST
+## section of a column 2023px tall in a 650px box, so revealing it scrolled to the bottom and
+## everything above it left. ASSA-133's order was right; the consequence was still that pressing L to
+## read what just happened cost you every control you had.
+##
+## WHY OVER THE MAP AND NOT A SECOND COLUMN OR A BOTTOM STRIP. Maren left the placement to me and
+## named all three. The map is 912x600 and the window is 1280x720, so a strip under the map would
+## have to come out of the map's own height -- `assay-rulings` §4 pins 32 px a tile, so that is fewer
+## tiles, which is buying log space with the world. A second column would come out of the map's width
+## for the same reason. The map's rectangle is the only surface this window has that is already
+## PAID FOR and mostly empty ground, and a panel over it is also the honest picture of what the
+## toggle does: it is a mode, which is Maren's ruling 2.
+##
+## THE TOP OF THE MAP, NOT THE BOTTOM, AND IT IS NOT TASTE. `_view_toggle` sits at
+## `world.end - (152, 36)`, inside the map's bottom-right corner: a bottom-anchored panel would cover
+## it, which is the same defect this item is about -- a control a player cannot reach because the log
+## is open. The top of the map has no control in it.
+##
+## HEIGHT IS THE ENGINE'S ANSWER, NOT A NUMBER I WROTE. The region is exactly the map's rect and the
+## box is `SIZE_SHRINK_BEGIN` inside it, so a `VBoxContainer` gives the box its content's minimum
+## height at the region's top and re-does that on the frame the content changes. The alternative was
+## a height constant, which would be dead space over the world when the log is short and a clipped
+## newest line when it is long. MEASURED, so the bound is a fact and not a hope: fourteen lines are
+## 304px and the widest line's minimum width is 1px (`AUTOWRAP_OFF` + `OVERRUN_TRIM_ELLIPSIS` takes
+## the text out of a Label's minimum, which I asked the engine rather than reasoned), so the box
+## wants about 350 of the 600px it may have. `window_shot.gd` fails the run if it ever leaves the
+## map's rect, because that bound is the one thing here that a font change could move.
+##
+## AND THE LINES GET 912px INSTEAD OF 320, which is a second payoff I did not plan: an older line is
+## cut to one row with an ellipsis, and in the column that ellipsis never appeared -- the row was
+## simply sliced by the scroll box's clip at 320px. Three times the width is three times the sentence,
+## on the surface the board called hard on the eyes.
+##
+## IT STOPS THE MOUSE, AND THAT IS DELIBERATE. The map is clicked through `_unhandled_input`, so a
+## `MOUSE_FILTER_IGNORE` panel would let a click pass through the log onto the tile underneath it --
+## placing a machine on a tile you cannot see. `STOP` means the covered tiles are not clickable while
+## the log is up, which is the honest version: what you cannot see, you cannot click. The region
+## itself is `IGNORE`, so the 912x600 of empty space around the box answers nothing.
+func _build_log_over_the_map(world: Rect2) -> void:
+	_log_region = VBoxContainer.new()
+	_log_region.position = world.position
+	_log_region.size = world.size
+	_log_region.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_log_region)
+	_log_box = PanelContainer.new()
+	_log_box.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	# SAID RATHER THAN INHERITED. `STOP` is a Control's default, and the rule above is the reason this
+	# panel has it -- a default nobody wrote down is a default somebody changes.
+	_log_box.mouse_filter = Control.MOUSE_FILTER_STOP
+	_log_region.add_child(_log_box)
+	var inside := VBoxContainer.new()
+	_log_box.add_child(inside)
+	# "event log", NOT "last tick" (Maren, ASSA-116 finding 4b/4c). Two defects in one word: the
+	# switch offered an "event log" and the surface called itself something else, so even having found
+	# it you would not know you had found what you asked for -- and `LOG_LINES` keeps the last
+	# fourteen LINES, which span many ticks, so the old heading named a time window the content never
+	# had. A heading is this client's word; the LINES in it stay the sim's (ASSA-80/93).
+	#
+	# IT IS INSIDE THE BOX NOW rather than being a row of the column, which is what makes "a heading
+	# over nothing" impossible here: the heading cannot be on screen without the panel it is in.
+	_log_heading = Label.new()
+	_log_heading.text = "event log"
+	_log_heading.theme_type_variation = &"Heading"
+	inside.add_child(_log_heading)
+	inside.add_child(_log)
+
+
 ## SHOW OR HIDE THE EVENT LOG (ASSA-89). The board's words were "logs are hard on the eyes", and
 ## this is the toggle they asked for rather than the deletion they did not.
 ##
@@ -621,32 +694,32 @@ func _build_ui() -> void:
 ##
 ## THE CONTROL NAMES THE KEY, because the key is the half a stranger cannot discover.
 ##
-## AND SHOWING IT MOVES THE VIEW TO IT (ASSA-117). Maren verified in code what two screenshots had
-## shown her: `_show_log` set two `visible` flags and nothing else, `ensure_control_visible` appeared
-## nowhere in this file, and the log is the LAST section of a column that is 2023px tall in a 720px
-## window. So the toggle reported success, the button's label changed to "hide the event log", and
-## not one line was anywhere on screen -- the board's "logs are hard on the eyes" describing
-## something they could at least see. Her ruled property, which is the one this line answers: **a
-## control that reveals something must leave that thing visible.**
+## **ASSA-117'S RULED PROPERTY IS NOW TRUE BY CONSTRUCTION, WHICH IS WHY THIS FUNCTION IS SHORTER.**
+## Maren's property was *a control that reveals something must leave that thing visible*, and until
+## ASSA-147 this function discharged it by SCROLLING: the log was the last section of a 2023px column
+## in a 650px box, so showing it meant moving the view 1120px to the bottom, one frame after the
+## press because a container had not laid out yet. That mechanism is deleted. The log now has a
+## surface of its own at a fixed place over the map, so revealing it moves nothing -- and nothing it
+## moves can carry a control off the screen, which was ASSA-147.
 ##
-## THE HEADING AND NOT THE BODY, so what you scroll to is the word you pressed for. Scrolling to the
-## body alone can leave its own heading one line above the top edge, which is a section you have
-## arrived at without being told you have.
+## WHAT THIS GREEN IS NOT A STATEMENT ABOUT: the column is still taller than its box (ASSA-98's
+## ~1746px in a 566px clip is unchanged, minus the log's 304px). Buttons below the fold are still
+## reached by scrolling. What cannot happen any more is the TOGGLE moving them.
+##
+## THREE FLAGS, ONE WRITER, AND THE REASON IS NOT TIDINESS. `_log_box` is the surface a player sees;
+## `_log` and `_log_heading` are inside it, so hiding the box alone would be enough on screen -- and
+## would leave every test, probe and tool that asks `_log.visible` reading `true` about a log nobody
+## can see. That is the exact shape of the bug ASSA-117 was: a node answering honestly about a state
+## the screen does not have. So all three move together, from this one function, and
+## `test_main_screen.gd` asserts they cannot drift.
 func _show_log(shown: bool) -> void:
 	_log_shown = shown
 	_log.visible = shown
 	if is_instance_valid(_log_heading):
 		_log_heading.visible = shown
+	if is_instance_valid(_log_box):
+		_log_box.visible = shown
 	_log_toggle.text = "hide the event log (L)" if shown else "show the event log (L)"
-	# ASKED FOR HERE, CARRIED OUT A FRAME LATER, AND THAT IS NOT TIDINESS (ASSA-117). I called
-	# `ensure_control_visible` on this line first and the real window said it did nothing: the
-	# section was still 667px below the bottom edge. A container lays its children out on the frame
-	# AFTER they change, so at this instant the heading's rect is the one it had while hidden, and
-	# the scroll box honoured that rect exactly. This is the third time this week I have reached for
-	# an engine call at the only moment it cannot work -- `grab_focus` inside `_initialize` was the
-	# same shape -- and the only reason I caught it is that `window_shot.gd` reports the section's
-	# rect against the window instead of asking the node whether it is visible.
-	_scroll_to_log = shown
 
 
 ## SHOW OR HIDE THE CRAFTING MENU'S ROWS (ASSA-88).
@@ -695,48 +768,6 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		_show_close_up(not _close_up)
 
 
-## MOVE THE VIEW TO THE LOG, ONE FRAME AFTER THE PRESS THAT ASKED FOR IT.
-##
-## IN `_process` RATHER THAN `call_deferred`, because a Container's own layout is ALSO deferred
-## (`queue_sort`), so a deferred call races it and the race is invisible when it is lost -- the
-## scroll box honours a stale rect and reports success. The next `_process` is after that layout
-## pass, which is the cheapest moment that is certainly late enough.
-##
-## ONE SHOT. Re-running it every frame would fight the player's own scrollbar: you would press L,
-## look at the log, drag away to the pack, and be dragged back.
-func _carry_out_the_scroll_to_the_log() -> void:
-	if not _scroll_to_log:
-		return
-	_scroll_to_log = false
-	if _scroll == null or not is_instance_valid(_log_heading):
-		return
-	# PUT THE HEADING'S TOP AT THE VIEWPORT'S TOP, by the distance between them, measured now.
-	#
-	# **TWO `ensure_control_visible` CALLS IN A ROW CANNOT DO THIS, AND I SHIPPED THAT VERSION.** It
-	# asked for the body (minimum scroll down, body's end in view) and then for the heading (minimum
-	# scroll back up), on the reasoning that two minimum scrolls in opposite directions land the
-	# heading at the top. The reasoning is right about the rects and wrong about WHEN they exist:
-	# `set_v_scroll` does not move a child's `get_global_rect()` until the scroll box re-lays its
-	# contents, so the SECOND call measures the heading where it was BEFORE the first call scrolled.
-	# On a column 2019px tall it therefore asks to scroll down again, the engine clamps it to the
-	# maximum, and the view sits exactly where the body-only call left it. Measured on both pinned
-	# seeds: `scrolled to 1453 of 1453, heading y -18..4` against a viewport of y 130..696 -- the
-	# heading one line ABOVE the top edge and the newest log line torn in half.
-	#
-	# That is the third engine call I have made at the only moment it cannot work, and the first one
-	# I shipped: `window_shot.gd`'s fold report measured sections against the WINDOW, so a section
-	# scrolled up under the chrome read `on screen`. The report is clip-rect-aware now and carries the
-	# verdict (`_reveal_report`), which is why this is a bug with a lever rather than a screenshot
-	# somebody squints at.
-	#
-	# ARITHMETIC, THEN, AND SAID OUT LOUD: one subtraction between two rects read in the same frame,
-	# after the layout pass that `_process` guarantees. No number is written down -- both sides are
-	# measured -- and the engine clamps the result, so a log too short to reach the top simply stops
-	# where the content does.
-	_scroll.scroll_vertical += int(
-			_log_heading.get_global_rect().position.y - _scroll.get_global_rect().position.y)
-
-
 ## START A RELAY OF OUR OWN AND JOIN IT (ASSA-106).
 ##
 ## THE SAME JOIN PATH ONCE THE ADDRESS IS KNOWN, which is ruling 7 in one line: solo is co-op with
@@ -771,7 +802,6 @@ func _on_play_solo() -> void:
 ## IN `_process` AND NOT IN `_refresh`, because `_refresh` runs on tick bundles and there are no
 ## bundles until we have joined -- polling there would wait for the thing it is waiting to start.
 func _process(_delta: float) -> void:
-	_carry_out_the_scroll_to_the_log()
 	# THE SCENE IS THE ONLY THING ON THIS SCREEN THAT MOVES BETWEEN TICKS, so it is the only thing
 	# that redraws per frame: a body tweening between two tiles the sim produced, and two gaits
 	# running off the wall clock. The schematic does not redraw here -- it is painted when a tick
@@ -1075,10 +1105,18 @@ func _refresh() -> void:
 	# same promise is `_refresh_world`'s camera, built on the same tick and for the same reason.
 	_cell = AssayHud.map_cell(size)
 	_refresh_world()
-	_detail.text = ("world seed %s, %d x %d tiles, %d species, %d players · tick %d, hash %s · "
-			+ "%d bundles applied, %d hashes reported") % [
-			_sim.seed_text(), size.x, size.y, _sim.species_names().size(), _sim.players().size(),
-			_sim.tick(), _sim.hash_hex(), _sim.applied, _hashes_sent]
+	# COUNTS AGREE WITH THEIR NOUNS, FROM THE SIM (ASSA-145). `1 players` was the second line of
+	# every screenshot of Assay that exists -- solo is `Play solo`, which is how every window shot
+	# was made and how a stranger opens the game. `AssaySimHost.counted` is `sim::debug::counted`,
+	# so this line and the terminal's cannot drift. `tiles` and `species` are left alone: one is
+	# always >= 2 and the other is invariant in English.
+	_detail.text = ("world seed %s, %d x %d tiles, %d species, %s · tick %d, hash %s · "
+			+ "%s applied, %s reported") % [
+			_sim.seed_text(), size.x, size.y, _sim.species_names().size(),
+			AssaySimHost.counted(_sim.players().size(), "player", "players"),
+			_sim.tick(), _sim.hash_hex(),
+			AssaySimHost.counted(_sim.applied, "bundle", "bundles"),
+			AssaySimHost.counted(_hashes_sent, "hash", "hashes")]
 	_refresh_make()
 	_refresh_assembling()
 	_refresh_pack()
