@@ -53,7 +53,10 @@ extends SceneTree
 ## Nothing is predicted in any mode. Every position, count, sheet and design checked is read back out
 ## of the stepped world, so a check can only pass if the real rules produced the state it is reading.
 ##
-## Reconnect is deliberately absent (Decision 3), so there is no retry here either.
+## There is no retry here, and the reason it used to give is no longer true: it said reconnect was
+## "deliberately absent (Decision 3)", which `tools/reconnect_probe.gd` has since disproved
+## (ASSA-177). The reason it stays is about this probe -- a lost link mid-run means the ticks it was
+## measuring are gone, so reconnecting would report a verdict about a session it only half watched.
 
 const DEFAULT_TICKS := 45
 const JOIN_TIMEOUT := 10.0

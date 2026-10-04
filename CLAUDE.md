@@ -222,12 +222,29 @@ Not built yet, roughly in order: mining drills as entities (which is what
 lets hardness progress past hand mining; needs the step-factor decision
 that ADR 0001 left open), belts, inserters
 (the modular design system), assemblers, items on belts, generated looks
-for species, the Godot client, reconnect without restart, client-side
-movement prediction, time-based autosave, binary saves, graceful relay
-shutdown, Steam auth, galaxy layer.
+for species, the Godot client, reconnect without restart **in `sim-cli`**
+(the Godot client turns out to have it — see the rough edges below),
+client-side movement prediction, time-based autosave, binary saves, graceful
+relay shutdown, Steam auth, galaxy layer.
 
-Known rough edges: the relay loses up to 2 s on Ctrl-C; a dropped client
-must restart to rejoin; your own moves wait for the host (~1 tick).
+Known rough edges: the relay loses up to 2 s on Ctrl-C; your own moves wait
+for the host (~1 tick).
+
+**A dropped client had to restart to rejoin, and that is no longer true of the
+Godot client** (ASSA-177, 2026-10-04). Measured, not reasoned:
+`client/tools/reconnect_probe.gd` kills a real relay under a real session and
+then presses the real Join button, and the client rejoins a running world on
+the same `PlayerId` — both after a host restart (losing only the ticks since
+the relay's last autosave) and after the socket alone dies with the host still
+up (losing nothing). Nobody built this; it falls out of the relay's account map
+(`sim-game/tools/rejoin_check.sh`) plus a `Welcome` carrying current state, and
+`main.gd` has always let a join through at stage `DEAD`. Still true, and still
+worth saying: `sim-cli` has no reconnect (it tells you to restart, and nothing
+here measured otherwise), and a DESYNC is not a drop — it leaves the Godot
+client joined, so Join is refused and restarting really is the only way back.
+What the probe does NOT cover is a *silent* drop: it closes the socket, so the
+client sees the status change. A blip that never closes the connection leaves a
+lockstep peer waiting with no timeout of its own.
 
 ## People
 
