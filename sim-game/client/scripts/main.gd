@@ -472,6 +472,17 @@ func _build_ui() -> void:
 	make_heading.theme_type_variation = &"Heading"
 	column.add_child(make_heading)
 	_crafting = _note("")
+	# **AN EMPTY LINE STILL COSTS A ROW AND A GAP, WHICH IS MOST OF MAREN'S 53px VOID** (ASSA-134).
+	# She measured a 53px blank run between the `make` heading and its own toggle on `01-join.png` and
+	# did not diagnose it; measured here rather than taken from her guess (she suspected the hidden
+	# menu was still taking layout space, which it is not). A `Label` with `text == ""` reports a full
+	# line of minimum height, and a `VBoxContainer` child costs a `separation` whether or not it draws
+	# anything -- so the running-craft line and the chosen-parts box together bought ~48px of nothing
+	# on the one screen where neither can ever have content.
+	#
+	# `_refresh` sets this every tick (`visible = text != ""`), so the only state this line changes is
+	# the one before the first refresh -- which is exactly the screen a stranger reads.
+	_crafting.visible = false
 	column.add_child(_crafting)
 	column.add_child(_assembling)
 	# NO FONT SIZE HERE. It is a Button, and how big a Button's label is now comes from the one
@@ -484,6 +495,18 @@ func _build_ui() -> void:
 	# scrolled to it you would not know you had found what you asked for -- and `LOG_LINES` keeps the
 	# last fourteen LINES, which span many ticks, so the old heading named a time window the content
 	# never had. A heading is this client's word; the LINES in it stay the sim's (ASSA-80/93).
+	# WHICH KIND OF EMPTY THE `cursor` SECTION IS (Maren's ruling, ASSA-134). Every other section in
+	# this column plants its own empty note from its `_refresh_*`, but `cursor` is a bare Label written
+	# straight from `_refresh` -- which RETURNS before it on every not-joined path, so the heading sat
+	# over a blank Label on the first screen a stranger sees. Maren measured it at 93px, the largest
+	# labelled void in the column, and `_note`'s own docstring is the rule it broke.
+	#
+	# SET HERE, ONCE, because there is no `_refresh_cursor` to derive it in and inventing one for a
+	# single Label would be two places that have to agree about one sentence. The limit that leaves:
+	# if a joined world STOPS, this keeps its last tile reading rather than returning to this line --
+	# the sentence `_detail` prints in that case ("no world is being simulated") is the surface that
+	# says so, and a frozen readout beside it is stale, not wrong.
+	_cursor.text = AssayHud.quiet_cursor_line()
 	for part in [["you", _carrying], ["do", _actions], ["bench", _bench], ["rocks", _species],
 			["cursor", _cursor], ["event log", _log]]:
 		var heading := Label.new()
@@ -837,6 +860,10 @@ func _rebuild_log() -> void:
 	for age in count:
 		# `_events` is oldest-first (`trimmed_log` keeps the tail), so age 0 is the LAST entry.
 		var line := _note(_events[count - 1 - age])
+		# ONE ROW EACH, AND THE NEWEST WHOLE (Maren's ruling, ASSA-117 box 8). Age 0 keeps the
+		# wrapping `_note` gives every other readout; everything older is cut to the width it has.
+		if age > 0:
+			_cut_to_one_row(line)
 		# A FONT COLOUR OVERRIDE, NOT `modulate`. `modulate` multiplies whatever the theme chose, so
 		# the colour a line ends up drawn in would depend on two things and a contrast test could
 		# only ever check one of them. This states the colour, and `get_theme_color` reads it back --
@@ -1158,6 +1185,12 @@ func _refresh_assembling() -> void:
 		return
 	_assembling_showing = signature
 	_clear(_assembling)
+	# NO PARTS CHOSEN COSTS NO PIXELS (ASSA-134). An empty `VBoxContainer` draws nothing and still
+	# takes the column's `separation`, so this box was a 10px gap under the `make` heading for the
+	# whole of every session in which nobody is holding parts -- including the join screen, where it
+	# cannot have content at all. `_refresh_assembling` is the one place that knows whether it has
+	# anything to show, so the `visible` flag is derived here rather than set at build.
+	_assembling.visible = not _building.is_empty()
 	if _building.is_empty():
 		# NOTHING, NOT A NOTE. This sits inside the menu's own section under a heading that is
 		# already about making things, so "no parts chosen" would be a line telling a player about
@@ -1202,13 +1235,22 @@ func _refresh_make() -> void:
 ##
 ## `JSON.stringify` on the tag because a recipe's tag is a bare string and a part's is a nested
 ## dictionary (`{"Frame": "Held"}`), and only one of those can be glued into a string by hand.
+## AND THE OUTPUT IS IN THE KEY BECAUSE THE ROW NOW DRAWS IT (ASSA-117 box 4). The standing rule
+## here is "a term in a cache key that no drawn thing depends on is a rebuild nobody asked for"
+## (ASSA-103); its converse is worse and silent -- a drawn thing MISSING from the key is a stale
+## picture that the fast path cannot repair, because the fast path only re-texts the sentence. The
+## output happens to be a function of the verb, the tag and the input today, so this term adds no
+## rebuild; it is here so that stops being something a reader has to verify.
 func _make_shape(offers: Array) -> String:
 	var shape := PackedStringArray()
 	for entry in offers:
 		var offer: Dictionary = entry
-		shape.append("%s/%s/%s/%d/%s" % [String(offer.get("verb", "?")),
+		var makes: Dictionary = offer.get("makes", {})
+		shape.append("%s/%s/%s/%d/%s/%s/%d/%s" % [String(offer.get("verb", "?")),
 				JSON.stringify(offer.get("tag")), String(offer.get("kind", "?")),
-				int(offer.get("species", -1)), String(offer.get("grade", "?"))])
+				int(offer.get("species", -1)), String(offer.get("grade", "?")),
+				String(makes.get("kind", "-")), int(makes.get("species", -1)),
+				String(makes.get("grade", "-"))])
 	return "|".join(shape)
 
 
@@ -1223,12 +1265,23 @@ func _rebuild_make(offers: Array) -> void:
 		# end, the verb]. The crafting menu had no art at all -- this is the half of box 4 that was
 		# actually open, because the pack's icons were already exact and guarded (ASSA-65/71/98).
 		#
-		# AND IT IS THE SAME OBJECT ON BOTH SURFACES, which is the point rather than a saving: the
-		# thing you press "make" on in this menu is the thing that turns up in your pack a tick
-		# later, and if the two drew it differently that would be the player's problem to work out.
+		# **THE ICON IS WHAT THE ROW MAKES, NOT WHAT IT SPENDS** (Maren's ruling, ASSA-117 box 4),
+		# and the comment that used to sit here claimed the opposite of what the code did: it said
+		# "the thing you press make on is the thing that turns up in your pack a tick later" while
+		# `_icon_box(offer)` read `offer.input` and drew the thing you spend. Maren hashed the plates
+		# in `04-pack.png` and found all five rows drawing one picture -- the refined slab -- in a
+		# menu whose only job is choosing between five things.
+		#
+		# THE INPUT IS NOT LOST AND NEVER NEEDED ART: it is identical on every row of a material's
+		# block and the sentence names it in words ("2 of your 8 Tonore refined"), so the icon spends
+		# its 32px on the half the player cannot otherwise see.
+		#
+		# `makes` IS THE SIM'S, out of `make_offers`, and absent on a row that makes nothing (`sort`
+		# on grade A) -- so `{}` is the honest argument there and `_icon_box` returns null for it,
+		# the same way it does for a gear.
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 6)
-		var slot := _icon_box(offer)
+		var slot := _icon_box(offer.get("makes", {}) as Dictionary)
 		if slot != null:
 			row.add_child(slot)
 		var body := VBoxContainer.new()
@@ -1336,9 +1389,13 @@ func _pack_shape(stacks: Array) -> String:
 ## second copy is the defect the comment inside it already names: two arms that must agree about a
 ## thing. `art/check_pack_icon_scale.py` measures the SHIPPED build, so it guards one of them.
 ##
-## IT TAKES A STACK-SHAPED DICTIONARY AND NOTHING ELSE. A pack stack and a crafting offer both carry
-## `kind`/`species`/`grade` spelled exactly as `inventory_of` spells them -- `_make_button` relies on
-## that already, to build the item it sends -- so one function reads both without knowing which.
+## IT TAKES A STACK-SHAPED DICTIONARY AND NOTHING ELSE: `kind`/`species`/`grade` spelled as
+## `inventory_of` spells them. A pack stack is one. A crafting offer is NOT -- its own three fields
+## are the INPUT, which is what the row spends, so the crafting menu passes `offer.makes` (the sim's
+## output item, same three spellings) and this function never learns which surface asked.
+##
+## AN EMPTY DICTIONARY IS A VALID ARGUMENT and returns null: `makes` is absent on a row that makes
+## nothing (`sort` on grade A), and "no art" is already this function's answer for a gear.
 func _icon_box(stack: Dictionary) -> Control:
 	# THE ICON IS REDUNDANT AND MOST ROWS DO NOT GET ONE. `items.png` carries ore, refined and
 	# smelter, so a gear comes back null; the four part kinds have a row per grade. Every sentence
@@ -1703,6 +1760,36 @@ func _note(line: String) -> Label:
 	# minus its scrollbar, which is ASSA-98's clipping with the floor doing the pushing.
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return label
+
+
+## A LOG LINE CUT TO THE WIDTH IT HAS, instead of wrapped to the height it wants (Maren's ruling,
+## ASSA-117 box 8).
+##
+## **THE SIM AUTHORED THESE LINES TO BE TRUNCATED AND THIS CLIENT WAS WRAPPING THEM.**
+## `sim/src/debug.rs:1785` says so in writing: *"Verdict first, then the numbers, then the parts.
+## Deliberate: a side panel is narrow and the line gets truncated, so the thing the player needs
+## before spending parts must not be the thing that is cut."* A design verdict became SIX rows here,
+## so the ordering that exists to survive a cut bought nothing and the log inherited a panel per
+## event: Maren measured entries 1, 4, 4, 5 and 6 rows tall, 682px of them in a 566px box.
+##
+## NOTHING IS REWORDED. The wording stays the sim's (ASSA-117 box 3 grants presentation and nothing
+## else), and the ellipsis is the engine's, drawn where the box ends rather than at a character count
+## this file would have to pick.
+##
+## **MEASURED, BECAUSE THE OBVIOUS SPELLING IS ASSA-98's BUG AGAIN.** Asked of the engine with the
+## real sentence at the real font: a Label with `AUTOWRAP_OFF` alone reports a **1012px** minimum
+## width, which is a row 692px wider than the 320px panel that clips it -- exactly the 358-in-320
+## defect ASSA-98 fixed. With `OVERRUN_TRIM_ELLIPSIS` the minimum is **1px**, so the row takes the
+## width the column gives it and the cut happens in the draw. `clip_text` measures the same and is not
+## set: the ellipsis says that something was cut, and a silent cut is a sentence that lies about
+## being complete.
+##
+## WHAT STILL COSTS MORE THAN ONE ROW: a line the SIM wrote with a newline in it (`event_lines` keeps
+## them, `_remember_events` stores them whole). Those are the sim's own notes, deliberately two rows,
+## and `AUTOWRAP_OFF` does not touch them -- which is what Maren's arithmetic counted.
+func _cut_to_one_row(label: Label) -> void:
+	label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 
 
 func _clear(box: Node) -> void:

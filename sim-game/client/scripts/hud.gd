@@ -302,6 +302,19 @@ static func quiet_log_line() -> String:
 	return "nothing has happened yet"
 
 
+## WHAT THE `cursor` SECTION SAYS BEFORE THERE IS A WORLD (Maren's ruling, ASSA-134; she measured it
+## at 93px of labelled void on the first screen a stranger sees, the largest in the column).
+##
+## `_note`'s own rule, which five sections honoured and this one did not: a heading with nothing under
+## it reads as a bug. `cursor` needed it most, because it is the one heading whose NAME does not tell
+## a stranger what it would ever contain -- `you`, `bench` and `rocks` all do.
+##
+## THE WORDS ARE MAREN'S OWN SUGGESTION, kept rather than improved: it is the shape `rocks` already
+## uses ("no world yet — ...") and the second clause answers the question the heading raises.
+static func quiet_cursor_line() -> String:
+	return "no world yet — this reads the tile under your mouse"
+
+
 ## EVERY VERB A STACK AFFORDS, as descriptors for the row's buttons: `{label, verb, ...}`.
 ##
 ## **WHAT YOU HAVE AND WHERE IT CAN GO -- NEVER WHAT IT MAKES** (ASSA-86, Maren's ruling). A row

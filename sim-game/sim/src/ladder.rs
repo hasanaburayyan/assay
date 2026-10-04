@@ -66,15 +66,30 @@ pub fn fuel_grade(s: &MineralSpecies) -> Option<Grade> {
         .find(|g| s.effective(Property::Reactivity, *g) >= FUEL_MIN_REACTIVITY)
 }
 
-/// Whether a hand spark alone sets this species alight.
+/// Whether a fire burning at `fire` sets this species alight, counting the
+/// hand spark a player always has.
+///
+/// **ONE PLACE DECIDES WHETHER FUEL CATCHES** (ASSA-128). `run_smelters` and
+/// `World::smelter_state` each had their own copy of this comparison and they
+/// disagreed: the rules let a unit light off the dying fire of the one before
+/// it, and the state function only ever asked the hand spark — so a smelter
+/// that refined 19 ore announced "fuel won't light from cold" once per unit
+/// burned. A caller gets the question answered, never the inputs to answer it
+/// with, the same way [`lighting`] keeps [`best_fire`] private.
 ///
 /// **NO GRADE ANYWHERE IN HERE** (Game Director's ruling on ASSA-58). Heat
 /// tolerance is the one property grade never scales (`mineral.rs`), so
 /// lightability is a per-species constant and a grade on the clause would be
 /// a lie. Reactivity *does* scale, which is why the "fuel at X or better"
 /// half of the same sentence keeps its grade. The asymmetry is real.
+pub fn lights_in_fire(s: &MineralSpecies, fire: u32) -> bool {
+    u32::from(s.sheet.heat_tolerance) <= fire.max(HAND_SPARK_TEMPERATURE)
+}
+
+/// Whether a hand spark alone sets this species alight: [`lights_in_fire`]
+/// with no fire at all.
 pub fn lights_from_cold(s: &MineralSpecies) -> bool {
-    u32::from(s.sheet.heat_tolerance) <= HAND_SPARK_TEMPERATURE
+    lights_in_fire(s, 0)
 }
 
 /// Fuel a player can mine and light with no machine at all.
