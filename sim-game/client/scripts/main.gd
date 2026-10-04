@@ -199,6 +199,10 @@ const SPECIES_READINGS := "SpeciesReadings"
 ## counting children -- the thing it is named for is a SURFACE, and the whole defect was that the
 ## surface could not be found because it did not exist.
 const COLUMN_SURFACE := "ColumnSurface"
+## The `MarginContainer` that gives the column's content the inset the theme's panel stylebox
+## already declares (ASSA-142). Named so a test can ask what its margins are without counting
+## children -- the property being tested is where the number came FROM.
+const COLUMN_PAD := "ColumnPad"
 
 ## The map glyph's disc in a species row. Big enough for a 12px letter to sit in, which is above the
 ## 10px floor `glyph_size` refuses to draw under.
@@ -444,6 +448,19 @@ func _build_ui() -> void:
 			+ " schematic, with every deposit and every player on it")
 	_view_toggle.pressed.connect(func(): _show_close_up(not _close_up))
 	add_child(_view_toggle)
+	# NOT ON THE JOIN SCREEN (ASSA-142 box 3 / ASSA-161, Maren's ruling): there is never a world at
+	# build time, and this button offers a view of one. It was the ONLY button inside the map's
+	# rectangle before a join, 280px below the one sentence on it, while the five sections beside it
+	# each say "no world yet" in words -- so the one surface that said nothing said it with a
+	# control, and a control is a promise that pressing it does something.
+	#
+	# HIDDEN RATHER THAN DISABLED, which Maren left to the builder and leaned the same way: the
+	# screen already carries five "no world yet" sentences and a sixth would be noise, and this
+	# button has no world to describe even in the past tense.
+	#
+	# `_refresh` is what brings it back, on the world's existence rather than on the join event --
+	# see there for why that is the honest test.
+	_view_toggle.visible = false
 
 	var row := HBoxContainer.new()
 	row.position = Vector2(24.0, 20.0)
@@ -561,12 +578,44 @@ func _build_ui() -> void:
 	surface.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	surface.name = COLUMN_SURFACE
 	add_child(surface)
-	# ZERO, because `chrome` is now positioned inside `surface` and `surface` carries the offset. The
-	# column's GLOBAL rect is unchanged, which is the thing that must not move.
-	chrome.position = Vector2.ZERO
-	chrome.size = column_rect.size
+	# THE GUTTER, AND THE THEME ALREADY DECIDED IT (ASSA-142, Maren: "the number comes from the
+	# container, not from this item").
+	#
+	# Measured on `01-join.png` from current main: the leftmost glyph is at x=936 and the panel's
+	# first column is x=936 -- **zero padding**, with the map's hard colour boundary immediately to
+	# its left. The rightmost glyph is x=1255 and the panel's last column is x=1255, so the right
+	# is flush too; the 24px of air on that side is the WINDOW's margin outside the panel, not the
+	# panel's own.
+	#
+	# **THE NUMBER IS `content_margin_left` OFF THE PANEL'S OWN STYLEBOX, READ, NEVER TYPED.**
+	# `build_theme.gd::_box` sets it on every panel in the theme, and `_running_box` and `_halt_box`
+	# get it for free because a `PanelContainer` IS a Container and applies it. This column is the
+	# one panel in the window that does not -- a plain `Panel` draws the stylebox and lays out
+	# nothing, which is exactly why it was chosen (ASSA-152) and exactly why its content had no
+	# inset. So the padding was never missing from the design; it was declared and unapplied.
+	#
+	# A `MarginContainer` rather than arithmetic on `chrome`, for this file's standing reason: a
+	# number written here is a number that rots when the theme is retuned. If `PAD_X` moves, the
+	# column follows on the next build with nothing to remember.
+	#
+	# LEFT AND RIGHT ONLY, NOT TOP AND BOTTOM. The stylebox declares a vertical margin too, and
+	# spending it costs the scroll box 12px of height -- the budget ASSA-154 is already open about
+	# (587px of `rocks` pushing the cursor readout off screen). The defect Maren measured is
+	# horizontal: text against a colour boundary. Taking only what the defect needs is the whole of
+	# the reason, and if she wants the vertical too it is one more override.
+	var pad := MarginContainer.new()
+	pad.name = COLUMN_PAD
+	pad.position = Vector2.ZERO
+	pad.size = column_rect.size
+	var panel_box := surface.get_theme_stylebox(&"panel")
+	pad.add_theme_constant_override(&"margin_left", int(panel_box.content_margin_left))
+	pad.add_theme_constant_override(&"margin_right", int(panel_box.content_margin_right))
+	surface.add_child(pad)
 	chrome.add_theme_constant_override("separation", 6)
-	surface.add_child(chrome)
+	# NO POSITION OR SIZE SET ON `chrome` ANY MORE: the `MarginContainer` owns both now, and a rect
+	# written here would be overwritten on the first layout pass and believed by every headless test
+	# until a real window disagreed with it.
+	pad.add_child(chrome)
 	_log_toggle.pressed.connect(func(): _show_log(not _log_shown))
 	chrome.add_child(_log_toggle)
 	# WHAT IS RUNNING, THEN WHAT HAS STOPPED, both above the scroll and never inside it (ASSA-133).
@@ -837,7 +886,13 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	elif key.keycode == KEY_M:
 		_show_make(not _make_shown)
 	elif key.keycode == KEY_V:
-		_show_close_up(not _close_up)
+		# THE SHORTCUT IS AS DEAD AS THE BUTTON IT NAMES (ASSA-142 box 3). Hiding `whole world (V)`
+		# and leaving V live would keep the promise this item removes -- a player who read the key
+		# off the button earlier in the session could still toggle to a view of nothing, and the
+		# control that would have explained what happened is the one that is gone. Maren's rule is
+		# about what the control can DO, not about where it is drawn.
+		if _sim.running():
+			_show_close_up(not _close_up)
 
 
 ## START A RELAY OF OUR OWN AND JOIN IT (ASSA-106).
@@ -1147,6 +1202,15 @@ func _say(line: String, level: int) -> void:
 
 
 func _refresh() -> void:
+	# THE VIEW TOGGLE TRACKS WHETHER THERE IS A WORLD, and it is set HERE, above the early return,
+	# because everything below this line runs only when there IS one (ASSA-142 box 3 / ASSA-161).
+	#
+	# ON `_sim.running()` AND NOT ON THE JOIN EVENT. A join that is accepted but produces no world is
+	# a real state this screen already handles two lines down -- `joined at tick N, but no world is
+	# being simulated` -- and in it the button would be back, offering a view of a world that does
+	# not exist, which is the defect again wearing a different cause. Asking what the renderer can
+	# actually draw is the question; asking whether a handshake succeeded is a proxy for it.
+	_view_toggle.visible = _sim.running()
 	if not _sim.running():
 		var joined: Dictionary = _client.joined_world
 		if joined.is_empty():

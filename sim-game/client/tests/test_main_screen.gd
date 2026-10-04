@@ -1065,18 +1065,121 @@ func test_the_painted_surface_moves_no_control() -> bool:
 	if surface.position != want_pos or surface.size != want_size:
 		ok = _fail("the surface is not the column's rect: %s %s, wanted %s %s"
 				% [surface.position, surface.size, want_pos, want_size])
-	# THE COLUMN ITSELF, in GLOBAL coordinates, because that is the number a sibling would have had
-	# and the only one a player can see.
-	var chrome := surface.get_child(0) as Control
-	if chrome == null:
-		ok = _fail("the surface has no column inside it")
-	elif ok:
-		var at := surface.position + chrome.position
-		if at != want_pos or chrome.size != want_size:
-			ok = _fail(("the column moved when it gained a painted parent: global %s size %s, "
-					+ "wanted %s %s. A `Panel` is not a `Container` and must impose nothing.")
-					% [at, chrome.size, want_pos, want_size])
+	# THE PAD IS THE SURFACE'S WHOLE RECT, so the painted area and the padded area are one thing.
+	#
+	# **THIS USED TO ASSERT `chrome`'s RECT AND NO LONGER CAN, which is a real loss and is named
+	# rather than quietly dropped** (ASSA-142). `chrome` is inside a `MarginContainer` now, so its
+	# rect is decided on the first layout pass -- and the test runner builds in
+	# `SceneTree._initialize`, where layout never happens. Any number asserted for it here would be
+	# the pre-layout zero, which is a reading about nothing. What this file CAN still hold is that
+	# the painted rect is the column's rect; what moved to the window shot is whether the glyphs
+	# landed inside it (ASSA-142 box 2, which is a pixel claim and says so).
+	var pad := surface.get_node_or_null(NodePath(screen.COLUMN_PAD)) as MarginContainer
+	if pad == null:
+		ok = _fail("no %s inside the surface, so the column's content has no inset"
+				% screen.COLUMN_PAD)
+	elif pad.position != Vector2.ZERO or pad.size != want_size:
+		ok = _fail("the pad is not the surface's whole rect: %s %s, wanted (0, 0) %s"
+				% [pad.position, pad.size, want_size])
 	screen.queue_free()
+	return ok
+
+
+## THE COLUMN'S GUTTER IS THE THEME'S OWN NUMBER, NOT ONE TYPED IN `main.gd` (ASSA-142 box 1).
+##
+## **MAREN'S PROPERTY, VERBATIM: "the number comes from the container, not from this item."** She
+## expected roughly 24 and said in advance that if it turned out to be another number in the
+## container's own terms, that was the right answer. It is `content_margin_left` on the panel
+## stylebox `build_theme.gd::_box` writes -- the same inset `_running_box` and `_halt_box` already
+## get, because a `PanelContainer` IS a Container and applies it. The HUD column is the one panel in
+## the window that does not, since a plain `Panel` draws a stylebox and lays out nothing.
+##
+## So the padding was never missing from the design. It was declared and unapplied, and this test is
+## about the LINK rather than about the value: it reads the stylebox at run time and compares. Typing
+## `10` here would pass on a theme that had moved to 14 and the column would be wrong and green.
+func test_the_columns_gutter_is_the_panel_styleboxs_own_margin() -> bool:
+	var screen := _screen()
+	var ok := true
+	var surface := screen.get_node_or_null(NodePath(screen.COLUMN_SURFACE)) as Panel
+	var pad := null if surface == null else surface.get_node_or_null(NodePath(screen.COLUMN_PAD))
+	var margins := pad as MarginContainer
+	if margins == null:
+		screen.queue_free()
+		return _fail("no %s/%s, so the column has no inset to check its source"
+				% [screen.COLUMN_SURFACE, screen.COLUMN_PAD])
+	var box := surface.get_theme_stylebox(&"panel")
+	if box == null:
+		ok = _fail("the column's surface resolves no panel stylebox, so there is no number to take")
+	else:
+		# NOT ZERO, FIRST. A theme that declared no content margin would make every comparison below
+		# trivially true and the column would have no gutter at all -- the shipped defect, passing.
+		if box.content_margin_left <= 0.0:
+			ok = _fail(("the panel stylebox declares no left content margin, so this test would "
+					+ "pass over a column with no gutter at all"))
+		for side in [["margin_left", box.content_margin_left],
+				["margin_right", box.content_margin_right]]:
+			var applied := margins.get_theme_constant(StringName(side[0]))
+			if ok and applied != int(side[1]):
+				ok = _fail(("the column's %s is %d and the panel stylebox declares %d: the gutter "
+						+ "stopped coming from the theme") % [side[0], applied, int(side[1])])
+	screen.queue_free()
+	return ok
+
+
+## A CONTROL THAT CANNOT DO ANYTHING IS NOT ON THE SCREEN (ASSA-142 box 3, ASSA-161, Maren).
+##
+## `whole world (V)` was the only button inside the map's rectangle before a join, offering a view of
+## a world that does not exist, while the five sections beside it each say "no world yet" in words.
+##
+## **ASSA-161 ASKS FOR THIS AS A TEST AND NOT A SCREENSHOT DIFF**, which is the right ask: a shot
+## proves the join screen, and only a test can show the button comes BACK. Both directions are here,
+## driven by `_sim.running()` because that is what the code keys on.
+func test_the_view_toggle_is_absent_until_there_is_a_world() -> bool:
+	var screen := _screen()
+	var ok := true
+	if screen._view_toggle.visible:
+		ok = _fail("`whole world (V)` is on the join screen, offering a view of no world")
+	# A REFRESH WITH NO WORLD MUST NOT BRING IT BACK, which is the case the early return in
+	# `_refresh` makes easy to get wrong: everything below that return runs only with a world, so a
+	# line placed one below it would leave the button hidden for ever.
+	if ok:
+		screen._refresh()
+		if screen._view_toggle.visible:
+			ok = _fail("the toggle reappeared on a refresh with no world running")
+	# AND THE SHORTCUT IS AS DEAD AS THE BUTTON. Hiding the control and leaving V live would keep
+	# the promise this item removes: a player who read the key off the button could still toggle to
+	# a view of nothing, with the control that would explain it now gone.
+	if ok:
+		var before: bool = screen._close_up
+		var press := InputEventKey.new()
+		press.keycode = KEY_V
+		press.pressed = true
+		screen._unhandled_key_input(press)
+		if screen._close_up != before:
+			ok = _fail("V toggled the view with no world, so the hidden button's key is still live")
+	screen.queue_free()
+	if not ok:
+		return ok
+
+	# AND IT COMES BACK IN A WORLD (ASSA-161 box 2: "the fix is not 'remove the button'"). Without
+	# this half, `_view_toggle.visible = false` and a deleted button are the same green.
+	var joined := _joined_screen()
+	if not joined._sim.running():
+		joined.queue_free()
+		return _fail("the fixture world did not start, so the half that matters was never asked")
+	joined._refresh()
+	if not joined._view_toggle.visible:
+		ok = _fail("`whole world (V)` never came back once a world existed")
+	# AND THE V KEY AGREES WITH THE BUTTON, in the world where it is supposed to work.
+	elif true:
+		var was: bool = joined._close_up
+		var event := InputEventKey.new()
+		event.keycode = KEY_V
+		event.pressed = true
+		joined._unhandled_key_input(event)
+		if joined._close_up == was:
+			ok = _fail("V did nothing in a world, so hiding the button took its shortcut with it")
+	joined.queue_free()
 	return ok
 
 
