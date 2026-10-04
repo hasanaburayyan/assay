@@ -378,6 +378,29 @@ jobs:
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
             python3 art/check_items_kinds.py
+      # THE REVIEW SHEET SAYS WHAT THE CLIENT SAYS (ASSA-132, guarding ASSA-103).
+      # `assets/review/pack_icons.png` labelled head, handle, frame and hopper all
+      # "Frame" for days after the client started saying "Mount" on two of them. The
+      # pipeline was not wrong -- every word in that sheet came from the engine's own
+      # buttons. The sheet was simply drawn before ASSA-103 and never redrawn: #157
+      # regenerated `pack_rows.png` from a fresh layout and left this one alone.
+      #
+      # A guard inside the generator cannot catch the generator not being RUN, so the
+      # generator stamps the words it drew into the PNG and this asks the live engine
+      # for the same words and compares. It also checks the word itself against the
+      # catalogue's `is_frame`, by button POSITION rather than by reading the text --
+      # "Frame" starting with the word Frame is a fact about English (ASSA-99).
+      #
+      # Anti-vacuity: it needs one frame kind AND one mounted kind among the rows, or
+      # "the word follows the catalogue" is one word everywhere and cannot fail; that
+      # exits 2. Proved red three ways: the pre-stamp sheet (no stamp), a stamp
+      # carrying the four old "Frame" words (names head and hopper, which is Nerite's
+      # finding reproduced), and `is_frame := true` in `hud.gd` (the client defect,
+      # which turns both claims red at once).
+      - name: The pack review sheet says what the client says
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
+            python3 art/check_pack_row_word.py
 
   macos:
     name: macOS bundle
