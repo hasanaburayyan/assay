@@ -306,6 +306,10 @@ var _ore_tick := -1
 ## rebuilt 60 times a second. Cached here rather than in that file so nothing else's behaviour
 ## changes with this item.
 var _manifest := {}
+## `assets/sprites/part_layout.json`, parsed once, for exactly the reason above: a planted machine's
+## rectangle is worked out from the repeat offset on every frame it is on screen, and
+## `AssayAssembly.contract()` opens and parses the file every call.
+var _layout := {}
 ## The tile under the mouse, and whether the mouse has ever been over the map. Not a Vector2i alone,
 ## because tile (0, 0) is a real tile and "no hover" is not it.
 var _hover := Vector2i.ZERO
@@ -1943,6 +1947,8 @@ func _refresh_world() -> void:
 		return
 	if _manifest.is_empty():
 		_manifest = AssaySprites.manifest()
+	if _layout.is_empty():
+		_layout = AssayAssembly.contract()
 	var size := _sim.size_tiles()
 	var now := float(Time.get_ticks_msec()) / 1000.0
 	# HOW FAR THROUGH THE GAP BETWEEN THE LAST TWO TICKS WE ARE. Clamped at 1, which is the whole
@@ -1983,6 +1989,10 @@ func _refresh_world() -> void:
 		# over the window, which is a different problem.
 		"buildings": _sim.buildings(),
 		"manifest": _manifest,
+		# THE PART CONTRACT, for the one building with no sheet. Beside the manifest and not inside
+		# it for `AssaySprites`' own reason: the manifest's top level is an asset namespace and
+		# `build.py` drops anything there that is not an asset (ASSA-54/71).
+		"layout": _layout,
 		"seconds": now,
 	}
 	_world.me = me

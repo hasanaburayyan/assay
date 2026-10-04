@@ -1,7 +1,12 @@
 extends SceneTree
 ## A PICTURE OF THE REAL WINDOW, at 1:1, with no hands (ASSA-116 box 5).
 ##
-##   godot --path . --script res://tools/window_shot.gd -- <out_dir> [seed] [ticks]
+##   godot --path . --script res://tools/window_shot.gd -- <out_dir> [seed] [ticks] [hoppers]
+##
+## `hoppers` is for ASSA-138 and is the one thing about the played world a caller may change: how
+## many hoppers the loop MOUNTS on the drill it plants (default: every one it makes, which is what
+## every other caller has always got). Three runs at 1, 2 and 4 are three real windows differing in
+## one part count, which is what "a player can count the hoppers" has to be judged on.
 ##
 ## NOT `--headless`, AND THAT IS THE WHOLE POINT. Every other tool in here runs headless because it
 ## is asking what the client KNOWS. This one asks what the client LOOKS LIKE, and a dummy rendering
@@ -119,6 +124,8 @@ func _initialize() -> void:
 	_screen._ready()
 	_screen._client.asked.connect(func(command: Variant) -> void: _asked.append(command))
 	_play = AssayButtonPlay.new(_screen, 0)
+	if argv.size() > 3:
+		_play.hoppers = int(argv[3])
 	print("window %s, viewport %s" % [DisplayServer.window_get_size(), root.size])
 
 
@@ -247,8 +254,15 @@ func _end_play() -> void:
 	if _play.failed != "":
 		_finish(false, "the loop stopped: %s" % _play.failed)
 		return
-	print("  played seed %s to tick %d, step %s"
-			% [_seed, _screen._sim.tick(), AssayButtonPlay.Step.keys()[_play.step]])
+	# WHAT THE PLAY DID WITH THE DRILL, IN THE SIM'S OWN WORDS. `step DONE` is not the same news as
+	# "a machine is standing there": the loop plants whatever it built and the SIM decides whether
+	# the design survives its own mass. A run whose drill came apart has an empty map and a perfectly
+	# healthy-looking final line, which is how I nearly reported an invisible machine as a drawing
+	# bug when the sim had simply refused to keep it (ASSA-138).
+	print("  played seed %s to tick %d, step %s; verdict %s; %s"
+			% [_seed, _screen._sim.tick(), AssayButtonPlay.Step.keys()[_play.step],
+			_play.planted_verdict if _play.planted_verdict != "" else "(none read)",
+			_play.outcome if _play.outcome != "" else "(no outcome)"])
 	_phase = Phase.SETTLE_PLAY
 
 
@@ -446,9 +460,57 @@ func _reveal_report() -> bool:
 	return true
 
 
+## WHAT WAS DRAWN FOR EACH BUILDING, AND WHERE (ASSA-138).
+##
+## THE SAME DEFECT AS A SHOT THAT MISSES ITS SUBJECT, one layer down. A machine drew NOTHING on this
+## view until ASSA-138, and no check here could have seen that: every one of them asks about the HUD
+## column, the map is just pixels to them, and a building that is absent looks exactly like one that
+## is behind you.
+##
+## **AND IT IS WHY THE LINE ABOVE PRINTS THE VERDICT.** I assumed this tool's shots had been quietly
+## full of an invisible 4-hopper drill, and they had not: on the pinned seed that design is WILL
+## BREAK, the sim takes it apart on placement, and the map was empty for a reason that has nothing to
+## do with drawing. Two different causes of "no machine in the picture", and only one of them is a
+## bug -- so this says which, instead of letting a reader pick.
+##
+## So each building the sim has is printed beside the placement the scene made for it: its rectangle
+## in view pixels, or `NOT DRAWN`. Read off `AssayScene.placements` -- the same call `_draw` makes --
+## rather than off the image, because a rectangle is checkable arithmetic and a dark lump in a PNG is
+## not. It reports; it does not fail the run. Whether a kind SHOULD have a picture is the Game
+## Director's question, and a tool that answered it would be holding her opinion.
+func _machine_report() -> void:
+	if _screen._world == null or (_screen._world.view as Dictionary).is_empty():
+		return
+	var drawn := []
+	for place in AssayScene.placements(_screen._world.view):
+		if bool((place as Dictionary).get("composite", false)):
+			drawn.append(place)
+	var world := Rect2(Vector2.ZERO, _screen._world.size)
+	for entry in _screen._sim.buildings():
+		var building: Dictionary = entry
+		var parts: Array = building.get("parts", [])
+		var kinds := PackedStringArray()
+		for part in parts:
+			kinds.append(String((part as Dictionary).get("kind", "?")))
+		var key := AssayAssembly.key_of(parts)
+		var where := "NOT DRAWN"
+		for place in drawn:
+			if String((place as Dictionary).get("key", "")) == key:
+				var dest: Rect2 = (place as Dictionary)["dest"]
+				where = "%s %s  %s" % [dest.position.round(), dest.size.round(),
+						"on the view" if world.intersects(dest) else "OFF THE VIEW"]
+				break
+		if parts.is_empty():
+			where = "(a sheet, not a composite)"
+		print("  building %-9s at %-10s %d parts %-28s %s"
+				% [String(building.get("kind", "?")), building.get("pos", Vector2i.ZERO),
+				parts.size(), "[%s]" % ", ".join(kinds), where])
+
+
 func _report() -> void:
 	for line in _shots:
 		print("  ", line)
+	_machine_report()
 	_fold_report()
 	# THE REVEAL VERDICT GOES FIRST, and the order is not taste. The incomplete check below ends the
 	# run, so with it first a shot that could not contain its subject also silently skipped the only
