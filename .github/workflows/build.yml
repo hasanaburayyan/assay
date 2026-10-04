@@ -192,6 +192,33 @@ jobs:
       # "handle CUT west 19 px / frame CUT west 58 px" per grade row. Stdlib only.
       - name: A part fits inside its own frame
         run: python3 art/check_part_frame_fit.py
+      # A COMMITTED REVIEW SHEET STILL MATCHES THE ART IT DREW (ASSA-144, Maren's ruling).
+      # `assets/review/` holds nine tracked PNGs and this repo's own CLAUDE.md says to
+      # judge the art off one of them, so a stale one is believed -- and it is believed
+      # about a game it no longer describes. It has happened: the pack sheet's slot plate
+      # was #889868 while the shipped ground's median had moved to #879A66, and nothing
+      # in the repo could tell. Two more were stale when this landed: `assembled.png`
+      # predated ASSA-124's frame re-render by 87,806 px, `mock_scene.png` predated
+      # ASSA-137's light rows by 11,674.
+      #
+      # NOT A HASH OF THE SHEET'S PIXELS, which is Cove's ruling: that goes red on every
+      # legitimate re-render and "a check that cries wolf is a check that gets
+      # regenerated blind". The generators stamp the identity of their SOURCES instead
+      # (`review_sources.py` records the shipped files each one actually opens), so
+      # redrawing a sheet from unchanged art is green and moving the art under a sheet
+      # nobody redrew is red, naming the file.
+      #
+      # TWO ANTI-VACUITY CHECKS RUN INSIDE IT, because "no source moved" is trivially
+      # true of a sheet that recorded nothing: one sheet must carry a non-empty source
+      # list, and the recorder must still observe all four ways this pipeline opens a
+      # file -- including `Path.read_bytes()`, which patching `builtins.open` alone
+      # measurably misses. Either failing exits 2, not 0.
+      #
+      # Lever: REVIEW_SOURCES_FAKE_MOVE=ground.png must turn it red, naming every sheet
+      # that composited ground.png. Proved red for real too, by appending a byte to a
+      # shipped sprite and restoring it. Stdlib only, ~0.2s.
+      - name: A review sheet still matches the art it drew
+        run: python3 art/check_review_sources.py
       # The client's own GDScript suite gates the bundles below. Editor only:
       # running tests needs no export templates, which is the ~1 GB download.
       - name: Godot (editor only)
