@@ -153,6 +153,21 @@ func halt_lines() -> PackedStringArray:
 	return _sim.halt_lines() if _sim != null else PackedStringArray()
 
 
+## EVERY ACTIVITY ONE PLAYER HAS RUNNING (ASSA-95), one worded line each, in `step`'s own system
+## order: hand mining, assaying, hand crafting. Empty when nothing is running, which is most ticks.
+##
+## RENDER THESE VERBATIM, NEVER SORT THEM AND NEVER CAP THEM — the same three rules `halt_lines`
+## above is under, for the same reason. The list is PLURAL by construction: `step` never clears
+## `mining` when an assay starts, so a player stands on a deposit and mines through their own assay,
+## and a surface showing only one of them would say the other had stopped.
+##
+## A COUNTDOWN ONLY WHERE THERE IS AN END. The assay counts down and the craft says its own words;
+## mining carries no number, because its cycle restarts until you stop or the deposit runs dry. The
+## absence is the fact, and this side must not supply one.
+func activity_lines(player: int) -> PackedStringArray:
+	return _sim.activity_lines(player) if _sim != null else PackedStringArray()
+
+
 ## What the last applied bundle caused, as the sim's own `Debug` text. For a log, not a player.
 func last_events() -> PackedStringArray:
 	return _sim.last_events() if _sim != null else PackedStringArray()

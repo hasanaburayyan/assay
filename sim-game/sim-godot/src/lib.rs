@@ -237,6 +237,27 @@ impl AssaySim {
         packed(&self.halt_line_texts())
     }
 
+    /// EVERY ACTIVITY THIS PLAYER HAS RUNNING, one sentence each, in `step`'s
+    /// own system order (ASSA-95, Maren's ruling; the sim half shipped in
+    /// #173). Empty when nothing is running, which is the common case.
+    ///
+    /// **PLURAL, AND A HOST MAY NOT THIN IT.** A player standing on a deposit
+    /// mines THROUGH their own assay — `step` never clears one for the other —
+    /// so a surface that showed "the" activity would say the mining had
+    /// stopped. The list arrives ranked by nothing, and this crate neither
+    /// sorts nor caps it: a cap would hide a running activity, which is the
+    /// defect the list exists to fix.
+    ///
+    /// The same shape as `halt_lines` above, and for the same reason: a
+    /// `PackedStringArray` the client lays out and never rewords.
+    #[func]
+    pub fn activity_lines(&self, player: i64) -> PackedStringArray {
+        let Some(id) = player_id_of(player) else {
+            return PackedStringArray::new();
+        };
+        packed(&sim::debug::activity_lines(&self.world, id))
+    }
+
     /// WHAT THIS PLAYER IS CRAFTING RIGHT NOW, in the sim's own sentence, or ""
     /// when nothing is being made (ASSA-49).
     ///

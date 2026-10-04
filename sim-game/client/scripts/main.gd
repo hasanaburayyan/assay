@@ -69,6 +69,24 @@ var _halt_box: PanelContainer = null
 ## The stopped lines alone, without the heading. Rebuilt with the block.
 var _halt_lines: VBoxContainer = null
 var _halt_showing := "\nnothing yet\n"
+## WHAT IS RUNNING, BESIDE WHAT HAS STOPPED (ASSA-133, Maren's ruling 1; the list is ASSA-95's).
+## `AssaySimHost.activity_lines()` -> `sim::debug::activity_lines`: mining, assaying and the running
+## craft, one line each, in `step`'s own system order, worded entirely by the sim.
+##
+## **ANNOUNCING DOES NOT SCROLL.** The craft countdown used to be the head of the crafting menu,
+## inside the scroll box. Maren's own reason for putting it there was that the menu was the TOP
+## section, so that line was least likely to be carried off the bottom -- a probabilistic argument
+## about position in a scroll box, which the chrome answers absolutely. `_halt_box` was already here
+## for exactly that reason and is the precedent she overruled herself with.
+##
+## NO SCROLL IN HERE, EVER, AND NO CAP. A cap would hide a running activity, which is the defect the
+## plural list exists to fix: a player mines THROUGH their own assay, so three lines is a real state
+## and not an overflow. A fourth activity is a fourth line or it is not in this block.
+var _running := VBoxContainer.new()
+var _running_box: PanelContainer = null
+## The running lines alone, without the heading. Rebuilt with the block.
+var _running_lines: VBoxContainer = null
+var _running_showing := "\nnothing yet\n"
 ## THE EVENT LOG'S CONTROL AND ITS STATE (ASSA-89). The log is the surface the team built the loop
 ## on and the board's one literal complaint about the window ("logs are hard on the eyes"), so it
 ## starts hidden and one named control brings it back. `_log_heading` is held because a hidden
@@ -88,16 +106,15 @@ var _scroll_to_log := false
 ## that passes by construction, which is the failure I keep writing down. At `true` the default-state
 ## assertion can only pass if the call actually happened.
 var _log_shown := true
-## The running-craft countdown. Held because its text changes every tick while the section around it
-## must not be rebuilt (ASSA-49).
+## `_crafting` WAS HERE AND IS GONE (ASSA-133 ruling 1). The running-craft countdown was a Label held
+## at the head of the crafting menu, a sibling of the menu's toggle so that collapsing the menu could
+## not take it away (ASSA-49, then ASSA-88). It is now one line in the chrome's `_running` block,
+## which is outside the scroll box entirely -- so "a later line cannot push it off" is structural
+## rather than probabilistic, and the sentence it printed is still the sim's `crafting_readout`,
+## reached through `activity_lines` beside the mining and assaying lines that never had a surface.
 ##
-## IT MOVED TO THE HEAD OF THE CRAFTING MENU AND OUT OF ANY SECTION THAT CAN BE REBUILT OR HIDDEN
-## (ASSA-88, Maren's ruling). It used to be made inside `_refresh_actions`, which put the one sentence
-## that explains an eight-second silence in the `do` section, competing with Mine and Assay -- and
-## nowhere near the button that started the craft. A craft is a CONDITION, not a moment, so this line
-## is a sibling of the menu's toggle rather than a child of the menu: collapsing the menu cannot take
-## it away.
-var _crafting: Label = null
+## There is deliberately no Label to put back: a second node holding that sentence would print the
+## craft countdown twice, once in each block.
 ## THE CRAFTING MENU (ASSA-88): the home of every make-verb. One row per recipe and part the sim says
 ## this player could make from what they carry, in the sim's order, each row the sim's own sentence.
 var _make := VBoxContainer.new()
@@ -460,14 +477,24 @@ func _build_ui() -> void:
 	# scroll is the derivation -- the scroll is whatever the other two leave, measured by the engine
 	# on the frame they change, and nobody has to remember it.
 	var chrome := VBoxContainer.new()
-	chrome.position = Vector2(VIEW.x - PANEL - MARGIN.x, MARGIN.y)
-	chrome.size = Vector2(PANEL, VIEW.y - MARGIN.y - 24.0)
+	# `COLUMN_TOP`, NOT `MARGIN.y`: the header band spans the map's width, not the window's, so the
+	# column starts at the top of the window and the 347 x 96 of empty chrome in the corner becomes
+	# clip. See `AssayHud.COLUMN_TOP` for the measurement and for why that rectangle gets no label.
+	chrome.position = Vector2(VIEW.x - PANEL - MARGIN.x, AssayHud.COLUMN_TOP)
+	chrome.size = Vector2(PANEL, VIEW.y - AssayHud.COLUMN_TOP - 24.0)
 	chrome.add_theme_constant_override("separation", 6)
 	add_child(chrome)
 	_log_toggle.pressed.connect(func(): _show_log(not _log_shown))
 	chrome.add_child(_log_toggle)
-	# WHAT HAS STOPPED, ABOVE THE SCROLL AND NEVER INSIDE IT. A `PanelContainer` so the block reads as
-	# its own surface, from the theme (ASSA-116) rather than from a colour typed here.
+	# WHAT IS RUNNING, THEN WHAT HAS STOPPED, both above the scroll and never inside it (ASSA-133).
+	# Running first because it is the thing you started and are waiting on; stopped is what you have
+	# to go and deal with, and it keeps its place directly over the sections you deal with it in.
+	# Each is a `PanelContainer` so the block reads as its own surface, from the theme (ASSA-116)
+	# rather than from a colour typed here.
+	_running_box = PanelContainer.new()
+	_running.add_theme_constant_override("separation", 2)
+	_running_box.add_child(_running)
+	chrome.add_child(_running_box)
 	_halt_box = PanelContainer.new()
 	_halt.add_theme_constant_override("separation", 2)
 	_halt_box.add_child(_halt)
@@ -489,38 +516,26 @@ func _build_ui() -> void:
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	column.add_theme_constant_override("separation", 10)
 	scroll.add_child(column)
-	# THE CRAFTING MENU IS THE FIRST SECTION, and it is built by hand rather than by the loop below
-	# because it is the only section with three parts in a fixed order: the heading, the running
-	# craft, the toggle, then the rows (ASSA-88).
+	# **A SECTION MAY NOT SIT ABOVE THE SECTION IT IS DERIVED FROM** (ASSA-133, Maren's ruling 2).
+	# The crafting menu is generated from your pack -- `debug::make_offers` iterates your stacks --
+	# and it grows FASTER than its source: one stack of refined produces five part rows plus a gear.
+	# Maren measured it on the real window: across one craft session `make` grew +198px and pushed
+	# `you` 148px past the BOTTOM of the window, mid-row, during the one minute you are crafting from
+	# the pack it was built out of. A derived list that outgrows its source and sits on top of it will
+	# always be the thing that pushes the source off the bottom.
 	#
-	# FIRST, FOR THE RUNNING CRAFT'S SAKE. Maren ruled the craft line sits at the head of this menu
-	# and is visible whatever the menu's open state; the menu being the top section means that line
-	# is also the one the scroll box is least likely to have carried off the bottom of the window.
-	# That is as far as placement can go without a second always-visible surface, which the status
-	# line already is and already has a job (refusals).
-	var make_heading := Label.new()
-	make_heading.text = "make"
-	make_heading.theme_type_variation = &"Heading"
-	column.add_child(make_heading)
-	_crafting = _note("")
-	# **AN EMPTY LINE STILL COSTS A ROW AND A GAP, WHICH IS MOST OF MAREN'S 53px VOID** (ASSA-134).
-	# She measured a 53px blank run between the `make` heading and its own toggle on `01-join.png` and
-	# did not diagnose it; measured here rather than taken from her guess (she suspected the hidden
-	# menu was still taking layout space, which it is not). A `Label` with `text == ""` reports a full
-	# line of minimum height, and a `VBoxContainer` child costs a `separation` whether or not it draws
-	# anything -- so the running-craft line and the chosen-parts box together bought ~48px of nothing
-	# on the one screen where neither can ever have content.
+	# So the order is you -> do -> make -> bench -> rocks -> cursor -> event log, and `make` is built
+	# in the loop below with the others instead of by hand ahead of them. `do` keeps its place above
+	# `make` because it is derived from the TILE, not from the pack, and it is 51px.
 	#
-	# `_refresh` sets this every tick (`visible = text != ""`), so the only state this line changes is
-	# the one before the first refresh -- which is exactly the screen a stranger reads.
-	_crafting.visible = false
-	column.add_child(_crafting)
-	column.add_child(_assembling)
-	# NO FONT SIZE HERE. It is a Button, and how big a Button's label is now comes from the one
-	# theme (ASSA-116) rather than from the eight call sites that used to decide it by hand.
+	# THE RUNNING CRAFT IS NO LONGER HERE AT ALL. It was the head of this menu; it is now a line in
+	# the chrome's running block with mining and assaying (ruling 1, and `_running` above).
+	#
+	# WHAT THIS DOES NOT FIX, in Maren's words, so a green shot is not read as a solved column: every
+	# menu row wraps to two lines because it repeats the material, and the panel still wants ~1746px
+	# in a 566px clip. The reorder moves the loss to the section that can afford it; it does not
+	# remove it.
 	_make_toggle.pressed.connect(func(): _show_make(not _make_shown))
-	column.add_child(_make_toggle)
-	column.add_child(_make)
 	# "event log", NOT "last tick" (Maren, ASSA-116 finding 4b/4c). Two defects in one word: the
 	# switch offered an "event log" and the section called itself something else, so even having
 	# scrolled to it you would not know you had found what you asked for -- and `LOG_LINES` keeps the
@@ -538,23 +553,41 @@ func _build_ui() -> void:
 	# the sentence `_detail` prints in that case ("no world is being simulated") is the surface that
 	# says so, and a frozen readout beside it is stale, not wrong.
 	_cursor.text = AssayHud.quiet_cursor_line()
-	for part in [["you", _carrying], ["do", _actions], ["bench", _bench], ["rocks", _species],
-			["cursor", _cursor], ["event log", _log]]:
+	# EVERY SECTION IN ONE LIST, IN THE ORDER MAREN RULED. `make` used to be built by hand above this
+	# loop because it is the only section with more than one body -- the chosen-parts box, its toggle
+	# and the rows. A section whose ORDER is the whole point of the item should not be the one section
+	# whose position is written somewhere else, so the loop takes a list of bodies and `make` joins it.
+	var sections: Array[Array] = [
+		["you", [_carrying] as Array[Control]],
+		["do", [_actions] as Array[Control]],
+		["make", [_assembling, _make_toggle, _make] as Array[Control]],
+		["bench", [_bench] as Array[Control]],
+		["rocks", [_species] as Array[Control]],
+		["cursor", [_cursor] as Array[Control]],
+		["event log", [_log] as Array[Control]],
+	]
+	for part in sections:
 		var heading := Label.new()
 		heading.text = String(part[0])
 		heading.theme_type_variation = &"Heading"
 		column.add_child(heading)
+		var bodies: Array[Control] = part[1]
 		# HELD, BECAUSE A HIDDEN SECTION WITH A VISIBLE HEADING IS A LABELLED EMPTY GAP. The headings
 		# are otherwise anonymous on purpose; this is the only one anything else has to reach.
-		if part[1] == _log:
+		if bodies.has(_log):
 			_log_heading = heading
-		var body: Control = part[1]
-		if body is Label:
-			(body as Label).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		column.add_child(body)
+		for body in bodies:
+			if body is Label:
+				(body as Label).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			column.add_child(body)
 	# HIDDEN ON FIRST OPEN, and this is the line the whole item is about.
 	_show_log(false)
+	# BOTH CHROME BLOCKS DRAWN ONCE AT BUILD, so the screen a stranger sees before any refresh is the
+	# empty one. A `PanelContainer` is visible by default, and `_refresh_*` only rebuilds when the
+	# shape CHANGES -- so without this the block starts visible-and-empty on the join screen, which
+	# is the labelled-empty-gap defect ASSA-134 spent a whole item on.
 	_refresh_halt()
+	_refresh_running()
 	# AND THE CRAFTING MENU IS OPEN ON FIRST JOIN, which is the opposite call for the opposite
 	# reason: the board asked for a crafting menu, and a menu nobody finds is the clunk restated.
 	_show_make(true)
@@ -616,11 +649,12 @@ func _show_log(shown: bool) -> void:
 ##
 ## THE ROWS ONLY, NEVER THE RUNNING CRAFT. Maren's clause from ASSA-89 applies here as she said:
 ## a craft is a CONDITION, not a moment, so a line a closed menu could hide would not discharge it.
-## `_crafting` is a sibling of this container in the column, not a child, which is what makes that
-## true structurally rather than by me remembering it here.
+## That used to be true because `_crafting` was a sibling of this container rather than a child of
+## it; since ASSA-133 the countdown is not in this column at all -- it is a line in the chrome's
+## `_running` block, above the scroll -- so nothing this function can do reaches it.
 ##
-## THE HEADING STAYS TOO, unlike the log's. "make" over a one-line craft countdown and a control that
-## says what it will show is not a labelled empty gap; "last tick" over nothing was.
+## THE HEADING STAYS TOO, unlike the log's. "make" over a control that says what it will show is not
+## a labelled empty gap; "last tick" over nothing was.
 func _show_make(shown: bool) -> void:
 	_make_shown = shown
 	_make.visible = shown
@@ -959,6 +993,47 @@ func _rebuild_halt(lines: PackedStringArray) -> void:
 		rows.add_child(_note(line))
 
 
+## WHAT IS RUNNING, the same shape as `_refresh_halt` and for the same reason (ASSA-133 ruling 1,
+## ASSA-95's list). Rebuilt only when the set of sentences changes, so the assay's countdown moves
+## the block every tick it is running and nothing else does.
+func _refresh_running() -> void:
+	var lines := PackedStringArray()
+	if _sim != null and _client != null:
+		lines = _sim.activity_lines(_client.player_id)
+	var shape := "\n".join(lines)
+	if shape == _running_showing:
+		return
+	_running_showing = shape
+	_rebuild_running(lines)
+
+
+## THE BLOCK, FROM LINES. Split from `_refresh_running` so a test can drive the drawing without a
+## world in which something is being mined, assayed or crafted.
+##
+## EMPTY IS EMPTY: no heading, no "nothing running", zero pixels. A window with nothing running and
+## nothing stopped looks exactly as it did before this item, which is most windows.
+func _rebuild_running(lines: PackedStringArray) -> void:
+	_clear(_running)
+	_running_lines = null
+	if is_instance_valid(_running_box):
+		_running_box.visible = not lines.is_empty()
+	if lines.is_empty():
+		return
+	# "running" IS THIS CLIENT'S HEADING, beside "stopped"; the lines under it are the sim's words.
+	# No count and no ordering of our own -- `activity_lines` is already in `step`'s system order and
+	# a host that sorted it would be ranking a player's own activities.
+	var heading := Label.new()
+	heading.text = "running"
+	heading.theme_type_variation = &"Heading"
+	_running.add_child(heading)
+	var rows := VBoxContainer.new()
+	rows.add_theme_constant_override("separation", 2)
+	_running_lines = rows
+	_running.add_child(rows)
+	for line in lines:
+		rows.add_child(_note(line))
+
+
 func _say(line: String, level: int) -> void:
 	_status.text = line
 	_status.modulate = AssayHud.status_color(level)
@@ -983,12 +1058,11 @@ func _refresh() -> void:
 	_cursor.text = "%s\n%s" % [source, "\n".join(AssayHud.tile_lines(_sim.tile_at(at)))]
 	_refresh_log()
 	_refresh_halt()
-	# The running craft's countdown, set every refresh for the reason in `_refresh_actions`. The
-	# sentence is the sim's (`sim::debug::crafting_readout`); an empty one means nothing is being made,
-	# and hiding the label rather than printing a blank keeps the panel from gaining a silent gap.
-	if is_instance_valid(_crafting):
-		_crafting.text = _sim.crafting_line(_client.player_id) if _client != null else ""
-		_crafting.visible = _crafting.text != ""
+	# WHAT IS RUNNING, beside what has stopped. This replaces the running-craft label that used to
+	# sit at the head of the crafting menu: `activity_lines` already carries the craft countdown --
+	# `crafting_readout` byte for byte, the same sentence that label printed -- plus the mining and
+	# assaying lines that had no surface at all (ASSA-95). Keeping both would print the craft twice.
+	_refresh_running()
 	# WHICH WORLD, WHICH TICK, WHICH HASH. The seed and the hash are TEXT, because a u64 cannot
 	# survive a GDScript number -- that is not caution, it is measured. The bundle and hash counts are
 	# here because a client that has stopped applying bundles looks exactly like one that is idle.
