@@ -154,6 +154,14 @@ def darken_rim(im, width, k):
     tools use for "a drawn pixel"; the antialiased fringe outside it is already ink.
     Off-image counts as transparent, so a part clipped by its frame edge is rimmed
     along that edge too -- it is a silhouette on screen whatever made it one.
+
+    THE ALPHA MASK THIS WALKS IN FROM IS PARTLY FREESTYLE'S, WHICH IS NOT OBVIOUS
+    (ASSA-172). Measured by rendering the four parts with the outline pass on and off
+    and differencing: 1,203 to 1,577 px per part change ALPHA, so the line extends
+    past the geometry rather than sitting inside it. So the outer rings this darkens
+    are partly line pixels that are already dark, and the ring's effect is smaller
+    than the width suggests. Nobody re-deriving `RIM_PX` or `part_layout.INK_RIM_PX`
+    should assume the mask is the model's own silhouette.
     """
     px = im.load()
     w, h = im.size
