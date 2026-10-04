@@ -2461,6 +2461,45 @@ func test_the_schematic_is_handed_every_building_the_sim_reports() -> bool:
 	return ok
 
 
+## **THE HATCH GOES ON BEFORE THE LETTER, WHICH IS THE ONLY THING KEEPING THE LETTER** (ASSA-199
+## box 6; Cove's constraint is that the hatch repaints only pixels already inside the disc).
+##
+## The hatch is `MAP_BG` strokes across the disc's interior and the species letter sits in the middle
+## of that interior. Nothing clips the strokes away from the glyph -- `hatch_segments` knows about a
+## circle and not about typography -- so what protects the letter is that `_draw` paints it AFTER.
+## Swap those two statements and the letter is cut by two dark bars on every dead end, which is 55.1%
+## of rocks.
+##
+## **A SOURCE ORDER, AND IT IS WHY THIS IS NOT A PIXEL TEST.** `_draw`'s statements run in written
+## order, which is the one frame-ordering fact in here I do not have to ask the engine about. I also
+## tried to measure it on the real shot and could not: glyph-ink pixels inside a hatched disc come
+## out within a few per cent of a clean one at the same radius, but the discs carry DIFFERENT LETTERS
+## (M, H, N, D, P), and a letter's own pixel count swamps the effect. A control would need the same
+## glyph at the same radius with and without the mark. The picture is Maren's box 1.
+func test_the_hatch_is_painted_before_the_species_letter() -> bool:
+	var source := FileAccess.get_file_as_string("res://scripts/main.gd")
+	if source == "":
+		return _fail("could not read res://scripts/main.gd, so nothing was scanned")
+	var hatch_at := source.find("draw_line(strokes[i], strokes[i + 1], ink, thick)")
+	if hatch_at < 0:
+		return _fail("main.gd does not paint `AssayHud.hatch_segments` as lines, so a dead-end rock "
+				+ "is drawn exactly like one that pays (ASSA-199 box 2)")
+	# The glyph is the ONLY `draw_string` in the deposit loop, and it is the one that follows.
+	var glyph_at := source.find("HORIZONTAL_ALIGNMENT_LEFT, -1, glyph, disc[\"ink\"])")
+	if glyph_at < 0:
+		return _fail("main.gd no longer draws the species letter with `disc[\"ink\"]`, so this scan "
+				+ "cannot say whether the hatch goes under it")
+	if hatch_at > glyph_at:
+		return _fail("main.gd paints the hatch AFTER the species letter, so every dead end's letter "
+				+ "is cut by two bars of MAP_BG -- 55.1% of rocks over Maren's 30 seeds")
+	# AND THE FILL IS UNDER BOTH: a hatch painted before the disc it marks is simply invisible.
+	var fill_at := source.find("draw_circle(at, radius, colour)")
+	if fill_at < 0 or fill_at > hatch_at:
+		return _fail("main.gd paints the deposit's fill at %d and the hatch at %d: a hatch under its "
+				+ "own disc marks nothing" % [fill_at, hatch_at])
+	return true
+
+
 ## **A PARTNER ON A LIGHT SPECIES LETTER FUSES WITH IT INTO ONE BLOB** (Maren's second ruling on
 ## ASSA-189, 17:40; Cove's finding, `assa-193-player-vs-mark-on-a-letter-3x.png` panel 3).
 ##
