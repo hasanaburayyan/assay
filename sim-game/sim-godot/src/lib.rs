@@ -959,6 +959,27 @@ fn deposit_dict(deposit: &DepositFacts) -> VarDictionary {
     }
 }
 
+/// ONE PART AS FACTS, AND THE ONLY PLACE THAT SPELLS THEM.
+///
+/// `design_facts` (the bench menu) and `building_fact` (a machine standing on
+/// the map) both need this, and the same argument the header of `building_fact`
+/// makes applies one level down: two copies drift, and the drift here would be
+/// a drill that looks like one material in your bench and another on the
+/// ground. Which sheet, which row and which tint are all read from this.
+fn part_fact(world: &World, part: &sim::assembly::Part) -> PartFacts {
+    let species = world.species(part.material.species);
+    let (low, high) = Assembly::part_mass_range(part, species);
+    PartFacts {
+        kind: part.kind.name().to_string(),
+        species: part.material.species.0 as i64,
+        species_name: species.name().to_string(),
+        symbol: sim::debug::species_symbol(species).to_string(),
+        grade: part.material.grade.letter().to_string(),
+        mass_low: low as i64,
+        mass_high: high as i64,
+    }
+}
+
 fn part_dict(part: &PartFacts) -> VarDictionary {
     vdict! {
         "kind" => &gstring(&part.kind).to_variant(),
@@ -1019,15 +1040,9 @@ fn building_fact(world: &World, building: &sim::building::Building) -> BuildingF
             sim::building::BuildingKind::Machine(machine) => machine
                 .assembly
                 .parts()
-                .map(|part| part.kind.name().to_string())
+                .map(|part| part_fact(world, part))
                 .collect(),
             sim::building::BuildingKind::Smelter(_) => Vec::new(),
-        },
-        grade: match &building.kind {
-            sim::building::BuildingKind::Machine(machine) => {
-                machine.assembly.frame.material.grade.letter().to_string()
-            }
-            sim::building::BuildingKind::Smelter(_) => String::new(),
         },
         species: building.material.species.0 as i64,
         lit: matches!(
@@ -1049,8 +1064,8 @@ fn building_dict(building: &BuildingFacts) -> VarDictionary {
         // field for exactly this: a `Variant` is invisible from Rust, so a
         // packed array of strings is the one shape BOTH `cargo test` and a
         // GDScript guard can read.
-        "parts" => &packed(&building.parts).to_variant(),
-        "grade" => &gstring(&building.grade).to_variant(),
+        "parts" => &building.parts.iter().map(part_dict)
+            .collect::<Array<VarDictionary>>().to_variant(),
         "species" => building.species,
         "lit" => building.lit,
     }
@@ -1221,16 +1236,26 @@ pub struct BuildingFacts {
     /// A smelter is (2, 2) and a machine (1, 1) — `BuildingKind::footprint`, so
     /// a renderer never has to know which kinds are big.
     pub footprint: (i32, i32),
-    /// The part kinds a machine is made of, frame first, in `Assembly::parts()`
+    /// The parts a machine is made of, frame first, in `Assembly::parts()`
     /// order. Empty for a smelter, which is not an assembly. This is here
     /// because a machine has NO single drawing: `art/rig.py` rule 2 is that one
     /// is drawn by overlaying whole part sprites at one frame position, so a
     /// renderer needs the list and the order.
-    pub parts: Vec<String>,
-    /// The grade the part sprites are drawn at (C/B/A), empty for a smelter.
-    /// From the frame's own material, which is the part `Assembly::parts()`
-    /// yields first.
-    pub grade: String,
+    ///
+    /// **THE SAME `PartFacts` THE BENCH MENU GETS** (`DesignFacts::parts`), and
+    /// that is the point of the shape rather than a convenience: the drill in
+    /// your bench and the drill standing on the map are ONE object, so they must
+    /// be drawn from one set of facts or they will eventually disagree about
+    /// what the thing you placed looks like (Maren's ruling 2 on ASSA-131).
+    ///
+    /// It was `Vec<String>` — kind names only — with ONE `grade` beside it taken
+    /// off the frame. That could not draw a machine honestly: a `Part` carries
+    /// its OWN `material` (species and grade), the sim lets you mount a grade-A
+    /// head on a grade-C frame, and the sheets have a row per grade and a tint
+    /// per species. A renderer given one grade and one species would have drawn
+    /// every part of a mixed machine as the frame's material — a picture of a
+    /// machine the player did not build.
+    pub parts: Vec<PartFacts>,
     /// The species of the material it is built from, for anything that tints.
     pub species: i64,
     /// Whether there is a fire burning in it THIS TICK, which is the one thing
@@ -1731,22 +1756,7 @@ impl AssaySim {
             },
             note: sim::debug::verdict_note(&self.world.species, a),
             unassayed,
-            parts: a
-                .parts()
-                .map(|part| {
-                    let species = self.world.species(part.material.species);
-                    let (low, high) = Assembly::part_mass_range(part, species);
-                    PartFacts {
-                        kind: part.kind.name().to_string(),
-                        species: part.material.species.0 as i64,
-                        species_name: species.name().to_string(),
-                        symbol: sim::debug::species_symbol(species).to_string(),
-                        grade: part.material.grade.letter().to_string(),
-                        mass_low: low as i64,
-                        mass_high: high as i64,
-                    }
-                })
-                .collect(),
+            parts: a.parts().map(|part| part_fact(&self.world, part)).collect(),
         }
     }
 
@@ -3420,12 +3430,11 @@ mod tests {
                 "{tile:?} is inside the reported block and holds no building"
             );
         }
-        // A SMELTER IS NOT AN ASSEMBLY, so it has no parts and no grade to draw
-        // them at. Empty rather than a guessed "C": a renderer overlaying a
-        // frame sprite on a smelter would be drawing a machine the game cannot
-        // build, which is the one thing `art/mock_scene.py`'s header forbids.
+        // A SMELTER IS NOT AN ASSEMBLY, so it has no parts to draw. Empty
+        // rather than one guessed frame part: a renderer overlaying a frame
+        // sprite on a smelter would be drawing a machine the game cannot build,
+        // which is the one thing `art/mock_scene.py`'s header forbids.
         assert!(placed.parts.is_empty(), "{:?}", placed.parts);
-        assert!(placed.grade.is_empty(), "{}", placed.grade);
     }
 
     /// **A SMELTER IS DRAWN LIT ONLY WHILE SOMETHING BURNS IN IT**, and the
@@ -3642,9 +3651,90 @@ mod tests {
             .parts()
             .map(|part| part.kind.name().to_string())
             .collect();
-        assert_eq!(placed.parts, want, "frame first, then the mounted parts");
-        assert_eq!(placed.parts[0], "frame", "{:?}", placed.parts);
-        assert_eq!(placed.grade, "B");
+        let got: Vec<String> = placed.parts.iter().map(|p| p.kind.clone()).collect();
+        assert_eq!(got, want, "frame first, then the mounted parts");
+        assert_eq!(got[0], "frame", "{got:?}");
+        assert_eq!(placed.parts[0].grade, "B");
+    }
+
+    /// **EVERY PART OF A PLANTED MACHINE CARRIES ITS OWN MATERIAL**, which is
+    /// the whole of what makes one drawable (ASSA-138).
+    ///
+    /// The part sheets have a ROW PER GRADE and are tinted PER SPECIES, so a
+    /// renderer handed one grade and one species for the whole machine draws a
+    /// mixed drill as if it were all frame — a picture of a machine the player
+    /// did not build. That is exactly what this binding used to hand over:
+    /// `Vec<String>` of kind names, with one `grade` taken off the frame.
+    ///
+    /// **THE FIXTURE IS MIXED ON PURPOSE AND THE TEST IS WORTHLESS WITHOUT IT.**
+    /// `a_machine_carries_its_parts_frame_first…` builds every part from one
+    /// material, so a binding that reported the frame's grade for all of them
+    /// would pass it — the assertion cannot fail, which is not evidence. Here
+    /// the head is a different species AND a different grade from the frame,
+    /// and both facts are asserted to differ before anything else is checked.
+    #[test]
+    fn a_mixed_material_machine_reports_each_parts_own_species_and_grade() {
+        let (mut sim, me) = with_a_player("limpet");
+        assert!(
+            sim.world().species.len() >= 2,
+            "premise: one species in the roster and this test cannot see a mix"
+        );
+        let first = sim.world().species[0].id;
+        let second = sim.world().species[1].id;
+        let frame = sim::assembly::Part::of(
+            sim::assembly::PartKind::Frame(sim::assembly::Mount::Planted),
+            Item::new(sim::ItemKind::Refined, first, sim::Grade::C),
+        );
+        let head = sim::assembly::Part::of(
+            sim::assembly::PartKind::Head,
+            Item::new(sim::ItemKind::Refined, second, sim::Grade::A),
+        );
+        let assembly = sim::assembly::Assembly::new(frame, vec![head]);
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 2, at.y);
+        let roster = sim.world().species.clone();
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.assemblies
+                .push(sim::assembly::Built::new(assembly.clone(), &roster));
+        }
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::PlaceAssembly {
+                assembly: 0,
+                pos: spot,
+            },
+        )]);
+        let facts = sim.building_facts();
+        assert_eq!(facts.len(), 1, "the machine was not placed: {facts:?}");
+        let parts = &facts[0].parts;
+        assert_eq!(parts.len(), 2, "{parts:?}");
+        assert_ne!(
+            parts[0].grade, parts[1].grade,
+            "the fixture stopped being mixed, so this test cannot fail: {parts:?}"
+        );
+        assert_ne!(
+            parts[0].species, parts[1].species,
+            "the fixture stopped being mixed, so this test cannot fail: {parts:?}"
+        );
+        for (part, fact) in assembly.parts().zip(parts.iter()) {
+            assert_eq!(fact.kind, part.kind.name());
+            assert_eq!(fact.grade, part.material.grade.letter().to_string());
+            assert_eq!(fact.species, part.material.species.0 as i64);
+            assert_eq!(
+                fact.species_name,
+                sim.world().species(part.material.species).name(),
+                "the name belongs to the PART's species, not the building's"
+            );
+        }
+        // AND THE SAME MACHINE IN THE BENCH MENU SAYS THE SAME THING. These
+        // are one object (Maren, ASSA-131 ruling 2) and now literally one
+        // function; this is what would catch them being given two again.
+        let held = sim.design(-1, true, &sim::assembly::Built::new(assembly, &roster));
+        assert_eq!(
+            held.parts, *parts,
+            "the bench and the map disagree about a drill"
+        );
     }
 
     #[test]
