@@ -267,6 +267,24 @@ jobs:
       # shipped sprite and restoring it. Stdlib only, ~0.2s.
       - name: A review sheet still matches the art it drew
         run: python3 art/check_review_sources.py
+      # THE ARITHMETIC HALF OF THE WINDOW ALPHA PROBE (ASSA-181, Maren's ruling 15:05).
+      #
+      # `art/window_alpha.py` is NOT a `check_*.py` and most of it still cannot be wired
+      # here: `control` and `field` need a real GUI Godot run, like `grid_findability.py`.
+      # But `--selftest` needs no Godot, no shots and no pip -- it round-trips 8,704
+      # simulated pixels through the client's own blend plus a 32,768-pair coverage sweep,
+      # all stdlib, ~2s. The item's box said "not wired because it needs a GUI run", which
+      # was true of the GUI half and false of this one. THAT IS THE WHOLE REASON FOR THE
+      # STEP: four masks lied in one day and this is the instrument that replaced them, so
+      # it must not rot unnoticed.
+      #
+      # IT IS NOT DECORATION -- all four arms have been proved red. A x10 widening mutant
+      # on `alpha_of` exits 1 on the COVERAGE arm, and COVERAGE is the ONLY arm that
+      # catches it: containment, the colour arm and UNSTABLE all stay green, because
+      # widening a bound cannot make a contained value escape. That is the gate's entire
+      # point.
+      - name: The window alpha probe still does its own arithmetic
+        run: python3 art/window_alpha.py --selftest
       # The client's own GDScript suite gates the bundles below. Editor only:
       # running tests needs no export templates, which is the ~1 GB download.
       - name: Godot (editor only)
