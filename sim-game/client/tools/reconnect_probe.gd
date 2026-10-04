@@ -558,8 +558,16 @@ func _finish_the_silence() -> void:
 				and _quiet_counts.size() >= 2 \
 				and _stage_at_warning == AssayNetClient.Stage.JOINED \
 				and not _band_at_warning
-		_lines.append(("   WARNED at %.1fs (threshold %dms, deadline %.1fs): %d distinct counts %s. "
-				+ "AND NOTHING ELSE MOVED: stage %d at the first warning, join band on screen %s")
+		# **TWO CLOCKS, AND SAYING WHICH IS WHICH, because a run of this printed "WARNED at 1.9s"
+		# against a 2000ms threshold and that reads like a warning firing early.** It is not: this
+		# number starts when the probe SIGSTOPs the relay, and the client's gap starts at the last
+		# bundle it HEARD, which at ten ticks a second can be up to 100ms older. So the honest reading
+		# is "up to one tick under the threshold", and anyone comparing these two numbers without the
+		# clause would file a bug in the client that is really a fact about my stopwatch.
+		_lines.append(("   WARNED %.1fs after the SIGSTOP (the client's own gap starts at the last "
+				+ "bundle it heard, up to one tick/100ms earlier, so this reads under the %dms "
+				+ "threshold by design; deadline %.1fs): %d distinct counts %s. AND NOTHING ELSE "
+				+ "MOVED: stage %d at the first warning, join band on screen %s")
 				% [_first_warning_at, AssayNetClient.QUIET_MS, _warning_deadline,
 				_quiet_counts.size(), _quiet_counts, _stage_at_warning, _band_at_warning])
 	if not _noticed_the_silence:
