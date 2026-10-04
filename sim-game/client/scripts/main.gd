@@ -1786,7 +1786,18 @@ func _note(line: String) -> Label:
 ##
 ## WHAT STILL COSTS MORE THAN ONE ROW: a line the SIM wrote with a newline in it (`event_lines` keeps
 ## them, `_remember_events` stores them whole). Those are the sim's own notes, deliberately two rows,
-## and `AUTOWRAP_OFF` does not touch them -- which is what Maren's arithmetic counted.
+## and `AUTOWRAP_OFF` does not fold them into one -- which is what Maren's arithmetic counted.
+##
+## **BUT EACH OF THOSE ROWS IS CUT TOO, and the first version of this comment did not say so.** I
+## wrote "`AUTOWRAP_OFF` does not touch them", which is true of the row COUNT and false about the
+## text: the trim applies per drawn row, so the sim's second row ends in an ellipsis like any other.
+## Seen in `03-log.png` at 14247 rather than reasoned about — `516 you assembled #0: WILL BREAK ...`
+## keeps its note row, and that row reads `this is over budget: it will break when planted…`. The
+## newest entry is exempt and shows every row of itself whole, which is where `broke` lives.
+##
+## If the sim's own notes should survive a cut that the event line does not, that is a ruling and not
+## a line of mine to change: it would mean a log entry is a list of rows with different rules, and
+## today it is one Label holding one string.
 func _cut_to_one_row(label: Label) -> void:
 	label.autowrap_mode = TextServer.AUTOWRAP_OFF
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
