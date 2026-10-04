@@ -117,6 +117,13 @@ func players() -> Array:
 	return _sim.players() if _sim != null else []
 
 
+## Every building: `id`, `kind`, `pos` (the TOP-LEFT tile of its footprint), `footprint`, `status`,
+## `parts`, `grade`, `species`, `lit`. The list a renderer needs; `tile_at` answers one tile and is
+## blind to the half of a 2x2 smelter that falls outside the window.
+func buildings() -> Array:
+	return _sim.buildings() if _sim != null else []
+
+
 ## Every deposit: `id`, `species`, `center`, `radius`, `amount`, `purity`. Depleted ones are included
 ## with `amount` 0, because the sim keeps them so ids stay stable.
 func deposits() -> Array:

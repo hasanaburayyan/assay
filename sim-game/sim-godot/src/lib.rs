@@ -1002,6 +1002,10 @@ fn building_fact(world: &World, building: &sim::building::Building) -> BuildingF
             sim::building::BuildingKind::Smelter(_) => String::new(),
         },
         species: building.material.species.0 as i64,
+        lit: matches!(
+            world.smelter_state(building),
+            sim::SmelterState::Working { .. }
+        ),
     }
 }
 
@@ -1019,6 +1023,7 @@ fn building_dict(building: &BuildingFacts) -> VarDictionary {
         "parts" => &packed(&building.parts).to_variant(),
         "grade" => &gstring(&building.grade).to_variant(),
         "species" => building.species,
+        "lit" => building.lit,
     }
 }
 
@@ -1194,6 +1199,21 @@ pub struct BuildingFacts {
     pub grade: String,
     /// The species of the material it is built from, for anything that tints.
     pub species: i64,
+    /// Whether there is a fire burning in it THIS TICK, which is the one thing
+    /// the shipped sheet draws two ways (`smelter.png` rows `cold` and `lit`).
+    ///
+    /// A BOOLEAN AND NOT A TEMPERATURE, because the art has two rows and a
+    /// renderer handed a number would have to invent the threshold — a second
+    /// copy of a decision, which is what ASSA-128 cost us a day of false stall
+    /// lines for. `false` for a machine: nothing in the sheets draws one yet.
+    ///
+    /// It is `SmelterState::Working`, the sim's own answer, and that carries
+    /// the sim's own rule that fuel burns only while something is refining
+    /// (`coal_only_burns_while_smelting`): a smelter sitting idle on a banked
+    /// `burn_left` consumes nothing, so it is not a fire. THE EDGE I DID NOT
+    /// RULE ON is `FireTooCool` — lit, too cool, burning nothing — which draws
+    /// cold today and is the Game Director's to settle (ASSA-119 box 11).
+    pub lit: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3250,6 +3270,177 @@ mod tests {
         // build, which is the one thing `art/mock_scene.py`'s header forbids.
         assert!(placed.parts.is_empty(), "{:?}", placed.parts);
         assert!(placed.grade.is_empty(), "{}", placed.grade);
+    }
+
+    /// **A SMELTER IS DRAWN LIT ONLY WHILE SOMETHING BURNS IN IT**, and the
+    /// fire is driven through `step` rather than set here: what is under test
+    /// is that this binding asks `World::smelter_state`, so a `lit` I arranged
+    /// by hand would be the fixture agreeing with me instead of with the rules.
+    ///
+    /// Cove's sheet ships two rows, `cold` and `lit` (ASSA-126), and this is
+    /// the only fact that chooses between them. It is a boolean here for the
+    /// reason on the field: a renderer handed a temperature would have to
+    /// invent the threshold, which is the second copy of a decision that
+    /// ASSA-128 just cost us a day of false stall lines for.
+    ///
+    /// **THE SEAM IS ASSERTED TOO.** Between two units of fuel a smelter spends
+    /// one tick at `burn_left == 0`, which is the tick ASSA-128 announced a
+    /// stall on. If that reached here the smelter would BLINK COLD once per
+    /// unit burned, in the window, for a fire that never went out.
+    #[test]
+    fn a_smelter_reads_lit_only_while_a_fire_is_burning_in_it() {
+        let (mut sim, me) = with_a_player("marlow");
+        let rock = sim.world().species[0].id;
+        let fuel_species = sim.world().species[1].id;
+        // Sheets set on purpose: ore this smelter's walls can take, and a fuel
+        // that lights from a hand spark. Worldgen rolls a roster per seed and
+        // this test is not about which roster it rolled.
+        sim.world.species_mut(rock).sheet = sim::Sheet {
+            density: 50,
+            strength: 50,
+            hardness: 30,
+            heat_tolerance: 60,
+            reactivity: 1,
+            conductivity: 50,
+        };
+        sim.world.species_mut(fuel_species).sheet = sim::Sheet {
+            density: 50,
+            strength: 50,
+            hardness: 30,
+            heat_tolerance: sim::tuning::HAND_SPARK_TEMPERATURE as u8,
+            reactivity: 60,
+            conductivity: 50,
+        };
+        let smelter = Item::new(sim::ItemKind::Smelter, rock, sim::Grade::B);
+        let ore = Item::new(sim::ItemKind::Ore, rock, sim::Grade::A);
+        let fuel = Item::new(sim::ItemKind::Ore, fuel_species, sim::Grade::A);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.inventory.add(smelter, 1);
+            p.inventory.add(ore, 15);
+            p.inventory.add(fuel, 3);
+        }
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 1, at.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place {
+                item: smelter,
+                pos: spot,
+            },
+        )]);
+        let id = sim
+            .world()
+            .building_at(spot)
+            .expect("the smelter was placed")
+            .id;
+
+        assert!(
+            !sim.building_facts()[0].lit,
+            "a smelter with nothing in it is cold: {:?}",
+            sim.building_facts()[0]
+        );
+
+        // **ORE IN AND NOTHING TO BURN: STILL COLD, AND THIS IS THE ARM THE
+        // OBVIOUS MISTAKE FAILS.** `lit = anything but Idle` passes every other
+        // assertion in this test and draws a fire in a smelter that is stalled
+        // asking the player for fuel. Found by mutation, not by inspection.
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Insert {
+                building: id,
+                slot: sim::Slot::Input,
+                item: ore,
+                count: 15,
+            },
+        )]);
+        assert!(
+            sim.building_facts()[0].status.contains("stalled: no fuel"),
+            "premise: this arm is only worth anything if it is a STALL and not idle: {:?}",
+            sim.building_facts()[0].status
+        );
+        assert!(
+            !sim.building_facts()[0].lit,
+            "a smelter stalled for want of fuel has no fire in it: {:?}",
+            sim.building_facts()[0]
+        );
+
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Insert {
+                building: id,
+                slot: sim::Slot::Fuel,
+                item: fuel,
+                count: 3,
+            },
+        )]);
+        assert!(
+            sim.building_facts()[0].lit,
+            "ore and lightable fuel in: {:?}",
+            sim.building_facts()[0]
+        );
+
+        // 300 ticks of refining against 120 per unit of this fuel, so the run
+        // crosses two seams. The premise is asserted from the sim's own output
+        // rather than assumed: a smelter that never lit would also never blink.
+        let mut blinked: Vec<(u64, String)> = Vec::new();
+        let mut cold_after: u32 = 0;
+        for _ in 0..300 {
+            sim.step_with(&[]);
+            let lit = sim.building_facts()[0].lit;
+            let sim::BuildingKind::Smelter(s) = &sim
+                .world()
+                .building(id)
+                .expect("still standing")
+                .kind
+                .clone()
+            else {
+                panic!("the building stopped being a smelter")
+            };
+            // "Still has ore in it" is the premise of the assertion, not the
+            // assertion: a smelter blinking cold with nothing left to refine is
+            // the banked-fire case below, and a different question.
+            match (lit, s.input.is_some()) {
+                (false, true) => {
+                    blinked.push((sim.world().tick, sim.building_facts()[0].status.clone()))
+                }
+                (false, false) => cold_after += 1,
+                _ => {}
+            }
+        }
+        let sim::BuildingKind::Smelter(s) = &sim
+            .world()
+            .building(id)
+            .expect("still standing")
+            .kind
+            .clone()
+        else {
+            panic!("the building stopped being a smelter")
+        };
+        assert!(
+            s.output.is_some_and(|o| o.count >= 10),
+            "premise: it has to have refined a batch, not sat there: {s:?}"
+        );
+        assert!(
+            s.fuel.is_none(),
+            "premise: every unit of fuel burned, so both seams were crossed: {s:?}"
+        );
+        assert_eq!(
+            blinked,
+            Vec::new(),
+            "the fire never went out while there was ore to refine, so the sprite may not blink"
+        );
+        // **AND THE EDGE THE GAME DIRECTOR HAS NOT RULED ON, PINNED SO IT
+        // CANNOT CHANGE QUIETLY.** When the ore runs out the smelter reads cold
+        // while still holding a banked fire — the status line above says
+        // `fuel empty (60 ticks burning at 60) ... idle: nothing to refine`.
+        // That follows from the sim's rule that fuel burns only while
+        // something is refining, and it is one line to reverse if she wants a
+        // smelter to keep glowing between batches.
+        assert!(
+            cold_after > 0,
+            "premise: the run has to outlast the batch for this edge to be pinned at all"
+        );
     }
 
     /// A MACHINE CARRIES ITS PARTS IN `Assembly::parts()` ORDER, FRAME FIRST.

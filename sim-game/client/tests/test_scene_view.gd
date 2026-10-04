@@ -647,3 +647,108 @@ func _tick(screen: Node, count := 1) -> void:
 		_asked.clear()
 		var at: int = screen._sim.tick()
 		screen._client.feed_offline(JSON.stringify({"Tick": {"tick": at, "inputs": inputs}}))
+
+
+## THE PREMISE OF THE THREE BELOW, and the bridge nothing else checks: a building's `kind` from the
+## sim is used as the ASSET NAME, so a sheet renamed or a kind renamed makes the demo's one machine
+## silently invisible again -- which is the state ASSA-119 box 11 was open on for two days.
+func test_the_shipped_manifest_draws_the_building_kinds_the_sim_can_place() -> bool:
+	var manifest := _manifest()
+	if not manifest.has("smelter"):
+		return _fail("the manifest has no `smelter`, so a placed smelter draws nothing at all")
+	var rows := []
+	for row in ((manifest["smelter"] as Dictionary).get("rows", []) as Array):
+		rows.append(String((row as Dictionary).get("name", "")))
+	for want in ["cold", "lit"]:
+		if not rows.has(want):
+			return _fail("`smelter` ships no `%s` row, and the view asks for it by name: %s"
+					% [want, rows])
+	return true
+
+
+func _smelter(at: Vector2i, lit := false) -> Dictionary:
+	return {"kind": "smelter", "pos": at, "footprint": Vector2i(2, 2), "lit": lit}
+
+
+## A SMELTER IS DRAWN ON THE FOUR TILES THE SIM GAVE IT, not on one and not centred on two.
+##
+## `pos` is the TOP-LEFT of the footprint (`Building::pos`), so the drawing's own bottom-right corner
+## has to be the block's: 2 tiles of 32 px across, with the sheet's anchor lifting it clear above.
+## Every number here is read from the footprint and the manifest -- a literal 64 would pass just as
+## well with `TILE_PX` at 16.
+func test_a_placed_smelter_is_drawn_across_its_whole_footprint() -> bool:
+	var at := Vector2i(10, 5)
+	var places := _of(AssayScene.placements(_view({"buildings": [_smelter(at)]})), "smelter")
+	if places.size() != 1:
+		return _fail("one placed smelter should draw once, drew %d" % places.size())
+	var dest: Rect2 = (places[0] as Dictionary)["dest"]
+	var block := Rect2(Vector2(at) * AssayScene.TILE_PX, Vector2(2, 2) * AssayScene.TILE_PX)
+	if dest.size.x != block.size.x:
+		return _fail("drawn %d px wide over a %d px footprint" % [dest.size.x, block.size.x])
+	if dest.end != block.end:
+		return _fail("the drawing's bottom-right is %s, the footprint's is %s" % [dest.end,
+				block.end])
+	# THE SHEET IS TALLER THAN THE FOOTPRINT ON PURPOSE (128x144 for 2x2), so it rises above the
+	# tiles it stands on the way the player sprite does. Equal would mean the anchor was dropped.
+	if dest.position.y >= block.position.y:
+		return _fail("a 2x2 smelter drawn at y %s does not rise above its block at y %s"
+				% [dest.position.y, block.position.y])
+	return true
+
+
+## COLD AND LIT ARE TWO DIFFERENT ROWS OF THE SAME SHEET, and `lit` is the only thing that picks.
+## Asserted on the source rectangle as well as the row name, because a name that resolves to the same
+## strip is a renamed nothing.
+func test_the_fire_in_a_smelter_chooses_the_row() -> bool:
+	var cold := _of(AssayScene.placements(_view({"buildings": [_smelter(Vector2i(10, 5))]})),
+			"smelter")
+	var lit := _of(AssayScene.placements(_view({"buildings": [_smelter(Vector2i(10, 5), true)]})),
+			"smelter")
+	if cold.size() != 1 or lit.size() != 1:
+		return _fail("expected one placement each, got %d and %d" % [cold.size(), lit.size()])
+	if String((cold[0] as Dictionary)["row"]) != "cold":
+		return _fail("an unlit smelter draws row `%s`" % (cold[0] as Dictionary)["row"])
+	if String((lit[0] as Dictionary)["row"]) != "lit":
+		return _fail("a burning smelter draws row `%s`" % (lit[0] as Dictionary)["row"])
+	if (cold[0] as Dictionary)["src"] == (lit[0] as Dictionary)["src"]:
+		return _fail("both rows read the same strip of the sheet: %s"
+				% (cold[0] as Dictionary)["src"])
+	return true
+
+
+## A KIND NO SHEET DRAWS IS SKIPPED, AND THE SCENE AROUND IT STILL DRAWS. A machine has no single
+## frame -- it is parts stacked by `part_layout.stack` -- so today the honest answer is nothing, and
+## the thing that must not happen is a missing asset taking the ground down with it.
+func test_a_building_kind_with_no_sheet_draws_nothing_and_breaks_nothing() -> bool:
+	var view := _view({"buildings": [{"kind": "machine", "pos": Vector2i(10, 5),
+			"footprint": Vector2i(1, 1), "lit": false}]})
+	var all := AssayScene.placements(view)
+	if _of(all, "machine").size() != 0:
+		return _fail("something was drawn for a kind the sheets have no art for")
+	if _of(all, "ground").is_empty():
+		return _fail("a building with no sheet stopped the ground being drawn")
+	return true
+
+
+## WHAT STANDS IN FRONT OF WHAT, AND THE KEY IS THE SIM'S FOOTPRINT. A player standing south of a
+## smelter walks in FRONT of it; one standing north of it is hidden behind. The 2x2 is why this
+## matters: sorting on `pos.y` alone would put a player on the smelter's own southern row behind it,
+## which is the bug that lost the player inside the spawn pad on the first shot of this view.
+func test_a_player_south_of_a_smelter_is_drawn_in_front_of_it() -> bool:
+	var smelter := _smelter(Vector2i(10, 5))
+	for case in [{"at": Vector2(10, 7), "front": true}, {"at": Vector2(10, 3), "front": false}]:
+		var player := {"at": case["at"], "facing": "S", "moving": false}
+		var all := AssayScene.placements(_view({"buildings": [smelter], "players": [player]}))
+		var order := []
+		for place in all:
+			var asset := String((place as Dictionary).get("asset", ""))
+			if asset == "smelter" or asset == "player":
+				order.append(asset)
+		if order.size() != 2:
+			return _fail("expected the smelter and the player, drew %s" % [order])
+		var drawn_last := String(order[1])
+		var want := "player" if bool(case["front"]) else "smelter"
+		if drawn_last != want:
+			return _fail("a player at %s should be drawn %s the smelter; order was %s"
+					% [case["at"], "after" if bool(case["front"]) else "before", order])
+	return true
