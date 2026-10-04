@@ -70,6 +70,24 @@ func _log_text(screen: Node) -> String:
 	return " · ".join(out)
 
 
+## WHETHER A CONTROL WOULD BE DRAWN, asked of the control AND of every ancestor it hangs from.
+##
+## `is_visible_in_tree()` is the engine's answer to this question and cannot be used here: the suite
+## runs inside `SceneTree._initialize`, where a node added under the runner reports
+## `is_inside_tree() == false`, so the engine's answer is about a node that is not yet anywhere.
+##
+## Walking the chain also keeps the test about the CONTROL rather than about the container today's fix
+## happens to hide. A later refactor that moves the hide to a different ancestor still has to pass,
+## and one that hides a control's parent cannot read as "the control is fine".
+func _on_screen(node: Node) -> bool:
+	var walk: Node = node
+	while walk != null:
+		if walk is CanvasItem and not (walk as CanvasItem).visible:
+			return false
+		walk = walk.get_parent()
+	return true
+
+
 func _left_edge_of(node: Node) -> float:
 	var x := 0.0
 	var walk: Node = node
@@ -268,6 +286,13 @@ func test_the_opening_line_offers_the_door_that_needs_nothing_typed() -> bool:
 ## `is_instance_valid`, because a freed node has no parent and a parent-walk over one passes about
 ## nothing -- that has caught me twice.
 ##
+## **IT ASKS THE WHOLE ROW IN TREE ORDER, AND IT USED TO ASK ONE INDEX** -- which my own ASSA-175
+## refactor would have left green while meaning less. Putting the three dead controls in a band kept
+## `get_index() == 0` true of the band's first child, so the old assertion would have passed with the
+## band moved to the END of the row, i.e. with Play solo last on screen. A `BoxContainer` lays its
+## children out in tree order, so the flattened reading below is the left-to-right one the item is
+## about, however many containers it is nested in.
+##
 ## WHAT THIS CANNOT DO IS WATCH THE FOCUS LAND. Measured: inside `SceneTree._initialize`, where this
 ## suite runs, a node added under the root reports `is_inside_tree() == false`, `get_viewport()` is
 ## null, and `grab_focus()` errors out leaving `has_focus()` false. One frame later it works, so the
@@ -275,6 +300,10 @@ func test_the_opening_line_offers_the_door_that_needs_nothing_typed() -> bool:
 func test_play_solo_is_the_first_door_in_the_row() -> bool:
 	var screen := _screen()
 	var button: Button = screen._solo_button
+	var reading := _row_reading(screen._join_band.get_parent())
+	var names := PackedStringArray()
+	for control in reading:
+		names.append(control.get_class() + ":" + String(control.get("text")))
 	var ok := true
 	if not is_instance_valid(button):
 		ok = _fail("the Play solo button does not exist")
@@ -282,13 +311,8 @@ func test_play_solo_is_the_first_door_in_the_row() -> bool:
 		ok = _fail("the Play solo button is not in the screen at all")
 	elif button.text != "Play solo":
 		ok = _fail("the first door reads `%s`" % button.text)
-	elif button.get_index() != 0:
-		var row := button.get_parent()
-		var names := PackedStringArray()
-		for child in row.get_children():
-			names.append(child.get_class() + ":" + String(child.get("text")))
-		ok = _fail("Play solo is child %d of the row, which reads %s"
-				% [button.get_index(), ", ".join(names)])
+	elif reading.is_empty() or reading[0] != button:
+		ok = _fail("the row reads %s, so Play solo is not the first door" % ", ".join(names))
 	elif button.focus_mode != Control.FOCUS_ALL:
 		ok = _fail("the first door cannot take focus, so Enter cannot press it")
 	# THE REQUEST, not the outcome: the outcome needs a tree and a frame, and this suite has neither.
@@ -1179,6 +1203,161 @@ func test_the_view_toggle_is_absent_until_there_is_a_world() -> bool:
 		joined._unhandled_key_input(event)
 		if joined._close_up == was:
 			ok = _fail("V did nothing in a world, so hiding the button took its shortcut with it")
+	joined.queue_free()
+	return ok
+
+
+## **THE BAND LEAVES THE SCREEN IN A WORLD AND IS BACK IN EVERY OTHER STAGE** (ASSA-175).
+##
+## `host` and `name` had exactly one reader each and `_join_address` returns before either unless the
+## stage is IDLE or DEAD, so all three controls sat there for the whole session reading as available.
+##
+## **DRIVEN THROUGH `_process`, NOT THROUGH `_refresh_join_band`.** Calling the function the fix added
+## would pass with nothing in production ever calling it -- a lever that cannot fail -- and the call
+## sits above an early return in `_process` that skips most frames of a session, which is exactly the
+## placement a green test should have to earn.
+##
+## **THE DEAD HALF IS THE ONE WORTH HAVING** (Maren's second ruling). `_join_address` permits a join
+## attempt at stage DEAD, so this band is the client's only reconnect affordance; a predicate like
+## `_sim.running()`, or a latch on the welcome, would hide it at the moment a dropped player reaches
+## for it and would pass a test that only checked the join screen and the world. DEAD is reached here
+## by feeding a real `Refused` frame through the reader, not by assigning the field: `_handle` is what
+## sets DEAD in production.
+##
+## THE TWO LABELS ARE FOUND BY SCANNING THE SCREEN, not by reading them out of the band the fix
+## built. A scan of the band could only ever find what the fix put there; this fails for a third
+## label added elsewhere, and the IDLE count below is what stops "found nothing" reading as "found
+## nothing on screen".
+func test_the_join_band_is_on_screen_in_every_stage_except_joined() -> bool:
+	var ok := true
+	var screen := _screen()
+	screen._process(0.016)
+	for named in [["Play solo", screen._solo_button], ["the host box", screen._host],
+			["the name box", screen._name], ["Join", screen._join_button]]:
+		if not _on_screen(named[1]):
+			ok = _fail("%s is not on the join screen at all" % named[0])
+	var idle_labels := _labels_naming_the_band(screen)
+	if idle_labels.size() < 2:
+		ok = _fail("found %d of the `host`/`name` labels on the join screen, so the scan below"
+				% idle_labels.size() + " could not fail")
+	for label in idle_labels:
+		if not _on_screen(label):
+			ok = _fail("the `%s` label is hidden before a join" % (label as Label).text)
+	screen.queue_free()
+	if not ok:
+		return ok
+
+	# IN A WORLD: the three dead controls and both their labels are gone, and `Join` has stayed.
+	var joined := _joined_screen()
+	if joined._client.stage != AssayNetClient.Stage.JOINED:
+		joined.queue_free()
+		return _fail("the fixture never reached JOINED, so this test asked nothing")
+	joined._process(0.016)
+	for named in [["Play solo", joined._solo_button], ["the host box", joined._host],
+			["the name box", joined._name]]:
+		if _on_screen(named[1]):
+			ok = _fail("%s is still on screen in a world, where nothing reads it" % named[0])
+	for label in _labels_naming_the_band(joined):
+		if _on_screen(label):
+			ok = _fail("the `%s` label is still standing over a hidden field"
+					% (label as Label).text)
+	if not _on_screen(joined._join_button):
+		ok = _fail("hiding the band took `Join` with it, which is the one control that can still act")
+	if not ok:
+		joined.queue_free()
+		return ok
+
+	# AND A DROPPED PLAYER GETS IT BACK.
+	joined._client.feed_offline('{"Refused":{"reason":"the relay went away"}}')
+	if joined._client.stage != AssayNetClient.Stage.DEAD:
+		joined.queue_free()
+		return _fail("the Refused frame did not kill the link, so the DEAD half was never asked")
+	joined._process(0.016)
+	for named in [["Play solo", joined._solo_button], ["the host box", joined._host],
+			["the name box", joined._name], ["Join", joined._join_button]]:
+		if not _on_screen(named[1]):
+			ok = _fail("%s is gone after the link died, and that is the only way back in" % named[0])
+	joined.queue_free()
+	return ok
+
+
+## EVERY CONTROL IN A ROW, FLATTENED INTO THE ORDER IT IS DRAWN IN. Containers are the nesting and
+## not the reading, so they are walked through rather than listed; a `BoxContainer` lays its children
+## out in tree order, which is what makes depth-first order the left-to-right one.
+func _row_reading(row: Node) -> Array:
+	var out := []
+	for child in row.get_children():
+		if child is Container:
+			out.append_array(_row_reading(child))
+		elif child is Control:
+			out.append(child)
+	return out
+
+
+## The `host` and `name` labels, wherever on the screen they are. Text and not identity, because the
+## fix holds neither as a field and a test that reached into the band would be reading the fix back
+## to itself.
+func _labels_naming_the_band(screen: Node) -> Array:
+	var out := []
+	for node in screen.find_children("*", "Label", true, false):
+		if (node as Label).text == "host" or (node as Label).text == "name":
+			out.append(node)
+	return out
+
+
+## **A REFUSED JOIN NAMES THE STAGE THE PLAYER IS ACTUALLY IN** (ASSA-176).
+##
+## Both sites gated on "not IDLE and not DEAD" and said *already joining* for all four remaining
+## stages, so a player ten minutes into a world was told they were joining. After ASSA-175 that is
+## the sentence the only remaining control in the row says.
+##
+## BOTH STAGES ARE REACHED THE REAL WAY. CONNECTING comes from a real `_on_join` at a port nothing
+## listens on -- `connect_to_host` returns OK there, so the stage is CONNECTING with no answer yet --
+## and JOINED from the offline welcome fixture. Neither is an assignment to `stage`, so the test
+## cannot pass by agreeing with a predicate I typed twice.
+##
+## IT ASSERTS BOTH DIRECTIONS, which is what makes a SWAP of the two clauses fail rather than half of
+## it: the joined sentence must not say "joining" and the connecting one must.
+func test_a_refused_join_names_the_stage_the_player_is_in() -> bool:
+	var screen := _screen()
+	# Nothing listens on port 1; the point is the stage, not the answer.
+	screen._host.text = "127.0.0.1:1"
+	screen._on_join()
+	if screen._client.stage != AssayNetClient.Stage.CONNECTING:
+		screen.queue_free()
+		return _fail("the fixture did not reach CONNECTING, so the true sentence was never asked")
+	var ok := true
+	screen._on_join()
+	if not screen._status.text.begins_with("already joining"):
+		ok = _fail("a player mid-handshake is not told they are joining: %s" % screen._status.text)
+	screen._on_play_solo()
+	if not screen._status.text.begins_with("already joining"):
+		ok = _fail("the solo refusal mid-handshake reads `%s`" % screen._status.text)
+	screen.queue_free()
+	if not ok:
+		return ok
+
+	var joined := _joined_screen()
+	if joined._client.stage != AssayNetClient.Stage.JOINED:
+		joined.queue_free()
+		return _fail("the fixture never reached JOINED, so this test asked nothing")
+	joined._on_join()
+	var said: String = joined._status.text
+	if said.contains("joining"):
+		ok = _fail("a player who is IN a world is told they are joining: %s" % said)
+	elif not said.begins_with("already in a world"):
+		ok = _fail("the joined refusal does not name the state the player is in: %s" % said)
+	# THE WAY OUT SURVIVED. A refusal that names the state and drops the remedy is this item's defect
+	# with the halves swapped: no refusal is silent, and none of them is only half a sentence.
+	elif not said.contains("restart the client to change host"):
+		ok = _fail("the joined refusal lost its remedy: %s" % said)
+	if ok:
+		joined._on_play_solo()
+		var solo_said: String = joined._status.text
+		if solo_said.contains("joining"):
+			ok = _fail("the solo refusal in a world still says joining: %s" % solo_said)
+		elif not solo_said.contains("start a world of your own"):
+			ok = _fail("the solo refusal lost its own remedy: %s" % solo_said)
 	joined.queue_free()
 	return ok
 
