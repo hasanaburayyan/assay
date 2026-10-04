@@ -1337,3 +1337,69 @@ func test_an_empty_view_is_silent_and_a_half_built_one_is_not() -> bool:
 	if AssayScene.missing_sim_facts({"world_tiles": Vector2i(96, 64)}).is_empty():
 		return _fail("a view with one key and no world was called complete")
 	return true
+
+
+## **THE CONTRACT IS CHECKED AGAINST THE READS, BECAUSE A LIST IS NOT A MECHANISM.**
+##
+## Found by mutation, after two mutations reddened NOTHING: with `lit` quietly deleted from
+## `SIM_FACTS`, and with the boundary check disabled outright, all 248 tests stayed green. The reason
+## is that both failures look identical from outside -- GDScript's own invalid-key abort empties the
+## frame exactly as the refusal does -- so no test could tell the rule from a crash, and the test
+## that walks `SIM_FACTS` cannot see a fact that is no longer in `SIM_FACTS` to walk.
+##
+## So the list is measured against the thing that depends on it: every `subject["key"]` read in
+## `scene_view.gd` must be a fact the contract declares. Drop `lit` from the list and line ~508 still
+## reads `building["lit"]`, so this reddens. It is Limpet's CO-6 shape -- measure the call that takes
+## the answer, not a second copy of the list.
+func test_every_sim_fact_the_scene_reads_is_one_the_contract_declares() -> bool:
+	var source := FileAccess.get_file_as_string("res://scripts/scene_view.gd")
+	if source.is_empty():
+		return _fail("could not read scene_view.gd, so this guard is vacuous")
+	var subjects := {"view": "view", "building": "building", "player": "player", "tile": "ore tile"}
+	var re := RegEx.new()
+	re.compile("\\b(view|building|player|tile)\\[\"([a-z_]+)\"\\]")
+	var found := 0
+	for m in re.search_all(source):
+		var subject := m.get_string(1)
+		var key := m.get_string(2)
+		var what := String(subjects[subject])
+		found += 1
+		if not (AssayScene.SIM_FACTS[what] as Array).has(key):
+			return _fail(("`%s[\"%s\"]` is read in scene_view.gd and the contract's `%s` list does "
+					+ "not declare it, so the boundary check cannot know it is required and the "
+					+ "renderer reaches a key nobody promised") % [subject, key, what])
+	# NON-VACUITY: zero is the passing answer for the loop above, so a regex that matches nothing
+	# would pass. Eleven sim-fact reads is what the file has; the bar is low enough not to break on
+	# a refactor and high enough that a broken pattern cannot slip under it.
+	if found < 9:
+		return _fail("only %d sim-fact reads found in scene_view.gd; this guard is reading the "
+				% found + "wrong text or the pattern no longer matches the code")
+	return true
+
+
+## **AND NO SIM FACT COMES BACK AS A DEFAULT.** The other half: the guard above is satisfied by a
+## contract that lists everything, and the defect this item is about is the `get(key, default)` FORM
+## -- `get("lit", false)` is what drew every smelter in the world cold. A fact may be indexed, never
+## defaulted, in this file. The manifest, the layout, the camera and `seconds` are the renderer's own
+## and keep their defaults, which is why this scans for the fact NAMES rather than for `get(`.
+func test_no_sim_fact_in_this_file_is_read_with_a_default() -> bool:
+	var source := FileAccess.get_file_as_string("res://scripts/scene_view.gd")
+	var code := ""
+	for line in source.split("\n"):
+		# Comments discuss `get("lit", false)` on purpose: that is the history being recorded.
+		if String(line).strip_edges().begins_with("#"):
+			continue
+		code += String(line) + "\n"
+	for what in AssayScene.SIM_FACTS:
+		for key in AssayScene.SIM_FACTS[what]:
+			var defaulted := '.get("%s"' % String(key)
+			if code.contains(defaulted):
+				# `missing_sim_facts` is the one place that must tolerate absence: it is the
+				# function whose whole job is to report it, and it reads the COLLECTIONS, never a
+				# fact off an entry.
+				if String(key) in ["ore", "players", "buildings", "parts"]:
+					continue
+				return _fail(("scene_view.gd reads the sim fact `%s` as %s..., which invents a "
+						+ "value for state the sim did not send (ASSA-141)") % [String(key),
+						defaulted])
+	return true

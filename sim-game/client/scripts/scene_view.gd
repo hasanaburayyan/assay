@@ -640,7 +640,7 @@ static func _composite_place(manifest: Dictionary, parts: Array, tile: Vector2i,
 	# pack row's items frame is 64x96 at `tiles` [1,1], so reading it here would scale every machine by
 	# the wrong factor and anchor it off its footprint tile.
 	var spec: Dictionary = manifest.get(AssaySprites.ASSEMBLY_SHEET_OF.get(
-			String((parts[0] as Dictionary).get("kind", "")).to_lower(), ""), {})
+			String((parts[0] as Dictionary)["kind"]).to_lower(), ""), {})
 	var frame_px: Array = spec.get("frame_px", [])
 	var tiles: Array = spec.get("tiles", [])
 	if frame_px.size() != 2 or tiles.size() != 2 or float(tiles[0]) <= 0.0:
