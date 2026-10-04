@@ -723,6 +723,54 @@ func test_a_span_bands_while_rough_and_is_one_number_when_exact() -> bool:
 	return true
 
 
+## **A PART ROW NAMES ITS SPECIES IN WORDS AND DOES NOT ALSO STAMP THE LETTER** (ASSA-180, Maren).
+##
+## The row read `handle · V Valium B · mass 148`: the species SYMBOL immediately before the species
+## NAME, which at 1x reads as a stutter rather than a cue. Maren's finding is not the stutter, it is
+## that the comment justifying the letter had expired -- the species panel is in the same column now
+## and draws the map's actual disc, letter and tint beside the name, which teaches the pairing
+## properly. The grade letter is ruled and stays.
+##
+## **THE FIXTURE'S SYMBOL IS `Z`, AND THAT IS THE ONLY REASON THIS TEST CAN FAIL.** The shared
+## `_design()` fixture uses symbol `K` for `Korvite`, so `contains("K")` is blind -- the letter is
+## inside the word. A standalone symbol that appears nowhere else in the row is what makes the
+## absence measurable instead of asserted.
+##
+## **MAREN'S RESERVATION, KEPT:** she declined to rule on a guard pinning "no bare species symbol
+## ANYWHERE outside the species panel", because a guard naming one approved spelling argues with the
+## next wording change. So this is scoped to `design_lines` and to an absence, not a format, and the
+## second half below is what stops it being a licence to delete the wrong field. Box 1's evidence is
+## a real window shot at 1x, not this.
+func test_a_part_row_names_its_species_without_stamping_the_letter() -> bool:
+	var design := _design()
+	var parts: Array = []
+	for entry in design["parts"]:
+		var part: Dictionary = (entry as Dictionary).duplicate()
+		part["symbol"] = "Z"
+		parts.append(part)
+	design["parts"] = parts
+	var rows := 0
+	for line in AssayHud.design_lines(design):
+		var text := String(line)
+		if not text.begins_with("  "):
+			continue
+		rows += 1
+		if text.contains("Z"):
+			return _fail(("a part row still carries the bare species symbol: %s. The species panel "
+					+ "teaches the letter now; this row is the only one in the column spelled with "
+					+ "one, and the pack and crafting rows carry none") % text)
+		# AND IT STILL SAYS THE THINGS THE ROW IS FOR. Dropping a field is a one-word edit and three
+		# of the four words here are load-bearing, so this half is what makes the half above safe.
+		for owed: String in ["Korvite", "B", "mass"]:
+			if not text.contains(owed):
+				return _fail(("a part row stopped naming %s: %s -- the fix was to drop the symbol, "
+						+ "not the species, the grade or the mass") % [owed, text])
+	if rows != 2:
+		return _fail(("the fixture's two parts produced %d indented rows, so the loop above ran on "
+				+ "the wrong lines and the assertion is vacuous") % rows)
+	return true
+
+
 ## THE VERDICT IS THE HEADLINE, so it must not also be buried in the small print: it is its own
 ## label in its own colour, and a second copy in grey would undo that.
 func test_the_verdict_word_is_not_repeated_in_the_small_print() -> bool:
@@ -832,8 +880,23 @@ func test_a_planted_design_shows_no_durability_at_all() -> bool:
 
 ## A PART ROW CARRIES KIND, SPECIES, GRADE AND MASS. Nothing else -- every other sheet property
 ## belongs to the assay panel, and over-showing is how this becomes a spreadsheet. The species comes
-## as letter AND name: the name is the row's own non-colour read, and the letter is the only place a
-## player learns which glyph on the map that name stands for (Maren's ruling, Decision #36).
+## as a NAME, which is the row's own non-colour read.
+##
+## **IT USED TO COME AS LETTER AND NAME** (Decision #36), on the ground that the row was the only
+## place a player saw the glyph and the word together. **Maren withdrew that half herself on
+## ASSA-180:** the species panel is in the same column now and draws the map's own disc, letter and
+## tint beside the name, so the bare `V` in `handle · V Valium B` was a weaker copy of a lesson
+## already on screen, and at 1x it read as a stutter.
+##
+## **THE LITERAL BELOW IS DELIBERATE, AND SIXTEEN LINES ABOVE THIS ONE I SAID THE OPPOSITE** about
+## the durability row -- so the difference is worth naming rather than leaving as an inconsistency.
+## That row prints a sentence the SIM composes, so an assertion spelling it out goes stale the day
+## the sim writes a better one and passes while wrong (it did). This row is composed HERE, out of
+## four named fields, and the claim is "four things and nothing else" -- which only a literal can
+## catch, because an extra field added to the format breaks no per-field check.
+## `test_a_part_row_names_its_species_without_stamping_the_letter` is the other direction: it
+## reddens on a field REMOVED, with a symbol the species name does not contain so the absence is
+## measurable.
 func test_a_part_row_carries_four_things_and_the_rows_sum_to_the_headline() -> bool:
 	var lines := AssayHud.design_lines(_design())
 	var rows := PackedStringArray()
@@ -842,7 +905,7 @@ func test_a_part_row_carries_four_things_and_the_rows_sum_to_the_headline() -> b
 			rows.append(String(line))
 	if rows.size() != 2:
 		return _fail("two parts must give two rows, got %s" % [rows])
-	if rows[0] != "  frame · K Korvite B · mass 18-34":
+	if rows[0] != "  frame · Korvite B · mass 18-34":
 		return _fail("unexpected part row: '%s'" % rows[0])
 	# The sim guarantees the rows add up to the headline; the panel must not lose that by rounding
 	# or by showing one end. Checked here because a reader compares them with their eyes.

@@ -727,16 +727,27 @@ static func design_lines(design: Dictionary) -> PackedStringArray:
 	# (`durability`, `in_hand`), nothing derived, and the rule now holds even if the binding regresses.
 	if design.has("durability") and bool(design.get("in_hand", false)):
 		lines.append("durability %s" % String(design["durability"]))
-	# THE LETTER IS HERE TO TEACH THE MAP, not to carry the row. The row already names its species in
-	# words, which is a stronger non-colour read than a glyph -- so on its own I would have left this
-	# out. Maren's ruling is right for a reason I missed: the letter stamped on a deposit is only
-	# decodable if something, somewhere, says which name it stands for, and this row is the only place
-	# a player sees both. Once per deposit, once per row, never once per tile.
+	# THE SPECIES SYMBOL IS GONE FROM THIS ROW, AND THE COMMENT THAT PUT IT HERE IS THE FINDING
+	# (ASSA-180, Maren's ruling). It used to read `handle · V Valium B · mass 148` and this comment
+	# used to justify the `V`: "the letter stamped on a deposit is only decodable if something,
+	# somewhere, says which name it stands for, and this row is the only place a player sees both."
+	#
+	# THAT WAS TRUE WHEN IT WAS WRITTEN AND IS NOT TRUE NOW. The species panel is in the SAME column,
+	# a scroll below, and `main.gd:1419-1425` draws the map's own disc there with
+	# `sim::debug::species_symbol`, `AssayHud.species_tint` and `glyph_color`: the actual mark, in the
+	# actual colour, beside the name. A bare letter in a text run is a weaker copy of a lesson
+	# already on screen -- and at 1x it read as a stutter, not a cue. It was also the only row in the
+	# column spelled this way: the pack reads `1 × Valium hopper (B)` and the crafting menu reads
+	# `Minyte gear (B) — 2 Minyte refined (B), you have 6`, neither carrying a symbol.
+	#
+	# **KEPT AS A CORRECTION RATHER THAN DELETED, because the expiry is the thing worth recording.**
+	# A justification in a comment is a claim about the rest of the screen, and the rest of the
+	# screen moved under it. The grade letter stays: that is ruled and right (GAME.md §3, "grade is
+	# never read off a part in the world -- it is a letter on the bench and the cursor").
 	for entry in design.get("parts", []):
 		var part: Dictionary = entry
-		lines.append("  %s · %s %s %s · mass %s" % [String(part.get("kind", "?")),
-				String(part.get("symbol", "?")), String(part.get("species_name", "?")),
-				String(part.get("grade", "?")),
+		lines.append("  %s · %s %s · mass %s" % [String(part.get("kind", "?")),
+				String(part.get("species_name", "?")), String(part.get("grade", "?")),
 				span(int(part.get("mass_low", 0)), int(part.get("mass_high", 0)))])
 	return lines
 

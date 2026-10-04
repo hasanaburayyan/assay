@@ -48,22 +48,45 @@ const STANDING := 1
 ## stops a harness that feeds ticks as fast as its loop runs from asking for an infinite rate.
 const MIN_PLAYOUT_STEP := 0.01
 
-## HOW FAR THE CAMERA MAY SIT FROM THE WORLD'S EDGE: nowhere. Clamped, so the view never shows void
-## beside the world. A player walking into the north-west corner stops being centred, which is
-## correct -- there is nothing up there to centre on.
+## HOW FAR THE CAMERA MAY SIT FROM THE WORLD'S EDGE: nowhere to the east, west or south, and
+## `headroom` to the NORTH. Clamped, so the view never shows void beside the world -- except above
+## row 0, where it must (ASSA-184).
+##
+## **WHY THE NORTH IS THE ONE DIRECTION WITH AN EXCEPTION** (Maren's measurement, ASSA-184). The
+## event log is anchored to the map's TOP and sized by `player_ceiling`, which is the lowest a
+## CENTRING camera ever draws your head. A clamp does not centre: it holds the camera still while
+## you keep walking, so the north clamp is the one that slides your body UP the window, into the
+## panel. 6 of 64 rows hid the player completely and 2 more cut them in half -- and 12.5% of every
+## world's deposits are centred in exactly those rows. The south clamp is safe because it pushes you
+## DOWN, away from the panel; `at.x` is safe because the panel owns a whole band, not a corner.
+##
+## **AND WHY A CONSTANT BOUND IS THE ONLY MECHANISM THAT KEEPS THE CENTRING** -- this is a derivation
+## and not a taste call, so it is written down. `_standing` floors a body to a tile; the camera does
+## not. For a body in row N the camera may sit no lower than `N * TILE_PX - overhang - ceiling`, so a
+## bound that tracks N binds through every one of rows 0..7, pins the body at the ceiling and jerks
+## the WORLD 32px per step -- the exact defect the camera exists to prevent (`main.gd`, "the camera is
+## on your drawn position"). A bound at the WORST row instead (`headroom`, from `north_headroom`)
+## binds only while `centre_tile.y <= 1`, so rows 1 and south go back to centring untouched and the
+## void above the world fades in smoothly as you approach the edge instead of appearing at a step.
 ##
 ## A world smaller than the view is CENTRED instead, because clamping has no answer there (the low
 ## bound would be above the high one). Worlds are 96x64 against a 28x18 view today, so this is the
 ## branch that only a test and a tiny world ever take; it is here because `clampf` with a reversed
-## range returns the wrong edge silently.
-static func camera_origin(centre_tile: Vector2, world_tiles: Vector2i, view: Vector2) -> Vector2:
+## range returns the wrong edge silently. **`headroom` applies to it too, through a `minf`**, and
+## that is deliberate: the invariant this function carries is "no camera it returns lifts a body
+## above the ceiling", and an invariant with a footnote is one nobody checks. A 4x4 world is drawn
+## lower than its centre as the price.
+static func camera_origin(centre_tile: Vector2, world_tiles: Vector2i, view: Vector2,
+		headroom: float) -> Vector2:
 	var world := Vector2(world_tiles) * TILE_PX
 	# The CENTRE of the tile, not its corner, or a 28.5-tile-wide view puts the player half a tile
 	# off-centre and the error looks like a rounding bug in the camera.
 	var wanted := (centre_tile + Vector2(0.5, 0.5)) * TILE_PX - view * 0.5
+	var north := -maxf(headroom, 0.0)
 	var at := Vector2.ZERO
 	at.x = (world.x - view.x) * 0.5 if world.x <= view.x else clampf(wanted.x, 0.0, world.x - view.x)
-	at.y = (world.y - view.y) * 0.5 if world.y <= view.y else clampf(wanted.y, 0.0, world.y - view.y)
+	at.y = (minf((world.y - view.y) * 0.5, north) if world.y <= view.y
+			else clampf(wanted.y, north, world.y - view.y))
 	return at
 
 
@@ -589,8 +612,11 @@ static func foot_mark(at: Vector2, origin: Vector2) -> Rect2:
 ## and this.
 static func player_ceiling(manifest: Dictionary, view: Vector2) -> float:
 	var at := Vector2(500.0, 500.0)
+	# HEADROOM 0.0, AND THAT IS NOT A DEFAULT I AM SHRUGGING AT (ASSA-184). `at` is the middle of a
+	# 1000x1000 world, where no bound of any sign binds -- and it must stay that way, because
+	# `north_headroom` is derived from THIS answer and a camera that read it back would be circular.
 	var place := _place(manifest, "player", player_row("", false), Vector2i(at.floor()),
-			camera_origin(at, Vector2i(1000, 1000), view), Color.WHITE, 0.0)
+			camera_origin(at, Vector2i(1000, 1000), view, 0.0), Color.WHITE, 0.0)
 	if place.is_empty():
 		return -1.0
 	# MINUS ONE WHOLE TILE, AND THAT TERM IS THE DEFECT A PANEL SIZED OFF ONE FRAME WOULD HAVE.
@@ -600,6 +626,33 @@ static func player_ceiling(manifest: Dictionary, view: Vector2) -> float:
 	# The highest it reaches is the limit at `frac -> 1`, which is never attained -- so a panel that
 	# ends exactly here touches the body's rectangle at worst and never overlaps it.
 	return (place["dest"] as Rect2).position.y - TILE_PX
+
+
+## HOW FAR ABOVE THE WORLD THE CAMERA MAY GO so that the north clamp cannot slide a body under the
+## panel `player_ceiling` bounds (ASSA-184). Map-local pixels, zero when there is nothing to ask.
+##
+## DERIVED FROM THE TWO FACTS IT DEPENDS ON AND FROM NO LITERAL. A clamped camera sits still, so a
+## body in row N is drawn from `N * TILE_PX - overhang - origin.y`; the worst row is 0, and setting
+## that equal to the ceiling gives `origin.y = -(ceiling + overhang)`. `overhang` is how far the
+## player's sprite reaches ABOVE the tile it stands on, which is a fact about the sheet Cove shipped
+## and not a number for me to hold: `_place` at row 0 with no camera answers it as `-dest.y`.
+##
+## ZERO, NOT A GUESS, WHEN THERE IS NO PLAYER ART. `player_ceiling` already returns -1.0 there and
+## its caller keeps all fourteen log lines; the matching answer here is "do not leave the world",
+## which is exactly today's camera. A missing manifest must not move the camera.
+##
+## 252px ON THE REAL 912x600 MAP, and `camera_origin` explains why that bound binds only in row 0
+## rather than through all eight rows the defect covered.
+static func north_headroom(manifest: Dictionary, view: Vector2) -> float:
+	var ceiling := player_ceiling(manifest, view)
+	if ceiling < 0.0:
+		return 0.0
+	var place := _place(manifest, "player", player_row("", false), Vector2i.ZERO, Vector2.ZERO,
+			Color.WHITE, 0.0)
+	if place.is_empty():
+		return 0.0
+	var overhang := -((place["dest"] as Rect2).position.y)
+	return maxf(0.0, ceiling + overhang)
 
 
 ## A MACHINE'S RECTANGLE, or {} when its parts have no art or the contract will not read.

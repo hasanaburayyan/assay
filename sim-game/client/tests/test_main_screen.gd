@@ -1910,6 +1910,84 @@ func _a_part_stack() -> Dictionary:
 	return {}
 
 
+## **AND THE CAMERA KEEPS YOU BELOW IT IN THE ROWS WHERE THE PANEL IS (ASSA-184).**
+##
+## `test_scene_view.gd::test_the_north_edge_rows_draw_a_whole_body_below_the_panel` owns the
+## geometry, on the real `placements` at four positions in every one of the north rows. **This test
+## owns the WIRING, which is the half that cannot be checked there**: `AssayScene.north_headroom`
+## existing and being right buys nothing until `main.gd` hands it to `camera_origin`, and "I added
+## the function and forgot to pass it" is a defect that leaves every scene-view assertion green.
+##
+## So it drives the real screen at the real 912x600 rect, puts the body in row 0, and reads the
+## camera out of the view the screen actually built. It also pins Maren's rule on ASSA-156, now
+## hers: **the panel's room must not move as you walk.** A camera bound that fixed this by shortening
+## the log would pass every assertion above and fail that one.
+func test_the_camera_keeps_you_below_the_panel_in_the_north_rows() -> bool:
+	var screen := _joined_screen()
+	var map := AssayHud.world_rect()
+	var room := AssayScene.north_headroom(AssaySprites.manifest(), map.size)
+	var id: int = screen._client.player_id
+	if room <= 0.0 or id < 0 or screen._sim.players().is_empty():
+		screen.queue_free()
+		return _fail(("headroom %f, player id %d, %d players: the fixture has nothing to measure "
+				+ "and every assertion below would pass on an empty world")
+				% [room, id, screen._sim.players().size()])
+	if absf(screen._north_room - room) > 0.01:
+		screen.queue_free()
+		return _fail(("the screen built its camera bound as %f and the scene says %f: main.gd is "
+				+ "not reading the same manifest or the same rect the log panel was sized from")
+				% [screen._north_room, room])
+	var ok := true
+	var rooms := {}
+	for row: int in [0, 3, 7, 40]:
+		screen._seen = {id: Vector2i(48, row)}
+		screen._was = screen._seen.duplicate()
+		screen._refresh_world()
+		var view: Dictionary = screen._world.view
+		var players: Array = view.get("players", [])
+		if players.is_empty() or absf(float((players[0] as Dictionary)["at"].y) - float(row)) > 0.01:
+			ok = _fail(("the fixture did not put a body in row %d (view says %s), so this test is "
+					+ "measuring a camera aimed somewhere else")
+					% [row, players if players.is_empty() else players[0]["at"]])
+			break
+		var origin: Vector2 = view["origin"]
+		var want := -room if row <= 1 else (float(row) + 0.5) * AssayScene.TILE_PX - map.size.y * 0.5
+		if absf(origin.y - want) > 0.01:
+			ok = _fail(("standing in row %d the screen's camera is at y %f and ASSA-184 wants %f: "
+					+ "at the old bound of 0 the body is drawn from y %f, behind a panel owning the "
+					+ "top %f of the map") % [row, origin.y, want,
+					float(row) * AssayScene.TILE_PX - AssayScene.TILE_PX,
+					AssayScene.player_ceiling(AssaySprites.manifest(), map.size)])
+			break
+		# THE PANEL, MEASURED A SECOND WAY AT EVERY ROW. Not `_log_room` against itself -- that is a
+		# constant compared to a constant, which is the self-agreeing test I have shipped twice. The
+		# quantity here is how many lines the panel actually BUILT, which is downstream of the room
+		# through a division I am not allowed to ask.
+		var lines := PackedStringArray()
+		for i in 14:
+			lines.append("%d · you mined 20 of Tonore ore (A) at (74, 36)" % (400 + i))
+		screen._events = lines
+		screen._rebuild_log()
+		rooms[row] = [screen._log_room,
+				screen._log.find_children("*", "Label", true, false).size()]
+	if ok:
+		var first: Array = rooms.values()[0]
+		for row: int in rooms:
+			if rooms[row] != first:
+				ok = _fail(("the log changed shape as the body walked: row %d gave %s and the first "
+						+ "row gave %s. Maren's rule on ASSA-156 is that the panel must not move or "
+						+ "resize under your feet, so the CAMERA is the only thing allowed to "
+						+ "answer this") % [row, rooms[row], first])
+				break
+		# WHAT THIS CANNOT SEE, SAID OUT LOUD: both numbers are position-independent BY SIGNATURE --
+		# `player_ceiling` and `north_headroom` take a manifest and a rect and no player at all -- so
+		# this loop cannot fail today and is here to redden the day somebody passes the camera into
+		# either of them. That is a regression guard, not evidence, and box 3 is ticked on the
+		# signature plus the window shot, not on this.
+	screen.queue_free()
+	return ok
+
+
 ## **THE PANEL STOPS ABOVE THE BODY THE CAMERA CENTRES (ASSA-156, box 6).**
 ##
 ## Maren's measurement: seed 777042 with the log open had ZERO player pixels anywhere in the map
