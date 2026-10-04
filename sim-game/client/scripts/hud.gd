@@ -729,8 +729,16 @@ static func no_designs_line() -> String:
 ## The tags a species row shows, in a fixed order so six rows read as a column rather than a jumble.
 ##
 ## `mining` LEADS, because it is the question a player is asking of six rows at once -- can I get
-## anything out of this, and does what I get go anywhere. Lighting follows: it only matters once the
-## answer to the first is yes, and on rock nothing can mine the sim withholds it (ASSA-68).
+## anything out of this, and does what I get go anywhere. `fuel` follows, then lighting: both only
+## matter once the answer to the first is yes, and on rock nothing can mine the sim withholds the
+## lighting (ASSA-68) while the fuel clause carries its own "if you could mine it".
+##
+## THE FUEL TAG NAMES THE GRADE AND THIS FILE DOES NOT KNOW WHAT A GRADE IS (ASSA-143). The row used
+## to show `[hand-minable] [lights from cold]` for a rock whose grade-C deposits will not burn: the
+## binding called `fuel_grade` and kept `.is_some()`, so the threshold was computed and dropped. On
+## 18.8% of the rows this panel tags as fuel the cheapest grade that burns is not C. `sim::debug::
+## fuel_tag` words the whole clause and it is rendered verbatim -- never assembled here from
+## `readings`, which are a 25-wide band until the species is assayed anyway.
 static func species_tags(species: Dictionary) -> PackedStringArray:
 	var tags := PackedStringArray()
 	# NO DEFAULT WORD AND NO FALLBACK. If `mining` ever stopped arriving this row would be one tag
@@ -739,6 +747,13 @@ static func species_tags(species: Dictionary) -> PackedStringArray:
 	var mining := String(species.get("mining", ""))
 	if mining != "":
 		tags.append(mining)
+	# ABSENT RATHER THAN NEGATED, like `lighting`: a rock the sim does not call fuel says nothing
+	# about fuel, so no row is ranked by this panel. There is deliberately no bare `"fuel"` word in
+	# this file to fall back to -- a grade-less fuel tag is the defect ASSA-143 is about, and if the
+	# key stopped arriving the row must lose the claim rather than make it without its condition.
+	var fuel := String(species.get("fuel", ""))
+	if fuel != "":
+		tags.append(fuel)
 	var lighting := String(species.get("lighting", ""))
 	if lighting != "":
 		tags.append(lighting)

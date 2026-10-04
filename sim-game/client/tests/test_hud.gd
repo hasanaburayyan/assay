@@ -819,3 +819,76 @@ func test_a_species_row_carries_the_sims_own_mining_sentence() -> bool:
 		if String(tag).contains("minable"):
 			return _fail("the row invented a mining tag with no sim sentence to render: %s" % [tags])
 	return true
+
+
+## THE FUEL CLAIM ARRIVES WITH ITS GRADE AND THIS CLIENT WORDS NONE OF IT (ASSA-143, boxes 1 and 4).
+##
+## Same proof by contradiction as the mining test above, against the other half of the same defect:
+## the binding called `fuel_grade` and kept `.is_some()`, so the row showed `[hand-minable] [lights
+## from cold]` for a rock whose grade-C deposits will not burn -- 18.8% of the rows this panel tags
+## as fuel. The grade was computed and dropped on the line that computed it.
+##
+## `hand_lit_fuel` is the bool to contradict here. A client that re-derived the claim from it would
+## show the same word for every threshold, which is the shipped defect exactly.
+func test_a_species_row_carries_the_sims_own_fuel_clause() -> bool:
+	# Not one of the sim's four wordings on purpose: what is tested is pass-through, not recognition.
+	var invented := "burns if you sing to it"
+	var tags := AssayHud.species_tags(
+			{"name": "alpha", "hand_lit_fuel": true, "mining": "hand-minable", "fuel": invented})
+	if not Array(tags).has(invented):
+		return _fail("the row dropped the sim's fuel clause and kept its own idea: %s" % [tags])
+
+	# THE CONTRADICTION. `hand_lit_fuel` is false and the sim's clause says this burns at B. A client
+	# reading the bool shows nothing, or shows a bare "fuel"; only one of those is this file's job.
+	var at_b := "fuel at B or better"
+	tags = AssayHud.species_tags(
+			{"name": "beta", "hand_lit_fuel": false, "mining": "hand-minable", "fuel": at_b})
+	if not Array(tags).has(at_b):
+		return _fail("the row preferred the bool to the sim's fuel clause: %s" % [tags])
+	for tag in tags:
+		if String(tag) == "fuel":
+			return _fail("the row composed a grade-less `fuel` from the bool: %s" % [tags])
+
+	# AND FOUR WORDINGS ARE FOUR ROWS (box 4). The whole item is that a rock burning only above C
+	# looked identical on screen to one burning at C.
+	var seen := {}
+	for clause in ["fuel at C or better", at_b, "fuel at A or better",
+			"fuel at C or better if you could mine it"]:
+		var row := AssayHud.species_tags(
+				{"name": "s", "hand_lit_fuel": true, "mining": "hand-minable", "fuel": clause})
+		seen[" ".join(PackedStringArray(row))] = clause
+	if seen.size() != 4:
+		return _fail("four fuel thresholds rendered as %d distinct rows: %s" % [seen.size(), seen])
+
+	# NO CLAIM WHERE THE SIM MADE NONE. A rock the sim does not call fuel arrives with no key, and a
+	# bare "fuel" invented here is the defect this item is about, not a smaller version of it.
+	tags = AssayHud.species_tags(
+			{"name": "gamma", "hand_lit_fuel": true, "mining": "hand-minable"})
+	for tag in tags:
+		if String(tag).contains("fuel"):
+			return _fail("the row invented a fuel tag with no sim clause to render: %s" % [tags])
+
+	# THE ORDER, because three tags on one line read as a sentence and this is the sentence the
+	# table prints: what you can get out of it, at which grade it burns, how it lights.
+	tags = AssayHud.species_tags({
+		"name": "delta", "mining": "hand-minable", "fuel": at_b, "lighting": "lights from cold",
+	})
+	if Array(tags) != ["hand-minable", at_b, "lights from cold"]:
+		return _fail("the fuel clause is not between the mining and lighting tags: %s" % [tags])
+
+	# AND NO GRADE IS DERIVED FROM A READING. The sheet says reactivity 100 -- which is fuel at C by
+	# the sim's own thresholds -- and the clause says A. A client doing its own arithmetic on the
+	# readings would print C here; it would also be printing a number that is a 25-wide band until
+	# the deposit is assayed.
+	var at_a := "fuel at A or better"
+	tags = AssayHud.species_tags({
+		"name": "epsilon", "mining": "hand-minable", "fuel": at_a, "assayed": true,
+		"readings": {"reactivity": "100"},
+	})
+	if not Array(tags).has(at_a):
+		return _fail("the row recomputed the grade from a reading instead of rendering %s: %s"
+				% [at_a, tags])
+	for tag in tags:
+		if String(tag).contains("C or better"):
+			return _fail("the row derived grade C from reactivity 100: %s" % [tags])
+	return true
