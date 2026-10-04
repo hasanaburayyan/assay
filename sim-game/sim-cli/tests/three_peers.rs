@@ -68,6 +68,38 @@ const FUEL_ORE: u32 = 20;
 /// be a minute of nothing happening.
 const MAX_SWINGS: u32 = 25;
 
+/// **THE HOST AND THE PEERS SAMPLE DIFFERENT CLOCKS, AND THE COMPARISON USED TO
+/// NEED THEM TO COINCIDE BY LUCK** (ASSA-100).
+///
+/// The relay autosaves every 20 ticks, so `host_hashes` only ever holds
+/// multiples of 20. A peer reports whatever tick it happens to be on when it
+/// answers `status`, which is an arbitrary number. Dumped from a passing run:
+///
+/// ```text
+/// host  [20, 40, 80, 100, 140, 160, 200, ...]       26 ticks, every one a multiple of 20
+/// peers [11, 14, 15, 22, 29, 34, 39, 42, 52, ...]  103 ticks, covering 13% of the session
+/// ```
+///
+/// Five ticks in common that time. When the intersection came out EMPTY the
+/// test failed with "the relay's own world was never compared against a peer at
+/// the same tick" **while nothing was wrong with the sim** — measured at 1 run
+/// in 10 under deliberate CPU load, and it is a harness defect, not a sim one.
+/// `pump` sleeps 50ms, which at TPS 60 is three ticks no peer reports; starve
+/// the box and that gap widens until the multiples of 20 fall through it.
+///
+/// So the alignment is now ASKED FOR rather than hoped for. In the 9 runs out
+/// of 10 that already had it this costs nothing — the loop never runs a single
+/// extra pump — and in the tenth it pumps with a short nap, which makes the
+/// peers answer on consecutive ticks instead of every third one, until the
+/// relay's own world has been seen at a tick a peer also reported.
+const ALIGN_TIMEOUT: Duration = Duration::from_secs(30);
+/// The nap while hunting an alignment: short enough that peers report
+/// consecutive ticks, rather than `pump`'s 50ms which skips two in three.
+const ALIGN_NAP: Duration = Duration::from_millis(10);
+/// How many `(host tick, peer report)` pairs the session has to produce before
+/// "the host agrees" is a measurement rather than an absence.
+const MIN_HOST_CHECKS: usize = 3;
+
 // ---------------------------------------------------------------------------
 // The session
 // ---------------------------------------------------------------------------
@@ -214,6 +246,10 @@ fn three_peers_on_one_relay_close_the_demo_loop_once_between_them() {
     for _ in 0..12 {
         party.pump();
     }
+    // ...and then until the relay's own world has been seen at a tick a peer
+    // also reported, so the host-against-peer comparison below is ASKED FOR
+    // rather than hoped for (ASSA-100).
+    party.pump_until_host_aligns();
 
     // -----------------------------------------------------------------------
     // What the session proved
@@ -294,9 +330,11 @@ fn three_peers_on_one_relay_close_the_demo_loop_once_between_them() {
         }
     }
     assert!(
-        checked >= 3,
-        "the relay's own world was never compared against a peer at the same \
-         tick ({} host samples, {} peer ticks)\n{diagnostics}",
+        checked >= MIN_HOST_CHECKS,
+        "the relay's own world was compared against a peer at the same tick \
+         only {checked} times, after pumping {ALIGN_TIMEOUT:?} for an alignment \
+         ({} host samples, every one a multiple of the autosave interval; {} \
+         peer ticks)\n{diagnostics}",
         host.len(),
         samples.len()
     );
@@ -542,10 +580,16 @@ impl Party {
     /// Ask every peer where it is, and read the relay's own world. This is the
     /// only clock in this test: everything waits by pumping.
     fn pump(&mut self) {
+        self.pump_for(Duration::from_millis(50));
+    }
+
+    /// [`pump`](Self::pump) with the nap named, so an alignment hunt can sample
+    /// the peers faster than once every three ticks. See [`ALIGN_NAP`].
+    fn pump_for(&mut self, nap: Duration) {
         for i in 0..self.peers.len() {
             self.send(i, "status");
         }
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(nap);
         self.pumps += 1;
         // The autosave is rewritten every 20 ticks; a read that lands mid-write
         // just fails to parse, and the next one will not.
@@ -553,6 +597,34 @@ impl Party {
             && let Ok(w) = World::load_json(&self.save)
         {
             self.host_hashes.insert(w.tick, w.state_hash());
+        }
+    }
+
+    /// How many times the relay's own world and a peer reported the SAME tick.
+    /// Counted exactly the way the assertion counts it, so what this waits for
+    /// and what that demands cannot drift apart.
+    fn host_peer_overlap(&self) -> usize {
+        (0..self.peers.len())
+            .map(|i| {
+                hashes(&self.lines(i))
+                    .into_iter()
+                    .filter(|(tick, _)| self.host_hashes.contains_key(tick))
+                    .count()
+            })
+            .sum()
+    }
+
+    /// Pump until the relay's own world has been seen at a tick a peer also
+    /// reported (ASSA-100; the reasoning is on [`ALIGN_TIMEOUT`]).
+    ///
+    /// **IT RETURNS ON THE DEADLINE RATHER THAN ASSERTING**, on purpose: if the
+    /// two really never meet, the caller's own assertion says so with the
+    /// session transcript attached, which is a far better failure than one
+    /// raised in here with none of that context.
+    fn pump_until_host_aligns(&mut self) {
+        let deadline = Instant::now() + ALIGN_TIMEOUT;
+        while self.host_peer_overlap() < MIN_HOST_CHECKS && Instant::now() < deadline {
+            self.pump_for(ALIGN_NAP);
         }
     }
 
