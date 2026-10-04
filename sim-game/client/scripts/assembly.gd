@@ -142,7 +142,11 @@ static func _placements(parts: Array, offset: Vector2i) -> Array:
 
 ## One part's pixels, from the sheet the pipeline drew, at the row the sim's grade names.
 static func _frame_of(part: Dictionary) -> Image:
-	var icon := AssaySprites.icon_for(part)
+	# THE ASSEMBLY DRAWING, NOT THE PACK ONE (ASSA-121). A part has two pictures: the loose object a
+	# pack slot shows and the registered frame a machine is built out of. `part_layout.json`'s repeat
+	# offset is expressed in THIS sheet's authoring pixels, so compositing the items row instead would
+	# put every repeat in the wrong space.
+	var icon := AssaySprites.assembly_icon_for(part)
 	if icon == null or icon.atlas == null:
 		return null
 	var sheet := icon.atlas.get_image()

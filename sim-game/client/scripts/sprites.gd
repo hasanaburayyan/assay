@@ -33,27 +33,63 @@ const UI_THEME := "res://assets/sprites/ui_theme.json"
 ##
 ## `ore` as an ITEM is `items.png`'s own row, not the `ore.png` world tile: the tile is a rock on the
 ## ground and the item is a thing in a pack, and Cove drew them separately. `refined` is the second
-## row of the same sheet (ASSA-66) and `smelter` the third (ASSA-87). The four part kinds have a row
-## per grade. `gear` has NO art and is listed here as empty on purpose, so the gap is visible in this
-## file rather than looking like a missing case.
+## row of the same sheet (ASSA-66) and `smelter` the third (ASSA-87). `gear` has NO art and is listed
+## here as empty on purpose, so the gap is visible in this file rather than looking like a missing
+## case.
 ##
-## THE GEAR'S GAP IS SETTLED, NOT PENDING. Maren ruled on ASSA-84 that nothing in the game consumes
-## a gear, so a gear icon would be art for a dead recipe. It stays empty until that changes.
+## THE FOUR PART KINDS ARE ALSO `items` ROWS NOW (ASSA-121), AND THAT IS A CHANGE OF SURFACE, NOT OF
+## ART. A pack slot is 32x48 -- portrait, 2:3 -- and an item's authoring frame is 64x96, exactly 2:3,
+## so it fills the plate. A part's ASSEMBLY frame is 128x102, landscape, because `PART_TILES = (2, 1)`
+## exists to hold an assembly JOIN and not to hold an object; fitted into a portrait slot the same
+## four parts filled 4.5-13.3% of it where every item fills 24.7-35.2%. So Maren ruled (ASSA-112) that
+## a part in your pack is a LOOSE THING and gets a row on the items sheet, and Cove drew them: 26.6 /
+## 31.2 / 37.7 / 38.9%, all above the floor ore sets at 24.7. This dictionary is where that ruling
+## reaches the screen.
+##
+## THE ASSEMBLY DRAWINGS DID NOT GO ANYWHERE -- see `ASSEMBLY_SHEET_OF` below, which is the map this
+## one used to be for parts. Two drawings of one object, each for the surface it serves.
 ##
 ## THESE EMPTY ENTRIES ARE DOCUMENTATION, NOT THE GUARD, and that was checked rather than assumed:
 ## before `items` had a second row, pointing `refined` here still drew nothing, because `_row_for`
 ## found no row named for the grade. The row lookup is what actually refuses. Said here so the next
 ## person does not trust the wrong line -- and it is why adding the row to the sheet was not on its
 ## own enough to make the icon appear.
+##
+## THE GEAR'S GAP IS SETTLED, NOT PENDING. Maren ruled on ASSA-84 that nothing in the game consumes
+## a gear, so a gear icon would be art for a dead recipe. It stays empty until that changes.
 const SHEET_OF := {
 	"ore": "items",
 	"refined": "items",
 	"smelter": "items",
+	"head": "items",
+	"handle": "items",
+	"frame": "items",
+	"hopper": "items",
+	"gear": "",
+}
+
+## WHICH SHEET A PART USES WHEN IT IS PART OF A MACHINE, which is a different question (ASSA-121).
+##
+## This is what `SHEET_OF` held for the four part kinds until the pack rows moved to the items sheet,
+## and it has to keep holding it, because the two surfaces want different pictures of the same object:
+##
+##  - a PACK ROW wants the loose drawing -- one object, filling a portrait slot, no join.
+##  - a MACHINE wants the ASSEMBLY drawing -- registered so parts join, at `frame_px` 128x102 with
+##    `anchor_px` and `tiles` that `part_layout.json`'s repeat offset is expressed in. Composite an
+##    items row instead and every repeat offset is in the wrong space and the machine comes apart.
+##
+## SO THE SPLIT IS NOT TIDINESS: before it, `assembly.gd::_frame_of` and `scene_view.gd` reached the
+## assembly sheets THROUGH `SHEET_OF`, so pointing the pack rows at `items` would have silently
+## redrawn every planted machine out of loose-part pictures. ASSA-138's composite path landed between
+## ASSA-121 being filed and being built, which is why the item reads as a four-line remap and is not.
+##
+## ONE ROW PER GRADE here, where the items rows are one row per kind: `_row_for` finds a part's C/B/A
+## row by the grade the sim gave it. Nothing in this file decides which; both arrive decided.
+const ASSEMBLY_SHEET_OF := {
 	"head": "head",
 	"handle": "handle",
 	"frame": "frame",
 	"hopper": "hopper",
-	"gear": "",
 }
 
 
@@ -103,8 +139,23 @@ static func pack_icon_plate() -> Color:
 ## is the one kind that still comes back null. The caller draws a row without an icon, which is why
 ## `stack_line` has to stay a complete sentence.
 static func icon_for(stack: Dictionary) -> AtlasTexture:
+	return _frame_from(stack, SHEET_OF)
+
+
+## THE FRAME FOR ONE PART AS PART OF A MACHINE, or null when we have no art for it.
+##
+## `assembly.gd` and `scene_view.gd` call this and not `icon_for`, because a machine is composited out
+## of the ASSEMBLY drawings -- see `ASSEMBLY_SHEET_OF` for why the two surfaces cannot share one map.
+## A part dict and a pack stack are the same shape, so the body is the same; only the map differs.
+static func assembly_icon_for(part: Dictionary) -> AtlasTexture:
+	return _frame_from(part, ASSEMBLY_SHEET_OF)
+
+
+## One frame out of whichever sheet the given map names for this kind. Shared so the pack row and the
+## machine composite cannot drift in how they slice a sheet -- only in WHICH sheet they slice.
+static func _frame_from(stack: Dictionary, sheets_of: Dictionary) -> AtlasTexture:
 	var kind := String(stack.get("kind", "")).to_lower()
-	var sheet := String(SHEET_OF.get(kind, ""))
+	var sheet := String(sheets_of.get(kind, ""))
 	if sheet == "":
 		return null
 	var sheets := manifest()
