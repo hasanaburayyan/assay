@@ -263,11 +263,14 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 			"asset": String(building.get("kind", "")),
 			"row": "lit" if bool(building.get("lit", false)) else "cold",
 			"tile": at,
-			# NO SPECIES TINT, unlike ore. A deposit is a rock of one material and the tint is how
-			# you tell two patches apart; a smelter is a built thing whose sprite Cove authored
-			# whole, and multiplying it by a species colour would be this file deciding what it
-			# looks like. If the walls should carry their material, that is an art ruling.
-			"tint": Color.WHITE,
+			# THE SPECIES TINT THE ITEM WORE IN YOUR PACK (Maren's ruling 2 on ASSA-131): "the thing
+			# you placed and the thing standing there are one object and must read as one". I had
+			# this as `Color.WHITE` and was wrong -- the sheets are authored species-neutral on
+			# light rock precisely so `modulate` is what makes a thing look like its material
+			# (ASSA-19/20), so leaving it white is not neutrality, it is every smelter in the world
+			# looking like the same material. `tint_for` is the pack's own function, called here
+			# rather than copied, so the two surfaces cannot drift apart.
+			"tint": AssaySprites.tint_for(building),
 			"bottom": float(at.y) + float(foot.y),
 		})
 
