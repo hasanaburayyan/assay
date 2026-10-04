@@ -38,12 +38,57 @@ for i in range(4):  # corner beacons
 # is its own colour gone dark, so it is mixed from the lamp it stops being.
 off = mat(rig.mix_hex("cyan", "gun", 0.78))
 
+
+def lens(t):
+    """A lamp `t` of the way from dead to lit. t=0 IS `off` and t=1 IS
+    `rig.lamp("cyan")`, by construction -- the endpoints are the two poses
+    already on main, so this only adds steps BETWEEN them and does not
+    re-style a surface that was approved.
+
+    The base slides along the same mix the dead lens is made from; the EMISSION
+    stays cyan at every level, because a dimmer beacon is a weaker light of the
+    same colour, not a different-coloured one (`mat`'s own `emit_color` note).
+    """
+    return mat(rig.mix_hex("cyan", "gun", 0.78 * (1 - t)), emit=6 * t, emit_color="cyan")
+
+
+# THE BLINK WAS A SQUARE WAVE AND THAT IS WHY IT STROBED (ASSA-115 box 7, Maren:
+# "a strobe on a 3x3 landmark"). Keyed `(i + f) % 2`, every lamp flipped the FULL
+# range every frame, so frames 0/2 and 1/3 were byte-identical and the sheet was
+# 2 distinct poses alternating at 4 fps -- four hard transitions a second. The
+# area is small (1.3% of the displayed 96x104 moves by more than 24) which is why
+# a pixel count made it look like a sixth of the idle's problem; what reads as a
+# flicker is the SHAPE of the transition, not how much of the frame it covers.
+# Measured at the displayed size, the worst consecutive step was 154 of 255.
+#
+# So: same two poses, CROSS-FADED. One diagonal pair runs the ramp below while the
+# other runs it shifted by two, which makes frames 0 and 2 exactly the two frames
+# that shipped and frames 1 and 3 a new middle where all four lamps sit halfway.
+# A triangle instead of a square wave: the same beacon, half the step, and the
+# light travels across the pad instead of snapping.
+#
+# THE MIDDLE IS 0.10, NOT 0.5, AND THAT IS NOT A TYPO. `t` is not linear in
+# anything a player sees -- emission is a light that clips, so most of the lamp's
+# visible range is spent in the first tenth of `t`. Rendered mean luminance over
+# the 223 lamp pixels, measured rather than assumed:
+#
+#     t     0.00   0.12   0.22   0.32   0.42   0.50   1.00
+#     lum   87.2  157.8  172.2  181.4  187.7  192.3  208.5
+#
+# The midpoint of the two shipped poses is 147.8, which lands at t ~= 0.10. My
+# first pass used 0.5 because it reads as "half", and it bought almost nothing:
+# the step 1.0 -> 0.5 is 16 luminance and 0.5 -> 0.0 is 105, so the flip was
+# still there, just moved. If this ramp ever gains a step, CALIBRATE IT THE SAME
+# WAY -- render a few values of t and read the lamp, do not interpolate t.
+RAMP = (1.0, 0.10, 0.0, 0.10)
+
 asset = rig.Asset("spawn", out, (3, 3), headroom=0.25)
 asset.anim("blink", FRAMES, 4)
 r.frame(3, 3, headroom=0.25)
 for f in range(FRAMES):
     for i, l in enumerate(lamps):
-        l.data.materials[0] = rig.lamp("cyan") if (i + f) % 2 == 0 else off
+        t = RAMP[f] if i % 2 == 0 else RAMP[(f + 2) % FRAMES]
+        l.data.materials[0] = lens(t)
     r.render(asset.path("pad", f))
 asset.add("pad", FRAMES)
 asset.write()
