@@ -23,6 +23,12 @@ const MANIFEST := SPRITES + "manifest.json"
 ## hand: 20 by 10 tiles exactly.
 const WINDOW := Vector2(640.0, 320.0)
 
+## THE RELAY'S OWN TICK PERIOD, in ms: `sim-relay` runs at 10 ticks a second by default and
+## `maren_bundle_gap_probe.gd` measured a real one at p50 100 ms exactly. Only the playout test below
+## uses it, and it is a constant rather than a 100 because the number has a source. See there for why
+## a test about a clock has to feed it wall clock at the rate the game really runs at.
+const RELAY_TICK_MS := 100
+
 var runner = null
 
 
@@ -670,14 +676,22 @@ func test_a_paired_tick_feed_is_drawn_one_whole_segment_at_a_time() -> bool:
 ##
 ## Walked for real through the screen's own click path, so what is checked is the client that ships.
 ##
-## WHY THIS TEST WAITS 20 ms A TICK, which is the only thing ASSA-148 changed about it. The screen no
+## WHY THIS TEST WAITS A TICK OF WALL CLOCK PER TICK, which is the only thing ASSA-148 changed about
+## it -- and `RELAY_TICK_MS` rather than the 20 ms it waited until ASSA-197, which was a flake. The
+## playout clock is rate-ADAPTIVE: it measures the gap between arrivals and divides frame time by it,
+## so feeding ticks five times faster than the relay produces them leaves the clock pinned to the
+## newest position it holds, `from == to`, and nothing tweening. Whether it got there inside twelve
+## ticks depended on how long the surrounding work took -- it failed on CI and passed on this Mac in
+## the same hour, then failed here. A test about a clock has to feed it the rate the game runs at,
+## and that rate has a source (`sim-relay`'s default, measured at p50 100 ms). The screen no
 ## longer advances the drawn segment when a bundle ARRIVES -- it advances it on a playout clock, so
 ## that a pair of bundles landing in the same frame can no longer leave the segment between them
 ## undrawn (a whole-tile teleport, 11 times in the demo walk's 25 steps). A test that feeds twelve
 ## ticks inside one millisecond is therefore asking a clock to move without time passing, and the
 ## honest answer is the one it got: the body has not been drawn anywhere yet. The delay makes this
-## feed what every other input in the game is -- ticks separated by wall clock -- and 20 ms a tick is
-## well inside the queue's depth, so the walk plays out step by step.
+## feed what every other input in the game is -- ticks separated by wall clock, at the rate the relay
+## separates them by -- and twelve ticks is well inside the queue's depth, so the walk plays out step
+## by step.
 func test_a_walking_body_is_drawn_between_two_tiles_the_sim_produced() -> bool:
 	var screen := _joined()
 	if not screen._sim.running():
@@ -692,7 +706,7 @@ func test_a_walking_body_is_drawn_between_two_tiles_the_sim_produced() -> bool:
 	var steps := 0
 	for _i in range(12):
 		_tick(screen)
-		OS.delay_msec(20)
+		OS.delay_msec(RELAY_TICK_MS)
 		screen._refresh_world()
 		var was: Vector2i = screen._was.get(screen._client.player_id, from)
 		var now: Vector2i = screen._seen.get(screen._client.player_id, from)
@@ -1181,16 +1195,116 @@ func test_a_player_south_of_a_smelter_is_drawn_in_front_of_it() -> bool:
 	return true
 
 
+## **A WALKING BODY'S OWN RECTANGLE MOVES WITH IT, SUB-TILE** (ASSA-197, and ASSA-200 is the
+## measurement).
+##
+## THE BUG THIS EXISTS FOR IS THE ONE EVERY TEST IN THIS FILE AGREED WITH FOR A FORTNIGHT. `main.gd`
+## lerped a player's position between the two ticks bracketing it and handed the view a fractional
+## `at`; `AssayScene._place` then took `Vector2i`, so the lerp was floored away before anything
+## reached the screen. The body was drawn on a whole-tile grid while the camera slid continuously
+## under it. Maren's `tools/maren_snap_probe.gd` read the drawn `dest` rather than the lerp's output
+## and found a **32 px peak-to-peak saw-tooth at the tick rate**, the body separating from its own
+## camera-locked foot mark by 34.2 px -- more than a whole tile -- ten times a second. The board
+## called it jumpy three times and no assertion we owned could see it, because every one of them
+## read `view["players"][i]["at"]`, which is the lerp's INPUT to the thing that was broken.
+##
+## SO THIS READS THE `dest` RECT AND NOTHING ELSE, in the two camera cases that fail differently:
+##
+## 1. **A FIXED camera** isolates the renderer: a body a fraction of a tile further east must be
+##    drawn exactly that fraction of 32 px further east, and the ground must not move at all. The
+##    floored code drew 16 of 17 samples in the same place and then jumped a whole tile.
+## 2. **The REAL centring camera**, which is the case a player is actually in: the body is drawn in
+##    the same place every frame and the GROUND slides under it. That is the pairing Maren measured
+##    -- `d(body)` must equal `d(ground)` -- and it is the half that says the picture is right
+##    rather than that the arithmetic is.
+##
+## ONE TEST AND NOT TWO, on the rule that two tests earn their keep only when a mutation separates
+## them: both halves read the single `corner * TILE_PX` in `_place`, so flooring it again reddens
+## both and nothing reddens one.
+func test_a_walking_bodys_own_rectangle_moves_with_it_sub_tile() -> bool:
+	var world := Vector2i(96, 64)
+	var fixed := AssayScene.camera_origin(Vector2(48.0, 32.0), world, WINDOW, 0.0)
+	var samples := 16
+	var first_body := Vector2.ZERO
+	var first_pad := Vector2.ZERO
+	var still_pad := Vector2.ZERO
+	var slid_with_the_walk := 0
+	for step in samples + 1:
+		var frac := float(step) / float(samples)
+		var at := Vector2(48.0 + frac, 32.0)
+		# CASE 1: THE CAMERA DOES NOT MOVE, so every pixel the body moves is the renderer's -- and
+		# the spawn pad is the control that says so, because a fixed camera may not move it at all.
+		var still := _view({"origin": fixed,
+				"players": [{"at": at, "facing": "E", "moving": true}]})
+		var frozen := AssayScene.placements(still)
+		var bodies := _of(frozen, "player")
+		var anchors := _of(frozen, "spawn")
+		if bodies.size() != 1 or anchors.size() != 1:
+			return _fail("a body at %s drew %d sprites and %d spawn pads, not one of each"
+					% [at, bodies.size(), anchors.size()])
+		var body: Vector2 = ((bodies[0] as Dictionary)["dest"] as Rect2).position
+		var anchor: Vector2 = ((anchors[0] as Dictionary)["dest"] as Rect2).position
+		if step == 0:
+			first_body = body
+			still_pad = anchor
+		if anchor.distance_to(still_pad) > 0.01:
+			return _fail(("the spawn tile moved from %s to %s under a camera that did not move, so "
+					+ "case 1 is measuring the whole scene sliding and not the body")
+					% [still_pad, anchor])
+		var want := first_body + Vector2(frac * AssayScene.TILE_PX, 0.0)
+		if body.distance_to(want) > 0.01:
+			return _fail(("%.3f of a tile east of (48, 32) the body's own rect is drawn at %s; a "
+					+ "renderer that moves with its subject draws it at %s. %.1f px of the sim's "
+					+ "position never reached the screen") % [frac, body, want,
+					body.distance_to(want)])
+		# CASE 2: THE REAL CAMERA. The body holds still and the WORLD slides, which is the pair of
+		# facts a player sees.
+		#
+		# THE SPAWN PAD IS THE CONTROL AND THE FIRST `ground` PLACEMENT IS NOT, which this test's own
+		# premise guard caught before its assertion did (15 of 16 steps, not 16). `visible_tiles`
+		# slides with the camera, so `_of(places, "ground")[0]` is a DIFFERENT sim tile once the
+		# window crosses a column and its rect jumps a tile back. The pad is the sim's one spawn
+		# tile, so it is the same tile in every sample -- Maren's "one FIXED ground tile as control".
+		var rolling := _view({"origin": AssayScene.camera_origin(at, world, WINDOW, 0.0),
+				"players": [{"at": at, "facing": "E", "moving": true}]})
+		var places := AssayScene.placements(rolling)
+		var drawn := _of(places, "player")
+		var pads := _of(places, "spawn")
+		if drawn.size() != 1 or pads.size() != 1:
+			return _fail(("under the real camera %s drew %d bodies and %d spawn pads, so there is "
+					+ "nothing to compare") % [at, drawn.size(), pads.size()])
+		var rolled: Vector2 = ((drawn[0] as Dictionary)["dest"] as Rect2).position
+		var pad: Vector2 = ((pads[0] as Dictionary)["dest"] as Rect2).position
+		if step == 0:
+			first_pad = pad
+			continue
+		if pad.distance_to(first_pad - Vector2(frac * AssayScene.TILE_PX, 0.0)) < 0.01:
+			slid_with_the_walk += 1
+		if rolled.distance_to(first_body) > 0.01:
+			return _fail(("under a CENTRING camera a body %.3f of a tile east is drawn at %s and "
+					+ "not at %s, so your body moves across the window while the world stands "
+					+ "still -- the camera and the sprite disagree about where you are")
+					% [frac, rolled, first_body])
+	# THE PREMISE OF CASE 2, AND WITHOUT IT THE ASSERTION ABOVE PASSES ON A FROZEN SCENE. A body that
+	# holds still is only correct because the world moves underneath it by exactly as much as the
+	# body would have; if the world never moved either, nothing was walking and this test would be
+	# green on a renderer that ignores `at` completely.
+	if slid_with_the_walk < samples:
+		return _fail(("the spawn tile slid by exactly the walk under %d of %d sub-tile steps, so "
+				+ "case 2's still body is a frozen scene rather than a camera tracking a walk")
+				% [slid_with_the_walk, samples])
+	return true
+
+
 ## **THE CEILING IS A LIMIT AND NOT A SAFE GUESS** (ASSA-156).
 ##
-## `player_ceiling` subtracts a whole tile from the sprite's top at a whole-tile position, and the
-## reason is a sentence in that function: `_standing` floors a body to a tile, the camera does not,
-## so a body climbs 32px up the window as it crosses a tile and drops back when the floor catches up.
-## That is REASONING, and reasoning in a comment is a claim nobody ran. So this walks a body across
-## one tile in 64 steps, through the real camera and the real `placements`, and asserts the bound
-## from BOTH sides: no step is drawn above the ceiling, and the highest step reaches it to within one
-## step. The second half is the one that matters -- `- TILE_PX * 2.0` would satisfy the first
-## assertion for ever and quietly cost the event log half its lines.
+## `player_ceiling` is the sprite's top at a whole-tile position under a centring camera, and since
+## ASSA-197 that is the whole answer -- it used to subtract a tile to cover the climb a floored body
+## made across one tile. The claim is still REASONING, and reasoning in a comment is a claim nobody
+## ran. So this walks a body across one tile in 64 steps, through the real camera and the real
+## `placements`, and asserts the bound from BOTH sides: no step is drawn above the ceiling, and the
+## highest step reaches it to within one step. The second half is the one that matters -- `- TILE_PX`
+## satisfied the first assertion for ever and quietly cost the event log a line.
 func test_the_player_ceiling_is_the_highest_a_body_is_ever_drawn() -> bool:
 	var ceiling := AssayScene.player_ceiling(_manifest(), WINDOW)
 	if ceiling <= 0.0:
@@ -1238,7 +1352,11 @@ func test_the_player_ceiling_does_not_depend_on_which_interior_tile_you_stand_on
 		if bodies.size() != 1:
 			return _fail("a body at %s drew %d sprites, not one" % [at, bodies.size()])
 		var top: float = ((bodies[0] as Dictionary)["dest"] as Rect2).position.y
-		if absf(top - AssayScene.TILE_PX - ceiling) > 0.01:
+		# EXACTLY THE CEILING, AND IT USED TO BE A TILE BELOW IT. This read
+		# `absf(top - TILE_PX - ceiling)`, and that `TILE_PX` was the floor `_place` has stopped
+		# doing (ASSA-197): a body could be drawn a whole tile higher than its position said, so the
+		# bound had to stand off by one. With the floor gone the bound is the position.
+		if absf(top - ceiling) > 0.01:
 			return _fail(("a body standing on tile %s is drawn from y %f; the ceiling is %f, so the "
 					+ "camera is not centring there and one bound cannot serve every tile")
 					% [at, top, ceiling])
@@ -1268,11 +1386,24 @@ func test_the_north_edge_rows_draw_a_whole_body_below_the_panel() -> bool:
 	if ceiling <= 0.0 or room <= 0.0:
 		return _fail(("ceiling %f and headroom %f: one of them has nothing to say, so every "
 				+ "assertion below is vacuous") % [ceiling, room])
-	# THE CENTRED ANSWER, COMPUTED A SECOND WAY and not read back off the camera: this is the
-	# position an interior body is drawn at, which `test_..._does_not_depend_on_which_interior_tile`
-	# pins to `ceiling + TILE_PX`. Assertion 3 compares against it, so a camera that quietly stopped
-	# centring would fail here rather than agreeing with itself.
-	var centred := ceiling + AssayScene.TILE_PX
+	# THE CENTRED ANSWER, MEASURED THROUGH THE RENDERER AT AN INTERIOR ROW and not read back off
+	# `ceiling`: this is where a body is drawn when no bound of any sign binds, so a camera that
+	# quietly stopped centring fails assertion 3 rather than agreeing with itself.
+	#
+	# IT USED TO BE `ceiling + TILE_PX` AND THE EXPECTATION USED TO SLIDE, `centred - TILE_PX *
+	# quarter * 0.25` -- which is the saw-tooth Maren measured on ASSA-200 written in as the correct
+	# answer. It WAS the correct answer: `_place` floored a body to a tile, so across one row the
+	# sprite stood still while the camera descended 32 px under it, and this test pinned that. The
+	# floor is gone (ASSA-197), so a centring camera draws a body in the same place at every fraction
+	# of every row, and assertion 3 is now one number instead of a ramp.
+	var interior := Vector2(48.0, 32.0)
+	var sample := _of(AssayScene.placements(_view({
+			"origin": AssayScene.camera_origin(interior, world, WINDOW, 0.0),
+			"players": [{"at": interior, "facing": "S", "moving": false}]})), "player")
+	if sample.size() != 1:
+		return _fail(("an interior body at %s drew %d sprites, so there is no centred position to "
+				+ "compare the north band against") % [interior, sample.size()])
+	var centred: float = ((sample[0] as Dictionary)["dest"] as Rect2).position.y
 	for row in 11:
 		for quarter in 4:
 			var at := Vector2(48.0, float(row) + float(quarter) * 0.25)
@@ -1292,12 +1423,11 @@ func test_the_north_edge_rows_draw_a_whole_body_below_the_panel() -> bool:
 				return _fail(("standing at %s your body is drawn y %.1f..%.1f and the map rect is "
 						+ "0..%.1f: part of you is outside the picture") % [at, body.position.y,
 						body.end.y, WINDOW.y])
-			if row >= 1 and absf(body.position.y - (centred - AssayScene.TILE_PX
-					* float(quarter) * 0.25)) > 0.01:
+			if row >= 1 and absf(body.position.y - centred) > 0.01:
 				return _fail(("at %s the body is drawn from y %.1f; a centring camera draws it at "
 						+ "%.1f. The north bound is binding south of row 1, so it pins the body and "
-						+ "the WORLD jerks a tile per step instead") % [at, body.position.y,
-						centred - AssayScene.TILE_PX * float(quarter) * 0.25])
+						+ "the WORLD jerks a tile per step instead")
+						% [at, body.position.y, centred])
 	# AND THE SOUTH CLAMP IS UNTOUCHED, which is the direction that was always safe: it pushes you
 	# DOWN, away from a panel anchored to the top. Rows 59..63 clamp here (320px of a 2048px world).
 	for row in range(54, 64):

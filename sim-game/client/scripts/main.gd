@@ -363,8 +363,11 @@ var _facing := {}
 ## ACROSS the hole -- two tick-times for a two-tick segment, continuous, never a sprint.
 const PLAYOUT_QUEUE := 8
 var _pending: Array[Dictionary] = []
-## WHERE THE CLOCK IS, as a fractional SIM TICK. 0.0 until the first position has been produced.
-var _play_tick := 0.0
+## WHERE THE CLOCK IS, as a fractional SIM TICK. **NEGATIVE UNTIL THE BUFFER HAS FILLED**, which is
+## `AssayScene.playout_at`'s "not started" state and not a tick number -- it was 0.0, and 0.0 is the
+## first tick of a fresh world, so the clock re-initialised itself on every frame of the first second
+## of every session.
+var _play_tick := AssayScene.PLAYOUT_UNSTARTED
 ## When the clock was last advanced, so a frame's own elapsed time drives it.
 var _played_at := 0.0
 ## Whether the buffer ran dry on the last advance: the body is holding on the newest position the sim
