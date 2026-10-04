@@ -1017,6 +1017,53 @@ pub fn deposit_dead_end_note(world: &World, deposit: &OreDeposit) -> Option<Stri
     deposit_reach_note(world, deposit).or_else(|| unsmeltable_note(world, deposit.species))
 }
 
+/// What the GROUND of a tile is, when no deposit is doing the talking.
+/// Empty when there is nothing for it to say.
+///
+/// **"empty ground" CARRIED TWO MEANINGS AND THE READER GOT THE WRONG ONE**
+/// (Game Director, ASSA-146). Every host words a tile the same way — the
+/// deposit, else spawn, else the ground — and then appends the building
+/// standing there as a separate line, written by a separate block. The deposit
+/// case composes ("deposit 11 · Remdornite · 712 ore left" over a smelter reads
+/// correctly); the bare case did not:
+///
+/// ```text
+/// (76, 38) · chunk (4, 2) · 1 from spawn
+/// empty ground
+/// Minyte smelter (B) 0 · walls 29 · in empty · fuel 9 Minyte ore (B) …
+/// ```
+///
+/// One line says the tile is empty, the next names what is standing on it. The
+/// phrase meant *this tile has no deposit* and was read as *nothing is here*,
+/// and a tile with a building is by far the most interesting tile with no
+/// deposit. So the ground line now names its own fact and only its own fact:
+/// **it is about rock, not about occupancy**, and then it cannot contradict a
+/// line it does not know about. Deleting it instead would have paid for that
+/// with the no-deposit fact, on the line the Game Director ruled (ASSA-138) to
+/// be where a player reads a machine's exact capacity.
+///
+/// **IT LIVES HERE BECAUSE THERE WERE THREE OF IT**: the literal was spelled
+/// out in `sim-cli`'s `at`, in the inspector's tile panel and in the Godot
+/// client's cursor section, which is how `building_name` and `fuel_tag` ended
+/// up here too. Hosts render this verbatim; none of them may word the ground.
+///
+/// Empty in the two cases where this function has no business speaking: a tile
+/// off the map (the host says *that* instead, with the bounds), and a tile with
+/// a deposit, whose own line is the ground line there — including on spawn,
+/// which is unchanged, deposit first.
+pub fn ground_note(world: &World, at: TilePos) -> &'static str {
+    if !world.in_bounds(at) || world.deposit_at(at).is_some() {
+        return "";
+    }
+    if at == world.spawn_tile() {
+        // UNCHANGED, AND NOT AN OVERSIGHT: "spawn" says what the tile IS and
+        // claims nothing about being bare, so it was never the contradiction —
+        // and it composed over a building before this function existed.
+        return "spawn";
+    }
+    "no deposit here"
+}
+
 /// Table of every deposit.
 pub fn deposit_table(world: &World) -> String {
     let mut out = format!(

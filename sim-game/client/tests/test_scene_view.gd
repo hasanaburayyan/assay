@@ -1140,3 +1140,72 @@ func test_a_player_south_of_a_smelter_is_drawn_in_front_of_it() -> bool:
 			return _fail("a player at %s should be drawn %s the smelter; order was %s"
 					% [case["at"], "after" if bool(case["front"]) else "before", order])
 	return true
+
+
+## **THE CEILING IS A LIMIT AND NOT A SAFE GUESS** (ASSA-156).
+##
+## `player_ceiling` subtracts a whole tile from the sprite's top at a whole-tile position, and the
+## reason is a sentence in that function: `_standing` floors a body to a tile, the camera does not,
+## so a body climbs 32px up the window as it crosses a tile and drops back when the floor catches up.
+## That is REASONING, and reasoning in a comment is a claim nobody ran. So this walks a body across
+## one tile in 64 steps, through the real camera and the real `placements`, and asserts the bound
+## from BOTH sides: no step is drawn above the ceiling, and the highest step reaches it to within one
+## step. The second half is the one that matters -- `- TILE_PX * 2.0` would satisfy the first
+## assertion for ever and quietly cost the event log half its lines.
+func test_the_player_ceiling_is_the_highest_a_body_is_ever_drawn() -> bool:
+	var ceiling := AssayScene.player_ceiling(_manifest(), WINDOW)
+	if ceiling <= 0.0:
+		return _fail("player_ceiling answered %f for the real manifest, so no panel has a bound"
+				% ceiling)
+	var steps := 64
+	var highest := INF
+	for step in steps:
+		var at := Vector2(48.0, 32.0 + float(step) / float(steps))
+		var origin := AssayScene.camera_origin(at, Vector2i(96, 64), WINDOW)
+		if origin.y <= 0.0 or origin.y >= float(64 * 32) - WINDOW.y:
+			return _fail("the camera clamped at %s, so this test is about the wrong case" % at)
+		var bodies := _of(AssayScene.placements(_view({"origin": origin,
+				"players": [{"at": at, "facing": "S", "moving": true}]})), "player")
+		if bodies.size() != 1:
+			return _fail("a body at %s drew %d sprites, not one" % [at, bodies.size()])
+		var top: float = ((bodies[0] as Dictionary)["dest"] as Rect2).position.y
+		if top < ceiling - 0.01:
+			return _fail(("a body at %s is drawn from y %f, ABOVE the ceiling %f that the log's "
+					+ "panel is sized by: the panel would be covering its head") % [at, top, ceiling])
+		highest = minf(highest, top)
+	var slack := AssayScene.TILE_PX / float(steps) + 0.01
+	if highest - ceiling > slack:
+		return _fail(("the highest a body reaches is y %f and the ceiling claims %f, %f px lower "
+				+ "than anything it bounds: the log's panel is paying for room nothing uses")
+				% [highest, ceiling, highest - ceiling])
+	return true
+
+
+## AND IT IS THE SAME ANSWER WHEREVER YOU STAND, which is the whole reason the log's panel can be
+## sized once at build time instead of being resized as you walk. An unclamped camera is one that is
+## centring; `player_ceiling` therefore takes no tile at all, and this is the assertion that makes
+## that signature honest rather than convenient.
+func test_the_player_ceiling_does_not_depend_on_which_interior_tile_you_stand_on() -> bool:
+	var ceiling := AssayScene.player_ceiling(_manifest(), WINDOW)
+	for at in [Vector2(20.0, 10.0), Vector2(48.0, 32.0), Vector2(70.0, 50.0), Vector2(11.0, 6.0)]:
+		var origin := AssayScene.camera_origin(at, Vector2i(96, 64), WINDOW)
+		var bodies := _of(AssayScene.placements(_view({"origin": origin,
+				"players": [{"at": at, "facing": "S", "moving": false}]})), "player")
+		if bodies.size() != 1:
+			return _fail("a body at %s drew %d sprites, not one" % [at, bodies.size()])
+		var top: float = ((bodies[0] as Dictionary)["dest"] as Rect2).position.y
+		if absf(top - AssayScene.TILE_PX - ceiling) > 0.01:
+			return _fail(("a body standing on tile %s is drawn from y %f; the ceiling is %f, so the "
+					+ "camera is not centring there and one bound cannot serve every tile")
+					% [at, top, ceiling])
+	return true
+
+
+## NO ART, NO CLAIM. The caller reads a negative as "nobody bounds the panel" and keeps all fourteen
+## lines, which is the right failure: a missing manifest must not silently shrink the log to one line.
+func test_the_player_ceiling_refuses_to_answer_without_player_art() -> bool:
+	if AssayScene.player_ceiling({}, WINDOW) >= 0.0:
+		return _fail("player_ceiling invented a bound from an empty manifest")
+	if AssayScene.player_ceiling({"ground": {"tiles": [1, 1]}}, WINDOW) >= 0.0:
+		return _fail("player_ceiling bounded a panel off a manifest with no player in it")
+	return true

@@ -906,8 +906,13 @@ fn at(s: &Session, args: &Args) -> Result<(), String> {
                 .map(|why| format!(" · {why}"))
                 .unwrap_or_default()
         ),
-        None if pos == s.world.spawn_tile() => out!("({x}, {y}): spawn · {place}"),
-        None => out!("({x}, {y}): empty ground · {place}"),
+        // THE SIM WORDS THE GROUND (ASSA-146). It used to be spelled out here,
+        // in the inspector and in the Godot client, and all three said "empty
+        // ground" on a tile with a smelter standing on it two lines up.
+        None => out!(
+            "({x}, {y}): {} · {place}",
+            debug::ground_note(&s.world, pos)
+        ),
     }
     Ok(())
 }

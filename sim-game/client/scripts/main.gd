@@ -101,6 +101,13 @@ var _log_heading: Label = null
 ## what a verdict has to be read off.
 var _log_region: VBoxContainer = null
 var _log_box: PanelContainer = null
+## HOW TALL THE LOG'S PANEL MAY BE, in the map's own pixels, or -1.0 when nothing bounds it
+## (ASSA-156, Maren's measurement). `AssayScene.player_ceiling`: the panel is anchored to the map's
+## top and the camera puts your body in the map's centre, so a panel sized only by its content owns
+## the one tile the camera guarantees you are standing on. Read once, here, because it is a fact
+## about the LAYOUT -- a bound that changed as you walked would be a panel that resized while you
+## read it, which is worse than a short one.
+var _log_room := -1.0
 ## THE BOX THAT SCROLLS THE COLUMN. Held since ASSA-117 and still held, for `window_shot.gd`'s clip
 ## report and for `test_main_screen.gd`'s invariant that the log is NOT inside it. What it is no
 ## longer held for is scrolling to the log: that whole mechanism is gone with ASSA-147, because the
@@ -773,6 +780,9 @@ func _build_ui() -> void:
 ## the log is up, which is the honest version: what you cannot see, you cannot click. The region
 ## itself is `IGNORE`, so the 912x600 of empty space around the box answers nothing.
 func _build_log_over_the_map(world: Rect2) -> void:
+	if _manifest.is_empty():
+		_manifest = AssaySprites.manifest()
+	_log_room = AssayScene.player_ceiling(_manifest, world.size)
 	_log_region = VBoxContainer.new()
 	_log_region.position = world.position
 	_log_region.size = world.size
@@ -1082,10 +1092,20 @@ func _rebuild_log() -> void:
 		return
 	var ink := _log.get_theme_color(&"font_color", &"Label")
 	var muted := _log.get_theme_color(&"font_color", &"Muted")
-	var count := _events.size()
+	# THE OLDEST LINES ARE WHAT THE PLAYER'S OWN BODY COSTS (ASSA-156), and ASSA-117 box 3 is the
+	# argument rather than my preference: newest-first was ruled so that "whatever height the section
+	# is given, the lines you keep are the newest ones". This is that height arriving. The ramp is
+	# over the lines actually drawn, so the oldest one on screen is still the dimmest.
+	var count := mini(_events.size(), _log_lines_that_fit())
 	for age in count:
 		# `_events` is oldest-first (`trimmed_log` keeps the tail), so age 0 is the LAST entry.
-		var line := _note(_events[count - 1 - age])
+		#
+		# **OFF `_events.size()` AND NOT OFF `count`, SINCE ASSA-156.** They were the same number
+		# until the panel got a height bound, and `count - 1 - age` with a count of 8 and fourteen
+		# events starts at the EIGHTH-oldest line and walks away from the newest -- a log showing
+		# older lines in newest-first order, which reads as correct and is the one defect this loop
+		# can have. The newest line is `_events`' last entry whatever the room allows.
+		var line := _note(_events[_events.size() - 1 - age])
 		# ONE ROW EACH, AND THE NEWEST WHOLE (Maren's ruling, ASSA-117 box 8). Age 0 keeps the
 		# wrapping `_note` gives every other readout; everything older is cut to the width it has.
 		if age > 0:
@@ -1098,6 +1118,43 @@ func _rebuild_log() -> void:
 		line.add_theme_color_override(&"font_color",
 				AssayHud.log_line_color(age, count, ink, muted))
 		_log.add_child(line)
+
+
+## HOW MANY LOG LINES THE ROOM ABOVE THE PLAYER HOLDS (ASSA-156). The sum is
+## `AssayHud.log_lines_that_fit`; every term in it is asked of the engine here.
+##
+## EVERY THEME LOOKUP NAMES ITS TYPE, and that is not style. These nodes are built inside
+## `SceneTree._initialize` in the suite and in every probe, where `is_inside_tree()` is false, and a
+## variation chain does not resolve off the tree: measured in `tools/log_room_probe.gd`, the heading
+## answers `font_size` 13 (the plain `Label` default) without the type and 15 with it -- a 4px error
+## per panel, in the direction of a panel taller than it measured. Naming the type is what makes the
+## headless number and the window's number the same number.
+##
+## THE NEWEST LINE IS MEASURED WRAPPED, through the TextServer at the width the panel will give it,
+## because it is the one line that keeps its wrapping (ASSA-117 box 8) and a Label's own minimum
+## height does not know its width yet.
+func _log_lines_that_fit() -> int:
+	if _log_room <= 0.0 or _events.is_empty() or not is_instance_valid(_log_box):
+		return LOG_LINES
+	var style: StyleBox = _log_box.get_theme_stylebox(&"panel")
+	var pad := Vector2.ZERO
+	if style != null:
+		pad = Vector2(style.get_margin(SIDE_LEFT) + style.get_margin(SIDE_RIGHT),
+				style.get_margin(SIDE_TOP) + style.get_margin(SIDE_BOTTOM))
+	var font: Font = _log.get_theme_font(&"font", &"Label")
+	var size := _log.get_theme_font_size(&"font_size", &"Label")
+	if font == null:
+		return LOG_LINES
+	var head: Font = _log_heading.get_theme_font(&"font", &"Heading")
+	var head_size := _log_heading.get_theme_font_size(&"font_size", &"Heading")
+	var inside: Control = _log_box.get_child(0)
+	var chrome := pad.y + float(inside.get_theme_constant(&"separation"))
+	if head != null:
+		chrome += head.get_height(head_size)
+	var newest := font.get_multiline_string_size(_events[_events.size() - 1],
+			HORIZONTAL_ALIGNMENT_LEFT, AssayHud.world_rect().size.x - pad.x, size).y
+	return AssayHud.log_lines_that_fit(_log_room, chrome, newest,
+			font.get_height(size) + float(_log.get_theme_constant(&"separation")), LOG_LINES)
 
 
 ## WHAT HAS STOPPED (ASSA-117, box 2). The sim's standing answer, `sim::debug::halt_lines` through
