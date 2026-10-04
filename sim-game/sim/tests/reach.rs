@@ -269,23 +269,36 @@ fn a_recipe_output_nothing_consumes_says_so() {
     let table = sim::debug::recipe_table();
     let mut unconsumed = 0;
     for r in &sim::RECIPES {
-        let row = table
-            .lines()
-            .find(|l| l.starts_with(r.name))
-            .unwrap_or_else(|| panic!("no row for {}\n{table}", r.name));
+        let lines = catalogue_entry(&table, r.name);
+        let row = lines[0];
+        let said = lines.join("\n");
         let clause = format!("nothing uses a {}", r.output.0.name());
         if sim::recipe::is_consumed(r.output.0) {
             assert!(
-                !row.contains("nothing uses"),
-                "something does consume a {}, so the row must not say otherwise: {row}",
+                !said.contains("nothing uses"),
+                "something does consume a {}, so its entry must not say otherwise: {said}",
                 r.output.0.name()
             );
         } else {
             unconsumed += 1;
             assert!(
-                row.contains(&clause),
-                "nothing consumes a {}, and the row has to say it: {row}",
+                said.contains(&clause),
+                "nothing consumes a {}, and the entry has to say it: {said}",
                 r.output.0.name()
+            );
+            // **ON ITS OWN LABELLED LINE, NEVER ON THE ROW** (ASSA-122). The
+            // row's last column is `needs`, and a permanent dead end is not a
+            // need. These two assertions are the pair: the sentence has to be
+            // somewhere (above) and it may not be there (here).
+            assert!(
+                !row.contains("nothing uses"),
+                "the dead end may not sit in the row's needs cell: {row}"
+            );
+            assert!(
+                lines[1..]
+                    .iter()
+                    .any(|l| l.trim_start().starts_with(sim::debug::DEAD_END_LABEL)),
+                "the dead end gets a line naming its kind, not a bare sentence: {said}"
             );
         }
     }
@@ -299,6 +312,106 @@ fn a_recipe_output_nothing_consumes_says_so() {
         table.contains("nothing uses a gear"),
         "and it is the gear:\n{table}"
     );
+}
+
+/// A recipe's WHOLE ENTRY in the catalogue: its row, plus any lines indented
+/// under it.
+///
+/// ASSA-122 moved the dead end off the row, so "what this recipe says" stopped
+/// being one line. A guard that kept reading only the row would have gone green
+/// the day the sentence vanished entirely, which is the failure the ASSA-59
+/// derivation was written to prevent.
+fn catalogue_entry<'a>(table: &'a str, name: &str) -> Vec<&'a str> {
+    let mut lines = table.lines().skip_while(|l| !l.starts_with(name));
+    let row = lines
+        .next()
+        .unwrap_or_else(|| panic!("no row for {name}\n{table}"));
+    let mut entry = vec![row];
+    entry.extend(lines.take_while(|l| l.starts_with(' ')));
+    entry
+}
+
+/// Where a column starts, counted in CHARACTERS and not bytes: `≥` is three
+/// bytes and the cells are padded by character, so a byte index would judge an
+/// aligned table misaligned the moment one appeared to the left.
+fn column_of(header: &str, title: &str) -> usize {
+    let at = header
+        .find(title)
+        .unwrap_or_else(|| panic!("no {title} column in: {header}"));
+    header[..at].chars().count()
+}
+
+/// **UNDER `needs`, EVERY ENTRY IS SOMETHING THAT MUST BECOME TRUE FOR THE
+/// RECIPE TO WORK** (Game Director, ASSA-122). "hardness ≥ 20" is a condition
+/// a player makes true by finding better rock; "nothing uses a gear" can never
+/// become true by anything they do, and under one header the second read as a
+/// second requirement — the wasted trip ASSA-107's precedence rule exists to
+/// prevent.
+///
+/// **PINNED AS A DERIVATION, like the sentence itself.** The clauses are asked
+/// of the recipe roster rather than written down here, so this covers whatever
+/// the catalogue can say and not just today's gear.
+#[test]
+fn no_needs_cell_states_a_permanent_dead_end() {
+    let table = sim::debug::recipe_table();
+    let needs_col = column_of(table.lines().next().expect("a header"), "needs");
+    let clauses: Vec<String> = sim::RECIPES
+        .iter()
+        .map(sim::debug::recipe_dead_end)
+        .filter(|c| !c.is_empty())
+        .collect();
+    // Non-vacuity: with nothing to misplace this test proves nothing. The day
+    // every output is consumed it should be deleted, not left reading green.
+    assert!(
+        !clauses.is_empty(),
+        "no recipe output is a dead end any more, so this guard is vacuous:\n{table}"
+    );
+    for r in &sim::RECIPES {
+        let row = catalogue_entry(&table, r.name)[0];
+        let cell: String = row.chars().skip(needs_col).collect();
+        for clause in &clauses {
+            assert!(
+                !cell.contains(clause.as_str()),
+                "{:?} is not a condition that can become true, so it may not sit under \
+                 `needs`: {row}",
+                clause
+            );
+        }
+    }
+}
+
+/// **A HEADER THAT PROMISES A SHAPE ITS CELLS BREAK** (ASSA-122, found while
+/// moving the dead end and not reported by anyone).
+///
+/// `makes` was `{:<16}` and `1 refined +1 grade` is 18 characters, so the
+/// resmelt row overflowed and shoved `from`, `ticks`, `where` and `needs` two
+/// places right — on that one row, under a header claiming a grid. The width is
+/// now an exact fit, which is one character from breaking again; this guard and
+/// not the number is the fix.
+#[test]
+fn every_recipe_row_lines_up_with_the_header() {
+    let table = sim::debug::recipe_table();
+    let needs_col = column_of(table.lines().next().expect("a header"), "needs");
+    for r in &sim::RECIPES {
+        let row = catalogue_entry(&table, r.name)[0];
+        let chars: Vec<char> = row.chars().collect();
+        assert!(
+            chars.len() > needs_col,
+            "the {} row stops before its needs cell: {row}",
+            r.name
+        );
+        assert_eq!(
+            chars[needs_col - 1],
+            ' ',
+            "a cell ran into the needs column on the {} row: {row}",
+            r.name
+        );
+        assert_ne!(
+            chars[needs_col], ' ',
+            "the {} row overflowed a cell and shoved `needs` right of the header: {row}",
+            r.name
+        );
+    }
 }
 
 /// `is_consumed` is a claim about the whole item roster, so it is checked

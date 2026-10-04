@@ -1234,10 +1234,41 @@ pub fn species_table(world: &World) -> String {
     out
 }
 
+/// WHAT LABELS A PERMANENT DEAD END IN THE CATALOGUE, so the sentence is not
+/// read as one more thing to go and satisfy.
+///
+/// **UNDER `needs`, EVERY ENTRY MUST BE A CONDITION THAT CAN BECOME TRUE**
+/// (Game Director, ASSA-122). "hardness ≥ 20" is something a player makes true
+/// by finding better rock; "nothing uses a gear" can never become true by
+/// anything they do. Both were in one cell under one header, so the second read
+/// as a second requirement — exactly the wasted trip ASSA-107's precedence rule
+/// exists to prevent. The menu got that right and the catalogue did not.
+///
+/// **WHY ITS OWN LINE AND NOT ANOTHER COLUMN.** `needs` is last precisely
+/// because it is unbounded: the smelter row's cell alone is ~80 characters, so
+/// there is no room for a column after it, and a marked suffix *inside* the
+/// cell is the defect. The line sits under `makes` because that is what the
+/// fact is about — the output nothing consumes, not the input.
+///
+/// The label carries the KIND and the sentence stays verbatim out of
+/// [`recipe_dead_end`], so the clause is still derived from
+/// `recipe::is_consumed` and still disappears on its own the day something
+/// takes a gear. Public because `reach.rs` asserts against the shipped string
+/// rather than a copy of it.
+pub const DEAD_END_LABEL: &str = "dead end: ";
+
 /// Table of every recipe.
 pub fn recipe_table() -> String {
+    // `makes` is 18 and not 16 because `1 refined +1 grade` is exactly 18: at
+    // 16 the resmelt row overflowed its cell and shoved the last four columns
+    // two places right, on that row alone (ASSA-122, found while moving the
+    // dead end). A header that promises a shape its cells break is the same
+    // defect as a header that promises a kind its cells break.
+    // `every_recipe_row_lines_up_with_the_header` is what keeps this honest;
+    // an exact fit is one character from breaking again and the guard, not the
+    // width, is the fix.
     let mut out = format!(
-        "{:<8} {:<16} {:<12} {:>5}  {:<16} needs\n",
+        "{:<8} {:<18} {:<12} {:>5}  {:<16} needs\n",
         "name", "makes", "from", "ticks", "where"
     );
     for r in &RECIPES {
@@ -1312,20 +1343,18 @@ pub fn recipe_table() -> String {
         //
         // On the row and not in the footer, per her ruling: the footer states
         // things true of several recipes, this is true of one, and a reader
-        // scanning for their row never reaches a footer. In `needs` because it
-        // is the last column and has free width — `makes` is `{:<16}` with six
-        // characters used and would push every column right.
+        // scanning for their row never reaches a footer.
+        //
+        // **BUT NOT IN `needs`, WHICH IS WHERE IT SHIPPED** — see
+        // [`DEAD_END_LABEL`]. It gets its own labelled line under the row, so
+        // the row keeps only conditions a player can make true.
         //
         // **NO "YET"**: no accepted decision backs a future use for a gear,
         // and `reach.rs::no_reach_sentence_promises_a_later_unlock` now reads
         // these rows too, so the word cannot creep back in quietly.
-        let dead_end = recipe_dead_end(r);
-        if !dead_end.is_empty() {
-            needs.push(dead_end);
-        }
         let _ = writeln!(
             out,
-            "{:<8} {makes:<16} {from:<12} {:>5}  {station:<16} {}",
+            "{:<8} {makes:<18} {from:<12} {:>5}  {station:<16} {}",
             r.name,
             r.ticks,
             if needs.is_empty() {
@@ -1334,6 +1363,13 @@ pub fn recipe_table() -> String {
                 needs.join(", ")
             }
         );
+        let dead_end = recipe_dead_end(r);
+        if !dead_end.is_empty() {
+            // Indented to the `makes` column by the same width as the name, so
+            // the line is plainly subordinate to the row above it. The recipe
+            // is still listed and still craftable: absence is never a cue.
+            let _ = writeln!(out, "{:<8} {DEAD_END_LABEL}{dead_end}", "");
+        }
     }
     out.push_str(
         "Every recipe keeps the input's species. sort and resmelt raise its grade by one\n(C->B->A) and lose two thirds of the material; by hand: craft sort <ore> [n].\n",
