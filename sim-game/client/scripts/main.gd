@@ -306,14 +306,15 @@ var _facing := {}
 ## trimming during normal play; the queue only ever reaches three when production genuinely outruns
 ## the clock, which on this machine means a test harness feeding ticks as fast as its loop runs.
 ##
-## `_pending_at` IS THE ARRIVAL TIME OF EACH ENTRY and it is load-bearing, not diagnostics: a segment
-## may not start before its own data existed, which is what makes resuming after a dry queue
-## continuous (see `AssayScene.playout`). Two arrays rather than one array of pairs because they are
-## appended and popped in exactly two places, both in this file, and the playout wants the times as a
-## plain `Array[float]` with no per-frame copy.
+## EACH ENTRY CARRIES ITS OWN ARRIVAL TIME (`{"at": seconds, "where": id -> tile}`) and that time is
+## load-bearing, not diagnostics: a segment may not start before its own data existed, which is what
+## makes resuming after a dry queue continuous (see `AssayScene.playout`). It rides INSIDE the entry
+## because I tried it as a second parallel array first and then mutated it -- dropping the pop of the
+## times while keeping the pop of the positions -- and all 229 client tests stayed green. A caller's
+## bookkeeping is invisible to a test of the arithmetic, so the way to close it was to make the two
+## impossible to separate rather than to write a check nobody would run.
 const PLAYOUT_QUEUE := 3
 var _pending: Array[Dictionary] = []
-var _pending_at: Array[float] = []
 var _seg_at := 0.0
 ## When the newest tick landed, and how far apart the last few were, both in seconds of wall clock.
 ##
@@ -2121,11 +2122,9 @@ func _remember_positions() -> void:
 		var player: Dictionary = entry
 		produced[int(player.get("id", -1))] = player.get("pos", Vector2i.ZERO) as Vector2i
 	var now := float(Time.get_ticks_msec()) / 1000.0
-	_pending.append(produced)
-	_pending_at.append(now)
+	_pending.append({"at": now, "where": produced})
 	while _pending.size() > PLAYOUT_QUEUE:
 		_pending.pop_front()
-		_pending_at.pop_front()
 	if _tick_at > 0.0:
 		# SMOOTHED, because the gap between two bundles is a network measurement and a single late
 		# packet should not stretch one step across half a second. A quarter weight settles on a
@@ -2149,11 +2148,14 @@ func _remember_positions() -> void:
 ## THE FACING IS TAKEN AT PROMOTION, so the sprite faces the step it is DRAWING rather than one the
 ## sim has produced but nobody has seen yet. Still the step they actually took, never a target.
 func _advance_playout(now: float) -> float:
-	var cursor := AssayScene.playout(_seg_at, _tick_gap, now, _pending_at, not _seen.is_empty())
+	var arrived: Array[float] = []
+	for entry in _pending:
+		arrived.append(float(entry["at"]))
+	var cursor := AssayScene.playout(_seg_at, _tick_gap, now, arrived, not _seen.is_empty())
 	for _i in range(int(cursor["promote"])):
-		_was = _seen if not _seen.is_empty() else _pending[0]
-		_seen = _pending.pop_front()
-		_pending_at.pop_front()
+		var where: Dictionary = _pending.pop_front()["where"]
+		_was = _seen if not _seen.is_empty() else where
+		_seen = where
 		for id in _seen:
 			if _was.has(id):
 				var way := AssayScene.facing_of((_seen[id] as Vector2i) - (_was[id] as Vector2i))
