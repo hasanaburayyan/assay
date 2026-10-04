@@ -396,6 +396,40 @@ func _report() -> void:
 				% [1000.0 * SHORT_FRAME, int(s["snaps_short"])]
 				+ " (of %d whole-tile steps in all; the rest are dropped frames, ASSA-167)"
 				% [int(s["snaps"])])
+		# WHY A MAX IS NOT ENOUGH, AND WHY THIS IS NOT A SECOND BAR (ASSA-167). The bar above counts
+		# WHOLE-tile steps and reads 0. What is left is the SUB-tile hop -- 0.6-0.7 tiles in a 12 ms
+		# frame -- and a max cannot answer the only question that matters about it, which is whether
+		# a player feels it: one 20 px twitch in a 25-tile walk is not the same defect as thirty.
+		#
+		# So print the spread. Across six runs the hop tracks the FRAME RATE, not the tween: at
+		# 93-100 fps the worst step is 9-11 px with 0-1 steps over 3x the mean, and at 73-79 fps it
+		# is 20-23 px with 5% of steps over 2x. That is the ASSA-167 verdict (the hitch is the
+		# machine, Marlow) showing up in the body as well as in the frame clock.
+		#
+		# NOTHING HERE IS A PASS/FAIL. It is context for a design call, like the ratio line.
+		var steps: Array[float] = []
+		for i in range(from + 1, to + 1):
+			steps.append((_samples[i] - _samples[i - 1]).length())
+		steps.sort()
+		var tot := 0.0
+		for v in steps:
+			tot += v
+		var mean_step := tot / maxf(float(steps.size()), 1.0)
+		var over2 := 0
+		var over3 := 0
+		for v in steps:
+			if v > 2.0 * mean_step:
+				over2 += 1
+			if v > 3.0 * mean_step:
+				over3 += 1
+		print("  STEP SPREAD: mean %.3f tiles (%.1f px), median %.3f, p90 %.3f, p99 %.3f,"
+				% [mean_step, 32.0 * mean_step, steps[steps.size() / 2],
+				steps[int(0.90 * steps.size())], steps[int(0.99 * steps.size())]]
+				+ " max %.3f tiles (%.1f px)" % [steps[-1], 32.0 * steps[-1]])
+		print("  HOPS over the walk: >2x mean %d · >3x mean %d · of %d steps (%.1f%% / %.1f%%)"
+				% [over2, over3, steps.size(), 100.0 * over2 / steps.size(),
+				100.0 * over3 / steps.size()]
+				+ "  -- context for ASSA-167, NOT a bar")
 		print("  biggest step %.3f tiles · WHOLE-TILE SNAPS (>=0.9) %d of %d steps · distinct"
 				% [s["biggest"], s["snaps"], int(s["frames"]) - 1]
 				+ " positions %d · on an exact tile %d of %d (%.1f%%)"
