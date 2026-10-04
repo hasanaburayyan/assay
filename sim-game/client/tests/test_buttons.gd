@@ -712,18 +712,22 @@ func test_the_pack_count_climbs_without_rebuilding_the_row() -> bool:
 ## against the whole sentence; what can only be checked here is that `_refresh` puts it on the panel
 ## and takes it away again, which is the half that broke twice this week in other panels.
 ##
-## **MOVED TO THE HEAD OF THE CRAFTING MENU (ASSA-88, Maren's ruling), AND THIS TEST MOVED WITH IT
-## RATHER THAN BEING LOOSENED.** It used to read the `do` section, where the sentence competed with
-## Mine and Assay and sat nowhere near the button that started the craft. Two things are asserted now
-## that were not before: that the press comes from a MENU row, and that **collapsing the menu does
-## not take the countdown away** -- a craft is a CONDITION, not a moment, so a line a closed menu
-## could hide would not discharge it.
-func test_a_running_craft_is_named_at_the_head_of_the_crafting_menu() -> bool:
+## **MOVED OUT OF THE CRAFTING MENU AND INTO THE CHROME (ASSA-133, Maren's ruling 1), AND THIS TEST
+## MOVED WITH IT RATHER THAN BEING LOOSENED.** It has now been in three places, and each move made it
+## assert more: the `do` section (where the sentence competed with Mine and Assay), the head of the
+## crafting menu (ASSA-88), and now the chrome's `running` block beside `stopped`.
+##
+## WHAT THE MOVE BUYS, AND WHY THE FOLD CLAUSE IS STILL HERE RATHER THAN DELETED AS TRIVIAL. The
+## countdown is no longer in the scroll box at all, so "collapsing the menu cannot hide it" is now
+## structurally impossible rather than arranged. A test that cannot fail is worth keeping only if it
+## says so, so: this clause can no longer fail by placement, and it is kept because what it really
+## guards is that `_show_make` never learns to reach the countdown again.
+func test_a_running_craft_is_named_in_the_chrome_and_outlives_the_menu() -> bool:
 	var screen := _joined()
 	_tick(screen, 2)
 	var ok := _mine_some_ore(screen)
-	if ok and screen._crafting.visible:
-		ok = _fail("the panel claimed a craft before one was started: %s" % screen._crafting.text)
+	if ok and _running_text(screen).contains("making "):
+		ok = _fail("the panel claimed a craft before one was started: %s" % _running_text(screen))
 	if ok:
 		var button := _make_button_for(screen, "smelter")
 		if button == null:
@@ -731,17 +735,17 @@ func test_a_running_craft_is_named_at_the_head_of_the_crafting_menu() -> bool:
 		else:
 			button.pressed.emit()
 			_tick(screen, 2)
-			var during: String = screen._crafting.text
-			if not screen._crafting.visible:
-				ok = _fail("a craft is running and the countdown is hidden: `%s`" % during)
+			var during := _running_text(screen)
+			if not screen._running_box.visible:
+				ok = _fail("a craft is running and the running block is hidden: `%s`" % during)
 			elif not during.contains("making ") or not during.contains("ticks left"):
-				ok = _fail(("a craft is running and the head of the menu does not say so: %s. The "
-						+ "ticks come from the sim; this client only prints them.") % during)
+				ok = _fail(("a craft is running and the chrome does not say so: %s. The ticks come "
+						+ "from the sim; this client only prints them.") % during)
 			else:
-				# THE CLAUSE MAREN ADDED. The menu folds; the condition does not.
+				# THE CLAUSE MAREN ADDED ON ASSA-88. The menu folds; the condition does not.
 				screen._show_make(false)
 				screen._refresh()
-				if not screen._crafting.visible:
+				if not _running_text(screen).contains("making "):
 					ok = _fail("folding the menu away hid the running craft, which lasts until it "
 							+ "finishes whatever the menu is doing")
 				elif screen._make.visible:
@@ -751,11 +755,30 @@ func test_a_running_craft_is_named_at_the_head_of_the_crafting_menu() -> bool:
 					# AND IT GOES AWAY. A line that appears and never clears is worse than no line:
 					# it would say a craft is running forever, which is the same lie the silence was.
 					_tick(screen, PATIENCE)
-					if screen._crafting.visible or screen._crafting.text != "":
+					if _running_text(screen).contains("making "):
 						ok = _fail("the craft finished and the panel still claims one: %s"
-								% screen._crafting.text)
+								% _running_text(screen))
+					# AND THE BLOCK IS NOT ASSERTED EMPTY HERE, WHICH IS A CORRECTION OF MY OWN
+					# TEST. I wrote `elif screen._running_box.visible: fail` and it reddened with
+					# `mining Minyte` -- because `_mine_some_ore` above leaves the mining RUNNING,
+					# and `step` never clears it for a craft. The block is right and the assertion
+					# was wrong: that is the plural list doing exactly its job, and asserting the
+					# block empties when one of three activities ends would have pinned the bug
+					# ASSA-95 exists to prevent. The empty case is covered where it is honestly
+					# empty, in test_main_screen's chrome-blocks test.
 	screen.queue_free()
 	return ok
+
+
+## THE CHROME'S RUNNING LINES AS ONE STRING, or "" when the block is hidden. Reads the LINES box
+## rather than the whole block so the client's own "running" heading cannot satisfy an assertion
+## about the sim's sentences.
+func _running_text(screen: Node) -> String:
+	if not is_instance_valid(screen._running_box) or not screen._running_box.visible:
+		return ""
+	if not is_instance_valid(screen._running_lines):
+		return ""
+	return _text_of(screen._running_lines)
 
 
 ## THE MENU ROW THAT OFFERS `want`, by the SIM'S OWN SENTENCE and never by a button label: every

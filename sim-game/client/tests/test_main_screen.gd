@@ -611,42 +611,84 @@ func test_the_crafting_menu_is_open_on_first_join_and_its_control_names_the_key(
 	return ok
 
 
-## THE MENU FOLDS AND THE RUNNING CRAFT DOES NOT FOLD WITH IT (Maren's clause on ASSA-89, applied to
-## ASSA-88): a craft is a CONDITION, not a moment.
+## THE RUNNING BLOCK IS OUTSIDE THE SCROLL BOX, WHICH IS THE WHOLE OF MAREN'S RULING 1 (ASSA-133).
 ##
-## STRUCTURAL, AND THAT IS THE POINT. `test_buttons.gd` proves it with a real craft running; this
-## proves the countdown is not a CHILD of the thing the toggle hides, so the property holds whatever
-## a later edit does to the rows. Both, because the structural half is what makes the behavioural
-## half impossible to break by accident.
-func test_folding_the_crafting_menu_cannot_hide_the_running_craft() -> bool:
+## WHAT THIS REPLACES. It used to walk `_crafting`'s ancestors to prove the countdown was not a CHILD
+## of the container `_show_make` hides -- true, and arranged. The countdown is now in the chrome, so
+## the stronger property is available and is the one asserted: no ancestor of the running block is
+## the scroll box, so NOTHING in the column -- not the menu folding, not a section growing, not a
+## later edit -- can carry it off the bottom. "Announcing does not scroll" as a structural fact.
+##
+## `_halt_box` is held to the same bar in the same walk, because the two blocks are one ruling and a
+## test that watched only the new one would let the precedent rot.
+func test_what_is_running_and_what_has_stopped_are_both_outside_the_scroll_box() -> bool:
 	var screen := _screen()
 	var ok := true
-	var walk: Node = screen._crafting
-	while walk != null:
-		if walk == screen._make:
-			ok = _fail("the running craft lives inside the container the toggle hides")
+	for named in [["running", screen._running_box], ["stopped", screen._halt_box]]:
+		var label := String(named[0])
+		var box: Node = named[1]
+		if not is_instance_valid(box):
+			ok = _fail("the %s block does not exist" % label)
 			break
-		walk = walk.get_parent()
-	# AND IT SURVIVES A REBUILD OF THE ROWS. `_rebuild_make` CLEARS the container it owns, so a
-	# countdown that had been added to the rows would be freed and the walk above would find a node
-	# with no parent at all -- which is how a mutation that moved this line into the rows passed
-	# every test I had. The parent is therefore asserted, not just "not the menu".
-	if ok:
-		screen._make_showing = "not a shape any pack has"
-		screen._refresh_make()
-		if not is_instance_valid(screen._crafting):
-			ok = _fail("rebuilding the rows freed the running-craft line")
-		elif screen._crafting.get_parent() == null:
-			ok = _fail("rebuilding the rows took the running-craft line off the panel")
-	if ok:
-		screen._show_make(false)
-		if screen._make.visible:
-			ok = _fail("_show_make(false) left the rows visible")
-		elif not screen._crafting.visible and screen._crafting.text != "":
-			ok = _fail("folding the rows away hid a running craft")
-		elif screen._make_toggle.text != AssayHud.make_toggle_text(false):
-			ok = _fail("the control still says `%s` with the rows hidden"
-					% screen._make_toggle.text)
+		var walk: Node = box
+		var depth := 0
+		while walk != null:
+			if walk == screen._scroll:
+				ok = _fail(("the %s block is inside the scroll box, so a long enough column can "
+						+ "push it off the window") % label)
+				break
+			walk = walk.get_parent()
+			depth += 1
+		if not ok:
+			break
+		# AND IT IS ON THE PANEL AT ALL. A block with no parent passes the walk above for the wrong
+		# reason -- the loop ends immediately -- which is the shape of hole that let a countdown live
+		# in a freed container once already.
+		if depth < 2:
+			ok = _fail("the %s block is only %d deep, so the walk above proved nothing" % [label, depth])
+			break
+	screen.queue_free()
+	return ok
+
+
+## EMPTY IS EMPTY, FOR BOTH CHROME BLOCKS (ASSA-133 box 2). A window with nothing running and nothing
+## stopped must look exactly as it did before this item: no heading, no "nothing running", no pixels.
+## A fresh screen has never joined a world, so both are the empty case by construction.
+func test_the_chrome_blocks_take_no_space_when_they_have_nothing_to_say() -> bool:
+	var screen := _screen()
+	var ok := true
+	for named in [["running", screen._running_box], ["stopped", screen._halt_box]]:
+		var box: Control = named[1]
+		if box.visible:
+			ok = _fail(("nothing is %s and its block is visible. Empty is empty: a reassuring line "
+					+ "is the cry-wolf failure one step removed. If this reddens with the block "
+					+ "never rebuilt, the `_refresh_%s` call in `_build_ui` is what is missing -- a "
+					+ "PanelContainer is visible by default and the refresh only redraws on change.")
+					% [String(named[0]), String(named[0])])
+			break
+	screen.queue_free()
+	return ok
+
+
+## **A SECTION MAY NOT SIT ABOVE THE SECTION IT IS DERIVED FROM** (ASSA-133 ruling 2, box 4). The
+## crafting menu is generated from the pack and grows faster than it, so `make` goes below `you`.
+##
+## ASSERTED AS THE ORDER OF HEADINGS IN THE SHARED PARENT, not as pixel positions: the ruling is
+## about which section pushes which off the bottom, and that is child order. Reading the headings
+## rather than the bodies is deliberate -- a body can be hidden, and a hidden section still occupies
+## its place in the order a later edit would have to respect.
+func test_the_column_reads_you_do_make_bench_rocks_cursor_log() -> bool:
+	var screen := _screen()
+	var ok := true
+	var want := ["you", "do", "make", "bench", "rocks", "cursor", "event log"]
+	var column: Node = screen._carrying.get_parent()
+	var seen := PackedStringArray()
+	for child in column.get_children():
+		if child is Label and (child as Label).theme_type_variation == &"Heading":
+			seen.append((child as Label).text)
+	if Array(seen) != want:
+		ok = _fail(("the column reads %s; Maren ruled %s. A list derived from your pack may not sit "
+				+ "above it.") % [seen, want])
 	screen.queue_free()
 	return ok
 
@@ -667,27 +709,31 @@ func test_the_crafting_menu_says_why_it_is_empty_before_a_world_exists() -> bool
 	return ok
 
 
-## ASSA-107 / Maren's ASSA-88 RULING: THE CHOSEN PARTS LIVE IN THE CRAFTING MENU, UNDER THE RUNNING
-## CRAFT — not in the `do` section two sections away from the rows they were chosen on.
+## ASSA-107 / Maren's ASSA-88 RULING: THE CHOSEN PARTS LIVE IN THE CRAFTING MENU — not in the `do`
+## section two sections away from the rows they were chosen on.
 ##
-## ASSERTED AS ORDER IN A SHARED PARENT, not as pixel positions: the three parts of the menu have to
-## read top to bottom as one activity (what is running · what you are assembling · what you can
-## make), and that is a property of the column's child order which survives any restyling.
-func test_the_chosen_parts_sit_under_the_running_craft_inside_the_menu() -> bool:
+## THE RUNNING CRAFT USED TO BE THE FIRST OF THREE and this test read all three in order. It left the
+## column on ASSA-133, so what remains of the ruling is the part that was always about the menu: the
+## parts you have chosen sit at the menu's head, above the control and the rows it offers.
+##
+## ASSERTED AS ORDER IN A SHARED PARENT, not as pixel positions: the menu has to read top to bottom
+## as one activity (what you are assembling · the control · what you can make), and that is a
+## property of the column's child order which survives any restyling.
+func test_the_chosen_parts_sit_at_the_head_of_the_crafting_menu() -> bool:
 	var screen := _screen()
 	var ok := true
-	var column: Node = screen._crafting.get_parent()
+	var column: Node = screen._make.get_parent()
 	if screen._assembling.get_parent() != column:
-		ok = _fail("the chosen parts are not in the same container as the running craft")
-	elif screen._make.get_parent() != column:
-		ok = _fail("the menu's rows are not in that container either, so order proves nothing")
+		ok = _fail("the chosen parts are not in the same container as the menu's rows")
+	elif screen._make_toggle.get_parent() != column:
+		ok = _fail("the menu's control is not in that container either, so order proves nothing")
 	else:
-		var craft := column.get_children().find(screen._crafting)
 		var mid := column.get_children().find(screen._assembling)
+		var toggle := column.get_children().find(screen._make_toggle)
 		var rows := column.get_children().find(screen._make)
-		if not (craft < mid and mid < rows):
-			ok = _fail(("the menu does not read running craft (%d), assembling (%d), rows (%d)")
-					% [craft, mid, rows])
+		if not (mid < toggle and toggle < rows):
+			ok = _fail(("the menu does not read assembling (%d), control (%d), rows (%d)")
+					% [mid, toggle, rows])
 	# AND NOT IN THE `do` SECTION ANY MORE. Checked by walking `_actions` for the button, because
 	# that is what a player would still find there if the move were half done.
 	if ok and _button_under(screen._actions, "Assemble") != null:

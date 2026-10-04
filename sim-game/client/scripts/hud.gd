@@ -21,6 +21,24 @@ const VIEW := Vector2(1280.0, 720.0)
 const MARGIN := Vector2(24.0, 96.0)
 const PANEL := 320.0
 
+## WHERE THE HUD COLUMN STARTS, AND IT IS NOT `MARGIN.y` (ASSA-133, Maren's 96px measurement).
+##
+## `MARGIN.y` is 96 because that is where the MAP starts: the header band above it carries the join
+## row, the status line and the detail line. But that band spans the MAP's width, not the window's --
+## its controls stop near x 620 and the column's x range is 936..1280 -- so the top-right 347 x 96 of
+## the window was 33,312 px of one colour, in a window whose one state surface wants 1746px of a
+## 566px clip. Maren measured the first non-background pixel in the column's x-range at y = 96
+## exactly.
+##
+## NOTHING MOVES AND NOTHING IS REWORDED to buy this: the column simply starts where there is nothing
+## in its way, which is +96px, about 17% more clip.
+##
+## IT IS NOT AN EMPTY STATE AND MUST NEVER GET A LABEL (Maren, answering Limpet's question on the
+## item). "Every empty surface says which kind of empty it is" is about a surface that HAS a subject
+## and nothing to show. This rectangle has no subject: a blank that no section owns is a layout that
+## stopped short, and labelling it is the game apologising for its own margin.
+const COLUMN_TOP := 8.0
+
 ## HOW MUCH OF THE PANEL THE LOG'S TOGGLE TAKES OFF THE TOP (ASSA-89).
 ##
 ## The control that shows and hides the event log is PINNED ABOVE THE SCROLL BOX rather than sitting
