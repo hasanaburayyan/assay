@@ -186,8 +186,10 @@ quit
         format!("you made 1 x {m} handle ({g})"),
         format!("you made 2 x {m} head ({g})"),
         format!("you made 1 x {m} frame ({g})"),
-        // One command builds a pick and a drill alike.
-        "you assembled #0".to_string(),
+        // One command builds a pick and a drill alike, and the entry says
+        // which it built rather than which slot it went into (ASSA-130).
+        "you assembled a tool".to_string(),
+        "you assembled a machine".to_string(),
         "you equipped a tool".to_string(),
         // And a planted design becomes a building.
         "you planted machine 1".to_string(),
@@ -197,6 +199,39 @@ quit
             "missing {expected:?}\n{transcript}"
         );
     }
+
+    // ASSA-130, IN THE PLAY-THROUGH THAT HAS THE PAIR. `assemble` then
+    // `equip` one tick apart is the normal flow, and both entries printed the
+    // same sheet: four wrapped rows each, eight of the twenty-four readable
+    // rows in the window shot that filed the item. The sheet belongs to the
+    // entry where it is news.
+    let assembled = stdout
+        .lines()
+        .find(|l| l.contains("you assembled a tool"))
+        .unwrap_or_else(|| panic!("no assemble entry in the transcript\n{transcript}"));
+    let equipped = stdout
+        .lines()
+        .find(|l| l.contains("you equipped a tool"))
+        .unwrap_or_else(|| panic!("no equip entry in the transcript\n{transcript}"));
+    for marker in ["mass ", "budget", "durability", "speed ", "handle("] {
+        // The present half first: without it, a readout that stopped saying
+        // "mass" would make the absence below true for the wrong reason.
+        assert!(
+            assembled.contains(marker),
+            "premise: the assemble entry is supposed to carry the whole sheet, \
+             and is missing {marker:?}: {assembled}\n{transcript}"
+        );
+        assert!(
+            !equipped.contains(marker),
+            "the equip entry reprints the sheet's {marker:?} one tick after the \
+             assemble entry already said it: {equipped}\n{transcript}"
+        );
+    }
+    assert!(
+        equipped.contains("SAFE"),
+        "the verdict bears on the act and stays on the equip entry: \
+         {equipped}\n{transcript}"
+    );
 
     // Amendment A5, end to end: mass against budget, **banded before the assay
     // and exact after it**. Both readings of the same pick are in this one
