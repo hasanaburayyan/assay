@@ -1220,3 +1220,115 @@ func test_a_log_with_no_measured_room_keeps_every_line() -> bool:
 	if AssayHud.log_lines_that_fit(220.0, 38.0, 18.0, 0.0, 14) != 14:
 		return _fail("a line height of 0 divided the log by nothing and cut it anyway")
 	return true
+
+
+## **THE BUILDING MARK IS NEITHER OF THE TWO SHAPES THIS MAP ALREADY USES, AS GEOMETRY** (ASSA-189,
+## Maren's boxes 3 and 4: "not a disc and NOT a fifth filled rect", and "a building is not mistakable
+## for a deposit OR for a player at 1x: the distinction survives a greyscale copy").
+##
+## **GREYSCALE IS WHY EVERY ASSERTION HERE IS ABOUT POINTS AND AREAS AND NONE IS ABOUT A COLOUR.** A
+## mark separated by hue fails her ruling no matter how good the hue is, so the checkable form of the
+## box is: a point the OTHER shape contains and this one does not. Two of those:
+##
+## - the footprint rect's CORNER, which a filled rect contains and a diamond leaves empty;
+## - the 45-degree point at 0.6 of the radius, which an inscribed CIRCLE contains (0.849r) and a
+##   diamond does not (|x| + |y| = 1.2r against a limit of r).
+##
+## Plus the area, which pins it exactly: a diamond is half of its own bounding box, where a rect is
+## all of it and an inscribed circle is pi/4 of it (78.5%). Three different numbers, one measurement.
+##
+## **AND IT IS AT THE TILE THE SIM GAVE IT** (box 2). `pos` is the top-left of the footprint, so the
+## centre is `pos + footprint / 2` in tiles -- the 2x2 case is the one worth a test, because taking
+## `pos` as the centre would draw a smelter a whole tile up and left of itself and nothing on a 1x1
+## machine would ever show it.
+##
+## WHAT THIS CANNOT SEE: whether `main.gd::_draw` consumes any of it.
+## `test_main_screen.gd::test_the_schematic_is_handed_every_building_the_sim_reports` holds the
+## wiring, and the picture is `tools/window_shot.gd`'s whole-world shot. A painter that computed its
+## own diamond and ignored this function would leave this test green.
+func test_a_building_on_the_schematic_is_neither_a_disc_nor_a_rect() -> bool:
+	var origin := Vector2(24.0, 96.0)
+	for case in [{"foot": Vector2i(2, 2), "cell": 9.0}, {"foot": Vector2i(1, 1), "cell": 9.0},
+			{"foot": Vector2i(2, 2), "cell": 18.0}, {"foot": Vector2i(3, 2), "cell": 32.0}]:
+		var foot: Vector2i = case["foot"]
+		var cell: float = case["cell"]
+		var pos := Vector2i(12, 7)
+		var mark := AssayHud.building_mark({"pos": pos, "footprint": foot}, cell, origin)
+		var points: PackedVector2Array = mark["points"]
+		if points.size() != 4:
+			return _fail("a %s building drew a %d-point mark" % [foot, points.size()])
+		# BOX 2: THE TILE THE SIM GAVE IT. The top-left corner tile plus half the footprint.
+		var want := origin + (Vector2(pos) + Vector2(foot) * 0.5) * cell
+		var at: Vector2 = mark["at"]
+		if at.distance_to(want) > 1e-4:
+			return _fail(("a %s building at tile %s and %.0fpx a tile is centred on %s; its "
+					+ "footprint's centre is %s. `pos` is the TOP-LEFT, so reading it as the centre "
+					+ "draws a smelter a tile up and left of itself.") % [foot, pos, cell, at, want])
+		var span: Vector2 = mark["span"]
+		var box := Rect2(at - span * 0.5, span)
+		# BOX 3, HALF ONE: NOT A FILLED RECT. The bounding box's own corner is outside the mark.
+		for corner: Vector2 in [box.position, box.position + Vector2(box.size.x, 0.0),
+				box.position + Vector2(0.0, box.size.y), box.end]:
+			var inset := corner + (at - corner).normalized() * 0.5
+			if Geometry2D.is_point_in_polygon(inset, points):
+				return _fail(("a %s building's mark contains its own bounding-box corner %s, so it "
+						+ "is a filled rect: at %.0fpx a tile that is the player's shape at the "
+						+ "player's size (%.0fpx) separated only by hue, on the one view co-op "
+						+ "exists for.") % [foot, corner, cell, AssayHud.PLAYER_MARK_PX])
+		# BOX 3, HALF TWO: NOT A DISC. A point an inscribed circle contains, 0.849 of the way out.
+		var radius := minf(span.x, span.y) * 0.5
+		var diagonal := at + Vector2(1.0, 1.0).normalized() * radius * 0.849
+		if Geometry2D.is_point_in_polygon(diagonal, points):
+			return _fail(("a %s building's mark contains %s, which is inside an inscribed circle of "
+					+ "radius %.1f. A disc is the deposit's shape and deposits are 18-36px of "
+					+ "radius on this view.") % [foot, diagonal, radius])
+		# AND THE AREA PINS WHICH SHAPE IT IS: half the box, against a rect's 100% and a circle's
+		# 78.5%. Shoelace, so a mark that grew a fifth point is measured rather than assumed.
+		var area := 0.0
+		for i in points.size():
+			var a := points[i]
+			var b := points[(i + 1) % points.size()]
+			area += a.x * b.y - b.x * a.y
+		area = absf(area) * 0.5
+		var ratio := area / (span.x * span.y)
+		if absf(ratio - 0.5) > 0.01:
+			return _fail(("a %s building's mark covers %.1f%% of its bounding box. A diamond is "
+					+ "50%%, a filled rect 100%% and an inscribed circle 78.5%%; this is the number "
+					+ "that says which of the three it is.") % [foot, ratio * 100.0])
+		# THE EDGE IS THE MAP'S OWN GROUND AND NOT A NEW COLOUR: a drill is planted ON a deposit, so
+		# the ring is what separates this mark from a bright species tint under it.
+		if mark["edge"] != AssayHud.MAP_BG:
+			return _fail("the mark's ring is %s and not MAP_BG" % mark["edge"])
+		if float(mark["edge_width"]) < 1.0:
+			return _fail("a ring %.2fpx wide is a sub-pixel line, which separates nothing"
+					% mark["edge_width"])
+	return true
+
+
+## **A ONE-TILE MACHINE IS STILL FINDABLE ON A BIG WORLD, AND STILL SMALLER THAN A PERSON** (ASSA-189,
+## and it is `PLAYER_MARK_PX`'s lesson applied to the other mark).
+##
+## Maren's finding on the player was that a mark scaling with the tile gets SMALLER exactly as the
+## world gets big enough to need a map. A machine's footprint is 1x1: 9px here, 4.5px on a world
+## twice as wide, 2px where `map_cell` floors. So the footprint sets the size and
+## `BUILDING_MARK_MIN_PX` is the floor -- and the floor is BELOW the player's 16px on purpose,
+## because a one-tile machine drawn bigger than a person is the mistake in the other direction.
+func test_the_smallest_building_mark_has_a_floor_and_stays_under_the_player() -> bool:
+	if AssayHud.BUILDING_MARK_MIN_PX >= AssayHud.PLAYER_MARK_PX:
+		return _fail(("the building floor is %.0fpx and a player is %.0fpx, so a one-tile machine is "
+				+ "drawn at least as big as a person")
+				% [AssayHud.BUILDING_MARK_MIN_PX, AssayHud.PLAYER_MARK_PX])
+	for cell: float in [2.0, 4.5, 9.0]:
+		var span: Vector2 = AssayHud.building_mark({"pos": Vector2i(1, 1),
+				"footprint": Vector2i(1, 1)}, cell, Vector2.ZERO)["span"]
+		if absf(span.x - AssayHud.BUILDING_MARK_MIN_PX) > 1e-4 \
+				or absf(span.y - AssayHud.BUILDING_MARK_MIN_PX) > 1e-4:
+			return _fail(("a 1x1 machine at %.1fpx a tile is drawn %s, not the %.0fpx floor: on a "
+					+ "big world a drill would be a few pixels on the one surface for finding it")
+					% [cell, span, AssayHud.BUILDING_MARK_MIN_PX])
+	# AND THE FLOOR DOES NOT OVERRIDE A FOOTPRINT BIGGER THAN IT: a 2x2 at 18px a tile is 36px.
+	var big: Vector2 = AssayHud.building_mark({"pos": Vector2i(1, 1), "footprint": Vector2i(2, 2)},
+			18.0, Vector2.ZERO)["span"]
+	if absf(big.x - 36.0) > 1e-4:
+		return _fail("a 2x2 at 18px a tile is %s, and the footprint is what sizes it" % big)
+	return true

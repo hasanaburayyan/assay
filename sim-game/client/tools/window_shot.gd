@@ -96,8 +96,8 @@ const NORTH_WALK_TICKS := 600
 
 enum Phase { SETTLE_JOIN, SHOOT_JOIN, PLAY, SETTLE_PACK, SHOOT_PACK, SETTLE_PLAY, SHOOT_PLAY,
 		SETTLE_FOLD, MEASURE_CONTROLS, SETTLE_MENUS, SHOOT_MENUS, SCROLL_ROCKS, SETTLE_ROCKS,
-		SHOOT_ROCKS, WALK_NORTH, SETTLE_NORTH_LOG, SHOOT_NORTH_LOG, SETTLE_NORTH_CLEAR,
-		SHOOT_NORTH_CLEAR, DONE }
+		SHOOT_ROCKS, PRESS_V, SETTLE_SCHEMATIC, SHOOT_SCHEMATIC, SETTLE_CLOSE_UP, WALK_NORTH,
+		SETTLE_NORTH_LOG, SHOOT_NORTH_LOG, SETTLE_NORTH_CLEAR, SHOOT_NORTH_CLEAR, DONE }
 ## What `_play_frames` did with its last tick.
 enum Ticked { AGAIN, OVER, DEAD }
 
@@ -110,6 +110,11 @@ var _ticks := PLAY_TICKS
 var _phase: Phase = Phase.SETTLE_JOIN
 var _waited := 0
 var _shots := PackedStringArray()
+## **WHAT THE SCHEMATIC PAINTED FOR EVERY BUILDING**, read off `main.gd::_building_marks` in the frame
+## `08-whole-world.png` was written from (ASSA-189). THE PAINTER'S OWN LIST and not a second copy of
+## the arithmetic: a table that derives the geometry again is a table that can disagree with the
+## picture it is describing, which is the shape of the bug I shipped in `_controls_report`.
+var _schematic_marks: Array = []
 ## Fingerprint of every frame already written, to the name it was written under. See `_shoot`.
 var _taken := {}
 ## Shot name -> what its own subjects were doing instead of being on screen. Keyed by name and
@@ -282,7 +287,34 @@ func _process(_delta: float) -> bool:
 			# frame. `_rocks_report` guards it instead, and asks for MORE: two whole ROWS in the
 			# frame, which is the least a picture needs to show that two rocks differ.
 			_shoot("05-rocks.png", PackedStringArray())
-			_phase = Phase.WALK_NORTH if _north_row >= 0 else Phase.DONE
+			_phase = Phase.PRESS_V
+		Phase.PRESS_V:
+			# **THE OTHER VIEW, WHICH THIS TOOL HAD NEVER PRESSED** (ASSA-189). Seven shots and every
+			# one of them was the close-up, so the view you cross 96x64 tiles on went a month drawing no
+			# factory at all and no check in here could have noticed: they are all about the HUD column,
+			# and to them the map is pixels.
+			#
+			# The same setter the (V) toggle calls, not an assignment to `_close_up`: a state a player
+			# cannot reach is not worth photographing.
+			_screen._show_close_up(false)
+			_phase = Phase.SETTLE_SCHEMATIC
+		Phase.SETTLE_SCHEMATIC:
+			_settle(Phase.SHOOT_SCHEMATIC)
+		Phase.SHOOT_SCHEMATIC:
+			# NO SUBJECT: this shot's subject is the MAP, which is not one of the column sections
+			# `_standing` knows how to measure. `_schematic_report` is its check, and it asks for more
+			# than presence -- every building the sim holds, marked, inside the frame.
+			#
+			# READ AT THE MOMENT OF THE SHOT, like the subject check and for the same reason: the
+			# geometry is only true in the frame that was actually written.
+			_schematic_marks = _screen._building_marks(_screen._sim.buildings())
+			_shoot("08-whole-world.png", PackedStringArray())
+			# BACK, because 06 and 07 are about the close-up's camera at the north edge and a schematic
+			# left up would photograph the wrong view twice.
+			_screen._show_close_up(true)
+			_phase = Phase.SETTLE_CLOSE_UP
+		Phase.SETTLE_CLOSE_UP:
+			_settle(Phase.WALK_NORTH if _north_row >= 0 else Phase.DONE)
 		Phase.WALK_NORTH:
 			_walk_north()
 		Phase.SETTLE_NORTH_LOG:
@@ -989,6 +1021,57 @@ func _machine_report() -> void:
 				parts.size(), "[%s]" % ", ".join(kinds), where])
 
 
+## **EVERY FACTORY THE SIM HOLDS, MARKED ON THE WHOLE-WORLD VIEW, INSIDE THE FRAME** (ASSA-189).
+##
+## THE LEG THAT WOULD HAVE CAUGHT THE DEFECT. `_machine_report` above is the same question for the
+## CLOSE-UP and it is why that view's buildings were fixed a month ago; nothing asked it of the
+## schematic, so `main.gd::_draw` painted a background, a spawn pad, deposits and players and the one
+## thing the game is about was not in the list.
+##
+## IT READS `main.gd::_building_marks`, the painter's own list, rather than measuring the PNG: a
+## rectangle is checkable arithmetic and a bright lump in an image is not. What it cannot see is
+## whether `draw_colored_polygon` put the pixels down -- `shared/assay/assa187_measure.py` against
+## these rects is that, and it needs a human to run it on the shot.
+##
+## **IT REPORTS `not run` RATHER THAN `NO` WHEN THE SIM HAS NO BUILDINGS** (ASSA-185's rule). A world
+## the play loop never got a smelter into cannot answer this question, and a leg that said NO there
+## would send the next reader into the painter for a reason that is in `button_play.gd`.
+func _schematic_report() -> Dictionary:
+	if _screen == null or _screen._sim == null or not _screen._sim.running():
+		return {"ran": false, "ok": false, "why": "no running sim, so there was no schematic to shoot"}
+	var buildings: Array = _screen._sim.buildings()
+	if buildings.is_empty():
+		return {"ran": false, "ok": false,
+				"why": "the sim holds no building, so this view has nothing to be missing"}
+	if _schematic_marks.is_empty():
+		return {"ran": true, "ok": false, "why": ("the sim holds %d building(s) and the schematic "
+				+ "marked none of them: ASSA-189 exactly") % buildings.size()}
+	if _schematic_marks.size() != buildings.size():
+		return {"ran": true, "ok": false, "why": "%d buildings and %d marks"
+				% [buildings.size(), _schematic_marks.size()]}
+	var map := Rect2(_screen.MARGIN, Vector2(_screen._sim.size_tiles()) * _screen._cell)
+	var lines := PackedStringArray()
+	var off := PackedStringArray()
+	for i in _schematic_marks.size():
+		var mark: Dictionary = _schematic_marks[i]
+		var building: Dictionary = buildings[i]
+		var at: Vector2 = mark["at"]
+		var span: Vector2 = mark["span"]
+		var inside := map.encloses(Rect2(at - span * 0.5, span))
+		lines.append("    schematic %-9s at %-10s mark %s %s  %s"
+				% [String(building.get("kind", "?")), building.get("pos", Vector2i.ZERO),
+				at.round(), span.round(), "on the map" if inside else "OFF THE MAP"])
+		if not inside:
+			off.append("%s at %s" % [building.get("kind", "?"), building.get("pos", Vector2i.ZERO)])
+	for line in lines:
+		print(line)
+	if not off.is_empty():
+		return {"ran": true, "ok": false, "why": "marked outside the map rect %s: %s"
+				% [map, ", ".join(off)]}
+	return {"ran": true, "ok": true, "why": "%d factory mark(s) on the whole-world view"
+			% _schematic_marks.size()}
+
+
 func _report() -> void:
 	for line in _shots:
 		print("  ", line)
@@ -1005,6 +1088,8 @@ func _report() -> void:
 		["controls", "opening the log moved no control off the screen", _controls_report()],
 		["roster", "two rocks can be compared in one shot", _rocks_report()],
 		["subject", "every shot contains the section it is named for", _subject_report()],
+		["schematic", "every factory the sim holds is marked on the whole-world view",
+				_schematic_report()],
 	]
 	print("  legs:")
 	var failures := PackedStringArray()

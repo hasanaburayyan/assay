@@ -71,6 +71,24 @@ const THEIRS := Color(0.75, 0.78, 0.85)
 const HOVER := Color(0.95, 0.95, 0.95)
 const SPAWN_PAD := Color(0.35, 0.33, 0.20)
 
+## **A FIFTH MARK, BECAUSE THE SCHEMATIC DREW NO FACTORIES AT ALL** (ASSA-189, Maren's P1). Green, and
+## it is the one free hue on this map: `SPECIES_TINTS` spends purple, red, pink, yellow, blue and sky
+## blue, `MINE` is the yellow, `THEIRS` the pale grey-blue, `SPAWN_PAD` the olive and `HOVER` white.
+##
+## IT IS A PLACEHOLDER AND THE ARTIST'S TO CHANGE, which is why it is ONE constant and why
+## [building_mark] decides the whole mark in one place. Maren ruled the SHAPE and left the mark to
+## Cove; this value is mine until they pick one, and the hard case is not the dark background -- a
+## drill is planted ON a deposit, so the mark is judged over six tints as well as over `MAP_BG`.
+const BUILT := Color(0.38, 0.92, 0.60)
+
+## HOW BIG THE SMALLEST BUILDING MARK MAY GET, in screen pixels, for `PLAYER_MARK_PX`'s reason.
+##
+## A machine is a 1x1 footprint, which is 9 px on the 96x64 world and 4.5 px on a world twice as wide:
+## a mark that scales only with the tile disappears exactly as the world gets big enough to need a
+## map. So the footprint sets the size and this is the floor. BELOW `PLAYER_MARK_PX` on purpose -- a
+## one-tile machine must not end up drawn bigger than a person.
+const BUILDING_MARK_MIN_PX := 12.0
+
 ## HOW BIG A PLAYER'S MARK IS ON THE SCHEMATIC, IN SCREEN PIXELS AND NOT IN TILES (ASSA-119 box 6).
 ##
 ## It used to be two cells square, which on the 96x64 world is 18 px and on a 32x32 world would be 36.
@@ -368,6 +386,56 @@ static func deposit_disc(deposit: Dictionary, drawn_radius: float) -> Dictionary
 	var surface := colour if minable else Color(colour.r, colour.g, colour.b, 0.0)
 	return {"colour": colour, "filled": minable, "ink": glyph_color(surface),
 			"stroke": clampf(drawn_radius * 0.2, 2.0, 6.0)}
+
+
+## **WHAT ONE BUILDING IS ON THE SCHEMATIC** (ASSA-189, Maren's P1: "the whole-world view draws no
+## factories, so in a co-op automation game neither player can see what either has built").
+##
+## `_sim.buildings()` occurred exactly once in `main.gd` and it was inside the close-up's view
+## dictionary, so the schematic was never handed a building to draw. It is the view you cross 96x64
+## tiles on and the view that carries a player you are nowhere near, which makes it the one surface
+## co-op needs: you could not find your own base and you could not see your partner's.
+##
+## **A DIAMOND, BECAUSE MAREN RULED OUT BOTH SHAPES THIS MAP ALREADY USES.** Her own first direction
+## here was `draw_rect` and she counted it out: `_draw` uses a rect for the background, the spawn pad,
+## a player's body, your ring and the hovered tile, and `draw_circle` for a deposit. At 9 px a tile a
+## 2x2 building to scale is 18 px against the player's 16 px mark, so a filled rect would be **the
+## player's shape at the player's size separated only by hue** -- on the one view co-op exists for,
+## and against her own rule that the distinction is SHAPE and must survive a greyscale copy. A
+## diamond's points are at the footprint's edge midpoints and its corners are empty, so it is neither
+## of the two: half the bounding box's area, where a rect is all of it and an inscribed circle 78.5%,
+## and the 45-degree point a circle contains is OUTSIDE it. `tests/test_hud.gd` asserts both of those
+## as geometry rather than as taste.
+##
+## **THE EDGE IS `MAP_BG` AND THAT IS NOT A NEW COLOUR.** A drill is planted on a deposit, so this
+## mark is drawn over a bright species tint as often as over the background; a ring of the map's own
+## ground colour separates the mark from whatever it stands on, and over `MAP_BG` itself it is
+## correctly invisible because there is nothing to separate from.
+##
+## **`pos` AND `footprint` ARE READ WITHOUT A DEFAULT** (ASSA-141's rule, and ASSA-196's bill for
+## breaking it on players): `pos` is the TOP-LEFT of the footprint and a binding that stopped sending
+## either must empty the frame rather than draw every factory in the world on top of each other at
+## the corner. `tests/test_main_screen.gd` is what notices.
+static func building_mark(building: Dictionary, cell: float, origin: Vector2) -> Dictionary:
+	var pos: Vector2i = building["pos"]
+	var foot: Vector2i = building["footprint"]
+	var span := Vector2(maxf(float(foot.x) * cell, BUILDING_MARK_MIN_PX),
+			maxf(float(foot.y) * cell, BUILDING_MARK_MIN_PX))
+	# The footprint's CENTRE, from its top-left corner tile plus half its extent in tiles, so a 2x2
+	# sits on the join of its four tiles and a 1x1 in the middle of its one.
+	var at := origin + (Vector2(pos) + Vector2(foot) * 0.5) * cell
+	var half := span * 0.5
+	return {
+		"points": PackedVector2Array([at + Vector2(0.0, -half.y), at + Vector2(half.x, 0.0),
+				at + Vector2(0.0, half.y), at + Vector2(-half.x, 0.0)]),
+		"colour": BUILT,
+		"edge": MAP_BG,
+		# One pixel at the 9 px a tile this world draws at, and never less: the ring is there to
+		# separate the mark from a deposit it may be standing on, and a sub-pixel line does not.
+		"edge_width": maxf(1.0, cell * 0.12),
+		"at": at,
+		"span": span,
+	}
 
 
 ## The status line's colour for a state. Neutral idle, amber connecting, red failed, green joined.

@@ -488,8 +488,12 @@ func _build_ui() -> void:
 
 	_view_toggle.position = world.end - Vector2(152.0, 36.0)
 	_view_toggle.custom_minimum_size = Vector2(144.0, 0.0)
+	# IT LISTS BUILDINGS NOW BECAUSE THE VIEW DRAWS THEM NOW (ASSA-189). This sentence promised "every
+	# deposit and every player" and never buildings, which was honest and was Maren's evidence that
+	# the gap was never written down rather than a regression. A promise that outlives its own defect
+	# is the next defect.
 	_view_toggle.tooltip_text = ("the close-up follows you at 32px a tile; the whole world is the"
-			+ " schematic, with every deposit and every player on it")
+			+ " schematic, with every deposit, every factory and every player on it")
 	_view_toggle.pressed.connect(func(): _show_close_up(not _close_up))
 	add_child(_view_toggle)
 	# NOT ON THE JOIN SCREEN (ASSA-142 box 3 / ASSA-161, Maren's ruling): there is never a world at
@@ -2637,7 +2641,9 @@ func _track_hover(at: Vector2) -> void:
 	queue_redraw()
 
 
-## THE WHOLE-WORLD SCHEMATIC: bounds, every deposit, every player, and spawn. THE SECOND VIEW NOW.
+## THE WHOLE-WORLD SCHEMATIC: bounds, every deposit, every FACTORY, every player, and spawn. THE
+## SECOND VIEW NOW. (Buildings only since ASSA-189: for a month this list was four things and the one
+## the game is about was not among them.)
 ##
 ## THE SPRITES ARE DRAWN, AND THEY ARE NOT DRAWN HERE. ASSA-119 is the camera at 32 px a tile, and it
 ## lives in `AssayScene` + `AssayWorldLayer` over the same rectangle this paints -- `_close_up` says
@@ -2717,6 +2723,21 @@ func _draw() -> void:
 			draw_string(font, at + Vector2(-wide * 0.5, float(glyph) * 0.36), symbol,
 					HORIZONTAL_ALIGNMENT_LEFT, -1, glyph, disc["ink"])
 
+	# EVERY FACTORY, WHICH THIS VIEW DID NOT DRAW AT ALL UNTIL ASSA-189. Drawn BEFORE the players, so
+	# a person standing on their own smelter is still the thing on top: you are the mark you look for
+	# first, and a 2x2 building is bigger than you are.
+	#
+	# THE DECISION IS `AssayHud.building_mark`'S, like the disc's above, and this loop only paints
+	# what `_building_marks` hands it -- see that function for why a test can read it and this cannot.
+	for mark in _building_marks(_sim.buildings()):
+		var shape: Dictionary = mark
+		var points: PackedVector2Array = shape["points"]
+		draw_colored_polygon(points, shape["colour"])
+		# Closed, so the ring goes all the way round rather than leaving the last side bare.
+		var ring := PackedVector2Array(points)
+		ring.append(points[0])
+		draw_polyline(ring, shape["edge"], float(shape["edge_width"]), true)
+
 	# EVERY PLAYER, AT A SIZE THAT DOES NOT COME FROM THE TILE (ASSA-119 box 6, Maren's finding 1).
 	# This mark used to be two cells square, which made it 18 px on this world and would make it 36 on
 	# a small one -- so the bigger and more confusing the world, the smaller you got. Measured on the
@@ -2766,3 +2787,23 @@ func _draw() -> void:
 	if _hovering:
 		draw_rect(Rect2(MARGIN + Vector2(_hover) * _cell, Vector2(_cell, _cell)),
 				Color(AssayHud.HOVER.r, AssayHud.HOVER.g, AssayHud.HOVER.b, 0.55), false, 1.0)
+
+
+## **WHAT THE SCHEMATIC IS ABOUT TO PAINT FOR EVERY BUILDING** (ASSA-189). One mark per building, in
+## the map's own view pixels, at this screen's real `_cell` and `MARGIN`.
+##
+## **IT EXISTS SO SOMETHING CAN BE ASKED WHAT `_draw` PAINTED.** Nothing in a headless suite can read
+## a `draw_colored_polygon` back off a canvas and `--headless` has no frame to photograph, so a
+## building mark computed inside the loop would be unreachable by any test and checkable only by a
+## human looking at a PNG -- which is how this view went a month with no factories on it. The
+## geometry is here, the painting is three lines there, and `tools/window_shot.gd` reads THIS rather
+## than re-deriving the arithmetic: a second copy of it is a table that can disagree with the picture.
+##
+## The LIST is an argument and not `_sim.buildings()` read in here, so a test can hand it a building
+## on a world that has none yet -- a fresh `Welcome` carries no factories, and a test whose list is
+## empty passes for the absence of the data it is about.
+func _building_marks(buildings: Array) -> Array:
+	var marks := []
+	for entry in buildings:
+		marks.append(AssayHud.building_mark(entry as Dictionary, _cell, MARGIN))
+	return marks
