@@ -33,12 +33,17 @@ from PIL import Image, ImageDraw, ImageFont, PngImagePlugin
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import review_sources  # noqa: E402  the shipped art this sheet composites, stamped into it
 review_sources.start()  # before the first read of shipped art (ASSA-144)
+import review_layout  # noqa: E402  the client layout this sheet draws, stamped into it
 from ask_layout import kind_of  # noqa: E402  one reader of what a row holds
 from pack_icon_draw import nearest_blit  # noqa: E402  the engine's own sampling, defined once
 from pack_words import png_info  # noqa: E402  the words this sheet claims, stamped into it
 
 HERE = Path(__file__).resolve().parent.parent
-LAYOUT = json.load(open(sys.argv[1] if len(sys.argv) > 1 else "/tmp/cove-layout.json"))
+# THROUGH `review_layout.load`, NOT `json.load` (ASSA-151): this sheet's subject is the icon's
+# SCALE inside the row the engine laid out, which no sprite digest can go stale against. See
+# `review_layout.py` for why the sources stamp alone left that half unguarded.
+LAYOUT = review_layout.load(sys.argv[1] if len(sys.argv) > 1 else "/tmp/cove-layout.json",
+                            probe="pack_icon_layout.gd")
 SPRITES = HERE / "client/assets/sprites"
 OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else HERE / "assets/review/pack_icons.png"
 
@@ -358,7 +363,7 @@ OUT.parent.mkdir(parents=True, exist_ok=True)
 # AND WITH THE SHIPPED ART IT COMPOSITED (ASSA-144), a second claim under its own key: the words
 # can be right while the pixels predate a re-render, which is what happened to this sheet's slot
 # plate. Both chunks ride one PNG and each check reads only its own.
-sheet.save(OUT, pnginfo=review_sources.png_info(png_info(ROWS)))
+sheet.save(OUT, pnginfo=review_layout.png_info(review_sources.png_info(png_info(ROWS))))
 
 # ---------------------------------------------------------------------------- the numbers
 print("background %s, luminance %.4f" % (BG, luminance(BG)))
