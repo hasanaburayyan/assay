@@ -272,6 +272,61 @@ func test_no_gdscript_file_pins_a_hash() -> bool:
 ## drawn, because a surface announcing health cries wolf by the same mechanism `idle: nothing to
 ## refine` would. The client renders `size()` lines, so "draws nothing" and "the array is empty" are
 ## the same claim, and this is where it is checked.
+## **EVERY DEPOSIT THE MAP DRAWS CARRIES THE SIM'S VERDICT ON WORKING IT** (ASSA-187), and this side
+## is the only side that can say so: **a Variant field is invisible from Rust.** I inverted a bool in
+## this binding once and all forty Rust tests stayed green, because a `vdict!` entry is not a type
+## anything over there checks. A missing key here is worse than a wrong value -- `AssayHud.
+## deposit_disc` reads it without a default on purpose, so the schematic would abort its whole frame.
+##
+## **CHECKED AGAINST THE OTHER PAYLOAD RATHER THAN AGAINST A NUMBER.** `species_sheets()` carries
+## `hand_minable` per species and `deposits()` now carries it per deposit; both are supposed to be
+## `sim::ladder::hand_minable` on the same roster, so disagreement means one of the two is a second
+## opinion about a rule -- which is the defect ASSA-43 is named for. A hardness threshold written here
+## would be a third.
+##
+## THE PREMISE IS THAT THIS WORLD HAS BOTH KINDS. On 777042 six of thirteen deposits are rock nothing
+## can mine (the Game Director counted them against `sim-cli deposits`), so a world where every
+## deposit answers the same way means worldgen moved under this test and it is proving nothing.
+func test_every_deposit_carries_the_sims_own_verdict_on_mining_it() -> bool:
+	if not ClassDB.class_exists("AssaySim"):
+		return _fail("no AssaySim class; see the failure above")
+	var sim := AssaySimHost.new()
+	if not sim.start(AssaySimHost.fresh_welcome_json("777042", "marlow")):
+		return _fail("could not make a world to ask: %s" % sim.fail_reason)
+	var by_species := {}
+	for entry in sim.species_sheets():
+		var species: Dictionary = entry
+		by_species[int(species["id"])] = bool(species["hand_minable"])
+	var minable := 0
+	var dead := 0
+	for entry in sim.deposits():
+		var deposit: Dictionary = entry
+		if not deposit.has("hand_minable"):
+			return _fail(("a deposit crossed without `hand_minable`: %s. The schematic reads it "
+					+ "with no default, so this is a blank map rather than a wrong one.")
+					% [deposit.keys()])
+		if typeof(deposit["hand_minable"]) != TYPE_BOOL:
+			return _fail("`hand_minable` crossed as %s, not a bool"
+					% type_string(typeof(deposit["hand_minable"])))
+		var id := int(deposit["species"])
+		if not by_species.has(id):
+			return _fail("a deposit names species %d, which the roster does not have" % id)
+		if bool(deposit["hand_minable"]) != bool(by_species[id]):
+			return _fail(("deposit of species %d says minable %s and that species' own sheet says "
+					+ "%s. Two surfaces, one rule: one of them is a second opinion.")
+					% [id, deposit["hand_minable"], by_species[id]])
+		if bool(deposit["hand_minable"]):
+			minable += 1
+		else:
+			dead += 1
+	if minable == 0 or dead == 0:
+		return _fail(("premise: seed 777042 gave %d minable and %d unminable deposits, so this "
+				+ "world cannot tell the two states apart and neither can the assertions above")
+				% [minable, dead])
+	print("    seed 777042: %d deposits you can work, %d nothing can mine" % [minable, dead])
+	return true
+
+
 func test_a_world_with_nothing_built_reports_nothing_stopped() -> bool:
 	if not ClassDB.class_exists("AssaySim"):
 		return _fail("no AssaySim class; see the failure above")

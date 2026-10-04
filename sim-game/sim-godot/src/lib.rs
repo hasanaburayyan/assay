@@ -655,6 +655,27 @@ impl AssaySim {
                         &sim::debug::species_symbol(self.world.species(deposit.species))
                             .to_string(),
                     ).to_variant(),
+                    // WHETHER ANYTHING THIS WORLD CAN BUILD GETS THE ORE OUT,
+                    // from `sim::ladder::hand_minable` — the same function
+                    // `step`, `mine_by_machine` and `DepositFacts` ask, so the
+                    // schematic and the cursor readout cannot tell a player two
+                    // different stories about one rock (ASSA-187).
+                    //
+                    // **THE SCHEMATIC HAD NO CHANNEL FOR IT AND THIS PAYLOAD
+                    // HAD NO FIELD.** Colour is the species slot, brightness is
+                    // purity, radius is radius; whether the walk is worth taking
+                    // was drawn nowhere, and 25.4% of deposits over 16 seeds are
+                    // rock nothing can mine. The fact was already in the sim and
+                    // already on `deposit_dict`; it was missing here, which is
+                    // the one payload the map draws from.
+                    //
+                    // Same name as `deposit_dict`'s field ON PURPOSE, including
+                    // its mild lie: "hand" is where the gate started and the
+                    // gate is now one function every miner asks. A second name
+                    // for one rule is how two surfaces drift.
+                    "hand_minable" => sim::ladder::hand_minable(
+                        self.world.species(deposit.species),
+                    ),
                 }
             })
             .collect()

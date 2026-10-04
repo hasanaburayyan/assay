@@ -336,6 +336,40 @@ static func glyph_size(drawn_radius: float) -> int:
 	return 0 if size < 10 else mini(size, 32)
 
 
+## **WHAT ONE SCHEMATIC DISC IS, INCLUDING WHETHER THE ROCK IS WORTH THE WALK** (ASSA-187, Maren's
+## ruling: "a deposit you cannot work must be distinguishable from one you can, on the schematic
+## itself, and not by colour"). 25.4% of deposits over 16 seeds are rock nothing can mine, and they
+## were drawn exactly like the ones that pay.
+##
+## **FILL IS THE CHANNEL, BECAUSE IT IS THE ONLY ONE A DISC HAD SPARE.** Colour is the species slot,
+## brightness is purity, radius is the deposit's radius -- Decision #36 and ASSA-119 box 6 spend those
+## three between them -- so the fourth fact gets GEOMETRY: a rock nothing can mine is an outline, a
+## rock you can work is solid. **Geometry survives a greyscale copy by construction**, which is the
+## half of the ruling no dimming or re-tinting could keep.
+##
+## **THE INK FOLLOWS THE SURFACE THE LETTER ACTUALLY SITS ON.** A hollow disc puts the glyph on
+## `MAP_BG`, not on the species colour, so this asks [glyph_color] about the species colour AT ZERO
+## COVERAGE -- which is what hollow means, and which that function already composites correctly. The
+## letter therefore clears a measured contrast in both states instead of inheriting an ink chosen for
+## a fill that is not there.
+##
+## **THE STROKE IS THICK ON PURPOSE.** A 1px ring would trade purity's brightness away: a hue at a
+## few per cent coverage reads as grey, and brightness IS the purity channel. A fifth of the radius,
+## floored at 2px and capped at 6px, keeps enough colour on screen to read species and purity off the
+## outline of the smallest disc this map draws.
+##
+## `hand_minable` IS READ WITHOUT A DEFAULT (ASSA-141, and it is the sim's own
+## `ladder::hand_minable`). A binding that stopped sending it must empty the frame rather than draw
+## every dead end as a patch worth a 40-tile walk; `test_sim_binding.gd` is what notices first.
+static func deposit_disc(deposit: Dictionary, drawn_radius: float) -> Dictionary:
+	var colour := deposit_color(int(deposit["species"]), int(deposit["purity"]))
+	var minable := bool(deposit["hand_minable"])
+	# THE SPECIES COLOUR AT ZERO COVERAGE IS WHAT A HOLLOW DISC SHOWS THE LETTER.
+	var surface := colour if minable else Color(colour.r, colour.g, colour.b, 0.0)
+	return {"colour": colour, "filled": minable, "ink": glyph_color(surface),
+			"stroke": clampf(drawn_radius * 0.2, 2.0, 6.0)}
+
+
 ## The status line's colour for a state. Neutral idle, amber connecting, red failed, green joined.
 static func status_color(level: int) -> Color:
 	match level:
