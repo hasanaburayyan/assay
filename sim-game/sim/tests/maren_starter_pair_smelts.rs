@@ -140,3 +140,40 @@ fn how_often_the_guaranteed_starter_pair_cannot_smelt() {
          material, so walls == what the ore needs and the fuel is the whole question."
     );
 }
+
+/// THE TWO SEEDS THAT FAIL LIVE: does the rule above predict the exact numbers the stall line
+/// prints? `button_session.gd -- offline 10027` dies with "fire 44 too cool for ore needing 54"
+/// and 7069 with "fire 52 too cool for ore needing 54". If this probe reproduces 44/54 and 52/54
+/// from the roster alone, the diagnosis is the cause and not a correlated population statistic.
+#[test]
+#[ignore = "a probe, not a guard: run it by name with --nocapture."]
+fn the_two_live_failures_are_predicted_from_the_roster() {
+    for seed in [10027u64, 7069] {
+        let w = world(seed);
+        let Some((material, fuel)) = ladder::starter_species(&w.species) else {
+            continue;
+        };
+        let mat = &w.species[usize::from(material.0)];
+        let needs = u32::from(mat.sheet.heat_tolerance);
+        let spawn = w.spawn_tile();
+        let near = w
+            .deposits
+            .iter()
+            .filter(|d| d.species == fuel && d.amount > 0)
+            .min_by_key(|d| (dist2(d.center, spawn), d.id.0))
+            .expect("a starter fuel deposit");
+        let grade = Grade::from_purity(near.purity);
+        let burns = w
+            .fuel_temperature(Item::new(ItemKind::Ore, fuel, grade))
+            .unwrap_or(0);
+        println!(
+            "seed {seed}: material {} needs {needs}; nearest fuel {} is grade {} and burns at \
+             {burns} -> fire {} {}",
+            mat.name(),
+            w.species[usize::from(fuel.0)].name(),
+            grade.letter(),
+            burns.min(needs),
+            if burns < needs { "TOO COOL" } else { "ok" }
+        );
+    }
+}
