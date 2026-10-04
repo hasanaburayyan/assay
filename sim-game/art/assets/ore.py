@@ -1,6 +1,6 @@
 """Ore deposit tiles, 1x1 and seamless. SPECIES-NEUTRAL: the client tints.
 
-Rows: <grade>_full_v<n> where grade is C, B or A, plus depleted_full. 7 rows,
+Rows: <grade>_full_v<n> where grade is C, B or A, plus depleted_full. 13 rows,
 and not one mineral name among them. A world rolls six species from its seed
 (ADR 0001) and no rule, recipe or sprite may name one, so the old 56 rows of
 iron / copper / coal / stone were art for a design that was withdrawn.
@@ -28,10 +28,13 @@ placing stop working, and a faded rim hides a hard rule. What ships is the
 digital disc the sim describes, which already staircases at tile resolution.
 
 IF IT EVER LOOKS STAMPED-ON, THE LEVER IS MORE ARRANGEMENT VARIANTS, NEVER
-DENSITY: v0/v1 move rocks around without claiming anything about quantity.
-Add v2/v3 before touching coverage again. REOPEN CONDITION, so this is not
-taste: if `amount` ever goes per-tile, or depletion eats a patch from the rim
-inward, the density step earns its mark back.
+DENSITY: a variant moves rocks around without claiming anything about
+quantity. v2/v3 were added on Maren's ASSA-115 order; coverage and density
+are untouched, and `count`/`smin`/`smax` below are still a pure function of
+`step`, so every variant of a grade is the SAME AMOUNT of rock in a different
+arrangement. REOPEN CONDITION, so this is not taste: if `amount` ever goes
+per-tile, or depletion eats a patch from the rim inward, the density step
+earns its mark back.
 
 THE LADDER IS THE SIM'S, NOT ONE I INVENTED. This file used to split purity
 1-25 / 26-50 / 51-75 / 76-100 while the sim splits it <40 / 40-69 / 70+. They
@@ -80,7 +83,7 @@ import rig
 from rig import mat
 
 out = rig.args()
-FULL_VARIANTS = 2
+FULL_VARIANTS = 4
 BASE, DARK, HI = rig.PALETTE["ore"], rig.PALETTE["ore_dk"], rig.PALETTE["ore_hi"]
 SIMGAME = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -197,12 +200,29 @@ def tile(step, seed):
     return r
 
 
+def seed_for(step, v):
+    """SEEDS ARE PINNED, so growing the variant count does not re-roll the
+    arrangements already judged.
+
+    The two-variant build walked one counter down the rows, which means
+    inserting v2 and v3 would have shifted every later row's seed and
+    silently redrawn B and A's v0/v1. Those two rows are not interchangeable
+    with any other: `species_probe.py`, `loudness.py` and `check_headroom.py`
+    all read `<grade>_full_v0` as THE tile of that grade, and ASSA-115's
+    whole ore baseline was measured on them. v0/v1 therefore keep the numbers
+    they already had; new variants start at 20 so the sequence can keep
+    growing without ever colliding.
+    """
+    return 1 + step * 2 + v if v < 2 else 20 + step * 2 + (v - 2)
+
+
+DEPLETED_SEED = 7  # what the two-variant walk happened to reach; also pinned
+
 asset = rig.Asset("ore", out, (1, 1))
-seed = 1
 for step, (letter, _min_purity) in enumerate(GRADES):
     for v in range(FULL_VARIANTS):
         row = f"{letter}_full_v{v}"
-        tile(step, seed).render(asset.path(row)); asset.add(row, 1); seed += 1
+        tile(step, seed_for(step, v)).render(asset.path(row)); asset.add(row, 1)
 row = "depleted_full"
-tile(-1, seed).render(asset.path(row)); asset.add(row, 1); seed += 1
+tile(-1, DEPLETED_SEED).render(asset.path(row)); asset.add(row, 1)
 asset.write()

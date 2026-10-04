@@ -185,7 +185,11 @@ for species, cx, cy, r, grade in deposits:
     for y in range(H):
         for x in range(W):
             if not inside(x, y): continue
-            row = f"{grade}_full_v{random.randrange(2)}"
+            # Count the arrangements the sheet actually ships, the way the
+            # client does. A literal 2 here went stale the day v2/v3 landed.
+            n = sum(1 for r in man["ore"]["rows"]
+                    if r["name"].startswith(f"{grade}_full_v"))
+            row = f"{grade}_full_v{random.randrange(max(n, 1))}"
             blit(img, "ore", row, x, y, tint=SPECIES_TINTS[species])
 blit(img, "ore", "depleted_full", 1, 7, tint=SPECIES_TINTS[2])
 # PLANTED MACHINES, assembled from parts. Three different builds at three

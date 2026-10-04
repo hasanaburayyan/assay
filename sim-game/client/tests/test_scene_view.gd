@@ -206,6 +206,35 @@ func test_an_ore_tile_wears_its_species_tint_and_its_grade_row() -> bool:
 	return true
 
 
+## EVERY ARRANGEMENT THE SHEET SHIPS GETS DRAWN. The count used to be the literal 2 in `ore_row`,
+## which is a failure nothing could see: rendering v2/v3 would have passed every test here and
+## every art check, and shipped two rows of art to a client that never asked for them. So this
+## test reads the count out of the manifest and fails if any row the sheet has goes unused.
+func test_the_view_uses_every_ore_arrangement_the_sheet_ships() -> bool:
+	var rows: Array = ((_manifest().get("ore", {}) as Dictionary).get("rows", []) as Array)
+	for grade in ["C", "B", "A"]:
+		var want := []
+		for row in rows:
+			var name := String((row as Dictionary).get("name", ""))
+			if name.begins_with(grade + "_full_v"):
+				want.append(name)
+		if want.is_empty():
+			return _fail("the shipped sheet has no `%s_full_v*` row at all" % grade)
+		var tiles := {}
+		# Inside the 20x10-tile window at origin zero, so nothing is culled before it is counted.
+		for y in range(10):
+			for x in range(20):
+				tiles[Vector2i(x, y)] = {"species": 0, "grade": grade, "depleted": false}
+		var seen := {}
+		for place in _of(AssayScene.placements(_view({"ore": tiles})), "ore"):
+			seen[String((place as Dictionary)["row"])] = true
+		for name in want:
+			if not seen.has(name):
+				return _fail("the sheet ships `%s` and 200 tiles of grade %s never drew it: %s"
+						% [name, grade, seen.keys()])
+	return true
+
+
 ## A SPENT PATCH IS STILL VISIBLE, and still its species. `sim` keeps a depleted deposit so its id
 ## stays stable, so the view has to have an answer for it, and the sheet ships one.
 func test_a_depleted_patch_has_its_own_drawing_and_keeps_its_tint() -> bool:
