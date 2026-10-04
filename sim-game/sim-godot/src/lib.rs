@@ -541,6 +541,32 @@ impl AssaySim {
         }
     }
 
+    /// **A COUNT AND ITS NOUN, AGREEING**, from the sim (ASSA-145).
+    ///
+    /// `sim::debug::counted` and not a GDScript twin, so the window and
+    /// `sim-cli` cannot drift on a sentence a player reads. The window needs it
+    /// for three counts the sim knows nothing about -- players, bundles
+    /// applied, hashes reported -- which is why it crosses as a helper rather
+    /// than as a finished line: those are the HOST's facts, not the world's,
+    /// and a sim that composed that sentence would be reading the network.
+    ///
+    /// NO `World` IS TOUCHED, so this is `static` on the class: a client can
+    /// say "0 players" before it has a world at all.
+    #[func]
+    pub fn counted(n: i64, one: GString, many: GString) -> GString {
+        // A NEGATIVE COUNT IS A CALLER BUG AND READS AS ONE. Clamping it to 0
+        // would print "0 players" for a count that came back as -1 from a
+        // binding that failed, which is the plausible lie ASSA-141 is about.
+        if n < 0 {
+            return gstring(&format!("{n} {many}"));
+        }
+        gstring(&sim::debug::counted(
+            n as u64,
+            &one.to_string(),
+            &many.to_string(),
+        ))
+    }
+
     /// EVERY PLAYER, FOR DRAWING: id, name, where they are, where they are
     /// walking. Read out of the stepped world, never predicted — `target` is
     /// here so a client can draw an intention, not so it can interpolate a

@@ -1435,6 +1435,37 @@ func test_the_maps_note_is_shown_exactly_when_the_map_is_empty() -> bool:
 	return ok
 
 
+## **"1 players" WAS THE FIRST LINE OF EVERY SCREENSHOT OF ASSAY THAT EXISTS** (ASSA-145).
+##
+## Solo is `Play solo`, which is how every window shot was taken and how a stranger opens the game,
+## so the second line of the window has read `6 species, 1 players` in every picture the board has
+## looked at. The Game Director filed it as the same defect as `5 of your 3 Tonore ore`: a sentence
+## that only reads in the good case is a defect.
+##
+## DRIVEN AT EXACTLY 1, ON A REAL SCREEN, AGAINST THE LABEL'S OWN TEXT. A fresh offline world has
+## one player and no bundles applied yet, which is why this is the only state worth driving: all
+## three counts were already right at 0 and at 2 and had been printing wrongly for weeks.
+func test_the_headline_counts_agree_with_their_nouns() -> bool:
+	var screen := _joined_screen()
+	screen._refresh()
+	var line: String = screen._detail.text
+	if not line.contains("1 player ·"):
+		return _fail("a solo world does not say `1 player`: %s" % line)
+	for wrong in ["1 players", "1 bundles", "1 hashes"]:
+		if line.contains(wrong):
+			return _fail("the headline says `%s`: %s" % [wrong, line])
+	# THE PREMISE: if the counts were missing from the line altogether, every assertion above would
+	# pass on a sentence with no numbers in it.
+	for noun in ["player", "applied", "reported", "species", "tiles"]:
+		if not line.contains(noun):
+			return _fail("the headline has no `%s` at all: %s" % [noun, line])
+	# AND THE PLURAL STILL WORKS, which is the half a singular-only fix breaks: 6 species and 96
+	# tiles are on this same line and must not have been turned singular.
+	if not line.contains("6 species") or not line.contains("96 x 64 tiles"):
+		return _fail("a plural on this line stopped reading as one: %s" % line)
+	return true
+
+
 ## A live screen welcomed into a fresh offline world, the way `test_buttons.gd::_joined` does it:
 ## `_ready` by hand because the suite works inside `SceneTree._initialize`.
 func _joined_screen(seed_text := "777042") -> Node:

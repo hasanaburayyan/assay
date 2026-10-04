@@ -1722,6 +1722,33 @@ pub fn building_state_line(world: &World, b: &Building) -> String {
 }
 
 /// One line describing what a building holds and whether it is working.
+/// **A COUNT AND ITS NOUN, AGREEING** — one place, so the next counted noun
+/// inherits it (ASSA-145, Maren's filing).
+///
+/// `1 players` has been the second line of every screenshot of Assay that
+/// exists, including the ones the board has looked at, because solo is `Play
+/// solo` and that is how a stranger opens the game. It is not one typo: the
+/// rule was already being applied deliberately in [`halted_table`] ("The 1
+/// building you have placed is working") and at `crafting_readout`, and missed
+/// in four other places. A number whose noun is wrong for some of its values is
+/// the same defect as `5 of your 3 Tonore ore` (ASSA-129, `assay-rulings` §2):
+/// A SENTENCE THAT ONLY READS IN THE GOOD CASE IS A DEFECT.
+///
+/// TWO FORMS AND NOT A SUFFIX RULE. English plurals are not `+ "s"`
+/// (`1 species`), and a caller that has to think about it writes the pair
+/// rather than trusting a guess this function cannot make.
+///
+/// IT TAKES THE COUNT AND RETURNS THE COUNT, so a call site reads as the whole
+/// phrase and there is no way to print the noun without the number it agrees
+/// with. ZERO IS PLURAL, which is English and not an accident: "0 players".
+pub fn counted(n: u64, one: &str, many: &str) -> String {
+    if n == 1 {
+        format!("1 {one}")
+    } else {
+        format!("{n} {many}")
+    }
+}
+
 pub fn building_status(world: &World, b: &Building) -> String {
     let s = match &b.kind {
         BuildingKind::Smelter(s) => s,
@@ -1730,10 +1757,10 @@ pub fn building_status(world: &World, b: &Building) -> String {
     let walls = world.max_temperature(b);
     let state = smelter_state_line(world.smelter_state(b));
     format!(
-        "walls {walls} · in {} · fuel {} ({} ticks burning at {}) · out {} · {state}",
+        "walls {walls} · in {} · fuel {} ({} burning at {}) · out {} · {state}",
         slot(world, s.input),
         slot(world, s.fuel),
-        s.burn_left,
+        counted(u64::from(s.burn_left), "tick", "ticks"),
         s.burn_temperature,
         slot(world, s.output)
     )
@@ -2094,13 +2121,14 @@ pub fn crafting_readout(world: &World, player: PlayerId) -> Option<String> {
     let recipe = crafting.recipe.recipe();
     let left = recipe.ticks.saturating_sub(crafting.progress);
     let making = world.item_name(recipe.output_for(crafting.input)?);
+    let left = counted(u64::from(left), "tick", "ticks");
     Some(if crafting.remaining > 1 {
         format!(
-            "making {making}: {left} ticks left on this one, {} to go after it",
+            "making {making}: {left} left on this one, {} to go after it",
             crafting.remaining - 1
         )
     } else {
-        format!("making {making}: {left} ticks left")
+        format!("making {making}: {left} left")
     })
 }
 

@@ -357,6 +357,16 @@ func designs_of(player: int) -> Array:
 	return _sim.designs_of(player) if _sim != null else []
 
 
+## **A COUNT AND ITS NOUN, AGREEING** (ASSA-145). `sim::debug::counted`, so the window and `sim-cli`
+## cannot drift on a sentence a player reads: "1 player" and "2 players" from one rule.
+##
+## STATIC AND WORLDLESS, unlike everything else here, because the counts that needed it are the
+## HOST's -- players, bundles applied, hashes reported -- and a client must be able to say them
+## before it has a world.
+static func counted(n: int, one: String, many: String) -> String:
+	return AssaySim.counted(n, one, many)
+
+
 ## **WHAT THE SIM WOULD SAY ABOUT A DESIGN NOBODY HAS BUILT YET**: `verdict` (its own word),
 ## `fault` (its own phrase when the rules refuse the design, "" otherwise) and the four numbers
 ## `designs_of` returns. `frame` and `mounted` are `PartKind` names -- "frame", "handle", "head",
