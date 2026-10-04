@@ -20,12 +20,21 @@ extends SceneTree
 ## panel made beside the game, never the panel. This writes PNGs of the actual screen, so the Game
 ## Director can rule on a picture of what shipped.
 ##
-## WHAT IT SHOOTS, and why these four:
+## WHAT IT SHOOTS. (This list said "these four" while the tool took seven, which is the kind of
+## stale sentence Maren keeps finding in our prose rather than in our code.)
 ##  - `01-join.png`   the first screen a stranger sees, before any press.
 ##  - `02-play.png`   mid-session, every panel carrying real content from a played world.
 ##  - `03-log.png`    the same screen with the event log open and the crafting menu folded away.
 ##  - `04-pack.png`   the fullest the pack and the crafting menu ever get in this play. NOT a state
 ##                    anyone asks for -- a moment the tool notices, for the reason below.
+##  - `05-rocks.png`  the species roster scrolled to the rocks, two whole rows in frame.
+##  - `06/07-north-*` the north-edge pair, log open and log down (ASSA-156/184).
+##  - `08-whole-world.png` **THE OTHER VIEW, AND IT TOOK ASSA-189 TO NOTICE IT WAS MISSING.** Every
+##                    shot above is the close-up. The whole-world schematic is how you cross 96x64
+##                    tiles and how you find a partner, and it drew no factory at all for a month
+##                    without one check in this file being able to see it -- they are all about the
+##                    HUD column, and to them the map is pixels. Written with
+##                    `08-whole-world-marks.json`, the geometry the frame was painted from.
 ##
 ## THE LOG SHOT IS NOT OPTIONAL AND IT IS WHY `_shoot` REFUSES A REPEAT. The board's complaint is
 ## "logs are hard on the eyes", and the played session ENDS with the log hidden and the menu open --
@@ -97,7 +106,7 @@ const NORTH_WALK_TICKS := 600
 enum Phase { SETTLE_JOIN, SHOOT_JOIN, PLAY, SETTLE_PACK, SHOOT_PACK, SETTLE_PLAY, SHOOT_PLAY,
 		SETTLE_FOLD, MEASURE_CONTROLS, SETTLE_MENUS, SHOOT_MENUS, SCROLL_ROCKS, SETTLE_ROCKS,
 		SHOOT_ROCKS, WALK_NORTH, SETTLE_NORTH_LOG, SHOOT_NORTH_LOG, SETTLE_NORTH_CLEAR,
-		SHOOT_NORTH_CLEAR, DONE }
+		SHOOT_NORTH_CLEAR, WALK_OFF, PRESS_V, SETTLE_SCHEMATIC, SHOOT_SCHEMATIC, DONE }
 ## What `_play_frames` did with its last tick.
 enum Ticked { AGAIN, OVER, DEAD }
 
@@ -110,6 +119,11 @@ var _ticks := PLAY_TICKS
 var _phase: Phase = Phase.SETTLE_JOIN
 var _waited := 0
 var _shots := PackedStringArray()
+## **WHAT THE SCHEMATIC PAINTED FOR EVERY BUILDING**, read off `main.gd::_building_marks` in the frame
+## `08-whole-world.png` was written from (ASSA-189). THE PAINTER'S OWN LIST and not a second copy of
+## the arithmetic: a table that derives the geometry again is a table that can disagree with the
+## picture it is describing, which is the shape of the bug I shipped in `_controls_report`.
+var _schematic_marks: Array = []
 ## Fingerprint of every frame already written, to the name it was written under. See `_shoot`.
 var _taken := {}
 ## Shot name -> what its own subjects were doing instead of being on screen. Keyed by name and
@@ -153,6 +167,16 @@ var _walk_ticks := 0
 ## for. A SHOT OF A MOVING BODY IS NOT A SHOT OF WHERE IT STANDS.
 const WALK_HOLD_TICKS := 10
 var _walk_held := 0
+## How far off their own base the player is walked before the whole-world shot, and how many ticks
+## that is allowed to take. See `Phase.WALK_OFF`: the distance only has to clear the two marks, and
+## the ceiling is this tool's own version of ASSA-182 -- a walk that cannot arrive must end the run
+## rather than tick for ever.
+const WALK_OFF_TILES := 10
+const WALK_OFF_CEILING := 200
+var _walk_off_sent := false
+var _walk_off_ticks := 0
+## Where `_walk_off` is taking them, held so the ceiling's failure can name it.
+var _walk_off_target := Vector2i.ZERO
 
 
 func _initialize() -> void:
@@ -282,7 +306,41 @@ func _process(_delta: float) -> bool:
 			# frame. `_rocks_report` guards it instead, and asks for MORE: two whole ROWS in the
 			# frame, which is the least a picture needs to show that two rocks differ.
 			_shoot("05-rocks.png", PackedStringArray())
-			_phase = Phase.WALK_NORTH if _north_row >= 0 else Phase.DONE
+			_phase = Phase.WALK_NORTH if _north_row >= 0 else Phase.WALK_OFF
+		Phase.WALK_OFF:
+			_walk_off()
+		Phase.PRESS_V:
+			# **LAST, AND AFTER A WALK, AND THE REASON IS A MEASUREMENT.** The play loop plants its
+			# machine on the tile you STAND on, so the first version of this shot had the one player
+			# mark in it sitting under a building to the pixel: the 12px diamond was invisible inside
+			# the 16px square, and once the order was fixed the PLAYER was the covered one. Either way
+			# the frame could not serve as `assa189_measure.py`'s filled-rect control, and the script
+			# correctly refused it rather than passing on a 4.5-point gap.
+			#
+			# AND IT IS THE STATE THE VIEW EXISTS FOR, not a contrivance for the instrument: Maren's own
+			# words on this item are "you cannot find your own base once you have walked away from it".
+			# **THE OTHER VIEW, WHICH THIS TOOL HAD NEVER PRESSED** (ASSA-189). Seven shots and every
+			# one of them was the close-up, so the view you cross 96x64 tiles on went a month drawing no
+			# factory at all and no check in here could have noticed: they are all about the HUD column,
+			# and to them the map is pixels.
+			#
+			# The same setter the (V) toggle calls, not an assignment to `_close_up`: a state a player
+			# cannot reach is not worth photographing.
+			_screen._show_close_up(false)
+			_phase = Phase.SETTLE_SCHEMATIC
+		Phase.SETTLE_SCHEMATIC:
+			_settle(Phase.SHOOT_SCHEMATIC)
+		Phase.SHOOT_SCHEMATIC:
+			# NO SUBJECT: this shot's subject is the MAP, which is not one of the column sections
+			# `_standing` knows how to measure. `_schematic_report` is its check, and it asks for more
+			# than presence -- every building the sim holds, marked, inside the frame.
+			#
+			# READ AT THE MOMENT OF THE SHOT, like the subject check and for the same reason: the
+			# geometry is only true in the frame that was actually written.
+			_schematic_marks = _screen._building_marks(_screen._sim.buildings())
+			_shoot("08-whole-world.png", PackedStringArray())
+			_write_marks_table()
+			_phase = Phase.DONE
 		Phase.WALK_NORTH:
 			_walk_north()
 		Phase.SETTLE_NORTH_LOG:
@@ -300,7 +358,7 @@ func _process(_delta: float) -> bool:
 			# measurement was zero player pixels WITH the log against 199 WITHOUT it, so a single
 			# shot cannot say whether the body is visible BECAUSE of the fix or because of the row.
 			_shoot("07-north-clear.png", PackedStringArray())
-			_phase = Phase.DONE
+			_phase = Phase.WALK_OFF
 		Phase.DONE:
 			_report()
 	return _done
@@ -435,6 +493,48 @@ func _walk_north() -> void:
 
 ## WHERE MY BODY IS, from the sim. `-1` y if there is no such player, which `_walk_north` reads as
 ## "not arrived" and then fails on the tick budget rather than shooting a pair of nothing.
+## **OFF THEIR OWN BASE, BEFORE THE WHOLE-WORLD SHOT** (ASSA-189).
+##
+## Not tidiness: the play loop plants on the tile you stand on, so a schematic shot taken where the
+## loop leaves you has the player mark and a building mark at the same point, and whichever is painted
+## second hides the other. A frame like that cannot answer Maren's box 4 -- "not mistakable for a
+## player" needs both classes in it, apart -- and it is also not the state the view is FOR.
+##
+## THE TARGET IS AWAY FROM THE NEAREST BUILDING and clamped inside the world, chosen along whichever
+## axis has room. It walks and then settles; if it cannot arrive within `WALK_OFF_CEILING` ticks the
+## run ENDS rather than ticking on, which is ASSA-182's rule applied to this tool.
+func _walk_off() -> void:
+	var id: int = _screen._client.player_id
+	var here := _my_tile(id)
+	var buildings: Array = _screen._sim.buildings()
+	if buildings.is_empty():
+		# Nothing to stand on top of, so nothing to walk away from.
+		_phase = Phase.PRESS_V
+		return
+	var size: Vector2i = _screen._sim.size_tiles()
+	if not _walk_off_sent:
+		_walk_off_sent = true
+		var want := Vector2i(clampi(here.x + WALK_OFF_TILES, 0, size.x - 1), here.y)
+		if absi(want.x - here.x) < WALK_OFF_TILES:
+			want = Vector2i(clampi(here.x - WALK_OFF_TILES, 0, size.x - 1), here.y)
+		_walk_off_target = want
+		print("  walking from %s to %s, off the base, for the whole-world shot" % [here, want])
+		_tick_plain([{"Player": {"player": id,
+				"command": AssayActions.move_to(_walk_off_target)}}])
+		return
+	_walk_off_ticks += 1
+	if _walk_off_ticks > WALK_OFF_CEILING:
+		_finish(false, ("the player did not reach %s in %d ticks (still at %s), so the whole-world "
+				+ "shot would be of a player standing on their own machine")
+				% [_walk_off_target, WALK_OFF_CEILING, here])
+		return
+	if here == _walk_off_target:
+		_phase = Phase.PRESS_V
+		return
+	if not _tick_plain([]):
+		return
+
+
 func _my_tile(id: int) -> Vector2i:
 	for entry in _screen._sim.players():
 		var player: Dictionary = entry
@@ -989,6 +1089,106 @@ func _machine_report() -> void:
 				parts.size(), "[%s]" % ", ".join(kinds), where])
 
 
+## **EVERY FACTORY THE SIM HOLDS, MARKED ON THE WHOLE-WORLD VIEW, INSIDE THE FRAME** (ASSA-189).
+##
+## THE LEG THAT WOULD HAVE CAUGHT THE DEFECT. `_machine_report` above is the same question for the
+## CLOSE-UP and it is why that view's buildings were fixed a month ago; nothing asked it of the
+## schematic, so `main.gd::_draw` painted a background, a spawn pad, deposits and players and the one
+## thing the game is about was not in the list.
+##
+## IT READS `main.gd::_building_marks`, the painter's own list, rather than measuring the PNG: a
+## rectangle is checkable arithmetic and a bright lump in an image is not. What it cannot see is
+## whether `draw_colored_polygon` put the pixels down -- `shared/assay/assa187_measure.py` against
+## these rects is that, and it needs a human to run it on the shot.
+##
+## **IT REPORTS `not run` RATHER THAN `NO` WHEN THE SIM HAS NO BUILDINGS** (ASSA-185's rule). A world
+## the play loop never got a smelter into cannot answer this question, and a leg that said NO there
+## would send the next reader into the painter for a reason that is in `button_play.gd`.
+func _schematic_report() -> Dictionary:
+	if _screen == null or _screen._sim == null or not _screen._sim.running():
+		return {"ran": false, "ok": false, "why": "no running sim, so there was no schematic to shoot"}
+	var buildings: Array = _screen._sim.buildings()
+	if buildings.is_empty():
+		return {"ran": false, "ok": false,
+				"why": "the sim holds no building, so this view has nothing to be missing"}
+	if _schematic_marks.is_empty():
+		return {"ran": true, "ok": false, "why": ("the sim holds %d building(s) and the schematic "
+				+ "marked none of them: ASSA-189 exactly") % buildings.size()}
+	if _schematic_marks.size() != buildings.size():
+		return {"ran": true, "ok": false, "why": "%d buildings and %d marks"
+				% [buildings.size(), _schematic_marks.size()]}
+	var map := Rect2(_screen.MARGIN, Vector2(_screen._sim.size_tiles()) * _screen._cell)
+	var lines := PackedStringArray()
+	var off := PackedStringArray()
+	for i in _schematic_marks.size():
+		var mark: Dictionary = _schematic_marks[i]
+		var building: Dictionary = buildings[i]
+		var at: Vector2 = mark["at"]
+		var span: Vector2 = mark["span"]
+		var inside := map.encloses(Rect2(at - span * 0.5, span))
+		lines.append("    schematic %-9s at %-10s mark %s %s  %s"
+				% [String(building.get("kind", "?")), building.get("pos", Vector2i.ZERO),
+				at.round(), span.round(), "on the map" if inside else "OFF THE MAP"])
+		if not inside:
+			off.append("%s at %s" % [building.get("kind", "?"), building.get("pos", Vector2i.ZERO)])
+	for line in lines:
+		print(line)
+	if not off.is_empty():
+		return {"ran": true, "ok": false, "why": "marked outside the map rect %s: %s"
+				% [map, ", ".join(off)]}
+	return {"ran": true, "ok": true, "why": "%d factory mark(s) on the whole-world view"
+			% _schematic_marks.size()}
+
+
+## **THE GEOMETRY THE SCHEMATIC SHOT WAS PAINTED FROM, BESIDE THE SHOT** (ASSA-189, Maren's box 4: "a
+## building is not mistakable for a deposit OR for a player at 1x, and the distinction survives a
+## greyscale copy").
+##
+## `shared/assay/assa189_measure.py` reads this and the PNG together. It is written here, in the
+## frame the shot came from, for the reason `assa187_measure.py` gives at the top of itself: measure
+## the rect the painter used, never a mask of the picture -- a lump of bright pixels in an image
+## cannot tell you which shape was asked for.
+##
+## **IT CARRIES THE PLAYER MARKS AS THE CONTROL.** The claim is not "a building is visible", it is "a
+## building is not the player's shape", and a measurement with only one class in it cannot say that.
+## The players are the filled rects the diamond has to differ from, in the same frame and the same
+## greyscale.
+func _write_marks_table() -> void:
+	var buildings: Array = _screen._sim.buildings()
+	var rows := []
+	for i in _schematic_marks.size():
+		var mark: Dictionary = _schematic_marks[i]
+		var at: Vector2 = mark["at"]
+		var span: Vector2 = mark["span"]
+		var building: Dictionary = buildings[i] if i < buildings.size() else {}
+		rows.append({"kind": String(building.get("kind", "?")), "x": at.x, "y": at.y,
+				"w": span.x, "h": span.y, "shape": "diamond"})
+	var people := []
+	for entry in _screen._sim.players():
+		var player: Dictionary = entry
+		var at: Vector2 = _screen.MARGIN + (Vector2(player["pos"] as Vector2i)
+				+ Vector2(0.5, 0.5)) * _screen._cell
+		people.append({"id": int(player["id"]), "x": at.x, "y": at.y,
+				"w": AssayHud.PLAYER_MARK_PX, "h": AssayHud.PLAYER_MARK_PX, "shape": "rect"})
+	var table := {
+		"shot": "08-whole-world.png",
+		"cell": _screen._cell,
+		"map_bg": [AssayHud.MAP_BG.r, AssayHud.MAP_BG.g, AssayHud.MAP_BG.b],
+		"built": [AssayHud.BUILT.r, AssayHud.BUILT.g, AssayHud.BUILT.b],
+		"buildings": rows,
+		"players": people,
+	}
+	var path := "%s/08-whole-world-marks.json" % _out
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		_finish(false, "cannot write %s" % path)
+		return
+	file.store_string(JSON.stringify(table, "  "))
+	file.close()
+	_shots.append("    marks table   %d building(s), %d player(s) -> %s"
+			% [rows.size(), people.size(), path.get_file()])
+
+
 func _report() -> void:
 	for line in _shots:
 		print("  ", line)
@@ -1005,6 +1205,8 @@ func _report() -> void:
 		["controls", "opening the log moved no control off the screen", _controls_report()],
 		["roster", "two rocks can be compared in one shot", _rocks_report()],
 		["subject", "every shot contains the section it is named for", _subject_report()],
+		["schematic", "every factory the sim holds is marked on the whole-world view",
+				_schematic_report()],
 	]
 	print("  legs:")
 	var failures := PackedStringArray()

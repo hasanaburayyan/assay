@@ -2324,3 +2324,108 @@ func test_a_quiet_host_covers_the_status_line_and_gives_back_what_it_covered() -
 		ok = _fail("the warning's colour outlived its sentence: %s" % screen._status.modulate)
 	screen.queue_free()
 	return ok
+
+
+## **THE SCHEMATIC IS HANDED EVERY BUILDING THE SIM REPORTS** (ASSA-189, Maren's P1).
+##
+## This is the wiring half and it is the half that IS the defect. `AssayHud.building_mark` being
+## right buys nothing: for a month `_sim.buildings()` occurred exactly ONCE in `main.gd`, inside the
+## close-up's `view` dictionary, so the whole-world view could not draw a factory because it was
+## never handed one. Nothing in `test_hud.gd` can see that, and the picture could not either -- an
+## empty map looks the same whether the painter is wrong or the list never arrived.
+##
+## **THE LIST IS AN ARGUMENT, BECAUSE A FRESH `Welcome` HAS NO BUILDINGS IN IT.** Planting two, the
+## way `test_what_has_stopped_is_pinned_outside_the_scroll` plants the sim's halt lines, is what stops
+## this passing for the ABSENCE of the data it is about -- the hole Marlow found in my durability test
+## and the one I keep re-finding. The screen is real, driven into the real schematic through
+## `_show_close_up(false)`, and the geometry comes out at the screen's own `_cell` and `MARGIN`.
+##
+## **AND THE SOURCE IS SCANNED, which is the leg that would have caught the bug.** The two together:
+## the marks prove the geometry survives the real screen, the scan proves `_draw` asks for the list at
+## all. A `_building_marks` that exists, is correct and is called by nobody is exactly the state this
+## item describes, and it leaves every assertion above green.
+##
+## WHAT IT CANNOT SEE: whether `draw_colored_polygon` put any pixels down. Nothing headless can read a
+## canvas back. That is `tools/window_shot.gd`'s whole-world shot, measured by
+## `shared/assay/assa187_measure.py`.
+func test_the_schematic_is_handed_every_building_the_sim_reports() -> bool:
+	var screen := _joined_screen()
+	screen._show_close_up(false)
+	screen._refresh()
+	if screen._close_up or not screen._sim.running() or screen._cell <= 0.0:
+		screen.queue_free()
+		return _fail(("premise: close_up %s, running %s, cell %f -- `_draw` returns before a "
+				+ "building on any of those and this test would be about nothing")
+				% [screen._close_up, screen._sim.running(), screen._cell])
+	var ok := true
+	# A 2x2 smelter and a 1x1 machine: the two footprints `BuildingKind::footprint` actually gives.
+	var planted := [{"pos": Vector2i(12, 7), "footprint": Vector2i(2, 2), "kind": "smelter"},
+			{"pos": Vector2i(40, 30), "footprint": Vector2i(1, 1), "kind": "machine"}]
+	var marks: Array = screen._building_marks(planted)
+	var map := Rect2(screen.MARGIN, Vector2(screen._sim.size_tiles()) * screen._cell)
+	if marks.size() != planted.size():
+		ok = _fail("%d buildings went in and %d marks came out" % [planted.size(), marks.size()])
+	else:
+		for i in marks.size():
+			var mark: Dictionary = marks[i]
+			var building: Dictionary = planted[i]
+			var at: Vector2 = mark["at"]
+			var want: Vector2 = screen.MARGIN + (Vector2(building["pos"] as Vector2i)
+					+ Vector2(building["footprint"] as Vector2i) * 0.5) * screen._cell
+			if at.distance_to(want) > 1e-4:
+				ok = _fail(("the %s at tile %s is marked at %s and its footprint's centre on this "
+						+ "screen is %s") % [building["kind"], building["pos"], at, want])
+				break
+			if not map.has_point(at):
+				ok = _fail(("the %s at tile %s is marked at %s, outside the map rect %s: a factory "
+						+ "drawn off the world is the same news as one not drawn")
+						% [building["kind"], building["pos"], at, map])
+				break
+			# **NOT THE PLAYER'S SHAPE AT THE PLAYER'S SIZE, ON THE REAL CELL** (Maren's box 4). At
+			# this screen's own tile size, the mark must leave empty the corner a 16px player square
+			# fills -- which is the greyscale claim as geometry rather than as a hue.
+			var span: Vector2 = mark["span"]
+			var corner := at + span * 0.5 - (span.normalized() * 0.5)
+			if Geometry2D.is_point_in_polygon(corner, mark["points"] as PackedVector2Array):
+				ok = _fail(("the %s's mark fills its own corner %s at %.1fpx a tile, so it is a "
+						+ "filled rect like the player's %.0fpx mark") % [building["kind"], corner,
+						screen._cell, AssayHud.PLAYER_MARK_PX])
+				break
+	# **THE TWO KEYS IT READS WITHOUT A DEFAULT ARE DECLARED AT THE BOUNDARY.** `building_mark` reads
+	# `pos` and `footprint` with `[]`, so a binding that stopped sending either empties the frame
+	# instead of drawing every factory on the corner (ASSA-196's bill). `AssayScene.SIM_FACTS` is the
+	# list `test_sim_binding.gd` asks the RUNNING binding about, and the Rust side holds it too
+	# (`every_building_is_listed_with_the_footprint_the_sim_gave_it`).
+	if ok:
+		for key: String in ["pos", "footprint"]:
+			if not (AssayScene.SIM_FACTS["building"] as Array).has(key):
+				ok = _fail(("the schematic reads `%s` off a building with no default and "
+						+ "AssayScene.SIM_FACTS['building'] does not declare it, so nothing asks "
+						+ "the binding whether it is still sent") % key)
+				break
+	# **AND `_draw` ACTUALLY ASKS FOR THE LIST.** This is the one assertion that fails on the code
+	# this item was filed against: before today `_sim.buildings()` appeared once in this file and it
+	# was inside the close-up's view dictionary. Blunt on purpose, like
+	# `test_sim_binding.gd::test_every_player_fact_main_reads_is_declared`.
+	if ok:
+		var source := FileAccess.get_file_as_string("res://scripts/main.gd")
+		if source == "":
+			ok = _fail("could not read res://scripts/main.gd, so nothing was scanned")
+		elif not source.contains("_building_marks(_sim.buildings())"):
+			ok = _fail("`_building_marks` is never handed `_sim.buildings()` in main.gd, which is "
+					+ "ASSA-189 exactly: the mark is right and the schematic still draws no factory")
+		elif source.find("_building_marks(_sim.buildings())") \
+				< source.rfind("for entry in _sim.players():"):
+			# **AND IT IS PAINTED AFTER THE PLAYERS, WHICH I GOT WRONG FIRST TIME AND MEASURED.** The
+			# play loop plants a machine on the tile you are STANDING on, so on the demo's own shot a
+			# 1x1 machine's 12px mark and the 16px player square were at the same point to the pixel and
+			# the machine was invisible: two buildings in the sim, one on screen. The order survives
+			# only because a diamond leaves the box's corners alone, so the player still reads under it.
+			#
+			# A SOURCE ORDER AND NOT A CLAIM ABOUT THE ENGINE: `_draw`'s calls happen in the order they
+			# are written, which is the one frame-ordering fact in here I do not have to ask about.
+			ok = _fail("main.gd paints the building marks BEFORE the players, so a machine on the tile "
+					+ "you stand on is covered by your own 16px mark -- measured on the demo shot, where "
+					+ "the sim held 2 buildings and the schematic showed 1")
+	screen.queue_free()
+	return ok
