@@ -341,7 +341,7 @@
   "rows": [
    {
     "name": "idle_S",
-    "frames": 4
+    "frames": 2
    },
    {
     "name": "walk_S",
@@ -349,7 +349,7 @@
    },
    {
     "name": "idle_SE",
-    "frames": 4
+    "frames": 2
    },
    {
     "name": "walk_SE",
@@ -357,7 +357,7 @@
    },
    {
     "name": "idle_E",
-    "frames": 4
+    "frames": 2
    },
    {
     "name": "walk_E",
@@ -365,7 +365,7 @@
    },
    {
     "name": "idle_NE",
-    "frames": 4
+    "frames": 2
    },
    {
     "name": "walk_NE",
@@ -373,7 +373,7 @@
    },
    {
     "name": "idle_N",
-    "frames": 4
+    "frames": 2
    },
    {
     "name": "walk_N",
@@ -381,7 +381,7 @@
    },
    {
     "name": "idle_NW",
-    "frames": 4
+    "frames": 2
    },
    {
     "name": "walk_NW",
@@ -389,7 +389,7 @@
    },
    {
     "name": "idle_W",
-    "frames": 4
+    "frames": 2
    },
    {
     "name": "walk_W",
@@ -397,7 +397,7 @@
    },
    {
     "name": "idle_SW",
-    "frames": 4
+    "frames": 2
    },
    {
     "name": "walk_SW",
@@ -406,8 +406,8 @@
   ],
   "animations": {
    "idle": {
-    "frames": 4,
-    "fps": 4
+    "frames": 2,
+    "fps": 2
    },
    "walk": {
     "frames": 8,
