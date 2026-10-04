@@ -491,6 +491,56 @@ impl AssaySim {
             .collect()
     }
 
+    /// **WHAT THE SIM WOULD SAY ABOUT A DESIGN NOBODY HAS BUILT YET** — the
+    /// one question `designs_of` cannot answer, because that list is what a
+    /// player already holds.
+    ///
+    /// A scripted run needs this and the reason is ASSA-140. `button_play.gd`
+    /// planted a frame, a head and four hoppers on every world, and the sim had
+    /// *already* said WILL BREAK before the press on the pinned showcase seed:
+    /// 1078 mass against a 705 budget. The demo's last beat is a machine
+    /// standing and mining, so the run has to be able to ask "which part count
+    /// does this world carry?" BEFORE it spends 500 ticks mining for one.
+    ///
+    /// IT IS STILL THE SIM'S VERDICT AND NOT THE CALLER'S. `designs_of`'s own
+    /// warning stands — a renderer holding the four numbers could compare them
+    /// itself and is forbidden from trying. This is the same
+    /// [`Assembly::stat_range`] call on a hypothetical assembly rather than a
+    /// built one, so there is still exactly one place that decides SAFE.
+    /// Choosing *among* the sim's answers is a caller's business; deriving one
+    /// is not.
+    ///
+    /// `frame` and `mounted` are `PartKind` NAMES — the strings
+    /// `PartKind::parse` already takes, which is what players type. An illegal
+    /// design answers with `verdict` empty and `fault` carrying the sim's own
+    /// phrase, so a caller that asks for five hoppers is told why by the rules
+    /// rather than by this function's opinion of them.
+    #[func]
+    pub fn design_if_built(
+        &self,
+        frame: GString,
+        mounted: PackedStringArray,
+        species: i64,
+        grade: GString,
+    ) -> VarDictionary {
+        let mounted: Vec<String> = mounted.as_slice().iter().map(ToString::to_string).collect();
+        let facts = design_if_built_facts(
+            &self.world,
+            &frame.to_string(),
+            &mounted,
+            species,
+            &grade.to_string(),
+        );
+        vdict! {
+            "verdict" => &gstring(&facts.verdict).to_variant(),
+            "fault" => &gstring(&facts.fault).to_variant(),
+            "mass_low" => facts.mass_low,
+            "mass_high" => facts.mass_high,
+            "budget_low" => facts.budget_low,
+            "budget_high" => facts.budget_high,
+        }
+    }
+
     /// EVERY PLAYER, FOR DRAWING: id, name, where they are, where they are
     /// walking. Read out of the stepped world, never predicted — `target` is
     /// here so a client can draw an intention, not so it can interpolate a
@@ -1084,6 +1134,87 @@ fn building_dict(building: &BuildingFacts) -> VarDictionary {
         "species" => building.species,
         "lit" => building.lit,
         "stopped" => building.stopped,
+    }
+}
+
+/// The sim's reading of a design that does not exist: [`AssaySim::design_if_built`]'s
+/// engine-free half, so `cargo test` can run it over thousands of worlds
+/// without a Godot in the room. Same keys, same order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DesignIfBuilt {
+    /// "SAFE" / "UNCERTAIN" / "WILL BREAK", or EMPTY when the design is not one
+    /// the rules allow — in which case nothing was weighed and the four numbers
+    /// below are zero.
+    pub verdict: String,
+    /// The sim's own phrase for why not, from `sim::debug::assembly_error_phrase`,
+    /// or empty when the design is legal. Never this crate's wording.
+    pub fault: String,
+    pub mass_low: i64,
+    pub mass_high: i64,
+    pub budget_low: i64,
+    pub budget_high: i64,
+}
+
+impl DesignIfBuilt {
+    fn refused(fault: String) -> Self {
+        Self {
+            verdict: String::new(),
+            fault,
+            mass_low: 0,
+            mass_high: 0,
+            budget_low: 0,
+            budget_high: 0,
+        }
+    }
+}
+
+/// Weigh a design made entirely of one refined species at one grade.
+///
+/// ONE SPECIES AND ONE GRADE IS A LIMIT OF THE QUESTION, NOT OF THE MODEL:
+/// `stat_range` bands each part from its own sheet, so a mixed design needs no
+/// special case. The caller that exists is a scripted run that smelts one
+/// deposit (ASSA-140), and taking an item per part would make the common ask
+/// four arguments wide for a case nothing has yet.
+pub fn design_if_built_facts(
+    world: &World,
+    frame: &str,
+    mounted: &[String],
+    species: i64,
+    grade: &str,
+) -> DesignIfBuilt {
+    let Some(frame_kind) = PartKind::parse(frame) else {
+        return DesignIfBuilt::refused(sim::debug::not_a_part_phrase(frame));
+    };
+    let Some(grade) = sim::Grade::parse(grade) else {
+        return DesignIfBuilt::refused(format!("{grade} is not a grade"));
+    };
+    let Ok(id) = u8::try_from(species) else {
+        return DesignIfBuilt::refused(format!("there is no species {species}"));
+    };
+    let species = SpeciesId(id);
+    if world.species.get(usize::from(id)).is_none() {
+        return DesignIfBuilt::refused(format!("there is no species {id} in this world"));
+    }
+    let material = Item::new(ItemKind::Refined, species, grade);
+    let mut parts = Vec::with_capacity(mounted.len());
+    for name in mounted {
+        let Some(kind) = PartKind::parse(name) else {
+            return DesignIfBuilt::refused(sim::debug::not_a_part_phrase(name));
+        };
+        parts.push(sim::assembly::Part::of(kind, material));
+    }
+    let assembly = Assembly::new(sim::assembly::Part::of(frame_kind, material), parts);
+    if let Err(e) = assembly.validate() {
+        return DesignIfBuilt::refused(sim::debug::assembly_error_phrase(e));
+    }
+    let range = assembly.stat_range(&world.species);
+    DesignIfBuilt {
+        verdict: range.verdict().label().to_string(),
+        fault: String::new(),
+        mass_low: range.low.mass as i64,
+        mass_high: range.high.mass as i64,
+        budget_low: range.low.budget as i64,
+        budget_high: range.high.budget as i64,
     }
 }
 
@@ -3829,6 +3960,352 @@ mod tests {
             sim::debug::halted_table(sim.world()).contains(&expected[0]),
             "the window's line is absent from the terminal's table: {}",
             sim::debug::halted_table(sim.world())
+        );
+    }
+
+    // ----- ASSA-140: the demo asks the sim which drill this world carries ---
+
+    /// The showcase seed, pinned everywhere: `window_shot.gd`, every picture
+    /// the board has been shown, and the demo request.
+    const SHOWCASE_SEED: u64 = 14247;
+
+    /// THE WORLD THE DEMO IS STANDING IN WHEN IT PLANTS, which is not a fresh
+    /// one: it has mined and ASSAYED the starter material, so that species'
+    /// sheet reads exact and the verdict is formed on numbers rather than on a
+    /// 25-wide band. Maren's first pass measured a fresh world and got
+    /// UNCERTAIN almost everywhere -- a property of the band, not the design.
+    ///
+    /// Only the MATERIAL is assayed, not the whole roster: that is what the
+    /// loop actually does, and a single-species drill reads no other sheet.
+    fn assayed_world(seed: u64) -> (World, i64) {
+        let mut world = sim_net::fresh_world(seed);
+        let (material, _) = sim::ladder::starter_species(&world.species)
+            .expect("every world has a starter pair; ASSA-139 pins that");
+        for species in &mut world.species {
+            if species.id == material {
+                species.assayed = true;
+            }
+        }
+        (world, i64::from(material.0))
+    }
+
+    /// The sim's verdict for each hopper count 0..=MAX on the demo's drill.
+    fn verdicts(world: &World, material: i64) -> Vec<String> {
+        (0..=sim::tuning::MAX_HOPPER_SLOTS)
+            .map(|hoppers| {
+                let mut mounted = vec!["head".to_string()];
+                mounted.extend(std::iter::repeat_n("hopper".to_string(), hoppers as usize));
+                let facts = design_if_built_facts(world, "frame", &mounted, material, "A");
+                assert!(
+                    facts.fault.is_empty(),
+                    "{hoppers} hoppers is inside MAX_HOPPER_SLOTS and was refused: {facts:?}"
+                );
+                facts.verdict
+            })
+            .collect()
+    }
+
+    /// **THE PROJECTION AND THE BUILT LIST MUST NEVER DISAGREE**, because the
+    /// whole point is that a run can ask before it spends 500 ticks and then
+    /// get what it was promised. Both read `Assembly::stat_range`; what this
+    /// catches is one of them growing a second way to assemble the parts --
+    /// a mount, an order, a grade applied to the wrong part.
+    ///
+    /// Driven at every hopper count and at all three grades, because a
+    /// single-count version of this stayed green under a mutation that swapped
+    /// the head's material for the frame's: with one species they are equal.
+    #[test]
+    fn the_verdict_for_a_design_not_yet_built_is_the_one_it_gets_when_it_is() {
+        let (mut sim, me) = with_a_player("marlow");
+        // **ONE ASSAYED SPECIES AND ONE ROUGH ONE, because a roster where every
+        // sheet reads exact has `low == high` on every stat and CANNOT SEE a
+        // band mixed up.** My first version assayed all six: a mutation setting
+        // `mass_high` to `mass_low` left all fifteen assertions green, and a
+        // client would have drawn a banded design as a certainty.
+        sim.world.species[0].assayed = true;
+        sim.world.species[1].assayed = false;
+        let mut seen: Vec<String> = Vec::new();
+        let mut saw_a_band = false;
+        for (index, grade) in [
+            (0usize, sim::Grade::C),
+            (0, sim::Grade::B),
+            (0, sim::Grade::A),
+            (1, sim::Grade::C),
+            (1, sim::Grade::B),
+            (1, sim::Grade::A),
+        ] {
+            let material = i64::from(sim.world().species[index].id.0);
+            for hoppers in 0..=sim::tuning::MAX_HOPPER_SLOTS as usize {
+                let item = Item::new(ItemKind::Refined, sim.world().species[index].id, grade);
+                let real = Built::new(
+                    Assembly::new(
+                        sim::Part::new(sim::PartKind::Frame(Mount::Planted), item),
+                        std::iter::once(sim::Part::new(sim::PartKind::Head, item))
+                            .chain(
+                                std::iter::repeat_n((), hoppers)
+                                    .map(|()| sim::Part::new(sim::PartKind::Hopper, item)),
+                            )
+                            .collect(),
+                    ),
+                    &sim.world().species,
+                );
+                sim.world.player_mut(me).expect("the player").assemblies = vec![real];
+                let built = sim.design_facts(Some(me))[0].clone();
+
+                let mut mounted = vec!["head".to_string()];
+                mounted.extend(std::iter::repeat_n("hopper".to_string(), hoppers));
+                let asked = design_if_built_facts(
+                    sim.world(),
+                    "frame",
+                    &mounted,
+                    material,
+                    &grade.letter().to_string(),
+                );
+                assert_eq!(
+                    (
+                        &asked.verdict,
+                        asked.mass_low,
+                        asked.mass_high,
+                        asked.budget_low,
+                        asked.budget_high
+                    ),
+                    (
+                        &built.verdict,
+                        built.mass_low,
+                        built.mass_high,
+                        built.budget_low,
+                        built.budget_high
+                    ),
+                    "{hoppers} hoppers at grade {}: asked {asked:?}, built {built:?}",
+                    grade.letter()
+                );
+                saw_a_band = saw_a_band
+                    || asked.mass_low < asked.mass_high
+                    || asked.budget_low < asked.budget_high;
+                seen.push(asked.verdict);
+            }
+        }
+        assert!(
+            saw_a_band,
+            "every design read exact, so swapping a band's ends is invisible here"
+        );
+        // THE PREMISE: an agreement over fifteen identical answers proves
+        // nothing. The mass of a frame plus n hoppers is strictly increasing in
+        // n and the budget does not move with it, so this population has to
+        // hold more than one verdict or the fixture is degenerate.
+        seen.sort();
+        seen.dedup();
+        assert!(
+            seen.len() > 1,
+            "every count and grade agreed, so this test cannot see a disagreement: {seen:?}"
+        );
+    }
+
+    /// **WHY ONE GRADE IS ENOUGH TO ASK WITH, even though the demo's pack can
+    /// hold parts of two.** The frame's grade decides the whole answer: mass is
+    /// size times density and density never scales with grade, and `Stat::Budget`
+    /// is contributed by frame rows only. So a drill whose head and hoppers came
+    /// out of the fire a grade lower weighs and carries exactly what the
+    /// single-grade projection said it would.
+    ///
+    /// ASSERTED AND NOT ASSUMED, because `button_play.gd` asks with the grade of
+    /// the stack it is about to press `Frame` on and nothing else: if a future
+    /// part row ever reads grade for mass, this reddens and that call is wrong.
+    ///
+    /// **IT IS THE FOUR NUMBERS AND NOT THE WHOLE `StatRange`**, and I had this
+    /// too wide first: the head contributes SPEED from hardness and DURABILITY
+    /// from strength, both of which DO scale, so a grade-C head really does
+    /// change the machine -- just not what it weighs or what carries it. The
+    /// claim this projection rests on is only about mass and budget.
+    #[test]
+    fn only_the_frames_grade_moves_a_single_species_drill() {
+        let (mut sim, _me) = with_a_player("marlow");
+        sim.world.species[0].assayed = true;
+        let id = sim.world().species[0].id;
+        let mut moved = 0;
+        for frame_grade in [sim::Grade::C, sim::Grade::B, sim::Grade::A] {
+            let all_one = |g: sim::Grade| {
+                let item = Item::new(ItemKind::Refined, id, g);
+                Assembly::new(
+                    sim::Part::new(sim::PartKind::Frame(Mount::Planted), item),
+                    vec![
+                        sim::Part::new(sim::PartKind::Head, item),
+                        sim::Part::new(sim::PartKind::Hopper, item),
+                    ],
+                )
+                .stat_range(&sim.world().species)
+            };
+            let mixed = {
+                let frame = Item::new(ItemKind::Refined, id, frame_grade);
+                let rest = Item::new(ItemKind::Refined, id, sim::Grade::C);
+                Assembly::new(
+                    sim::Part::new(sim::PartKind::Frame(Mount::Planted), frame),
+                    vec![
+                        sim::Part::new(sim::PartKind::Head, rest),
+                        sim::Part::new(sim::PartKind::Hopper, rest),
+                    ],
+                )
+                .stat_range(&sim.world().species)
+            };
+            let weighed = |r: sim::assembly::StatRange| {
+                (r.low.mass, r.high.mass, r.low.budget, r.high.budget)
+            };
+            assert_eq!(
+                weighed(all_one(frame_grade)),
+                weighed(mixed),
+                "a grade-C head and hopper changed a grade-{} frame's mass or budget",
+                frame_grade.letter()
+            );
+            assert_eq!(
+                all_one(frame_grade).verdict(),
+                mixed.verdict(),
+                "a grade-C head and hopper changed a grade-{} frame's verdict",
+                frame_grade.letter()
+            );
+            if weighed(all_one(frame_grade)) != weighed(all_one(sim::Grade::C)) {
+                moved += 1;
+            }
+        }
+        // THE PREMISE: if grade moved nothing at all, the equality above is
+        // trivially true and this test cannot fail. The frame's budget does
+        // scale with grade, so two of the three must differ from grade C.
+        assert_eq!(
+            moved, 2,
+            "the frame's grade moved no budget, so this test proves nothing"
+        );
+    }
+
+    /// AN ILLEGAL DESIGN IS REFUSED IN THE SIM'S OWN WORDS, and refusing is not
+    /// the same as weighing nothing: a caller that read `verdict` as "not SAFE"
+    /// and planted anyway is the failure this shape exists to prevent.
+    #[test]
+    fn a_design_the_rules_refuse_comes_back_with_the_sims_phrase_and_no_verdict() {
+        let (world, material) = assayed_world(SHOWCASE_SEED);
+        let too_many: Vec<String> = std::iter::once("head".to_string())
+            .chain(std::iter::repeat_n(
+                "hopper".to_string(),
+                sim::tuning::MAX_HOPPER_SLOTS as usize + 1,
+            ))
+            .collect();
+        for (frame, mounted, expect) in [
+            ("frame", too_many.clone(), "at most"),
+            ("frame", vec!["hopper".to_string()], "at least"),
+            (
+                "handle",
+                vec!["head".to_string(), "hopper".to_string()],
+                "no hopper slot",
+            ),
+            ("head", vec!["head".to_string()], "must be a frame"),
+            (
+                "sprocket",
+                vec!["head".to_string()],
+                "is not a machine part",
+            ),
+        ] {
+            let facts = design_if_built_facts(&world, frame, &mounted, material, "A");
+            assert!(
+                facts.verdict.is_empty() && facts.mass_high == 0 && facts.budget_low == 0,
+                "{frame} + {mounted:?} was weighed anyway: {facts:?}"
+            );
+            assert!(
+                facts.fault.contains(expect),
+                "{frame} + {mounted:?}: wanted {expect:?} in {:?}",
+                facts.fault
+            );
+        }
+        // And a legal one still answers, so the assertions above are not just
+        // "this function always refuses".
+        let ok = design_if_built_facts(
+            &world,
+            "frame",
+            &["head".to_string(), "hopper".to_string()],
+            material,
+            "A",
+        );
+        assert!(ok.fault.is_empty() && !ok.verdict.is_empty(), "{ok:?}");
+    }
+
+    /// **BOTH OF ASSA-140'S RUNS ARE RELIABLE ON THE PINNED SEED.** The
+    /// showcase run needs a count the sim calls SAFE so its last beat can be a
+    /// machine standing; the break run needs one the sim calls WILL BREAK so
+    /// ASSA-37's box is exercised rather than satisfied by luck. On 14247 the
+    /// demo's hard-coded 4 is WILL BREAK (1078 mass against a 705 budget) and
+    /// 0 or 1 is SAFE, so this seed carries both.
+    #[test]
+    fn the_showcase_seed_carries_both_a_standing_drill_and_a_breaking_one() {
+        let (world, material) = assayed_world(SHOWCASE_SEED);
+        let v = verdicts(&world, material);
+        assert!(
+            v.iter().any(|x| x == "SAFE"),
+            "seed {SHOWCASE_SEED} has no SAFE drill, so the showcase run cannot stand: {v:?}"
+        );
+        assert!(
+            v.iter().any(|x| x == "WILL BREAK"),
+            "seed {SHOWCASE_SEED} has no breaking drill, so the break run has nothing: {v:?}"
+        );
+        // The counts are ordered by mass, so SAFE can never come after WILL
+        // BREAK. A policy picking "the largest SAFE" and "the smallest WILL
+        // BREAK" relies on that and it is a property of the sim, not of a seed.
+        let last_safe = v.iter().rposition(|x| x == "SAFE").expect("checked above");
+        let first_break = v
+            .iter()
+            .position(|x| x == "WILL BREAK")
+            .expect("checked above");
+        assert!(last_safe < first_break, "{v:?}");
+    }
+
+    /// **HOW OFTEN THE SHOWCASE RUN CAN PAY OFF AT ALL**, over the population
+    /// and not over the pinned seed, because Wren's bar is "a drill standing
+    /// AND mining on a large majority of seeds".
+    ///
+    /// Through `design_if_built_facts`, which is the function the client calls,
+    /// so this measures the shipped path rather than a copy of it.
+    ///
+    /// THE THRESHOLD IS A FLOOR UNDER A MEASURED NUMBER, NOT A TARGET: 81.2% of
+    /// 2000 worlds hold at least one SAFE count for the starter material at
+    /// grade A. The remaining 18.8% is ASSA-140's open box 6 -- the frame is
+    /// made of the species `ladder::starter_species` picked for its HARDNESS,
+    /// which is what a head reads, while the frame's budget is its STRENGTH.
+    /// Letting the frame pick on strength out of rung zero raises this to
+    /// 93.7%, measured the same way, and costs the demo a third mining stretch;
+    /// that is the Game Director's call and it is asked on the item.
+    #[test]
+    fn a_large_majority_of_worlds_hold_a_drill_the_demo_can_stand_up() {
+        const SEEDS: u64 = 2000;
+        let mut has_safe = 0u32;
+        let mut has_break = 0u32;
+        let mut largest_safe = [0u32; sim::tuning::MAX_HOPPER_SLOTS as usize + 1];
+        for seed in 0..SEEDS {
+            let (world, material) = assayed_world(seed);
+            let v = verdicts(&world, material);
+            if let Some(n) = v.iter().rposition(|x| x == "SAFE") {
+                has_safe += 1;
+                largest_safe[n] += 1;
+            }
+            if v.iter().any(|x| x == "WILL BREAK") {
+                has_break += 1;
+            }
+        }
+        let pc = |n: u32| 100.0 * f64::from(n) / SEEDS as f64;
+        assert!(
+            pc(has_safe) >= 75.0,
+            "only {:.1}% of {SEEDS} worlds hold a SAFE drill for the starter material \
+             (largest-safe-count spread {largest_safe:?}); the showcase run's payoff is no \
+             longer a large majority",
+            pc(has_safe)
+        );
+        // THE BREAK RUN IS THE HALF THAT CANNOT BE MADE RELIABLE, and this
+        // number is why, stated so nobody reads box 4 as closed: a WILL BREAK
+        // drill is reachable in 44.9% of worlds from the starter material and
+        // 64.7% if the frame may be any rung-zero species -- never all of
+        // them. MAX_HOPPER_SLOTS is 4 and mass is the only dial, so in the rest
+        // there is no over-budget design to plant. The break run is reliable on
+        // the seeds the gate pins and honest about the population elsewhere.
+        assert!(
+            pc(has_break) < 100.0 && has_break > 0,
+            "a breaking drill is reachable in {:.1}% of worlds; if that is now every world, \
+             the break run can be made unconditional and box 4's note is stale",
+            pc(has_break)
         );
     }
 }

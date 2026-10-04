@@ -357,6 +357,19 @@ func designs_of(player: int) -> Array:
 	return _sim.designs_of(player) if _sim != null else []
 
 
+## **WHAT THE SIM WOULD SAY ABOUT A DESIGN NOBODY HAS BUILT YET**: `verdict` (its own word),
+## `fault` (its own phrase when the rules refuse the design, "" otherwise) and the four numbers
+## `designs_of` returns. `frame` and `mounted` are `PartKind` names -- "frame", "handle", "head",
+## "hopper" -- and every part is made of one species at one grade.
+##
+## The verdict is still the sim's and still may not be derived here; see `designs_of` above. This
+## asks about a design that does not exist, which is the one question that list cannot answer, and
+## the caller is `tools/button_play.gd`: the scripted run has to know which drill THIS world carries
+## before it spends 500 ticks mining for one (ASSA-140).
+func design_if_built(frame: String, mounted: PackedStringArray, species: int, grade: String) -> Dictionary:
+	return _sim.design_if_built(frame, mounted, species, grade) if _sim != null else {}
+
+
 ## WHAT THIS PLAYER IS CRAFTING, in the sim's own sentence, or "" when nothing is (ASSA-49).
 ##
 ## The wording is `sim::debug::crafting_readout`, shared with `sim-cli` for the same reason
