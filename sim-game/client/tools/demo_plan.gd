@@ -136,6 +136,37 @@ static func smelter_spot(at: Vector2i, size: Vector2i, blocked: Array) -> Vector
 	return Vector2i(-1, -1)
 
 
+## WHERE TO PUT THE DRILL, WHICH IS NOT WHERE TO PUT A SMELTER (ASSA-140). A smelter is fed by hand
+## and works anywhere; a drill mines the ground under it and is stopped the moment it lands anywhere
+## else. `_planting` used `smelter_spot` for both, so of the worlds where the demo's design was SAFE
+## and a machine really stood, three in four read `idle: no deposit underneath` -- the loop's whole
+## payoff, standing there doing nothing, with a panel naming it (Game Director's measurement).
+##
+## Same offsets and same clearance rule as `smelter_spot`, so a spot this returns is one the sim
+## would have accepted before; the only added requirement is that the anchor tile holds ore.
+## `on_deposit` is the SIM's answer per tile (`tile_at(...).deposit`), never a radius computed here:
+## what a deposit covers is sim state and a client that guessed it would plant on its own arithmetic.
+##
+## Vector2i(-1, -1) when no reachable tile holds ore. THE CALLER MUST SAY SO RATHER THAN FALL BACK
+## SILENTLY: a drill planted off ore is a demo whose last beat is a stopped machine, and that is
+## worth reporting as the outcome it is.
+static func drill_spot(at: Vector2i, size: Vector2i, blocked: Array,
+		on_deposit: Dictionary) -> Vector2i:
+	for offset: Vector2i in [Vector2i.ZERO, Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0),
+			Vector2i(0, -1), Vector2i(1, 1), Vector2i(-1, 1), Vector2i(1, -1), Vector2i(-1, -1),
+			Vector2i(2, 0), Vector2i(0, 2), Vector2i(-2, 0), Vector2i(0, -2), Vector2i(2, 2),
+			Vector2i(-2, 2), Vector2i(2, -2), Vector2i(-2, -2)]:
+		var pos: Vector2i = at + offset
+		if pos.x < 0 or pos.y < 0 or pos.x >= size.x or pos.y >= size.y:
+			continue
+		if blocked.has(pos):
+			continue
+		if not bool(on_deposit.get(pos, false)):
+			continue
+		return pos
+	return Vector2i(-1, -1)
+
+
 ## The tiles a 2x2 building at `pos` would stand on. The probe asks the sim about each one.
 static func footprint(pos: Vector2i) -> Array:
 	return [pos, pos + Vector2i(1, 0), pos + Vector2i(0, 1), pos + Vector2i(1, 1)]
