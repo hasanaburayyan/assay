@@ -536,7 +536,7 @@ class Rig:
             ls.select_by_collection = True; ls.collection = self.model
             ls.linestyle.color = srgb(PALETTE["line"])
             # ~1px after the SS downscale -- ON THE SHEET, WHICH IS NOT THE LAST DOWNSCALE
-            # (ASSA-163). `scene_view.gd::_place` draws parts at scale 0.5 with NEAREST
+            # (ASSA-172). `scene_view.gd::_place` draws parts at scale 0.5 with NEAREST
             # filtering, so this line arrives on 278 of 402 silhouette pixels (69%) and is
             # sampled away on the rest. Widening it is a separate item because it costs frame
             # space: at 2px the body of `frame` and `handle` lands ON the west frame edge and
