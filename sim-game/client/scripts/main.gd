@@ -472,6 +472,17 @@ func _build_ui() -> void:
 	make_heading.theme_type_variation = &"Heading"
 	column.add_child(make_heading)
 	_crafting = _note("")
+	# **AN EMPTY LINE STILL COSTS A ROW AND A GAP, WHICH IS MOST OF MAREN'S 53px VOID** (ASSA-134).
+	# She measured a 53px blank run between the `make` heading and its own toggle on `01-join.png` and
+	# did not diagnose it; measured here rather than taken from her guess (she suspected the hidden
+	# menu was still taking layout space, which it is not). A `Label` with `text == ""` reports a full
+	# line of minimum height, and a `VBoxContainer` child costs a `separation` whether or not it draws
+	# anything -- so the running-craft line and the chosen-parts box together bought ~48px of nothing
+	# on the one screen where neither can ever have content.
+	#
+	# `_refresh` sets this every tick (`visible = text != ""`), so the only state this line changes is
+	# the one before the first refresh -- which is exactly the screen a stranger reads.
+	_crafting.visible = false
 	column.add_child(_crafting)
 	column.add_child(_assembling)
 	# NO FONT SIZE HERE. It is a Button, and how big a Button's label is now comes from the one
@@ -484,6 +495,18 @@ func _build_ui() -> void:
 	# scrolled to it you would not know you had found what you asked for -- and `LOG_LINES` keeps the
 	# last fourteen LINES, which span many ticks, so the old heading named a time window the content
 	# never had. A heading is this client's word; the LINES in it stay the sim's (ASSA-80/93).
+	# WHICH KIND OF EMPTY THE `cursor` SECTION IS (Maren's ruling, ASSA-134). Every other section in
+	# this column plants its own empty note from its `_refresh_*`, but `cursor` is a bare Label written
+	# straight from `_refresh` -- which RETURNS before it on every not-joined path, so the heading sat
+	# over a blank Label on the first screen a stranger sees. Maren measured it at 93px, the largest
+	# labelled void in the column, and `_note`'s own docstring is the rule it broke.
+	#
+	# SET HERE, ONCE, because there is no `_refresh_cursor` to derive it in and inventing one for a
+	# single Label would be two places that have to agree about one sentence. The limit that leaves:
+	# if a joined world STOPS, this keeps its last tile reading rather than returning to this line --
+	# the sentence `_detail` prints in that case ("no world is being simulated") is the surface that
+	# says so, and a frozen readout beside it is stale, not wrong.
+	_cursor.text = AssayHud.quiet_cursor_line()
 	for part in [["you", _carrying], ["do", _actions], ["bench", _bench], ["rocks", _species],
 			["cursor", _cursor], ["event log", _log]]:
 		var heading := Label.new()
@@ -1162,6 +1185,12 @@ func _refresh_assembling() -> void:
 		return
 	_assembling_showing = signature
 	_clear(_assembling)
+	# NO PARTS CHOSEN COSTS NO PIXELS (ASSA-134). An empty `VBoxContainer` draws nothing and still
+	# takes the column's `separation`, so this box was a 10px gap under the `make` heading for the
+	# whole of every session in which nobody is holding parts -- including the join screen, where it
+	# cannot have content at all. `_refresh_assembling` is the one place that knows whether it has
+	# anything to show, so the `visible` flag is derived here rather than set at build.
+	_assembling.visible = not _building.is_empty()
 	if _building.is_empty():
 		# NOTHING, NOT A NOTE. This sits inside the menu's own section under a heading that is
 		# already about making things, so "no parts chosen" would be a line telling a player about

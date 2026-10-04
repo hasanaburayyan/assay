@@ -724,11 +724,22 @@ func test_folding_the_menu_cannot_put_down_the_parts_you_are_holding() -> bool:
 		elif screen._assembling.get_parent() == null:
 			ok = _fail("rebuilding the rows took the chosen-parts block off the panel")
 	if ok:
-		screen._show_make(false)
-		if not screen._assembling.visible:
-			ok = _fail("folding the rows away hid the parts you are holding")
-		elif screen._make.visible:
-			ok = _fail("_show_make(false) left the rows visible, so this proves nothing")
+		# **WITH SOMETHING ACTUALLY IN HAND, which this test used to skip** (ASSA-134). It asserted
+		# `_assembling.visible` on a screen holding NO parts, so it was reading the default flag of an
+		# empty box rather than the fate of a half-chosen assembly -- and it went red the moment that
+		# box started hiding itself when it has nothing to show. The claim is about parts you are
+		# holding; the fixture has to hold some.
+		screen._choose_part(_a_part_stack())
+		if screen._building.is_empty():
+			ok = _fail("the sim refused the part this test chooses, so the fold proves nothing")
+		elif not screen._assembling.visible:
+			ok = _fail("choosing a part left the chosen-parts block hidden, before any fold")
+		else:
+			screen._show_make(false)
+			if not screen._assembling.visible:
+				ok = _fail("folding the rows away hid the parts you are holding")
+			elif screen._make.visible:
+				ok = _fail("_show_make(false) left the rows visible, so this proves nothing")
 	screen.queue_free()
 	return ok
 
@@ -1046,3 +1057,82 @@ func test_an_old_log_line_is_one_row_and_the_newest_is_whole() -> bool:
 				break
 	screen.queue_free()
 	return ok
+
+
+## NO HEADING ON THE JOIN SCREEN STANDS OVER NOTHING (Maren's ruling, ASSA-134).
+##
+## `_note`'s own docstring is the rule: *"a heading with nothing under it reads as a bug, so every
+## empty section says which kind of empty it is."* Maren checked it against the shipped picture and
+## found **five sections honouring it and two not** -- `cursor`, a bare Label that `_refresh` writes
+## only after a join and so never reaches on the first screen, at 93px the largest labelled void in
+## the column; and the 53px between the `make` heading and its own toggle.
+##
+## **ASSERTED OVER EVERY SECTION, NOT OVER `cursor`.** A test that named the cursor would be a test
+## about the bug Maren happened to find; this one is about the rule, so the next section added to this
+## column cannot ship blank. The sweep is why the `make` void shows up here at all -- nobody,
+## including Maren, had noticed that one until a number was taken.
+##
+## A HIDDEN SECTION IS NOT A VOID and is skipped: the event log starts hidden with its heading, which
+## is ASSA-89 working as ruled. What is required is that a heading a stranger can SEE has something
+## under it they can READ -- any visible control carrying text, because the `make` section's first
+## reachable thing is legitimately its toggle and not a sentence.
+func test_no_visible_heading_on_the_join_screen_stands_over_nothing() -> bool:
+	var screen := _screen()
+	var column: Node = screen._make.get_parent()
+	var ok := true
+	var heading := ""
+	var said := false
+	# THE COLUMN IN ORDER: every heading opens a section and everything after it belongs to that
+	# section until the next heading. Read off `theme_type_variation`, which is what MAKES a heading a
+	# heading here, rather than off a list of names this test would have to keep in step.
+	for child in column.get_children():
+		var control := child as Control
+		if control == null:
+			continue
+		var is_heading: bool = control is Label and control.theme_type_variation == &"Heading"
+		if is_heading:
+			if heading != "" and not said:
+				ok = _fail(("the `%s` heading is visible on the join screen with nothing readable "
+						+ "under it: a stranger reads that as a game with nothing to say") % heading)
+				break
+			heading = (control as Label).text if control.visible else ""
+			said = false
+			continue
+		if heading == "" or not control.visible:
+			continue
+		if _carries_text(control):
+			said = true
+	if ok and heading != "" and not said:
+		ok = _fail("the last section, `%s`, is a visible heading over nothing" % heading)
+	screen.queue_free()
+	return ok
+
+
+## Does this control, or anything visible inside it, actually put words on screen?
+func _carries_text(control: Control) -> bool:
+	if control is Label and (control as Label).text.strip_edges() != "":
+		return true
+	if control is Button and (control as Button).text.strip_edges() != "":
+		return true
+	# DESCENDING ONLY THROUGH VISIBLE CHILDREN, AND NOT VIA `is_visible_in_tree` -- asked of the
+	# engine after it reported every section blank: a screen built under the test runner has no
+	# visible ancestor chain, so `is_visible_in_tree` is false for every node in it and the sweep
+	# would have passed or failed on a property of the harness rather than of the panel.
+	for child in control.get_children():
+		var inner := child as Control
+		if inner != null and inner.visible and _carries_text(inner):
+			return true
+	return false
+
+
+## A STACK SHAPED LIKE A FRAME PART, out of the sim's own catalogue of kinds. The first part of an
+## assembly must be a frame (`part_press_refusal`), so this is what a press that is NOT refused looks
+## like -- the fold test needs something in hand or it is reading an empty box's default flag.
+func _a_part_stack() -> Dictionary:
+	for entry in AssaySimHost.part_kinds():
+		var part: Dictionary = entry
+		if bool(part.get("is_frame", false)):
+			var kind := String(part.get("name", ""))
+			return {"kind": kind, "species": 0, "species_name": "Testore", "grade": "C",
+					"count": 1, "name": kind}
+	return {}
