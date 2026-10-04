@@ -47,7 +47,15 @@ const STANDING := 1
 ## against a late bundle: with no buffer, any gap longer than a frame starves the clock and the body
 ## stops dead. Measured on this Mac the host's bundles land in pairs with p95 gaps of ~257 ms, so a
 ## buffer under two ticks starves on a normal frame.
-const PLAYOUT_DELAY := 2.0
+##
+## **2.5 IS MEASURED AND THE MEASUREMENT IS THE ARGUMENT.** At 2.0 the clock starved 9 to 13 times in
+## a six-second walk -- each starve is a freeze of up to 140 ms and then a catch-up -- and 64-76% of
+## moving frames landed inside the bar. At 2.5, on the same machine minutes later, it starved ONCE in
+## 184 frames and 97.3% were inside. What it costs is stated rather than hidden: `PLAYOUT_DELAY x
+## tick length` of latency on your own body, 250 ms here, paid because this client may not predict
+## (ASSA-119). ASSA-197 box 5 caps added latency at 250 ms, so this sits exactly ON the cap and not
+## under it; whether that passes is Wren's call and not a thing to round quietly.
+const PLAYOUT_DELAY := 2.5
 ## How hard the clock leans on its error (per tick of error, as a fraction of rate) and the most it
 ## may ever bend. 10% of 10 tiles/s is 1 tile/s, well inside the bar the board's complaint set.
 const PLAYOUT_CATCHUP := 0.5

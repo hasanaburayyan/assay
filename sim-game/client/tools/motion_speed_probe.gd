@@ -66,6 +66,11 @@ var _last_bundle := 0.0
 ## Frames where the renderer had published no drawn position for us. A sampler that reads the wrong
 ## field is silent in exactly the way a body that never moved is; this counts the difference.
 var _blind := 0
+## The clock's own state at each sample, so a frozen frame can be told from a starved one.
+var _play: Array[float] = []
+var _starved: Array[bool] = []
+var _held: Array[int] = []
+var _sim_tick: Array[int] = []
 
 
 func _initialize() -> void:
@@ -192,6 +197,10 @@ func _sample(delta: float, now: float) -> void:
 	_origin.append(view.get("origin", Vector2.ZERO) as Vector2)
 	_dt.append(delta)
 	_clock.append(now)
+	_play.append(float(_screen._play_tick))
+	_starved.append(bool(_screen._starved))
+	_held.append((_screen._pending as Array).size())
+	_sim_tick.append(int(_screen._sim.tick()))
 
 
 ## THE MOVING STRETCH ONLY, both ends trimmed. A standing body is on its tile in every frame, so any
@@ -258,9 +267,11 @@ func _report() -> void:
 	var from: int = span["from"]
 	var to: int = span["to"]
 	var body: Array[float] = []
+	var wall: Array[float] = []
 	var camera: Array[float] = []
 	var frames: Array[float] = []
 	var within := 0
+	var within_wall := 0
 	var tile_px: float = AssayScene.TILE_PX
 	for i in range(from + 1, to + 1):
 		var dt: float = _dt[i]
@@ -268,6 +279,18 @@ func _report() -> void:
 			continue
 		var speed := (_at[i] - _at[i - 1]).length() / dt
 		body.append(speed)
+		# **THE SAME DISTANCE OVER THE WALL CLOCK BETWEEN THE TWO SAMPLES**, which is not the same
+		# number as the engine's frame delta and the difference is the INSTRUMENT, not the game. This
+		# probe's `_process` and the screen's run at different points in a frame, so the position I
+		# read at sample i was drawn some microseconds before or after the delta I divide by. If the
+		# wall-clock column is tight and the delta column is not, the body IS being drawn at a
+		# constant speed and my sampler is the jitter.
+		var wall_dt: float = _clock[i] - _clock[i - 1]
+		if wall_dt > 0.0:
+			var wall_speed := (_at[i] - _at[i - 1]).length() / wall_dt
+			wall.append(wall_speed)
+			if absf(wall_speed - TRUE_SPEED) <= TRUE_SPEED * TOLERANCE:
+				within_wall += 1
 		camera.append((_origin[i] - _origin[i - 1]).length() / tile_px / dt)
 		frames.append(dt * 1000.0)
 		if absf(speed - TRUE_SPEED) <= TRUE_SPEED * TOLERANCE:
@@ -275,15 +298,68 @@ func _report() -> void:
 	print("  true speed %.2f tiles/s (one tile per %.0f ms tick), bar is +/-%d%%"
 			% [TRUE_SPEED, TICK_SECONDS * 1000.0, int(TOLERANCE * 100.0)])
 	_say("body tiles/s", _percentiles(body))
+	_say("body (wall)", _percentiles(wall))
 	_say("camera tiles/s", _percentiles(camera))
 	_say("frame ms", _percentiles(frames))
 	_say("bundle gap ms", _percentiles(_scaled(_bundle_gaps, 1000.0)))
+	# **WHAT A FROZEN FRAME ACTUALLY WAS.** A drawn speed of zero has three different causes and they
+	# need different fixes: the clock ran out of produced positions (starved), the sim produced the
+	# same position twice (the body is not walking every tick), or the clock advanced but the segment
+	# it is on has zero length. Counting them apart is the difference between fixing the renderer and
+	# fixing the wrong thing.
+	var frozen := 0
+	var frozen_starved := 0
+	var frozen_same := 0
+	for i in range(from + 1, to + 1):
+		if not _at[i].is_equal_approx(_at[i - 1]):
+			continue
+		frozen += 1
+		if _starved[i]:
+			frozen_starved += 1
+		elif is_equal_approx(_play[i], _play[i - 1]):
+			frozen_same += 1
+	print(("  frozen frames %d of %d: %d starved, %d clock did not move, %d clock moved on a "
+			+ "zero-length segment") % [frozen, to - from, frozen_starved, frozen_same,
+			frozen - frozen_starved - frozen_same])
+	if not _sim_tick.is_empty():
+		var ticks := _sim_tick[to] - _sim_tick[from]
+		var tiles := (_at[to] - _at[from]).length()
+		print("  the SIM moved %.1f tiles in %d ticks = %.3f tiles/tick (true speed assumes 1.000)"
+				% [tiles, ticks, tiles / maxf(1.0, float(ticks))])
+	print("  buffer held: %s" % [_percentiles(_as_floats(_held))])
+	# **WHAT THE CLIENT THINKS A TICK IS, AGAINST WHAT IT ACTUALLY IS.** The clock divides by the
+	# first number; the second is the sim's own tick count over the wall clock across the same span.
+	# Any gap between them IS a speed error, multiplied straight into every drawn frame.
+	var span_seconds: float = _clock[to] - _clock[from]
+	var span_ticks: int = _sim_tick[to] - _sim_tick[from]
+	if span_seconds > 0.0 and span_ticks > 0:
+		var measured: float = span_seconds / float(span_ticks)
+		print(("  tick length: the client is using %.1f ms, the host actually sent one every "
+				+ "%.1f ms -> the clock runs %.0f%% of true speed")
+				% [float(_screen._tick_gap) * 1000.0, measured * 1000.0,
+				measured / maxf(float(_screen._tick_gap), 1e-6) * 100.0])
+	if OS.get_environment("TRACE") != "":
+		print("  frame  dt_ms   x        speed  play_tick  newest  held starved")
+		for i in range(from + 1, mini(from + 46, to + 1)):
+			print("  %5d %6.1f %8.3f %7.2f %10.3f %7d %5d %s"
+					% [i, _dt[i] * 1000.0, _at[i].x, (_at[i] - _at[i - 1]).length() / maxf(_dt[i], 1e-6),
+					_play[i], _sim_tick[i], _held[i], _starved[i]])
 	var share := 0.0 if body.is_empty() else float(within) / float(body.size())
 	print("  WITHIN THE BAR: %d of %d moving frames (%.1f%%)" % [within, body.size(), share * 100.0])
+	var share_wall := 0.0 if wall.is_empty() else float(within_wall) / float(wall.size())
+	print("  ... measured against the wall clock between samples: %d of %d (%.1f%%)"
+			% [within_wall, wall.size(), share_wall * 100.0])
 	if _walk_at > 0.0 and span.has("raw_from"):
 		print("  input latency on your own body: %.0f ms (press -> first drawn movement)"
 				% ((_clock[int(span["raw_from"]) + 1] - _walk_at) * 1000.0))
 	print("  VERDICT: %s" % ("WITHIN BAR" if share >= 1.0 else "OUTSIDE BAR"))
+
+
+func _as_floats(values: Array[int]) -> Array[float]:
+	var out: Array[float] = []
+	for v in values:
+		out.append(float(v))
+	return out
 
 
 func _scaled(values: Array[float], by: float) -> Array[float]:
