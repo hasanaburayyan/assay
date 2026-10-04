@@ -1301,40 +1301,89 @@ func test_a_building_on_the_schematic_is_neither_a_disc_nor_a_rect() -> bool:
 			return _fail(("a %s building's mark covers %.1f%% of its bounding box. A diamond is "
 					+ "50%%, a filled rect 100%% and an inscribed circle 78.5%%; this is the number "
 					+ "that says which of the three it is.") % [foot, ratio * 100.0])
-		# THE EDGE IS THE MAP'S OWN GROUND AND NOT A NEW COLOUR: a drill is planted ON a deposit, so
-		# the ring is what separates this mark from a bright species tint under it.
-		if mark["edge"] != AssayHud.MAP_BG:
-			return _fail("the mark's ring is %s and not MAP_BG" % mark["edge"])
-		if float(mark["edge_width"]) < 1.0:
-			return _fail("a ring %.2fpx wide is a sub-pixel line, which separates nothing"
-					% mark["edge_width"])
+		# **THE APPROVED COLOUR, AND IT SPENDS NO NEW HUE** (Cove's ASSA-193, Maren at 17:25). `HOVER`
+		# with a `MAP_BG` rim. I shipped a green of my own here (ASSA-203) -- a 22nd literal on a map
+		# whose named set exists to stop exactly that.
+		if mark["colour"] != AssayHud.HOVER:
+			return _fail(("a %s building's mark is %s, not HOVER. The approved mark spends no new "
+					+ "hue: filled-vs-hollow is what tells it from the cursor at 1x.")
+					% [foot, mark["colour"]])
+		if mark["keyline"] != AssayHud.MAP_BG:
+			return _fail("the mark's keyline is %s and not MAP_BG" % mark["keyline"])
+		# **THE RIM IS 2 px PERPENDICULAR, WHICH IS NOT `span + 4`.** A diamond's edge sits
+		# `h/sqrt(2)` from its centre, so growing the DIAGONAL by `d` grows the rim by `d/(2*sqrt(2))`:
+		# the obvious `span + 2*MARK_KEYLINE_PX` gives a 1.41 px rim, and Cove's note in the hand-off
+		# is the only reason I did not write it. Measured off the polygon the painter is handed, so
+		# the arithmetic is checked rather than restated.
+		var rim: PackedVector2Array = mark["keyline_points"]
+		if rim.size() != points.size():
+			return _fail("the mark is a %d-gon and its keyline a %d-gon, so the rim is not its shape"
+					% [points.size(), rim.size()])
+		var outer := rim[1].x - rim[3].x
+		var gap := (outer - span.x) / (2.0 * sqrt(2.0))
+		if absf(gap - AssayHud.MARK_KEYLINE_PX) > 0.01:
+			return _fail(("a %s building's keyline is %.2fpx thick perpendicular, not %.2f: its "
+					+ "diagonal is %.2f against the mark's %.2f. Growing the diagonal by 2t gives a "
+					+ "rim of t/sqrt(2), not t.")
+					% [foot, gap, AssayHud.MARK_KEYLINE_PX, outer, span.x])
+		# AND IT IS OUTSIDE THE MARK, not a stroke straddling its edge: every point of the mark is
+		# inside the rim, so the mark keeps all 16px of the size Cove sized it at.
+		for point: Vector2 in points:
+			if not Geometry2D.is_point_in_polygon(point, rim):
+				return _fail(("a %s building's mark reaches %s, which is outside its own keyline: the "
+						+ "rim is being paid for out of the mark instead of grown around it.")
+						% [foot, point])
 	return true
 
 
-## **A ONE-TILE MACHINE IS STILL FINDABLE ON A BIG WORLD, AND STILL SMALLER THAN A PERSON** (ASSA-189,
-## and it is `PLAYER_MARK_PX`'s lesson applied to the other mark).
+## **A ONE-TILE MACHINE IS STILL FINDABLE ON A BIG WORLD, AND IT OCCUPIES A PERSON'S BOX ON PURPOSE**
+## (Cove's size rule, ASSA-193; the floor is `PLAYER_MARK_PX`'s lesson applied to the other mark).
 ##
 ## Maren's finding on the player was that a mark scaling with the tile gets SMALLER exactly as the
 ## world gets big enough to need a map. A machine's footprint is 1x1: 9px here, 4.5px on a world
-## twice as wide, 2px where `map_cell` floors. So the footprint sets the size and
-## `BUILDING_MARK_MIN_PX` is the floor -- and the floor is BELOW the player's 16px on purpose,
-## because a one-tile machine drawn bigger than a person is the mistake in the other direction.
-func test_the_smallest_building_mark_has_a_floor_and_stays_under_the_player() -> bool:
-	if AssayHud.BUILDING_MARK_MIN_PX >= AssayHud.PLAYER_MARK_PX:
-		return _fail(("the building floor is %.0fpx and a player is %.0fpx, so a one-tile machine is "
-				+ "drawn at least as big as a person")
-				% [AssayHud.BUILDING_MARK_MIN_PX, AssayHud.PLAYER_MARK_PX])
+## twice as wide, 2px where `map_cell` floors. So the footprint sets the size and `BUILDING_MARK_PX`
+## is the floor.
+##
+## **IT IS THE SAME NUMBER AS `PLAYER_MARK_PX`, AND THE EARLIER VERSION OF THIS TEST DEMANDED IT BE
+## SMALLER** (ASSA-203). I had written `BUILDING_MARK_MIN_PX 12` and a test asserting
+## `floor < PLAYER_MARK_PX`, reasoning a one-tile machine must not be drawn bigger than a person.
+## Cove's answer is equality, not inequality: the same box, so the SHAPE does all the telling, which
+## is the half that survives greyscale. Their rendered sizes are the evidence -- at 14 the diamond
+## reads lighter than a player, at 20 it outweighs one. **So the assertion is now `==`, and a mutation
+## that drifts either constant alone reddens it.**
+##
+## WHAT THIS CANNOT SEE: whether 16 is the right number. That is a judgement on a picture and it is
+## Maren's, made at 1x on `shared/assay/cove-assa193/assa-193-diamond-sizes-1x.png`.
+func test_a_building_mark_has_a_floor_and_it_is_the_players_own_size() -> bool:
+	if absf(AssayHud.BUILDING_MARK_PX - AssayHud.PLAYER_MARK_PX) > 1e-4:
+		return _fail(("the building floor is %.0fpx and a player is %.0fpx. Cove sized these EQUAL so "
+				+ "a building and a person occupy the same box and the shape does the telling; one of "
+				+ "them has moved alone.") % [AssayHud.BUILDING_MARK_PX, AssayHud.PLAYER_MARK_PX])
 	for cell: float in [2.0, 4.5, 9.0]:
 		var span: Vector2 = AssayHud.building_mark({"pos": Vector2i(1, 1),
 				"footprint": Vector2i(1, 1)}, cell, Vector2.ZERO)["span"]
-		if absf(span.x - AssayHud.BUILDING_MARK_MIN_PX) > 1e-4 \
-				or absf(span.y - AssayHud.BUILDING_MARK_MIN_PX) > 1e-4:
+		if absf(span.x - AssayHud.BUILDING_MARK_PX) > 1e-4 \
+				or absf(span.y - AssayHud.BUILDING_MARK_PX) > 1e-4:
 			return _fail(("a 1x1 machine at %.1fpx a tile is drawn %s, not the %.0fpx floor: on a "
 					+ "big world a drill would be a few pixels on the one surface for finding it")
-					% [cell, span, AssayHud.BUILDING_MARK_MIN_PX])
+					% [cell, span, AssayHud.BUILDING_MARK_PX])
 	# AND THE FLOOR DOES NOT OVERRIDE A FOOTPRINT BIGGER THAN IT: a 2x2 at 18px a tile is 36px.
 	var big: Vector2 = AssayHud.building_mark({"pos": Vector2i(1, 1), "footprint": Vector2i(2, 2)},
 			18.0, Vector2.ZERO)["span"]
 	if absf(big.x - 36.0) > 1e-4:
 		return _fail("a 2x2 at 18px a tile is %s, and the footprint is what sizes it" % big)
+	# **SQUARE OFF THE LONGER SIDE, WHICH IS WHAT A PER-AXIS FLOOR GETS WRONG.** Cove's rule is one
+	# `s` from `max(foot.x, foot.y)`; what I shipped took the floor per axis, so a footprint that is
+	# not square came out a rhombus -- a shape that leans, stating a facing `BuildingFacts` does not
+	# carry. That is the reason their chevron candidate lost, arrived at by accident.
+	for case in [{"foot": Vector2i(3, 1), "cell": 9.0}, {"foot": Vector2i(1, 4), "cell": 32.0}]:
+		var foot: Vector2i = case["foot"]
+		var cell: float = case["cell"]
+		var span: Vector2 = AssayHud.building_mark({"pos": Vector2i(2, 2), "footprint": foot},
+				cell, Vector2.ZERO)["span"]
+		var want := maxf(float(maxi(foot.x, foot.y)) * cell, AssayHud.BUILDING_MARK_PX)
+		if absf(span.x - want) > 1e-4 or absf(span.y - want) > 1e-4:
+			return _fail(("a %s building at %.0fpx a tile is drawn %s, not %.0f square: a per-axis "
+					+ "size makes a leaning rhombus out of a footprint that is not square.")
+					% [foot, cell, span, want])
 	return true
