@@ -173,6 +173,28 @@ static func join_refusal(joined: bool, remedy: String) -> String:
 	return "%s; %s" % ["already in a world" if joined else "already joining", remedy]
 
 
+## **A HOST THAT WENT QUIET WITHOUT CLOSING THE SOCKET** (ASSA-179). Three parts, like every refusal
+## on this screen: what stopped, the measurement behind the claim, and the door that is open.
+##
+## **THE WORDS AND THE NUMBER ARE THE GAME DIRECTOR'S** (ASSA-179 part 2, not ruled when this shipped).
+## They are here rather than inline in `net_client.gd` with that file's four other failure sentences
+## for one reason: a sentence with no test is how ASSA-176 happened, and this file exists so a wording
+## ruling is a one-line change with `test_hud.gd` holding it. The inconsistency with those four is
+## real and deliberate -- they are untouched, and this is not an argument for moving them.
+##
+## "went quiet" and not "disconnected": the socket is still open, which is the entire reason this case
+## needed a clock of its own. `seconds` is the threshold that elapsed, not a guess at when the host
+## died -- the honest claim is about what this client waited, and it cannot know the other.
+##
+## THE SECOND SENTENCE IS THE PART THAT MATTERS AND IT IS TRUE ONLY SINCE ASSA-177: pressing Join at
+## this point rejoins the same `PlayerId` in the running world, measured both ways round by
+## `tools/reconnect_probe.gd`. Without it a player reads that the link is dead and has no reason to
+## believe the one visible control does anything.
+static func silent_host_line(where: String, seconds: int) -> String:
+	return ("%s went quiet: nothing from it for %ds. Press Join to get back into the same slot."
+			% [where, seconds])
+
+
 ## A DEPOSIT'S COLOUR: THE SPECIES' SLOT, DIMMED BY PURITY. Purity may never move the hue.
 ##
 ## Second correction of this function, and the first one is worth keeping in view. Version one rode
@@ -496,7 +518,18 @@ static func target_line(tile: Vector2i, chosen: bool, tile_facts: Dictionary) ->
 		what = "%s %d" % [String((building as Dictionary).get("kind", "?")),
 				int((building as Dictionary).get("id", -1))]
 	elif bool(tile_facts.get("in_bounds", false)):
-		what = "empty ground" if tile_facts.get("deposit") == null else "on a deposit"
+		# **`clear ground`, NOT `empty ground`** (Maren's ruling, ASSA-146 comment of 15:07Z). This
+		# line and the sim's `ground_note` are two subjects -- where a BUTTON will act, and what the
+		# ROCK is -- so they must not merge, and they may not share words either. `empty ground` is
+		# the exact phrase ASSA-146 deleted from the sim for carrying two facts, and it sat here on
+		# the same screen as its own replacement: a player reading `cursor > no deposit here` in one
+		# section and `acting on (76, 38) · where you stand · empty ground` in another cannot tell
+		# whether those describe the same tile state, and the more definite-sounding one is the one we
+		# removed for being ambiguous. It was not FALSE here -- the building is tested first in the
+		# same expression -- which is why it survived the item that killed the phrase.
+		#
+		# `clear` keeps what this line is for: Place lands there, Insert and Take do not.
+		what = "clear ground" if tile_facts.get("deposit") == null else "on a deposit"
 	return "acting on (%d, %d) · %s · %s" % [tile.x, tile.y,
 			"chosen" if chosen else "where you stand", what]
 

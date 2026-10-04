@@ -26,7 +26,9 @@ extends SceneTree
 ## relay 2 on that same number, so the address in the host box never changes and "press Join again" is
 ## literally the same press.
 ##
-## FOUR PRESSES, REPORTED SEPARATELY, because they are four different things a player does:
+## EIGHT CASES, REPORTED SEPARATELY, because they are different things that happen to a player (and
+## the count is in the verdict line rather than in this sentence, which was wrong within a day of
+## being written: it said four while the file did six):
 ##   A. the first join, to have a world and a slot to compare against
 ##   B/C. Join at the old address with NOTHING listening -- what the control does when the host is gone
 ##   D. Join once a relay is back on that port -- the reconnect after a HOST RESTART
@@ -35,9 +37,19 @@ extends SceneTree
 ##      about the world should have moved backwards
 ##   F. No press at all: a host that goes SILENT without closing the socket. Can a person at this
 ##      window tell? That one was a reading of the code in my ASSA-177 notes until this measured it.
+##      It read NOT NOTICED for as long as it existed, which is what ASSA-179 was filed as.
+##   G. The press AFTER the silence: the whole point of noticing is that Join is live again, so the
+##      probe presses it. A timeout that only changes the wording would leave the player where F left
+##      them -- a screen with no control that does anything.
+##   H. **THE CONTROL, AND IT IS THE CASE THE TIMEOUT COULD GET WRONG.** A frozen CLIENT, not a frozen
+##      host: the main loop is blocked for longer than the client's own threshold while the relay goes
+##      on sending. A detector that reads its clock before draining the socket calls this a dead host,
+##      so this leg is the one that fails if the ordering in `net_client.gd::_process` is ever flipped.
 ##
-## Prints `RECONNECT PROBE VERDICT: ...` LAST, with YES or NO in it, and exits 0 on either: a
-## no-reconnect answer is a result, not a probe failure. Only a probe that could not ASK exits 1.
+## Prints `RECONNECT PROBE VERDICT: ...` LAST -- YES, PARTLY or NO, and every leg named with `yes`,
+## `NO` or `not run` beside it -- and exits 0 on all of them: a no-reconnect answer is a result, not a
+## probe failure. Only a probe that could not ASK exits 1, which now includes a probe whose own watch
+## is shorter than the client's threshold (see `SILENCE_SECONDS`).
 
 const DEFAULT_SEED := "777042"
 ## Long enough to pass the relay's 20-tick autosave at 10 ticks/s, so relay 2 RESUMES the world
@@ -47,15 +59,18 @@ const PLAY_SECONDS := 3.0
 const JOIN_DEADLINE := 12.0
 const DEAD_DEADLINE := 8.0
 const LISTEN_DEADLINE := 10.0
-## How long a wedged host gets to be noticed. The relay ticks ten times a second, so eight seconds is
-## ~80 bundles that did not arrive -- far past anything a slow frame could explain.
-const SILENCE_SECONDS := 8.0
+## **HOW LONG A WEDGED HOST IS WATCHED, WHICH MUST EXCEED THE CLIENT'S OWN THRESHOLD OR THIS PROBE
+## CANNOT ANSWER ITS QUESTION.** It did not, once: the window was 8s while `AssayNetClient.SILENCE_MS`
+## was 10s, so a run would have reported NOT NOTICED about a client that notices -- a measurement of
+## my watch rather than of the client. `_initialize` refuses to start when that is true again, because
+## a comment saying "keep this bigger" is not a thing anybody checks.
+const SILENCE_SECONDS := 16.0
 ## **A CEILING ON THE WHOLE RUN, AND I ADDED IT BECAUSE I LEFT AN ORPHAN.** A SCRIPT ERROR in
 ## `_initialize` does not stop a `SceneTree`: `_process` keeps returning false with `_step` at 0 and
 ## nothing to advance it, so the engine ran for 45 minutes on my own machine after a typo. `quit` is
 ## reachable from exactly one place, so every path has to arrive at it -- including the paths that
 ## never started.
-const RUN_CEILING := 120.0
+const RUN_CEILING := 210.0
 
 var _screen: Node = null
 var _binary := ""
@@ -89,6 +104,22 @@ var _blip_ok := false
 ## The join band at the drop, read twice on purpose. See `_wait_for_the_drop`.
 var _before_silence := {}
 var _noticed_the_silence := false
+var _silence_said := ""
+var _after_silence := {}
+var _silence_rejoin_ok := false
+## The control: a frozen CLIENT against a live host, which must NOT be called a drop.
+var _before_freeze := {}
+var _freeze_ok := false
+## **DID IT RUN, as opposed to pass?** A leg that never happened must not read as a leg that failed:
+## case H needs a joined client, and a run where an earlier case never got one says nothing about the
+## false positive rather than reporting one. The verdict counts only legs that ran.
+var _freeze_ran := false
+## **LONGER THAN THE CLIENT'S OWN THRESHOLD, AND NEVER SHORTER THAN TEN SECONDS.** A freeze under the
+## threshold proves nothing (there is no gap to misread), and a freeze that moves with the constant
+## keeps proving the same thing after the Game Director rules on it. The floor is for the case where
+## the detector is turned off (`SILENCE_MS` 0): the control still has to be a real freeze then,
+## because that run is the baseline this case is compared against.
+var _freeze_ms: int = maxi(AssayNetClient.SILENCE_MS, 10000) + 2000
 var _band_at_the_drop := false
 var _band_after := false
 ## Every sentence the screen said, in order, so a refusal that scrolled past is still evidence.
@@ -98,6 +129,16 @@ var _no_listener_said := ""
 
 
 func _initialize() -> void:
+	# **MY INSTRUMENT BEFORE THE SUBJECT.** Case F can only report "not noticed" honestly if it waited
+	# longer than the client's own threshold; the first version of this pairing got that wrong by 2s.
+	# `SILENCE_MS == 0` means the detector is deliberately off (that is the baseline run), and then
+	# there is nothing to out-wait.
+	if AssayNetClient.SILENCE_MS > 0 and SILENCE_SECONDS * 1000.0 <= float(AssayNetClient.SILENCE_MS):
+		print(("FAIL  this probe watches a silent host for %.0fs and the client calls a link dead "
+				+ "after %dms: case F would measure my watch, not the client. Raise SILENCE_SECONDS.")
+				% [SILENCE_SECONDS, AssayNetClient.SILENCE_MS])
+		quit(1)
+		return
 	var argv := OS.get_cmdline_user_args()
 	if argv.size() > 0:
 		_seed = String(argv[0])
@@ -172,6 +213,16 @@ func _process(_delta: float) -> bool:
 			_watch_the_world_after_the_blip()
 		16:
 			_watch_the_silence()
+		17:
+			_press_join_after_the_silence()
+		18:
+			_wait_for_the_reconnect_after_the_silence()
+		19:
+			_watch_the_world_after_the_silence()
+		20:
+			_freeze_the_client_not_the_host()
+		21:
+			_read_the_link_after_the_freeze()
 	return _done
 
 
@@ -420,8 +471,9 @@ func _stop_relay_without_closing_it() -> void:
 func _watch_the_silence() -> void:
 	if _now() < _until:
 		if _screen._client.stage == AssayNetClient.Stage.DEAD:
+			_silence_said = String(_screen._status.text)
 			_lines.append("   NOTICED after %.1fs: \"%s\""
-					% [SILENCE_SECONDS - (_until - _now()), _screen._status.text])
+					% [SILENCE_SECONDS - (_until - _now()), _silence_said])
 			_noticed_the_silence = true
 			_finish_the_silence()
 		return
@@ -439,8 +491,123 @@ func _finish_the_silence() -> void:
 				% [after.get("sim_tick", -1), _before_silence.get("bundles", -1),
 				after.get("bundles", -1)])
 	# **RESUMED, ALWAYS.** A SIGSTOPped relay left behind is a process holding a port that cannot be
-	# killed by a polite kill, which is a worse mess than the one this probe exists to avoid.
+	# killed by a polite kill, which is a worse mess than the one this probe exists to avoid. It is
+	# also what cases G and H need: a host that is answering again.
 	OS.execute("/bin/kill", PackedStringArray(["-CONT", str(_relay_pid)]))
+	# A SECOND, AND IT IS NOT POLITENESS. The relay was stopped while this client dropped its socket,
+	# so the EOF is sitting unread in its kernel queue; a Join pressed in the same instant can reach a
+	# host that still believes our old account is in the world and be refused for it. Waiting makes
+	# the measurement about the timeout rather than about a race. A refusal is still printed, not
+	# treated as a probe failure -- see `_wait_for_the_reconnect_after_the_silence`.
+	_until = _now() + 1.0
+	# NOT NOTICED SKIPS CASE G AND KEEPS CASE H. There is nothing to press when the client never left
+	# JOINED -- Join is refused (ASSA-176) and that refusal is the defect, not a result -- but the
+	# frozen-client control is exactly as meaningful, and that is the run it is a baseline FOR.
+	_step = 17 if _noticed_the_silence else 20
+
+
+# ---------------------------------------------------------------- the press the timeout is for
+
+
+## STEP 17: **THE WHOLE POINT OF NOTICING.** A timeout that only re-words the screen leaves the player
+## where case F left them. The relay is up again (it was only stopped), the stage is DEAD, so the join
+## band is back and `_on_join` is permitted: one press, the same press as every other case here.
+func _press_join_after_the_silence() -> void:
+	if _now() < _until:
+		return
+	_drain_relay()
+	_lines.append("G. THE PRESS AFTER THE SILENCE: Join at stage %d, host resumed"
+			% _screen._client.stage)
+	_screen._on_join()
+	_said.append("press: Join %s after the silence (stage was %d)"
+			% [_address, _screen._client.stage])
+	_step = 18
+	_until = _now() + JOIN_DEADLINE
+
+
+func _wait_for_the_reconnect_after_the_silence() -> void:
+	if _screen._client.stage == AssayNetClient.Stage.JOINED:
+		_after_silence = _snapshot()
+		_lines.append("   welcomed again: %s" % _describe(_after_silence))
+		_step = 19
+		_until = _now() + 2.0
+		return
+	if _screen._client.stage == AssayNetClient.Stage.DEAD:
+		_lines.append("   REFUSED after the silence: \"%s\"" % _screen._status.text)
+		_step = 20
+		_until = _now()
+		return
+	if _now() >= _until:
+		_lines.append("   NEVER RESOLVED after the silence: stage %d, \"%s\""
+				% [_screen._client.stage, _screen._status.text])
+		_step = 20
+		_until = _now()
+
+
+func _watch_the_world_after_the_silence() -> void:
+	if _now() < _until:
+		return
+	var after := _snapshot()
+	_lines.append("   two seconds on: %s" % _describe(after))
+	_silence_rejoin_ok = _is_playing(after, _after_silence, _before_silence)
+	_lines.append("   verdict terms after a SILENT HOST: %s"
+			% _terms(after, _after_silence, _before_silence))
+	_step = 20
+	_until = _now()
+
+
+# ---------------------------------------------------------------- the control: a frozen client
+
+
+## STEP 20: **THE ONE CASE THE TIMEOUT COULD GET WRONG, so it is measured beside the one it gets
+## right.** Everything above freezes the HOST. This freezes the CLIENT: the main loop does not run for
+## longer than the client's own threshold while the relay keeps sending at ten bundles a second.
+##
+## A slept laptop, a breakpoint, a long import, this process SIGSTOPped: in all of them the kernel
+## goes on buffering what the relay sent, so the frame that resumes sees a gap of the whole freeze AND
+## a socket full of the bundles that crossed it. Whether that is a drop depends entirely on whether
+## `net_client.gd` reads its clock before or after draining the socket, and nothing but a real freeze
+## can tell the two apart -- a unit test would have to fake the clock, which is to say fake the bug.
+##
+## `OS.delay_msec` and not a SIGSTOP of our own pid: a stopped process cannot resume itself, so that
+## version needs a helper process whose only job is to send SIGCONT, and a probe that leaves one of
+## THOSE behind is worse than the orphan it is trying to avoid. The engine clock keeps running through
+## both (`Time.get_ticks_msec` is monotonic, not a frame count), which is the property the client's
+## detector actually reads.
+func _freeze_the_client_not_the_host() -> void:
+	if _now() < _until:
+		return
+	if _screen._client.stage != AssayNetClient.Stage.JOINED:
+		_lines.append(("H. THE FROZEN CLIENT: SKIPPED -- the client is at stage %d, not JOINED, so "
+				+ "there is no live link to freeze. The control says nothing about this run.")
+				% _screen._client.stage)
+		_report()
+		return
+	_before_freeze = _snapshot()
+	_lines.append("H. THE FROZEN CLIENT (host still sending): blocking the main loop for %dms at %s"
+			% [_freeze_ms, _describe(_before_freeze)])
+	_freeze_ran = true
+	OS.delay_msec(_freeze_ms)
+	_step = 21
+	# TWO SECONDS, BECAUSE THE READ IS THE HALF I HAVE GOT WRONG BEFORE. The client's `_process` has
+	# not run yet -- that is the point of a frozen loop -- so a stage read in this frame is a fact
+	# about when I looked. 0.3s would be enough for one frame; 2s is enough for twenty bundles, which
+	# is what makes "still playing" a measurement rather than "still joined".
+	_until = _now() + 2.0
+
+
+func _read_the_link_after_the_freeze() -> void:
+	if _now() < _until:
+		return
+	var after := _snapshot()
+	var joined: bool = _screen._client.stage == AssayNetClient.Stage.JOINED
+	var moving: bool = int(after.get("bundles", -1)) > int(_before_freeze.get("bundles", -1))
+	_freeze_ok = joined and moving
+	_lines.append("   two seconds on: %s" % _describe(after))
+	_lines.append(("   verdict terms after a %dms FROZEN CLIENT: still joined %s · bundles still "
+			+ "arriving %s (%d before the freeze, %d after) · screen says \"%s\"")
+			% [_freeze_ms, joined, moving, _before_freeze.get("bundles", -1),
+			after.get("bundles", -1), _screen._status.text])
 	_report()
 
 
@@ -569,6 +736,13 @@ func _report() -> void:
 	if _done:
 		return
 	_done = true
+	# **THE CLIENT STOPS POLLING BEFORE THE RELAY DIES, AND THAT IS NOT TIDINESS EITHER.** This file
+	# promises the verdict is the LAST line, and a CI grep reads it that way. Case H is the first case
+	# that ends with a LIVE link, so `_kill_relay` below made the client notice one more time and
+	# `main._say` printed "closed the connection" after the verdict -- a true sentence in the one
+	# place that breaks the contract the header makes.
+	if _screen != null and _screen._client != null:
+		_screen._client.set_process(false)
 	_kill_relay()
 	_print_lines()
 	print("")
@@ -580,16 +754,36 @@ func _report() -> void:
 	if _before_silence.is_empty():
 		print("  the silent drop was never reached, so nothing here says whether it is noticed")
 	else:
-		print("  silent drop (SIGSTOP, %ds): noticed by the client: %s"
-				% [int(SILENCE_SECONDS), _noticed_the_silence])
-	var verdict := "NO"
-	if _host_restart_ok and _blip_ok:
+		print("  silent drop (SIGSTOP, watched %ds, client threshold %dms): noticed by the client: %s"
+				% [int(SILENCE_SECONDS), AssayNetClient.SILENCE_MS, _noticed_the_silence])
+	# **EVERY LEG IS IN THE VERDICT LINE, AND THAT IS NOT TIDINESS.** The old line carried the two
+	# reconnect legs only, so the silence legs could regress under a YES that a CI grep would read as
+	# all-clear -- a lever that cannot fail for the thing it was most recently extended to measure.
+	# `ran` is separate from `ok` because a leg that could not happen must not read as one that failed.
+	var legs := [
+		["host restarted", _host_restart_ok, true],
+		["socket dropped with the host up", _blip_ok, true],
+		["silent host noticed", _noticed_the_silence, not _before_silence.is_empty()],
+		["rejoined after the silence", _silence_rejoin_ok, _noticed_the_silence],
+		["a %dms frozen client survived" % _freeze_ms, _freeze_ok, _freeze_ran],
+	]
+	var ran := 0
+	var passed := 0
+	var terms := PackedStringArray()
+	for leg in legs:
+		var ok: bool = leg[1]
+		var leg_ran: bool = leg[2]
+		if leg_ran:
+			ran += 1
+			if ok:
+				passed += 1
+		terms.append("%s: %s" % [leg[0], ("yes" if ok else "NO") if leg_ran else "not run"])
+	var verdict := "PARTLY"
+	if ran > 0 and passed == ran:
 		verdict = "YES"
-	elif _host_restart_ok or _blip_ok:
-		verdict = "PARTLY"
-	print("RECONNECT PROBE VERDICT: %s -- host restarted: %s · socket dropped with the host up: %s"
-			% [verdict, "rejoined and playing" if _host_restart_ok else "did NOT get back in",
-			"rejoined and playing" if _blip_ok else "did NOT get back in"])
+	elif passed == 0:
+		verdict = "NO"
+	print("RECONNECT PROBE VERDICT: %s -- %s" % [verdict, " · ".join(terms)])
 	_free_screen()
 	quit(0)
 
