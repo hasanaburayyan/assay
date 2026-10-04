@@ -14,11 +14,24 @@ repeating the way the ground is; a second block would just add a second lattice.
 
 WHAT IT MAY NOT DO, AND WHY THAT IS STRUCTURAL RATHER THAN TUNED. Ore owns
 saturation (rig rule 6). Measured on the shipped frame, the ore's separation from
-the ground is delta E 56.2 -- and the CHROMA leg of that is 50.8 against a
-lightness leg of only 24.0. The ore's signal is chroma. So every colour in this
-file is the ground's own family pulled toward `grey`: scatter spends LUMINANCE
-and has no chroma to spare, which is why it cannot read as a deposit rather than
-merely being tuned not to.
+the ground is delta E 56.2, of which the CHROMA leg is 50.8 against a lightness
+leg of 24.0: the ore's signal is chroma.
+
+SO ORE AND SCATTER MOVE IN OPPOSITE DIRECTIONS ON THAT ONE AXIS. Every colour
+here is the ground's family pulled toward `grey`, which takes chroma AWAY: ore
+sits at saturation 0.792 against the ground's 0.357 and this layer at 0.144, so
+scatter is the least saturated thing on the screen and ore the most. They cannot
+be confused because they are on opposite sides of the same ground, which is a
+stronger guarantee than being quieter would be.
+
+I FIRST WROTE "scatter spends LUMINANCE and has no chroma to spare" HERE, AND IT
+IS BACKWARDS. Measured on the composited frame with the scatter pixels named by
+the overlay's own alpha: delta E 17.5, of which 17.4 is chroma and 1.5 is
+lightness. It barely moves in luminance at all. The sentence was written before
+the measurement and the measurement reversed it. The consequence worth knowing:
+a delta L* of +1.5 means this layer nearly VANISHES in a greyscale copy, so the
+navigation read is carried by hue-free SHAPE rather than by tone, and a landmark
+that must survive greyscale needs lightness added on purpose.
 
 TWO SCALES, BECAUSE THE PLACEMENT STUDY SAID ONE WAS NOT ENOUGH
 (`shared/assay/cove-assa202/`). Uniform small props make two places look like
