@@ -51,8 +51,18 @@ are signed, so that one message is written in Rust and only framed here.
 
 ## Not here yet
 
-**Sprites**, and reconnect — the latter out of scope by Decision 3: a dropped
-client restarts to rejoin.
+**Sprites.** Reconnect used to be listed here too, out of scope by Decision 3 —
+"a dropped client restarts to rejoin". It is not out of scope; it works, and
+nobody built it (ASSA-177). A drop leaves the stage `DEAD`, `_join_address`
+permits a join at `DEAD`, and the relay hands a returning account its own
+`PlayerId` back, so one press of Join puts you in the same slot in a running
+world. Measured by `tools/reconnect_probe.gd`, which kills a real relay under a
+real session: after a host restart you lose the ticks since its last autosave,
+and after the socket alone dies with the host still up you lose nothing.
+
+Still not here: a *silent* drop (the client notices a socket that CLOSES, and
+keeps no clock of its own on a link that merely goes quiet) and recovery from a
+desync, which leaves you joined and really does need a restart.
 
 The part menu and placement used to be listed here as waiting on ASSA-5. They
 landed: the bench panel reads `AssaySim.designs_of`, and the probe assembles,

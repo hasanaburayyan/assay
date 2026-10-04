@@ -398,9 +398,15 @@ func _ready() -> void:
 	_client.refused.connect(func(reason): _say("refused: %s" % reason, AssayHud.Say.FAILED))
 	_client.link_failed.connect(func(reason): _say(reason, AssayHud.Say.FAILED))
 	_client.tick_bundle.connect(_on_tick_bundle)
+	# **THE ADVICE IS RIGHT AND ITS REASON WAS WRONG** (ASSA-177). It said "(Decision 3: no
+	# reconnect)", which the probe has now disproved for every other way a session ends -- but a
+	# desync is not a drop: `desynced` leaves the stage JOINED, so the Join button refuses and there
+	# is genuinely nothing on this screen that can recover. The sentence says that instead of citing a
+	# decision that no longer holds. Whether a desync SHOULD drop you to DEAD, where Join would work,
+	# is a question for whoever owns the net layer; see ASSA-177's note.
 	_client.desynced.connect(func(tick): _say(
-			"desync at tick %d. Restart the client to rejoin (Decision 3: no reconnect)." % tick,
-			AssayHud.Say.FAILED))
+			"desync at tick %d. Restart the client to rejoin: a desync leaves you joined, so Join "
+			% tick + "cannot help.", AssayHud.Say.FAILED))
 	# A note is narration, so its state is whatever the link's state already is.
 	_client.note.connect(func(line): _say(line, AssayHud.Say.JOINED
 			if _client.stage == AssayNetClient.Stage.JOINED else AssayHud.Say.CONNECTING))
@@ -1029,13 +1035,25 @@ func _on_join() -> void:
 
 ## JOIN ONE ADDRESS. The only caller that reads `_host` is `_on_join`; solo passes the address its
 ## own relay reported, which is what keeps a typed host untouched (Maren, ASSA-113).
+##
+## **`DEAD` IS A DOOR, NOT A WRECK, AND NOW THAT IS MEASURED RATHER THAN TOLERATED** (ASSA-177). The
+## `or DEAD` below is the whole of this client's reconnect: `tools/reconnect_probe.gd` kills a real
+## relay under a real session and presses this path, and the player is back in the same `PlayerId`
+## with the world stepping -- after a host restart and after the socket alone dying. Narrowing this
+## guard to IDLE would delete a working feature nobody wrote down.
 func _join_address(address: String) -> void:
 	if _client.stage != AssayNetClient.Stage.IDLE and _client.stage != AssayNetClient.Stage.DEAD:
 		# ASSA-176, and this is the site that matters: `Join` is the control ASSA-175 deliberately
 		# leaves on screen, so this is the sentence a joined player gets when they press the one thing
 		# still there.
+		#
+		# **AND THE REMEDY LOST A FALSE CLAUSE** (ASSA-177). It used to read "(no reconnect in the
+		# demo)", which I shipped on ASSA-176 saying out loud that I believed it and had not measured
+		# it. The probe says it is false. What is left is true in both stages this sentence can reach:
+		# while a handshake is in flight or while you are in a world, changing host does take a
+		# restart, because this is the guard that says so.
 		_say(AssayHud.join_refusal(_client.stage == AssayNetClient.Stage.JOINED,
-				"restart the client to change host (no reconnect in the demo)"), AssayHud.Say.FAILED)
+				"restart the client to change host"), AssayHud.Say.FAILED)
 		return
 	# SAID BEFORE THE CALL, not after it: `join` does reach a socket, and a button that shows nothing
 	# until the answer comes back reads as a dead button. Maren's ruling, and she had the premise

@@ -163,9 +163,12 @@ static func view_toggle_text(close_up: bool) -> String:
 ## states, so the state is the part worth having in one place where `test_hud.gd` can see both
 ## halves at once.
 ##
-## THE REMEDIES ARE UNTOUCHED, INCLUDING "no reconnect in the demo", which I believe and have not
-## measured: ASSA-177 is open on exactly that claim, and rewording it here would be asserting the
-## answer before the probe runs.
+## THE REMEDIES CAME ACROSS UNTOUCHED, INCLUDING "no reconnect in the demo" -- which I said out loud
+## I believed and had not measured. **IT WAS FALSE** (ASSA-177): `tools/reconnect_probe.gd` presses
+## Join after a real drop and gets back into the same slot in a running world, so that clause is gone
+## from `_join_address` and what is left ("restart the client to change host") is true in both stages
+## this sentence can reach. Worth keeping in view: the clause survived two items BECAUSE it read like
+## a settled fact, and the only reason it was ever checked is that I wrote down that it was not one.
 static func join_refusal(joined: bool, remedy: String) -> String:
 	return "%s; %s" % ["already in a world" if joined else "already joining", remedy]
 

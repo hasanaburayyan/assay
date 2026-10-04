@@ -15,7 +15,22 @@ extends Node
 ## into a double by the time the Dictionary exists -- a `u64` seed in it is already wrong. The
 ## Dictionary is for showing things to a person.
 ##
-## Reconnect is deliberately absent (Decision 3): a dropped client restarts to rejoin.
+## **RECONNECT WAS NEVER BUILT AND THE CLIENT HAS IT ANYWAY** (ASSA-177). This header said
+## "deliberately absent (Decision 3): a dropped client restarts to rejoin" for as long as there has
+## been a client, and nobody had pressed the button: `join` treats DEAD as "not connected" rather than
+## "finished" (see `_process`), `main.gd::_join_address` permits an attempt at that stage, and the
+## relay has mapped an account back to its own `PlayerId` since `sim-game/tools/rejoin_check.sh`. So a
+## drop, one press of Join, and you are back in the same slot in a running world. Measured, both ways
+## round, by `tools/reconnect_probe.gd`: after the host restarts (you lose the ticks since its last
+## autosave) and after the socket alone dies with the host still up (you lose nothing).
+##
+## **WHAT IS STILL ABSENT, AND IT IS NOT RECONNECT.** (1) A *silent* drop. Everything above goes
+## through `_process` noticing the socket's status change; a connection that stops carrying bytes
+## without closing leaves this node waiting, because nothing here keeps its own clock on the link.
+## (2) A desync, which does not come here at all -- `desynced` leaves the stage JOINED, so Join is
+## refused and restarting really is the only way back. Nothing in this file resets `bundles_seen`,
+## `last_tick`, `player_id` or `_reader` on a second `join`, which the probe shows is harmless today
+## (the reader was empty at the drop) and is where to look first if a reconnect ever reads garbage.
 
 ## Accepted: our slot, the world to start from, and the message's own text for the sim. The next
 ## bundle is for `world.tick`.
