@@ -1063,6 +1063,7 @@ fn building_fact(world: &World, building: &sim::building::Building) -> BuildingF
             world.smelter_state(building),
             sim::SmelterState::Working { .. }
         ),
+        stopped: world.building_state(building).halted(),
     }
 }
 
@@ -1082,6 +1083,7 @@ fn building_dict(building: &BuildingFacts) -> VarDictionary {
             .collect::<Array<VarDictionary>>().to_variant(),
         "species" => building.species,
         "lit" => building.lit,
+        "stopped" => building.stopped,
     }
 }
 
@@ -1246,6 +1248,15 @@ pub struct BuildingFacts {
     pub name: String,
     pub pos: (i32, i32),
     pub status: String,
+    /// **HAS IT STOPPED** — `World::building_state(b).halted()`, the same
+    /// predicate `World::halted` filters on and so the same answer the
+    /// `stopped` block renders. A bool and not a word, for `lit`'s reason:
+    /// `status` is one prose sentence for a person, and a caller that branched
+    /// on its shape would be deriving a rule from a rendering. ASSA-140 is the
+    /// bill for exactly that — `button_play` asked `status.begins_with("mining")`
+    /// and a machine reading `holding 0 of 210 · mining Minyte · …` was
+    /// reported as stopped, so the demo's own proof mislabelled its payoff.
+    pub stopped: bool,
     /// How many tiles it occupies, from `pos` as the TOP-LEFT of the footprint.
     /// A smelter is (2, 2) and a machine (1, 1) — `BuildingKind::footprint`, so
     /// a renderer never has to know which kinds are big.

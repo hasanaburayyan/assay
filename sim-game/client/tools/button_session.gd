@@ -206,7 +206,22 @@ func _report() -> void:
 	print("  %s" % _play.outcome)
 	print("  final: tick %d, hash %s, %d bundles applied"
 			% [_screen._sim.tick(), _screen._sim.hash_hex(), _screen._sim.applied])
-	print("BUTTON SESSION OK")
+	# THE MARKER NAMES THE OUTCOME, and that is the whole of ASSA-140's last box. This printed one
+	# `BUTTON SESSION OK` whether the loop ended with a machine mining, a machine standing there
+	# stopped, or a design that came apart -- so a demo that paid off in 0% of worlds read green for
+	# weeks, and the Game Director had to shoot a window to find out. Nothing here forms an opinion
+	# about whether a break was correct: `outcome_kind` is read from the sim's own status string and
+	# from whether the design survived, exactly as before, and all three are still a successful RUN.
+	# What the marker stops doing is calling them the same RESULT.
+	#
+	# `BUTTON SESSION OK` is still the prefix and still the last line, so every existing grep keeps
+	# working; a grep that cares which way it went now has something to match.
+	var suffix: String = String({
+		"mining": "MACHINE MINING",
+		"stopped": "MACHINE STOPPED",
+		"broke": "DESIGN BROKE",
+	}.get(_play.outcome_kind, "OUTCOME UNNAMED"))
+	print("BUTTON SESSION OK · %s" % suffix)
 	_done = true
 	quit(0)
 
