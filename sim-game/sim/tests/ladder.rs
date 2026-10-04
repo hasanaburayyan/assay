@@ -410,9 +410,17 @@ fn the_starter_pair_smelts_in_every_world() {
 /// `starter_roster_ok` rerolls until the pair smelts at [`JUDGED_AT`];
 /// `worldgen::deposit_in_chunk` floors the two starter deposits at
 /// `STARTER_MIN_PURITY`. The promise is true only while the second grades at
-/// least as high as the first — lower `STARTER_MIN_PURITY` to 39 and every
-/// world still passes every other test in this file while the guaranteed fuel
-/// quietly burns 20% cooler than the grade it was cleared at.
+/// least as high as the first.
+///
+/// MEASURED, and it corrects what I first wrote here: at
+/// `STARTER_MIN_PURITY = 39` the existing
+/// `rung_zero_sits_next_to_spawn_at_a_useful_purity` **stays green** — it
+/// asserts the grade of the deposits a few seeds actually rolled, and a floor
+/// of 39 still rolls above 40 most of the time. What does catch it is
+/// `the_starter_pair_smelts_in_every_world`, because its second assertion
+/// judges at the deposit's real grade. So this test is not the only lever,
+/// but it is the only one that names the *reason*, and it fails on the
+/// constant rather than on 1 seed in 2000.
 ///
 /// This is the answer to "which grade is the guarantee stated at": the one
 /// worldgen can deliver next to spawn, which is a LOCATED promise and not an

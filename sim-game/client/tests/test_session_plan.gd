@@ -157,3 +157,51 @@ func test_assayed_and_name_come_from_the_sheets() -> bool:
 	if AssaySessionPlan.species_name(_sheets(), 3) != "delta":
 		return _fail("species 3 is named delta in the sheets")
 	return true
+
+
+## Deposits carrying the sim's `starter` flag: two patches of species 0, the GUARANTEED one further
+## away and poorer-looking, so "nearest" and "guaranteed" are different answers and a test cannot
+## pass by accident. Purity is on them only to make the fixture readable; nothing here reads it.
+func _flagged_deposits() -> Array:
+	return [
+		{"id": 0, "species": 0, "center": Vector2i(46, 40), "amount": 400, "purity": 20,
+			"starter": false},
+		{"id": 1, "species": 0, "center": Vector2i(70, 40), "amount": 400, "purity": 55,
+			"starter": true},
+		{"id": 2, "species": 3, "center": Vector2i(60, 50), "amount": 400, "purity": 70,
+			"starter": true},
+		{"id": 3, "species": 4, "center": Vector2i(10, 10), "amount": 0, "purity": 90,
+			"starter": true},
+	]
+
+
+## THE FUEL COMES OFF THE PATCH THE SIM GUARANTEES, NOT THE NEAREST ONE OF THE RIGHT SPECIES
+## (ASSA-139). Grade scales reactivity, so the nearer patch is a fire that may be too cool to melt
+## its own ore -- 1.5% of worlds, measured, and the loop stalled forever with the sim correct.
+func test_the_guaranteed_deposit_is_not_the_nearest_one() -> bool:
+	var from := Vector2i(44, 40)
+	var guaranteed := AssaySessionPlan.guaranteed_of_species(_flagged_deposits(), 0)
+	if int(guaranteed.get("id", -1)) != 1:
+		return _fail("deposit 1 carries the sim's starter flag; got %s" % [guaranteed])
+	# The premise: the two answers really differ on this fixture, or the test proves nothing.
+	var nearest := AssaySessionPlan.nearest_of_species(_flagged_deposits(), 0, from, 0)
+	if int(nearest.get("id", -1)) != 0:
+		return _fail("fixture broken: nearest should be deposit 0, got %s" % [nearest])
+	return true
+
+
+## An empty guaranteed patch is not a guarantee. The caller falls back to the nearest rather than
+## stopping the loop, which is why this must report `{}` and not the depleted patch.
+func test_a_depleted_guaranteed_deposit_is_not_offered() -> bool:
+	var chosen := AssaySessionPlan.guaranteed_of_species(_flagged_deposits(), 4)
+	if not chosen.is_empty():
+		return _fail("deposit 3 holds no ore and must not be offered; got %s" % [chosen])
+	return true
+
+
+## A species with no guaranteed patch at all reports nothing rather than guessing one.
+func test_a_species_with_no_guaranteed_patch_reports_nothing() -> bool:
+	var chosen := AssaySessionPlan.guaranteed_of_species(_flagged_deposits(), 1)
+	if not chosen.is_empty():
+		return _fail("species 1 has no starter patch; got %s" % [chosen])
+	return true

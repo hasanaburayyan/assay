@@ -84,6 +84,35 @@ static func nearest_of_species(deposits: Array, species: int, from: Vector2i,
 	return candidates[maxi(rank, 0) % reachable]
 
 
+## THE DEPOSIT OF ONE SPECIES THAT THE SIM'S OWN GUARANTEE POINTS AT, or `{}` if it has none left.
+##
+## NOT `nearest_of_species`, AND THE DIFFERENCE IS A WHOLE GRADE (ASSA-139). `starter_pair` names two
+## SPECIES; worldgen puts one patch of each beside spawn with its purity floored so the pair is
+## reachable at the grade the ladder cleared it at. Every other patch of the same species is a plain
+## purity roll, so walking to the nearest one instead reached a grade-C patch in 1.5% of worlds and
+## the smelter stalled forever on a fire too cool for its own ore. The pair was never wrong.
+##
+## The `starter` flag is the SIM's answer (`World::is_starter_deposit`), not a purity comparison done
+## here: grade scales reactivity, so choosing between two patches is deciding whether the smelter will
+## run, and a client deciding that from a 25-wide rough sheet is guessing. Same reason `starter_pair`
+## hands over the pair rather than the sheets.
+##
+## A deposit dict with no `starter` key is a BROKEN BINDING and says so, rather than quietly reporting
+## that this world guarantees nothing (Game Director's ruling on ASSA-141).
+static func guaranteed_of_species(deposits: Array, species: int) -> Dictionary:
+	for entry in deposits:
+		var deposit: Dictionary = entry
+		assert(deposit.has("starter"),
+			"deposit %d carries no `starter` key: rebuild libsim_godot (`make client-lib`)"
+				% int(deposit.get("id", -1)))
+		if not bool(deposit["starter"]):
+			continue
+		if int(deposit.get("species", -1)) != species or int(deposit.get("amount", 0)) <= 0:
+			continue
+		return deposit
+	return {}
+
+
 ## The species id this peer should work on, or -1 if the world has none left for it.
 ##
 ## Wraps when there are fewer candidate species than peers: a collision is better than a peer with

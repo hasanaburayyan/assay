@@ -541,8 +541,20 @@ impl AssaySim {
     /// #36). It comes from there rather than from the first character of
     /// `species_names()`: that name is the discoverer's once a species is
     /// claimed, and only the GENERATED name is distinct per world.
+    ///
+    /// `starter` is `sim::World::is_starter_deposit`: this is one of the two
+    /// patches the ladder's guarantee actually points at, floored to a grade
+    /// the pair was cleared at. **A caller that wants the guaranteed fuel must
+    /// read this and not "the nearest deposit of the right species"**, which
+    /// is a different patch at a rolled purity in 1.5% of worlds and the
+    /// second half of ASSA-139. The sim answers it for the same reason
+    /// [`AssaySim::starter_pair`] does: grade scales reactivity, so choosing
+    /// the patch is choosing whether the smelter runs.
     #[func]
     pub fn deposits(&self) -> Array<VarDictionary> {
+        // Resolved once: `is_starter_deposit` walks the roster and the deposit
+        // list, and doing that per deposit would make drawing quadratic.
+        let starter = self.world.starter_deposits();
         self.world
             .deposits
             .iter()
@@ -554,6 +566,8 @@ impl AssaySim {
                     "radius" => deposit.radius as i64,
                     "amount" => deposit.amount as i64,
                     "purity" => deposit.purity as i64,
+                    "starter" => starter
+                        .is_some_and(|(m, f)| deposit.id == m || deposit.id == f),
                     "symbol" => &gstring(
                         &sim::debug::species_symbol(self.world.species(deposit.species))
                             .to_string(),

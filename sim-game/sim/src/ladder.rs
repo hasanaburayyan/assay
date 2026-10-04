@@ -253,6 +253,13 @@ pub fn usable_from_bare_hands(species: &[MineralSpecies], id: SpeciesId) -> bool
 /// as the real rule anyway, because the day a smelter's walls stop being its
 /// material's heat tolerance this still answers correctly.
 ///
+/// **NO TEST CAN CATCH A CHANGE TO THAT `min`, and I would rather say so than
+/// let a green run read as cover.** `walls` and `needs` are the same number,
+/// so `min` and `max` give the same answer on every input the game can
+/// produce; I mutated it to `max` and all 14 ladder tests stayed green. The
+/// clause is here for the reader and for the day the two stop being equal,
+/// and on that day it needs a test of its own.
+///
 /// Heat only. Whether the player can light it at all is [`hand_lit_fuel`]'s
 /// question, and [`starter_species`] asks both.
 pub fn pair_smelts(material: &MineralSpecies, fuel: &MineralSpecies, grade: Grade) -> bool {

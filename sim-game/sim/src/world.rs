@@ -115,6 +115,47 @@ impl World {
         (0..self.width()).contains(&pos.x) && (0..self.height()).contains(&pos.y)
     }
 
+    /// **THE TWO DEPOSITS THE STARTER GUARANTEE ACTUALLY POINTS AT**, as
+    /// `(material, fuel)`, or `None` if this roster has no starter pair.
+    ///
+    /// `ladder::starter_species` names two *species*; this names the two
+    /// *deposits* worldgen placed for them, in the `STARTER_CHUNKS` beside
+    /// spawn with purity floored at `STARTER_MIN_PURITY`. **The difference is
+    /// a whole grade and that is ASSA-139's second half.** The promise is
+    /// located, not global: other deposits of the same fuel species sit all
+    /// over the map at whatever purity they rolled, and a scripted session
+    /// that walked to the NEAREST one of the right species reached a grade-C
+    /// patch in 1.5% of worlds and stalled on a fire too cool to melt its own
+    /// ore — the pair was never at fault.
+    ///
+    /// So picking a deposit is a rule and not a convenience, for the same
+    /// reason `AssaySim::starter_pair` gives its caller the answer instead of
+    /// the inputs: grade scales reactivity, and a client choosing between two
+    /// patches is deciding whether a smelter will run. It is also deciding it
+    /// from the ROUGH sheet, before anything is assayed.
+    ///
+    /// Three callers hand-rolled this chunk lookup before it lived here
+    /// (`sim-cli/tests/common`, `tests/ladder.rs`, the demo), which is how
+    /// ASSA-43 and ASSA-52 happened.
+    pub fn starter_deposits(&self) -> Option<(DepositId, DepositId)> {
+        let (material, fuel) = crate::ladder::starter_species(&self.species)?;
+        let at = |i: usize, species: SpeciesId| {
+            let (dx, dy) = worldgen::STARTER_CHUNKS[i];
+            let chunk = ChunkPos::new(self.spawn.x + dx, self.spawn.y + dy);
+            self.deposits
+                .iter()
+                .find(|d| d.center.chunk() == chunk && d.species == species)
+                .map(|d| d.id)
+        };
+        Some((at(0, material)?, at(1, fuel)?))
+    }
+
+    /// Whether this deposit is one of [`World::starter_deposits`].
+    pub fn is_starter_deposit(&self, id: DepositId) -> bool {
+        self.starter_deposits()
+            .is_some_and(|(material, fuel)| id == material || id == fuel)
+    }
+
     /// The center tile of the spawn chunk.
     pub fn spawn_tile(&self) -> TilePos {
         TilePos::new(

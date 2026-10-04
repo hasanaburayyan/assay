@@ -15,8 +15,7 @@
 use sim::tuning::{
     FRAME_BUDGET_PER_STRENGTH, GEAR_MIN_HARDNESS, HEAD_SIZE, HOPPER_SIZE, PLANTED_FRAME_SIZE,
 };
-use sim::worldgen::STARTER_CHUNKS;
-use sim::{ChunkPos, OreDeposit, Property, TilePos, World};
+use sim::{OreDeposit, Property, TilePos, World};
 
 /// Chebyshev distance: ticks it takes to walk between two tiles.
 pub fn walk(from: TilePos, to: TilePos) -> i32 {
@@ -67,17 +66,21 @@ pub fn starters(seed: u64) -> (World, OreDeposit, OreDeposit) {
     // the doc comment above only stays true while one place decides the shape
     // (ASSA-53).
     let world = sim_net::fresh_world(seed);
-    let at = |i: usize| {
-        let (dx, dy) = STARTER_CHUNKS[i];
-        let chunk = ChunkPos::new(world.spawn.x + dx, world.spawn.y + dy);
+    // ASKS THE SIM WHICH DEPOSITS THE GUARANTEE POINTS AT (ASSA-139). This
+    // hand-rolled the chunk walk, and so did `tests/ladder.rs` and the demo —
+    // three copies of "where is the starter patch", one of which was wrong.
+    let (material, fuel) = world
+        .starter_deposits()
+        .expect("every world has a starter pair");
+    let at = |id| {
         world
             .deposits
             .iter()
-            .find(|d| d.center.chunk() == chunk)
+            .find(|d| d.id == id)
             .cloned()
             .expect("starter deposit")
     };
-    let (material, fuel) = (at(0), at(1));
+    let (material, fuel) = (at(material), at(fuel));
     (world, material, fuel)
 }
 

@@ -149,7 +149,16 @@ func _choose_species() -> bool:
 		_stop(false, "no deposit of the starter material %d holds ore" % _material)
 		return false
 	_stand = _on_deposit(deposit)
-	var fuel_deposit := AssaySessionPlan.nearest_of_species(_world().deposits(), _fuel, me, rank)
+	# THE FUEL COMES OFF THE GUARANTEED PATCH AND THE MATERIAL DOES NOT, and the asymmetry is a rule
+	# rather than an oversight (ASSA-139). Grade scales REACTIVITY, so a poorer patch of the right
+	# fuel is a fire too cool to melt its own ore -- 1.5% of worlds, and the loop stalls forever with
+	# nothing in the sim at fault. Grade never scales HEAT TOLERANCE, so the material's own patch can
+	# be any grade and still smelt, which is why that one keeps `nearest_of_species` and with it the
+	# peer divergence this plan exists to create. (The material's grade does move a part's strength
+	# and so the frame budget; that is ASSA-140's question, not this one.)
+	var fuel_deposit := AssaySessionPlan.guaranteed_of_species(_world().deposits(), _fuel)
+	if fuel_deposit.is_empty():
+		fuel_deposit = AssaySessionPlan.nearest_of_species(_world().deposits(), _fuel, me, rank)
 	if fuel_deposit.is_empty():
 		_stop(false, "no deposit of the starter fuel %d holds ore" % _fuel)
 		return false
