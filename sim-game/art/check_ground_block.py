@@ -21,16 +21,22 @@ must sit among the steps between columns INTERIOR to a cell. Measured on the she
 64 px, with no camera, no downsample and no placement rule.
 
     SHIPPED      vertical Z -0.08 (rank 31 of 64)   horizontal Z +0.73 (rank 12 of 64)
-    CONTROL      vertical Z +67.0 (rank  1)         horizontal Z +49.2 (rank  1)
+    CONTROL      vertical Z +38.0 (rank  1 of 64)   horizontal Z +40.0 (rank  1 of 64)
 
 THE BAR IS IMPORTED, NOT COPIED: `grid_findability.verdict`, the same 3-sd magnitude that judges
 a window shot, so the sheet and the screen are held to one rule. A rank is printed and is NOT the
 bar -- sixty-four offsets always have a rank 1, which is the defect that bar replaced (ASSA-162).
 
 THE RED PATH RUNS ON EVERY PASS. The control above is not a number in this docstring, it is
-measured each time by shuffling the same cells out of field order: the failure this check exists
-for, performed. If the control does not go red the instrument is broken and this exits 2 rather
-than reporting a pass -- a green that has not been shown capable of being red says nothing.
+measured each time: every cell on the dark squares of a checkerboard is lifted by `CONTROL_STEP`,
+which puts a step across BOTH a left|right and an upper/lower join. That is the failure this check
+exists for, performed. If the control does not go red the instrument is broken and this exits 2
+rather than reporting a pass -- a green that has not been shown capable of being red says nothing.
+
+    (The REALISTIC control -- shuffling the cells out of field order -- is the one that reads
+    +67 / +49, and it is run by hand, not here. It is not used as the automatic control because it
+    depends on a coincidence not happening: a shuffle can put a join back together, and one did,
+    at Z +0.90. A control that can go green by luck is not a control. See `control()` below.)
 
 AND IT CANNOT GO TO SLEEP. The block shape is read from the shipped manifest, not written here.
 A manifest that stops declaring a block, or declares one the sheet cannot hold, exits 2: the
