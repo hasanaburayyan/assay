@@ -320,6 +320,34 @@
   "sheet": "spawn.png",
   "columns": 4
  },
+ "smelter": {
+  "name": "smelter",
+  "tiles": [
+   2,
+   2
+  ],
+  "frame_px": [
+   128,
+   144
+  ],
+  "anchor_px": [
+   0,
+   16
+  ],
+  "rows": [
+   {
+    "name": "cold",
+    "frames": 1
+   },
+   {
+    "name": "lit",
+    "frames": 1
+   }
+  ],
+  "animations": {},
+  "sheet": "smelter.png",
+  "columns": 1
+ },
  "player": {
   "name": "player",
   "tiles": [
@@ -337,7 +365,7 @@
   "rows": [
    {
     "name": "idle_S",
-    "frames": 4
+    "frames": 2
    },
    {
     "name": "walk_S",
@@ -345,7 +373,7 @@
    },
    {
     "name": "idle_SE",
-    "frames": 4
+    "frames": 2
    },
    {
     "name": "walk_SE",
@@ -353,7 +381,7 @@
    },
    {
     "name": "idle_E",
-    "frames": 4
+    "frames": 2
    },
    {
     "name": "walk_E",
@@ -361,7 +389,7 @@
    },
    {
     "name": "idle_NE",
-    "frames": 4
+    "frames": 2
    },
    {
     "name": "walk_NE",
@@ -369,7 +397,7 @@
    },
    {
     "name": "idle_N",
-    "frames": 4
+    "frames": 2
    },
    {
     "name": "walk_N",
@@ -377,7 +405,7 @@
    },
    {
     "name": "idle_NW",
-    "frames": 4
+    "frames": 2
    },
    {
     "name": "walk_NW",
@@ -385,7 +413,7 @@
    },
    {
     "name": "idle_W",
-    "frames": 4
+    "frames": 2
    },
    {
     "name": "walk_W",
@@ -393,7 +421,7 @@
    },
    {
     "name": "idle_SW",
-    "frames": 4
+    "frames": 2
    },
    {
     "name": "walk_SW",
@@ -402,8 +430,8 @@
   ],
   "animations": {
    "idle": {
-    "frames": 4,
-    "fps": 4
+    "frames": 2,
+    "fps": 2
    },
    "walk": {
     "frames": 8,

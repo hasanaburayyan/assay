@@ -86,6 +86,12 @@ PALETTE = {
     # once. Both measured in art/species_probe.py.
     "ore": "#CCC8C2", "ore_dk": "#7B7872", "ore_hi": "#F6F2EA",
     "line": "#1A1D23",
+    # A LIT SMELTER'S HEARTH (ASSA-126), and deliberately NOT `glint` below.
+    # Warm and near-white: a multiply tint owns the hue, so the fire's job is
+    # to sit at the top of whatever value the species leaves it. It is a STATE
+    # mark, which is why it must not be the glint's #FFFFFF -- that hex means
+    # "grade changes a number in sim" and nothing else may emit it.
+    "fire": "#FFE9C4",
     # The grade-A glint EMITS this and nothing else emits it. Neutral by
     # necessity, not by taste: see GRADE_GLINT_COLOR.
     "glint": "#FFFFFF",

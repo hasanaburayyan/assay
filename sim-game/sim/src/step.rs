@@ -7,13 +7,12 @@ use crate::building::{
 use crate::command::{Event, Input, PlayerCommand, RejectReason, StopReason, SystemCommand};
 use crate::inventory::Inventory;
 use crate::item::{Item, ItemKind, ItemStack};
-use crate::mineral::{Property, SpeciesId, validate_name};
+use crate::mineral::{SpeciesId, validate_name};
 use crate::player::{Assaying, Crafting, Mining, Player};
 use crate::recipe::{Recipe, smelter_recipe_for};
 use crate::tuning::{
-    ASSAY_TICKS, BURN_TICKS_PER_REACTIVITY, FUEL_MIN_REACTIVITY, HAND_SPARK_TEMPERATURE,
-    HAND_WORK_PER_TICK, PICK_WEAR_PER_SWING, REACH, SMELTER_FUEL_CAP, SMELTER_INPUT_CAP,
-    SMELTER_OUTPUT_CAP, WORK_PER_UNIT, YIELD_BY_GRADE,
+    ASSAY_TICKS, BURN_TICKS_PER_REACTIVITY, HAND_WORK_PER_TICK, PICK_WEAR_PER_SWING, REACH,
+    SMELTER_FUEL_CAP, SMELTER_INPUT_CAP, SMELTER_OUTPUT_CAP, WORK_PER_UNIT, YIELD_BY_GRADE,
 };
 use crate::types::{PlayerId, TilePos};
 use crate::world::World;
@@ -76,14 +75,6 @@ fn apply_system(world: &mut World, command: &SystemCommand, events: &mut Vec<Eve
             });
         }
     }
-}
-
-/// Whether `item` burns well enough to be fuel, and how hot.
-fn fuel_temperature(world: &World, item: Item) -> Option<u32> {
-    let t = world
-        .species(item.species)
-        .effective(Property::Reactivity, item.grade);
-    (t >= FUEL_MIN_REACTIVITY).then_some(t)
 }
 
 /// Validate and apply one player command. Validation lives in the sim, not
@@ -318,7 +309,7 @@ fn apply_player(
                     if !matches!(item.kind, ItemKind::Ore | ItemKind::Refined) {
                         return reject(RejectReason::WrongItem, events);
                     }
-                    if fuel_temperature(world, item).is_none() {
+                    if world.fuel_temperature(item).is_none() {
                         return reject(RejectReason::NotFuel, events);
                     }
                     let BuildingKind::Smelter(s) =
@@ -1129,11 +1120,13 @@ fn run_smelters(world: &mut World, events: &mut Vec<Event>) {
         if out_have + out_count > SMELTER_OUTPUT_CAP {
             continue;
         }
-        let fuel_temp = s.fuel.and_then(|f| fuel_temperature(world, f.item));
-        let fuel_lights = s.fuel.is_some_and(|f| {
-            let ignition = u32::from(world.species(f.item.species).sheet.heat_tolerance);
-            ignition <= HAND_SPARK_TEMPERATURE || ignition <= s.burn_temperature
-        });
+        let fuel_temp = s.fuel.and_then(|f| world.fuel_temperature(f.item));
+        // **ASKED OF THE WORLD, NOT RE-DERIVED HERE** (ASSA-128). This used
+        // to be its own copy of the comparison, and `World::smelter_state`'s
+        // copy forgot that a unit lights off the dying fire of the one
+        // before it — so a smelter that refined 19 ore told the player
+        // "fuel won't light from cold" once per unit burned.
+        let fuel_lights = s.fuel.is_some_and(|f| world.fuel_lights(s, f.item));
 
         let BuildingKind::Smelter(s) = &mut world.buildings[i].kind else {
             continue;

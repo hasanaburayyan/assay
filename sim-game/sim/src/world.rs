@@ -2,11 +2,11 @@
 
 use crate::building::{
     Building, BuildingId, BuildingKind, BuildingState, Machine, MachineIdle, MachineStall,
-    MachineState, SmelterStall, SmelterState,
+    MachineState, Smelter, SmelterStall, SmelterState,
 };
 use crate::hash::fnv64;
 use crate::item::Item;
-use crate::mineral::{MineralSpecies, SpeciesId};
+use crate::mineral::{MineralSpecies, Property, SpeciesId};
 use crate::ore::OreDeposit;
 use crate::player::Player;
 use crate::rng::{Rng, mix};
@@ -176,6 +176,28 @@ impl World {
         u32::from(self.species(b.material.species).sheet.heat_tolerance)
     }
 
+    /// How hot this item burns, or `None` if it is not fuel at all.
+    ///
+    /// Grade belongs here and not in [`World::fuel_lights`]: reactivity
+    /// scales with grade, heat tolerance never does (`mineral.rs`).
+    pub fn fuel_temperature(&self, item: Item) -> Option<u32> {
+        let t = self
+            .species(item.species)
+            .effective(Property::Reactivity, item.grade);
+        (t >= crate::tuning::FUEL_MIN_REACTIVITY).then_some(t)
+    }
+
+    /// Whether the fuel in this smelter's slot catches, given the fire it has
+    /// now — which may be a unit that is one tick from burning out, and that
+    /// is how a hotter fuel gets lit at all.
+    ///
+    /// Asks [`crate::ladder::lights_in_fire`], the one place that decides
+    /// (ASSA-128). `step` asks this same method, so the sentence a player
+    /// reads cannot disagree with whether the fire actually catches.
+    pub fn fuel_lights(&self, s: &Smelter, fuel: Item) -> bool {
+        crate::ladder::lights_in_fire(self.species(fuel.species), s.burn_temperature)
+    }
+
     /// What this smelter is doing, and why if it has stopped.
     ///
     /// **THE ONE PLACE THAT DECIDES** (ASSA-80). This chain used to live in
@@ -192,7 +214,23 @@ impl World {
             return SmelterState::Idle;
         };
         let walls = self.max_temperature(b);
-        let fire = s.burn_temperature.min(walls);
+        // The fire this smelter is running on: what is burning now, or what
+        // the fuel in the slot will catch at next tick, or nothing.
+        //
+        // **THE SEAM BETWEEN TWO UNITS OF FUEL IS NOT A STALL** (ASSA-128).
+        // `run_smelters` spends the last tick of a unit and relights on the
+        // next one, so `burn_left == 0` with lightable fuel in the slot is a
+        // working smelter mid-stride. Reading the dying fire's own
+        // temperature here instead would report `FireTooCool` on a cold
+        // start, which is the same lie wearing the other arm's sentence.
+        let burning = if s.burn_left > 0 {
+            Some(s.burn_temperature)
+        } else {
+            s.fuel
+                .filter(|f| self.fuel_lights(s, f.item))
+                .and_then(|f| self.fuel_temperature(f.item))
+        };
+        let fire = burning.unwrap_or(0).min(walls);
         let needs = s
             .input
             .map(|i| u32::from(self.species(i.item.species).sheet.heat_tolerance));
@@ -205,7 +243,7 @@ impl World {
             SmelterState::Stalled(SmelterStall::OutputFull)
         } else if s.burn_left == 0 && s.fuel.is_none() {
             SmelterState::Stalled(SmelterStall::NoFuel)
-        } else if s.burn_left == 0 {
+        } else if burning.is_none() {
             SmelterState::Stalled(SmelterStall::FuelWontLight)
         } else if needs.is_some_and(|n| fire < n) {
             SmelterState::Stalled(SmelterStall::FireTooCool {

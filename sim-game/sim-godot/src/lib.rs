@@ -351,8 +351,14 @@ impl AssaySim {
     }
 
     /// EVERYTHING THIS PLAYER COULD MAKE BY HAND, as the crafting menu's rows:
-    /// `line`, `dead_end`, `verb`, `tag`, and the input stack's own `kind` /
-    /// `species` / `grade` / `count`.
+    /// `line`, `dead_end`, `walls`, `verb`, `tag`, and the input stack's own
+    /// `kind` / `species` / `grade` / `count`.
+    ///
+    /// `walls` is the smelter row's figure and empty everywhere else
+    /// (`sim::debug::walls_clause`, Maren's ruling on ASSA-88). It is a
+    /// SENTENCE and not a number on purpose: what the player may know of a
+    /// species' heat tolerance is a 25-wide band until they assay it, and a
+    /// host handed the number would have to decide how to say so.
     ///
     /// `sim::debug::make_offers` is the whole answer, including the ORDER
     /// (`RecipeId::ALL`, then `PartKind::ALL`, then the pack's own order) and
@@ -374,6 +380,25 @@ impl AssaySim {
     /// `count` is the pack's count AT THIS TICK and is in the row's sentence
     /// too. It is a thing to SHOW and must be re-read every refresh; nothing a
     /// button sends is derived from it (ASSA-55: one batch, always).
+    ///
+    /// **`makes` IS THE OUTPUT ITEM, AND IT IS HERE BECAUSE THE MENU DRAWS IT**
+    /// (Maren's ruling on ASSA-117 box 4). Without it a client that wants to
+    /// show what a row produces has only `offer.input`, so every row in a menu
+    /// whose one job is choosing between five things drew the same picture —
+    /// the thing you SPEND, which is identical on every row and already named
+    /// in the sentence.
+    ///
+    /// **AND IT IS THE SIM'S, NOT THE CLIENT'S, FOR THE REASON ALREADY WRITTEN
+    /// ABOVE:** `sort` moves a grade and grade A makes nothing at all, so
+    /// GDScript deriving "the output of this row" from `tag` plus `input` would
+    /// be guessing at `Recipe::output_for` and wrong on the one recipe that
+    /// moves a grade.
+    ///
+    /// **ABSENT, NOT EMPTY, WHEN THE ROW MAKES NOTHING** (`sort` on grade A) —
+    /// the shape `lighting` and `durability` already use, so a surface cannot
+    /// draw a blank plate for a row that has no output. Spelled `kind` /
+    /// `species` / `grade` exactly as `inventory_of` spells them, so the same
+    /// function draws a pack stack and this.
     #[func]
     pub fn make_offers(&self, player: i64) -> Array<VarDictionary> {
         let Some(id) = player_id_of(player) else {
@@ -390,16 +415,29 @@ impl AssaySim {
                         ("make", tag_variant(&serde_json::to_value(kind).ok()?)?)
                     }
                 };
-                Some(vdict! {
+                let mut row = vdict! {
                     "line" => &gstring(&offer.line).to_variant(),
                     "dead_end" => &gstring(&offer.dead_end).to_variant(),
+                    "walls" => &gstring(&offer.walls).to_variant(),
                     "verb" => &gstring(verb).to_variant(),
                     "tag" => &tag,
                     "kind" => &gstring(offer.input.kind.name()).to_variant(),
                     "species" => offer.input.species.0 as i64,
                     "grade" => &gstring(&offer.input.grade.letter().to_string()).to_variant(),
                     "count" => offer.have as i64,
-                })
+                };
+                if let Some(makes) = offer.makes {
+                    row.set(
+                        &gstring("makes"),
+                        &vdict! {
+                            "kind" => &gstring(makes.kind.name()).to_variant(),
+                            "species" => makes.species.0 as i64,
+                            "grade" => &gstring(&makes.grade.letter().to_string()).to_variant(),
+                        }
+                        .to_variant(),
+                    );
+                }
+                Some(row)
             })
             .collect()
     }

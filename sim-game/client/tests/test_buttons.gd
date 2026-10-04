@@ -1185,6 +1185,48 @@ func _mine_two_species(screen: Node) -> bool:
 	return _mine_some_ore_of(screen, second)
 
 
+## MAREN'S WALLS CLAUSE ON A REAL PACK (ASSA-125), which is two claims a Rust test cannot make: that
+## the field survives the binding, and that the row a player looks at carries it.
+##
+## **NOTHING HERE NAMES THE SMELTER**, deliberately, the way the dead-end test names no gear. It asks
+## the SIM which rows carry a clause and then requires exactly those rows to show exactly that
+## sentence. The day a second recipe output gets walls, this test covers it without being edited.
+##
+## A VARIANT FIELD IS INVISIBLE FROM RUST: I inverted `is_frame` in the binding on ASSA-103 and all
+## 40 Rust tests stayed green, because nothing on that side reads a `VarDictionary` key. The guard
+## for a field crossing into GDScript has to live in GDScript.
+func test_a_menu_row_carries_the_sims_walls_clause_where_the_sim_puts_it() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_two_species(screen)
+	if ok:
+		var offers: Array = screen._sim.make_offers(screen._client.player_id)
+		if screen._make.get_child_count() != offers.size():
+			return _fail("%d rows for %d offers" % [screen._make.get_child_count(), offers.size()])
+		var carried := 0
+		for i in range(offers.size()):
+			var offer: Dictionary = offers[i]
+			var walls := String(offer.get("walls", ""))
+			if walls == "":
+				continue
+			carried += 1
+			var said := ""
+			for child in screen._make.get_child(i).find_children("*", "Label", true, false):
+				said += " " + (child as Label).text
+			if not said.contains(walls):
+				ok = _fail("row %d should carry the sim's clause `%s` and reads `%s`"
+						% [i, walls, said])
+				break
+		# THE PREMISE, ASSERTED BEFORE THE ASSERTIONS OVER IT. A loop over rows that all have an
+		# empty clause passes every check inside it, so an empty pack or a dropped binding field
+		# would read as a green test about a sentence nobody drew.
+		if ok and carried == 0:
+			ok = _fail("no row carried a walls clause: a pack with two kinds of rock in it offers "
+					+ "two smelters, so either the binding dropped the field or the sim stopped "
+					+ "wording it")
+	return ok
+
+
 ## ASSA-107: CHOOSING A PART PUTS IT IN THE MENU, AND CLEARING IT TAKES IT BACK OUT — through the
 ## real refresh path, with a real stack the sim named.
 ##
@@ -1325,3 +1367,111 @@ func _a_frame_stack(like: Dictionary) -> Dictionary:
 			stack["kind"] = String(part.get("name", ""))
 			return stack
 	return {}
+
+
+## THE ICON ON A CRAFTING ROW IS WHAT THE ROW MAKES, NOT WHAT IT SPENDS (Maren's ruling, ASSA-117
+## box 4). She found it by hashing the plates in `04-pack.png`: five rows, one picture -- the refined
+## slab -- because `_icon_box(offer)` read the offer's own `kind`/`species`/`grade`, which are the
+## INPUT. In a menu whose only job is choosing between things, the icon distinguished nothing.
+##
+## **THE LEVER IS MAREN'S PROPERTY, NOT AN EQUALITY WITH `icon_for`.** Two rows that spend the SAME
+## stack and make DIFFERENT things may not draw the same picture. That is the defect stated as
+## something the drawn window must be true of, and it fails on the shipped code by construction:
+## every row off one stack drew that stack. Nothing in it mentions which argument `_rebuild_make`
+## passes, so it cannot be satisfied by the bug coming back in another shape.
+##
+## The second half -- each row's picture IS its output's -- is admitted construction (it compares
+## against the same `icon_for` the rebuild calls) and is here only to stop "any picture that is not
+## the input" from passing. The first half is the evidence.
+##
+## **AND IT REFUSES A VERDICT RATHER THAN PASSING VACUOUSLY.** With a fixture whose rows all make the
+## same thing, or whose outputs share one sheet row, the property is true of the bug too. So the
+## fixture is required to contain a pair that can tell them apart, and the test FAILS saying so if it
+## does not -- the shape of the two mutations that walked through my menu tests on 10-02 was exactly
+## a fixture that could not distinguish right from wrong.
+func test_a_crafting_row_draws_what_it_makes_not_what_it_spends() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_some_ore(screen)
+	if ok:
+		var offers: Array = screen._sim.make_offers(screen._client.player_id)
+		var rows: Array = screen._make.get_children()
+		if offers.is_empty():
+			ok = _fail("a pack with ore in it produced no crafting offers at all")
+		elif rows.size() != offers.size():
+			ok = _fail("%d offers and %d rows, so nothing below pairs" % [offers.size(), rows.size()])
+		else:
+			# WHAT IS ON SCREEN, read off the row rather than recomputed: the AtlasTexture the
+			# TextureRect is actually holding, found by CLASS because a row is [icon?][VBox] and the
+			# icon is wrapped in a Panel when the pipeline ships a plate.
+			var drawn := {}
+			for i in range(rows.size()):
+				drawn[i] = _drawn_icon_id(rows[i])
+			# THE PAIR THAT MAKES THE ASSERTION ABLE TO FAIL: same input stack, different output,
+			# and the two outputs must be drawable as different pictures.
+			var pairs := 0
+			for i in range(offers.size()):
+				var a: Dictionary = offers[i]
+				for j in range(i + 1, offers.size()):
+					var b: Dictionary = offers[j]
+					if _input_of(a) != _input_of(b):
+						continue
+					var makes_a: Dictionary = a.get("makes", {})
+					var makes_b: Dictionary = b.get("makes", {})
+					if makes_a == makes_b or makes_a.is_empty() or makes_b.is_empty():
+						continue
+					var want_a := _icon_id(AssaySprites.icon_for(makes_a))
+					var want_b := _icon_id(AssaySprites.icon_for(makes_b))
+					if want_a == "" or want_b == "" or want_a == want_b:
+						continue
+					pairs += 1
+					if drawn[i] == drawn[j]:
+						ok = _fail(("two rows spend `%s` and make `%s` and `%s`, and both draw %s"
+								+ " -- the icon is the input") % [_input_of(a),
+								makes_a.get("kind"), makes_b.get("kind"), drawn[i]])
+						break
+				if not ok:
+					break
+			if ok and pairs == 0:
+				ok = _fail(("NO VERDICT: no two rows in this pack spend one stack, make different"
+						+ " things and have distinguishable art, so the property is true of the bug"
+						+ " as well. Offers: %s") % [_inputs_and_outputs(offers)])
+			if ok:
+				for i in range(offers.size()):
+					var makes: Dictionary = (offers[i] as Dictionary).get("makes", {})
+					var want := _icon_id(AssaySprites.icon_for(makes))
+					if drawn[i] != want:
+						ok = _fail("row %d makes `%s` and draws %s, the output's art is %s"
+								% [i, makes.get("kind", "nothing"), drawn[i], want])
+						break
+	screen.queue_free()
+	return ok
+
+
+## The icon a row is ACTUALLY drawing, as a comparable string. Empty when the row draws none.
+func _drawn_icon_id(row: Node) -> String:
+	for art in row.find_children("*", "TextureRect", true, false):
+		return _icon_id((art as TextureRect).texture as AtlasTexture)
+	return ""
+
+
+## An AtlasTexture's identity: which sheet and which region of it. Two calls to `icon_for` return
+## different objects for the same item, so `==` on the textures themselves answers nothing.
+func _icon_id(icon: AtlasTexture) -> String:
+	if icon == null or icon.atlas == null:
+		return ""
+	return "%s%s" % [icon.atlas.resource_path.get_file(), icon.region]
+
+
+func _input_of(offer: Dictionary) -> String:
+	return "%s/%d/%s" % [String(offer.get("kind", "?")), int(offer.get("species", -1)),
+			String(offer.get("grade", "?"))]
+
+
+func _inputs_and_outputs(offers: Array) -> String:
+	var out := PackedStringArray()
+	for entry in offers:
+		var offer: Dictionary = entry
+		var makes: Dictionary = offer.get("makes", {})
+		out.append("%s -> %s" % [_input_of(offer), String(makes.get("kind", "nothing"))])
+	return " | ".join(out)

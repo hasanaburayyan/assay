@@ -929,18 +929,32 @@ fn where_am_i(s: &Session) -> Result<(), String> {
         }
         None => out!("You are standing at ({x}, {y})."),
     }
+    // WHAT YOU HAVE RUNNING, ALL OF IT, IN THE SIM'S OWN WORDS (ASSA-95). Three
+    // activities run on their own and only the craft ever had a sentence — and
+    // an assay is 30 ticks whose whole payoff is a sheet sharpening, so silence
+    // there is the one action the game is named after going unreported. The
+    // list is `step`'s order and this prints it unranked and unreworded.
+    for line in sim::debug::activity_lines(&s.world, s.me) {
+        out!("  {line}");
+    }
     if let Some(d) = s.world.deposit_at(me.pos) {
         // NEVER INVITE THE IMPOSSIBLE (ASSA-43). This said "`mine` to start
         // mining it" on every deposit, and 40.7% of them are of a species
         // nothing in the game can break — so the headless game's standing
         // advice was an instruction that cannot work. Reach comes from the
         // sim's own note, so this and the Godot tile line cannot disagree.
+        // THE INVITATION ONLY. "You're mining it." used to live here too, and
+        // it was a SECOND WORDING of something `activity_lines` now says
+        // properly two lines up — with the assay beside it, which this never
+        // mentioned (ASSA-95). Two wordings for one fact is the disagreement
+        // nobody notices, and the one that was here could say a player was
+        // mining while being silent that they were also assaying.
         let mining = match (
             sim::debug::deposit_dead_end_note(&s.world, d),
             me.mining.is_some(),
         ) {
             (Some(why), _) => format!(" {why}."),
-            (None, true) => " You're mining it.".to_string(),
+            (None, true) => String::new(),
             (None, false) => " `mine` to start mining it.".to_string(),
         };
         out!(
