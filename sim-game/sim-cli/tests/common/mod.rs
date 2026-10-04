@@ -100,7 +100,12 @@ pub fn supports_the_loop(w: &World, m: &OreDeposit, f: &OreDeposit) -> bool {
         * FRAME_BUDGET_PER_STRENGTH
         * ms.effective(Property::Strength, m.grade());
     ms.effective(Property::Hardness, m.grade()) >= GEAR_MIN_HARDNESS
-        && fs.effective(Property::Reactivity, f.grade()) >= u32::from(ms.sheet.heat_tolerance)
+        // ASKS THE SIM, not a fifth copy of the comparison. This line used to
+        // re-derive "the fuel melts the material" and it was the fourth copy
+        // of it in the tree (ASSA-139); it also omitted the fuel-threshold
+        // half, so it counted a rock with reactivity 20 as fuel when the sim
+        // would not light it at all.
+        && sim::ladder::pair_smelts(ms, fs, f.grade())
         && m.species != f.species
         && drill_mass <= frame_budget
 }

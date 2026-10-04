@@ -6,7 +6,7 @@ use crate::building::{
 };
 use crate::hash::fnv64;
 use crate::item::Item;
-use crate::mineral::{MineralSpecies, Property, SpeciesId};
+use crate::mineral::{MineralSpecies, SpeciesId};
 use crate::ore::OreDeposit;
 use crate::player::Player;
 use crate::rng::{Rng, mix};
@@ -180,11 +180,13 @@ impl World {
     ///
     /// Grade belongs here and not in [`World::fuel_lights`]: reactivity
     /// scales with grade, heat tolerance never does (`mineral.rs`).
+    ///
+    /// Asks [`crate::ladder::burn_temperature_at`], the one place that decides
+    /// (ASSA-139), the same way [`World::fuel_lights`] asks
+    /// [`crate::ladder::lights_in_fire`]. This held its own copy of the
+    /// comparison and the ladder held two more; they agreed by hand.
     pub fn fuel_temperature(&self, item: Item) -> Option<u32> {
-        let t = self
-            .species(item.species)
-            .effective(Property::Reactivity, item.grade);
-        (t >= crate::tuning::FUEL_MIN_REACTIVITY).then_some(t)
+        crate::ladder::burn_temperature_at(self.species(item.species), item.grade)
     }
 
     /// Whether the fuel in this smelter's slot catches, given the fire it has
