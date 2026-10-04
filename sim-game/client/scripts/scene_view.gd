@@ -40,6 +40,14 @@ const TILE_PX := 32.0
 const FLOOR := 0
 const STANDING := 1
 
+## THE SHORTEST A PLAYED-OUT STEP MAY BE, in seconds. See `playout`.
+##
+## A FLOOR AND NOT A CHOICE OF RATE: the rate is measured from the bundles that arrive, because
+## `sim-relay --tps N` is a flag and a constant here would draw a `--tps 20` world at half speed with
+## nothing reporting it. This only stops a divide-by-zero before the second bundle has landed, and
+## stops a harness that feeds ticks as fast as its loop runs from asking for an infinite rate.
+const MIN_PLAYOUT_STEP := 0.01
+
 ## HOW FAR THE CAMERA MAY SIT FROM THE WORLD'S EDGE: nowhere. Clamped, so the view never shows void
 ## beside the world. A player walking into the north-west corner stops being centred, which is
 ## correct -- there is nothing up there to centre on.
@@ -90,6 +98,62 @@ static func facing_of(step: Vector2i) -> String:
 	var vertical := "N" if step.y < 0 else ("S" if step.y > 0 else "")
 	var horizontal := "E" if step.x > 0 else ("W" if step.x < 0 else "")
 	return vertical + horizontal
+
+
+## HOW MUCH OF THE PRODUCED PATH IS DRAWN BY NOW: the playout clock, and nothing else in this file
+## is arithmetic the board can feel as directly as this.
+##
+## THE DEFECT IT EXISTS FOR (ASSA-148, the board's own "the movement is choppy", measured by Maren).
+## The screen used to keep exactly two positions -- last tick's and this tick's -- and restart the
+## tween at every ARRIVAL. Bundles do not arrive evenly: on a real relay the client receives exactly
+## 10.00 a second with gaps between 0.000 s and 0.254 s, i.e. in PAIRS. When two are applied between
+## two drawn frames, the older of the two segments is never drawn at all and the body teleports a
+## whole tile. Measured on the pinned demo seed: 11 of the walk's 25 tile-steps went undrawn.
+##
+## SO ARRIVAL IS NOT A CLOCK AND THIS STOPS TREATING IT AS ONE. Produced positions queue up, and the
+## screen plays them out in order, one step of `step_seconds` each. `promote` is how many the queue
+## owes the screen right now; `part` is how far through the one being drawn we are.
+##
+## IT IS STILL HISTORY AND THAT IS THE POINT -- MAREN'S ASSA-119 RULING DOES NOT BEND: a renderer may
+## interpolate the DRAWN position, never state, never toward a `target`. A playout buffer can only
+## ever draw LATER than the newest tick, never ahead of it, so this is the most conservative fix
+## available rather than a cleverer one. Nothing here reads a target, a velocity or a direction.
+##
+## A SEGMENT STARTS AT THE LATER OF: WHEN THE ONE BEFORE IT ENDED, AND WHEN ITS OWN DATA ARRIVED.
+## That one line is the whole of this function and I got it wrong first, in a way worth keeping
+## written down because it is this item's defect at one third the size.
+##
+## My first rule was "start where the previous segment ended, unless we were parked longer than a
+## step". It measures 0.549 and 0.768 tiles in a single frame on a real relay: when the queue runs dry
+## the body parks on the segment's end position, and a bundle landing (say) 60 ms later was then
+## treated as having started 60 ms AGO -- so the first frame of it drew the body 60% of the way along
+## a tile it had not begun to cross. A jump, from a rule written to prevent jumps. The queue's cap was
+## never reached in that run, so the mechanism I had suspected was not even involved; the probe's
+## queue-depth number is what ruled it out.
+##
+## Taking each position's ARRIVAL TIME as the floor fixes it without a special case for being parked:
+## - **Parked, then news:** `arrived == now`, so the segment starts now and the drawn position does
+##   not move this frame. Continuous by construction -- the body was already standing on its first
+##   position.
+## - **A burst already waiting:** `arrived` is in the past, so the floor is the previous segment's
+##   end and the queue drains phase-locked, each step its full length, no frame lost per step.
+## - **Starved:** nothing to promote, `part` clamps at 1 and the body SITS on the newest position it
+##   has been given. That is what the old code degraded to and the only honest thing to draw.
+##
+## `drawing` is false before the first position has ever been promoted, and then the first one is
+## taken immediately: a world that has just been joined draws the player where the Welcome put them.
+static func playout(seg_at: float, step_seconds: float, now: float, arrived: Array[float],
+		drawing: bool) -> Dictionary:
+	var step := maxf(step_seconds, MIN_PLAYOUT_STEP)
+	var promote := 0
+	var at := seg_at
+	if not drawing and not arrived.is_empty():
+		promote = 1
+		at = now
+	while promote < arrived.size() and now - at >= step:
+		at = minf(maxf(at + step, arrived[promote]), now)
+		promote += 1
+	return {"promote": promote, "seg_at": at, "part": clampf((now - at) / step, 0.0, 1.0)}
 
 
 ## WHICH ROW OF `player.png`: the gait and the facing. South when nothing has moved yet, because a

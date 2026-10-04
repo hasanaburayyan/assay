@@ -556,6 +556,84 @@ func test_a_left_click_in_the_close_up_asks_the_sim_to_walk_there() -> bool:
 	return true
 
 
+## THE ARRIVAL PATTERN A REAL RELAY GIVES, PLAYED OUT AT 60 fps, WITH NO SOCKET AND NO CLOCK.
+##
+## THIS IS ASSA-148 AS A TEST, and it can only be one because `AssayScene.playout` takes its clock as
+## an argument. The defect was not in the lerp and not in the cadence estimate: bundles arrive in
+## PAIRS -- exactly 10.00 a second with gaps between 0.000 s and 0.268 s -- and a client that restarts
+## its tween at every arrival never draws the older segment of a pair at all. The body teleports a
+## whole tile; measured on the demo seed, 11 of the walk's 25 steps went undrawn.
+##
+## SO THE FEED HERE IS THE MEASURED ONE AND NOT A METRONOME. Thirteen pairs at 0.2 s, with ONE 0.27 s
+## gap in the middle, because that gap is the case my first fix got wrong: the queue runs dry, the
+## body parks on the segment's end position, and a rule that resumed "where the previous segment
+## ended" then drew the next frame 70% of the way along a tile the body had not begun to cross. That
+## is a 0.700-tile jump, and it is what this test fails on if the arrival floor in `playout` goes.
+##
+## THREE PROPERTIES, and the third is the one a picture cannot show:
+## 1. **Every produced position is drawn, in the order the sim produced it.** `promoted` must be
+##    0..25 with nothing skipped -- a skipped entry IS the teleport.
+## 2. **No frame moves the body further than that frame's own share of a tile.** At 60 fps against a
+##    0.1 s tick that is 1/6 of a tile, so the old defect is six times the bar.
+## 3. **The body ends exactly on the last position the sim produced**, never past it. A playout
+##    buffer can only draw later than the newest tick, which is why it keeps Maren's ASSA-119 ruling
+##    by construction: there is nothing here to predict with.
+func test_a_paired_tick_feed_is_drawn_one_whole_segment_at_a_time() -> bool:
+	var step := 0.1
+	var frame := 1.0 / 60.0
+	var arrivals: Array[float] = []
+	var t := 0.0
+	for pair in range(13):
+		arrivals.append(t)
+		arrivals.append(t)
+		t += 0.27 if pair == 4 else 0.2
+	# Tick i leaves the player at x = i: one tile per tick, which is what `move_players` does.
+	var pending: Array[int] = []
+	var pending_at: Array[float] = []
+	var promoted: Array[int] = []
+	var delivered := 0
+	var was := -1
+	var seen := -1
+	var seg_at := 0.0
+	var drawn := 0.0
+	var biggest := 0.0
+	for f in range(int(4.0 / frame)):
+		var now := frame * float(f)
+		while delivered < arrivals.size() and arrivals[delivered] <= now:
+			pending.append(delivered)
+			pending_at.append(arrivals[delivered])
+			delivered += 1
+			while pending.size() > 3:
+				pending.pop_front()
+				pending_at.pop_front()
+		var cursor := AssayScene.playout(seg_at, step, now, pending_at, seen >= 0)
+		for _i in range(int(cursor["promote"])):
+			was = seen if seen >= 0 else pending[0]
+			seen = pending.pop_front()
+			pending_at.pop_front()
+			promoted.append(seen)
+		seg_at = float(cursor["seg_at"])
+		if seen < 0:
+			continue
+		var at := lerpf(float(was), float(seen), float(cursor["part"]))
+		if f > 0:
+			biggest = maxf(biggest, absf(at - drawn))
+		drawn = at
+	for i in range(arrivals.size()):
+		if promoted.size() <= i or promoted[i] != i:
+			return _fail(("the playout drew %s, so position %d was never drawn. A produced position"
+					+ " that is skipped is the whole-tile teleport this item is about.")
+					% [promoted, i])
+	if biggest > frame / step + 0.0005:
+		return _fail(("a frame moved the body %.3f tiles, and a frame's own share of a tile at 60 fps"
+				+ " against a %.2fs tick is %.3f. Arrival is not a clock.")
+				% [biggest, step, frame / step])
+	if not is_equal_approx(drawn, float(arrivals.size() - 1)):
+		return _fail("the walk ended drawn at %.3f, not on the last position the sim produced (%d)"
+				% [drawn, arrivals.size() - 1])
+	return true
+
+
 ## A BODY IS NEVER DRAWN PAST A POSITION THE SIM PRODUCED.
 ##
 ## MAREN'S MOTION RULING, AS A TEST, and it is the one assertion in this file that is about the repo's
@@ -565,6 +643,15 @@ func test_a_left_click_in_the_close_up_asks_the_sim_to_walk_there() -> bool:
 ## because that is a second copy of the movement rule living outside `sim`.
 ##
 ## Walked for real through the screen's own click path, so what is checked is the client that ships.
+##
+## WHY THIS TEST WAITS 20 ms A TICK, which is the only thing ASSA-148 changed about it. The screen no
+## longer advances the drawn segment when a bundle ARRIVES -- it advances it on a playout clock, so
+## that a pair of bundles landing in the same frame can no longer leave the segment between them
+## undrawn (a whole-tile teleport, 11 times in the demo walk's 25 steps). A test that feeds twelve
+## ticks inside one millisecond is therefore asking a clock to move without time passing, and the
+## honest answer is the one it got: the body has not been drawn anywhere yet. The delay makes this
+## feed what every other input in the game is -- ticks separated by wall clock -- and 20 ms a tick is
+## well inside the queue's depth, so the walk plays out step by step.
 func test_a_walking_body_is_drawn_between_two_tiles_the_sim_produced() -> bool:
 	var screen := _joined()
 	if not screen._sim.running():
@@ -579,11 +666,14 @@ func test_a_walking_body_is_drawn_between_two_tiles_the_sim_produced() -> bool:
 	var steps := 0
 	for _i in range(12):
 		_tick(screen)
+		OS.delay_msec(20)
+		screen._refresh_world()
 		var was: Vector2i = screen._was.get(screen._client.player_id, from)
 		var now: Vector2i = screen._seen.get(screen._client.player_id, from)
 		if was != now:
 			steps += 1
-		# The view is rebuilt on the tick, so this is the position that would be painted.
+		# Rebuilt a frame's worth of time after the tick, so this is the position that would be
+		# painted -- and it is read from the same advance that `_was` and `_seen` were read from.
 		var players: Array = screen._world.view.get("players", [])
 		if players.is_empty():
 			return _fail("the scene has no player to draw after tick %d" % screen._sim.tick())
