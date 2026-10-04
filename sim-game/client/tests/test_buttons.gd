@@ -736,6 +736,15 @@ func test_a_running_craft_is_named_in_the_chrome_and_outlives_the_menu() -> bool
 			button.pressed.emit()
 			_tick(screen, 2)
 			var during := _running_text(screen)
+			# TWO ACTIVITIES AT ONCE, WHICH IS THE WHOLE REASON THE LIST IS A LIST (ASSA-95).
+			# `_mine_some_ore` leaves the mining RUNNING and `step` never clears it for a craft, so
+			# this is the state a single-activity readout would misreport -- it would say the mining
+			# had stopped. Asserted here rather than in its own test because this is the one place
+			# the suite already has both running, and a fixture built to have one activity would be
+			# proving the easy half.
+			if not during.contains("mining "):
+				ok = _fail(("a craft started while the mining ran on, and the block names only: %s. "
+						+ "A list that silently omits a kind teaches that it is complete.") % during)
 			if not screen._running_box.visible:
 				ok = _fail("a craft is running and the running block is hidden: `%s`" % during)
 			elif not during.contains("making ") or not during.contains("ticks left"):
