@@ -1223,11 +1223,18 @@ func test_the_measured_tick_rate_is_per_tick_and_tracks_a_drifting_host() -> boo
 		ticks.append(i)
 		if i % 2 == 1:
 			at += 0.221
+	# **THE EXPECTATION IS THE RATE THE FIXTURE WAS BUILT FROM, NOT ONE DERIVED FROM IT.** This read
+	# `span / (window - 1)`, which is the estimator's own arithmetic -- so it agreed with the 10/11
+	# answer the pairing produces and could not see the defect at all. A test that asks the code what
+	# to expect is the shape I keep writing; 0.1105 is a number the fixture puts in by construction.
 	var steady := AssayScene.playout_step(arrivals, ticks, 0.1)
-	var want := (arrivals[arrivals.size() - 1] - arrivals[0]) / float(window - 1)
+	var want := 0.1105
 	if absf(steady - want) > 0.0005:
-		return _fail(("a host delivering ticks in pairs at %.1f ms was measured at %.1f ms, so the "
-				+ "pairing moved the rate the clock divides by") % [want * 1000.0, steady * 1000.0])
+		return _fail(("a host delivering two bundles a frame at a true %.1f ms a tick was measured "
+				+ "at %.1f ms (%.0f%% of it). The clock divides frame time by that, so it plays out "
+				+ "%.0f%% fast, drains its buffer and holds the body still")
+				% [want * 1000.0, steady * 1000.0, steady / want * 100.0,
+				(want / steady - 1.0) * 100.0])
 	# THE SAME SERIES WITH AN OLDER, FASTER RATE IN FRONT OF IT -- which is what a long window holds
 	# after the host slows down. The estimate must be the NEW rate, not a blend.
 	var long_arrivals: Array[float] = []
@@ -1235,7 +1242,7 @@ func test_the_measured_tick_rate_is_per_tick_and_tracks_a_drifting_host() -> boo
 	for i in 28:
 		long_arrivals.append(float(i) * 0.09)
 		long_ticks.append(i)
-	var shift := long_arrivals[long_arrivals.size() - 1] + 0.1105 - arrivals[0]
+	var shift := long_arrivals[long_arrivals.size() - 1] + want - arrivals[0]
 	for i in arrivals.size():
 		long_arrivals.append(arrivals[i] + shift)
 		long_ticks.append(28 + ticks[i])
