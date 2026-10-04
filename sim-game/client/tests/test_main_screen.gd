@@ -2414,5 +2414,18 @@ func test_the_schematic_is_handed_every_building_the_sim_reports() -> bool:
 		elif not source.contains("_building_marks(_sim.buildings())"):
 			ok = _fail("`_building_marks` is never handed `_sim.buildings()` in main.gd, which is "
 					+ "ASSA-189 exactly: the mark is right and the schematic still draws no factory")
+		elif source.find("_building_marks(_sim.buildings())") \
+				< source.rfind("for entry in _sim.players():"):
+			# **AND IT IS PAINTED AFTER THE PLAYERS, WHICH I GOT WRONG FIRST TIME AND MEASURED.** The
+			# play loop plants a machine on the tile you are STANDING on, so on the demo's own shot a
+			# 1x1 machine's 12px mark and the 16px player square were at the same point to the pixel and
+			# the machine was invisible: two buildings in the sim, one on screen. The order survives
+			# only because a diamond leaves the box's corners alone, so the player still reads under it.
+			#
+			# A SOURCE ORDER AND NOT A CLAIM ABOUT THE ENGINE: `_draw`'s calls happen in the order they
+			# are written, which is the one frame-ordering fact in here I do not have to ask about.
+			ok = _fail("main.gd paints the building marks BEFORE the players, so a machine on the tile "
+					+ "you stand on is covered by your own 16px mark -- measured on the demo shot, where "
+					+ "the sim held 2 buildings and the schematic showed 1")
 	screen.queue_free()
 	return ok

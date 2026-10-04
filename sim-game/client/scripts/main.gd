@@ -2723,21 +2723,6 @@ func _draw() -> void:
 			draw_string(font, at + Vector2(-wide * 0.5, float(glyph) * 0.36), symbol,
 					HORIZONTAL_ALIGNMENT_LEFT, -1, glyph, disc["ink"])
 
-	# EVERY FACTORY, WHICH THIS VIEW DID NOT DRAW AT ALL UNTIL ASSA-189. Drawn BEFORE the players, so
-	# a person standing on their own smelter is still the thing on top: you are the mark you look for
-	# first, and a 2x2 building is bigger than you are.
-	#
-	# THE DECISION IS `AssayHud.building_mark`'S, like the disc's above, and this loop only paints
-	# what `_building_marks` hands it -- see that function for why a test can read it and this cannot.
-	for mark in _building_marks(_sim.buildings()):
-		var shape: Dictionary = mark
-		var points: PackedVector2Array = shape["points"]
-		draw_colored_polygon(points, shape["colour"])
-		# Closed, so the ring goes all the way round rather than leaving the last side bare.
-		var ring := PackedVector2Array(points)
-		ring.append(points[0])
-		draw_polyline(ring, shape["edge"], float(shape["edge_width"]), true)
-
 	# EVERY PLAYER, AT A SIZE THAT DOES NOT COME FROM THE TILE (ASSA-119 box 6, Maren's finding 1).
 	# This mark used to be two cells square, which made it 18 px on this world and would make it 36 on
 	# a small one -- so the bigger and more confusing the world, the smaller you got. Measured on the
@@ -2762,6 +2747,32 @@ func _draw() -> void:
 		draw_rect(Rect2(at - mark * 0.5, mark), colour, true)
 		if mine:
 			draw_rect(Rect2(at - mark * 0.8, mark * 1.6), colour, false, 2.0)
+
+	# EVERY FACTORY, WHICH THIS VIEW DID NOT DRAW AT ALL UNTIL ASSA-189.
+	#
+	# **AFTER THE PLAYERS, AND IT IS MEASURED RATHER THAN CHOSEN.** I drew these first, reasoning that
+	# you are the mark you look for and a 2x2 building is bigger than you are. Then I measured the
+	# demo's own shot: the loop plants a machine on the tile you are STANDING on (`_targeted` false is
+	# "where you stand"), so the 1x1 machine's 12 px mark and your 16 px square were at the same point
+	# to the pixel and the 12x12 box held nothing but your yellow. Two buildings in the sim, one on
+	# screen -- this item's own defect surviving its own fix.
+	#
+	# **AND THE ORDER ONLY WORKS BECAUSE OF THE SHAPE.** A diamond leaves its bounding box's corners
+	# alone, so a player under a building still shows four triangles of `MINE` around it, and your own
+	# hollow ring (1.6x the body, outside the mark entirely) is untouched at any footprint. A filled
+	# rect on top -- Maren's banned shape -- would have hidden the player instead, which is why
+	# "buildings last" is not an option on the shape she ruled out.
+	#
+	# THE DECISION IS `AssayHud.building_mark`'S, like the disc's above, and this loop only paints what
+	# `_building_marks` hands it -- see that function for why a test can read it and this cannot.
+	for shape_entry in _building_marks(_sim.buildings()):
+		var shape: Dictionary = shape_entry
+		var points: PackedVector2Array = shape["points"]
+		draw_colored_polygon(points, shape["colour"])
+		# Closed, so the ring goes all the way round rather than leaving the last side bare.
+		var ring := PackedVector2Array(points)
+		ring.append(points[0])
+		draw_polyline(ring, shape["edge"], float(shape["edge_width"]), true)
 
 	# THE TILE THE BUTTONS ACT ON, AND IT IS A SHAPE NOW, NOT A THINNER YOU (ASSA-119 box 6).
 	#

@@ -1255,8 +1255,14 @@ func test_a_building_on_the_schematic_is_neither_a_disc_nor_a_rect() -> bool:
 		var pos := Vector2i(12, 7)
 		var mark := AssayHud.building_mark({"pos": pos, "footprint": foot}, cell, origin)
 		var points: PackedVector2Array = mark["points"]
-		if points.size() != 4:
-			return _fail("a %s building drew a %d-point mark" % [foot, points.size()])
+		# NOT A POINT COUNT. An earlier version of this demanded exactly four points and that is how
+		# a check stops being evidence: an octagon-shaped mutation -- a disc in all but name, which is
+		# Maren's other banned shape -- was caught by "8 points" and the two assertions below about
+		# BEING a disc never ran. Four points is not what she ruled; a hexagon would satisfy her. So
+		# the floor here is only "is it a polygon at all", and the geometry speaks.
+		if points.size() < 3:
+			return _fail("a %s building drew a %d-point mark, which has no interior"
+					% [foot, points.size()])
 		# BOX 2: THE TILE THE SIM GAVE IT. The top-left corner tile plus half the footprint.
 		var want := origin + (Vector2(pos) + Vector2(foot) * 0.5) * cell
 		var at: Vector2 = mark["at"]
