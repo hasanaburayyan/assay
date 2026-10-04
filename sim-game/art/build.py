@@ -120,6 +120,48 @@ def light_layer(body, lit):
     return out
 
 
+def darken_rim(im, width, k):
+    """Multiply the outer `width` rings of this frame's ALPHA MASK by `k` (ASSA-159).
+
+    WHY THE SILHOUETTE AND NOT THE BODY. A building and the ore of its own species
+    carry the identical `modulate` colour, so the tint cancels and only the greyscale
+    sheet separates a drill from the deposit it must stand on to run. Everything that
+    darkens the BODY pays for that separation with the pixels that name the material:
+    measured, reaching the bar that way costs the species read (worst pair dE 8.2
+    against DISTINCT 12). A ring is tint-independent and leaves the body alone --
+    black is the one ink a multiply cannot recolour. `rig.PART_RIM_PX` has the rest,
+    including why the width is 2 and the k is 0.15.
+
+    A RING OF THE ALPHA MASK, NOT A STROKE OF THE DRAWING. Freestyle can only widen
+    the line everywhere, which inks creases too; this walks in from transparency, so
+    it touches exactly the pixels that border what the player sees as the edge.
+
+    MULTIPLY, NOT A FLAT INK. The ring keeps its own modelling and its own hue at
+    15%, so a lit face still reads lighter than a shadowed one along the rim, and the
+    pixels still carry (a little) species chroma under the tint. A flat fill would be
+    a second outline colour the palette does not own.
+
+    `alpha > 200` is what counts as opaque, the same threshold the rest of the art
+    tools use for "a drawn pixel"; the antialiased fringe outside it is already ink.
+    Off-image counts as transparent, so a part clipped by its frame edge is rimmed
+    along that edge too -- it is a silhouette on screen whatever made it one.
+    """
+    px = im.load()
+    w, h = im.size
+    cur = {(x, y) for y in range(h) for x in range(w) if px[x, y][3] > 200}
+    out = im.copy()
+    po = out.load()
+    for _ in range(width):
+        ring = {p for p in cur
+                if any((p[0] + dx, p[1] + dy) not in cur
+                       for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))}
+        for (x, y) in ring:
+            r, g, b, a = px[x, y]
+            po[x, y] = (int(r * k), int(g * k), int(b * k), a)
+        cur -= ring
+    return out
+
+
 def pack(name):
     meta = json.load(open(os.path.join(OUT, name, "asset.json")))
     fw, fh = meta["frame_px"]
@@ -159,12 +201,23 @@ def pack(name):
         im = Image.open(os.path.join(OUT, name, f"{row}_{f:02d}.png")).convert("RGBA")
         return im.resize((fw, fh), Image.LANCZOS)
 
+    # The rim is a property of the SHEET, so it is applied here and not in the asset
+    # script: the ring is walked in from the alpha mask the downscale produced, which
+    # no Blender setting can see. Popped rather than kept, because it is an
+    # instruction to this function and not part of the client's contract.
+    rim = meta.pop("rim", None)
+
     sheet = Image.new("RGBA", (cols * fw, len(meta["rows"]) * fh), (0, 0, 0, 0))
     for y, row in enumerate(meta["rows"]):
         for f in range(row["frames"]):
             d = derived.get(row["name"])
             im = light_layer(authored(d["body"], f), authored(d["lit"], f)) if d \
                 else authored(row["name"], f)
+            if rim and not row.get("light"):
+                # Never a light row: that one is EMITTED LIGHT drawn at Color.WHITE over
+                # the body (`rig.Asset.light_row`), so darkening its edge would dim a
+                # fire for a reason about material.
+                im = darken_rim(im, int(rim[0]), float(rim[1]))
             sheet.alpha_composite(im, (f * fw, y * fh))
     sheet.save(os.path.join(SPRITES, f"{name}.png"))
     meta["sheet"] = f"{name}.png"; meta["columns"] = cols

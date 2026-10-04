@@ -88,6 +88,28 @@ MOUNTED_PARTS_CARRY_NO_SHADOW = (
     "a machine has exactly one contact shadow and plain `over` cannot compound "
     "what is not there.")
 
+# THE DARK RIM EVERY MACHINE PART WEARS, in authoring px and as a multiplier
+# (ASSA-159, Maren's ruling of 2026-10-04). `build.py::darken_rim` multiplies the
+# outer RIM_PX rings of a part's ALPHA MASK by RIM_K after the downscale to
+# authoring size, and `art/check_machine_vs_own_ore.py` is what holds it there.
+#
+# WHAT IT IS FOR, in one line: a building and the ore of its own species carry the
+# IDENTICAL `modulate` colour (scene_view.gd:239 and :314 -> sprites.gd:226 ->
+# hud.gd:200) and a drill must stand ON a deposit to run, so without this the
+# first machine a player builds is drawn in the exact colour of the ground under
+# it -- measured, 1.49 : 1, with 83% of its silhouette under the 3 : 1 bar.
+#
+# IT LIVES HERE AND NOT IN `rig.py` for this module's own reason: the renderer, the
+# packer and two CI checks all need it, and importing `rig.py` outside Blender dies
+# on `import bpy`. `rig.py` re-exports it so an asset script reads one name.
+#
+# WIDTH AND DARKNESS ARE BOTH PINNED, not tuned. 1 px is sampled away on 31% of the
+# silhouette by the client's NEAREST half-scale draw (a dotted line is not a mark);
+# 3 px takes the worst species pair to dE 11.25 and the species read is lost. The k
+# window is [0, ~0.19] and box 3 wants it HIGH, so 0.15 sits near the top of it.
+RIM_PX = 2
+RIM_K = 0.15
+
 # HOW WIDE THE INK RIM IS, in authoring pixels, and why a shadow check needs to
 # know. `rig.py` draws outlines with Freestyle at `line_thickness = 0.35 * SS`,
 # which is a sub-pixel stroke once the SSx render is downscaled to authoring
@@ -96,7 +118,19 @@ MOUNTED_PARTS_CARRY_NO_SHADOW = (
 # exactly (0,0,0)), so "dark" alone cannot tell a sprite's own outline from a
 # shadow lying beside it. A dark pixel this far from any SURFACE pixel is not
 # the outline. One pixel for the stroke, one for its antialiasing.
-INK_RIM_PX = 2
+#
+# PLUS `RIM_PX`, BECAUSE THE INK IS NOW WIDER BY DESIGN (ASSA-159). The rim above
+# multiplies two rings of the alpha mask by 0.15, which puts them under
+# SHADOW_CEILING: by this module's own definition they are not a surface, and they
+# are not a shadow either -- they are the part's outline, drawn on purpose. DERIVED
+# rather than re-picked, so the day the rim changes width this follows it; a
+# constant bumped by hand to keep a check green is a check tuned to its own art.
+#
+# IT COSTS THE SHADOW GUARD ALMOST NOTHING. A contact shadow is a POOL: the ones
+# ASSA-64 stripped off head and hopper ran 2473 and 2621 px at alpha 122-250, tens
+# of authoring px out from the sprite. Four authoring px is two px at 1x, so the
+# thing this guard was written to catch is still caught by an order of magnitude.
+INK_RIM_PX = 2 + RIM_PX
 
 # The most alpha a dark pixel out past the ink rim may carry before it counts as
 # a shadow, and it is DERIVED rather than chosen. Sheets are downscaled from an
