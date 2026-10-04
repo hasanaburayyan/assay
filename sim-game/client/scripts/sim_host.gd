@@ -110,9 +110,29 @@ func spawn_tile() -> Vector2i:
 	return _sim.spawn_tile() if _sim != null else Vector2i.ZERO
 
 
-## Every player, as the sim has them: `id`, `name`, `pos`, `target` (or null). READ, NEVER
-## INTERPOLATED -- `target` is where the sim is walking them, not permission to draw them part of the
-## way there.
+## **WHAT THE CLIENT CANNOT DRAW A PLAYER WITHOUT** (ASSA-196, found by Marlow in my file).
+##
+## The dict below is a BINDING fact read with a default at five places in `main.gd`, and that is the
+## `lit` defect of ASSA-141 one level up: a binding that stopped sending `pos` would put every player
+## on tile (0, 0) -- one tile off the world's corner, confidently -- and one that stopped sending `id`
+## would make every player -1, so `id == player_id` is false and the camera follows nobody.
+## `AssayScene.missing_sim_facts` cannot see either, because by the time it looks `main.gd` has
+## composed `at`/`facing`/`moving` and all three are present.
+##
+## **TWO TESTS HANG ON THIS LIST AND THEY PULL IN OPPOSITE DIRECTIONS**, which is the only reason it
+## is worth anything (CO-6, and Marlow's ASSA-141 hole: a test that walks a list cannot see a fact
+## removed from it). `test_sim_binding.gd` asks a REAL world's `players()` whether every key here is
+## present -- that catches the binding dropping one -- and scans `main.gd` for every `player.get("x")`
+## read, failing if a key read there is missing from here -- that catches this list going stale. The
+## list cannot be both the subject and the oracle.
+##
+## `name` IS IN THE DICT AND IS DELIBERATELY NOT HERE: nothing in the client reads it, so requiring it
+## would be a test about this file's own docstring rather than about anything a player sees.
+const PLAYER_FACTS := ["id", "pos", "target"]
+
+## Every player, as the sim has them: `id`, `name`, `pos`, `target` (or null -- the key is always
+## there, measured, not assumed). READ, NEVER INTERPOLATED -- `target` is where the sim is walking
+## them, not permission to draw them part of the way there.
 func players() -> Array:
 	return _sim.players() if _sim != null else []
 
