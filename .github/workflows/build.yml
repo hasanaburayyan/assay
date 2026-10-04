@@ -304,13 +304,36 @@ jobs:
       # on the same world hash every run, not a timing-sensitive integration test.
       # The marker is printed LAST and only on success, which is the only thing a
       # grep can trust when Godot exits 0 on a failed script.
+      #
+      # THREE RUNS, AND THE GREP IS ON THE SUFFIX (ASSA-140). One run greped for
+      # `^BUTTON SESSION OK`, which the loop printed whether it ended with a
+      # machine mining, a machine standing there stopped, or a design that came
+      # apart -- so a demo that paid off in 0% of worlds read green for weeks.
+      # Each run below names the outcome it requires and the loop now plants the
+      # drill the SIM says does that job, so neither outcome is the seed's choice.
+      #
+      # WHY THESE SEEDS, each catching something the others cannot:
+      #  - 777042 is where the drill used to land OFF the deposit and stand there
+      #    idle (the Game Director's measurement). Reverting that fix fails here
+      #    and is INVISIBLE on 14247, where the old spot happens to hold ore.
+      #  - 14247 is the pinned showcase seed: every window shot, every picture the
+      #    board has seen, and the bar Wren set -- a drill standing AND mining.
+      #  - 14247 again for the break, because it is one of the 44.9% of worlds
+      #    that hold an over-budget design at all; on 777042 nothing the frame
+      #    takes breaks, and that run honestly reports NO SUCH DESIGN.
       - name: The demo loop is reachable through the buttons
         working-directory: sim-game/client
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64"
           "$GODOT" --headless --path . --script res://tools/button_session.gd \
-            -- offline | tee session.log
-          grep -q '^BUTTON SESSION OK' session.log
+            -- offline 777042 0 showcase | tee session-deposit.log
+          grep -q '^BUTTON SESSION OK · MACHINE MINING' session-deposit.log
+          "$GODOT" --headless --path . --script res://tools/button_session.gd \
+            -- offline 14247 0 showcase | tee session-showcase.log
+          grep -q '^BUTTON SESSION OK · MACHINE MINING' session-showcase.log
+          "$GODOT" --headless --path . --script res://tools/button_session.gd \
+            -- offline 14247 0 break | tee session-break.log
+          grep -q '^BUTTON SESSION OK · DESIGN BROKE' session-break.log
       # THE LETTER ON A MAP DISC IS READABLE. Runs the client and scores what
       # `AssayHud.glyph_color` actually returned for all 600 species x purity
       # states (ASSA-39/44), rather than reimplementing the rule -- computing

@@ -123,6 +123,48 @@ func test_the_stand_tile_is_always_one_the_sim_says_is_on_the_deposit() -> bool:
 	return true
 
 
+## **THE TWO JOBS PICK OPPOSITE ENDS OF THE SIM'S OWN LIST** (ASSA-140). The verdicts are handed in
+## because this is the half that can be wrong without a world: `design_if_built` is the sim's and
+## `test_sim_host.gd` holds it against the built design.
+##
+## THE LISTS HERE ARE SHAPES THE SIM REALLY PRODUCES, not illustrations: seed 14247 answers
+## ["SAFE","SAFE","WILL BREAK","WILL BREAK","WILL BREAK"] and seed 777042 answers all SAFE, both
+## measured through the binding.
+func test_each_job_takes_its_own_end_of_the_verdict_list() -> bool:
+	var mixed := PackedStringArray(["SAFE", "SAFE", "WILL BREAK", "WILL BREAK", "WILL BREAK"])
+	# THE LARGEST SAFE AND THE SMALLEST BREAK ARE DIFFERENT COUNTS HERE, which is the whole point:
+	# a list where they coincide cannot tell the two policies apart, and my first version used one.
+	if AssayDemoPlan.hoppers_for_job(AssayDemoPlan.JOB_SHOWCASE, mixed) != 1:
+		return _fail("the showcase job wants the LARGEST safe count, got %d from %s"
+				% [AssayDemoPlan.hoppers_for_job(AssayDemoPlan.JOB_SHOWCASE, mixed), mixed])
+	if AssayDemoPlan.hoppers_for_job(AssayDemoPlan.JOB_BREAK, mixed) != 2:
+		return _fail("the break job wants the SMALLEST breaking count, got %d from %s"
+				% [AssayDemoPlan.hoppers_for_job(AssayDemoPlan.JOB_BREAK, mixed), mixed])
+	# -1 IS AN ANSWER AND NOT A DEFAULT. 18.8% of worlds hold no SAFE drill and 55.1% hold no
+	# breaking one, so both of these are shapes the gate will really meet.
+	var all_safe := PackedStringArray(["SAFE", "SAFE", "SAFE", "SAFE", "SAFE"])
+	if AssayDemoPlan.hoppers_for_job(AssayDemoPlan.JOB_BREAK, all_safe) != -1:
+		return _fail("a world with no breaking drill must answer -1, got %d"
+				% AssayDemoPlan.hoppers_for_job(AssayDemoPlan.JOB_BREAK, all_safe))
+	var all_break := PackedStringArray(["WILL BREAK", "WILL BREAK", "WILL BREAK"])
+	if AssayDemoPlan.hoppers_for_job(AssayDemoPlan.JOB_SHOWCASE, all_break) != -1:
+		return _fail("a world with no standing drill must answer -1, got %d"
+				% AssayDemoPlan.hoppers_for_job(AssayDemoPlan.JOB_SHOWCASE, all_break))
+	# UNCERTAIN IS NEITHER JOB. A run that planted one would be demonstrating a guess, and the loop
+	# assays its material precisely so this does not arise.
+	var uncertain := PackedStringArray(["UNCERTAIN", "UNCERTAIN"])
+	for job in [AssayDemoPlan.JOB_SHOWCASE, AssayDemoPlan.JOB_BREAK]:
+		if AssayDemoPlan.hoppers_for_job(job, uncertain) != -1:
+			return _fail("job `%s` claimed an UNCERTAIN design: %d"
+					% [job, AssayDemoPlan.hoppers_for_job(job, uncertain)])
+	# A job nobody defined picks nothing rather than falling into one of the two.
+	if AssayDemoPlan.hoppers_for_job("whatever", mixed) != -1:
+		return _fail("an unknown job chose a count")
+	if AssayDemoPlan.hoppers_for_job(AssayDemoPlan.JOB_SHOWCASE, PackedStringArray()) != -1:
+		return _fail("an empty verdict list chose a count")
+	return true
+
+
 ## THE BUDGET GROWS WITH THE WALK AND WITH THE SMELTING, and it is never under the smelting alone --
 ## an underestimate turns a real failure into "ask for more ticks", which is the confusing way round.
 func test_the_tick_budget_covers_the_parts_it_is_made_of() -> bool:

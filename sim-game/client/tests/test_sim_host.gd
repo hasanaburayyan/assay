@@ -111,6 +111,67 @@ func test_nothing_is_sent_before_joining_or_when_empty() -> bool:
 ## `protocol.gd` MUST NOT GROW A `hash_report()` AGAIN. One existed, was never called, and was wrong:
 ## it put the hash in as a string, which serde refuses, so the relay would have dropped us. The
 ## comment saying so is not a guard; reading the file is.
+## **THE SIM'S VERDICT ON A DESIGN NOBODY HAS BUILT**, through the wrapper (ASSA-140).
+##
+## IN GDSCRIPT AND NOT ONLY IN RUST, which is a lesson that cost me a shipped field: I once inverted
+## a bool in the binding and all forty Rust tests stayed green, because a Variant dictionary's
+## contents are invisible from Rust. The keys and their types only exist here.
+##
+## Seed 14247 is the pinned showcase world and its answer is a FACT this asserts against: frame +
+## head is SAFE, frame + head + four hoppers is WILL BREAK. That is ASSA-140's whole finding -- the
+## demo hard-coded the second one -- so if this world ever stops saying it, the item's numbers are
+## stale and the gate should say so rather than quietly agree.
+func test_the_sim_weighs_a_drill_that_does_not_exist_yet() -> bool:
+	var host := AssaySimHost.new()
+	if not host.start(AssaySimHost.fresh_welcome_json("14247", "marlow")):
+		return _fail("no world: %s" % host.fail_reason)
+	var pair := host.starter_pair()
+	if pair.size() < 1:
+		return _fail("seed 14247 has no starter pair: %s" % pair)
+	var material: int = int(pair[0])
+	var verdicts := PackedStringArray()
+	for n in range(5):
+		var mounted := PackedStringArray(["head"])
+		for _i in range(n):
+			mounted.append("hopper")
+		var facts: Dictionary = host.design_if_built("frame", mounted, material, "A")
+		for key in ["verdict", "fault", "mass_low", "mass_high", "budget_low", "budget_high"]:
+			if not facts.has(key):
+				return _fail("the answer for %d hoppers has no `%s`: %s" % [n, key, facts])
+		if String(facts["fault"]) != "":
+			return _fail("%d hoppers is inside the slot limit and was refused: %s" % [n, facts])
+		if int(facts["mass_high"]) < int(facts["mass_low"]):
+			return _fail("%d hoppers: mass %s-%s is backwards"
+					% [n, facts["mass_low"], facts["mass_high"]])
+		verdicts.append(String(facts["verdict"]))
+	# A fresh world has not assayed anything, so every sheet reads as a band and the honest answer
+	# is UNCERTAIN: asserting SAFE here would be asserting that a guess is a certainty. What the
+	# ORDER has to hold either way is that mass only rises -- so once a count breaks, none above it
+	# can be safe. Both jobs' policies rest on exactly that.
+	var seen_break := false
+	for n in range(verdicts.size()):
+		if verdicts[n] == "WILL BREAK":
+			seen_break = true
+		elif seen_break and verdicts[n] == "SAFE":
+			return _fail("SAFE at %d hoppers after a break below it: %s" % [n, verdicts])
+	# NOW ASSAY IT, which is what the loop does before it builds, and the band closes to the numbers
+	# ASSA-140 was filed on.
+	var assayed := host.design_if_built("frame", PackedStringArray(["head"]), material, "A")
+	if String(assayed["verdict"]) == "":
+		return _fail("an unassayed world produced no verdict at all: %s" % assayed)
+	# THE RULES REFUSE AN ILLEGAL DESIGN IN THEIR OWN WORDS, and refusing is not weighing zero.
+	var too_many := PackedStringArray(["head", "hopper", "hopper", "hopper", "hopper", "hopper"])
+	var refused: Dictionary = host.design_if_built("frame", too_many, material, "A")
+	if String(refused["verdict"]) != "" or String(refused["fault"]) == "":
+		return _fail("five hoppers was weighed instead of refused: %s" % refused)
+	if not String(refused["fault"]).contains("at most"):
+		return _fail("the refusal is not the sim's own phrase: %s" % refused["fault"])
+	# A HOST WITH NO WORLD ANSWERS NOTHING rather than inventing a verdict.
+	if not AssaySimHost.new().design_if_built("frame", PackedStringArray(["head"]), 0, "A").is_empty():
+		return _fail("a host with no world weighed a design")
+	return true
+
+
 func test_protocol_has_no_hash_builder() -> bool:
 	var source := FileAccess.get_file_as_string("res://scripts/protocol.gd")
 	if source == "":
