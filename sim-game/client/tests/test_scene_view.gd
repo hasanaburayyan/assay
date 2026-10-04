@@ -50,6 +50,11 @@ func _view(extra := {}) -> Dictionary:
 		"spawn": Vector2i(48, 32),
 		"ore": {},
 		"players": [],
+		# EMPTY, BUT PRESENT. This fixture had no `buildings` key at all until ASSA-141, and
+		# `placements` read it as `get("buildings", [])` -- so the fixture and the real view
+		# disagreed about the contract and nothing could say so. Nineteen tests in this file went
+		# red the moment the contract was checked, which is the item's own argument about fixtures.
+		"buildings": [],
 		"manifest": _manifest(),
 		"layout": AssayAssembly.contract(),
 		"seconds": 0.0,
@@ -804,8 +809,11 @@ func test_the_shipped_manifest_draws_the_building_kinds_the_sim_can_place() -> b
 
 
 func _smelter(at: Vector2i, lit := false, species := 2) -> Dictionary:
+	# `parts` EMPTY AND PRESENT, as `BuildingFacts` sends it: "non-empty for a machine and empty for
+	# a smelter, which is the sim's own answer to `is this an assembly`". `_drill` below always
+	# carried it; this fixture never did.
 	return {"kind": "smelter", "pos": at, "footprint": Vector2i(2, 2), "lit": lit,
-			"species": species}
+			"species": species, "parts": []}
 
 
 ## **THE THING YOU PLACED AND THE THING STANDING THERE ARE ONE OBJECT** (Maren, ASSA-131 ruling 2).
@@ -924,8 +932,15 @@ func test_a_fire_is_drawn_after_its_walls_even_when_a_body_sorts_equal_to_it() -
 ## client before tonight, and what a building kind added after today will look like until it has
 ## art. The thing that must not happen is a missing asset taking the ground down with it.
 func test_a_building_kind_with_no_sheet_draws_nothing_and_breaks_nothing() -> bool:
+	# **A MISSING ASSET AND A MISSING SIM FACT ARE NOT THE SAME THING ANY MORE** (ASSA-141). This
+	# fixture used to express "no art for this kind" by leaving `parts` and `species` OFF the
+	# dictionary, and that is now a broken view rather than a drawable one: `BuildingFacts` always
+	# sends `parts`, empty for anything that is not an assembly. The sim facts are all here and the
+	# ART is what is absent -- the manifest has no `machine` sheet, because since ASSA-138 a machine
+	# is composited from its parts -- which is the case this test is actually about. A sheet is the
+	# renderer's own and may be missing; a fact may not.
 	var view := _view({"buildings": [{"kind": "machine", "pos": Vector2i(10, 5),
-			"footprint": Vector2i(1, 1), "lit": false}]})
+			"footprint": Vector2i(1, 1), "lit": false, "species": 2, "parts": []}]})
 	var all := AssayScene.placements(view)
 	if _of(all, "machine").size() != 0:
 		return _fail("something was drawn for a kind the sheets have no art for")
@@ -1208,4 +1223,183 @@ func test_the_player_ceiling_refuses_to_answer_without_player_art() -> bool:
 		return _fail("player_ceiling invented a bound from an empty manifest")
 	if AssayScene.player_ceiling({"ground": {"tiles": [1, 1]}}, WINDOW) >= 0.0:
 		return _fail("player_ceiling bounded a panel off a manifest with no player in it")
+	return true
+
+
+# ---------------------------------------------------------------------------
+# A SIM FACT IS NEVER DEFAULTED (ASSA-141)
+# ---------------------------------------------------------------------------
+
+## A COMPLETE VIEW WITH ONE BUILDING AND ONE PLAYER, so that dropping a single key is the only
+## difference between the two halves of every test below.
+func _whole_view() -> Dictionary:
+	return _view({
+		"ore": {Vector2i(9, 9): {"species": 1, "grade": "B", "depleted": false}},
+		"players": [{"at": Vector2(5.0, 5.0), "facing": "S", "moving": false}],
+		"buildings": [_smelter(Vector2i(10, 5), true), _drill(Vector2i(14, 6), 1)],
+	})
+
+
+## THE SAME VIEW WITH ONE FACT TAKEN OFF ONE ENTRY. Returns the view and what the loss should be
+## called, so the test asserts on the name as well as on the refusal.
+func _view_without(what: String, key: String) -> Dictionary:
+	var view := _whole_view()
+	match what:
+		"view":
+			view.erase(key)
+		"ore tile":
+			var tiles: Dictionary = (view["ore"] as Dictionary).duplicate(true)
+			(tiles.values()[0] as Dictionary).erase(key)
+			view["ore"] = tiles
+		"building":
+			var buildings: Array = (view["buildings"] as Array).duplicate(true)
+			(buildings[0] as Dictionary).erase(key)
+			view["buildings"] = buildings
+		"player":
+			var players: Array = (view["players"] as Array).duplicate(true)
+			(players[0] as Dictionary).erase(key)
+			view["players"] = players
+		"machine part":
+			var buildings: Array = (view["buildings"] as Array).duplicate(true)
+			var parts: Array = (buildings[1] as Dictionary)["parts"]
+			(parts[0] as Dictionary).erase(key)
+			view["buildings"] = buildings
+	return view
+
+
+## **THE PREMISE OF EVERY TEST BELOW, AND IT IS NOT A FORMALITY.** If the whole view were already
+## missing something, every "dropping X is noticed" test would pass without the drop doing anything
+## -- the shape of my own ASSA-156 mistake, where a test asked the function under test what to
+## expect. So: the complete view is clean, and it DRAWS the things the tests below watch disappear.
+func test_the_whole_view_fixture_satisfies_the_contract_and_draws() -> bool:
+	var missing := AssayScene.missing_sim_facts(_whole_view())
+	if not missing.is_empty():
+		return _fail("the fixture every test below starts from is itself incomplete: %s" % [missing])
+	var places := AssayScene.placements(_whole_view())
+	for asset in ["ground", "ore", "smelter", "player"]:
+		if _of(places, asset).is_empty():
+			return _fail("the complete fixture drew no `%s`, so nothing below can measure its loss"
+					% asset)
+	if _composites(places).is_empty():
+		return _fail("the complete fixture drew no machine, so a lost part fact measures nothing")
+	return true
+
+
+## **EVERY SIM FACT, NOT JUST `lit`.** The item's box 2: `footprint`, `pos`, `kind`, `species` and
+## the rest are read the same way `lit` was, so the rule has to be true for all of them or it is a
+## patch rather than a rule. Driven off `SIM_FACTS` itself, so a fact added to the contract
+## tomorrow is covered by this test the moment it is listed.
+func test_every_sim_fact_is_named_when_it_does_not_arrive() -> bool:
+	for what in AssayScene.SIM_FACTS:
+		for key in AssayScene.SIM_FACTS[what]:
+			var view := _view_without(String(what), String(key))
+			var missing := AssayScene.missing_sim_facts(view)
+			if missing.is_empty():
+				return _fail(("dropping `%s` from a %s was not noticed at all, so the renderer "
+						+ "would draw whatever its default invents") % [String(key), String(what)])
+			var named := false
+			for complaint in missing:
+				if String(complaint).begins_with(String(what)) \
+						and String(complaint).ends_with("." + String(key)):
+					named = true
+			if not named:
+				return _fail("dropping `%s` from a %s was reported as %s, which does not name it"
+						% [String(key), String(what), missing])
+	return true
+
+
+## **IT DRAWS NOTHING, RATHER THAN DRAWING COLD.** Box 1, and the measurement is the whole point: a
+## smelter whose `lit` never arrived used to draw the `cold` row -- a picture indistinguishable from
+## a fire that is genuinely out, for every smelter in the world, with every test green. The frame is
+## refused instead, which is a thing somebody notices.
+func test_a_building_with_no_lit_key_draws_nothing_instead_of_cold() -> bool:
+	var lit := _of(AssayScene.placements(_whole_view()), "smelter")
+	if lit.is_empty():
+		return _fail("the complete fixture drew no smelter, so this test cannot measure one")
+	var without := AssayScene.placements(_view_without("building", "lit"))
+	if not _of(without, "smelter").is_empty():
+		return _fail("a smelter with no `lit` fact was still drawn %d time(s): a renderer may not "
+				% _of(without, "smelter").size() + "substitute a value for a sim fact")
+	if not without.is_empty():
+		return _fail("the frame was not refused: %d placements survived a missing sim fact"
+				% without.size())
+	return true
+
+
+## AN EMPTY VIEW IS NOT A BROKEN ONE, and this is the line between the two. `{}` is the state before
+## a snapshot lands -- `--selfcheck` and a mid-join frame are both in it -- so it must stay silent,
+## while a view that claims to be a world and is missing one fact must not.
+func test_an_empty_view_is_silent_and_a_half_built_one_is_not() -> bool:
+	if not AssayScene.missing_sim_facts({}).is_empty():
+		return _fail("an empty view was called broken: %s" % [AssayScene.missing_sim_facts({})])
+	if AssayScene.placements({}).size() != 0:
+		return _fail("an empty view produced placements")
+	if AssayScene.missing_sim_facts({"world_tiles": Vector2i(96, 64)}).is_empty():
+		return _fail("a view with one key and no world was called complete")
+	return true
+
+
+## **THE CONTRACT IS CHECKED AGAINST THE READS, BECAUSE A LIST IS NOT A MECHANISM.**
+##
+## Found by mutation, after two mutations reddened NOTHING: with `lit` quietly deleted from
+## `SIM_FACTS`, and with the boundary check disabled outright, all 248 tests stayed green. The reason
+## is that both failures look identical from outside -- GDScript's own invalid-key abort empties the
+## frame exactly as the refusal does -- so no test could tell the rule from a crash, and the test
+## that walks `SIM_FACTS` cannot see a fact that is no longer in `SIM_FACTS` to walk.
+##
+## So the list is measured against the thing that depends on it: every `subject["key"]` read in
+## `scene_view.gd` must be a fact the contract declares. Drop `lit` from the list and line ~508 still
+## reads `building["lit"]`, so this reddens. It is Limpet's CO-6 shape -- measure the call that takes
+## the answer, not a second copy of the list.
+func test_every_sim_fact_the_scene_reads_is_one_the_contract_declares() -> bool:
+	var source := FileAccess.get_file_as_string("res://scripts/scene_view.gd")
+	if source.is_empty():
+		return _fail("could not read scene_view.gd, so this guard is vacuous")
+	var subjects := {"view": "view", "building": "building", "player": "player", "tile": "ore tile"}
+	var re := RegEx.new()
+	re.compile("\\b(view|building|player|tile)\\[\"([a-z_]+)\"\\]")
+	var found := 0
+	for m in re.search_all(source):
+		var subject := m.get_string(1)
+		var key := m.get_string(2)
+		var what := String(subjects[subject])
+		found += 1
+		if not (AssayScene.SIM_FACTS[what] as Array).has(key):
+			return _fail(("`%s[\"%s\"]` is read in scene_view.gd and the contract's `%s` list does "
+					+ "not declare it, so the boundary check cannot know it is required and the "
+					+ "renderer reaches a key nobody promised") % [subject, key, what])
+	# NON-VACUITY: zero is the passing answer for the loop above, so a regex that matches nothing
+	# would pass. Eleven sim-fact reads is what the file has; the bar is low enough not to break on
+	# a refactor and high enough that a broken pattern cannot slip under it.
+	if found < 9:
+		return _fail("only %d sim-fact reads found in scene_view.gd; this guard is reading the "
+				% found + "wrong text or the pattern no longer matches the code")
+	return true
+
+
+## **AND NO SIM FACT COMES BACK AS A DEFAULT.** The other half: the guard above is satisfied by a
+## contract that lists everything, and the defect this item is about is the `get(key, default)` FORM
+## -- `get("lit", false)` is what drew every smelter in the world cold. A fact may be indexed, never
+## defaulted, in this file. The manifest, the layout, the camera and `seconds` are the renderer's own
+## and keep their defaults, which is why this scans for the fact NAMES rather than for `get(`.
+func test_no_sim_fact_in_this_file_is_read_with_a_default() -> bool:
+	var source := FileAccess.get_file_as_string("res://scripts/scene_view.gd")
+	var code := ""
+	for line in source.split("\n"):
+		# Comments discuss `get("lit", false)` on purpose: that is the history being recorded.
+		if String(line).strip_edges().begins_with("#"):
+			continue
+		code += String(line) + "\n"
+	for what in AssayScene.SIM_FACTS:
+		for key in AssayScene.SIM_FACTS[what]:
+			var defaulted := '.get("%s"' % String(key)
+			if code.contains(defaulted):
+				# `missing_sim_facts` is the one place that must tolerate absence: it is the
+				# function whose whole job is to report it, and it reads the COLLECTIONS, never a
+				# fact off an entry.
+				if String(key) in ["ore", "players", "buildings", "parts"]:
+					continue
+				return _fail(("scene_view.gd reads the sim fact `%s` as %s..., which invents a "
+						+ "value for state the sim did not send (ASSA-141)") % [String(key),
+						defaulted])
 	return true
