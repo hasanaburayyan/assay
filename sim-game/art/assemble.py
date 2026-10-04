@@ -64,6 +64,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # `manifest.json` at its own module level, so importing it is already a read.
 import review_sources
 review_sources.start()
+import review_layout  # noqa: E402  this sheet's declaration that it draws no layout
+# NOT A PICTURE OF A CLIENT PANEL, SAID OUT LOUD (CO-6). `check_review_layout.py`
+# used to print `NO LAYOUT` here and pass, so this sheet and a panel sheet that had
+# FORGOTTEN its stamp were the same state -- and two sheets really were the second
+# thing. The claim is the sheet's own, so a copy of it carries the reason with it.
+ART_ONLY = review_layout.art_only(
+    "a picture of the PART SPRITES composited by this script, with no engine layout behind any of it: positions come from part_layout.py, which the client never asks")
 from part_layout import PART_REPEAT_OFFSET, SHADOW_CEILING, stack
 from species_probe import DISTINCT, GRADE_ROWS, OBSERVERS, dE, lab, seen_flat
 
@@ -798,7 +805,9 @@ def main():
     stacked.alpha_composite(sheet, (0, 0))
     stacked.alpha_composite(ladder, (0, sheet.height + pad))
     sheet = stacked
-    sheet.save(os.path.join(REVIEW, "assembled.png"), pnginfo=review_sources.png_info())
+    sheet.save(os.path.join(REVIEW, "assembled.png"),
+           pnginfo=review_layout.png_info(review_sources.png_info(),
+                                          layouts=ART_ONLY))
     print("wrote assets/review/assembled.png  (%d machines, top row authoring size, bottom row true 1x)"
           % len(shots))
     return 0 if ok else 1

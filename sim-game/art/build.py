@@ -32,6 +32,15 @@ import json, os, subprocess, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from PIL import Image, ImageDraw
 import review_sources
+import review_layout  # the contact sheet's declaration that it draws no client layout
+
+# NOT A PICTURE OF A CLIENT PANEL, SAID OUT LOUD (CO-6). `check_review_layout.py` used to print
+# `NO LAYOUT` for this sheet and pass, so "a contact sheet of sprites" and "a panel sheet that
+# FORGOT its layout stamp" were one state -- and two sheets really were the second thing. The
+# contact sheet is laid out by the loop below, from the manifest; the client never answers for it.
+ART_ONLY = review_layout.art_only(
+    "a contact sheet of the shipped sprites at 1x and 0.5x, laid out by build.py's own loop "
+    "from the manifest; no engine layout is behind any part of it")
 
 ART = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(ART)
@@ -280,7 +289,8 @@ def contact(manifest):
     out = Image.new("RGBA", (W, H), bg); y = 0
     for b in blocks:
         out.alpha_composite(b, (0, y)); y += b.height
-    out.save(os.path.join(REVIEW, "contact.png"), pnginfo=review_sources.png_info())
+    out.save(os.path.join(REVIEW, "contact.png"),
+             pnginfo=review_layout.png_info(review_sources.png_info(), layouts=ART_ONLY))
 
 
 def draw_contact(manifest_path):
