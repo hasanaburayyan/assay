@@ -40,6 +40,19 @@ const TILE_PX := 32.0
 const FLOOR := 0
 const STANDING := 1
 
+## HOW FAR BEHIND THE NEWEST PRODUCED POSITION THE PLAYOUT CLOCK RUNS, in ticks (ASSA-197).
+##
+## THIS IS THE ONE NUMBER THAT COSTS SOMETHING. Every tick of buffer is 100 ms of latency on your own
+## body, and ASSA-197 box 5 caps the ADDED latency at 250 ms. It also buys the only protection
+## against a late bundle: with no buffer, any gap longer than a frame starves the clock and the body
+## stops dead. Measured on this Mac the host's bundles land in pairs with p95 gaps of ~257 ms, so a
+## buffer under two ticks starves on a normal frame.
+const PLAYOUT_DELAY := 2.0
+## How hard the clock leans on its error (per tick of error, as a fraction of rate) and the most it
+## may ever bend. 10% of 10 tiles/s is 1 tile/s, well inside the bar the board's complaint set.
+const PLAYOUT_CATCHUP := 0.5
+const PLAYOUT_NUDGE := 0.1
+
 ## THE SHORTEST A PLAYED-OUT STEP MAY BE, in seconds. See `playout`.
 ##
 ## A FLOOR AND NOT A CHOICE OF RATE: the rate is measured from the bundles that arrive, because
@@ -165,6 +178,86 @@ static func facing_of(step: Vector2i) -> String:
 ##
 ## `drawing` is false before the first position has ever been promoted, and then the first one is
 ## taken immediately: a world that has just been joined draws the player where the Welcome put them.
+## **HOW MANY TICKS A SECOND THE HOST IS ACTUALLY SENDING**, from the times its bundles landed.
+##
+## **A WINDOWED MEAN AND NOT AN EMA, AND THAT CHANGE IS HALF OF ASSA-197.** The old estimator was
+## `lerpf(gap, measured, 0.25)` over the gap between consecutive arrivals -- and measured on a real
+## window those gaps are 0.17 ms, 0.17 ms, 257 ms, 386 ms, because the client drains its socket once
+## a frame and at 17 fps that means two bundles in one frame and none in the next. An EMA over that
+## series swings by a factor of ten, and it was the DENOMINATOR of the drawn fraction: the segment
+## length itself jittered, so the body sprinted and stalled with the renderer's own frame rate.
+##
+## A mean over the whole window is immune to the pairing (two bundles 0.17 ms apart still advance the
+## tick count by two) and still follows a real rate change in a second or so, which is what
+## `sim-relay --tps N` needs. The fallback is for the first two arrivals, where there is no rate yet.
+static func playout_step(arrivals: Array[float], fallback: float) -> float:
+	if arrivals.size() < 3:
+		return fallback
+	var span := arrivals[arrivals.size() - 1] - arrivals[0]
+	if span <= 0.0:
+		return fallback
+	return clampf(span / float(arrivals.size() - 1), MIN_PLAYOUT_STEP, 1.0)
+
+
+## **WHERE THE PLAYOUT CLOCK IS NOW, IN SIM TICKS** (ASSA-197). The board, twice: *"the lerp is not
+## correct and its very jumpy"*. Measured before this existed: a body whose true speed is 10 tiles/s
+## drawn at anything from 0.00 to 55.76 tiles/s, with 10-19% of moving frames inside +/-25% of true.
+##
+## **THE OLD CLOCK WAS MADE OF ARRIVALS AND THIS ONE IS MADE OF TIME.** `playout` (ASSA-148, above,
+## now gone from `main.gd`) advanced one whole segment per arrival and floored each segment at its
+## own data's arrival time. That never teleports -- which was ASSA-148's bar and it passed -- but a
+## segment that gets its full step of time in 60 ms of frames and then waits 200 ms for the next
+## bundle draws a tile's worth of movement and then nothing. Fast, stop, fast, stop. Jumpy is the
+## right word and it is what the arithmetic has to answer for, not the tween.
+##
+## So the drawn position is a function of TIME: `play_tick` advances by `dt / step` every frame, and
+## the body is drawn between the two produced positions that bracket it. Frame length stops mattering
+## -- a 130 ms frame moves the body 1.3 tiles and a 16 ms frame 0.16, which is one constant speed
+## sampled at two rates.
+##
+## **IT STAYS A FIXED DELAY BEHIND THE NEWEST PRODUCED POSITION**, `delay` ticks of buffer, so a late
+## bundle is absorbed by the buffer instead of by the body's legs. The clock is nudged toward that
+## delay by at most `PLAYOUT_NUDGE` -- a few per cent of rate, never a jump -- because a clock that
+## corrected itself in one frame would be the sprint it exists to remove.
+##
+## **STILL HISTORY, NEVER PREDICTION (ASSA-119, Maren's ruling, which does not bend).** `play_tick`
+## is clamped to the newest tick we hold, so the drawn position is always between two positions the
+## sim produced. When the buffer runs dry the body HOLDS on the newest one and `starved` says so --
+## that is a stalled host, and the only honest thing to draw is where the player really is.
+##
+## `ticks` is the sim's own tick number for each held position, oldest first, so a dropped position
+## is interpolated ACROSS rather than sprinted through: two tick-times for a two-tick segment.
+static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: float,
+		delay: float) -> Dictionary:
+	if ticks.is_empty():
+		return {"play_tick": play_tick, "index": -1, "part": 1.0, "starved": true, "rate": 1.0}
+	var newest := float(ticks[ticks.size() - 1])
+	var oldest := float(ticks[0])
+	var at := play_tick
+	var rate := 1.0
+	if at <= 0.0:
+		# THE FIRST FRAME OF A SESSION starts a buffer behind the newest, never at it: starting at
+		# the newest means starving on the very next frame.
+		at = maxf(newest - delay, oldest)
+	else:
+		# The error is in ticks and the correction is in rate. `PLAYOUT_CATCHUP` decides how hard we
+		# lean on it and `PLAYOUT_NUDGE` caps it, so the worst speed error this clock can introduce
+		# is a few per cent -- against the +/-25% the bar allows.
+		rate = clampf(1.0 + (newest - delay - at) * PLAYOUT_CATCHUP,
+				1.0 - PLAYOUT_NUDGE, 1.0 + PLAYOUT_NUDGE)
+		at += dt / maxf(step, MIN_PLAYOUT_STEP) * rate
+	var starved := at > newest
+	at = clampf(at, oldest, newest)
+	var index := 0
+	while index + 1 < ticks.size() and float(ticks[index + 1]) <= at:
+		index += 1
+	var part := 1.0
+	if index + 1 < ticks.size():
+		var span := float(ticks[index + 1] - ticks[index])
+		part = clampf((at - float(ticks[index])) / maxf(span, 1.0), 0.0, 1.0)
+	return {"play_tick": at, "index": index, "part": part, "starved": starved, "rate": rate}
+
+
 static func playout(seg_at: float, step_seconds: float, now: float, arrived: Array[float],
 		drawing: bool) -> Dictionary:
 	var step := maxf(step_seconds, MIN_PLAYOUT_STEP)

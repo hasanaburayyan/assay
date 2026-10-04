@@ -2144,8 +2144,17 @@ func test_the_camera_keeps_you_below_the_panel_in_the_north_rows() -> bool:
 	var ok := true
 	var rooms := {}
 	for row: int in [0, 3, 7, 40]:
-		screen._seen = {id: Vector2i(48, row)}
-		screen._was = screen._seen.duplicate()
+		# **THE BODY IS PLACED THROUGH THE PLAYOUT BUFFER, NOT BY SETTING `_was`/`_seen`** (ASSA-197).
+		# Those two are now DERIVED every frame from the positions the clock is between, so a test
+		# that assigned them was overwritten before `_refresh_world` drew anything -- it reported a
+		# body at spawn and a camera aimed somewhere else, which is how this test caught the change.
+		# One held position with the clock parked on it is a standing body: `from == to`, part 1.
+		# TYPED, because `_pending` is an `Array[Dictionary]` and assigning a bare array literal to
+		# one aborts the test mid-function -- which the runner reports as "returned false and said
+		# nothing", a failure with no message and no line.
+		var held: Array[Dictionary] = [{"at": 0.0, "tick": 1, "where": {id: Vector2i(48, row)}}]
+		screen._pending = held
+		screen._play_tick = 1.0
 		screen._refresh_world()
 		var view: Dictionary = screen._world.view
 		var players: Array = view.get("players", [])

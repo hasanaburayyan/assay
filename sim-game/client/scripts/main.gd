@@ -356,9 +356,22 @@ var _facing := {}
 ## times while keeping the pop of the positions -- and all 229 client tests stayed green. A caller's
 ## bookkeeping is invisible to a test of the arithmetic, so the way to close it was to make the two
 ## impossible to separate rather than to write a check nobody would run.
-const PLAYOUT_QUEUE := 3
+## **HOW MANY PRODUCED POSITIONS THE SCREEN KEEPS AROUND THE ONE IT IS DRAWING** (ASSA-197). The
+## clock runs `AssayScene.PLAYOUT_DELAY` ticks behind the newest, so the buffer must hold at least
+## that many plus the longest burst; eight is 800 ms of history, which covers the 386 ms worst gap
+## measured on this Mac with room over. Over the cap the OLDEST is dropped and the clock interpolates
+## ACROSS the hole -- two tick-times for a two-tick segment, continuous, never a sprint.
+const PLAYOUT_QUEUE := 8
 var _pending: Array[Dictionary] = []
-var _seg_at := 0.0
+## WHERE THE CLOCK IS, as a fractional SIM TICK. 0.0 until the first position has been produced.
+var _play_tick := 0.0
+## When the clock was last advanced, so a frame's own elapsed time drives it.
+var _played_at := 0.0
+## Whether the buffer ran dry on the last advance: the body is holding on the newest position the sim
+## produced, which is a stalled host and not a renderer decision.
+var _starved := false
+## The last few bundle ARRIVAL times, for the measured tick rate. See `AssayScene.playout_step`.
+var _tick_times: Array[float] = []
 ## When the newest tick landed, and how far apart the last few were, both in seconds of wall clock.
 ##
 ## MEASURED RATHER THAN ASSUMED, and that is not fussiness: the relay's rate is a FLAG
@@ -2481,14 +2494,19 @@ func _remember_positions() -> void:
 		var player: Dictionary = entry
 		produced[int(player.get("id", -1))] = player.get("pos", Vector2i.ZERO) as Vector2i
 	var now := float(Time.get_ticks_msec()) / 1000.0
-	_pending.append({"at": now, "where": produced})
+	# **STAMPED WITH THE SIM'S OWN TICK NUMBER** (ASSA-197), which is the timeline the clock runs on.
+	# The arrival time stays for diagnostics and for the rate, but it no longer decides when a
+	# segment may start -- that was the arrival-driven playout the board felt as jumpy.
+	_pending.append({"at": now, "tick": _sim.tick(), "where": produced})
 	while _pending.size() > PLAYOUT_QUEUE:
 		_pending.pop_front()
-	if _tick_at > 0.0:
-		# SMOOTHED, because the gap between two bundles is a network measurement and a single late
-		# packet should not stretch one step across half a second. A quarter weight settles on a
-		# changed rate in a handful of ticks and ignores one hiccup.
-		_tick_gap = lerpf(_tick_gap, clampf(now - _tick_at, 0.01, 1.0), 0.25)
+	# THE RATE, OVER A WINDOW RATHER THAN AN EMA. Arrivals come in pairs 0.17 ms apart at this frame
+	# rate; an EMA of consecutive gaps swings by a factor of ten and used to be the denominator the
+	# whole tween was divided by. `playout_step` takes the mean over the window instead.
+	_tick_times.append(now)
+	while _tick_times.size() > 40:
+		_tick_times.pop_front()
+	_tick_gap = AssayScene.playout_step(_tick_times, _tick_gap)
 	_tick_at = now
 	# ADVANCED ON THIS PATH TOO, not only on a drawn frame, and that is not belt-and-braces: every
 	# headless test and probe runs inside `SceneTree._initialize` where `_process` never fires, so a
@@ -2507,20 +2525,37 @@ func _remember_positions() -> void:
 ## THE FACING IS TAKEN AT PROMOTION, so the sprite faces the step it is DRAWING rather than one the
 ## sim has produced but nobody has seen yet. Still the step they actually took, never a target.
 func _advance_playout(now: float) -> float:
-	var arrived: Array[float] = []
+	if _pending.is_empty():
+		return 1.0
+	var ticks: Array[int] = []
 	for entry in _pending:
-		arrived.append(float(entry["at"]))
-	var cursor := AssayScene.playout(_seg_at, _tick_gap, now, arrived, not _seen.is_empty())
-	for _i in range(int(cursor["promote"])):
-		var where: Dictionary = _pending.pop_front()["where"]
-		_was = _seen if not _seen.is_empty() else where
-		_seen = where
-		for id in _seen:
-			if _was.has(id):
-				var way := AssayScene.facing_of((_seen[id] as Vector2i) - (_was[id] as Vector2i))
+		ticks.append(int(entry["tick"]))
+	# THE FRAME'S OWN ELAPSED TIME, clamped. This function also runs when a bundle lands (see
+	# `_remember_positions`), so `dt` is "time since the clock last moved" rather than a frame delta,
+	# which is the same quantity on a drawn frame and the right one on a headless tick.
+	var dt := 0.0 if _played_at <= 0.0 else clampf(now - _played_at, 0.0, 1.0)
+	_played_at = now
+	var cursor := AssayScene.playout_at(_play_tick, ticks, dt, _tick_gap, AssayScene.PLAYOUT_DELAY)
+	_play_tick = float(cursor["play_tick"])
+	_starved = bool(cursor["starved"])
+	var index := int(cursor["index"])
+	# EVERYTHING THE CLOCK HAS GONE PAST IS DROPPED, except the position being drawn FROM. `_pending`
+	# keeps its documented meaning for the probes that read its depth: produced positions the screen
+	# has not finished drawing.
+	for _i in range(index):
+		_pending.pop_front()
+	var from: Dictionary = _pending[0]["where"]
+	var to: Dictionary = _pending[1]["where"] if _pending.size() > 1 else from
+	# THE FACING IS TAKEN WHEN THE SEGMENT CHANGES, not every frame, and it is still the step the
+	# body is DRAWING rather than one the sim has produced but nobody has seen (ASSA-119).
+	if _seen != to or _was != from:
+		for id in to:
+			if from.has(id):
+				var way := AssayScene.facing_of((to[id] as Vector2i) - (from[id] as Vector2i))
 				if way != "":
 					_facing[id] = way
-	_seg_at = float(cursor["seg_at"])
+	_was = from
+	_seen = to
 	return float(cursor["part"])
 
 
