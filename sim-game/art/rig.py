@@ -115,6 +115,7 @@ PALETTE = {
 
 from species_tints import SPECIES_TINTS  # noqa: F401  (data, see that file)
 from part_layout import PART_REPEAT_OFFSET  # noqa: F401  (rule 5, see that file)
+from part_layout import RIM_PX as _RIM_PX, RIM_K as _RIM_K  # (ASSA-159, see PART_RIM_PX)
 
 # ---------------------------------------------------------------- parts
 #
@@ -244,6 +245,45 @@ PART_HEADROOM = 0.6
 # report its own extent) and the rim needs the third. In authoring px, so it is a
 # whole number of subpixels at SS and the downscale cannot smear it.
 PART_SHIFT_PX = 3
+
+# THE DARK RIM EVERY MACHINE PART WEARS, in authoring px and as a multiplier
+# (ASSA-159, Maren's ruling of 2026-10-04). `build.py::darken_rim` applies it to
+# the outer PART_RIM_PX rings of a part's ALPHA MASK, after the downscale to
+# authoring size; `art/check_machine_vs_own_ore.py` is what holds it here.
+#
+# WHAT IT IS FOR. A building and the ore of its species wear the SAME `modulate`
+# colour by construction (scene_view.gd:239 and :314 -> sprites.gd:226 ->
+# hud.gd:200), and a drill must stand ON a deposit to run, so the first machine a
+# player builds is drawn in the exact colour of the ground it stands on. The tint
+# cancels out of the ratio, which makes this a property of the greyscale sheets:
+# shipped, a planted machine was 1.49 : 1 against the ore of its own species and
+# 83% of its silhouette pixels sat under 3 : 1.
+#
+# WHY A RIM ON THE ALPHA MASK AND NOT ONE OF THE TWO OBVIOUS LEVERS, both
+# rendered and both measured short:
+#   - DARKENING THE PART (material or fill light) pays the ratio out of the same
+#     pixels that name the species. Reaching 3 : 1 on medians costs the species
+#     read: worst pair dE 8.2 against species_probe's DISTINCT of 12.
+#   - THICKENING THE FREESTYLE LINE inks every crease as well as the silhouette,
+#     so it buys interior detail nobody asked for with body brightness
+#     (114 -> 61), and it still left 16% of the edge under the bar. It also costs
+#     frame space: at 2px the body of `frame` and `handle` lands ON the west frame
+#     edge and `art/check_part_frame_fit.py` goes red (ASSA-104 ruled against
+#     buying sideroom, because it shrinks the pack icon).
+# A rim on the alpha mask touches the silhouette and nothing else, so the body
+# that names the material is untouched: worst species pair dE goes 14.48 -> 12.52,
+# still clear of 12.
+#
+# WHY 2 PX AND WHY k = 0.15 -- both pinned by measurement, not chosen -- is in
+# `part_layout.py` beside the numbers.
+#
+# THE NUMBERS THEMSELVES LIVE IN `part_layout.py`, re-exported here so an asset
+# script reads one name: `check_part_contract.py` needs the width too (the rim is
+# ink, and a shadow check that did not know that would call a part's own outline a
+# contact shadow), and that check runs outside Blender where this file cannot be
+# imported at all.
+PART_RIM_PX = _RIM_PX
+PART_RIM_K = _RIM_K
 
 
 def srgb(h):
@@ -498,7 +538,14 @@ class Rig:
             ls.select_silhouette = ls.select_border = ls.select_crease = True
             ls.select_by_collection = True; ls.collection = self.model
             ls.linestyle.color = srgb(PALETTE["line"])
-            # ~1px after the SS downscale
+            # ~1px after the SS downscale -- ON THE SHEET, WHICH IS NOT THE LAST
+            # DOWNSCALE (ASSA-172). `scene_view.gd::_place` draws parts at scale 0.5
+            # with NEAREST filtering, so this line arrives on 278 of 402 silhouette
+            # pixels (69%) and is sampled away on the rest. Widening it here is NOT the
+            # fix and was measured: it inks creases as well as the silhouette, and at
+            # 2px the body of `frame` and `handle` lands on the west frame edge
+            # (ASSA-159). What a machine's silhouette gets instead is PART_RIM_PX, which
+            # is a post-process on the alpha mask and touches no crease.
             sc.render.line_thickness = ls.linestyle.thickness = 0.35 * SS
 
     # ------------------------------------------------------------ primitives
@@ -643,7 +690,7 @@ class Asset:
     footprint's top-left tile corner sits in the frame, in authoring px.
     """
 
-    def __init__(self, name, out_root, tiles, headroom=0.0, anchor_x=0, block=None):
+    def __init__(self, name, out_root, tiles, headroom=0.0, anchor_x=0, block=None, rim=None):
         self.name = name
         self.dir = os.path.join(out_root, name)
         os.makedirs(self.dir, exist_ok=True)
@@ -661,6 +708,13 @@ class Asset:
         # recorded mistake: a count hardcoded there silently shipped new rows to nobody.
         # Absent (the normal case) the rows are interchangeable and a hash picks one.
         self.block = list(block) if block else None
+        # (px, k): darken the outer `px` rings of this asset's alpha mask by `k` after
+        # the downscale (PART_RIM_PX / PART_RIM_K has why). A POST-PROCESS and not a
+        # render setting, because the ring is defined on the alpha mask the sheet ends
+        # up with -- Blender does not know where the silhouette will land after LANCZOS.
+        # It travels in asset.json so `--pack` applies it too: a repack that quietly
+        # dropped the rim would ship art that fails its own CI check.
+        self.rim = list(rim) if rim else None
         self.slice = None
         self.rows = []
         self.animations = {}
@@ -734,6 +788,8 @@ class Asset:
         # Only when there IS one, so no other asset's manifest entry moves a byte.
         if self.block:
             meta["block"] = self.block
+        if self.rim:
+            meta["rim"] = self.rim
         if self.slice:
             meta["slice"] = self.slice
         with open(os.path.join(self.dir, "asset.json"), "w") as f:
@@ -753,4 +809,5 @@ def part_asset(name, out_root):
     overlaying is how a machine is assembled. This is the single place that decides both,
     so that assertion can never be satisfied by three parts agreeing and one drifting.
     """
-    return Asset(name, out_root, PART_TILES, headroom=PART_HEADROOM, anchor_x=PART_SHIFT_PX)
+    return Asset(name, out_root, PART_TILES, headroom=PART_HEADROOM, anchor_x=PART_SHIFT_PX,
+                 rim=(PART_RIM_PX, PART_RIM_K))
