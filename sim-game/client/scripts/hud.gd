@@ -1375,12 +1375,24 @@ static func tile_lines(tile: Dictionary) -> PackedStringArray:
 		var named := String(b.get("name", ""))
 		if named == "":
 			named = String(b.get("kind", "?"))
-		# **THE BARE ID IS GONE (Maren, ASSA-222).** This read
-		# `"%s %d · %s" % [named, id, status]` -> `Tonore smelter (A) 0 · stalled:
-		# no fuel`. The noun was already right here; the index was not, and a
-		# reader who points has no command line to type it into. The tile this
-		# readout is ABOUT is the cursor's own, named at the top of the section.
-		lines.append("%s · %s" % [named, String(b.get("status", ""))])
+		# **THE BARE ID IS GONE WHEN THERE IS A NAME, AND KEPT WHEN THERE IS NOT
+		# (ASSA-222, ASSA-244).** This read `"%s %d · %s" % [named, id, status]`
+		# -> `Tonore smelter (A) 0 · stalled: no fuel`. The noun was already right;
+		# the index was not, and a reader who points has no command line to type
+		# it into. The tile this readout is ABOUT is the cursor's own.
+		#
+		# **THE FALLBACK KEEPS THE ID, which a test taught me.** I dropped it
+		# unconditionally first and `a building with no name must still be
+		# addressable` went red. It was right: when `name` is missing the line
+		# falls back to the bare `kind`, and `machine` alone does not say WHICH
+		# machine. This is the same rule `sim::debug::building_ref` documents for
+		# itself -- when there is nothing left to name, the id is the only true
+		# thing we hold -- so the two surfaces now degrade the same way.
+		if String(b.get("name", "")) == "":
+			lines.append("%s %d · %s" % [named, int(b.get("id", -1)),
+					String(b.get("status", ""))])
+		else:
+			lines.append("%s · %s" % [named, String(b.get("status", ""))])
 
 	var here: PackedStringArray = tile.get("players_here", PackedStringArray())
 	if not here.is_empty():
