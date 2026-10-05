@@ -170,6 +170,25 @@ const SPECIES_TINTS: Array[String] = ["#7A29CC", "#FF3333", "#FF80BF", "#FFFF33"
 const GLYPH_DARK := Color(0.02, 0.02, 0.03)
 const GLYPH_LIGHT := Color(1.0, 1.0, 1.0)
 
+## **THE DISC, CARRIED WITH THE LETTER** (ASSA-213): an outline this many px wide, in the deposit's
+## own fill colour, painted under the glyph's strokes.
+##
+## WHY IT EXISTS. The letter is painted LAST now, over the building marks, because a 16 px diamond on
+## a deposit's centre tile was erasing a 25 px letter whole (Maren's two 1x shots). Over its own disc
+## that was the end of it; over a `HOVER` diamond it is not, because `glyph_color` picks the ink by
+## contrast against the DISC, and `GLYPH_LIGHT` on a pale diamond is the same letter gone for the
+## opposite reason. The bed restores the exact surface the ink was measured against, locally, so
+## Decision #36's 4.52 worst case holds over a mark as well as over a rock.
+##
+## **ON AN UNOCCUPIED DISC IT IS INVISIBLE BY CONSTRUCTION** -- same colour as what is already there --
+## so none of the 600 measured states change, and a hatched disc loses only a 2 px rim around the
+## strokes it was already losing to the glyph itself.
+##
+## 2.0 is the width of `MARK_KEYLINE_PX` for the same reason it is 2 there: it is the thinnest rim
+## that survives at 1x on this map (Cove's keyline-0 finding, ASSA-193), and a wider one would start
+## eating the diamond it sits on.
+const GLYPH_BED_PX := 2.0
+
 ## **EVERY MARK THE WHOLE-WORLD MAP CAN PUT ON SCREEN, IN THE TABLE THE DRAW LOOP ITSELF READS**
 ## (ASSA-206, Maren's ruling: "the key must be GENERATED from the same table the draw loop reads, so
 ## a mark cannot be added without appearing in it").
@@ -205,8 +224,6 @@ const MAP_MARKS: Array[Dictionary] = [
 			"label": "ore you can work"},
 	{"id": &"dead_end", "shape": &"hatch", "ink": MAP_BG, "in_key": true,
 			"label": "hatched: nothing can get this ore out"},
-	{"id": &"species_glyph", "shape": &"glyph", "ink": GLYPH_LIGHT, "data_ink": true, "in_key": true,
-			"label": "the species, as its own letter"},
 	{"id": &"walk_mine", "shape": &"line", "ink": MINE, "alpha": 0.35, "in_key": true,
 			"label": "where a player is walking to"},
 	{"id": &"walk_theirs", "shape": &"line", "ink": THEIRS, "alpha": 0.25, "in_key": false,
@@ -222,6 +239,15 @@ const MAP_MARKS: Array[Dictionary] = [
 			"keyed_by": &"building", "label": "the map's own ink, under a machine's mark"},
 	{"id": &"building", "shape": &"diamond", "ink": HOVER, "data_ink": true, "in_key": true,
 			"label": "a machine someone built"},
+	# **AFTER THE BUILDING, AND THE TABLE'S ORDER IS THE PAINT ORDER** (ASSA-213). The letter used to
+	# sit between the hatch and the walk lines, which is where it was painted, which is why a machine
+	# standing on a deposit erased it. `tests/test_map_key.gd` now holds this list against the order
+	# `_draw`'s own calls appear in, so these two rows cannot drift back up without a red suite.
+	{"id": &"species_bed", "shape": &"glyph", "ink": MAP_BG, "data_ink": true, "in_key": false,
+			"keyed_by": &"species_glyph",
+			"label": "the deposit's own colour, carried under its letter"},
+	{"id": &"species_glyph", "shape": &"glyph", "ink": GLYPH_LIGHT, "data_ink": true, "in_key": true,
+			"label": "the species, as its own letter"},
 	{"id": &"target", "shape": &"brackets", "ink": HOVER, "in_key": true,
 			"label": "the tile the buttons act on"},
 	{"id": &"hover_tile", "shape": &"outline", "ink": HOVER, "alpha": 0.55, "in_key": true,

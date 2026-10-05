@@ -2986,8 +2986,13 @@ func _draw() -> void:
 	# men with a red-green deficiency the glyph is the read and the colour is the hint. `symbol`
 	# comes from the sim -- a generated name's initial, distinct per world -- never from the first
 	# character of a name a player may have renamed.
+	# **AND THE LETTER IS NOT PAINTED HERE ANY MORE** (ASSA-213, Maren's P1): it is the last mark on
+	# this view, below, because a 16 px building diamond on a deposit's centre tile was painting out a
+	# 25 px letter whole. The list is read ONCE and handed to both passes -- the discs here and
+	# `_glyph_marks` down there -- so the two cannot be looking at different worlds.
 	var font := ThemeDB.fallback_font
-	for entry in _sim.deposits():
+	var deposits := _sim.deposits()
+	for entry in deposits:
 		var deposit: Dictionary = entry
 		if int(deposit.get("amount", 0)) <= 0:
 			continue
@@ -3020,15 +3025,6 @@ func _draw() -> void:
 			var thick := float(disc["hatch_width"])
 			for i in range(0, strokes.size(), 2):
 				draw_line(strokes[i], strokes[i + 1], AssayHud.mark_ink_of(&"dead_end", ink), thick)
-		var symbol := String(deposit.get("symbol", ""))
-		var glyph := AssayHud.glyph_size(radius)
-		if glyph > 0 and not symbol.is_empty() and font != null:
-			# Centred by measurement, not by a guessed offset: the width is the font's and the
-			# vertical nudge is the usual "half the cap height" for a baseline-drawn capital.
-			var wide := font.get_string_size(symbol, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph).x
-			draw_string(font, at + Vector2(-wide * 0.5, float(glyph) * 0.36), symbol,
-					HORIZONTAL_ALIGNMENT_LEFT, -1, glyph,
-					AssayHud.mark_ink_of(&"species_glyph", disc["ink"]))
 
 	# EVERY PLAYER, AT A SIZE THAT DOES NOT COME FROM THE TILE (ASSA-119 box 6, Maren's finding 1).
 	# This mark used to be two cells square, which made it 18 px on this world and would make it 36 on
@@ -3097,6 +3093,38 @@ func _draw() -> void:
 				AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]))
 		draw_colored_polygon(shape["points"], AssayHud.mark_ink_of(&"building", shape["colour"]))
 
+	# **THE SPECIES LETTER, LAST, BECAUSE A MACHINE STANDS ON THE ROCK IT WORKS** (ASSA-213, Maren's
+	# P1: "a building mark may not remove the species letter from a deposit it stands on").
+	#
+	# WHAT WAS WRONG, AND IT WAS NOT AN UNLUCKY TILE. The letter was painted inside the deposit loop,
+	# four passes before the factories. `sim/src/step.rs:213` checks bounds, occupancy and reach and
+	# nothing else, so a building on a deposit is legal -- and it is the NORMAL case, because a drill
+	# is on the rock it mines by definition. At 9 px a tile the diamond is 16 px and the letter 25, so
+	# the diamond ate the middle of it: Maren photographed that at 1x on two seeds
+	# (`shared/assay/maren-assa206-coop/`), and the map lost the one read that names ore.
+	#
+	# **THE ORDER IS THE FIX AND THE BED IS WHAT MAKES THE ORDER SAFE.** Painting a letter over a
+	# `HOVER` diamond on its own would swap one erasure for another: `AssayHud.glyph_color` picks the
+	# ink by contrast against the DISC, so a `GLYPH_LIGHT` letter chosen for a dark rock is white on a
+	# pale diamond. Each letter therefore carries `AssayHud.GLYPH_BED_PX` of its own disc colour as an
+	# outline under its strokes -- the surface Decision #36's 4.52 worst case was measured on. Over an
+	# unoccupied disc the bed is the colour already there and nothing changes.
+	#
+	# **IT IS OVER THE PLAYER MARKS TOO, which is a consequence and not a preference.** Buildings are
+	# painted after players (ASSA-203), so the only position that satisfies the ruling is after both.
+	# A letter is strokes and not a fill, so a body keeps its own colour around them, and the pale
+	# `THEIRS` body on a light letter is exactly the fusion ASSA-189's keyline was added for -- which
+	# the bed now states instead of hoping for. The 1x cost to a body is measured in the item.
+	#
+	# THE DECISION IS `_glyph_marks`', like `_building_marks` above; this loop paints what it is told.
+	for glyph_entry in _glyph_marks(deposits, font):
+		var glyph: Dictionary = glyph_entry
+		draw_string_outline(font, glyph["baseline"], glyph["symbol"], HORIZONTAL_ALIGNMENT_LEFT, -1,
+				int(glyph["size"]), int(glyph["bed_px"]),
+				AssayHud.mark_ink_of(&"species_bed", glyph["bed"]))
+		draw_string(font, glyph["baseline"], glyph["symbol"], HORIZONTAL_ALIGNMENT_LEFT, -1,
+				int(glyph["size"]), AssayHud.mark_ink_of(&"species_glyph", glyph["ink"]))
+
 	# THE TILE THE BUTTONS ACT ON, AND IT IS A SHAPE NOW, NOT A THINNER YOU (ASSA-119 box 6).
 	#
 	# MAREN CORRECTED HERSELF ON THIS ONE AND THE CORRECTION IS THE INTERESTING HALF. She defended the
@@ -3140,4 +3168,59 @@ func _building_marks(buildings: Array) -> Array:
 	var marks := []
 	for entry in buildings:
 		marks.append(AssayHud.building_mark(entry as Dictionary, _cell, MARGIN))
+	return marks
+
+
+## **WHAT THE SCHEMATIC IS ABOUT TO PAINT FOR EVERY SPECIES LETTER** (ASSA-213), in the same shape and
+## for the same reason as `_building_marks`: the letter is now the LAST mark on this view, over the
+## machines, and a test has to be able to ask what it will paint and where.
+##
+## `baseline` IS WHERE `draw_string` IS TOLD TO START, not the centre of the glyph: the width comes
+## from the font and the vertical nudge is the usual "half the cap height" for a baseline-drawn
+## capital, so a letter is centred by measurement rather than by a guessed offset. `box` is the
+## rectangle that measured letter occupies, which is what a check about a mark covering it has to
+## intersect -- the ink inside it is the font's business and nothing headless can rasterise it.
+##
+## THE BED IS THE DISC'S OWN FILL. `AssayHud.deposit_disc` is asked a second time rather than the
+## colour being carried out of the loop above, because the two passes must agree with the DATA and
+## not with each other: a bed that remembered a colour the disc has since recomputed would be a rim
+## of the wrong species, which is worse than no rim.
+##
+## A DEPOSIT WITH NOTHING LEFT CARRIES NO LETTER, the same `amount` test the disc pass makes -- a
+## spent patch keeps its tint on this map but has no species worth naming over a factory.
+func _glyph_marks(deposits: Array, font: Font) -> Array:
+	var marks := []
+	if font == null:
+		return marks
+	for entry in deposits:
+		var deposit: Dictionary = entry
+		if int(deposit.get("amount", 0)) <= 0:
+			continue
+		var symbol := String(deposit.get("symbol", ""))
+		if symbol.is_empty():
+			continue
+		var at := MARGIN + Vector2(deposit.get("center", Vector2i.ZERO) as Vector2i) * _cell
+		var radius := maxf(_cell, float(int(deposit.get("radius", 1))) * _cell)
+		var size := AssayHud.glyph_size(radius)
+		if size <= 0:
+			continue
+		var disc := AssayHud.deposit_disc(deposit, radius)
+		var measured := font.get_string_size(symbol, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
+		var baseline := at + Vector2(-measured.x * 0.5, float(size) * 0.36)
+		marks.append({
+			"symbol": symbol,
+			"size": size,
+			"baseline": baseline,
+			"ink": disc["ink"],
+			"bed": disc["colour"],
+			"bed_px": AssayHud.GLYPH_BED_PX,
+			# THE FONT'S OWN BOX AND NOT A TYPED CAP HEIGHT: the ascent above the baseline, the
+			# advance across. A "0.72 x size" would be a number I invented about a font I did not
+			# ask. THE DESCENT IS LEFT OUT ON PURPOSE -- `symbol` is one capital, a generated name's
+			# initial, so there is no descender and a box that reserved room for one would say a
+			# mark lands on the letter when it lands under it.
+			"box": Rect2(baseline - Vector2(0.0, font.get_ascent(size)),
+					Vector2(measured.x, font.get_ascent(size))),
+			"at": at,
+		})
 	return marks

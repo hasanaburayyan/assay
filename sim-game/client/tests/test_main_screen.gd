@@ -2661,12 +2661,17 @@ func test_the_hatch_is_painted_before_the_species_letter() -> bool:
 	if hatch_at < 0:
 		return _fail("main.gd does not paint `AssayHud.hatch_segments` as lines, so a dead-end rock "
 				+ "is drawn exactly like one that pays (ASSA-199 box 2)")
-	# The glyph is the ONLY `draw_string` in the deposit loop, and it is the one that follows.
+	# **THE LETTER IS NO LONGER IN THE DEPOSIT LOOP AT ALL** (ASSA-213): it is the last mark on the
+	# view, after the factories, because a building standing on a deposit was erasing it. That makes
+	# this assertion weaker than it was -- the hatch is now four passes rather than six lines ahead of
+	# the glyph -- and it stays because the hatch is still the mark that would cut the letter if the
+	# two ever swapped, and because this scan is what notices the call going away. The ink now comes
+	# out of `_glyph_marks`, which is the function a test can ask what the letter will be painted in.
 	var glyph_at := source.find(
-			"AssayHud.mark_ink_of(&\"species_glyph\", disc[\"ink\"]))")
+			"AssayHud.mark_ink_of(&\"species_glyph\", glyph[\"ink\"]))")
 	if glyph_at < 0:
-		return _fail("main.gd no longer draws the species letter with `disc[\"ink\"]`, so this scan "
-				+ "cannot say whether the hatch goes under it")
+		return _fail("main.gd no longer draws the species letter with `_glyph_marks`' own ink, so "
+				+ "this scan cannot say whether the hatch goes under it")
 	if hatch_at > glyph_at:
 		return _fail("main.gd paints the hatch AFTER the species letter, so every dead end's letter "
 				+ "is cut by two bars of MAP_BG -- 55.1% of rocks over Maren's 30 seeds")
@@ -2739,3 +2744,114 @@ func test_both_player_marks_carry_the_maps_own_keyline() -> bool:
 		return _fail("main.gd draws the player keyline AFTER the body, which is a dark frame ON the "
 				+ "person rather than a rim behind them")
 	return true
+
+
+## **A BUILDING MARK MAY NOT ERASE THE SPECIES LETTER IT STANDS ON** (ASSA-213, Maren's P1 and her
+## ruling; the pictures are hers, at 1x on two seeds, `shared/assay/maren-assa206-coop/`).
+##
+## WHY THIS IS THE NORMAL CASE AND NOT AN UNLUCKY TILE: `sim/src/step.rs` lets a building stand on a
+## deposit -- Place checks bounds, occupancy and reach and nothing else -- and a drill is on the rock
+## it mines by definition. The letter is how this view names ore (ASSA-73), so the mark was taking a
+## read away to add one.
+##
+## **THE PREMISE IS MEASURED FIRST, because a test about a mark covering a letter on a world where it
+## does not is green for the wrong reason.** The diamond and the letter's box come out of the real
+## `_building_marks` and `_glyph_marks` at the real screen's `_cell`, and the overlap is sampled on a
+## 1px grid. If the two do not overlap, this fails as a broken instrument.
+##
+## WHAT IT CANNOT SEE: ink. Nothing headless rasterises a glyph, so "the letter is still legible" is
+## the 1x window shot in the item. The two legs here are the ORDER (a source scan, because `_draw`'s
+## statements run in written order) and the BED (the colour the ink was picked against travels with
+## the letter, so the order is safe over a mark as well as over a rock).
+func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> bool:
+	var screen := _joined_screen()
+	screen._show_close_up(false)
+	screen._refresh()
+	var ok := true
+	if screen._close_up or not screen._sim.running() or screen._cell <= 0.0:
+		screen.queue_free()
+		return _fail(("premise: close_up %s, running %s, cell %f -- `_draw` returns before any mark "
+				+ "on any of those") % [screen._close_up, screen._sim.running(), screen._cell])
+	var font := ThemeDB.fallback_font
+	var marks: Array = screen._glyph_marks(screen._sim.deposits(), font)
+	if marks.is_empty():
+		screen.queue_free()
+		return _fail("the schematic paints no species letter on this world, so there is nothing for "
+				+ "a building to erase and this test is about nothing")
+	# The deposit the mark belongs to, and a 1x1 machine planted on its CENTRE tile -- the tile the
+	# play loop plants on, and the one Maren's shots caught.
+	var glyph: Dictionary = marks[0]
+	var centre: Vector2 = glyph["at"]
+	var tile := Vector2i(((centre - screen.MARGIN) / screen._cell).round())
+	var planted := [{"pos": tile, "footprint": Vector2i(1, 1), "kind": "machine"}]
+	var mark: Dictionary = (screen._building_marks(planted)[0] as Dictionary)
+	var diamond: PackedVector2Array = mark["points"]
+	var box: Rect2 = glyph["box"]
+	# SAMPLED ON A 1px GRID, NOT REASONED, AND THE FRACTION IS THE DIAMOND'S AND NOT THE BOX'S. The
+	# box is the font's whole line box -- ascent, descent and advance -- so the share of IT a 16px
+	# diamond covers is small however completely the letter is destroyed. What the defect is about is
+	# where the diamond lands: all of it, on the middle of the letter.
+	var diamond_px := 0
+	var on_letter := 0
+	var bounds := Rect2(diamond[0], Vector2.ZERO)
+	for point in diamond:
+		bounds = bounds.expand(point)
+	var y := bounds.position.y
+	while y <= bounds.end.y:
+		var x := bounds.position.x
+		while x <= bounds.end.x:
+			var point := Vector2(x, y)
+			if Geometry2D.is_point_in_polygon(point, diamond):
+				diamond_px += 1
+				if box.has_point(point):
+					on_letter += 1
+			x += 1.0
+		y += 1.0
+	var covered := float(on_letter) / float(maxi(diamond_px, 1))
+	if covered < 0.8:
+		ok = _fail(("a machine on the deposit's own centre tile %s puts %.1f%% of its diamond (%d of "
+				+ "%d sampled px) inside the letter's box %s: the case this item is about is not in "
+				+ "this test") % [tile, covered * 100.0, on_letter, diamond_px, box])
+	# **THE ORDER.** The one assertion that fails on the code this item was filed against: the letter
+	# was painted in the deposit loop, four passes before the factories.
+	if ok:
+		var source := FileAccess.get_file_as_string("res://scripts/main.gd")
+		var glyph_at := source.find("AssayHud.mark_ink_of(&\"species_glyph\", glyph[\"ink\"]))")
+		var building_at := source.find("AssayHud.mark_ink_of(&\"building\", shape[\"colour\"]))")
+		if source == "" or glyph_at < 0 or building_at < 0:
+			ok = _fail(("main.gd does not paint both the species letter (%d) and a building mark "
+					+ "(%d) through the map's table, so this scan says nothing")
+					% [glyph_at, building_at])
+		elif glyph_at < building_at:
+			ok = _fail(("main.gd paints the species letter BEFORE the building marks, so the %.1f%% "
+					+ "of a machine diamond that lands on the letter is painted over it -- and a drill is on a "
+					+ "deposit by definition") % [covered * 100.0])
+		elif not source.contains("_glyph_marks(deposits, font)"):
+			ok = _fail("`_glyph_marks` is never handed the deposits `_draw` read, which is "
+					+ "ASSA-189's shape: a correct mark that nothing paints")
+	# **THE BED, which is what makes painting last safe.** `glyph_color` picks the ink by contrast
+	# against the DISC; over a pale `HOVER` diamond a `GLYPH_LIGHT` letter chosen for a dark rock is
+	# the same letter gone. So the ink must be the one picked for the bed it carries.
+	if ok:
+		for entry in marks:
+			var each: Dictionary = entry
+			if AssayHud.glyph_color(each["bed"] as Color) != each["ink"]:
+				ok = _fail(("a letter is painted in %s on a bed of %s, and the ink picked for that "
+						+ "bed is %s: the bed is not the surface the contrast was measured on")
+						% [each["ink"], each["bed"], AssayHud.glyph_color(each["bed"] as Color)])
+				break
+			if float(each["bed_px"]) < 1.0:
+				ok = _fail("a letter carries a bed %.1fpx wide, which is no bed at all"
+						% [each["bed_px"] as float])
+				break
+	# AND THE REASON THE BED IS LOAD-BEARING, as a number rather than as a sentence: the ink this
+	# world actually picked, read against the diamond it now sits on.
+	if ok:
+		var on_mark := AssayHud.contrast_ratio(glyph["ink"] as Color, AssayHud.HOVER)
+		var on_bed := AssayHud.contrast_ratio(glyph["ink"] as Color, glyph["bed"] as Color)
+		if on_bed <= on_mark:
+			ok = _fail(("this deposit's letter reads %.2f:1 on its bed and %.2f:1 on the building "
+					+ "mark, so the bed buys nothing here and the case needs a different deposit")
+					% [on_bed, on_mark])
+	screen.queue_free()
+	return ok
