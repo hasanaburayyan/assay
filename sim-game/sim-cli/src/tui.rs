@@ -672,7 +672,13 @@ fn draw_side(f: &mut Frame, area: Rect, h: &Host, ui: &Ui) {
                 chunk.distance(world.spawn)
             ))];
             if let Some(b) = world.building_at(t) {
-                lines.push(Line::from(debug::building_address(world, b)));
+                // `Typed`: the inspector has a command line, so the id in this
+                // line is the handle for `take`/`pickup` (ASSA-222).
+                lines.push(Line::from(debug::building_address(
+                    world,
+                    b,
+                    debug::Audience::Typed,
+                )));
                 lines.push(Line::from(debug::building_status(world, b)));
             }
             match world.deposit_at(t) {

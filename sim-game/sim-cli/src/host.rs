@@ -890,7 +890,8 @@ fn at(s: &Session, args: &Args) -> Result<(), String> {
     if let Some(b) = s.world.building_at(pos) {
         out!(
             "({x}, {y}): {} · {}",
-            debug::building_address(&s.world, b),
+            // `Typed`: this reader types `take 0` (ASSA-222).
+            debug::building_address(&s.world, b, debug::Audience::Typed),
             debug::building_status(&s.world, b)
         );
     }
