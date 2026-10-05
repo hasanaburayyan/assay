@@ -373,6 +373,14 @@ var _played_at := 0.0
 ## Whether the buffer ran dry on the last advance: the body is holding on the newest position the sim
 ## produced, which is a stalled host and not a renderer decision.
 var _starved := false
+## THE PLAYOUT CLOCK'S INTEGRAL TERM, and this client's only memory of it (see
+## `AssayScene.PLAYOUT_TRIM`). 1.0 means the measured tick length is being taken at face value; 0.86
+## means the clock has learnt that it is 14% short and is playing out that much slower than the
+## measurement alone would. It lives here rather than in the scene because `playout_at` is pure.
+var _play_trim := AssayScene.PLAYOUT_TRIM_NONE
+## The buffer's depth in ticks on the last advance, for the probes and the debug line: the quantity
+## the clock is actually controlling, which until now could only be inferred from `_pending.size()`.
+var _play_depth := 0.0
 ## The last few bundle ARRIVAL times, for the measured tick rate. See `AssayScene.playout_step`.
 var _tick_times: Array[float] = []
 ## The sim tick each of those arrivals carried, so the rate is seconds per TICK and not per bundle.
@@ -2553,9 +2561,14 @@ func _advance_playout(now: float) -> float:
 	# which is the same quantity on a drawn frame and the right one on a headless tick.
 	var dt := 0.0 if _played_at <= 0.0 else clampf(now - _played_at, 0.0, 1.0)
 	_played_at = now
-	var cursor := AssayScene.playout_at(_play_tick, ticks, dt, _tick_gap, AssayScene.PLAYOUT_DELAY)
+	var cursor := AssayScene.playout_at(_play_tick, ticks, dt, _tick_gap, AssayScene.PLAYOUT_DELAY,
+			_play_trim)
 	_play_tick = float(cursor["play_tick"])
 	_starved = bool(cursor["starved"])
+	# THE INTEGRAL GOES BACK IN NEXT FRAME. `playout_at` is pure, so the one piece of state the PI
+	# loop needs is carried by its caller and by nothing else.
+	_play_trim = float(cursor["trim"])
+	_play_depth = float(cursor["depth"])
 	var index := int(cursor["index"])
 	# EVERYTHING THE CLOCK HAS GONE PAST IS DROPPED, except the position being drawn FROM. `_pending`
 	# keeps its documented meaning for the probes that read its depth: produced positions the screen

@@ -84,6 +84,13 @@ var _play: Array[float] = []
 var _starved: Array[bool] = []
 var _held: Array[int] = []
 var _sim_tick: Array[int] = []
+## **THE QUANTITY THE CLOCK IS CONTROLLING, AND WHAT IT HAS LEARNT ABOUT ITS OWN MEASUREMENT**
+## (ASSA-197). `_held` is how many positions the queue holds, which is not the same thing: the depth
+## is fractional and is what decides whether the next late bundle is absorbed or felt. A trim away
+## from 1.0 says the measured tick length is biased by that much and the loop has corrected it --
+## which on a machine none of us owns is the only way to see that happening at all.
+var _depth: Array[float] = []
+var _trim: Array[float] = []
 
 
 func _initialize() -> void:

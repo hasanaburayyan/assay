@@ -1334,6 +1334,137 @@ func test_the_playout_clock_waits_for_a_buffer_and_never_runs_past_the_newest() 
 	return true
 
 
+## **A CLOCK WHOSE MEASURED TICK LENGTH IS BIASED STILL HOLDS ITS BUFFER** (ASSA-197, Wren's 23:45
+## ruling, and the one thing on this item that is about a machine nobody here owns).
+##
+## THE RISK THIS PINS. `playout_step` measures the host's tick length from arrival times, and the
+## clock divides frame time by it; every number proving that measurement right was taken on this Mac.
+## On a Windows PC the relay child's sleep and the loopback arrivals sit on a ~15.6 ms timer, which
+## has never been measured here -- and a measurement that comes out SHORT makes the clock play out
+## faster than the host produces, drain its own buffer and hold the body still. That is the shape the
+## board felt twice, and on this Mac it was real: the client used 86% of the host's true tick.
+##
+## **AND THE DEPTH LOOP ALONE DOES NOT SAVE IT, WHICH IS WHY THERE IS AN INTEGRAL.** Depth is at rest
+## only where `rate` equals the ratio of measured tick to true, and `rate` is clamped to
+## `PLAYOUT_NUDGE`; past that the controller sits on its stop and drains anyway. So this test drives
+## one fixture TWICE, and the first leg is the control:
+##
+## 1. **The integral thrown away each frame** -- a pure proportional loop, which is what main did
+##    before this -- must STARVE. If it does not, the fixture is too gentle to be about anything and
+##    the leg below proves nothing.
+## 2. **The integral fed back** must starve on no frame at all and settle its depth near the target.
+##
+## WHAT THE TEST EXPECTS COMES FROM THE FIXTURE AND NOT FROM THE CLOCK: the host's true tick is
+## `RELAY_TICK_MS`, the bias is a constant written here, and the played-out rate is counted from how
+## far `play_tick` actually travelled. Nothing asks `playout_at` what it ought to have done -- the
+## mistake that let my own rate test pass the defect it was written for.
+func test_a_biased_tick_measurement_does_not_drain_the_playout_buffer() -> bool:
+	# 14% SHORT, which is not a round number for effect: it is what the real client measured against a
+	# real relay on 2026-10-04 (89.8 ms used against 104.2 ms sent) before the pairing fix.
+	var bias := 0.86
+	var loose := _drive_playout(bias, false)
+	if int(loose["starved"]) == 0:
+		return _fail(("THE CONTROL DID NOT FAIL: a clock measuring the tick at %.0f%% of its true "
+				+ "length, with the integral discarded every frame, starved on none of %d frames and "
+				+ "settled its depth at %.2f. Then this fixture cannot tell a loop that holds its "
+				+ "buffer from one that cannot, and the assertion below is vacuous")
+				% [bias * 100.0, int(loose["frames"]), float(loose["depth_mean"])])
+	var learnt := _drive_playout(bias, true)
+	if int(learnt["starved"]) > 0:
+		return _fail(("a clock measuring the tick at %.0f%% of true starved on %d of %d frames "
+				+ "(depth %.2f-%.2f against a target of %.1f, trim settled at %.3f). Each starved "
+				+ "frame is the body holding still, and the bar on this item is zero of them")
+				% [bias * 100.0, int(learnt["starved"]), int(learnt["frames"]),
+				float(learnt["depth_min"]), float(learnt["depth_max"]), AssayScene.PLAYOUT_DELAY,
+				float(learnt["trim"])])
+	# AND IT HOLDS THE BUFFER AT THE DEPTH IT IS AIMED AT, not merely above zero: a clock that
+	# survived by sitting on one tick of history would starve on the first late bundle.
+	if absf(float(learnt["depth_mean"]) - AssayScene.PLAYOUT_DELAY) > 0.5:
+		return _fail(("the buffer averaged %.2f ticks deep against a target of %.1f: the loop is not "
+				+ "holding the depth it is aimed at, it is parked somewhere else")
+				% [float(learnt["depth_mean"]), AssayScene.PLAYOUT_DELAY])
+	# **AND THE CORRECTION COSTS NO DRAWN SPEED, which is the half a buffer number cannot show.** The
+	# clock must play out ticks at the rate the HOST produced them -- 1000/RELAY_TICK_MS a second, a
+	# fixture constant -- or the body walks at the wrong speed for as long as the session lasts.
+	var want := 1000.0 / float(RELAY_TICK_MS)
+	var played := float(learnt["played_rate"])
+	if absf(played / want - 1.0) > 0.02:
+		return _fail(("the clock played out %.3f ticks a second against a host producing %.3f "
+				+ "(%.1f%% of true) over the steady stretch: a body drawn at that rate is walking at "
+				+ "the wrong speed, buffer or no buffer") % [played, want, played / want * 100.0])
+	# A HONEST MEASUREMENT MUST NOT BE MADE WORSE BY ANY OF THIS. The same drive with the estimate
+	# exactly right is the case every number on this item was taken in.
+	var exact := _drive_playout(1.0, true)
+	if int(exact["starved"]) > 0 or absf(float(exact["depth_mean"]) - AssayScene.PLAYOUT_DELAY) > 0.5:
+		return _fail(("with the tick measured exactly right the clock starved %d of %d frames and "
+				+ "held %.2f ticks of buffer: the integral has broken the case that already worked")
+				% [int(exact["starved"]), int(exact["frames"]), float(exact["depth_mean"])])
+	return true
+
+
+## DRIVE `playout_at` AGAINST A SYNTHETIC HOST: `bias` is how long the clock BELIEVES a tick is as a
+## fraction of how long it really is, and `learn` is whether the integral term is handed back.
+##
+## NO WALL CLOCK AND NO SOCKET -- the host's ticks and the frames are both counted out of a loop, so
+## this is the same arithmetic the window runs with none of the load that makes a probe unrepeatable.
+## The queue cap and the dropping of positions the clock has passed are `main.gd`'s, copied here
+## because they decide what `ticks` holds and therefore what depth means.
+func _drive_playout(bias: float, learn: bool) -> Dictionary:
+	var tick := float(RELAY_TICK_MS) / 1000.0
+	var frame := 1.0 / 90.0
+	var delay: float = AssayScene.PLAYOUT_DELAY
+	var play: float = AssayScene.PLAYOUT_UNSTARTED
+	var trim: float = AssayScene.PLAYOUT_TRIM_NONE
+	var ticks: Array[int] = []
+	var next_tick := 0.0
+	var tick_no := 0
+	var now := 0.0
+	var starved := 0
+	var frames := 0
+	var depth_min := INF
+	var depth_max := -INF
+	var depth_sum := 0.0
+	var steady_from := 0.0
+	var steady_play := 0.0
+	while now < 12.0:
+		now += frame
+		while next_tick <= now:
+			ticks.append(tick_no)
+			tick_no += 1
+			next_tick += tick
+			while ticks.size() > 8:
+				ticks.pop_front()
+		var cursor := AssayScene.playout_at(play, ticks, frame, tick * bias, delay, trim)
+		play = float(cursor["play_tick"])
+		if learn:
+			trim = float(cursor["trim"])
+		for _i in range(int(cursor["index"])):
+			ticks.pop_front()
+		# THE FIRST THREE SECONDS ARE NOT JUDGED: the clock is waiting for its buffer and then the
+		# integral is still learning, and a transient is not what this test is about.
+		if now < 3.0:
+			continue
+		if steady_from <= 0.0:
+			steady_from = now
+			steady_play = play
+		frames += 1
+		if bool(cursor["starved"]):
+			starved += 1
+		var depth := float(cursor["depth"])
+		depth_min = minf(depth_min, depth)
+		depth_max = maxf(depth_max, depth)
+		depth_sum += depth
+	return {
+		"starved": starved,
+		"frames": frames,
+		"depth_min": depth_min,
+		"depth_max": depth_max,
+		"depth_mean": depth_sum / maxf(float(frames), 1.0),
+		"trim": trim,
+		"played_rate": (play - steady_play) / maxf(now - steady_from, 0.001),
+	}
+
+
 ## **A WALKING BODY'S OWN RECTANGLE MOVES WITH IT, SUB-TILE** (ASSA-197, and ASSA-200 is the
 ## measurement).
 ##
