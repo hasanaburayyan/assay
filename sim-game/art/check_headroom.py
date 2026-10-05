@@ -55,6 +55,20 @@ CLIP = 254
 OPAQUE = 200          # alpha above this is surface; below it is edge or shadow
 TOLERANCE = 0.3       # percentage points of slack, for renderer noise between runs
 
+# ON A SMALL ROW THIS TOLERANCE IS COARSER THAN THE THING IT COUNTS, and anyone
+# reading a 0.1-point move on one should know that before believing it (Maren,
+# ASSA-216). The number is a SHARE, so the slack in pixels is 0.003 * the row's
+# opaque count: on `ore/B_full_v3` -- about 1,500 opaque pixels carrying 19
+# pinned ones -- 0.3 points is +-4 PIXELS, a quarter of the row's whole pinned
+# population. Its 1.2 -> 1.6 during the ASSA-216 clump was two pixels. On a
+# grade-A ore row (about 2,500 opaque, 220 pinned) the same slack is +-7 pixels
+# against a population of 220, which is a real 3%.
+#
+# So: a move on a row whose pinned count is in the tens is counting noise and
+# the check cannot tell otherwise. Read the COUNTS before explaining a share --
+# `blown()` has them, and this file deliberately prints the share only, which is
+# what sent two of us hunting a lost highlight that was never there.
+
 # MEASURED, NOT CHOSEN. Percentage of each row's opaque pixels with a pinned
 # channel, as the row ships. Rows at 0.0 are omitted: anything absent must stay
 # under TOLERANCE. Regenerate with --record after a deliberate change, and say
