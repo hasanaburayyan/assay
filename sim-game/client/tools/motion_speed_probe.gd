@@ -1,7 +1,7 @@
 extends SceneTree
 ## **THE DEV HARNESS FOR `AssayMotionProbe`: it builds a window, the probe does the measuring.**
 ##
-##   godot --path client --script res://tools/motion_speed_probe.gd -- <seed> [seconds] [label]
+##   godot --path client --script res://tools/motion_speed_probe.gd -- <seed> [seconds] [label] [mode]
 ##   **NEVER `--headless`.** A headless run has no vsync and no compositor: frames come as fast as
 ##   the loop can spin, so `dt` is a tenth of a real frame's and the distribution is of a machine
 ##   nobody plays on. The board plays a window. This measures a window.
@@ -44,6 +44,17 @@ func _initialize() -> void:
 	var want_seed := String(argv[0]) if argv.size() > 0 else ""
 	var seconds := float(argv[1]) if argv.size() > 1 else 8.0
 	var label := String(argv[2]) if argv.size() > 2 else "run"
+	# **`mode` IS MARLOW'S (ASSA-212) AND IT STAYS A DEV ARGUMENT.** `start` orders a SECOND walk from
+	# a standstill with the playout clock long since running, which is a reproduction the shipped door
+	# has no business offering a player: the board's one line is `-- --motion-probe <file> [seconds]`
+	# and every token added to it is a token to get wrong. The arithmetic moved into
+	# `AssayMotionProbe` with the rest in ASSA-211; only the way in is here.
+	var mode := String(argv[3]) if argv.size() > 3 else "steady"
+	if mode != "steady" and mode != "start":
+		print("FAIL  mode must be `steady` or `start`, not %s" % mode)
+		_refused = true
+		quit(2)
+		return
 	if DisplayServer.get_name() == "headless":
 		print("FAIL  headless: this probe measures frame pacing and there is none here")
 		_refused = true
@@ -53,7 +64,7 @@ func _initialize() -> void:
 	root.add_child(screen)
 	screen._ready()
 	_probe = AssayMotionProbe.new()
-	_probe.begin(screen, seconds, label, want_seed)
+	_probe.begin(screen, seconds, label, want_seed, mode)
 
 
 func _process(delta: float) -> bool:

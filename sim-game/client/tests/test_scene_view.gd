@@ -1317,6 +1317,194 @@ func test_the_measured_tick_rate_is_per_tick_and_tracks_a_drifting_host() -> boo
 	return true
 
 
+## **AND THE FIRST FRAME IT RUNS DOES NOT JUMP** (ASSA-212, found by Maren with a different tool).
+##
+## **THE DEFECT, AND THE NUMBER WAS PREDICTED BEFORE IT WAS CONFIRMED.** While the buffer fills, the
+## branch below returns `index: 0`, so the body is DRAWN ON THE OLDEST POSITION HELD and stands still
+## while the sim runs ahead -- the deliberate quarter-second at the start of a walk. Then the clock
+## started with `at = newest - delay`. Positions arrive one tick at a time, so `newest - oldest`
+## crosses `PLAYOUT_DELAY` 2.5 at exactly **3**, and that assignment moves the drawn body from
+## `oldest` to `newest - 2.5` -- **half a tile, 16 px at 32 px tiles, in one frame.**
+##
+## Maren measured 16 px and a 160 ms freeze in a real window (`maren_corner_strip.gd`, main 9a800c1)
+## and offered me the excuse that it was their harness; the arithmetic above says it is the clock.
+## **Two instruments agreeing, neither of them the probe that signed off box 1a** -- which could not
+## see this at all, because the bar trims the first 150 ms and the jump lives inside it.
+##
+## THE FIX IS TO START AT `oldest`, the position the body is already being drawn on, so the first
+## running frame moves it by one frame's worth and nothing else. **AND A TICK EARLIER THAN THAT, which
+## the one-line version got wrong and only a table showed**: starting at `oldest` once the buffer is
+## `delay` deep leaves the clock half a tick DEEPER than the loop settles at, and the loop spends that
+## surplus at its +10% stop -- 1.238 of true speed at 90 fps and 1.284 at 30, worse than the jump it
+## replaced and outside the +/-25% the board's verdict is judged on. Waiting for `delay + LEAD - 1`
+## instead starts it half a tick SHORT, which the loop closes by running slow, and slow neither jumps
+## nor starves. `tools/start_jump_table.gd` is the table, and it drives the two retired rules from
+## outside the function so the before/after needs nothing mutated. ASSA-119 is untouched either way --
+## `oldest` is a position the sim produced.
+func test_the_clocks_first_running_frame_does_not_jump_the_body() -> bool:
+	var delay: float = AssayScene.PLAYOUT_DELAY
+	var step := 0.1
+	# **A REAL FRAME, AND THE FIRST VERSION OF THIS TEST PASSED THE DEFECT FOR WANT OF ONE.** Written
+	# with `dt` equal to a whole tick, "one frame's worth of movement" is a whole tile, and a half-tile
+	# jump hides inside it: 294 green against the unfixed code. A window runs 11 ms frames against a
+	# 100 ms tick, so one frame is worth 0.11 tiles and the jump is four and a half times that. The
+	# tolerance below is derived from this number, never typed.
+	var frame := step / 9.0
+	var play: float = AssayScene.PLAYOUT_UNSTARTED
+	var ticks: Array[int] = []
+	var drawn_before := 0.0
+	for tick in 8:
+		ticks.append(tick)
+		var oldest := float(ticks[0])
+		var was := play
+		var cursor := AssayScene.playout_at(play, ticks, frame, step, delay)
+		play = float(cursor["play_tick"])
+		if was == AssayScene.PLAYOUT_UNSTARTED and play == AssayScene.PLAYOUT_UNSTARTED:
+			# WHERE THE BODY IS BEING DRAWN WHILE IT WAITS: the entry `index` points at, which is the
+			# oldest held. Taken from the function rather than assumed, so a change of that behaviour
+			# moves this test's own premise instead of silently passing.
+			if int(cursor["index"]) != 0:
+				return _fail(("while the buffer fills the clock pointed at entry %d, not the oldest "
+						+ "held: this test's premise is that the waiting body is drawn on `oldest`")
+						% [int(cursor["index"])])
+			drawn_before = oldest
+			continue
+		if was != AssayScene.PLAYOUT_UNSTARTED:
+			continue
+		# **THE FRAME THE CLOCK STARTS ON.** The body was standing on `drawn_before`; one frame of
+		# `frame` at the host's own rate is worth `frame / step` of a tick, so anything beyond that is
+		# a jump the player sees.
+		var moved := absf(play - drawn_before)
+		var allowed := frame / step * (1.0 + AssayScene.PLAYOUT_NUDGE)
+		if moved > allowed + 0.001:
+			return _fail(("the clock's first running frame moved the drawn body %.3f tiles (%.1f px at "
+					+ "%d px tiles) from the position it had been standing on. One frame is worth %.3f "
+					+ "tiles. The buffer was %.1f ticks deep and the clock started at %.3f instead of "
+					+ "%.3f") % [moved, moved * AssayScene.TILE_PX, int(AssayScene.TILE_PX), allowed,
+					float(ticks[ticks.size() - 1]) - drawn_before, play, drawn_before])
+		# **AND THE BUFFER IS STILL THE WHOLE `delay`, WHICH IS THE HALF OF THIS A TABLE GOT WRONG.**
+		var deep := float(ticks[ticks.size() - 1]) - play
+		if deep < delay - 0.001:
+			return _fail(("the first running frame left %.2f ticks of buffer against a delay of %.1f. "
+					+ "A jump traded for stall absorption is still a trade, and the absorption inside "
+					+ "the start transient is the half tick between the two no-jump rules (ASSA-212)")
+					% [deep, delay])
+		# AND THE SURPLUS IT STARTS WITH IS BOUNDED BY WHAT THE LOOP MAY SPEND ON IT. `at` begins deeper
+		# than the loop settles, which the clock pays off at `rate`, and `PLAYOUT_NUDGE` is the whole
+		# authority it has -- so the start transient's drawn speed cannot exceed `1 + NUDGE` times
+		# whatever the platform's tick misread is. The surplus here is stated so a change to `delay` or
+		# `LEAD` that makes the chase longer shows up as a failing number rather than a slower start.
+		var surplus: float = deep - (delay + AssayScene.PLAYOUT_PRODUCTION_LEAD - 1.0)
+		if surplus > 1.0:
+			return _fail(("the clock starts %.2f ticks deeper than the shallowest start the loop would "
+					+ "not chase, so it spends over a tick at its +%.0f%% stop before it settles")
+					% [surplus, AssayScene.PLAYOUT_NUDGE * 100.0])
+		return true
+	return _fail("the clock never started over 8 ticks, so there was no first running frame to judge")
+
+
+## **WHAT THE CHOSEN START COSTS, PINNED IN BOTH DIRECTIONS SO IT CANNOT MOVE QUIETLY** (ASSA-212).
+##
+## Three rules, three costs, and none of them is free: a 16 px jump once per session, half a second of
+## chase at the loop's +10% stop, or half a tick less stall absorption. The chase is what ships, and
+## **at 30 fps and a 14% tick misread it reads 1.284, which is over the +/-25% the board's verdict
+## uses.** That number is not asserted as acceptable; it is asserted as MEASURED, because the thing
+## that must not happen is it growing while every bar stays green. Current real misreads are 0.93-1.00
+## (trim median 0.992 on windows-latest, 0.933 on this Mac), where the same rule reads 0.978-1.094 --
+## so the failing case is a worst case nobody has measured since the pairing fix, and whether it is
+## acceptable is Maren's to rule, with this number.
+##
+## IT FAILS IF THE COST SHRINKS TOO, which is deliberate: a drop means the start rule or a constant
+## moved, and whoever moved it should come and read this comment.
+func test_the_cost_of_a_jump_free_start_is_the_one_that_was_chosen() -> bool:
+	var worst := _drive_playout(0.86, true, 12.0, 0.0, 1.0, 30.0)
+	var real := _drive_playout(0.93, true, 12.0, 0.0, 1.0, 30.0)
+	if absf(float(worst["ratio_max"]) - 1.284) > 0.03:
+		return _fail(("the start transient at a 14%% misread and 30 fps reads %.3f of true speed "
+				+ "where it measured 1.284 on 2026-10-05. It is over the board's +/-25%% either way; "
+				+ "a change in it means the start rule moved and the trade needs re-reading")
+				% [float(worst["ratio_max"])])
+	if float(real["ratio_max"]) > 1.25:
+		return _fail(("at the misread this hardware actually shows (0.93) the start transient reads "
+				+ "%.3f, outside the +/-25%% the board's verdict uses. The worst case being out is a "
+				+ "stated cost; the measured case being out is a defect") % [float(real["ratio_max"])])
+	if int(worst["starved"]) > 0 or int(real["starved"]) > 0:
+		return _fail(("the start starved (%d, %d frames): the whole reason this rule keeps the full "
+				+ "`delay` of buffer is that a shallower one went dry on the studio Mac")
+				% [int(worst["starved"]), int(real["starved"])])
+	return true
+
+
+## **AND THE INSTRUMENT THAT SAYS SO CAN SEE THE DEFECT IT CLEARED** (ASSA-212). Every number on this
+## item comes out of `_drive_playout`, and "0.0 px of jump" is worth exactly as much as the harness's
+## ability to read a jump that is really there. So the rule that shipped until tonight is driven
+## through the same harness from outside -- no edit to `playout_at`, because the start frame assigns
+## `at` and returns without advancing, which a caller can do for it -- and it must read the half tile
+## the arithmetic predicts. If this stops failing for the old rule, nothing else on this item means
+## anything.
+func test_the_start_jump_harness_still_reads_the_jump_the_old_rule_made() -> bool:
+	var was: Dictionary = _drive_playout(0.86, true, 4.0, 0.0, 1.0, 90.0, 0)
+	var ships: Dictionary = _drive_playout(0.86, true, 4.0, 0.0, 1.0, 90.0, -1)
+	var predicted: float = AssayScene.PLAYOUT_DELAY - floorf(AssayScene.PLAYOUT_DELAY)
+	if absf(float(was["start_jump"]) - predicted) > 0.01:
+		return _fail(("the retired rule read %.3f tiles of start jump where the constants predict "
+				+ "%.3f (`delay` 2.5 is crossed at 3 positions, so `newest - delay` is half a tile "
+				+ "past `oldest`). The harness cannot see a jump, so no row of this item's table is "
+				+ "evidence of anything") % [float(was["start_jump"]), predicted])
+	if float(ships["start_jump"]) > 0.001:
+		return _fail("the shipped rule read %.3f tiles of start jump" % [float(ships["start_jump"])])
+	# **AND THE FREEZE IS UNCHANGED, WHICH IS A COST AND IS ASSERTED AS ONE.** A start a tick
+	# shallower cut 100 ms off the stand-still -- the other half of what Maren saw in a window -- and
+	# that is exactly the tick of stall absorption a GUI run then went dry without. The two rules wait
+	# for the same buffer, so they stand still for the same time, and this test says so rather than
+	# leaving the earlier claim in a comment where nothing could contradict it.
+	if absf(float(was["freeze_s"]) - float(ships["freeze_s"])) > 0.02:
+		return _fail(("the shipped rule stood still for %.0f ms against the retired rule's %.0f: they "
+				+ "wait for the same buffer, so a difference means the wait moved")
+				% [float(ships["freeze_s"]) * 1000.0, float(was["freeze_s"]) * 1000.0])
+	return true
+
+
+## **THE FLAG A WINDOW WILL REPORT SAYS THE SAME THING THIS HARNESS DERIVES** (ASSA-212, Wren's gate
+## (c) wants `dragged` zero from a real window and nothing could report it).
+##
+## `playout_at` now says when its own clamp dragged the drawn body forward to the tail of a queue that
+## evicted history the clock had not played. The synthetic drive has counted that since ASSA-197 by
+## re-deriving the free-running advance, which is the number every bar on ASSA-197 was read against.
+## **So the new flag is checked against the old derivation on a run where drag really happens**, not
+## only on a healthy one: a flag that is always false agrees with a zero count perfectly.
+func test_the_clock_reports_its_own_drag_and_agrees_with_the_derived_count() -> bool:
+	var healthy := _drive_playout(1.0, true, 6.0, 0.0)
+	if int(healthy["dragged"]) != 0 or int(healthy["dragged_said"]) != 0:
+		return _fail(("a clock at an exactly right tick measurement reported drag: derived %d, said "
+				+ "%d") % [int(healthy["dragged"]), int(healthy["dragged_said"])])
+	# A TICK MEASUREMENT SO LONG THE CLOCK CANNOT KEEP UP, which is the slow-side failure: it falls
+	# behind, `PLAYOUT_QUEUE` evicts what it has not drawn, and the clamp catches it up in one frame.
+	# The bias is searched for rather than typed, because the edge moves with the clamps.
+	var bias := 1.2
+	var hurt := {}
+	for _step in range(12):
+		hurt = _drive_playout(bias, false, 8.0, 0.0)
+		if int(hurt["dragged"]) > 0:
+			break
+		bias += 0.1
+	if int(hurt["dragged"]) == 0:
+		return _fail(("no bias up to %.1f could make this harness drag the body, so there is nothing "
+				+ "to check the flag against and this test proves nothing") % [bias])
+	if int(hurt["dragged_said"]) == 0:
+		return _fail(("the harness derived %d dragged frames at a bias of %.1f and the function "
+				+ "reported none: `main.gd::_play_dragged` would read zero through a defect a probe "
+				+ "is meant to catch") % [int(hurt["dragged"]), bias])
+	# WITHIN ONE, not equal: the derivation looks at the advance a frame WOULD have made from the
+	# clock's previous value, and the function looks at the advance it did make, so the two can differ
+	# by the single frame on which the clamp first bites.
+	if absf(float(int(hurt["dragged"]) - int(hurt["dragged_said"]))) > 1.0:
+		return _fail(("derived %d dragged frames and the function said %d at a bias of %.1f: the two "
+				+ "are measuring different things") % [int(hurt["dragged"]),
+				int(hurt["dragged_said"]), bias])
+	return true
+
+
 ## **THE CLOCK WAITS FOR A BUFFER BEFORE IT STARTS, AND NEVER READS PAST THE NEWEST POSITION HELD**
 ## (ASSA-197).
 ##
@@ -1336,23 +1524,29 @@ func test_the_playout_clock_waits_for_a_buffer_and_never_runs_past_the_newest() 
 	# number the old sentinel could not tell from "not started".
 	var play: float = AssayScene.PLAYOUT_UNSTARTED
 	var ticks: Array[int] = []
+	# **THE DEPTH IT WAITS FOR IS THE WHOLE `delay`, AND ASSA-212 IS WHY THAT IS WRITTEN DOWN HERE.**
+	# A tick shallower is the deepest start whose loop error cannot be positive, which is why I
+	# shipped it for an hour; the half tick it saves is the stall absorption, and a GUI run went dry
+	# in the first second without it. The buffer the clock waits for and the buffer it runs behind
+	# are the same number on purpose.
+	var wait_for: float = delay
 	for tick in 8:
 		ticks.append(tick)
 		var cursor := AssayScene.playout_at(play, ticks, step, step, delay)
 		play = float(cursor["play_tick"])
 		var deep := float(ticks[ticks.size() - 1] - ticks[0])
-		if deep < delay:
+		if deep < wait_for:
 			if play != AssayScene.PLAYOUT_UNSTARTED:
 				return _fail(("the clock started at tick %.3f with only %.1f ticks of history, and "
-						+ "the buffer it is meant to run behind is %.1f. A clock that starts with no "
-						+ "buffer starves on its next frame") % [play, deep, delay])
+						+ "it waits for %.1f. A clock that starts with no buffer starves on its next "
+						+ "frame") % [play, deep, wait_for])
 			if bool(cursor["starved"]):
 				return _fail("a clock that has not started yet reported STARVED, which is a stalled"
 						+ " host and a different thing from a buffer still filling")
 			continue
 		if play < 0.0:
-			return _fail("the clock is still unstarted with %.1f ticks of history and a %.1f delay"
-					% [deep, delay])
+			return _fail("the clock is still unstarted with %.1f ticks of history and it waits for %.1f"
+					% [deep, wait_for])
 		if play > float(ticks[ticks.size() - 1]) + 0.001:
 			return _fail("the clock reads %.3f and the newest position held is tick %d: it is"
 					+ " drawing toward a position the sim has not produced"
@@ -1724,10 +1918,23 @@ func test_the_playout_trim_settles_from_a_cold_start_without_holding_the_body() 
 		return _fail(("winding up from a 14%% error held the body %d times and jumped it %d times "
 				+ "(90%% of the correction took %.1f s): the bar on this item is zero")
 				% [int(cold["starved"]), int(cold["dragged"]), float(cold["settle90"])])
-	if float(cold["ratio_min"]) < 0.85 or float(cold["ratio_max"]) > 1.15:
-		return _fail(("while the trim wound up the body was drawn at %.3f-%.3f of true speed: the "
-				+ "transient is visible, and it is the first seconds of every session")
-				% [float(cold["ratio_min"]), float(cold["ratio_max"])])
+	# **THE START IS JUDGED ON THE BOARD'S BAR AND THE REST ON THIS FILE'S, which is Wren's ruling of
+	# 04:45 UTC on ASSA-212 and not a widened bar.** Since that item the clock starts at `oldest` --
+	# where the waiting body is drawn, so nothing jumps -- and `oldest` is half a tick deeper than the
+	# loop settles, so the first half second is the loop paying that off at up to its +10% stop. At
+	# this run's 14% misread that stacks to 1.238. The alternatives were a 16 px jump and a buffer
+	# half a tick shallower, which put 7 dry frames in a GUI run; Wren ruled no jump beats a tight
+	# settle and Maren's bar is zero dry.
+	if float(cold["ratio_min"]) < 0.75 or float(cold["ratio_max"]) > 1.25:
+		return _fail(("from its FIRST FRAME the body was drawn at %.3f-%.3f of true speed, outside "
+				+ "the +/-25%% the board's verdict is judged on") % [float(cold["ratio_min"]),
+				float(cold["ratio_max"])])
+	var settled := _drive_playout(bias, true, 12.0, 1.0)
+	if float(settled["ratio_min"]) < 0.85 or float(settled["ratio_max"]) > 1.15:
+		return _fail(("a second in, while the trim was still winding up, the body was drawn at "
+				+ "%.3f-%.3f of true speed: the transient is visible past its start and it is the "
+				+ "first seconds of every session") % [float(settled["ratio_min"]),
+				float(settled["ratio_max"])])
 	if float(cold["settle90"]) > 8.0:
 		return _fail(("the integral took %.1f s to cover 90%% of a 14%% error (and %.1f s to come "
 				+ "within 1%%): the buffer runs shallow for that whole stretch, where a host stall "
@@ -1744,10 +1951,24 @@ func test_the_playout_trim_settles_from_a_cold_start_without_holding_the_body() 
 				+ "jumped it %d times: then the wind-up is not what the first seconds cost and the "
 				+ "cause is elsewhere") % [float(cold["trim"]), int(warm["starved"]),
 				int(warm["dragged"])])
-	if float(warm["ratio_min"]) < 0.88 or float(warm["ratio_max"]) > 1.12:
-		return _fail(("a warm clock drew the body at %.3f-%.3f of true from its first frame: the "
-				+ "steady state is not steady") % [float(warm["ratio_min"]),
-				float(warm["ratio_max"])])
+	# **TWO BARS, BECAUSE THE START IS A TRANSIENT BY CONSTRUCTION SINCE ASSA-212 AND WAS NOT BEFORE.**
+	# The clock now starts half a tick SHORT of where it settles -- that is what buys a start with no
+	# jump in it -- so the first frames are the loop closing a deficit at up to its -10% stop, times
+	# whatever the platform's tick misread is. Measured 0.861 at a 14% misread, which is inside both
+	# the item's +/-25% and the 0.85-1.15 this test holds the cold run to, and outside the 0.88 the
+	# steady state holds. **The tight number is kept where it was measured to hold rather than
+	# widened to cover a stretch it was not written for**: a transient bar from the first frame and
+	# the steady-state bar from a second in. Wren ruled the start is judged on the item's bar
+	# (04:45 UTC on ASSA-212); this is that ruling with the steady state still fenced off.
+	if float(warm["ratio_min"]) < 0.85 or float(warm["ratio_max"]) > 1.15:
+		return _fail(("a warm clock's first second drew the body at %.3f-%.3f of true: the start "
+				+ "transient is outside the bar the board's verdict is judged on")
+				% [float(warm["ratio_min"]), float(warm["ratio_max"])])
+	var warm_steady := _drive_playout(bias, true, 12.0, 1.0, float(cold["trim"]))
+	if float(warm_steady["ratio_min"]) < 0.88 or float(warm_steady["ratio_max"]) > 1.12:
+		return _fail(("a warm clock drew the body at %.3f-%.3f of true from a second in: the steady "
+				+ "state is not steady") % [float(warm_steady["ratio_min"]),
+				float(warm_steady["ratio_max"])])
 	# **AND THE TRIM IS SESSION STATE.** One assignment in `main.gd` and it is the loop's own output;
 	# a `_play_trim = PLAYOUT_TRIM_NONE` anywhere -- a join, a respawn, a new walk -- would put the
 	# wind-up above back on every walk, and no run of this fixture could see it.
@@ -1787,7 +2008,7 @@ func test_the_playout_trim_settles_from_a_cold_start_without_holding_the_body() 
 ## session settled on, because that is what the real client carries (`main.gd::_play_trim` is a
 ## member written only from this function's own output).
 func _drive_playout(bias: float, learn: bool, seconds := 12.0, judge_from := 3.0,
-		trim_in := AssayScene.PLAYOUT_TRIM_NONE, fps := 90.0) -> Dictionary:
+		trim_in := AssayScene.PLAYOUT_TRIM_NONE, fps := 90.0, start_rule := -1) -> Dictionary:
 	var tick := float(RELAY_TICK_MS) / 1000.0
 	var frame := 1.0 / fps
 	var delay: float = AssayScene.PLAYOUT_DELAY
@@ -1802,6 +2023,7 @@ func _drive_playout(bias: float, learn: bool, seconds := 12.0, judge_from := 3.0
 	var landed := 0.0
 	var starved := 0
 	var dragged := 0
+	var dragged_said := 0
 	var frames := 0
 	var depth_min := INF
 	var depth_max := -INF
@@ -1815,6 +2037,14 @@ func _drive_playout(bias: float, learn: bool, seconds := 12.0, judge_from := 3.0
 	var ripple := 0.0
 	var play_prev := -1.0
 	var started_at := -1.0
+	# **WHERE THE WAITING BODY IS BEING DRAWN, AND HOW FAR THE FIRST RUNNING FRAME MOVES IT** (ASSA-212).
+	# While the clock is UNSTARTED `playout_at` returns `index: 0`, so the body is drawn on the oldest
+	# position held; `start_jump` is the distance the frame the clock STARTS on moves it from there, in
+	# ticks, which for a body walking one tile a tick is tiles. This is the number the ends-trimmed
+	# statistics below cannot see, because the jump is inside the window they trim.
+	var waiting_on := -1.0
+	var start_jump := -1.0
+	var start_depth_at := -1.0
 	var trim_path: Array[float] = []
 	var trim_when: Array[float] = []
 	while now < seconds:
@@ -1827,6 +2057,29 @@ func _drive_playout(bias: float, learn: bool, seconds := 12.0, judge_from := 3.0
 			while ticks.size() > 8:
 				ticks.pop_front()
 		var oldest := float(ticks[0]) if not ticks.is_empty() else 0.0
+		# **A START RULE THIS FILE NO LONGER USES, DRIVEN FROM OUTSIDE** (ASSA-212). `start_rule` 0 is
+		# the rule that shipped until tonight (wait for `delay` of buffer, then set the clock to
+		# `newest - delay`, which moved the drawn body half a tile in one frame) and 1 is the one-line
+		# fix that replaced it (same wait, start at `oldest`). Both are reproduced by handing the
+		# clock the `at` they would have assigned: the start frame assigns and returns WITHOUT
+		# advancing, so not calling the function on that frame is what it does. **A before/after
+		# therefore needs no edit to the shipped function**, which is what the board asks for when
+		# they look at something a third time.
+		if play < 0.0 and start_rule >= 0:
+			# WAITING IS THE CALLER'S TOO, OR THE SHIPPED RULE GETS THERE FIRST. It starts a tick
+			# shallower than these two do, so a harness that only overrode the start POSITION would
+			# measure the shipped rule three times and print three identical rows -- which is what it
+			# did, and why this reads as it does. Not calling the function leaves exactly what it
+			# returns while it waits: the clock UNSTARTED and the integral untouched.
+			waiting_on = oldest
+			if float(ticks[ticks.size() - 1]) - oldest < delay:
+				continue
+			play = (float(ticks[ticks.size() - 1]) - delay) if start_rule == 0 else oldest
+			started_at = now
+			start_depth_at = float(ticks[ticks.size() - 1]) - play
+			start_jump = absf(play - waiting_on)
+			play_prev = play
+			continue
 		var was := play
 		var cursor := AssayScene.playout_at(play, ticks, frame, tick * bias, delay, now - landed, trim)
 		play = float(cursor["play_tick"])
@@ -1838,8 +2091,20 @@ func _drive_playout(bias: float, learn: bool, seconds := 12.0, judge_from := 3.0
 			var free := was + frame / (tick * bias) * float(cursor["rate"]) * float(cursor["trim"])
 			if free < oldest - 1e-9:
 				dragged += 1
+		# **AND THE FUNCTION'S OWN ANSWER BESIDE THIS LOOP'S, because a window now reads the
+		# function's** (ASSA-212: `main.gd::_play_dragged`). This harness has derived drag from its own
+		# copy of the advance since ASSA-197; the copy is what the suite's bars were measured against,
+		# so it stays, and `dragged_said` is the flag a probe will report. Two numbers that must
+		# agree, rather than one that replaced the other without being checked.
+		if bool(cursor["dragged"]):
+			dragged_said += 1
+		if play < 0.0:
+			waiting_on = oldest
 		if play >= 0.0 and started_at < 0.0:
 			started_at = now
+			start_depth_at = float(ticks[ticks.size() - 1]) - play
+			if waiting_on >= 0.0:
+				start_jump = absf(play - waiting_on)
 		# HOW FAR THE CLOCK ACTUALLY MOVED THIS FRAME, as a fraction of the host's true tick rate:
 		# the drawn speed of a body walking one tile a tick, which is the bar on ASSA-197.
 		var ratio := -1.0
@@ -1884,6 +2149,7 @@ func _drive_playout(bias: float, learn: bool, seconds := 12.0, judge_from := 3.0
 	return {
 		"starved": starved,
 		"dragged": dragged,
+		"dragged_said": dragged_said,
 		"frames": frames,
 		"depth_min": depth_min,
 		"depth_max": depth_max,
@@ -1899,6 +2165,9 @@ func _drive_playout(bias: float, learn: bool, seconds := 12.0, judge_from := 3.0
 		"trim_in": trim_in,
 		"settle_s": settle,
 		"settle90": settle90,
+		"start_jump": start_jump,
+		"freeze_s": started_at if started_at >= 0.0 else -1.0,
+		"start_depth": start_depth_at,
 	}
 
 
@@ -2338,4 +2607,266 @@ func test_no_sim_fact_in_this_file_is_read_with_a_default() -> bool:
 				return _fail(("scene_view.gd reads the sim fact `%s` as %s..., which invents a "
 						+ "value for state the sim did not send (ASSA-141)") % [String(key),
 						defaulted])
+	return true
+
+
+## **THE SUB-TILE OFFSET MUST SURVIVE TO `dest`, AND NO TEST WE OWNED COULD SEE IT FLOORED.**
+##
+## This is ASSA-197's lesson applied one layer up, and it is here because the Lead asked for it by
+## name: `test_a_walking_bodys_own_rectangle_moves_with_it_sub_tile` catches a floor INSIDE `_place`,
+## and would stay green if the floor were in the scatter loop's own line. The scatter layer exists to
+## not read as a grid; quantising its props onto whole tiles turns nine rows of props back into a
+## repeating texture, which is the exact criticism ASSA-115 drew for the six ground variants.
+##
+## IT ASSERTS ON PIXELS, NOT ON MY READING OF THE CODE. The placed rectangle must differ from the
+## same prop placed on its whole tile by EXACTLY the offset `scatter_at` asked for; an `int()`,
+## a `round()` or a `Vector2i` anywhere on the path collapses that difference and this goes red.
+func test_scatter_offsets_are_sub_tile_and_reach_dest_unfloored() -> bool:
+	var manifest := _manifest()
+	if not manifest.has("scatter"):
+		return _fail("the shipped manifest has no `scatter` asset, so this layer cannot draw at all")
+	# IT ASKS `placements` AND NOT `_place`, AND THAT IS THE WHOLE POINT. My first version of this
+	# test called `_place` with a fractional corner and asserted the rectangle moved -- which is
+	# ASSA-197's property, already covered, and it stayed GREEN when I floored the scatter loop's own
+	# line. An instrument that cannot fail for the reason it was written. The Lead warned about this
+	# exact gap in the routing note and I built it anyway; what follows reads the drawn output.
+	var view := _view({"origin": Vector2(10.0, 10.0) * AssayScene.TILE_PX})
+	var origin: Vector2 = view["origin"]
+	var window := AssayScene.visible_tiles(origin, view["size"], view["world_tiles"])
+	var grown := Rect2i(window.position - Vector2i.ONE, window.size + Vector2i.ONE * 2)
+	grown = grown.intersection(Rect2i(Vector2i.ZERO, view["world_tiles"]))
+
+	# WHAT THE SCREEN SHOULD SHOW, and what it would show if the offset were thrown away.
+	var want := {}
+	var floored := {}
+	var movable := 0
+	for y in range(grown.position.y, grown.end.y):
+		for x in range(grown.position.x, grown.end.x):
+			var at := Vector2i(x, y)
+			for prop in AssayScene.scatter_at(at):
+				var off: Vector2 = prop[1]
+				# SUB-TILE BY CONSTRUCTION: both jitter constants are peak-to-peak drawn px under a
+				# tile, so an offset at or past 32 px would draw a prop on a tile that never asked.
+				if absf(off.x) >= AssayScene.TILE_PX or absf(off.y) >= AssayScene.TILE_PX:
+					return _fail("scatter offset %s at %s is a whole tile or more" % [off, at])
+				var moved: Dictionary = AssayScene._place(manifest, "scatter", prop[0],
+						Vector2(at) + off / AssayScene.TILE_PX, origin, Color.WHITE, 0.0)
+				var still: Dictionary = AssayScene._place(manifest, "scatter", prop[0],
+						Vector2(at), origin, Color.WHITE, 0.0)
+				if moved.is_empty() or still.is_empty():
+					return _fail("scatter row %s did not place at all" % String(prop[0]))
+				var a := (moved["dest"] as Rect2).position
+				var b := (still["dest"] as Rect2).position
+				want[_at_key(a)] = true
+				floored[_at_key(b)] = true
+				if absf(a.x - b.x) > 0.5 or absf(a.y - b.y) > 0.5:
+					movable += 1
+	# THE TEETH: unless some props are drawn more than half a pixel off their tile, "unfloored" and
+	# "floored" are the same picture and nothing below could tell them apart.
+	if movable < 20:
+		return _fail(("only %d of the scatter props in this window sit more than 0.5 px off their "
+				+ "tile, so this test cannot tell a floored layer from an unfloored one") % movable)
+
+	var drawn := _of(AssayScene.placements(view), "scatter")
+	if drawn.size() < 20:
+		return _fail("placements drew %d scatter props in a full window: too few to judge"
+				% drawn.size())
+	# ONE BUCKET, NOT TWO. An earlier version sorted misplacements into "on its bare tile" and
+	# "somewhere else", which was complexity for nothing: a truncation toward zero lands on `at - 1`
+	# for a negative offset, so the tidy "bare tile" case is not even the common one. Every drawn
+	# prop must be exactly where its own offset puts it; anything else is the defect.
+	for place in drawn:
+		var dest: Rect2 = (place as Dictionary)["dest"]
+		if want.has(_at_key(dest.position)):
+			continue
+		var bare := floored.has(_at_key(dest.position))
+		return _fail(("a scatter prop is drawn at %s, which is not where its sub-tile offset puts "
+				+ "it (%s). The offset is being quantised on the way to the screen, which puts the "
+				+ "whole layer back on the tile grid and makes it read as a repeating texture "
+				+ "rather than as scattered props (ASSA-197).") % [dest.position,
+				"its bare tile" if bare else "nor on its bare tile"])
+	return true
+
+
+## A DRAWN POSITION AS A KEY, ROUNDED TO 0.01 px. `Vector2` is float32 and the offset makes the round
+## trip `tile + px/32` then `* 32`, so the answer comes back ~1e-5 px out -- tighter than the type the
+## engine draws with, and far below the whole-pixel error this is looking for.
+func _at_key(at: Vector2) -> String:
+	return "%.2f,%.2f" % [at.x, at.y]
+
+
+## **SCATTER MAY NEVER COVER A DEPOSIT.** Ore is one of the two things in this game you can act on;
+## a prop drawn over it hides the thing the whole layer is forbidden to compete with (ASSA-202 box 3).
+## **ORE SITS BESIDE THE PROPS, NOT UNDER THEM, AND THAT IS THE WHOLE REPAIR.** The first version of
+## this test put a deposit on every tile that HAD a prop, so `placements` skipped exactly the ore
+## tiles and the loop below ran over props that could not have been on ore whatever the code did.
+## Nerite's QA note on ASSA-210 named it: "a probe that jitters a prop from a non-ore tile onto an
+## adjacent ore tile is not covered." It was worse than that -- the old fixture could not produce an
+## adjacency at all, so the ONE case the test exists for was the one case it never built.
+##
+## IT ALSO MEASURED THE WRONG TILE. `dest.position / TILE_PX` floored is the FRAME's top-left, and
+## `scatter`'s `anchor_px` is `[0, 20]` = 10 drawn px of headroom, so for every prop less than 0.3125
+## of a tile down its own tile that answer was the row NORTH. Mine, shipped, and not a close call.
+##
+## SO THERE ARE TWO DIFFERENT PROMISES HERE AND THEY NEEDED SEPARATING:
+## 1. **No prop is PLACED on a deposit tile** -- the `ore.has(at)` skip, asserted on the tile the
+##    offset rounds back to (the offsets are sub-tile, so the nearest tile is the one that asked).
+## 2. **A prop's INK may lap onto a neighbouring deposit, and the ore is drawn over it.** This is not
+##    a bound, it is draw order: a prop is 32x42 drawn px with up to 9 px of jitter, so it ALWAYS
+##    laps 10 px onto the tile to its north and laps sideways whenever the offset leans that way.
+##    The layer is appended before the ore loop and `world_layer.gd` draws FLOOR in array order, so
+##    ore paints over the lap. Move the scatter loop below the ore loop and part 2 goes red.
+func test_scatter_never_lands_on_an_ore_tile() -> bool:
+	var manifest := _manifest()
+	var ore := {}
+	var props := 0
+	for y in range(0, 20):
+		for x in range(0, 20):
+			var at := Vector2i(x, y)
+			if AssayScene.scatter_at(at).is_empty():
+				continue
+			props += 1
+			# EAST OF A PROP, AND ONLY WHERE NOTHING IS DRAWN. Ore on a prop's own tile would
+			# suppress that prop and put the fixture back where it started.
+			for side: Vector2i in [Vector2i.RIGHT, Vector2i.DOWN]:
+				var beside: Vector2i = at + side
+				if AssayScene.scatter_at(beside).is_empty():
+					ore[beside] = {"species": 0, "grade": "C", "depleted": false,
+							"purity": 50}
+	if props < 30 or ore.size() < 30:
+		return _fail(("fixture holds %d props and %d deposits beside them: too few to see a prop "
+				+ "lean onto a deposit") % [props, ore.size()])
+
+	var view := _view({"ore": ore})
+	var places := AssayScene.placements(view)
+	var first_ore := -1
+	var last_scatter := -1
+	var lapping := 0
+	for i in range(places.size()):
+		var place: Dictionary = places[i]
+		if int(place.get("layer", AssayScene.FLOOR)) != AssayScene.FLOOR:
+			continue
+		var asset := String(place.get("asset", ""))
+		if asset == "ore" and first_ore < 0:
+			first_ore = i
+		if asset != "scatter":
+			continue
+		last_scatter = i
+		var dest: Rect2 = place["dest"]
+		# PART 1: the tile that asked for this prop. `round`, not `floor`: both jitter constants
+		# are under half a tile peak-to-peak, so the nearest tile is the source and the floor is
+		# the source MINUS ONE for every negative offset -- about three props in four.
+		var corner := _scatter_corner(manifest, dest, view["origin"])
+		var tile := Vector2i(corner.round())
+		if ore.has(tile):
+			return _fail(("a scatter prop is placed on ore tile %s (drawn corner %s). Ore is one "
+					+ "of the two things in this game you can act on; the layer may not sit on "
+					+ "it.") % [tile, corner])
+		for step: Vector2i in [Vector2i.ZERO, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.UP,
+				Vector2i.LEFT]:
+			var near: Vector2i = tile + step
+			if not ore.has(near):
+				continue
+			if dest.intersects(Rect2(Vector2(near) * AssayScene.TILE_PX - view["origin"],
+					Vector2.ONE * AssayScene.TILE_PX)):
+				lapping += 1
+				break
+	# PART 2'S PREMISE, STATED BEFORE IT IS USED. If no prop's ink reaches a deposit then the draw
+	# order below is guarding nothing and this test is quietly empty again.
+	if lapping < 10:
+		return _fail(("only %d props put ink on a neighbouring deposit, so this cannot tell whether "
+				+ "the ore is drawn over the lap") % lapping)
+	if first_ore < 0:
+		return _fail("no ore was drawn at all beside %d props: the fixture is not reaching the view"
+				% props)
+	if last_scatter > first_ore:
+		return _fail(("a scatter prop is drawn at index %d, AFTER the first ore at %d. Both are "
+				+ "FLOOR and `world_layer.gd` draws FLOOR in array order, so %d props whose ink "
+				+ "laps onto a deposit would be painted ON TOP of it.") % [last_scatter, first_ore,
+				lapping])
+	return true
+
+
+## THE TILE COORDINATE A DRAWN SCATTER RECT CAME FROM: the exact inverse of `_place`, which is
+## `corner * TILE_PX - anchor_px * scale - origin`. Read out of the shipped manifest rather than
+## written here, because `anchor_px` is the art's to change and a number copied into a test is a
+## second source of truth that goes stale silently.
+func _scatter_corner(manifest: Dictionary, dest: Rect2, origin: Vector2) -> Vector2:
+	var spec: Dictionary = manifest["scatter"]
+	var authored := float((spec["frame_px"] as Array)[0]) / float((spec["tiles"] as Array)[0])
+	var scale := AssayScene.TILE_PX / authored
+	var anchor: Array = spec["anchor_px"]
+	var back := Vector2(float(anchor[0]), float(anchor[1])) * scale
+	return (dest.position + back + origin) / AssayScene.TILE_PX
+
+
+## **EVERY ROW THE PICKER CAN CHOOSE IS IN THE SHEET, AND EVERY ROW IN THE SHEET'S LISTS IS
+## REACHABLE.** Maren's builder trap on ASSA-202: the landmark picker was `_fnv([x, y, 8]) % 6` in
+## the Python hand-off, a hardcoded literal, and the moment the tuft rows left `SCATTER_LARGE` a
+## four-row list read with `% 6` either errors or mis-distributes. A modulus smaller than the list
+## is the silent half of that, and it looks like nothing: the last rows simply never appear.
+##
+## AND THE TUFTS ARE ASSERTED TO BE STILL IN THE SHEET AND STILL UNUSED. That is the ruling in a
+## form that can fail: Maren said "do not re-render the tuft, its rows stay in the sheet" for a
+## ground-cover tier we have not designed, so deleting the art and putting tufts back among the
+## landmarks are both changes someone has to make on purpose.
+func test_every_scatter_row_is_in_the_sheet_and_every_row_is_reachable() -> bool:
+	var manifest := _manifest()
+	if not manifest.has("scatter"):
+		return _fail("the shipped manifest has no `scatter` asset")
+	var sheet := {}
+	for row in ((manifest["scatter"] as Dictionary)["rows"] as Array):
+		sheet[String((row as Dictionary).get("name", row))] = true
+	var listed := {}
+	for name in AssayScene.SCATTER_GRIT + AssayScene.SCATTER_LARGE:
+		if not sheet.has(name):
+			return _fail("scatter row %s is picked by the client and is not in scatter.png: %s"
+					% [name, sheet.keys()])
+		listed[name] = true
+	for tuft in ["tuft0", "tuft1"]:
+		if not sheet.has(tuft):
+			return _fail(("%s has gone from scatter.png. Maren ruled on ASSA-202 that the tuft "
+					+ "rows stay in the sheet for a later ground-cover tier even though they are "
+					+ "not landmarks; re-render it or change the ruling, not just the sheet")
+					% tuft)
+		if listed.has(tuft):
+			return _fail(("%s is back among the scatter lists. It clears the contrast floor and is "
+					+ "still not findable -- 106 px flat against a boulder's 214 in Maren's own "
+					+ "engine frames (ASSA-202 point 2, ruled 22:35)") % tuft)
+
+	var seen := {}
+	for y in range(-60, 60):
+		for x in range(-60, 60):
+			for prop in AssayScene.scatter_at(Vector2i(x, y)):
+				seen[String(prop[0])] = true
+	for name in listed:
+		if not seen.has(name):
+			return _fail(("row %s is in a scatter list and was drawn on none of 14,400 tiles, so "
+					+ "the picker cannot reach it -- a modulus that does not match the list's own "
+					+ "size (ASSA-202, Maren's builder trap)") % name)
+	for name in seen:
+		if not listed.has(name):
+			return _fail("row %s is drawn and is in neither scatter list" % name)
+	return true
+
+
+## **THE WINDOW IS GROWN ONE TILE, OR PROPS POP IN AT THE EDGE.** A prop is up to 42 drawn px tall
+## with 9 px of jitter, so a tile just off screen still puts ink on screen. Without the grow the ink
+## appears only once its own tile crosses the boundary, which is a visible pop as the camera moves.
+func test_scatter_is_drawn_for_tiles_just_outside_the_window() -> bool:
+	var manifest := _manifest()
+	var view := _view({"origin": Vector2(20.0 * AssayScene.TILE_PX, 20.0 * AssayScene.TILE_PX)})
+	var window := AssayScene.visible_tiles(view["origin"], view["size"], view["world_tiles"])
+	var outside := 0
+	for place in _of(AssayScene.placements(view), "scatter"):
+		var dest: Rect2 = (place as Dictionary)["dest"]
+		# `_scatter_corner` AND NOT A FLOOR OF `dest.position`, which is the frame's top-left and
+		# sits 10 drawn px above the tile -- it answered with the row to the north for a third of
+		# the props and that error is the same one the ore test above carried.
+		var tile := Vector2i(_scatter_corner(manifest, dest, view["origin"]).round())
+		if not window.has_point(tile):
+			outside += 1
+	if outside == 0:
+		return _fail(("no scatter prop comes from outside the visible window, so the one-tile grow "
+				+ "is not happening and props will pop in at the edge as the camera moves"))
 	return true

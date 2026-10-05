@@ -367,13 +367,13 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 		delay: float, since: float = 0.0, trim: float = PLAYOUT_TRIM_NONE) -> Dictionary:
 	if ticks.is_empty():
 		return {"play_tick": play_tick, "index": -1, "part": 1.0, "starved": true, "rate": 1.0,
-				"trim": trim, "depth": 0.0}
+				"trim": trim, "depth": 0.0, "dragged": false}
 	var newest := float(ticks[ticks.size() - 1])
 	var oldest := float(ticks[0])
 	var at := play_tick
 	var rate := 1.0
 	if at < 0.0:
-		# **THE CLOCK DOES NOT START UNTIL THE BUFFER IS `delay` TICKS DEEP**, and getting this wrong
+		# **THE CLOCK DOES NOT START UNTIL THE BUFFER IS DEEP ENOUGH TO PLAY OUT**, and getting this wrong
 		# is what a trace of a real walk caught (ASSA-197, `tools/playout_trace.gd`). This read
 		# `at = maxf(newest - delay, oldest)`, so with one position held it started the clock AT the
 		# newest -- zero buffer, exactly what the sentence below it forbids -- and the only way back
@@ -383,16 +383,58 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 		# this item is ZERO dry frames.
 		#
 		# So while the buffer is shallow the clock WAITS: the body is drawn on the oldest position
-		# held, the sim runs ahead, and nothing moves until there is `delay` of history to play out.
-		# That costs a quarter of a second of standing still at the start of a session and buys a
+		# held, the sim runs ahead, and nothing moves until there is enough history to play out.
+		# That costs a fifth of a second of standing still at the start of a session and buys a
 		# buffer the rest of the session spends.
-		if newest - oldest < delay:
+		#
+		# **AND IT WAITS FOR THE WHOLE `delay`, WHICH IS A HALF TICK OF STALL ABSORPTION AND NOT A
+		# ROUNDING** (ASSA-212). I shipped a tick shallower than this for an hour tonight, because
+		# `delay + LEAD - 1` is the deepest start whose loop error cannot be positive, so it never
+		# chases. What it gives up is absorption in exactly the window the transient lives in: it
+		# starts 2.0 ticks deep and grows to the target, where this starts 3.0 deep and comes down.
+		#
+		# **AND THE MEASUREMENT THAT SENT ME BACK DOES NOT PROVE WHAT I FIRST SAID IT DID.** A GUI run
+		# on the shallow rule went dry at the start (7 starved frames, buffer 0.00) with a 164 ms tick
+		# in the first second, and I wrote that down as the reason. Three runs of THIS rule then
+		# starved once too (3 frames) and hit 0.00 depth in two of three, at 16-20 host stalls of
+		# 164-248 ms per 9 s. **A stall of 1.6-2.5 ticks is bigger than the half tick between the two
+		# rules, so nothing here attributes a dry frame to the start depth and I am not claiming it.**
+		# The buffer stays because more absorption inside the transient is monotonically better and
+		# the chase's worst case is a tick misread nobody has measured since the pairing fix. The dry
+		# frames themselves are ASSA-208, the relay's own pacing on a Mac running six agents.
+		var start_depth := delay
+		if newest - oldest < start_depth:
 			# AND THE TRIM DOES NOT INTEGRATE WHILE THE CLOCK IS NOT RUNNING. The depth error is
 			# enormous here by design -- the buffer is deliberately filling -- and a term that learnt
 			# from it would come out of the join wound to its stop in the wrong direction.
-			return {"play_tick": PLAYOUT_UNSTARTED, "index": 0, "part": 0.0,
-					"starved": false, "rate": 1.0, "trim": trim, "depth": newest - oldest}
-		at = newest - delay
+			return {"play_tick": PLAYOUT_UNSTARTED, "index": 0, "part": 0.0, "starved": false,
+					"rate": 1.0, "trim": trim, "depth": newest - oldest, "dragged": false}
+		# **AND IT STARTS WHERE THE BODY ALREADY IS, WHICH IS `oldest`** (ASSA-212). This read
+		# `at = newest - delay`, and the branch above draws the waiting body on the OLDEST position
+		# held, so the frame the clock started on moved it from `oldest` to `newest - delay` in one
+		# step -- half a tile, **16 px at 32 px tiles**, in one frame. Maren measured 16 px and a
+		# 160 ms freeze in a real window with their own tool; the arithmetic here predicted the same
+		# number, which is how it was found. `oldest` is a position the sim produced, so ASSA-119 is
+		# untouched, and the clock begins on the same frame either way: no latency is bought or sold.
+		#
+		# **THE THREE CANDIDATES AND WHAT EACH COSTS, at the 14% tick misread this Mac produces and
+		# 90 fps** (`tools/start_jump_table.gd`, cold statistics from the first running frame):
+		#
+		#   start rule                        jump        freeze   drawn speed    starved/dragged
+		#   at = newest - delay (was)         0.50t 16px  311 ms   0.938-1.046    0 / 0
+		#   at = oldest, depth >= delay       0.00t  0px  311 ms   0.943-1.238    0 / 0
+		#   at = oldest, depth >= delay+LEAD-1 0.00t 0px  211 ms   0.888-1.045    0 / 0
+		#
+		# **ALL THREE COST SOMETHING AND THE MIDDLE ROW IS THE ONE THAT SHIPS.** The surplus half tick
+		# between `oldest` and where the loop settles has to be spent in one frame (a 16 px jump every
+		# player sees once), over time (this rule: up to +10% of rate for half a second, so 1.238 at a
+		# 14% tick misread and 1.284 at 30 fps, over the +/-25% the board's verdict uses) or out of the
+		# buffer (the third row: measured DRY frames on a stalling host). Wren ruled no jump beats a
+		# tight settle; Maren's bar is zero dry frames; so the chase is what is left, and its cost is
+		# a WORST CASE of a misread that current measurements put at 0.93-1.00 (trim median 0.992 on
+		# windows-latest, 0.933 on the loaded Mac), where the same rule reads 0.978-1.094. Pinned by
+		# `test_the_cost_of_a_jump_free_start_is_the_one_that_was_chosen` so it cannot grow quietly.
+		at = oldest
 	else:
 		# The error is in ticks and the correction is in rate. `PLAYOUT_CATCHUP` decides how hard we
 		# lean on it and `PLAYOUT_NUDGE` caps it, so the worst speed error this clock can introduce
@@ -408,6 +450,13 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 				1.0 - PLAYOUT_TRIM_MAX, 1.0 + PLAYOUT_TRIM_MAX)
 		at += dt / maxf(step, MIN_PLAYOUT_STEP) * rate * trim
 	var starved := at > newest
+	# **AND THE MIRROR OF STARVED, WHICH NOTHING IN A WINDOW COULD REPORT UNTIL NOW** (ASSA-212,
+	# Wren's gate (c)). A clock running slow falls behind until the queue cap evicts history it has
+	# not played yet, and then the clamp below DRAGS the drawn body forward to catch the tail -- a
+	# jump, out of a loop that never starved once. `tests/test_scene_view.gd::_drive_playout` has
+	# counted it against its own copy of the rule since ASSA-197; a real window had no way to say it,
+	# so the probe's only answer to "did the body jump" was the size of its own steps.
+	var dragged := play_tick >= 0.0 and at < oldest - 1e-9
 	at = clampf(at, oldest, newest)
 	var index := 0
 	while index + 1 < ticks.size() and float(ticks[index + 1]) <= at:
@@ -417,7 +466,7 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 		var span := float(ticks[index + 1] - ticks[index])
 		part = clampf((at - float(ticks[index])) / maxf(span, 1.0), 0.0, 1.0)
 	return {"play_tick": at, "index": index, "part": part, "starved": starved, "rate": rate,
-			"trim": trim, "depth": newest - at}
+			"trim": trim, "depth": newest - at, "dragged": dragged}
 
 
 static func playout(seg_at: float, step_seconds: float, now: float, arrived: Array[float],
@@ -509,6 +558,137 @@ static func ground_row(manifest: Dictionary, at: Vector2i) -> String:
 		if w > 0 and h > 0 and w * h <= rows:
 			return "v%d" % (posmod(at.y, h) * w + posmod(at.x, w))
 	return "v%d" % variant_of(at, rows)
+
+
+## THE SECOND GROUND LAYER (ASSA-202/210): non-interactive props keyed by the tile coordinate.
+##
+## WHY IT EXISTS, measured rather than felt: 96.3% of the player's view is one material, and the
+## ground is worse than low-variance -- `manifest.ground.block == [8, 8]` is placed BY POSITION, so
+## the picture repeats every 8 tiles = 256 drawn px. The map rect is 912 px = 28.5 tiles, so ONE
+## SCREEN HOLDS 3.5 COPIES OF THE SAME PICTURE and two screens 16 tiles apart are pixel-identical
+## (100.00% over 193,800 px, measured on a real window shot). There is nothing to navigate by
+## because there is literally nothing new to see.
+##
+## SO THIS LAYER IS KEYED BY A HASH AND NEVER BY A BLOCK. A second block would just add a second
+## lattice on another period; a hash is aperiodic, so it cannot be caught repeating. `_scatter_unit`
+## is `variant_of`'s own FNV widened to take a salt, which is also why every peer draws the same
+## props with nothing crossing the wire.
+##
+## TWO SCALES, because the placement study said one was not enough: uniform small props make two
+## places look like the same place, since statistically they ARE. GRIT is regional texture, clumped
+## by a low-frequency field; LARGE is the rare thing you can walk back to. Maren's census of the
+## shipped frames counted 9 landmark props here and 7 twenty tiles east; the roll below is what
+## produces those counts and dropping rows from the list does not change them (see `SCATTER_LARGE`).
+const SCATTER_GRIT := ["grit0", "grit1", "grit2"]
+## **`tuft0`/`tuft1` ARE IN THE SHEET AND ARE DELIBERATELY NOT IN THIS LIST** (Maren, ASSA-202
+## point 2, 22:35). They clear her contrast floor and are still not landmarks: in her own engine
+## frames the five props measure p50 dE 17.4-19.7 -- FLAT across the whole set -- while area spans
+## 3.7x (tuft 106/107 px against boulder 214 and log 358/396) and internal lightness 2.7x (L* sd
+## 3.9/4.2 against 9.0-10.8). A bar returning the same value for a findable prop and an unfindable
+## one is not the bar for findability: **contrast is not findability, and a per-pixel median cannot
+## see mass.** Neither of us can find either tuft at 1x in a frame where every boulder is obvious.
+##
+## WHY THE RATE DOES NOT MOVE WITH THE LIST. `SCATTER_LARGE_ODDS` is ONE roll deciding WHETHER a
+## landmark lands; the list only decides WHICH. So its length never set the landmark rate -- it set
+## what fraction of landmarks are findable, and at six rows that was 4/6. The visible supply was
+## 1/80 x 4/6 = 1/120, about 4.1 a screen against the ~6 the ruling asked for. Dropping two rows at
+## an unchanged 1/80 inflates nothing; it finally pays the ruling. I recommended 1/120 and Maren
+## overruled it with this arithmetic, which is hers and is right.
+##
+## THE ROWS STAY IN `scatter.png` ON PURPOSE. A ground-cover tier that draws them at grit's rate is
+## a later call and nobody is asking for it now; the sheet keeps the art until we do.
+const SCATTER_LARGE := ["boulder0", "boulder1", "log0", "log1"]
+## NOT THE RATE, AND THE NAME SAYS SO. 0.24 is the UNIFORM rate the clumped field was calibrated
+## AGAINST in the placement study -- a null, not a density. Maren ruled on it directly: "do not move
+## the world to match a constant's name; fix the name."
+const SCATTER_GRIT_UNIFORM_NULL := 0.24
+## WHAT IT ACTUALLY DRAWS, counted over all 57,600 tiles of a 240x240 world rather than derived:
+## 0.1525/tile = 81.5 props per 912x600 screen. `SCATTER_FIELD_GAIN` restores 63.1% of the null
+## world-wide (93.7% over the 464 tiles it was tuned on, which is why it is not 100%). QUOTE THIS
+## ONE. Unused by the code on purpose: it is a measurement, not a lever.
+const SCATTER_GRIT_REALISED := 0.1525
+## ONE ROLL, AND IT DECIDES *WHETHER*, NEVER *WHICH*. Realised 0.0124/tile = 6.3 landmark props per
+## 504-tile screen, and since the tuft rows left `SCATTER_LARGE` all 6.3 of them are findable; it was
+## 4.2 before. UNCHANGED BY THE LIST ON PURPOSE -- see `SCATTER_LARGE`.
+const SCATTER_LARGE_ODDS := 1.0 / 80.0
+const SCATTER_FIELD_CELL := 12           # tiles per density-field cell
+const SCATTER_FIELD_GAIN := 2.77
+const SCATTER_FIELD_SHAPE := 2.6
+## DRAWN px, peak-to-peak, at TILE_PX 32. Without a sub-tile offset nine rows would read as nine
+## visible repeats on a grid -- the exact criticism levelled at the six ground variants in ASSA-115.
+const SCATTER_JITTER_GRIT := 18.0
+const SCATTER_JITTER_LARGE := 10.0
+
+
+## FNV-1a over a tile coordinate and a SALT. `variant_of` is this same hash without the salt, and
+## this cannot reuse it because every independent decision on a tile -- draw at all? which row? how
+## far off centre? -- needs its own stream, or they correlate and the props line up.
+##
+## THE RAW HASH AND THE UNIT FLOAT ARE BOTH NEEDED AND ONLY ONE IS THE TRUTH. A row index is taken
+## from the integer, because `% 3` on the unit float would throw away the low bits the division
+## already dropped; a probability is taken from the float.
+static func _scatter_hash(at: Vector2i, salt: int) -> int:
+	var hash := 2166136261
+	for part in [at.x, at.y, salt]:
+		for byte in range(4):
+			hash = (hash ^ ((int(part) >> (byte * 8)) & 255)) * 16777619 & 0xFFFFFFFF
+	return hash
+
+
+static func _scatter_unit(at: Vector2i, salt: int) -> float:
+	return float(_scatter_hash(at, salt) >> 8) / float(0xFFFFFF)
+
+
+## THE LOW-FREQUENCY DENSITY FIELD: value noise on a 12-tile lattice, smoothstepped, so there are
+## stony stretches and bare ones instead of an even rash. Per 12x12 cell the grit runs min 0 / p10 7
+## / median 20 / p90 39 / max 64 where a uniform field at the same realised rate puts 22 in every one.
+##
+## `floori` and `posmod`, NEVER `/` and `%`: a tile coordinate goes negative, and truncating division
+## folds the negative quadrant onto the wrong cell. That is not a style note -- it moves 2,222 of the
+## 4,483 props in the control this file is diffed against.
+static func _scatter_field(at: Vector2i) -> float:
+	var gx := floori(float(at.x) / float(SCATTER_FIELD_CELL))
+	var gy := floori(float(at.y) / float(SCATTER_FIELD_CELL))
+	var fx := float(posmod(at.x, SCATTER_FIELD_CELL)) / float(SCATTER_FIELD_CELL)
+	var fy := float(posmod(at.y, SCATTER_FIELD_CELL)) / float(SCATTER_FIELD_CELL)
+	fx = fx * fx * (3.0 - 2.0 * fx)
+	fy = fy * fy * (3.0 - 2.0 * fy)
+	var c00 := _scatter_unit(Vector2i(gx, gy), 99)
+	var c10 := _scatter_unit(Vector2i(gx + 1, gy), 99)
+	var c01 := _scatter_unit(Vector2i(gx, gy + 1), 99)
+	var c11 := _scatter_unit(Vector2i(gx + 1, gy + 1), 99)
+	var top := c00 + (c10 - c00) * fx
+	var bot := c01 + (c11 - c01) * fx
+	return top + (bot - top) * fy
+
+
+## WHAT ONE TILE CARRIES: `[[row, px_offset], ...]`. Tile coordinate in, nothing else -- no sim
+## field, no `SAVE_VERSION`, no golden hash, no frame counter.
+##
+## THE SALTS ARE PART OF THE SPEC, not an implementation detail: 10 draw-grit, 11 which-grit, 20/21
+## grit offset, 7 draw-landmark, 8 which-landmark, 22/23 landmark offset, 99 the field. Change one
+## and this is a different world. Nothing saved disagrees, but two clients in a session would draw
+## two different fields, which is ASSA-115's "three players, three grounds" one layer up.
+##
+## `px_offset` IS A `Vector2` AND MUST STAY ONE all the way to `dest`. ASSA-197: `_place` took a
+## `Vector2i` corner until it was fixed, so every body was drawn on a whole-tile grid while the
+## camera slid continuously under it. An `int()` or a `round()` here would quantise every prop onto
+## the tile grid and this layer would read as a repeating texture rather than as scattered objects --
+## which is the one thing it exists to not be. `test_scatter_offsets_are_sub_tile_and_reach_dest`
+## fails if it is floored.
+static func scatter_at(at: Vector2i) -> Array:
+	var out: Array = []
+	var density := minf(1.0, SCATTER_FIELD_GAIN * SCATTER_GRIT_UNIFORM_NULL
+			* pow(_scatter_field(at), SCATTER_FIELD_SHAPE))
+	if _scatter_unit(at, 10) < density:
+		out.append([SCATTER_GRIT[_scatter_hash(at, 11) % SCATTER_GRIT.size()],
+				Vector2((_scatter_unit(at, 20) - 0.5) * SCATTER_JITTER_GRIT,
+						(_scatter_unit(at, 21) - 0.5) * SCATTER_JITTER_GRIT)])
+	if _scatter_unit(at, 7) < SCATTER_LARGE_ODDS:
+		out.append([SCATTER_LARGE[_scatter_hash(at, 8) % SCATTER_LARGE.size()],
+				Vector2((_scatter_unit(at, 22) - 0.5) * SCATTER_JITTER_LARGE,
+						(_scatter_unit(at, 23) - 0.5) * SCATTER_JITTER_LARGE)])
+	return out
 
 
 ## WHICH ROW OF `ore.png` A TILE OF A DEPOSIT GETS.
@@ -686,7 +866,36 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 				place["layer"] = FLOOR
 				out.append(place)
 
+	# THE SECOND GROUND LAYER (ASSA-210), between the ground and the ore it may not sit on.
+	#
+	# `ore` is read above this loop rather than below it, because this loop needs it: ore is one of
+	# the two things in this game you can act on, so scatter may never cover a deposit tile.
+	# Buildings need no such skip -- they are `standing` and sort over FLOOR by construction.
+	#
+	# THE WINDOW IS GROWN ONE TILE ON EVERY SIDE, then re-clipped to the world. A prop is 32x42 drawn
+	# px with up to 9 px of jitter, so a tile just off screen still puts ink on screen; without the
+	# grow, props pop into existence at the edge as the camera moves. Clipping to the world keeps the
+	# promise `visible_tiles` makes -- nothing ever asks about a tile the sim does not have.
 	var ore: Dictionary = view["ore"]
+	var grown := Rect2i(window.position - Vector2i.ONE, window.size + Vector2i.ONE * 2)
+	grown = grown.intersection(Rect2i(Vector2i.ZERO, world))
+	for y in range(grown.position.y, grown.end.y):
+		for x in range(grown.position.x, grown.end.x):
+			var at := Vector2i(x, y)
+			if ore.has(at):
+				continue
+			for prop in scatter_at(at):
+				# THE OFFSET STAYS FRACTIONAL ALL THE WAY TO `dest`. `corner` is in TILES and may be
+				# fractional since ASSA-197, so a drawn-pixel offset is a division and NOT a new
+				# parameter: `_place` already expresses this exactly. An `int()` or `round()` on this
+				# line puts every prop back on the tile grid, which no existing test can see.
+				var corner := Vector2(at) + (prop[1] as Vector2) / TILE_PX
+				var place := _place(manifest, "scatter", prop[0], corner, origin,
+						Color.WHITE, seconds)
+				if not place.is_empty():
+					place["layer"] = FLOOR
+					out.append(place)
+
 	for key in ore:
 		var at: Vector2i = key
 		var tile: Dictionary = ore[key]
