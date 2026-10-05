@@ -163,14 +163,34 @@ func species_names() -> PackedStringArray:
 ## (ASSA-43/52). The order is the sim's because which stopped machine matters most depends on what
 ## the player is doing next, which this side cannot know.
 ##
-## THE COUNT IS `size()`. There is deliberately no second field carrying it: the Game Director ruled
-## the total must never truncate while the reasons are bounded by the column's height, and two copies
-## of one quantity are free to disagree.
+## **THE COUNT IS `halt_summary()` BELOW, AND IT IS NOT `size()`** (ASSA-94). This said "the count is
+## `size()`" and that was not a convention I was choosing, it was a sentence this side cannot write:
+## the ruled total is "N of M buildings stopped", and **M -- how many buildings exist at all -- is
+## nowhere in this list.** `size()` is N. A client that wanted the ruled sentence would have had to go
+## and count the world's buildings itself, which is the second claim the next paragraph forbids.
+##
+## Its other half stands and is why the summary is read rather than composed: two copies of one
+## quantity are free to disagree.
 ##
 ## EMPTY IS THE HEALTHY STATE AND DRAWS NOTHING. A surface that said "0 stopped" would cry wolf the
 ## way `idle: nothing to refine` would.
 func halt_lines() -> PackedStringArray:
 	return _sim.halt_lines() if _sim != null else PackedStringArray()
+
+
+## **HOW MANY OF THEM THERE ARE, IN THE SIM'S OWN WORDS**: "3 of 5 buildings stopped", or "" when
+## nothing has (ASSA-94). `sim::debug::halt_summary`, which is also `halted`'s first line in the
+## terminal -- one wording, two surfaces.
+##
+## THE GAME DIRECTOR'S RULING THIS SERVES: the count is the floor and must never be truncated, the
+## reasons are the extra and are bounded by the space there is. A player who reads "3 stopped" and can
+## see one reason knows there are two more to find; a player who sees one reason and no count does not
+## know anything is missing.
+##
+## EMPTY IS THE INSTRUCTION, NOT A MISSING VALUE -- there is no number to draw in the healthy case, so
+## a caller cannot render "0 of 2 buildings stopped" by accident.
+func halt_summary() -> String:
+	return String(_sim.halt_summary()) if _sim != null else ""
 
 
 ## EVERY ACTIVITY ONE PLAYER HAS RUNNING (ASSA-95), one worded line each, in `step`'s own system

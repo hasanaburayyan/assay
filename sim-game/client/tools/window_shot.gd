@@ -35,6 +35,11 @@ extends SceneTree
 ##                    without one check in this file being able to see it -- they are all about the
 ##                    HUD column, and to them the map is pixels. Written with
 ##                    `08-whole-world-marks.json`, the geometry the frame was painted from.
+##  - `10-stopped.png` **THE FACTORY HALTED, AND ONLY THIS LOOP'S WORST MOMENT OF IT** (ASSA-94).
+##                    Like 04, a moment the tool NOTICES rather than a state anyone asks for, and for
+##                    a sharper reason: the demo loop RESOLVES every stall it causes, so the condition
+##                    exists for a few ticks in the middle of the play and no tick anyone picked lands
+##                    on it. Absent when nothing stalled, which `_report` says in words either way.
 ##
 ## THE LOG SHOT IS NOT OPTIONAL AND IT IS WHY `_shoot` REFUSES A REPEAT. The board's complaint is
 ## "logs are hard on the eyes", and the played session ENDS with the log hidden and the menu open --
@@ -103,7 +108,8 @@ const DEFAULT_SEED := "777042"
 ## shorter walk, because a pair shot from the wrong row is a pair that answers nothing.
 const NORTH_WALK_TICKS := 600
 
-enum Phase { SETTLE_JOIN, SHOOT_JOIN, PLAY, SETTLE_PACK, SHOOT_PACK, SETTLE_PLAY, SHOOT_PLAY,
+enum Phase { SETTLE_JOIN, SHOOT_JOIN, PLAY, SETTLE_PACK, SHOOT_PACK, SETTLE_HALT, SHOOT_HALT,
+		SETTLE_PLAY, SHOOT_PLAY,
 		SETTLE_FOLD, MEASURE_CONTROLS, SETTLE_MENUS, SHOOT_MENUS, SCROLL_ROCKS, SETTLE_ROCKS,
 		SHOOT_ROCKS, WALK_NORTH, SETTLE_NORTH_LOG, SHOOT_NORTH_LOG, SETTLE_NORTH_CLEAR,
 		SHOOT_NORTH_CLEAR, WALK_OFF, PRESS_V, SETTLE_SCHEMATIC, SHOOT_SCHEMATIC, PRESS_K,
@@ -155,6 +161,13 @@ var _left := 0
 ## High-water mark of pack rows + crafting rows, and the tick it was reached on. See `04-pack.png`.
 var _rows_best := 0
 var _rows_tick := -1
+## **THE MOST BUILDINGS EVER STOPPED AT ONCE IN THIS PLAY, and the tick it happened on** (ASSA-94).
+## The same high-water shape as `_rows_best` and for a sharper reason: a stall is a CONDITION that
+## this loop RESOLVES -- it inserts the fuel that was missing -- so the stopped block exists only
+## mid-play and every shot taken at a tick somebody picked lands after it. Left at 0 when nothing
+## ever stalled, which is a legitimate outcome of a seed and is reported rather than failing the run.
+var _halt_best := 0
+var _halt_tick := -1
 ## WHERE EVERY CONTROL STOOD BEFORE THE LOG WAS OPENED (ASSA-147). Keyed by node path so two buttons
 ## reading "Craft" cannot be mistaken for one, and taken with the crafting menu already folded so the
 ## only difference between this and the after reading is the log. See `_controls_report`.
@@ -368,6 +381,16 @@ func _process(_delta: float) -> bool:
 			# a fullest-pack picture whose pack is below the fold is worth nothing to ASSA-117.
 			_shoot("04-pack.png", PackedStringArray(["you", "crafting menu"]), false)
 			_phase = Phase.PLAY
+		Phase.SETTLE_HALT:
+			_settle(Phase.SHOOT_HALT)
+		Phase.SHOOT_HALT:
+			# THE SUBJECT IS THE BLOCK ITSELF, for `04-pack.png`'s reason: a picture of a stopped
+			# factory whose `stopped` block is below the fold is worth nothing to the ruling this shot
+			# exists to make possible. `guard_repeat` is false for the same reason as 04 -- it is
+			# re-taken whenever MORE machines are stopped at once, so a duplicate frame is a fact
+			# about the play (the worst moment was also the last) and not a state asked for twice.
+			_shoot("10-stopped.png", PackedStringArray(["stopped"]), false)
+			_phase = Phase.PLAY
 		Phase.SETTLE_PLAY:
 			_settle(Phase.SHOOT_PLAY)
 		Phase.SHOOT_PLAY:
@@ -448,7 +471,11 @@ func _process(_delta: float) -> bool:
 			_shot_buildings = _screen._sim.buildings()
 			_schematic_marks = _screen._building_marks(_shot_buildings)
 			_shot_deposits = _screen._sim.deposits()
-			_letter_marks = _screen._glyph_marks(_shot_deposits, ThemeDB.fallback_font)
+			# THE BUILDING MARKS GO IN, because since ASSA-218 box 9 they decide `bedded` -- which
+			# letters carry the eight stamps. Passing `[]` here would photograph a map whose letters
+			# all report `bedded: false`, and the marks table would then describe a frame nobody drew.
+			_letter_marks = _screen._glyph_marks(_shot_deposits, ThemeDB.fallback_font,
+					_schematic_marks)
 			_shoot("08-whole-world.png", PackedStringArray())
 			_write_marks_table()
 			_phase = Phase.PRESS_K
@@ -543,6 +570,21 @@ func _play_frames() -> void:
 			_rows_best = rows
 			_rows_tick = _screen._sim.tick()
 			_phase = Phase.SETTLE_PACK
+			return
+		# **AND THE OTHER HIGH-WATER MARK: THE MOST MACHINES EVER STOPPED AT ONCE** (ASSA-94). Read
+		# off `halt_lines()` -- the sim's own standing answer -- for exactly the reason the rows above
+		# are read off the sim: the `stopped` panel's text is what this shot is evidence ABOUT, so
+		# asking the panel whether it has rows would be asking the thing under test.
+		#
+		# A TICK COULD NOT HAVE DONE THIS. The demo loop resolves every stall it causes, so the
+		# condition lasts a handful of ticks somewhere in the middle of a 519-tick play and no tick
+		# anyone picked lands on it. That is why Maren's "ask me with a screenshot and I will choose
+		# in one sentence" had been unanswerable since 10-03.
+		var stopped := _halt_now()
+		if stopped > _halt_best:
+			_halt_best = stopped
+			_halt_tick = _screen._sim.tick()
+			_phase = Phase.SETTLE_HALT
 			return
 
 
@@ -691,6 +733,15 @@ func _rows_now() -> int:
 	return stacks.size() + offers.size()
 
 
+## HOW MANY BUILDINGS THE SIM SAYS ARE STOPPED RIGHT NOW (ASSA-94). `sim::debug::halt_lines` through
+## the binding -- one line per stopped building, and `idle: nothing to refine` is not one of them,
+## which is the sim's call and not this tool's.
+func _halt_now() -> int:
+	if _screen._sim == null or not _screen._sim.running():
+		return 0
+	return _screen._sim.halt_lines().size()
+
+
 func _end_play() -> void:
 	if _play.failed != "":
 		_finish(false, "the loop stopped: %s" % _play.failed)
@@ -763,6 +814,8 @@ func _shoot(name: String, subjects: PackedStringArray, guard_repeat := true) -> 
 			seen.size(), fingerprint.substr(0, 12)]
 	if name == "04-pack.png":
 		line += "  %d rows at tick %d" % [_rows_best, _rows_tick]
+	if name == "10-stopped.png":
+		line += "  %d stopped at tick %d" % [_halt_best, _halt_tick]
 	_shots.append(line)
 	# THE SUBJECT CHECK, at the moment of the shot, because the geometry is only true then: 04 is
 	# taken mid-play and the column it photographs is a different height by the end.
@@ -833,16 +886,18 @@ func _shoot(name: String, subjects: PackedStringArray, guard_repeat := true) -> 
 ## stopped (Maren: "a count of zero is not drawn"), so `hidden` is the correct and commonest reading
 ## and must not fail a run.
 ##
-## **AND ON THIS LOOP IT IS ALWAYS `hidden`, WHICH IS THE USEFUL THING THIS REPORT NOW SAYS.** I
-## first read the play's own `smelter 0 stopped: no fuel` and this section's rect as one observation
-## and nearly filed a defect: the surface built for discovery, hidden while a machine is stopped.
-## They are two different moments. That line is tick 88, between a Place and a Mine; the report is
-## taken at tick 481, by which time the loop has fuelled and smelted and NOTHING is stopped, so
-## `hidden` is correct. **The consequence stands on its own: no window shot we take can contain this
-## block**, because the demo loop resolves every stall it causes, and Maren's "ask me with a
-## screenshot and I will choose in one sentence" is therefore still unanswerable. Shooting on the
-## CONDITION is the fix, the way `04-pack.png` is re-taken on the fullest pack (ASSA-165) rather than
-## at a tick somebody picked.
+## **IT IS `hidden` IN EVERY SHOT TAKEN AT A TICK, AND THAT IS CORRECT.** I first read the play's own
+## `smelter 0 stopped: no fuel` and this section's rect as one observation and nearly filed a defect:
+## the surface built for discovery, hidden while a machine is stopped. They are two different
+## moments. That line is tick 88, between a Place and a Mine; the report is taken at tick 481, by
+## which time the loop has fuelled and smelted and NOTHING is stopped.
+##
+## **SO THE BLOCK IS NOW PHOTOGRAPHED ON THE CONDITION INSTEAD** -- `10-stopped.png`, re-taken
+## whenever more buildings are stopped at once, the way `04-pack.png` is re-taken on the fullest pack
+## (ASSA-165) rather than at a tick somebody picked. **This comment said "no window shot we take can
+## contain this block" until that shot existed, which was true for two days and is why Maren's "ask me
+## with a screenshot and I will choose in one sentence" went unanswered.** The fold report still reads
+## `hidden` for the tick-taken shots and that remains the correct and commonest reading.
 func _sections() -> Array:
 	return [["crafting menu", _screen._make], ["you", _screen._carrying], ["do", _screen._actions],
 			["bench", _screen._bench], ["rocks", _screen._species], ["cursor", _screen._cursor],
@@ -1321,8 +1376,10 @@ func _write_marks_table() -> void:
 	var people := []
 	for entry in _screen._sim.players():
 		var player: Dictionary = entry
-		var at: Vector2 = _screen.MARGIN + (Vector2(player["pos"] as Vector2i)
-				+ Vector2(0.5, 0.5)) * _screen._cell
+		# Through `point_of_tile` as well, and this one moves nothing: it already spelled the middle
+		# (ASSA-220). Converted for the same reason as `main.gd`'s player copy -- a correct copy sitting
+		# beside a wrong one is part of what made the wrong one look deliberate.
+		var at: Vector2 = _screen.point_of_tile(player["pos"] as Vector2i)
 		people.append({"id": int(player["id"]), "x": at.x, "y": at.y,
 				"w": AssayHud.PLAYER_MARK_PX, "h": AssayHud.PLAYER_MARK_PX, "shape": "rect"})
 	# **AND THE SPECIES LETTERS, BECAUSE ASSA-213 IS ONE MARK COVERING ANOTHER.** The box, the ink and
@@ -1360,9 +1417,17 @@ func _write_marks_table() -> void:
 		var disc: Dictionary = AssayHud.deposit_disc(deposit, radius)
 		var fill: Color = disc["colour"]
 		var glyph_ink: Color = disc["ink"]
+		# **THE SCREEN'S OWN ANSWER FOR WHERE THAT TILE IS, NOT A THIRD COPY OF IT** (ASSA-220). These two
+		# lines spelled `MARGIN + tile * _cell` -- the tile's CORNER -- and so did the two draws in
+		# `main.gd` they were describing. That is the whole reason the half-tile error was invisible for
+		# as long as it was: THE INSTRUMENT AGREED WITH THE DEFECT. Every disc centre measured off
+		# `08-whole-world-marks.json` (Cove's disc 9 at (690, 420), Maren's edge-bar control, my own
+		# cap-box numbers) came out of this expression, so had `main.gd` been fixed alone, this file would
+		# have gone on reporting a centre the screen no longer draws and every number downstream would
+		# have been wrong by 4.5 px with nothing red.
+		var at: Vector2 = _screen.point_of_tile(tile)
 		discs.append({"symbol": String(deposit["symbol"]), "tile": [tile.x, tile.y],
-				"x": _screen.MARGIN.x + float(tile.x) * _screen._cell,
-				"y": _screen.MARGIN.y + float(tile.y) * _screen._cell, "r": radius,
+				"x": at.x, "y": at.y, "r": radius,
 				"purity": int(deposit["purity"]), "species": int(deposit["species"]),
 				"hatch": bool(disc["hatch"]), "fill": [fill.r, fill.g, fill.b],
 				"ink": [glyph_ink.r, glyph_ink.g, glyph_ink.b],
@@ -1462,6 +1527,15 @@ func _letters_report() -> Dictionary:
 func _report() -> void:
 	for line in _shots:
 		print("  ", line)
+	# **SAID EVERY RUN, INCLUDING THE RUNS WHERE IT NEVER HAPPENED** (ASSA-94). `10-stopped.png` is
+	# taken on a CONDITION, so its absence has two completely different meanings -- "nothing stalled on
+	# this seed" and "something stalled and the shot did not fire" -- and a missing file cannot tell
+	# them apart. A reader who is not told reads the first and would be guessing.
+	if _halt_best > 0:
+		print("  stopped:  %d building(s) at once, tick %d -> 10-stopped.png"
+				% [_halt_best, _halt_tick])
+	else:
+		print("  stopped:  nothing stalled anywhere in this play, so no 10-stopped.png was taken")
 	_machine_report()
 	_fold_report()
 	# **FOUR LEGS, ALL MEASURED, NONE OF THEM ABLE TO END THE RUN** (ASSA-185). Every one of these ran

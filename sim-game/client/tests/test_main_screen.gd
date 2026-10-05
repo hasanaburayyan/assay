@@ -517,7 +517,9 @@ func test_the_event_log_starts_hidden_behind_a_named_control() -> bool:
 func test_a_hidden_log_still_carries_its_lines() -> bool:
 	var screen := _screen()
 	var ok := true
-	var planted := PackedStringArray(["41 · you mined 2 ore", "42 · you started walking"])
+	# No `tick N ·` prefix since ASSA-222 — `_remember_events` no longer writes one, and a fixture
+	# that still carried it would be planting a line this client cannot produce.
+	var planted := PackedStringArray(["you mined 2 ore", "you started walking"])
 	screen._log_toggle.pressed.emit()
 	# PLANTED INTO THE MODEL AND DRAWN BY THE REAL REBUILD (ASSA-117). It used to set `_log.text`,
 	# which was a single Label's text and no longer exists -- the log is one Label per line now, so
@@ -1699,7 +1701,11 @@ func test_the_newest_log_line_is_the_brightest_and_the_oldest_is_still_readable(
 	var surface := _panel_surface()
 	var lines := PackedStringArray()
 	for i in 14:
-		lines.append("%d · event number %d" % [100 + i, i])
+		# NO `tick N ·` PREFIX, because `_remember_events` stopped writing one (ASSA-222, Maren's
+		# ruling). A fixture that still carried it would be measuring a line the client cannot
+		# produce -- and these tests are about WIDTH and dimming, so a stale prefix would quietly
+		# measure the wrong string length.
+		lines.append("event number %d" % i)
 	screen._events = lines
 	screen._rebuild_log()
 	var drawn: Array = screen._log.find_children("*", "Label", true, false)
@@ -1772,7 +1778,8 @@ func test_an_empty_log_says_nothing_has_happened_rather_than_nothing() -> bool:
 ##
 ## AND THE LINES ARE THE SIM'S, IN THE SIM'S ORDER. `sim::debug::halt_lines` is "every building that
 ## has stopped, one line each, worst-placed first in placement order"; this block may not sort,
-## re-word or count them.
+## re-word or count them. The total on the heading is the sim's own sentence and not this block's
+## arithmetic over the rows -- see the test below, which is what holds that apart.
 func test_what_has_stopped_is_pinned_outside_the_scroll_and_reads_verbatim() -> bool:
 	var screen := _screen()
 	var ok := true
@@ -1809,6 +1816,79 @@ func test_what_has_stopped_is_pinned_outside_the_scroll_and_reads_verbatim() -> 
 				ok = _fail("the smelter was fixed and the panel still says it is stopped")
 			elif screen._halt_lines != null:
 				ok = _fail("the lines are still in the block, one `visible` away from coming back")
+	screen.queue_free()
+	return ok
+
+
+## **THE STOPPED HEADING CARRIES A TOTAL THIS BLOCK COULD NOT HAVE WORKED OUT** (ASSA-94).
+##
+## The Game Director ruled the count the floor of this surface: *"a player who reads '3 machines
+## stopped' and can see one reason knows there are two more to find; a player who sees one reason and
+## no count does not know anything is missing."* The block declined one in a comment, on the correct
+## objection that a count would be a second claim about the world -- and the answer was never for the
+## client to count, it was to read the sentence the sim was already composing (`halt_summary`).
+##
+## **THE ASSERTION IS THAT THE HEADING HOLDS A NUMBER THE ROWS DO NOT CONTAIN, and that is the whole
+## design of this test.** Asserting `heading.text == summary` alone is nearly vacuous -- `summary` is
+## the argument that was just passed in. So the fixture is deliberately **2 stopped out of 7**: a
+## block counting its own rows can produce the 2 and can NEVER produce the 7, because how many
+## buildings exist is not in `halt_lines` at all. That is also the fact that made the old comment
+## wrong on the merits rather than on taste.
+func test_the_stopped_headings_total_is_one_this_block_could_not_have_counted() -> bool:
+	var screen := _screen()
+	var ok := true
+	var planted := PackedStringArray([
+		"smelter 3 at (12, 7) · walls stone · stalled: the fuel will not light",
+		"machine 1 at (4, 9) · nothing here to mine",
+	])
+	# Two stopped, SEVEN built. `planted.size()` is 2 and no arithmetic over these rows reaches 7.
+	var summary := "2 of 7 buildings stopped"
+	screen._rebuild_halt(planted, summary)
+	var heading: Label = null
+	for child in screen._halt.get_children():
+		if child is Label and (child as Label).theme_type_variation == &"Heading":
+			heading = child
+			break
+	if heading == null:
+		ok = _fail("the stopped block has no heading, so there is nowhere for the total to survive "
+				+ "when the reasons are dropped")
+	elif heading.text != summary:
+		ok = _fail(("the stopped heading reads '%s' and the sim's sentence is '%s': the count is the "
+				+ "sim's wording or it is a second claim about the world") % [heading.text, summary])
+	elif not heading.text.contains("7"):
+		ok = _fail(("the stopped heading reads '%s', which carries no total beyond the %d rows it was "
+				+ "handed -- a block counting its own rows would read exactly like this, and the "
+				+ "ruling is that the player is told how many there ARE") % [heading.text,
+				planted.size()])
+	# AND THE ROWS ARE UNTOUCHED BY IT: the heading is not one of them, so a short column drops
+	# reasons and never the number.
+	if ok:
+		var rows: Array = screen._halt_lines.find_children("*", "Label", true, false)
+		if rows.size() != planted.size():
+			ok = _fail("%d lines went in and %d came out once the heading carried a count"
+					% [planted.size(), rows.size()])
+	# **AND THE TOTAL IS PART OF WHAT "THE BLOCK IS ALREADY SHOWING THIS" MEANS.** `_refresh_halt`
+	# rebuilds only when the shape changes, and M moves when a WORKING building is placed -- which
+	# changes no line. So "1 of 2" and "1 of 3" carry identical lines, and a shape built from the
+	# lines alone would compare equal and leave the old total on screen: the number that must always
+	# be stated, quietly wrong. The suite cannot reach a world with a stalled building in it, so this
+	# is asserted on the shape itself rather than left to a comment.
+	if ok:
+		var same := PackedStringArray(["machine 1 at (4, 9) · nothing here to mine"])
+		if screen._halt_shape("1 of 2 buildings stopped", same) \
+				== screen._halt_shape("1 of 3 buildings stopped", same):
+			ok = _fail("placing a working building moves the total and no line, and this block "
+					+ "cannot tell those two states apart, so it would keep showing the old count")
+	# AND WITH NO SENTENCE FROM THE SIM IT FALLS BACK TO THE SECTION'S NAME rather than inventing a
+	# number -- the state every other test here drives it in.
+	if ok:
+		screen._rebuild_halt(planted)
+		for child in screen._halt.get_children():
+			if child is Label and (child as Label).theme_type_variation == &"Heading":
+				if (child as Label).text != "stopped":
+					ok = _fail(("with no summary the heading reads '%s'; it must fall back to the "
+							+ "section's own name") % [(child as Label).text])
+				break
 	screen.queue_free()
 	return ok
 
@@ -1879,11 +1959,15 @@ func test_an_old_log_line_is_one_row_and_the_newest_is_whole() -> bool:
 	var long := ("your design broke: mass 1078 of 705 budget · holds 210 · speed 78 (bare hands 25)"
 			+ " · frame(Tonore A 385) + head(Tonore A 120) + hopper(Souktulore B 140) x4")
 	var lines := PackedStringArray()
-	for i in 12:
-		lines.append("%d · %s" % [500 + i, long])
+	for _i in 12:
+		lines.append(long)
 	# THE NEWEST ENTRY IS ALSO A LONG ONE, or "the newest shows whole" would be a claim about a
 	# sentence that fits anyway and the exemption could be deleted with nothing going red.
-	lines.append("%d · %s" % [512, long])
+	#
+	# NO `tick N ·` PREFIX SINCE ASSA-222: `_remember_events` no longer writes one, and this test
+	# measures WRAPPING, so a fixture carrying a prefix the client cannot produce would be wrapping
+	# a string five characters longer than any real line.
+	lines.append(long)
 	screen._events = lines
 	screen._rebuild_log()
 	var drawn: Array = screen._log.find_children("*", "Label", true, false)
@@ -2406,8 +2490,9 @@ func test_the_camera_keeps_you_below_the_panel_in_the_north_rows() -> bool:
 		# quantity here is how many lines the panel actually BUILT, which is downstream of the room
 		# through a division I am not allowed to ask.
 		var lines := PackedStringArray()
-		for i in 14:
-			lines.append("%d · you mined 20 of Tonore ore (A) at (74, 36)" % (400 + i))
+		for _i in 14:
+			# No `tick N ·` prefix since ASSA-222 (ASSA-116 box 2).
+			lines.append("you mined 20 of Tonore ore (A) at (74, 36)")
 		screen._events = lines
 		screen._rebuild_log()
 		rooms[row] = [screen._log_room,
@@ -2468,7 +2553,8 @@ func test_the_log_panel_stops_above_the_body_the_camera_centres() -> bool:
 	for newest in ["you mined 20 of Tonore ore (A) at (74, 36)", long]:
 		var lines := PackedStringArray()
 		for i in 13:
-			lines.append("%d · you mined 20 of Tonore ore (A) at (74, 36)" % (400 + i))
+			# No `tick N ·` prefix since ASSA-222; `i` is unused now, hence `_i`.
+			lines.append("you mined 20 of Tonore ore (A) at (74, 36)")
 		lines.append("413 · %s" % newest)
 		screen._events = lines
 		screen._rebuild_log()
@@ -2998,8 +3084,13 @@ func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> b
 	# The deposit the mark belongs to, and a 1x1 machine planted on its CENTRE tile -- the tile the
 	# play loop plants on, and the one Maren's shots caught.
 	var glyph: Dictionary = marks[0]
-	var centre: Vector2 = glyph["at"]
-	var tile := Vector2i(((centre - screen.MARGIN) / screen._cell).round())
+	# **THE TILE THE MARK NAMES, NOT A TILE RECOVERED FROM ITS PIXEL** (ASSA-220 box 3). This read
+	# `round((at - MARGIN) / _cell)`, which was exact for exactly as long as `at` was the tile's CORNER.
+	# Now that it is the middle, `(at - MARGIN) / _cell` is `tile + 0.5` and `round()` takes it UP: this
+	# test would have planted its machine one tile down and right of the letter and then failed on the
+	# coverage assertion, reporting the case as absent rather than reporting the move. `tile` exists on
+	# the mark for this (ASSA-213 box 2).
+	var tile: Vector2i = glyph["tile"]
 	var planted := [{"pos": tile, "footprint": Vector2i(1, 1), "kind": "machine"}]
 	var mark: Dictionary = (screen._building_marks(planted)[0] as Dictionary)
 	var diamond: PackedVector2Array = mark["points"]
@@ -3043,9 +3134,16 @@ func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> b
 			ok = _fail(("main.gd paints the species letter BEFORE the building marks, so the %.1f%% "
 					+ "of a machine diamond that lands on the letter is painted over it -- and a drill is on a "
 					+ "deposit by definition") % [covered * 100.0])
-		elif not source.contains("_glyph_marks(deposits, font)"):
-			ok = _fail("`_glyph_marks` is never handed the deposits `_draw` read, which is "
-					+ "ASSA-189's shape: a correct mark that nothing paints")
+		# **AND THE BUILDING MARKS GO IN WITH THEM** (ASSA-218 box 9). This read
+		# `_glyph_marks(deposits, font)` and my box-9 change broke it, correctly: the call grew a
+		# third argument. Pinning the new form is strictly stronger, because `bedded` is decided from
+		# those marks — handed `[]`, every letter reports `bedded: false` and the expensive bed is
+		# silently never drawn on the one letter it exists for. `shapes` and not
+		# `_building_marks(...)` inline, so the same list reaches both passes in one frame.
+		elif not source.contains("_glyph_marks(deposits, font, shapes)"):
+			ok = _fail("`_glyph_marks` is not handed the deposits AND the building marks `_draw` "
+					+ "read, which is ASSA-189's shape: a correct mark that nothing paints, or "
+					+ "since box 9 a correct mark nothing beds")
 	# **THE BED, which is what makes painting last safe.** `glyph_color` picks the ink by contrast
 	# against the DISC; over a pale `HOVER` diamond a `GLYPH_LIGHT` letter chosen for a dark rock is
 	# the same letter gone. So the ink must be the one picked for the bed it carries.
@@ -3110,6 +3208,200 @@ func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> b
 	return ok
 
 
+## **ONLY A LAPPED LETTER PAYS FOR THE EIGHT-STAMP BED** (ASSA-218 box 9, Maren: "it matters" -- 104
+## extra `draw_string` on a 13-letter world against ASSA-214's whole-map median of 42 is 2.5x the
+## map's entire budget, spent to protect the one letter a machine stands on).
+##
+## **WHY THIS TEST CAN EXIST AT ALL, and it is the reason the decision was moved:** `_draw` cannot be
+## asked how many times it called `draw_string`. Nothing headless counts draw calls. So the choice is
+## published as `bedded` on each mark and `_draw` paints what it is told -- the pattern the glyph
+## pass's own comment already claimed ("THE DECISION IS `_glyph_marks`'") but did not yet obey. An
+## `if` inside the loop would have been correct and unprovable.
+##
+## WHAT IT GUARDS, by mutation: `bedded = true` for every letter (the old behaviour, 104 calls) fails
+## on the unlapped letters; `false` for all of them fails on the lapped one; dropping the
+## `letter_occlusions` call fails the same way; and handing `_glyph_marks` no buildings fails the
+## lapped half, which is what would happen if a caller forgot the new argument -- `window_shot.gd`
+## being the caller that would otherwise have photographed a map nobody drew.
+##
+## THE PREMISE IS CHECKED AND NOT ASSUMED: this needs at least two letters and at least one the
+## machine does NOT lap, or "only the lapped one is bedded" is vacuously true.
+func test_only_a_lapped_letter_carries_the_expensive_bed() -> bool:
+	var screen := _joined_screen()
+	screen._show_close_up(false)
+	screen._refresh()
+	if screen._close_up or not screen._sim.running() or screen._cell <= 0.0:
+		screen.queue_free()
+		return _fail(("premise: close_up %s, running %s, cell %f -- `_draw` returns before any mark")
+				% [screen._close_up, screen._sim.running(), screen._cell])
+	var font := ThemeDB.fallback_font
+	var deposits: Array = screen._sim.deposits()
+	var bare: Array = screen._glyph_marks(deposits, font)
+	if bare.size() < 2:
+		screen.queue_free()
+		return _fail(("premise: this world paints %d species letter(s); two are needed so that "
+				+ "'only the lapped one' is not vacuous") % bare.size())
+	# A 1x1 machine on the FIRST letter's own tile -- the tile the play loop plants on.
+	var target: Dictionary = bare[0]
+	var planted := [{"pos": target["tile"], "footprint": Vector2i(1, 1), "kind": "machine"}]
+	var shapes: Array = screen._building_marks(planted)
+	var marks: Array = screen._glyph_marks(deposits, font, shapes)
+	if marks.size() != bare.size():
+		screen.queue_free()
+		return _fail(("passing buildings changed the letter COUNT, %d -> %d: `bedded` must change "
+				+ "which letters are expensive, never which letters exist")
+				% [bare.size(), marks.size()])
+	# WHO IS LAPPED IS `letter_occlusions`' ANSWER, NOT MINE. Asserting "index 0 and no other" would
+	# bake in the assumption that one machine laps exactly one letter, which two deposits sharing a
+	# tile would break -- so the expectation is read from the same function the painter reads.
+	var want := {}
+	for raw in AssayHud.letter_occlusions(shapes, marks):
+		want[int((raw as Dictionary)["letter"])] = true
+	if want.is_empty():
+		screen.queue_free()
+		return _fail(("premise: a machine on letter 0's own tile %s laps no letter at all, so there "
+				+ "is no expensive case in this world and the test measures nothing")
+				% [target["tile"]])
+	if want.size() >= marks.size():
+		screen.queue_free()
+		return _fail(("premise: the machine laps all %d letters, so there is no cheap letter left "
+				+ "to prove the saving against") % marks.size())
+	var ok := true
+	for j in marks.size():
+		var glyph: Dictionary = marks[j]
+		var bedded := bool(glyph["bedded"])
+		if bedded != want.has(j):
+			ok = _fail(("letter %d (`%s`, tile %s) reports bedded=%s and `letter_occlusions` says "
+					+ "lapped=%s. A letter nothing laps sits on its own disc, the surface its ink "
+					+ "was picked against, so eight stamps there are eight draw calls for nothing.")
+					% [j, glyph["symbol"], glyph["tile"], bedded, want.has(j)])
+			break
+	# AND THE SAVING, AS A NUMBER RATHER THAN AS A CLAIM: eight stamps per bedded letter.
+	if ok:
+		var paid := want.size() * AssayHud.GLYPH_BED_STAMPS.size()
+		var everything := marks.size() * AssayHud.GLYPH_BED_STAMPS.size()
+		if paid >= everything:
+			ok = _fail("the bed costs %d draw calls and stamping every letter costs %d: no saving"
+					% [paid, everything])
+	# AND NO BUILDINGS MEANS NO STAMPS, not "stamp everything" -- the default-argument path every
+	# existing caller still takes.
+	if ok:
+		for entry in bare:
+			if bool((entry as Dictionary)["bedded"]):
+				ok = _fail("a letter is bedded on a world with no buildings passed at all: the "
+						+ "empty case must cost nothing, not everything")
+				break
+	screen.queue_free()
+	return ok
+
+
+## **EVERY DEPOSIT MARK SITS ON THE MIDDLE OF THE TILE IT NAMES** (ASSA-220).
+##
+## **WHY THE INVARIANT THAT ALREADY EXISTS CANNOT SEE THIS**, which is most of why a half-tile shipped
+## for as long as it did. `tests/test_scene_view.gd` holds `_tile_under(point_of_tile(t)) == t` in both
+## views, and that passes on the defect: the tile's top-left CORNER is inside the tile too, so
+## `_tile_under` answers `t` for the corner exactly as it does for the middle. A round trip through a
+## floor cannot tell two points in one cell apart. Only a claim about WHERE IN the cell can.
+##
+## **AND THE WANTED POINT IS DERIVED, NOT COPIED.** Re-spelling `MARGIN + (tile + 0.5) * _cell` here
+## would assert the implementation against itself -- the vacuous shape that has cost me two merged
+## tests. So the claim is the one in the item: a deposit covers tiles `centre +/- radius`, which on
+## screen spans `(c - r) * cell` to `(c + r + 1) * cell`, and a circle drawn concentric with the rock it
+## describes sits at the MIDPOINT of that span. `r` cancels out of that midpoint, which is the point --
+## the answer is the tile's middle as a CONCLUSION about the rock, not as a premise about the formula.
+##
+## **TWO CELL SIZES, because the error is half a CELL and not a number of pixels.** At one cell size a
+## constant 4.5 px offset satisfies this assertion; at two it cannot.
+func test_a_deposit_and_its_letter_are_drawn_on_the_middle_of_the_tile_they_name() -> bool:
+	var screen := _joined_screen()
+	screen._show_close_up(false)
+	screen._refresh()
+	if screen._close_up or not screen._sim.running():
+		screen.queue_free()
+		return _fail(("premise: close_up %s, running %s -- `_draw` returns before any deposit on "
+				+ "either") % [screen._close_up, screen._sim.running()])
+	var font := ThemeDB.fallback_font
+	var deposits: Array = screen._sim.deposits()
+	if deposits.is_empty():
+		screen.queue_free()
+		return _fail("premise: this world has no deposits, so there is no mark to place and this test "
+				+ "is about nothing")
+	var ok := true
+	var checked := 0
+	for cell: float in [9.0, 23.0]:
+		if not ok:
+			break
+		screen._cell = cell
+		var by_tile := {}
+		for entry in screen._glyph_marks(deposits, font):
+			var mark: Dictionary = entry
+			by_tile[mark["tile"] as Vector2i] = mark
+		if by_tile.is_empty():
+			ok = _fail(("premise: no species letter is placed at %.0fpx a tile, so there is nothing "
+					+ "to measure at this cell size") % [cell])
+			break
+		for raw in deposits:
+			var deposit: Dictionary = raw
+			var tile: Vector2i = deposit["center"]
+			if int(deposit["amount"]) <= 0 or not by_tile.has(tile):
+				continue
+			var mark: Dictionary = by_tile[tile]
+			# The rock's own pixel span, straight off the tiles it covers.
+			var radius := int(deposit["radius"])
+			var low: Vector2 = screen.MARGIN + Vector2(tile - Vector2i(radius, radius)) * cell
+			var high: Vector2 = screen.MARGIN + Vector2(tile + Vector2i(radius + 1, radius + 1)) * cell
+			var want: Vector2 = (low + high) * 0.5
+			var at: Vector2 = mark["at"]
+			if at.distance_to(want) > 1e-4:
+				var off := (at - want) / cell
+				ok = _fail(("the %s deposit at tile %s spans %s..%s at %.0fpx a tile, so a mark "
+						+ "concentric with it belongs at %s -- and it is drawn at %s, off by (%.2f, "
+						+ "%.2f) of a tile. A mark may lie about its size or its colour and never "
+						+ "about its position.") % [mark["symbol"], tile, low, high, cell, want, at,
+						off.x, off.y])
+				break
+			checked += 1
+	if ok and checked < 2:
+		ok = _fail(("only %d deposit marks were measured across both cell sizes, which is too few for "
+				+ "the two-cell argument to mean anything") % [checked])
+	# **AND THE DISC ITSELF, WHICH NOTHING HEADLESS CAN READ.** The letter's position comes out of
+	# `_glyph_marks` and is measured above; the disc's is computed inside `_draw`, where nothing can be
+	# asked what it painted (the same gap the comment on `_building_marks` names). The two were
+	# INDEPENDENT copies of the corner formula, which is exactly how one defect came to sit in two
+	# places, so a scan for the shared helper is what keeps them from drifting apart again.
+	if ok:
+		var source := FileAccess.get_file_as_string("res://scripts/main.gd")
+		if source == "":
+			ok = _fail("main.gd could not be read, so this scan says nothing")
+		elif not source.contains("point_of_tile(deposit.get(\"center\""):
+			ok = _fail("the deposit pass in `_draw` no longer takes its centre from `point_of_tile`, "
+					+ "so the disc and the letter it carries can disagree about which tile they are on")
+		# **THESE TWO MUST KEEP THE CORNER, and that is the whole reason they are asserted** (Maren's
+		# second point on ASSA-220). A rect that COVERS a cell is not a mark that NAMES one: both start
+		# at the tile's top-left and span `_cell`. Their arithmetic is identical to the bug this test is
+		# about, so the next person to grep for `MARGIN + Vector2(` and "finish the job" moves the two
+		# marks that were right -- and would see nothing red without this.
+		elif not source.contains("MARGIN + Vector2(_target) * _cell"):
+			ok = _fail("the target brackets no longer start at the tile's corner: a rect that covers a "
+					+ "cell is not a mark that names it, and ASSA-220 moved the marks, not the rects")
+		elif not source.contains("MARGIN + Vector2(_hover) * _cell"):
+			ok = _fail("the hover outline no longer starts at the tile's corner, so it no longer "
+					+ "covers the cell the readout is talking about")
+	# **AND THE INSTRUMENT, BECAUSE IT CARRIED THE SAME BUG.** `window_shot.gd` recorded each disc's
+	# centre with its own third copy of `MARGIN + tile * _cell`, so it AGREED WITH THE DEFECT: every
+	# centre measured off `08-whole-world-marks.json` was the corner, and `main.gd` fixed alone would
+	# have left the shot reporting a point the screen does not draw, with nothing red anywhere.
+	if ok:
+		var shot := FileAccess.get_file_as_string("res://tools/window_shot.gd")
+		if shot == "":
+			ok = _fail("window_shot.gd could not be read, so this scan says nothing")
+		elif not shot.contains("_screen.point_of_tile(tile)"):
+			ok = _fail("the shot's disc table no longer takes its centre from the screen, so a "
+					+ "measurement off its JSON can be half a tile from what was painted")
+	screen.queue_free()
+	return ok
+
+
 ## **THE OTHER HALF OF ASSA-219, AND THE HALF THAT MADE IT A FREEZE A PLAYER MET.**
 ##
 ## `solo_relay.gd`'s `poll()` had an early return that stopped it reading the pipe once an address
@@ -3148,3 +3440,70 @@ func test_the_solo_frame_keeps_reading_the_relay_for_the_whole_session() -> bool
 				+ "exists to prevent") % solo.polls)
 	screen.queue_free()
 	return ok
+
+## **EXACTLY ONE GREEN THING TO PRESS PER SCREEN** (ASSA-233, Maren's ruling 2; the hole Nerite
+## measured on ASSA-224).
+##
+## **THIS EXISTS BECAUSE NERITE PROVED NOTHING GUARDED IT.** They replaced
+## `_solo_button.theme_type_variation = &"Primary"` with `pass` and the suite answered 340 passed,
+## 0 failed: no test in `tests/` read the word `Primary` or `Quiet`, so the one-accent rule and the
+## quiet furniture were held up by a screenshot and a reviewer removing the accent would have merged
+## green. A rank nothing can fail is a preference, not a rule.
+##
+## **IT COUNTS ON THE REAL TREE AND NOT AT THE CALL SITES.** A grep of `main.gd` would pass over a
+## `Primary` applied by a loop, a scene file, or a third screen written next month; what the rule is
+## about is how many accented controls a player can see at once, so that is what is counted --
+## every visible `Button` under the screen, in both states the client has.
+##
+## THE JOIN SCREEN'S ONE IS `Play solo`, AND IT IS NAMED. "Exactly one" with no name would stay green
+## if the accent moved to `Join`, which is the quieter path and the opposite of the ruling.
+func test_exactly_one_control_per_screen_wears_the_accent() -> bool:
+	var screen := _screen()
+	var ok := true
+	var before := _accented(screen)
+	if before.size() != 1:
+		ok = _fail(("the join screen shows %d accented controls, not 1: %s (ASSA-233: one screen, "
+				+ "one primary action)") % [before.size(), ", ".join(before)])
+	elif before[0] != "Play solo":
+		ok = _fail("the join screen's one accented control is `%s`, not `Play solo`" % before[0])
+	screen.queue_free()
+	if not ok:
+		return false
+
+	# AND THE PLAYED SCREEN, which is the one the ruling was filed about: nine buttons at identical
+	# weight. `_joined_screen` plays a real world through the binding, so what is counted here is the
+	# column a player actually gets rather than a hand-built row.
+	var joined := _joined_screen()
+	# **ONE FRAME, BECAUSE A WELCOME ALONE IS A STATE PRODUCTION NEVER SITS IN.** `_joined_screen`
+	# feeds a welcome and stops; `_refresh_join_band` and `_refresh_front_door` run in `_process`,
+	# so without this the join controls still wear the visibility they were BUILT with and the
+	# first run of this test reported `Play solo` accented inside a played world. That was my
+	# harness, not the client -- the same trap `test_play_solo_neither_reads_nor_wipes_a_typed_host`
+	# already carries a note about.
+	joined._process(0.016)
+	var during := _accented(joined)
+	if during.size() > 1:
+		ok = _fail(("a played world shows %d accented controls: %s. A green on every row of a list "
+				+ "is a bullet point, not a rank") % [during.size(), ", ".join(during)])
+	elif during.size() == 1 and during[0] != "Mine":
+		ok = _fail("the played screen's one accented control is `%s`, not `Mine`" % during[0])
+	else:
+		# NOT ASSERTED AS EXACTLY ONE, and this is the honest half. `Mine` is Primary only where the
+		# sim says a hand can break the rock under you (`hand_minable`), so on a world where the
+		# body happens to stand on grass the right answer is ZERO accented controls. Demanding one
+		# here would be demanding the accent on a button that would refuse -- the exact thing
+		# Maren's `check, do not assume` clause forbids.
+		print("    accented in a played world: %d (%s)" % [during.size(), ", ".join(during)])
+	joined.queue_free()
+	return ok
+
+
+## Every VISIBLE button under a node wearing the accent weight, by its label.
+func _accented(node: Node) -> PackedStringArray:
+	var found := PackedStringArray()
+	for child in node.get_children():
+		if child is Button and (child as Button).theme_type_variation == &"Primary" \
+				and _on_screen(child):
+			found.append((child as Button).text)
+		found.append_array(_accented(child))
+	return found

@@ -909,6 +909,9 @@ func _build_ui() -> void:
 	# QUIET, BECAUSE IT IS FURNITURE (ASSA-224). On `01-join.png` this toggle reads as loudly as the
 	# section headings it sits above, so the column's structure competes with its own controls.
 	_log_toggle.theme_type_variation = &"Quiet"
+	# LEFT, INTO THE BODY COLUMN (ASSA-233, Maren at 1x). Centred and boxless, this read as the
+	# PANEL'S TITLE -- a dim centred line across the top of a panel is where a title sits.
+	_log_toggle.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_log_toggle.pressed.connect(func(): _show_log(not _log_shown))
 	chrome.add_child(_log_toggle)
 	# WHAT IS RUNNING, THEN WHAT HAS STOPPED, both above the scroll and never inside it (ASSA-133).
@@ -961,6 +964,9 @@ func _build_ui() -> void:
 	# in a 566px clip. The reorder moves the loss to the section that can afford it; it does not
 	# remove it.
 	_make_toggle.theme_type_variation = &"Quiet"  # furniture, same as the log toggle (ASSA-224)
+	# AND LEFT, for the same reason: centred under the `make` heading it read as that heading's
+	# caption rather than as a control (ASSA-233).
+	_make_toggle.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_make_toggle.pressed.connect(func(): _show_make(not _make_shown))
 	# THE EVENT LOG IS NOT IN THIS LIST ANY MORE (ASSA-147). It was the last section; it is now a
 	# panel over the map, built by `_build_log_over_the_map`. Maren's reason in one line: it is the
@@ -1536,10 +1542,22 @@ func _on_tick_bundle(_tick: int, _inputs: Array, raw: String) -> void:
 
 ## What the tick we just applied did, kept where it can be read. The sim holds only the newest tick's
 ## events, so a line not copied out here is gone a tenth of a second later.
+## **NO `tick N ·` PREFIX, AND THAT IS A RULING NOT A TIDY-UP** (ASSA-222, Maren: *"drop the `tick N
+## ·` prefix: the log is already in order, newest last, and a tick is the inspector's clock, not a
+## player's"*). This appended `"%d · %s"` and Nerite read the result at 1x as **"292 ·"** — a number
+## a player cannot interpret, in front of every line, on the surface the board called *hard on the
+## eyes*. Order is already carried by position, and `_log_row`'s dimming reads age by index, not by
+## parsing this. Nothing anywhere splits on it: the repo has no `split(" · ")`.
+##
+## **THIS IS SLICE 1 OF THAT RULING AND THE OTHER TWO CLAUSES ARE NOT HERE.** "Name the building"
+## and "drop the bare `building 0`" need `sim::debug::event_line` to take an audience, because the
+## same describer serves `sim-cli`, where a `BuildingId` is the handle you type into `take`/`pickup`.
+## Doing those in the client would be a second wording of one fact, which is the drift Maren's
+## ruling and my own guard on that item both forbid. So the sim half waits for a wake-up that can
+## afford the Rust gate; this clause stands alone because it is purely presentational.
 func _remember_events() -> void:
-	var tick := _sim.tick()
 	for line in _sim.event_lines(_client.player_id):
-		_events.append("%d · %s" % [tick, line])
+		_events.append(line)
 	_events = AssayHud.trimmed_log(_events, LOG_LINES)
 	# WHAT A HIDDEN LOG MAY NOT SWALLOW (ASSA-89). The sim says which lines those are
 	# (`sim::debug::event_needs_attention`) and these are the SAME SENTENCES, word for word -- a
@@ -1689,11 +1707,25 @@ func _log_lines_that_fit() -> int:
 ## has to cost zero pixels when it has nothing to say or it cannot be pinned above the scroll.
 func _refresh_halt() -> void:
 	var lines := _sim.halt_lines() if _sim != null else PackedStringArray()
-	var shape := "\n".join(lines)
+	var summary := _sim.halt_summary() if _sim != null else ""
+	var shape := _halt_shape(summary, lines)
 	if shape == _halt_showing:
 		return
 	_halt_showing = shape
-	_rebuild_halt(lines)
+	_rebuild_halt(lines, summary)
+
+
+## **WHAT THIS BLOCK IS SHOWING, AS ONE STRING, AND THE SUMMARY IS PART OF IT** (ASSA-94). Split out
+## for `_rebuild_halt`'s reason: the suite cannot reach a world with a stalled building in it, so a
+## hazard that lives inside `_refresh_halt` is a hazard nothing can hold me to.
+##
+## **THE HAZARD IT EXISTS FOR.** The count is "N of M buildings stopped", so M moves when a building
+## is PLACED -- and placing a WORKING building changes nothing about which buildings are stopped. "1
+## of 2" and "1 of 3" therefore carry identical `lines`, and a shape made of the lines alone would
+## compare equal, skip the rebuild and leave the old total on screen. The number the Game Director
+## ruled must always be stated would be quietly wrong, which is worse than absent.
+func _halt_shape(summary: String, lines: PackedStringArray) -> String:
+	return summary + "\n" + "\n".join(lines)
 
 
 ## THE BLOCK, FROM LINES. Split from `_refresh_halt` so a test can drive the drawing without a world
@@ -1706,18 +1738,28 @@ func _refresh_halt() -> void:
 ## a live `halt_lines()`: "machine 1 at (71, 38) · idle: no deposit underneath", the sim's sentence,
 ## pinned above the scroll. The suite still cannot reach it -- `button_play.gd` can, and that is the
 ## path a test would take (`test_buttons.gd:300` is where the chain was last declined).
-func _rebuild_halt(lines: PackedStringArray) -> void:
+func _rebuild_halt(lines: PackedStringArray, summary := "") -> void:
 	_clear(_halt)
 	_halt_lines = null
 	if is_instance_valid(_halt_box):
 		_halt_box.visible = not lines.is_empty()
 	if lines.is_empty():
 		return
-	# "stopped" IS THIS CLIENT'S HEADING, the way "you", "do" and "event log" are; the lines under it
-	# are the sim's words. A count would be a second claim about the world and the sim already makes
-	# it (`halted_table`'s "N of M buildings stopped") -- one this block would have to keep true.
+	# **THE HEADING IS THE SIM'S COUNT, AND THE COMMENT THAT USED TO BE HERE WAS RIGHT ABOUT THE
+	# DANGER AND WRONG ABOUT THE FIX** (ASSA-94). It read: *"a count would be a second claim about the
+	# world and the sim already makes it (`halted_table`'s 'N of M buildings stopped') -- one this
+	# block would have to keep true."* The objection holds for a client that COUNTS -- that is the
+	# ASSA-43/52 shape exactly -- and the conclusion does not follow, because the answer was never to
+	# count. It was to read the sentence the sim was already composing, which is now `halt_summary`.
+	#
+	# **AND THIS BLOCK COULD NOT HAVE COUNTED IT ANYWAY.** The ruled total is "N of M", and M -- how
+	# many buildings exist -- is not in `halt_lines` at all. `lines.size()` is N on its own.
+	#
+	# THE GAME DIRECTOR'S RULING: the count is the floor and must never truncate; the reasons are the
+	# extra and are bounded by the column's height. So the number lives in the HEADING, which is
+	# pinned, and the reasons below it are what a short column drops.
 	var heading := Label.new()
-	heading.text = "stopped"
+	heading.text = summary if summary != "" else "stopped"
 	heading.theme_type_variation = &"Heading"
 	_halt.add_child(heading)
 	# THE LINES IN THEIR OWN BOX, so "the lines of this block" is a container and not a filter over
@@ -2516,7 +2558,13 @@ func _refresh_actions() -> void:
 	var facts := _sim.tile_at(target) if _sim.running() else {}
 	var building: Variant = facts.get("building")
 	var at := -1 if building == null else int((building as Dictionary).get("id", -1))
-	var signature := "%s/%s/%d/%s" % [target, _targeted, at, _building]
+	# **AND THE MINABLE BIT IS IN THE SIGNATURE, WHICH IS THE HALF THAT WOULD HAVE FAILED SILENTLY.**
+	# This row is only rebuilt when the signature changes, and `Mine` acts on the tile you are
+	# STANDING on while every other term here is about the tile you are ACTING on. Walking off a
+	# deposit without touching the cursor changes none of the old terms, so the button would have
+	# kept an accent that no longer meant anything until something else happened to move.
+	var minable := _can_hand_mine_here()
+	var signature := "%s/%s/%d/%s/%s" % [target, _targeted, at, _building, minable]
 	if signature == _actions_showing:
 		return
 	_actions_showing = signature
@@ -2529,8 +2577,24 @@ func _refresh_actions() -> void:
 
 	var here := HBoxContainer.new()
 	here.add_theme_constant_override("separation", 4)
-	here.add_child(_button("Mine", func() -> void: _act("Mine", AssayActions.mine()),
-			"hand-mine the deposit under you. Keeps swinging until you Stop."))
+	# **THE PLAYED SCREEN'S ONE PRIMARY, AND ONLY WHERE IT WOULD WORK** (ASSA-233, Maren's ruling 2).
+	# Nine buttons at identical weight is the join screen's old defect one room over: "Mine is the
+	# verb that makes something from nothing, and the first thing a player with no tutorial must do".
+	#
+	# **HER `CHECK, DO NOT ASSUME` CLAUSE, CHECKED: `do` DOES NOT GATE ANYTHING.** Mine, Stop and
+	# Assay are added unconditionally the moment `_sim.running()`, so a green Mine would be offered
+	# over bare grass and over rock no hand can break -- and "a green button that refuses is worse
+	# than a grey one that refuses" is the whole of her clause.
+	#
+	# **THE FACT IS THE SIM'S BIT, NOT A RULE COPIED INTO THIS FILE.** `hand_minable` on the deposit
+	# comes from `sim::ladder::hand_minable`; the client may not re-derive "hardness <= 40 at grade",
+	# and could not honestly anyway -- a sheet reads as a 25-wide BAND until the species is assayed,
+	# so this screen does not know the hardness it would need. One bit, from the one authority.
+	var mine_button := _button("Mine", func() -> void: _act("Mine", AssayActions.mine()),
+			"hand-mine the deposit under you. Keeps swinging until you Stop.")
+	if minable:
+		mine_button.theme_type_variation = &"Primary"
+	here.add_child(mine_button)
 	here.add_child(_button("Stop", func() -> void: _act("Stop", AssayActions.stop()),
 			"stop walking, mining, crafting and assaying"))
 	here.add_child(_button("Assay", func() -> void: _act("Assay", AssayActions.assay()),
@@ -3142,6 +3206,26 @@ func _advance_playout(now: float, frame_dt := -1.0) -> float:
 	return float(cursor["part"])
 
 
+## **CAN THIS PLAYER SWING AT THE ROCK THEY ARE STANDING ON, RIGHT NOW** (ASSA-233).
+##
+## THREE FACTS, ALL THE SIM'S: there is a deposit under us, it is not worked out, and the sim says a
+## hand can break it. `hand_minable` is `sim::ladder::hand_minable`'s answer carried across the
+## binding as a BIT -- never the deposit's sentence, which is prose for a person and is a wider gate
+## than this one (it also covers rock you can mine and cannot smelt).
+##
+## **THE TILE IS `_my_tile()` AND NOT THE TARGET**, because that is what the button does: "hand-mine
+## the deposit under you". Reading the cursor's tile here would light the accent for a rock across
+## the map that this press would not touch.
+func _can_hand_mine_here() -> bool:
+	if not _sim.running():
+		return false
+	var deposit: Variant = _sim.tile_at(_my_tile()).get("deposit")
+	if deposit == null:
+		return false
+	var rock: Dictionary = deposit
+	return bool(rock.get("hand_minable", false)) and not bool(rock.get("depleted", false))
+
+
 func _my_tile() -> Vector2i:
 	for entry in _players():
 		var player: Dictionary = entry
@@ -3343,7 +3427,14 @@ func _draw() -> void:
 		var deposit: Dictionary = entry
 		if int(deposit.get("amount", 0)) <= 0:
 			continue
-		var at := MARGIN + Vector2(deposit.get("center", Vector2i.ZERO) as Vector2i) * _cell
+		# **THE TILE'S MIDDLE, THROUGH `point_of_tile`, AND NOT A COPY OF ITS ARITHMETIC** (ASSA-220).
+		# This read `MARGIN + Vector2(centre) * _cell` -- the tile's top-left CORNER -- while the player,
+		# the spawn pad and every building mark used its middle, so at 9 px a tile every rock on this map
+		# was drawn 4.5 px up and left of itself. Maren's law on ASSA-213 is that a mark may lie about its
+		# size or its colour to be legible and never about its POSITION, and she refused an offset mark at
+		# 13-15 px under it; this was 4.5 px in the opposite direction and had been shipping the whole
+		# time. The hatch follows for free, being a pure function of `at`.
+		var at := point_of_tile(deposit.get("center", Vector2i.ZERO) as Vector2i)
 		var radius := maxf(_cell, float(int(deposit.get("radius", 1))) * _cell)
 		# **HATCHED IF NOTHING CAN GET THE ORE OUT, CLEAN IF THE ROCK PAYS** (ASSA-199, Maren's
 		# ruling on Cove's sheet; it replaces the outline ASSA-187 shipped). Three channels were
@@ -3382,8 +3473,12 @@ func _draw() -> void:
 	var mark := Vector2(AssayHud.PLAYER_MARK_PX, AssayHud.PLAYER_MARK_PX)
 	for entry in _players():
 		var player: Dictionary = entry
-		var at := MARGIN + (Vector2(player.get("pos", Vector2i.ZERO) as Vector2i)
-				+ Vector2(0.5, 0.5)) * _cell
+		# THROUGH `point_of_tile` TOO, AND THIS ONE MOVES NOTHING (ASSA-220). It spelled
+		# `MARGIN + (pos + 0.5) * _cell` itself, which is byte-for-byte what `point_of_tile` returns in
+		# this view -- so it was CORRECT and still a copy. It is converted because the copies are the
+		# defect: the disc's corner formula and this one sat eight lines apart, and nothing could tell
+		# you which of the two was the odd one out. The suite proves no player mark moved.
+		var at := point_of_tile(player.get("pos", Vector2i.ZERO) as Vector2i)
 		var mine := int(player.get("id", -1)) == _client.player_id
 		var colour := AssayHud.mark_ink(&"player_mine" if mine else &"player_theirs")
 		# Where the sim is walking them, drawn as a line to there. Not a tween: the sim owns the
@@ -3392,7 +3487,7 @@ func _draw() -> void:
 		# line stays a line there for the same reason it is one here.)
 		var target: Variant = player.get("target")
 		if target != null:
-			draw_line(at, MARGIN + (Vector2(target as Vector2i) + Vector2(0.5, 0.5)) * _cell,
+			draw_line(at, point_of_tile(target as Vector2i),
 					AssayHud.mark_ink_of(&"walk_mine" if mine else &"walk_theirs", colour), 1.0)
 		# **A KEYLINE ON A PERSON, WHICH IS MAREN'S SECOND RULING ON ASSA-189 AND A DEFECT THAT WAS
 		# ALREADY SHIPPING.** `THEIRS` is a pale near-white, and with no rim a partner standing on a
@@ -3441,7 +3536,11 @@ func _draw() -> void:
 	#
 	# THE DECISION IS `AssayHud.building_mark`'S, like the disc's above, and this loop only paints what
 	# `_building_marks` hands it -- see that function for why a test can read it and this cannot.
-	for shape_entry in _building_marks(_sim.buildings()):
+	# HELD IN A LOCAL AND NOT CALLED TWICE: the glyph pass below asks `letter_occlusions` which of
+	# these diamonds laps a letter (ASSA-218 box 9), and two calls could be two different worlds in
+	# the same frame -- the mistake `window_shot.gd` already carries a comment about.
+	var shapes := _building_marks(_sim.buildings())
+	for shape_entry in shapes:
 		var shape: Dictionary = shape_entry
 		# TWO POLYGONS, NOT A STROKE. The rim is a bigger diamond UNDER the mark, so the mark keeps
 		# every pixel of its own size; a 2 px stroke on the mark's edge would spend one of them.
@@ -3482,23 +3581,49 @@ func _draw() -> void:
 	# painted after players (ASSA-203), so the only position that satisfies the ruling is after both.
 	# A letter is strokes and not a fill, so a body keeps its own colour around them, and the pale
 	# `THEIRS` body on a light letter is exactly the fusion ASSA-189's keyline was added for -- which
-	# the bed now states instead of hoping for. The 1x cost to a body is measured in the item.
+	# the bed now states instead of hoping for.
+	#
+	# **"THE 1x COST TO A BODY IS MEASURED IN THE ITEM" IS WHAT THIS LINE SAID, AND IT WAS FALSE**
+	# (Maren, who went looking because I wrote the claim here rather than letting her find it).
+	# ASSA-213 box 1 measures what a building costs a LETTER; box 5 says the player rect and ring are
+	# untouched, which is true of their SHAPE in code and silent about what paints on top afterwards.
+	# **No box on ASSA-213 measures a body at all.** It is now ASSA-221.
+	#
+	# WHAT IS MEASURED, AND IT IS SMALLER THAN THE FIRST ANSWER: Maren's geometry said 94.1% of a body
+	# eaten, then she photographed it and corrected herself to **36.3% player ink left under the
+	# letter against 100% for a body with nothing over it** -- the first figure measured the glyph on
+	# an r=27 disc and applied that footprint to a body on a small one. "A control must be the same
+	# object", her words, twice in one morning.
+	#
+	# **AND THE CASE THAT MATTERS IS STILL NOT PHOTOGRAPHED.** Your own mark carries the ring, which
+	# grows OUTWARDS (`hud.gd`'s `PLAYER_MARK_PX` ring) and survives outside the glyph box, so you can
+	# always find yourself. `THEIRS` is the body alone. The body that goes substantially missing is a
+	# PARTNER's, on the one screen for "where is everyone", on a milestone called the minimal co-op
+	# demo -- and the co-op shot tool spaced the two players four tiles apart, so no frame we have
+	# holds a partner on a deposit centre. Do not build to a number here; ASSA-221 carries the state.
 	#
 	# THE DECISION IS `_glyph_marks`', like `_building_marks` above; this loop paints what it is told.
-	for glyph_entry in _glyph_marks(deposits, font):
+	for glyph_entry in _glyph_marks(deposits, font, shapes):
 		var glyph: Dictionary = glyph_entry
 		draw_string_outline(font, glyph["baseline"], glyph["symbol"], HORIZONTAL_ALIGNMENT_LEFT, -1,
 				int(glyph["size"]), int(glyph["bed_px"]),
 				AssayHud.mark_ink_of(&"species_bed", glyph["bed"]))
-		# **AND A SOLID CORE UNDER IT** (ASSA-218, Maren's P1 on the half of ASSA-213 that did not
-		# work, built as the fallback she named once I had measured her condition for it). The outline
-		# above is antialiased, so a 2 px rim left the letter's boundary inside a mark with a 4.5:1
-		# edge on 13% of itself; stamping the letter once per neighbouring pixel takes that to 81%.
-		# `AssayHud.GLYPH_BED_STAMPS` carries the five candidates I measured and the price of this one.
-		for offset: Vector2 in AssayHud.GLYPH_BED_STAMPS:
-			draw_string(font, glyph["baseline"] + offset, glyph["symbol"],
-					HORIZONTAL_ALIGNMENT_LEFT, -1, int(glyph["size"]),
-					AssayHud.mark_ink_of(&"species_bed", glyph["bed"]))
+		# **AND A SOLID CORE UNDER IT, ON THE LETTERS THAT NEED ONE** (ASSA-218, Maren's P1 on the half
+		# of ASSA-213 that did not work, built as the fallback she named once I had measured her
+		# condition for it). The outline above is antialiased, so a 2 px rim left the letter's boundary
+		# inside a mark with a 4.5:1 edge on 13% of itself; stamping the letter once per neighbouring
+		# pixel takes that to 81%. `AssayHud.GLYPH_BED_STAMPS` carries the five candidates I measured.
+		#
+		# **`bedded` AND NOT EVERY LETTER, BECAUSE THE PRICE IS REAL** (box 9): eight extra
+		# `draw_string` each, 104 on a 13-letter world against ASSA-214's whole-map median of 42. A
+		# letter nothing laps sits on its own disc, which is the surface `glyph_color` picked its ink
+		# against, so the stamps buy it nothing. `_glyph_marks` decides; this loop paints what it is
+		# told. On seed 777042 that is 8 stamps, not 104.
+		if bool(glyph["bedded"]):
+			for offset: Vector2 in AssayHud.GLYPH_BED_STAMPS:
+				draw_string(font, glyph["baseline"] + offset, glyph["symbol"],
+						HORIZONTAL_ALIGNMENT_LEFT, -1, int(glyph["size"]),
+						AssayHud.mark_ink_of(&"species_bed", glyph["bed"]))
 		draw_string(font, glyph["baseline"], glyph["symbol"], HORIZONTAL_ALIGNMENT_LEFT, -1,
 				int(glyph["size"]), AssayHud.mark_ink_of(&"species_glyph", glyph["ink"]))
 
@@ -3511,6 +3636,12 @@ func _draw() -> void:
 	# as two of something. So the target keeps the tile it marks and loses the hue: four corner
 	# brackets in the neutral ink, which cannot be mistaken for a body at any tile size, and no 22nd
 	# colour literal added to the 21 she counted.
+	# **THIS CORNER AND THE HOVER RECT BELOW ARE THE TWO PLACES THAT MUST NOT GO THROUGH
+	# `point_of_tile`** (ASSA-220, Maren's second point). A RECT THAT COVERS A CELL IS NOT A MARK THAT
+	# NAMES IT: these two start at the tile's top-left and span `_cell`, so the corner IS their correct
+	# origin, and the brackets below are placed off it by `_cell` on each axis. The deposit pass used the
+	# same expression for a CENTRE, which is probably where the habit came from -- so the arithmetic
+	# looking identical to the bug three hundred lines up is not a reason to change it.
 	if _targeted:
 		var corner := MARGIN + Vector2(_target) * _cell
 		var reach := maxf(4.0, _cell * 0.45)
@@ -3565,7 +3696,25 @@ func _building_marks(buildings: Array) -> Array:
 ##
 ## A DEPOSIT WITH NOTHING LEFT CARRIES NO LETTER, the same `amount` test the disc pass makes -- a
 ## spent patch keeps its tint on this map but has no species worth naming over a factory.
-func _glyph_marks(deposits: Array, font: Font) -> Array:
+## **`building_marks` IS WHY ONLY SOME LETTERS GET THE EXPENSIVE BED** (ASSA-218 box 9, Maren: "it
+## matters"). The eight stamps are eight extra `draw_string` per letter, and a 13-letter world paid
+## 104 of them against ASSA-214's whole-map median of 42 draw calls -- 2.5x the map's entire budget,
+## to protect the one letter a machine was standing on. `AssayHud.letter_occlusions` already decides
+## which letters a building diamond laps, so it decides this too: on seed 777042 that is **1 letter,
+## so 8 stamps instead of 104.**
+##
+## **THE DECISION IS A FACT ON THE MARK, NOT AN `if` IN THE DRAW LOOP**, which is the whole reason
+## this is testable. `_draw` cannot be asked how many times it called `draw_string`; a dictionary
+## can. So `bedded` is published here and `_draw` paints what it is told, exactly as the comment
+## over the glyph pass already claims ("THE DECISION IS `_glyph_marks`'"). Mutating this to `true`
+## for every letter, or to `false` for all of them, reddens
+## `test_only_a_lapped_letter_carries_the_expensive_bed`.
+##
+## AN EMPTY LIST MEANS NO BUILDINGS, AND THEREFORE NO STAMPS -- not "stamp everything". A letter with
+## nothing over it is on its own disc, where `glyph_color` picked its ink against that exact surface
+## and the bed is invisible by construction; the stamps buy nothing there. That is the case the
+## `hud.gd` comment has always described and it is now the case that also costs nothing.
+func _glyph_marks(deposits: Array, font: Font, building_marks: Array = []) -> Array:
 	var marks := []
 	if font == null:
 		return marks
@@ -3581,7 +3730,10 @@ func _glyph_marks(deposits: Array, font: Font) -> Array:
 		# every deposit would stack its glyph on tile (0,0), and `AssayHud.machines_on_letters` would
 		# then report a machine near the origin as standing on all six species at once.
 		var centre: Vector2i = deposit["center"]
-		var at := MARGIN + Vector2(centre) * _cell
+		# **THE SAME `point_of_tile` THE DISC PASS USES** (ASSA-220). These were two independent copies of
+		# the corner formula, which is why one defect sat in two places: a letter centred on `at` inherited
+		# the disc's half-tile error exactly.
+		var at := point_of_tile(centre)
 		var radius := maxf(_cell, float(int(deposit.get("radius", 1))) * _cell)
 		var size := AssayHud.glyph_size(radius)
 		if size <= 0:
@@ -3610,5 +3762,17 @@ func _glyph_marks(deposits: Array, font: Font) -> Array:
 			# machine was on a rock today" from "one was and the map did not mark it".
 			# `AssayHud.machines_on_letters` is the comparison and `tools/window_shot.gd` the caller.
 			"tile": centre,
+			# Filled in below, once every letter's box exists: `letter_occlusions` needs the whole
+			# list, so it cannot be answered one letter at a time inside this loop.
+			"bedded": false,
 		})
+	# **WHICH LETTERS A BUILDING ACTUALLY LAPS** -- the same `letter_occlusions` the window shot's
+	# `case` leg reports, so the painter and the picture cannot disagree about which letter was at
+	# risk. It returns one entry per (building, letter) pair that overlaps at all, and a letter lapped
+	# by two buildings is still one letter, hence the set rather than a count.
+	for raw in AssayHud.letter_occlusions(building_marks, marks):
+		var lap: Dictionary = raw
+		var j := int(lap["letter"])
+		if j >= 0 and j < marks.size():
+			(marks[j] as Dictionary)["bedded"] = true
 	return marks

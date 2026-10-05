@@ -249,6 +249,30 @@ impl AssaySim {
         packed(&self.halt_line_texts())
     }
 
+    /// **HOW MANY OF THEM THERE ARE, IN THE SIM'S WORDS** — `"3 of 5 buildings
+    /// stopped"`, or `""` when nothing has (ASSA-94).
+    ///
+    /// `sim::debug::halt_summary` verbatim, which is also `halted`'s first line
+    /// in `sim-cli`. The Game Director's ruling is that the count is the floor
+    /// of this surface and the reasons are the extra: space bounds how many
+    /// reasons fit, and nothing bounds the number. A player who reads "3 stopped"
+    /// and can see one reason knows there are two more to find.
+    ///
+    /// **THIS EXISTS BECAUSE THE WINDOW WAS RIGHT TO REFUSE TO COUNT.** `main.gd`
+    /// declined a count in a comment — *"a count would be a second claim about
+    /// the world and the sim already makes it"* — and the objection is correct;
+    /// the conclusion was not. A client counting `halt_lines().size()` would be
+    /// a second claim, and would have to be kept true. Reading the sentence the
+    /// sim already composes is not.
+    ///
+    /// **EMPTY IS THE INSTRUCTION, NOT A MISSING VALUE.** "0 of 2 buildings
+    /// stopped" is the cry-wolf failure one step removed, so there is no number
+    /// here to render in the healthy case.
+    #[func]
+    pub fn halt_summary(&self) -> GString {
+        gstring(&sim::debug::halt_summary(&self.world))
+    }
+
     /// EVERY ACTIVITY THIS PLAYER HAS RUNNING, one sentence each, in `step`'s
     /// own system order (ASSA-95, Maren's ruling; the sim half shipped in
     /// #173). Empty when nothing is running, which is the common case.

@@ -643,9 +643,20 @@ func test_each_status_state_has_its_own_colour() -> bool:
 	var failed := AssayHud.status_color(AssayHud.Say.FAILED)
 	if failed.r <= failed.g or failed.r <= failed.b:
 		return _fail("the failed colour is not red: %s" % failed)
+	# **`JOINED` IS NO LONGER GREEN, AND THAT IS A RULING RATHER THAN A REGRESSION** (ASSA-233).
+	# This asserted green because green meant "this went well". Since ASSA-224 the accent means
+	# "press this" and belongs to the one `Primary` control, so a green readout and a green button
+	# in one frame are one colour doing opposite work. What is still required of this state is that
+	# it is READABLE and is not one of the two colours that carry an alarm -- an ordinary good
+	# status has no business looking like a failure or like a connection in progress. Which colour
+	# it IS is pinned against the theme's `INK_MUTED` in
+	# `test_the_themes_borrowed_colours_are_still_the_ones_they_say_they_borrowed`.
 	var joined := AssayHud.status_color(AssayHud.Say.JOINED)
-	if joined.g <= joined.r or joined.g <= joined.b:
-		return _fail("the joined colour is not green: %s" % joined)
+	if joined.r > joined.g and joined.r > joined.b:
+		return _fail("the joined colour reads as an alarm: %s" % joined)
+	if AssayHud.contrast_ratio(joined, AssayHud.MAP_BG) < 4.5:
+		return _fail("the joined status is %.2f:1 on the map, under the floor the theme refuses at"
+				% AssayHud.contrast_ratio(joined, AssayHud.MAP_BG))
 	var connecting := AssayHud.status_color(AssayHud.Say.CONNECTING)
 	if connecting.b >= connecting.r or connecting.b >= connecting.g:
 		return _fail("the connecting colour is not amber: %s" % connecting)
@@ -1132,11 +1143,27 @@ func test_an_empty_bench_says_so_rather_than_showing_nothing() -> bool:
 func test_the_themes_borrowed_colours_are_still_the_ones_they_say_they_borrowed() -> bool:
 	var theme_script = load("res://tools/build_theme.gd")
 	var accent: Color = theme_script.ACCENT
+	# **THIS PIN IS INVERTED SINCE ASSA-233, AND THE REASON IS A RULING, NOT A DRIFT.** It used to
+	# assert ACCENT *is* `status_color(JOINED)`, on the argument that "a focused field and a good
+	# status are the same colour rather than two opinions about success". Maren overturned exactly
+	# that argument at 1x: since ASSA-224 the accent means *press this* and is spent on the one
+	# `Primary` control, so a green `Play solo` and a green `· submitted at tick 514` in one frame
+	# are one colour doing opposite work. **NO STATUS COLOUR MAY BE THE ACCENT**, which is a stronger
+	# claim than the old equality and catches the same drift from the other side.
+	for level in [AssayHud.Say.IDLE, AssayHud.Say.CONNECTING, AssayHud.Say.FAILED,
+			AssayHud.Say.JOINED]:
+		var said := AssayHud.status_color(int(level))
+		if said.is_equal_approx(accent):
+			return _fail(("status_color(%d) is the theme's ACCENT %s. The accent means `press this` "
+					+ "and belongs to a button; a readout wearing it is two vocabularies for one "
+					+ "colour (ASSA-233)") % [int(level), accent])
+	# AND `JOINED` IS THE THEME'S SECONDARY INK, typed in `hud.gd` because the generator imports this
+	# file and the cycle would not close. Same arrangement `SURFACE` has below.
 	var joined := AssayHud.status_color(AssayHud.Say.JOINED)
-	if not accent.is_equal_approx(joined):
-		return _fail(("the theme's ACCENT %s is no longer status_color(JOINED) %s. One of them was "
-				+ "changed alone, and a focused field and a good status are now two opinions about "
-				+ "success") % [accent, joined])
+	var muted: Color = theme_script.INK_MUTED
+	if not joined.is_equal_approx(muted):
+		return _fail(("status_color(JOINED) %s is no longer the theme's INK_MUTED %s, so the status "
+				+ "line has a colour of its own again") % [joined, muted])
 	var surface: Color = theme_script.SURFACE
 	var scale := Vector3(surface.r / AssayHud.MAP_BG.r, surface.g / AssayHud.MAP_BG.g,
 			surface.b / AssayHud.MAP_BG.b)
@@ -1449,9 +1476,27 @@ func test_a_building_on_the_schematic_is_neither_a_disc_nor_a_rect() -> bool:
 ## mask's corners bare and this reddens; a wider OUTLINE would not satisfy it at all, which is the
 ## point of the item.
 ##
-## WHAT IT CANNOT SEE: whether the letter is legible. Nothing headless rasterises a glyph, so the
-## 13% -> 81% is `shared/assay/marlow-assa218-bed/ring.py` on a real 1x window, and the judgement on
-## the picture is Maren's.
+## **THE INK MASK IS A FIXTURE AND THIS SENTENCE IS THE POINT OF IT** (ASSA-218 box 3, Maren's
+## standard, and she accepted the fixture only on condition that it says so). The mask above is five
+## squares I typed, not a rasterised glyph, so **it cannot fail when the real letter changes** -- a
+## new font, a different `glyph_size`, a letter with a counter this mask has no shape for, and this
+## test stays green while the picture moves. By ASSA-189 box 6's letter ("reads the painter's own
+## glyph box, not a colour table") that makes it a fixture, and the honest name for what it proves is
+## narrow: *given this mask, the eight offsets cover its distance-1 ring.*
+##
+## **WHAT COVERS THE REAL RASTER, because the alternative to a fixture here is no test at all:**
+## nothing headless rasterises a glyph. The real letter is measured on a 1x window shot, and these
+## are the two in this item's evidence --
+##
+##   `shared/assay/marlow-assa218-bed/ring.py`      the 13% -> 81% edge figures
+##   `shared/assay/marlow-assa218-bedclaim/`        the three arms behind box 2's surface bar:
+##                                                  the bed AS DRAWN is 4.35:1 against a white
+##                                                  letter where the bare fill is 9.20:1
+##
+## Both are seed 777042, a machine standing on Minyte at (74,36). **The judgement on the picture is
+## Maren's and the number is not a substitute for it:** her own ASSA-229 finding is that an edge bar
+## scores 99-100% on letters reading 2.43:1 against their real surround, so a pass here, and a pass
+## on any bar in this family, measures what a mark COSTS a letter and never whether it reads.
 func test_the_glyph_bed_covers_every_neighbour_of_the_inks_own_pixels() -> bool:
 	var ink := {}
 	for y in range(0, 5):

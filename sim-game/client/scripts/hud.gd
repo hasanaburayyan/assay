@@ -962,7 +962,25 @@ static func mark_keyline_rect(body: Rect2) -> Rect2:
 	return body.grow(MARK_KEYLINE_PX)
 
 
-## The status line's colour for a state. Neutral idle, amber connecting, red failed, green joined.
+## The status line's colour for a state. Neutral idle, amber connecting, red failed, quiet joined.
+##
+## **`JOINED` WAS THE ACCENT GREEN AND IS NOT ANY MORE** (ASSA-233, Maren's ruling 3). Since ASSA-224
+## the accent means ONE thing -- *press this* -- and it is spent on the single `Primary` control on
+## the screen. A green `Play solo` and a green `· submitted at tick 514` in the same frame is one
+## colour doing opposite work, which is the two-vocabularies defect her own direction doc condemns.
+## Her words: "it is a readout, not an action, and nothing is lost -- the line already says the word
+## submitted".
+##
+## **IT IS SEVEN READOUTS, NOT THE ONE SHE NAMED, and that is deliberate.** `Say.JOINED` also paints
+## "joined as player N", "acting on x, y", "walking to x, y" and the link's own notes. Her ruling is
+## stated as a rule -- *no accent outside a button* -- so fixing only the clause in the shot would
+## leave the rule false everywhere else in the same screen, and the next readout added would be
+## green again. `test_no_status_colour_is_the_themes_accent` is what holds it.
+##
+## **THE VALUE IS `build_theme.gd`'s `INK_MUTED`, PINNED BY A TEST RATHER THAN BY THIS COMMENT.**
+## This file cannot import the theme generator -- the generator imports THIS file for
+## `contrast_ratio` -- so the number is typed here and asserted equal there, which is the arrangement
+## `SURFACE` and the old `ACCENT` already had.
 static func status_color(level: int) -> Color:
 	match level:
 		Say.CONNECTING:
@@ -970,7 +988,7 @@ static func status_color(level: int) -> Color:
 		Say.FAILED:
 			return Color(0.95, 0.40, 0.35)
 		Say.JOINED:
-			return Color(0.50, 0.90, 0.55)
+			return Color(0.655, 0.690, 0.745)
 		_:
 			return Color(0.80, 0.82, 0.86)
 
