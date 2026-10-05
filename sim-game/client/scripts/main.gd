@@ -47,6 +47,37 @@ var _name := LineEdit.new()
 var _join_band := HBoxContainer.new()
 ## The door that stays in every stage. A field only so a test can assert it stayed.
 var _join_button := Button.new()
+## **THE JOIN SCREEN AS ONE COMPOSITION, AND THE SAME CONTROLS IN A WORLD** (ASSA-231, Maren's Gap 5
+## in doc `assay-ui-direction`: *"one screen, one primary action, the empty column not shown at all
+## before a world exists"*).
+##
+## Before there is a world the three join controls do not live in the top-left toolbar at all: they
+## stand in the middle of the biggest surface in the game, under the game's name and the one
+## sentence that names both doors, with `Play solo` alone on its line above the host path. The
+## moment a world exists they move back into `_row`, where `Join` is the reconnect affordance a
+## dropped player reaches for (ASSA-175/ASSA-177) and nothing is drawn over the world.
+##
+## **ONE SET OF NODES WITH TWO HOMES, NOT TWO SETS.** Two `Play solo` buttons would be two things to
+## keep in step and two things to press, and the accent that gives this screen its rank is exactly
+## one control deep (ASSA-224). `_place_join_controls` is the whole of the move.
+var _row := HBoxContainer.new()
+var _front_door := VBoxContainer.new()
+var _door_title := Label.new()
+## The two travelling cells: the primary on its own line, and the host path on the next one. They
+## are what `_refresh_join_band` hides in a world, wherever they are currently parented.
+var _solo_cell := HBoxContainer.new()
+var _cred_cell := HBoxContainer.new()
+var _door_primary := HBoxContainer.new()
+var _door_secondary := HBoxContainer.new()
+## What the client is SAYING, under the controls it is saying it about. In a world these two labels
+## go back to (24, 54) and (24, 74); on the join screen a refusal 300 px from the button that earned
+## it is the same defect ASSA-127 fixed for the invitation.
+var _door_says := VBoxContainer.new()
+## THE PAINTED COLUMN SURFACE, held so the column can leave the screen before a world exists. Not
+## its sections one at a time: the column is one object to a player and `COLUMN_SURFACE` is the
+## ancestor every part of it hangs from, so a section added later is hidden by this with no second
+## list to remember.
+var _column: Panel = null
 var _status := Label.new()
 ## **WHAT THE STATUS LINE WOULD SAY IF THE LINK WERE FINE**: the last sentence `_say` was given, kept
 ## because the quiet warning is TEMPORARY and something has to be underneath it when it goes
@@ -578,14 +609,38 @@ func _build_ui() -> void:
 	# `MOUSE_FILTER_IGNORE` IS NOT DECORATION: this control spans 912x600 of the window, and the map
 	# is clicked through `_unhandled_input`. A label that answered the mouse would swallow every
 	# click on the world and the failure would be "Play solo does nothing", nowhere near this line.
+	# **AND IT IS A COMPOSITION NOW, NOT A SENTENCE** (ASSA-231, Maren's Gap 5). The door spans the
+	# same rectangle the sentence used to span and carries that sentence unchanged; what is new is
+	# that the controls it talks about stand underneath it instead of in the far corner.
+	#
+	# `MOUSE_FILTER_IGNORE` FOR THE REASON THE NOTE HAS IT, one level up: this is a 912x600 Control
+	# over the map, and a Container does NOT inherit the note's filter. IGNORE does not apply to
+	# children, so every button inside it still gets its clicks -- and the failure if it did would
+	# read as "Play solo does nothing", nowhere near this line.
+	_front_door.position = world.position
+	_front_door.size = world.size
+	_front_door.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_front_door.alignment = BoxContainer.ALIGNMENT_CENTER
+	_front_door.add_theme_constant_override("separation", 10)
+	add_child(_front_door)
+	# THE GAME'S NAME, AT THE TOP OF THE TYPE SCALE WE HAVE. `Display` is 20px/INK -- the size Maren
+	# measured as "used exactly once in the game, on the bench verdict". A title screen is what it is
+	# for. **AND IT IS THE CEILING:** a bigger title means a fifth size in `build_theme.gd`, which is
+	# a type-scale ruling and hers, so the shot goes to her with the limit named rather than with a
+	# number I invented in this file.
+	_door_title.text = ProjectSettings.get_setting("application/config/name", "Assay")
+	_door_title.theme_type_variation = &"Display"
+	_door_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_door_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_front_door.add_child(_door_title)
+	# **THE SAME WORDS, AND NOT ONE WORD OF NEW COPY** (Maren's ruling 1, ASSA-127: "keep the existing
+	# words"). The sentence names both doors, solo first, and now the two rows under it are in that
+	# same order, so the layout and the sentence say one thing instead of two.
 	_map_note = _note(AssayHud.empty_map_line())
-	_map_note.position = world.position
-	_map_note.size = world.size
 	_map_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_map_note.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_map_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_map_note.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_map_note)
+	_front_door.add_child(_map_note)
 
 	_build_log_over_the_map(world)
 	_build_map_key_over_the_map(world)
@@ -627,26 +682,34 @@ func _build_ui() -> void:
 	add_child(_map_key_toggle)
 	_map_key_toggle.visible = false
 
-	var row := HBoxContainer.new()
-	row.position = Vector2(24.0, 20.0)
-	row.add_theme_constant_override("separation", 8)
-	add_child(row)
+	# THE TOP-LEFT ROW IS THE IN-WORLD HOME ONLY (ASSA-231). On the join screen it stands empty and
+	# the three controls are in `_front_door`; `_place_join_controls` moves them here when a world
+	# appears, which is also the state `Join` has to be reachable in (ASSA-175/ASSA-177).
+	_row.position = Vector2(24.0, 20.0)
+	_row.add_theme_constant_override("separation", 8)
+	add_child(_row)
 
 	# THE BAND INSIDE THE ROW: everything a player in a world can no longer use (ASSA-175). Same
 	# separation as the row it sits in, so the band is a grouping for the hide and not a layout change
 	# -- a `BoxContainer` skips invisible children, so the gap before `Join` closes when it goes.
 	_join_band.add_theme_constant_override("separation", 8)
-	row.add_child(_join_band)
+	_row.add_child(_join_band)
 
 	# **PLAY SOLO: DOWNLOAD AND PLAY, WITH NOTHING TO TYPE** (ASSA-106, the board's own ask). The
 	# host box already defaults to `localhost`, so the shortest honest version of their request was
 	# never "a field with a better default" -- it was that nothing is listening on the other end.
 	# This starts the `sim-relay` that shipped in the same zip, on loopback, and joins it.
 	#
-	# **FIRST IN THE ROW AND IT TAKES THE FOCUS** (Maren, ASSA-113): the row reads left to right, so
-	# the door that needs nothing typed is the first thing a stranger reads and the thing Enter
-	# presses. Beside `Join` rather than instead of it -- a friend's host address is the other half of
-	# the milestone and this must not become the only way in.
+	# **FIRST IN READING ORDER AND IT TAKES THE FOCUS** (Maren, ASSA-113): the door that needs nothing
+	# typed is the first thing a stranger reads and the thing Enter presses. Beside `Join` rather than
+	# instead of it -- a friend's host address is the other half of the milestone and this must not
+	# become the only way in.
+	#
+	# **THE AXIS CHANGED AND THE RULING DID NOT** (ASSA-231). Her sentence was "the row reads left to
+	# right"; on the join screen the composition now reads top to bottom, with this button alone on
+	# its line above the host path, so it is still the first control a stranger meets and still the
+	# one Enter presses. In a world the controls are back in a left-to-right row and it is first there
+	# too.
 	#
 	# FOCUS IS ASKED FOR ON `tree_entered`, NOT TAKEN HERE. `grab_focus` asserts `is_inside_tree()`,
 	# and measured: inside `SceneTree._initialize` -- where the suite and every tool run -- a node
@@ -669,31 +732,51 @@ func _build_ui() -> void:
 	_solo_button.focus_mode = Control.FOCUS_ALL
 	_solo_button.pressed.connect(_on_play_solo)
 	_solo_button.tree_entered.connect(_solo_button.grab_focus)
-	_join_band.add_child(_solo_button)
+	# THE CELL AND NOT THE BUTTON IS WHAT TRAVELS AND WHAT HIDES (ASSA-231): one node to move, one
+	# node to hide, and the two cells keep `Play solo` and the host path separable so the primary can
+	# have a line of its own on the join screen.
+	_solo_cell.add_child(_solo_button)
 
 	var host_label := Label.new()
 	host_label.text = "host"
-	_join_band.add_child(host_label)
+	_cred_cell.add_theme_constant_override("separation", 8)
+	_cred_cell.add_child(host_label)
 	_host.text = "localhost:%d" % AssayProtocol.DEFAULT_PORT
 	_host.custom_minimum_size = Vector2(240.0, 0.0)
 	_host.tooltip_text = "host, host:port, or [v6]:port. A bare address uses 7777."
-	_join_band.add_child(_host)
+	_cred_cell.add_child(_host)
 
 	var name_label := Label.new()
 	name_label.text = "name"
-	_join_band.add_child(name_label)
+	_cred_cell.add_child(name_label)
 	_name.text = OS.get_environment("USER")
 	_name.custom_minimum_size = Vector2(140.0, 0.0)
-	_join_band.add_child(_name)
+	_cred_cell.add_child(_name)
 
 	_join_button.text = "Join"
 	_join_button.pressed.connect(_on_join)
-	row.add_child(_join_button)
 
-	_status.position = Vector2(24.0, 54.0)
-	add_child(_status)
-	_detail.position = Vector2(24.0, 74.0)
-	add_child(_detail)
+	# **THE TWO ROWS OF THE COMPOSITION, AND THE RANK IS THE LAYOUT AS WELL AS THE COLOUR.** Gap 5's
+	# complaint is that the one thing to press is "visually subordinate to the host field, the name
+	# field and Join"; ASSA-224 answered the colour half. A primary that shares its line with two text
+	# boxes is still competing with them, so it gets the line.
+	_door_primary.alignment = BoxContainer.ALIGNMENT_CENTER
+	_door_primary.add_child(_solo_cell)
+	_front_door.add_child(_door_primary)
+	_door_secondary.alignment = BoxContainer.ALIGNMENT_CENTER
+	_door_secondary.add_theme_constant_override("separation", 8)
+	_door_secondary.add_child(_cred_cell)
+	_door_secondary.add_child(_join_button)
+	_front_door.add_child(_door_secondary)
+
+	# WHAT THE CLIENT IS SAYING, UNDER WHAT IT IS SAYING IT ABOUT. `SHRINK_CENTER` so the block is its
+	# own width and centred rather than two lines of left-aligned text across 912px; the labels keep
+	# their own alignment, which is what they go back to in a world.
+	_door_says.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_door_says.add_theme_constant_override("separation", 2)
+	_door_says.add_child(_status)
+	_door_says.add_child(_detail)
+	_front_door.add_child(_door_says)
 
 	# THE HUD COLUMN, beside the map. Each section is the plainest thing that answers one question:
 	# what am I carrying, what can I do here, what have I built, what is under the cursor, what just
@@ -757,6 +840,19 @@ func _build_ui() -> void:
 	surface.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	surface.name = COLUMN_SURFACE
 	add_child(surface)
+	# **THE COLUMN IS NOT ON THE SCREEN BEFORE THERE IS A WORLD** (ASSA-231, Maren's Gap 5: "the empty
+	# column not shown at all before a world exists").
+	#
+	# Six of its seven sections said which kind of empty they were, which was ASSA-134 and ASSA-186
+	# working exactly as ruled -- and as a COMPOSITION Maren's own doc calls the result "a column of
+	# six apologies". The rule has not changed for the state it is about; this is the state leaving.
+	#
+	# HIDDEN AT BUILD AND NOT ON THE FIRST REFRESH, because `_refresh_world` is not called on the join
+	# screen at all (`_process` only calls it `if _close_up and _sim.running()`), so a column shown
+	# here and hidden later would be shown for the whole of the join screen. Same reason
+	# `_view_toggle.visible = false` is set at build a few lines up.
+	_column = surface
+	_column.visible = false
 	# THE GUTTER, AND THE THEME ALREADY DECIDED IT (ASSA-142, Maren: "the number comes from the
 	# container, not from this item").
 	#
@@ -1178,8 +1274,15 @@ func _unhandled_key_input(event: InputEvent) -> void:
 ## anything, so a signal-driven hide would be a list to keep in step with `net_client.gd`. Asking the
 ## stage every frame cannot miss a transition, and `CanvasItem.set_visible` early-returns when the
 ## value is unchanged.
+## **IT HIDES THE CELLS AND NOT ONLY THE BAND NOW, BECAUSE THEY ARE NOT ALWAYS IN IT** (ASSA-231).
+## Before a world the two cells stand in `_front_door`, and a hide that only reached `_join_band`
+## would be a statement about an empty box -- true, green, and about nothing. The band keeps its own
+## flag because it is the in-world grouping that closes the gap before `Join`, and because
+## `tools/reconnect_probe.gd` reads it as the sign the band came back after a drop.
 func _refresh_join_band() -> void:
-	_join_band.visible = _client.stage != AssayNetClient.Stage.JOINED
+	var offer: bool = _client.stage != AssayNetClient.Stage.JOINED
+	for control: Control in [_join_band, _solo_cell, _cred_cell]:
+		control.visible = offer
 
 
 ## START A RELAY OF OUR OWN AND JOIN IT (ASSA-106).
@@ -2663,8 +2766,57 @@ func _clear(box: Node) -> void:
 ## that decides whether anything is painted. Asking `_sim.running()` here instead would be a second
 ## condition for one fact, and the frame where the two disagree is a sentence over a drawn world or
 ## a bare rectangle with no sentence -- both of which look like the bug this item is about.
-func _refresh_map_note() -> void:
-	_map_note.visible = _world.view.is_empty()
+## **AND THE WHOLE JOIN SCREEN GOES WITH IT NOW** (ASSA-231). The note is one line inside
+## `_front_door`, so what is shown or hidden is the composition: the title, the sentence, the two
+## rows of controls and what the client is saying. The HUD column is the other half of the same
+## fact, which is why it is set here rather than on a predicate of its own -- Maren's Gap 5 is one
+## ruling about one screen, and two conditions for it is how a door and a column end up both on
+## screen for a frame.
+func _refresh_front_door() -> void:
+	var empty: bool = _world.view.is_empty()
+	_front_door.visible = empty
+	if _column != null:
+		_column.visible = not empty
+	_place_join_controls(not empty)
+
+
+## **WHERE THE THREE JOIN CONTROLS LIVE, WHICH IS A FUNCTION OF WHETHER THERE IS A WORLD** (ASSA-231).
+##
+## IDEMPOTENT ON PURPOSE: this runs on every refresh and `reparent` is skipped unless the home is
+## actually wrong, so the normal frame costs three comparisons and moves nothing. That is also what
+## keeps the order inside `_row` right -- the cells are appended in this dictionary's order the one
+## time they move, and never shuffled again.
+##
+## AND THE FOCUS IS DROPPED ON THE WAY IN. `_solo_button` asks for the focus whenever it enters a
+## tree (see `_build_ui`), which a reparent is: landing in a world holding the focus would mean Enter
+## pressing a hidden `Play solo` and getting a refusal nobody asked for.
+func _place_join_controls(in_world: bool) -> void:
+	var homes := {
+		_solo_cell: _join_band if in_world else _door_primary,
+		_cred_cell: _join_band if in_world else _door_secondary,
+		_join_button: _row if in_world else _door_secondary,
+		_status: self if in_world else _door_says,
+		_detail: self if in_world else _door_says,
+	}
+	var moved := false
+	for control: Control in homes:
+		var home: Node = homes[control]
+		if control.get_parent() == home:
+			continue
+		control.reparent(home, false)
+		moved = true
+	if not moved:
+		return
+	if in_world:
+		# THE TWO LABELS GO BACK TO THEIR OWN COORDINATES, and `reset_size` with them: a container
+		# hands a child its width, and a 912px-wide Label parked at (24, 54) would report a rect
+		# three quarters of the window wide for one word of text.
+		_status.reset_size()
+		_status.position = Vector2(24.0, 54.0)
+		_detail.reset_size()
+		_detail.position = Vector2(24.0, 74.0)
+		if _solo_button.has_focus():
+			_solo_button.release_focus()
 
 
 ## **EVERY PLAYER THE BINDING IS SENDING, OR NOTHING AT ALL** (ASSA-196 box 3, and box 5 is the
@@ -2723,7 +2875,7 @@ func _refresh_world(frame_dt := -1.0) -> void:
 	if not _sim.running():
 		_world.view = {}
 		_world.me = null
-		_refresh_map_note()
+		_refresh_front_door()
 		_world.queue_redraw()
 		return
 	if _manifest.is_empty():
@@ -2748,7 +2900,7 @@ func _refresh_world(frame_dt := -1.0) -> void:
 	if not _player_facts_missing.is_empty():
 		_world.view = {}
 		_world.me = null
-		_refresh_map_note()
+		_refresh_front_door()
 		_world.queue_redraw()
 		return
 	# THE TWO SIM FACTS THE CLICK ECHO DIES ON (ASSA-215), picked up in the loop that is already
@@ -2810,7 +2962,7 @@ func _refresh_world(frame_dt := -1.0) -> void:
 	# refusal that killed it, on the one surface whose whole job this frame is answering the click.
 	_walk_echo = AssayScene.walk_echo(_walk_echo, my_target, my_pos, false)
 	_world.destination = _walk_echo.get("tile")
-	_refresh_map_note()
+	_refresh_front_door()
 	_world.queue_redraw()
 
 
