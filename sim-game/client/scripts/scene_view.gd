@@ -72,6 +72,56 @@ const SAME_FRAME := 0.002
 const PLAYOUT_CATCHUP := 0.5
 const PLAYOUT_NUDGE := 0.1
 
+## **THE INTEGRAL HALF OF THE SAME LOOP: how fast the clock LEARNS that its measured tick length is
+## biased, as a fraction of rate per tick of depth error per second** (ASSA-197). And the band it may
+## learn inside.
+##
+## WHY A SECOND TERM EXISTS AT ALL, which is Wren's question on this item and the arithmetic that
+## answers it. `PLAYOUT_NUDGE` is the whole authority the clock has, so it is also a CEILING ON HOW
+## WRONG `playout_step` MAY BE: depth is steady only when `rate = s/T` for a measured tick `s`
+## against a true `T`, and `rate` cannot leave ±10%. Simulated against this very function, 30 s at 90
+## fps: an estimate at 90% of true survives with the controller pinned on its stop and depth settled
+## at 1.75 instead of 2.5, and an estimate at **86% starves 263 of 2430 frames** -- which is exactly
+## the drain-and-hold measured on this Mac before the pairing fix, WITH this loop already closed.
+## Tightening the clamp (to ±5%, say) moves that cliff to 6% rather than removing it; widening it
+## spends on jitter, visibly, what is wanted for bias, because at `PLAYOUT_CATCHUP` 0.5 a single tick
+## of jitter already asks for 50%.
+##
+## So the proportional term keeps the jitter and a slow integral takes the bias. **IN STEADY STATE
+## THE TRIM CARRIES THE WHOLE CORRECTION AND THE PROPORTIONAL TERM GOES TO ZERO, so the trim's size
+## is not a speed error -- it is the removal of one.** Drawn speed is `rate * trim / s` tiles/s and
+## the loop is only at rest when that equals the host's true `1/T`, whatever `s` claims.
+##
+## **0.05 AND NOT FASTER, because this term's job is a bias and the depth signal is mostly jitter.**
+## Depth swings ±0.5 ticks around target at a steady 10 tps (measured in the same simulation) and
+## that ripple integrates to 2.5% a second if it were one-sided; it is not, so the real ripple is
+## well under a per cent, while a 2-tick error moves the trim 10% a second and converges in about a
+## second and a half.
+##
+## **±35% IS AN UNWIND BUDGET, NOT A BELIEF ABOUT MEASUREMENT ERROR.** Depth error is not always a
+## rate bias -- a host that stops and restarts, or a queue cap that drops positions, drives it too --
+## and an unbounded integral would wind up and then take tens of seconds to come back. At 35% a fully
+## wound trim unwinds in about seven seconds of a 1-tick error and the client still plays out at a
+## third off the host's rate at worst, which the proportional term alone cannot survive for a moment.
+const PLAYOUT_TRIM := 0.05
+const PLAYOUT_TRIM_MAX := 0.35
+## WHAT A CLOCK THAT HAS LEARNT NOTHING YET TRIMS BY: the measured rate, untouched.
+const PLAYOUT_TRIM_NONE := 1.0
+
+## **HOW FAR THE HOST'S LIVE POSITION LEADS THE NEWEST POSITION WE CAN ACTUALLY DRAW, in ticks, on
+## average** (ASSA-197). Half a tick, and it is a conversion rather than a tuning knob.
+##
+## The loop's error is measured against where the host has got to by now (`playout_at`'s `since`),
+## which is the only sawtooth-free signal available. But the BUFFER is the history we hold, and that
+## is counted from the newest tick that has LANDED -- a fraction of a tick behind the live host,
+## uniformly distributed over [0, 1) and so 0.5 on average. Without this term the clock would hold
+## `delay` ticks behind the live host and therefore `delay - 0.5` ticks of real history: 50 ms less
+## buffer and 50 ms less latency than the 2.5 ticks that were measured, which is a change to
+## `PLAYOUT_DELAY` made by accident in the arithmetic rather than on purpose with a number. With it,
+## the clock sits exactly where it sat before this signal existed, and the only thing that changed
+## is the ±10% ripple that is now gone.
+const PLAYOUT_PRODUCTION_LEAD := 0.5
+
 ## THE SHORTEST A PLAYED-OUT STEP MAY BE, in seconds. See `playout`.
 ##
 ## A FLOOR AND NOT A CHOICE OF RATE: the rate is measured from the bundles that arrive, because
@@ -277,10 +327,33 @@ static func playout_step(arrivals: Array[float], ticks: Array[int], fallback: fl
 ##
 ## `ticks` is the sim's own tick number for each held position, oldest first, so a dropped position
 ## is interpolated ACROSS rather than sprinted through: two tick-times for a two-tick segment.
+##
+## **THE LOOP IS CLOSED ON BUFFER DEPTH AND IT IS A PI, NOT A P** (ASSA-197, Wren's 23:05 ruling and
+## the arithmetic under `PLAYOUT_TRIM`). `trim` is the integral: it comes in, it goes out in the
+## answer, and the caller does nothing with it but hand it back next frame.
+##
+## **AND THE ERROR IT CONTROLS IS MEASURED AGAINST THE HOST'S PRODUCTION, NOT AGAINST ITS LAST WHOLE
+## TICK** -- `since` is how long ago the newest position landed, and leaving it out costs ±10% of
+## drawn speed ten times a second. `newest` is an integer that jumps by one at each arrival while
+## `at` slides continuously between them, so `newest - at` SAW-TOOTHS by a whole tick at the tick
+## rate even when the clock is perfect. At `PLAYOUT_CATCHUP` 0.5 the proportional term saturates at
+## 0.2 ticks of error, so a ±0.5-tick sawtooth drives it to BOTH stops within every tick: a ±10%
+## square modulation of the body's speed, injected by the controller and by nothing else. Measured
+## in a real window (`motion_speed_probe.gd`, 2026-10-04): every frame outside the bar in three runs
+## was the rate sitting on one of its two stops. Adding `since / step` makes both sides of the
+## comparison continuous, with the same mean, so the clock holds the same depth and the same latency
+## without the ripple.
+##
+## `since` IS CLAMPED TO ONE TICK, which is what makes a stalled host degrade to the old behaviour
+## instead of inventing production. Past a tick of silence the host has not sent what it owes, the
+## estimate stops growing, and the error falls exactly as it does today -- the buffer gets spent,
+## which is what it is for. Nothing here is drawn from it: `at` is still clamped to `newest`, so
+## ASSA-119 holds unchanged.
 static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: float,
-		delay: float) -> Dictionary:
+		delay: float, since: float = 0.0, trim: float = PLAYOUT_TRIM_NONE) -> Dictionary:
 	if ticks.is_empty():
-		return {"play_tick": play_tick, "index": -1, "part": 1.0, "starved": true, "rate": 1.0}
+		return {"play_tick": play_tick, "index": -1, "part": 1.0, "starved": true, "rate": 1.0,
+				"trim": trim, "depth": 0.0}
 	var newest := float(ticks[ticks.size() - 1])
 	var oldest := float(ticks[0])
 	var at := play_tick
@@ -300,16 +373,26 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 		# That costs a quarter of a second of standing still at the start of a session and buys a
 		# buffer the rest of the session spends.
 		if newest - oldest < delay:
+			# AND THE TRIM DOES NOT INTEGRATE WHILE THE CLOCK IS NOT RUNNING. The depth error is
+			# enormous here by design -- the buffer is deliberately filling -- and a term that learnt
+			# from it would come out of the join wound to its stop in the wrong direction.
 			return {"play_tick": PLAYOUT_UNSTARTED, "index": 0, "part": 0.0,
-					"starved": false, "rate": 1.0}
+					"starved": false, "rate": 1.0, "trim": trim, "depth": newest - oldest}
 		at = newest - delay
 	else:
 		# The error is in ticks and the correction is in rate. `PLAYOUT_CATCHUP` decides how hard we
 		# lean on it and `PLAYOUT_NUDGE` caps it, so the worst speed error this clock can introduce
 		# is a few per cent -- against the +/-25% the bar allows.
-		rate = clampf(1.0 + (newest - delay - at) * PLAYOUT_CATCHUP,
-				1.0 - PLAYOUT_NUDGE, 1.0 + PLAYOUT_NUDGE)
-		at += dt / maxf(step, MIN_PLAYOUT_STEP) * rate
+		var produced := newest + clampf(since / maxf(step, MIN_PLAYOUT_STEP), 0.0, 1.0)
+		var err := produced - (delay + PLAYOUT_PRODUCTION_LEAD) - at
+		rate = clampf(1.0 + err * PLAYOUT_CATCHUP, 1.0 - PLAYOUT_NUDGE, 1.0 + PLAYOUT_NUDGE)
+		# THE SAME ERROR, INTEGRATED, which is the half that survives a measurement this client cannot
+		# check (`PLAYOUT_TRIM`: a Windows PC, where `playout_step` has never been run). `dt` is in the
+		# integral because a trim that learnt per FRAME would learn at the frame rate, and then the
+		# same host would be tracked differently at 30 and 120 fps.
+		trim = clampf(trim + err * PLAYOUT_TRIM * dt,
+				1.0 - PLAYOUT_TRIM_MAX, 1.0 + PLAYOUT_TRIM_MAX)
+		at += dt / maxf(step, MIN_PLAYOUT_STEP) * rate * trim
 	var starved := at > newest
 	at = clampf(at, oldest, newest)
 	var index := 0
@@ -319,7 +402,8 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 	if index + 1 < ticks.size():
 		var span := float(ticks[index + 1] - ticks[index])
 		part = clampf((at - float(ticks[index])) / maxf(span, 1.0), 0.0, 1.0)
-	return {"play_tick": at, "index": index, "part": part, "starved": starved, "rate": rate}
+	return {"play_tick": at, "index": index, "part": part, "starved": starved, "rate": rate,
+			"trim": trim, "depth": newest - at}
 
 
 static func playout(seg_at: float, step_seconds: float, now: float, arrived: Array[float],

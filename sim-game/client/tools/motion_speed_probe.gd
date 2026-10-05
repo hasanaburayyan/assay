@@ -63,6 +63,9 @@ var _clock: Array[float] = []
 ## Bundle arrivals, as a cross-check on TICK_SECONDS and to show how bursty delivery was.
 var _bundle_gaps: Array[float] = []
 var _last_bundle := 0.0
+## Every bundle's arrival instant and the sim tick it carried, for the host's own pacing.
+var _bundle_at: Array[float] = []
+var _bundle_tick: Array[int] = []
 ## Frames where the renderer had published no drawn position for us. A sampler that reads the wrong
 ## field is silent in exactly the way a body that never moved is; this counts the difference.
 var _blind := 0
@@ -84,6 +87,19 @@ var _play: Array[float] = []
 var _starved: Array[bool] = []
 var _held: Array[int] = []
 var _sim_tick: Array[int] = []
+## **THE QUANTITY THE CLOCK IS CONTROLLING, AND WHAT IT HAS LEARNT ABOUT ITS OWN MEASUREMENT**
+## (ASSA-197). `_held` is how many positions the queue holds, which is not the same thing: the depth
+## is fractional and is what decides whether the next late bundle is absorbed or felt. A trim away
+## from 1.0 says the measured tick length is biased by that much and the loop has corrected it --
+## which on a machine none of us owns is the only way to see that happening at all.
+var _depth: Array[float] = []
+var _trim: Array[float] = []
+## How many times the screen had advanced its playout clock by this sample. See
+## `main.gd::_play_advances`: more than one between two samples means `_played_at` stepped without a
+## new rectangle being drawn, and the verdict column's denominator is then short.
+var _advances: Array[int] = []
+## One entry per moving frame that failed the bar, with the parts of its own verdict.
+var _outliers: Array[Dictionary] = []
 
 
 func _initialize() -> void:
@@ -98,11 +114,19 @@ func _initialize() -> void:
 	_screen = load("res://scenes/main.tscn").instantiate()
 	root.add_child(_screen)
 	_screen._ready()
-	_screen._client.tick_bundle.connect(func(_t: int, _i: Array, _r: String) -> void:
+	_screen._client.tick_bundle.connect(func(t: int, _i: Array, _r: String) -> void:
 		var now := _now()
 		if _last_bundle > 0.0:
 			_bundle_gaps.append(now - _last_bundle)
-		_last_bundle = now)
+		_last_bundle = now
+		# **THE TICK NUMBER AS WELL AS THE INSTANT, so the HOST's own rate can be stated** (ASSA-197).
+		# A raw gap is bimodal and says nothing about pacing -- the client drains its socket once a
+		# frame, so bundles land in pairs 0.17 ms apart and the gap series reads 0.17, 0.17, 221, 258.
+		# Collapsed per frame and divided by the tick span it covers, the same arrivals give the
+		# length of a tick as the host actually produced it, which is the reference the bar's constant
+		# 10.00 tiles/s stands in for.
+		_bundle_at.append(now)
+		_bundle_tick.append(t))
 
 
 func _now() -> float:
@@ -233,6 +257,9 @@ func _sample(delta: float, now: float) -> void:
 	_starved.append(bool(_screen._starved))
 	_held.append((_screen._pending as Array).size())
 	_sim_tick.append(int(_screen._sim.tick()))
+	_depth.append(float(_screen._play_depth))
+	_trim.append(float(_screen._play_trim))
+	_advances.append(int(_screen._play_advances))
 
 
 ## THE MOVING STRETCH ONLY, both ends trimmed. A standing body is on its tile in every frame, so any
@@ -332,6 +359,15 @@ func _report() -> void:
 			drawn.append(moved / screen_dt)
 			if absf(drawn[drawn.size() - 1] - TRUE_SPEED) <= TRUE_SPEED * TOLERANCE:
 				within_drawn += 1
+			else:
+				# **EVERY FRAME OUTSIDE THE BAR IS NAMED WITH WHAT ITS DENOMINATOR WAS MADE OF**, which
+				# is the difference between a finding and a plea. `advances` is how many times the
+				# clock stepped between these two samples: two means a bundle landed mid-frame and
+				# moved `_played_at` without publishing a rectangle, so this frame's movement is being
+				# divided by part of its own interval.
+				_outliers.append({"frame": i, "speed": moved / screen_dt, "moved": moved,
+						"screen_dt": screen_dt, "probe_dt": dt, "over_probe": moved / dt,
+						"advances": _advances[i] - _advances[i - 1], "depth": _depth[i]})
 		probe.append(moved / dt)
 		# **BOX 3, MEASURED RATHER THAN BUILT.** The camera is on the drawn position (`main.gd`) and
 		# the foot mark is drawn from it, so the body and its own mark must keep a fixed offset. Any
@@ -366,6 +402,23 @@ func _report() -> void:
 	_say("camera tiles/s", _percentiles(camera))
 	_say("frame ms", _percentiles(frames))
 	_say("bundle gap ms", _percentiles(_scaled(_bundle_gaps, 1000.0)))
+	# **WHAT THE HOST ACTUALLY DID, which is the other half of every verdict here.** The bar is
+	# +/-25% of a CONSTANT 10.00 tiles/s, and that constant is the relay's nominal rate rather than a
+	# measurement: a clock that follows a host perfectly is drawn outside the bar whenever the host
+	# itself wanders more than 25%, and on this Mac under six agents the relay is a child process
+	# competing for the same cores. So the host's own tick length is stated beside the body's speed,
+	# and a stall is counted rather than left inside a percentage.
+	_say("host tick ms", _percentiles(_scaled(_host_ticks(), 1000.0)))
+	var stalls := 0
+	var worst_tick := 0.0
+	for seconds in _host_ticks():
+		if seconds > TICK_SECONDS * 1.5:
+			stalls += 1
+			worst_tick = maxf(worst_tick, seconds)
+	if stalls > 0:
+		print(("  the HOST stalled %d times (a tick it took over %.0f ms to produce, longest %.0f "
+				+ "ms): production the clock can only answer by slowing down or running dry")
+				% [stalls, TICK_SECONDS * 1500.0, worst_tick * 1000.0])
 	# **WHAT A FROZEN FRAME ACTUALLY WAS.** A drawn speed of zero has three different causes and they
 	# need different fixes: the clock ran out of produced positions (starved), the sim produced the
 	# same position twice (the body is not walking every tick), or the clock advanced but the segment
@@ -391,6 +444,15 @@ func _report() -> void:
 		print("  the SIM moved %.1f tiles in %d ticks = %.3f tiles/tick (true speed assumes 1.000)"
 				% [tiles, ticks, tiles / maxf(1.0, float(ticks))])
 	print("  buffer held: %s" % [_percentiles(_as_floats(_held))])
+	# **THE DEPTH AND THE TRIM: THE LOOP'S OWN TWO NUMBERS** (ASSA-197). Depth is what the PI loop
+	# controls -- `PLAYOUT_DELAY` is the target, and a depth sitting near zero is a clock about to
+	# hold the body still. The trim is what it has learnt about `playout_step`'s bias: 1.000 means
+	# the measurement is being taken at face value, and a trim parked on `PLAYOUT_TRIM_MAX` means the
+	# integral has run out of authority and the next thing to look at is the measurement itself.
+	print("  buffer depth (ticks, target %.1f): %s"
+			% [AssayScene.PLAYOUT_DELAY, _percentiles(_slice(_depth, from, to))])
+	print("  clock trim (1.000 = the measured tick taken as-is, clamp %.2f): %s"
+			% [AssayScene.PLAYOUT_TRIM_MAX, _percentiles(_slice(_trim, from, to))])
 	# **WHAT THE CLIENT THINKS A TICK IS, AGAINST WHAT IT ACTUALLY IS.** The clock divides by the
 	# first number; the second is the sim's own tick count over the wall clock across the same span.
 	# Any gap between them IS a speed error, multiplied straight into every drawn frame.
@@ -417,6 +479,14 @@ func _report() -> void:
 			float(ms.get("median", 0.0)), float(ms.get("p95", 0.0)),
 			1000.0 / maxf(float(ms.get("median", 0.0)), 1e-6), _label]
 	var share := 0.0 if drawn.is_empty() else float(within_drawn) / float(drawn.size())
+	if not _outliers.is_empty():
+		print("  THE FRAMES OUTSIDE THE BAR, one line each (see `_outliers`):")
+		for entry: Dictionary in _outliers:
+			print(("    frame %4d  %6.2f tiles/s  moved %.4f tiles  screen_dt %5.1f ms  "
+					+ "probe_dt %5.1f ms  = %6.2f tiles/s over probe_dt  clock advances %d  depth %.2f")
+					% [int(entry["frame"]), float(entry["speed"]), float(entry["moved"]),
+					float(entry["screen_dt"]) * 1000.0, float(entry["probe_dt"]) * 1000.0,
+					float(entry["over_probe"]), int(entry["advances"]), float(entry["depth"])])
 	print("  WITHIN THE BAR, ON THE DRAWN RECT: %d of %d moving frames (%.1f%%), %s"
 			% [within_drawn, drawn.size(), share * 100.0, rate])
 	var share_lerp := 0.0 if body.is_empty() else float(within) / float(body.size())
@@ -451,6 +521,35 @@ func _as_floats(values: Array[int]) -> Array[float]:
 	var out: Array[float] = []
 	for v in values:
 		out.append(float(v))
+	return out
+
+
+## **HOW LONG THE HOST TOOK OVER EACH TICK IT SENT**, in seconds, one entry per tick.
+##
+## ARRIVALS COLLAPSED PER SOCKET DRAIN FIRST, exactly as `AssayScene.playout_step` does and for the
+## same reason: two bundles that come out of one `poll` are 0.17 ms apart, so a series of raw gaps is
+## a measurement of this client's frame rate wearing the host's name. The span between two drains
+## divided by the sim ticks between them is seconds per TICK whatever the delivery did.
+func _host_ticks() -> Array[float]:
+	var out: Array[float] = []
+	var last_at := -1.0
+	var last_tick := -1
+	for i in _bundle_at.size():
+		if last_at >= 0.0 and _bundle_at[i] - last_at <= AssayScene.SAME_FRAME:
+			continue
+		if last_at >= 0.0 and _bundle_tick[i] > last_tick:
+			out.append((_bundle_at[i] - last_at) / float(_bundle_tick[i] - last_tick))
+		last_at = _bundle_at[i]
+		last_tick = _bundle_tick[i]
+	return out
+
+
+## THE MOVING STRETCH OF A PER-FRAME SERIES, both ends inclusive, so a distribution over it is about
+## the walk and not about how long the probe watched a standing body.
+func _slice(values: Array[float], from: int, to: int) -> Array[float]:
+	var out: Array[float] = []
+	for i in range(maxi(from, 0), mini(to + 1, values.size())):
+		out.append(values[i])
 	return out
 
 
