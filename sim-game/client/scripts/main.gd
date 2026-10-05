@@ -2570,8 +2570,13 @@ func _advance_playout(now: float) -> float:
 	# which is the same quantity on a drawn frame and the right one on a headless tick.
 	var dt := 0.0 if _played_at <= 0.0 else clampf(now - _played_at, 0.0, 1.0)
 	_played_at = now
+	# **HOW LONG AGO THE NEWEST POSITION LANDED**, so the loop's error is measured against what the
+	# host has produced by now rather than against its last whole tick (see `playout_at`): the
+	# difference is a ±10% modulation of the body's speed at the tick rate. Zero on the frame a
+	# bundle lands, which is when `_tick_at` is set.
+	var since := 0.0 if _tick_at <= 0.0 else maxf(now - _tick_at, 0.0)
 	var cursor := AssayScene.playout_at(_play_tick, ticks, dt, _tick_gap, AssayScene.PLAYOUT_DELAY,
-			_play_trim)
+			since, _play_trim)
 	_play_tick = float(cursor["play_tick"])
 	_starved = bool(cursor["starved"])
 	# THE INTEGRAL GOES BACK IN NEXT FRAME. `playout_at` is pure, so the one piece of state the PI

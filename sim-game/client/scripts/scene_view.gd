@@ -108,6 +108,20 @@ const PLAYOUT_TRIM_MAX := 0.35
 ## WHAT A CLOCK THAT HAS LEARNT NOTHING YET TRIMS BY: the measured rate, untouched.
 const PLAYOUT_TRIM_NONE := 1.0
 
+## **HOW FAR THE HOST'S LIVE POSITION LEADS THE NEWEST POSITION WE CAN ACTUALLY DRAW, in ticks, on
+## average** (ASSA-197). Half a tick, and it is a conversion rather than a tuning knob.
+##
+## The loop's error is measured against where the host has got to by now (`playout_at`'s `since`),
+## which is the only sawtooth-free signal available. But the BUFFER is the history we hold, and that
+## is counted from the newest tick that has LANDED -- a fraction of a tick behind the live host,
+## uniformly distributed over [0, 1) and so 0.5 on average. Without this term the clock would hold
+## `delay` ticks behind the live host and therefore `delay - 0.5` ticks of real history: 50 ms less
+## buffer and 50 ms less latency than the 2.5 ticks that were measured, which is a change to
+## `PLAYOUT_DELAY` made by accident in the arithmetic rather than on purpose with a number. With it,
+## the clock sits exactly where it sat before this signal existed, and the only thing that changed
+## is the ±10% ripple that is now gone.
+const PLAYOUT_PRODUCTION_LEAD := 0.5
+
 ## THE SHORTEST A PLAYED-OUT STEP MAY BE, in seconds. See `playout`.
 ##
 ## A FLOOR AND NOT A CHOICE OF RATE: the rate is measured from the bundles that arrive, because
@@ -317,8 +331,26 @@ static func playout_step(arrivals: Array[float], ticks: Array[int], fallback: fl
 ## **THE LOOP IS CLOSED ON BUFFER DEPTH AND IT IS A PI, NOT A P** (ASSA-197, Wren's 23:05 ruling and
 ## the arithmetic under `PLAYOUT_TRIM`). `trim` is the integral: it comes in, it goes out in the
 ## answer, and the caller does nothing with it but hand it back next frame.
+##
+## **AND THE ERROR IT CONTROLS IS MEASURED AGAINST THE HOST'S PRODUCTION, NOT AGAINST ITS LAST WHOLE
+## TICK** -- `since` is how long ago the newest position landed, and leaving it out costs ±10% of
+## drawn speed ten times a second. `newest` is an integer that jumps by one at each arrival while
+## `at` slides continuously between them, so `newest - at` SAW-TOOTHS by a whole tick at the tick
+## rate even when the clock is perfect. At `PLAYOUT_CATCHUP` 0.5 the proportional term saturates at
+## 0.2 ticks of error, so a ±0.5-tick sawtooth drives it to BOTH stops within every tick: a ±10%
+## square modulation of the body's speed, injected by the controller and by nothing else. Measured
+## in a real window (`motion_speed_probe.gd`, 2026-10-04): every frame outside the bar in three runs
+## was the rate sitting on one of its two stops. Adding `since / step` makes both sides of the
+## comparison continuous, with the same mean, so the clock holds the same depth and the same latency
+## without the ripple.
+##
+## `since` IS CLAMPED TO ONE TICK, which is what makes a stalled host degrade to the old behaviour
+## instead of inventing production. Past a tick of silence the host has not sent what it owes, the
+## estimate stops growing, and the error falls exactly as it does today -- the buffer gets spent,
+## which is what it is for. Nothing here is drawn from it: `at` is still clamped to `newest`, so
+## ASSA-119 holds unchanged.
 static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: float,
-		delay: float, trim: float = PLAYOUT_TRIM_NONE) -> Dictionary:
+		delay: float, since: float = 0.0, trim: float = PLAYOUT_TRIM_NONE) -> Dictionary:
 	if ticks.is_empty():
 		return {"play_tick": play_tick, "index": -1, "part": 1.0, "starved": true, "rate": 1.0,
 				"trim": trim, "depth": 0.0}
@@ -351,7 +383,8 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 		# The error is in ticks and the correction is in rate. `PLAYOUT_CATCHUP` decides how hard we
 		# lean on it and `PLAYOUT_NUDGE` caps it, so the worst speed error this clock can introduce
 		# is a few per cent -- against the +/-25% the bar allows.
-		var err := newest - delay - at
+		var produced := newest + clampf(since / maxf(step, MIN_PLAYOUT_STEP), 0.0, 1.0)
+		var err := produced - (delay + PLAYOUT_PRODUCTION_LEAD) - at
 		rate = clampf(1.0 + err * PLAYOUT_CATCHUP, 1.0 - PLAYOUT_NUDGE, 1.0 + PLAYOUT_NUDGE)
 		# THE SAME ERROR, INTEGRATED, which is the half that survives a measurement this client cannot
 		# check (`PLAYOUT_TRIM`: a Windows PC, where `playout_step` has never been run). `dt` is in the

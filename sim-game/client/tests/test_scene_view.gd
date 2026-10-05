@@ -1399,6 +1399,18 @@ func test_a_biased_tick_measurement_does_not_drain_the_playout_buffer() -> bool:
 		return _fail(("with the tick measured exactly right the clock starved %d of %d frames and "
 				+ "held %.2f ticks of buffer: the integral has broken the case that already worked")
 				% [int(exact["starved"]), int(exact["frames"]), float(exact["depth_mean"])])
+	# **AND A PERFECT HOST, PERFECTLY MEASURED, MUST NOT MAKE THE CLOCK BEND AT ALL.** This is the
+	# ±10% the controller used to inject into every walk by itself: `newest` jumps a whole tick at
+	# each arrival while the clock slides between them, so an error measured against the last whole
+	# tick saw-tooths by ±0.5 even when nothing is wrong -- and at `PLAYOUT_CATCHUP` 0.5 that drives
+	# the rate to BOTH of its stops inside every tick. Every frame outside the bar in three real
+	# window runs was the rate sitting on a stop. 5% is a bar and not a measurement: the ripple with
+	# the production estimate in place is far under it, and without it the number is the clamp.
+	if float(exact["ripple"]) > 0.05:
+		return _fail(("a steady host measured exactly right still bent the clock by %.1f%% -- the "
+				+ "controller is modulating the body's drawn speed by that much on its own, ten "
+				+ "times a second, with nothing wrong to correct")
+				% [float(exact["ripple"]) * 100.0])
 	return true
 
 
@@ -1419,11 +1431,15 @@ func _drive_playout(bias: float, learn: bool) -> Dictionary:
 	var next_tick := 0.0
 	var tick_no := 0
 	var now := 0.0
+	# WHEN THE NEWEST POSITION LANDED, as the client would see it: on the frame it was drained, which
+	# is what `main.gd` stamps. The loop's error is measured against it (see `playout_at`).
+	var landed := 0.0
 	var starved := 0
 	var frames := 0
 	var depth_min := INF
 	var depth_max := -INF
 	var depth_sum := 0.0
+	var ripple := 0.0
 	var steady_from := 0.0
 	var steady_play := 0.0
 	while now < 12.0:
@@ -1432,9 +1448,10 @@ func _drive_playout(bias: float, learn: bool) -> Dictionary:
 			ticks.append(tick_no)
 			tick_no += 1
 			next_tick += tick
+			landed = now
 			while ticks.size() > 8:
 				ticks.pop_front()
-		var cursor := AssayScene.playout_at(play, ticks, frame, tick * bias, delay, trim)
+		var cursor := AssayScene.playout_at(play, ticks, frame, tick * bias, delay, now - landed, trim)
 		play = float(cursor["play_tick"])
 		if learn:
 			trim = float(cursor["trim"])
@@ -1454,12 +1471,14 @@ func _drive_playout(bias: float, learn: bool) -> Dictionary:
 		depth_min = minf(depth_min, depth)
 		depth_max = maxf(depth_max, depth)
 		depth_sum += depth
+		ripple = maxf(ripple, absf(float(cursor["rate"]) - 1.0))
 	return {
 		"starved": starved,
 		"frames": frames,
 		"depth_min": depth_min,
 		"depth_max": depth_max,
 		"depth_mean": depth_sum / maxf(float(frames), 1.0),
+		"ripple": ripple,
 		"trim": trim,
 		"played_rate": (play - steady_play) / maxf(now - steady_from, 0.001),
 	}
