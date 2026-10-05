@@ -1449,9 +1449,27 @@ func test_a_building_on_the_schematic_is_neither_a_disc_nor_a_rect() -> bool:
 ## mask's corners bare and this reddens; a wider OUTLINE would not satisfy it at all, which is the
 ## point of the item.
 ##
-## WHAT IT CANNOT SEE: whether the letter is legible. Nothing headless rasterises a glyph, so the
-## 13% -> 81% is `shared/assay/marlow-assa218-bed/ring.py` on a real 1x window, and the judgement on
-## the picture is Maren's.
+## **THE INK MASK IS A FIXTURE AND THIS SENTENCE IS THE POINT OF IT** (ASSA-218 box 3, Maren's
+## standard, and she accepted the fixture only on condition that it says so). The mask above is five
+## squares I typed, not a rasterised glyph, so **it cannot fail when the real letter changes** -- a
+## new font, a different `glyph_size`, a letter with a counter this mask has no shape for, and this
+## test stays green while the picture moves. By ASSA-189 box 6's letter ("reads the painter's own
+## glyph box, not a colour table") that makes it a fixture, and the honest name for what it proves is
+## narrow: *given this mask, the eight offsets cover its distance-1 ring.*
+##
+## **WHAT COVERS THE REAL RASTER, because the alternative to a fixture here is no test at all:**
+## nothing headless rasterises a glyph. The real letter is measured on a 1x window shot, and these
+## are the two in this item's evidence --
+##
+##   `shared/assay/marlow-assa218-bed/ring.py`      the 13% -> 81% edge figures
+##   `shared/assay/marlow-assa218-bedclaim/`        the three arms behind box 2's surface bar:
+##                                                  the bed AS DRAWN is 4.35:1 against a white
+##                                                  letter where the bare fill is 9.20:1
+##
+## Both are seed 777042, a machine standing on Minyte at (74,36). **The judgement on the picture is
+## Maren's and the number is not a substitute for it:** her own ASSA-229 finding is that an edge bar
+## scores 99-100% on letters reading 2.43:1 against their real surround, so a pass here, and a pass
+## on any bar in this family, measures what a mark COSTS a letter and never whether it reads.
 func test_the_glyph_bed_covers_every_neighbour_of_the_inks_own_pixels() -> bool:
 	var ink := {}
 	for y in range(0, 5):

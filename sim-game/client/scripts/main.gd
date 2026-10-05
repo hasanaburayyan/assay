@@ -3308,7 +3308,11 @@ func _draw() -> void:
 	#
 	# THE DECISION IS `AssayHud.building_mark`'S, like the disc's above, and this loop only paints what
 	# `_building_marks` hands it -- see that function for why a test can read it and this cannot.
-	for shape_entry in _building_marks(_sim.buildings()):
+	# HELD IN A LOCAL AND NOT CALLED TWICE: the glyph pass below asks `letter_occlusions` which of
+	# these diamonds laps a letter (ASSA-218 box 9), and two calls could be two different worlds in
+	# the same frame -- the mistake `window_shot.gd` already carries a comment about.
+	var shapes := _building_marks(_sim.buildings())
+	for shape_entry in shapes:
 		var shape: Dictionary = shape_entry
 		# TWO POLYGONS, NOT A STROKE. The rim is a bigger diamond UNDER the mark, so the mark keeps
 		# every pixel of its own size; a 2 px stroke on the mark's edge would spend one of them.
@@ -3349,23 +3353,49 @@ func _draw() -> void:
 	# painted after players (ASSA-203), so the only position that satisfies the ruling is after both.
 	# A letter is strokes and not a fill, so a body keeps its own colour around them, and the pale
 	# `THEIRS` body on a light letter is exactly the fusion ASSA-189's keyline was added for -- which
-	# the bed now states instead of hoping for. The 1x cost to a body is measured in the item.
+	# the bed now states instead of hoping for.
+	#
+	# **"THE 1x COST TO A BODY IS MEASURED IN THE ITEM" IS WHAT THIS LINE SAID, AND IT WAS FALSE**
+	# (Maren, who went looking because I wrote the claim here rather than letting her find it).
+	# ASSA-213 box 1 measures what a building costs a LETTER; box 5 says the player rect and ring are
+	# untouched, which is true of their SHAPE in code and silent about what paints on top afterwards.
+	# **No box on ASSA-213 measures a body at all.** It is now ASSA-221.
+	#
+	# WHAT IS MEASURED, AND IT IS SMALLER THAN THE FIRST ANSWER: Maren's geometry said 94.1% of a body
+	# eaten, then she photographed it and corrected herself to **36.3% player ink left under the
+	# letter against 100% for a body with nothing over it** -- the first figure measured the glyph on
+	# an r=27 disc and applied that footprint to a body on a small one. "A control must be the same
+	# object", her words, twice in one morning.
+	#
+	# **AND THE CASE THAT MATTERS IS STILL NOT PHOTOGRAPHED.** Your own mark carries the ring, which
+	# grows OUTWARDS (`hud.gd`'s `PLAYER_MARK_PX` ring) and survives outside the glyph box, so you can
+	# always find yourself. `THEIRS` is the body alone. The body that goes substantially missing is a
+	# PARTNER's, on the one screen for "where is everyone", on a milestone called the minimal co-op
+	# demo -- and the co-op shot tool spaced the two players four tiles apart, so no frame we have
+	# holds a partner on a deposit centre. Do not build to a number here; ASSA-221 carries the state.
 	#
 	# THE DECISION IS `_glyph_marks`', like `_building_marks` above; this loop paints what it is told.
-	for glyph_entry in _glyph_marks(deposits, font):
+	for glyph_entry in _glyph_marks(deposits, font, shapes):
 		var glyph: Dictionary = glyph_entry
 		draw_string_outline(font, glyph["baseline"], glyph["symbol"], HORIZONTAL_ALIGNMENT_LEFT, -1,
 				int(glyph["size"]), int(glyph["bed_px"]),
 				AssayHud.mark_ink_of(&"species_bed", glyph["bed"]))
-		# **AND A SOLID CORE UNDER IT** (ASSA-218, Maren's P1 on the half of ASSA-213 that did not
-		# work, built as the fallback she named once I had measured her condition for it). The outline
-		# above is antialiased, so a 2 px rim left the letter's boundary inside a mark with a 4.5:1
-		# edge on 13% of itself; stamping the letter once per neighbouring pixel takes that to 81%.
-		# `AssayHud.GLYPH_BED_STAMPS` carries the five candidates I measured and the price of this one.
-		for offset: Vector2 in AssayHud.GLYPH_BED_STAMPS:
-			draw_string(font, glyph["baseline"] + offset, glyph["symbol"],
-					HORIZONTAL_ALIGNMENT_LEFT, -1, int(glyph["size"]),
-					AssayHud.mark_ink_of(&"species_bed", glyph["bed"]))
+		# **AND A SOLID CORE UNDER IT, ON THE LETTERS THAT NEED ONE** (ASSA-218, Maren's P1 on the half
+		# of ASSA-213 that did not work, built as the fallback she named once I had measured her
+		# condition for it). The outline above is antialiased, so a 2 px rim left the letter's boundary
+		# inside a mark with a 4.5:1 edge on 13% of itself; stamping the letter once per neighbouring
+		# pixel takes that to 81%. `AssayHud.GLYPH_BED_STAMPS` carries the five candidates I measured.
+		#
+		# **`bedded` AND NOT EVERY LETTER, BECAUSE THE PRICE IS REAL** (box 9): eight extra
+		# `draw_string` each, 104 on a 13-letter world against ASSA-214's whole-map median of 42. A
+		# letter nothing laps sits on its own disc, which is the surface `glyph_color` picked its ink
+		# against, so the stamps buy it nothing. `_glyph_marks` decides; this loop paints what it is
+		# told. On seed 777042 that is 8 stamps, not 104.
+		if bool(glyph["bedded"]):
+			for offset: Vector2 in AssayHud.GLYPH_BED_STAMPS:
+				draw_string(font, glyph["baseline"] + offset, glyph["symbol"],
+						HORIZONTAL_ALIGNMENT_LEFT, -1, int(glyph["size"]),
+						AssayHud.mark_ink_of(&"species_bed", glyph["bed"]))
 		draw_string(font, glyph["baseline"], glyph["symbol"], HORIZONTAL_ALIGNMENT_LEFT, -1,
 				int(glyph["size"]), AssayHud.mark_ink_of(&"species_glyph", glyph["ink"]))
 
@@ -3438,7 +3468,25 @@ func _building_marks(buildings: Array) -> Array:
 ##
 ## A DEPOSIT WITH NOTHING LEFT CARRIES NO LETTER, the same `amount` test the disc pass makes -- a
 ## spent patch keeps its tint on this map but has no species worth naming over a factory.
-func _glyph_marks(deposits: Array, font: Font) -> Array:
+## **`building_marks` IS WHY ONLY SOME LETTERS GET THE EXPENSIVE BED** (ASSA-218 box 9, Maren: "it
+## matters"). The eight stamps are eight extra `draw_string` per letter, and a 13-letter world paid
+## 104 of them against ASSA-214's whole-map median of 42 draw calls -- 2.5x the map's entire budget,
+## to protect the one letter a machine was standing on. `AssayHud.letter_occlusions` already decides
+## which letters a building diamond laps, so it decides this too: on seed 777042 that is **1 letter,
+## so 8 stamps instead of 104.**
+##
+## **THE DECISION IS A FACT ON THE MARK, NOT AN `if` IN THE DRAW LOOP**, which is the whole reason
+## this is testable. `_draw` cannot be asked how many times it called `draw_string`; a dictionary
+## can. So `bedded` is published here and `_draw` paints what it is told, exactly as the comment
+## over the glyph pass already claims ("THE DECISION IS `_glyph_marks`'"). Mutating this to `true`
+## for every letter, or to `false` for all of them, reddens
+## `test_only_a_lapped_letter_carries_the_expensive_bed`.
+##
+## AN EMPTY LIST MEANS NO BUILDINGS, AND THEREFORE NO STAMPS -- not "stamp everything". A letter with
+## nothing over it is on its own disc, where `glyph_color` picked its ink against that exact surface
+## and the bed is invisible by construction; the stamps buy nothing there. That is the case the
+## `hud.gd` comment has always described and it is now the case that also costs nothing.
+func _glyph_marks(deposits: Array, font: Font, building_marks: Array = []) -> Array:
 	var marks := []
 	if font == null:
 		return marks
@@ -3486,5 +3534,17 @@ func _glyph_marks(deposits: Array, font: Font) -> Array:
 			# machine was on a rock today" from "one was and the map did not mark it".
 			# `AssayHud.machines_on_letters` is the comparison and `tools/window_shot.gd` the caller.
 			"tile": centre,
+			# Filled in below, once every letter's box exists: `letter_occlusions` needs the whole
+			# list, so it cannot be answered one letter at a time inside this loop.
+			"bedded": false,
 		})
+	# **WHICH LETTERS A BUILDING ACTUALLY LAPS** -- the same `letter_occlusions` the window shot's
+	# `case` leg reports, so the painter and the picture cannot disagree about which letter was at
+	# risk. It returns one entry per (building, letter) pair that overlaps at all, and a letter lapped
+	# by two buildings is still one letter, hence the set rather than a count.
+	for raw in AssayHud.letter_occlusions(building_marks, marks):
+		var lap: Dictionary = raw
+		var j := int(lap["letter"])
+		if j >= 0 and j < marks.size():
+			(marks[j] as Dictionary)["bedded"] = true
 	return marks
