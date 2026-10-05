@@ -181,6 +181,18 @@ jobs:
       # other. Stdlib only, no Godot, no Pillow, ~0.7s.
       - name: The ground sheet is still one picture
         run: python3 art/check_ground_block.py
+      # A SCATTER LANDMARK IS VISIBLE ON THE GROUND IT IS DRAWN ON. The Game
+      # Director's floor, made executable: p50 >= 10 dE per-pixel, per landmark
+      # row, against all 64 ground cells (ASSA-202). It exists because `tuft0`
+      # was built out of four ground tones mixed with each other and shipped at
+      # p50 3.5 -- a prop nobody could see -- while the LAYER's aggregate dE of
+      # 17.5 passed its acceptance box and hid it. A mean over a patch with
+      # internal structure cannot report that patch invisible. Grit is exempt by
+      # name: texture is allowed to be quiet, landmarks are not. The same step
+      # refuses an odd authored frame, which does not halve onto whole drawn
+      # pixels. Stdlib only, no Godot, no Pillow, ~2s.
+      - name: Scatter landmarks are visible on the ground
+        run: python3 art/check_scatter.py
       # THE ENGINE CAN REACH THE ART. For the pipeline's whole life the sheets
       # sat in `assets/sprites/`, the Godot project's SIBLING -- and `res://` is
       # the project folder and nothing above it, so no client script could load
