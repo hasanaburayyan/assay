@@ -1921,3 +1921,128 @@ func test_no_sim_fact_in_this_file_is_read_with_a_default() -> bool:
 						+ "value for state the sim did not send (ASSA-141)") % [String(key),
 						defaulted])
 	return true
+
+
+## **THE SUB-TILE OFFSET MUST SURVIVE TO `dest`, AND NO TEST WE OWNED COULD SEE IT FLOORED.**
+##
+## This is ASSA-197's lesson applied one layer up, and it is here because the Lead asked for it by
+## name: `test_a_walking_bodys_own_rectangle_moves_with_it_sub_tile` catches a floor INSIDE `_place`,
+## and would stay green if the floor were in the scatter loop's own line. The scatter layer exists to
+## not read as a grid; quantising its props onto whole tiles turns nine rows of props back into a
+## repeating texture, which is the exact criticism ASSA-115 drew for the six ground variants.
+##
+## IT ASSERTS ON PIXELS, NOT ON MY READING OF THE CODE. The placed rectangle must differ from the
+## same prop placed on its whole tile by EXACTLY the offset `scatter_at` asked for; an `int()`,
+## a `round()` or a `Vector2i` anywhere on the path collapses that difference and this goes red.
+func test_scatter_offsets_are_sub_tile_and_reach_dest_unfloored() -> bool:
+	var manifest := _manifest()
+	if not manifest.has("scatter"):
+		return _fail("the shipped manifest has no `scatter` asset, so this layer cannot draw at all")
+	# IT ASKS `placements` AND NOT `_place`, AND THAT IS THE WHOLE POINT. My first version of this
+	# test called `_place` with a fractional corner and asserted the rectangle moved -- which is
+	# ASSA-197's property, already covered, and it stayed GREEN when I floored the scatter loop's own
+	# line. An instrument that cannot fail for the reason it was written. The Lead warned about this
+	# exact gap in the routing note and I built it anyway; what follows reads the drawn output.
+	var view := _view({"origin": Vector2(10.0, 10.0) * AssayScene.TILE_PX})
+	var origin: Vector2 = view["origin"]
+	var window := AssayScene.visible_tiles(origin, view["size"], view["world_tiles"])
+	var grown := Rect2i(window.position - Vector2i.ONE, window.size + Vector2i.ONE * 2)
+	grown = grown.intersection(Rect2i(Vector2i.ZERO, view["world_tiles"]))
+
+	# WHAT THE SCREEN SHOULD SHOW, and what it would show if the offset were thrown away.
+	var want := {}
+	var floored := {}
+	var movable := 0
+	for y in range(grown.position.y, grown.end.y):
+		for x in range(grown.position.x, grown.end.x):
+			var at := Vector2i(x, y)
+			for prop in AssayScene.scatter_at(at):
+				var off: Vector2 = prop[1]
+				# SUB-TILE BY CONSTRUCTION: both jitter constants are peak-to-peak drawn px under a
+				# tile, so an offset at or past 32 px would draw a prop on a tile that never asked.
+				if absf(off.x) >= AssayScene.TILE_PX or absf(off.y) >= AssayScene.TILE_PX:
+					return _fail("scatter offset %s at %s is a whole tile or more" % [off, at])
+				var moved: Dictionary = AssayScene._place(manifest, "scatter", prop[0],
+						Vector2(at) + off / AssayScene.TILE_PX, origin, Color.WHITE, 0.0)
+				var still: Dictionary = AssayScene._place(manifest, "scatter", prop[0],
+						Vector2(at), origin, Color.WHITE, 0.0)
+				if moved.is_empty() or still.is_empty():
+					return _fail("scatter row %s did not place at all" % String(prop[0]))
+				var a := (moved["dest"] as Rect2).position
+				var b := (still["dest"] as Rect2).position
+				want[_at_key(a)] = true
+				floored[_at_key(b)] = true
+				if absf(a.x - b.x) > 0.5 or absf(a.y - b.y) > 0.5:
+					movable += 1
+	# THE TEETH: unless some props are drawn more than half a pixel off their tile, "unfloored" and
+	# "floored" are the same picture and nothing below could tell them apart.
+	if movable < 20:
+		return _fail(("only %d of the scatter props in this window sit more than 0.5 px off their "
+				+ "tile, so this test cannot tell a floored layer from an unfloored one") % movable)
+
+	var drawn := _of(AssayScene.placements(view), "scatter")
+	if drawn.size() < 20:
+		return _fail("placements drew %d scatter props in a full window: too few to judge"
+				% drawn.size())
+	# ONE BUCKET, NOT TWO. An earlier version sorted misplacements into "on its bare tile" and
+	# "somewhere else", which was complexity for nothing: a truncation toward zero lands on `at - 1`
+	# for a negative offset, so the tidy "bare tile" case is not even the common one. Every drawn
+	# prop must be exactly where its own offset puts it; anything else is the defect.
+	for place in drawn:
+		var dest: Rect2 = (place as Dictionary)["dest"]
+		if want.has(_at_key(dest.position)):
+			continue
+		var bare := floored.has(_at_key(dest.position))
+		return _fail(("a scatter prop is drawn at %s, which is not where its sub-tile offset puts "
+				+ "it (%s). The offset is being quantised on the way to the screen, which puts the "
+				+ "whole layer back on the tile grid and makes it read as a repeating texture "
+				+ "rather than as scattered props (ASSA-197).") % [dest.position,
+				"its bare tile" if bare else "nor on its bare tile"])
+	return true
+
+
+## A DRAWN POSITION AS A KEY, ROUNDED TO 0.01 px. `Vector2` is float32 and the offset makes the round
+## trip `tile + px/32` then `* 32`, so the answer comes back ~1e-5 px out -- tighter than the type the
+## engine draws with, and far below the whole-pixel error this is looking for.
+func _at_key(at: Vector2) -> String:
+	return "%.2f,%.2f" % [at.x, at.y]
+
+
+## **SCATTER MAY NEVER COVER A DEPOSIT.** Ore is one of the two things in this game you can act on;
+## a prop drawn over it hides the thing the whole layer is forbidden to compete with (ASSA-202 box 3).
+func test_scatter_never_lands_on_an_ore_tile() -> bool:
+	var ore := {}
+	var tiles := 0
+	for y in range(0, 20):
+		for x in range(0, 20):
+			var at := Vector2i(x, y)
+			if not AssayScene.scatter_at(at).is_empty():
+				ore[at] = {"species": 0, "grade": "C", "depleted": false, "purity": 50}
+				tiles += 1
+	if tiles < 10:
+		return _fail("fixture put only %d deposits down: it cannot see a prop on ore" % tiles)
+	var places := AssayScene.placements(_view({"ore": ore}))
+	for place in _of(places, "scatter"):
+		var dest: Rect2 = (place as Dictionary)["dest"]
+		var tile := Vector2i((dest.position / AssayScene.TILE_PX).floor())
+		if ore.has(tile):
+			return _fail("a scatter prop is drawn on ore tile %s" % tile)
+	return true
+
+
+## **THE WINDOW IS GROWN ONE TILE, OR PROPS POP IN AT THE EDGE.** A prop is up to 42 drawn px tall
+## with 9 px of jitter, so a tile just off screen still puts ink on screen. Without the grow the ink
+## appears only once its own tile crosses the boundary, which is a visible pop as the camera moves.
+func test_scatter_is_drawn_for_tiles_just_outside_the_window() -> bool:
+	var view := _view({"origin": Vector2(20.0 * AssayScene.TILE_PX, 20.0 * AssayScene.TILE_PX)})
+	var window := AssayScene.visible_tiles(view["origin"], view["size"], view["world_tiles"])
+	var outside := 0
+	for place in _of(AssayScene.placements(view), "scatter"):
+		var dest: Rect2 = (place as Dictionary)["dest"]
+		var tile := Vector2i(((dest.position + view["origin"]) / AssayScene.TILE_PX).floor())
+		if not window.has_point(tile):
+			outside += 1
+	if outside == 0:
+		return _fail(("no scatter prop comes from outside the visible window, so the one-tile grow "
+				+ "is not happening and props will pop in at the edge as the camera moves"))
+	return true
