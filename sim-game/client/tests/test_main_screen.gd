@@ -2939,14 +2939,14 @@ func test_a_deposit_and_its_letter_are_drawn_on_the_middle_of_the_tile_they_name
 		return _fail(("premise: close_up %s, running %s -- `_draw` returns before any deposit on "
 				+ "either") % [screen._close_up, screen._sim.running()])
 	var font := ThemeDB.fallback_font
-	var deposits := screen._sim.deposits()
+	var deposits: Array = screen._sim.deposits()
 	if deposits.is_empty():
 		screen.queue_free()
 		return _fail("premise: this world has no deposits, so there is no mark to place and this test "
 				+ "is about nothing")
 	var ok := true
 	var checked := 0
-	for cell in [9.0, 23.0]:
+	for cell: float in [9.0, 23.0]:
 		if not ok:
 			break
 		screen._cell = cell
