@@ -63,6 +63,9 @@ var _clock: Array[float] = []
 ## Bundle arrivals, as a cross-check on TICK_SECONDS and to show how bursty delivery was.
 var _bundle_gaps: Array[float] = []
 var _last_bundle := 0.0
+## Every bundle's arrival instant and the sim tick it carried, for the host's own pacing.
+var _bundle_at: Array[float] = []
+var _bundle_tick: Array[int] = []
 ## Frames where the renderer had published no drawn position for us. A sampler that reads the wrong
 ## field is silent in exactly the way a body that never moved is; this counts the difference.
 var _blind := 0
@@ -111,11 +114,19 @@ func _initialize() -> void:
 	_screen = load("res://scenes/main.tscn").instantiate()
 	root.add_child(_screen)
 	_screen._ready()
-	_screen._client.tick_bundle.connect(func(_t: int, _i: Array, _r: String) -> void:
+	_screen._client.tick_bundle.connect(func(t: int, _i: Array, _r: String) -> void:
 		var now := _now()
 		if _last_bundle > 0.0:
 			_bundle_gaps.append(now - _last_bundle)
-		_last_bundle = now)
+		_last_bundle = now
+		# **THE TICK NUMBER AS WELL AS THE INSTANT, so the HOST's own rate can be stated** (ASSA-197).
+		# A raw gap is bimodal and says nothing about pacing -- the client drains its socket once a
+		# frame, so bundles land in pairs 0.17 ms apart and the gap series reads 0.17, 0.17, 221, 258.
+		# Collapsed per frame and divided by the tick span it covers, the same arrivals give the
+		# length of a tick as the host actually produced it, which is the reference the bar's constant
+		# 10.00 tiles/s stands in for.
+		_bundle_at.append(now)
+		_bundle_tick.append(t))
 
 
 func _now() -> float:
@@ -391,6 +402,23 @@ func _report() -> void:
 	_say("camera tiles/s", _percentiles(camera))
 	_say("frame ms", _percentiles(frames))
 	_say("bundle gap ms", _percentiles(_scaled(_bundle_gaps, 1000.0)))
+	# **WHAT THE HOST ACTUALLY DID, which is the other half of every verdict here.** The bar is
+	# +/-25% of a CONSTANT 10.00 tiles/s, and that constant is the relay's nominal rate rather than a
+	# measurement: a clock that follows a host perfectly is drawn outside the bar whenever the host
+	# itself wanders more than 25%, and on this Mac under six agents the relay is a child process
+	# competing for the same cores. So the host's own tick length is stated beside the body's speed,
+	# and a stall is counted rather than left inside a percentage.
+	_say("host tick ms", _percentiles(_scaled(_host_ticks(), 1000.0)))
+	var stalls := 0
+	var worst_tick := 0.0
+	for seconds in _host_ticks():
+		if seconds > TICK_SECONDS * 1.5:
+			stalls += 1
+			worst_tick = maxf(worst_tick, seconds)
+	if stalls > 0:
+		print(("  the HOST stalled %d times (a tick it took over %.0f ms to produce, longest %.0f "
+				+ "ms): production the clock can only answer by slowing down or running dry")
+				% [stalls, TICK_SECONDS * 1500.0, worst_tick * 1000.0])
 	# **WHAT A FROZEN FRAME ACTUALLY WAS.** A drawn speed of zero has three different causes and they
 	# need different fixes: the clock ran out of produced positions (starved), the sim produced the
 	# same position twice (the body is not walking every tick), or the clock advanced but the segment
@@ -493,6 +521,26 @@ func _as_floats(values: Array[int]) -> Array[float]:
 	var out: Array[float] = []
 	for v in values:
 		out.append(float(v))
+	return out
+
+
+## **HOW LONG THE HOST TOOK OVER EACH TICK IT SENT**, in seconds, one entry per tick.
+##
+## ARRIVALS COLLAPSED PER SOCKET DRAIN FIRST, exactly as `AssayScene.playout_step` does and for the
+## same reason: two bundles that come out of one `poll` are 0.17 ms apart, so a series of raw gaps is
+## a measurement of this client's frame rate wearing the host's name. The span between two drains
+## divided by the sim ticks between them is seconds per TICK whatever the delivery did.
+func _host_ticks() -> Array[float]:
+	var out: Array[float] = []
+	var last_at := -1.0
+	var last_tick := -1
+	for i in _bundle_at.size():
+		if last_at >= 0.0 and _bundle_at[i] - last_at <= AssayScene.SAME_FRAME:
+			continue
+		if last_at >= 0.0 and _bundle_tick[i] > last_tick:
+			out.append((_bundle_at[i] - last_at) / float(_bundle_tick[i] - last_tick))
+		last_at = _bundle_at[i]
+		last_tick = _bundle_tick[i]
 	return out
 
 
