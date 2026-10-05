@@ -32,10 +32,31 @@ const STEPS := 10
 const GROUND_TILE := Vector2i(50, 40)
 
 
+## **A ONE-SHOT TOOL CAN RUN FOR EVER TOO, AND THIS IS THE HALF ASSA-182 DID NOT FIX FIRST TIME.**
+## `SceneTree`'s own `_process` returns false, so a tool with no `_process` of its own does not end when
+## `_initialize` returns -- it ends when something calls `quit()`. A runtime error inside `_initialize`
+## skips that call and the engine spins with no output and no exit: measured 2026-10-04 with a scratch
+## script, alive after 25 s. The looping tools got a wall-clock ceiling; this needs no clock, because
+## there is nothing a one-shot tool legitimately waits for.
+##
+## `_quitting` is set beside every `quit()` in this file rather than at the end of `_initialize`, so a
+## deliberate early exit -- a bad argument, a missing world -- stays deliberate, and only a
+## fall-through reaches the sentence below.
+var _quitting := false
+
+
+func _process(_delta: float) -> bool:
+	if not _quitting:
+		print("FAIL  maren_snap_probe.gd: _initialize ended without asking to quit -- see the error above")
+		quit(1)
+	return true
+
+
 func _initialize() -> void:
 	var manifest: Dictionary = AssaySprites.manifest()
 	if manifest.is_empty():
 		print("NO MANIFEST: assets/sprites/manifest.json did not parse")
+		_quitting = true
 		quit(1)
 		return
 	print("MAREN SNAP PROBE -- world %s, view %s, TILE_PX %d" % [WORLD, VIEW, int(AssayScene.TILE_PX)])
@@ -86,6 +107,7 @@ func _initialize() -> void:
 	print("")
 	print("ONE WHOLE TICK, tile 56 -> 57, the step the player sees:")
 	_tick_edge(manifest)
+	_quitting = true
 	quit(0)
 
 

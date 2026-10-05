@@ -18,10 +18,31 @@ extends SceneTree
 ## No `_process` loop and no deadline: everything happens in `_initialize` and it quits. There is
 ## nothing here for ASSA-182's run ceiling to protect.
 
+## **A ONE-SHOT TOOL CAN RUN FOR EVER TOO, AND THIS IS THE HALF ASSA-182 DID NOT FIX FIRST TIME.**
+## `SceneTree`'s own `_process` returns false, so a tool with no `_process` of its own does not end when
+## `_initialize` returns -- it ends when something calls `quit()`. A runtime error inside `_initialize`
+## skips that call and the engine spins with no output and no exit: measured 2026-10-04 with a scratch
+## script, alive after 25 s. The looping tools got a wall-clock ceiling; this needs no clock, because
+## there is nothing a one-shot tool legitimately waits for.
+##
+## `_quitting` is set beside every `quit()` in this file rather than at the end of `_initialize`, so a
+## deliberate early exit -- a bad argument, a missing world -- stays deliberate, and only a
+## fall-through reaches the sentence below.
+var _quitting := false
+
+
+func _process(_delta: float) -> bool:
+	if not _quitting:
+		print("FAIL  schematic_disc_table.gd: _initialize ended without asking to quit -- see the error above")
+		quit(1)
+	return true
+
+
 func _initialize() -> void:
 	var argv := OS.get_cmdline_user_args()
 	if argv.is_empty():
 		print("FAIL  need a seed")
+		_quitting = true
 		quit(1)
 		return
 	var seed_text := String(argv[0])
@@ -31,6 +52,7 @@ func _initialize() -> void:
 	var welcome := AssaySimHost.fresh_welcome_json(seed_text, "marlow")
 	if welcome == "":
 		print("FAIL  no world for seed %s" % seed_text)
+		_quitting = true
 		quit(1)
 		return
 	screen._client.play_offline()
@@ -40,6 +62,7 @@ func _initialize() -> void:
 	if not screen._sim.running() or screen._close_up or screen._cell <= 0.0:
 		print("FAIL  running %s, close_up %s, cell %f: no schematic to describe"
 				% [screen._sim.running(), screen._close_up, screen._cell])
+		_quitting = true
 		quit(1)
 		return
 	var margin: Vector2 = screen.MARGIN
@@ -69,10 +92,12 @@ func _initialize() -> void:
 		var file := FileAccess.open(String(argv[1]), FileAccess.WRITE)
 		if file == null:
 			print("FAIL  cannot write %s" % argv[1])
+			_quitting = true
 			quit(1)
 			return
 		file.store_string(text)
 		file.close()
 		print("wrote %s" % argv[1])
 	print(text)
+	_quitting = true
 	quit(0)

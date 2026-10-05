@@ -20,6 +20,26 @@ extends SceneTree
 
 var _asked := []
 
+## **A ONE-SHOT TOOL CAN RUN FOR EVER TOO, AND THIS IS THE HALF ASSA-182 DID NOT FIX FIRST TIME.**
+## `SceneTree`'s own `_process` returns false, so a tool with no `_process` of its own does not end when
+## `_initialize` returns -- it ends when something calls `quit()`. A runtime error inside `_initialize`
+## skips that call and the engine spins with no output and no exit: measured 2026-10-04 with a scratch
+## script, alive after 25 s. The looping tools got a wall-clock ceiling; this needs no clock, because
+## there is nothing a one-shot tool legitimately waits for.
+##
+## `_quitting` is set beside every `quit()` in this file rather than at the end of `_initialize`, so a
+## deliberate early exit -- a bad argument, a missing world -- stays deliberate, and only a
+## fall-through reaches the sentence below.
+var _quitting := false
+
+
+func _process(_delta: float) -> bool:
+	if not _quitting:
+		print("FAIL  playout_trace.gd: _initialize ended without asking to quit -- see the error above")
+		quit(1)
+	return true
+
+
 func _initialize() -> void:
 	var screen: Node = load("res://scenes/main.tscn").instantiate()
 	root.add_child(screen)
@@ -30,6 +50,7 @@ func _initialize() -> void:
 	screen._client.feed_offline(welcome)
 	if not screen._sim.running():
 		print("no world: %s" % screen._sim.fail_reason)
+		_quitting = true
 		quit(1)
 		return
 	screen._show_close_up(true)
@@ -70,4 +91,5 @@ func _initialize() -> void:
 				+ "  starved %s") % [i, screen._sim.tick(), screen._play_tick, screen._tick_gap,
 				ticks, was, now, at, screen._starved])
 	print("steps %d" % steps)
+	_quitting = true
 	quit(0)

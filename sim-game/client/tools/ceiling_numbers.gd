@@ -10,6 +10,26 @@ extends SceneTree
 ## 912x600 map: ceiling 220 -> 252, north_headroom 252 -> 284, log lines 8 -> 9 of 14 at a 22 px
 ## pitch. The 640x320 row is the size `tests/test_scene_view.gd` asserts against.
 
+## **A ONE-SHOT TOOL CAN RUN FOR EVER TOO, AND THIS IS THE HALF ASSA-182 DID NOT FIX FIRST TIME.**
+## `SceneTree`'s own `_process` returns false, so a tool with no `_process` of its own does not end when
+## `_initialize` returns -- it ends when something calls `quit()`. A runtime error inside `_initialize`
+## skips that call and the engine spins with no output and no exit: measured 2026-10-04 with a scratch
+## script, alive after 25 s. The looping tools got a wall-clock ceiling; this needs no clock, because
+## there is nothing a one-shot tool legitimately waits for.
+##
+## `_quitting` is set beside every `quit()` in this file rather than at the end of `_initialize`, so a
+## deliberate early exit -- a bad argument, a missing world -- stays deliberate, and only a
+## fall-through reaches the sentence below.
+var _quitting := false
+
+
+func _process(_delta: float) -> bool:
+	if not _quitting:
+		print("FAIL  ceiling_numbers.gd: _initialize ended without asking to quit -- see the error above")
+		quit(1)
+	return true
+
+
 func _initialize() -> void:
 	var manifest := AssaySprites.manifest()
 	var map: Vector2 = AssayHud.world_rect().size
@@ -20,4 +40,5 @@ func _initialize() -> void:
 		for pitch: float in [18.0, 20.0, 22.0]:
 			print("   pitch %.0f chrome 38 newest 18 -> %d lines of 14" % [pitch,
 					AssayHud.log_lines_that_fit(ceiling, 38.0, 18.0, pitch, 14)])
+	_quitting = true
 	quit(0)
