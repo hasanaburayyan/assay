@@ -2870,3 +2870,184 @@ func test_scatter_is_drawn_for_tiles_just_outside_the_window() -> bool:
 		return _fail(("no scatter prop comes from outside the visible window, so the one-tile grow "
 				+ "is not happening and props will pop in at the edge as the camera moves"))
 	return true
+
+
+## EVERY SCATTER PROP THIS WINDOW SHOULD DRAW, COMPUTED WITHOUT THE CACHE. `scatter_at` and `_place`
+## only; nothing here can reach `_scatter_plan`, which is the whole point -- a reference built out of
+## the cached path would agree with a stale cache by construction.
+##
+## A SORTED ARRAY AND NOT A SET, because two props may land on the same drawn pixel and a set would
+## quietly forgive a plan that drew one of them twice.
+func _fresh_scatter_keys(view: Dictionary) -> Array:
+	var manifest: Dictionary = view["manifest"]
+	var origin: Vector2 = view["origin"]
+	var world: Vector2i = view["world_tiles"]
+	var ore: Dictionary = view["ore"]
+	var window := AssayScene.visible_tiles(origin, view["size"], world)
+	var grown := Rect2i(window.position - Vector2i.ONE, window.size + Vector2i.ONE * 2)
+	grown = grown.intersection(Rect2i(Vector2i.ZERO, world))
+	# THE SAME CULL `placements` DOES LAST, AND MY FIRST VERSION OF THIS DID NOT DO IT. The window
+	# is grown a tile on every side, so a few props are placed and then dropped because their
+	# rectangle never reaches the drawn area -- `placements` ends with
+	# `if clip.intersects(place["dest"])`. Without this the reference asked for 72 props where the
+	# screen correctly drew 67, and the test failed on its FIRST visit, with nothing cached yet.
+	var clip := Rect2(Vector2.ZERO, view["size"])
+	var keys := []
+	for y in range(grown.position.y, grown.end.y):
+		for x in range(grown.position.x, grown.end.x):
+			var at := Vector2i(x, y)
+			if ore.has(at):
+				continue
+			for prop in AssayScene.scatter_at(at):
+				var place: Dictionary = AssayScene._place(manifest, "scatter", prop[0],
+						Vector2(at) + (prop[1] as Vector2) / AssayScene.TILE_PX, origin,
+						Color.WHITE, float(view.get("seconds", 0.0)))
+				if place.is_empty():
+					continue
+				if not clip.intersects(place["dest"] as Rect2):
+					continue
+				keys.append(_at_key((place["dest"] as Rect2).position))
+	keys.sort()
+	return keys
+
+
+## ASSA-214: THE CACHED PLAN MUST FOLLOW THE WINDOW, AND A CACHE IS EXACTLY HOW A LAYER STARTS
+## DRAWING YESTERDAY'S WORLD.
+##
+## `_scatter_plan` holds one window's whole plan in a `static var` so that most frames do no hashing
+## (+5.39 ms on the median frame became +0.56 ms, measured in a real window). Everything that can go
+## wrong with it goes wrong silently: a key that never changes draws the first window for ever, a key
+## that is wrong by one tile shifts the layer under the camera, and a cache that is never dropped
+## leaks the world a tile at a time. None of those make a sprite look broken -- the props are still
+## props, they are just the wrong props, which is precisely the failure `test_scatter_offsets...`
+## above cannot see because it asks ONE window ONCE.
+##
+## SO THIS WALKS: here, away, and back to here. The third visit is the one a cache keyed on a frame
+## counter or a tick gets wrong, and the second is the one a cache keyed on nothing gets wrong.
+func test_the_scatter_plan_follows_a_moving_window_and_is_not_cached_once() -> bool:
+	var manifest := _manifest()
+	if not manifest.has("scatter"):
+		return _fail("the shipped manifest has no `scatter` asset, so this layer cannot draw at all")
+	var here := Vector2(10.0, 10.0) * AssayScene.TILE_PX
+	var away := Vector2(44.0, 28.0) * AssayScene.TILE_PX
+	# THE PREMISE, ASSERTED BEFORE ANYTHING IS CONCLUDED. If the two windows asked for the same
+	# props then a cache that never invalidates would pass every check below, and this test would be
+	# an instrument that cannot fail for the reason it was written.
+	var keys_here := _fresh_scatter_keys(_view({"origin": here}))
+	var keys_away := _fresh_scatter_keys(_view({"origin": away}))
+	if keys_here.size() < 20 or keys_away.size() < 20:
+		return _fail(("the two windows hold %d and %d scatter props: too few to tell a followed "
+				+ "window from a cached one") % [keys_here.size(), keys_away.size()])
+	var shared := 0
+	var away_set := {}
+	for key in keys_away:
+		away_set[key] = true
+	for key in keys_here:
+		if away_set.has(key):
+			shared += 1
+	if shared * 5 > keys_here.size():
+		return _fail(("%d of %d props are drawn at the same pixel in both windows, so these two "
+				+ "camera positions are too alike for a stale plan to show") % [shared,
+				keys_here.size()])
+
+	var visits: Array[Vector2] = [here, away, here]
+	for i in range(visits.size()):
+		var origin: Vector2 = visits[i]
+		var view := _view({"origin": origin})
+		var want: Array = keys_here if origin == here else keys_away
+		var got := []
+		for place in _of(AssayScene.placements(view), "scatter"):
+			got.append(_at_key(((place as Dictionary)["dest"] as Rect2).position))
+		got.sort()
+		if got.size() != want.size():
+			return _fail(("visit %d at origin %s drew %d scatter props where the tile hash asks "
+					+ "for %d. The plan is not following the window: a cached plan keeps drawing "
+					+ "the props of whichever window filled it.") % [i + 1, origin, got.size(),
+					want.size()])
+		for k in range(got.size()):
+			if got[k] == want[k]:
+				continue
+			return _fail(("visit %d at origin %s draws a prop at %s where the tile hash puts one "
+					+ "at %s. The layer is drawing another window's plan, so the props slide "
+					+ "under the camera instead of staying on their tiles.") % [i + 1, origin,
+					got[k], want[k]])
+	return true
+
+
+## ASSA-214, AND THE HOLE IN THE TEST ABOVE: THE CAMERA MOVES WITHIN ONE TILE AND THE CACHE DOES NOT.
+##
+## `_scatter_plan` is keyed on the WINDOW RECT, which is in whole tiles, so between two tile
+## crossings the camera slides a fraction of a tile and the same cached plan is handed back. That is
+## the point of it -- and it is also the shape of ASSA-197's defect one layer up: **cache the placed
+## rectangles instead of the plan and the whole layer freezes to the tile grid while the camera
+## slides under it.** Nothing about that looks broken either. The props are the right props, in the
+## right places, on a world that has stopped moving with you.
+##
+## The test above cannot see it: all three of its origins are whole multiples of `TILE_PX`, so it
+## never asks two different sub-tile positions of ONE window rect. This does, and it asserts the
+## premise first -- both origins must land in the same rect, or it is re-testing the other case.
+func test_scatter_slides_with_a_sub_tile_camera_inside_one_cached_window() -> bool:
+	var manifest := _manifest()
+	if not manifest.has("scatter"):
+		return _fail("the shipped manifest has no `scatter` asset, so this layer cannot draw at all")
+	# BOTH ORIGINS ARE OFF THE TILE GRID, AND THE PREMISE BELOW IS WHAT TAUGHT ME THAT THEY HAVE TO
+	# BE. My first version stepped from a tile-aligned origin and the premise fired: `visible_tiles`
+	# grows the rect to cover the partial tiles at both edges, so a flush camera gives a 20x10 window
+	# and a camera one pixel off it gives 21x11. The constant window is the one BETWEEN two crossings,
+	# never the one that starts on a crossing.
+	var step := Vector2(0.5, 0.25) * AssayScene.TILE_PX
+	var first := Vector2(10.25, 10.25) * AssayScene.TILE_PX
+	var second := first + step
+	var view_a := _view({"origin": first})
+	var view_b := _view({"origin": second})
+	# THE PREMISE: one window rect, two camera positions. If the half-tile step crosses a boundary
+	# then the cache invalidates and this test is just a slower copy of the one above.
+	var rect_a := AssayScene.visible_tiles(first, view_a["size"], view_a["world_tiles"])
+	var rect_b := AssayScene.visible_tiles(second, view_b["size"], view_b["world_tiles"])
+	if rect_a != rect_b:
+		return _fail(("a %s px camera step changed the window rect from %s to %s, so this cannot "
+				+ "test a sub-tile move inside one cached plan") % [step, rect_a, rect_b])
+
+	# NOT A FRAME-TO-FRAME COMPARISON, and my first version of this was one. Pairing the two frames
+	# by index assumes they hold the same props in the same order, and a half-tile step can push an
+	# edge prop across the clip rect `placements` culls on -- so the counts may honestly differ and
+	# the pairing would report a defect that is the cull doing its job. Each frame is checked against
+	# its OWN cache-free reference instead, which already applies that cull.
+	var want_a := _fresh_scatter_keys(view_a)
+	var want_b := _fresh_scatter_keys(view_b)
+	if want_a.size() < 20:
+		return _fail("only %d scatter props in this window: too few to judge" % want_a.size())
+	# THE TEETH: unless the half-tile step moves every prop off the pixel it was on, a frozen layer
+	# would satisfy both checks below and this test would pass on the very defect it is written for.
+	var overlap := 0
+	var b_set := {}
+	for key in want_b:
+		b_set[key] = true
+	for key in want_a:
+		if b_set.has(key):
+			overlap += 1
+	if overlap > 0:
+		return _fail(("%d props are drawn at the same pixel at both camera positions, so a layer "
+				+ "frozen to the tile grid would look identical to a correct one here") % overlap)
+
+	# `first` IS ASKED FIRST, so the cache is populated by the window we then move INSIDE.
+	var visits: Array[Dictionary] = [view_a, view_b]
+	var wants: Array = [want_a, want_b]
+	for i in range(visits.size()):
+		var got := []
+		for place in _of(AssayScene.placements(visits[i]), "scatter"):
+			got.append(_at_key(((place as Dictionary)["dest"] as Rect2).position))
+		got.sort()
+		var want: Array = wants[i]
+		if got.size() != want.size():
+			return _fail(("at camera position %d the window drew %d scatter props where the tile "
+					+ "hash asks for %d") % [i + 1, got.size(), want.size()])
+		for k in range(got.size()):
+			if got[k] == want[k]:
+				continue
+			return _fail(("the camera moved %s px inside ONE window rect and the layer drew a prop "
+					+ "at %s where it belongs at %s. A cached PLACEMENT, rather than a cached "
+					+ "plan, pins the whole layer to the tile grid while the camera slides under "
+					+ "it -- ASSA-197's defect one layer up, and it looks like working props.")
+					% [step, got[k], want[k]])
+	return true
