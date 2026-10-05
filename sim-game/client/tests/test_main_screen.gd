@@ -2648,12 +2648,22 @@ func test_the_hatch_is_painted_before_the_species_letter() -> bool:
 	var source := FileAccess.get_file_as_string("res://scripts/main.gd")
 	if source == "":
 		return _fail("could not read res://scripts/main.gd, so nothing was scanned")
-	var hatch_at := source.find("draw_line(strokes[i], strokes[i + 1], ink, thick)")
+	# **THE INK NOW COMES OUT OF `AssayHud.MAP_MARKS` AND THE CALL TEXT SAYS SO** (ASSA-206): every
+	# colour `_draw` paints with is looked up by the mark's name, which is what lets the map's key be
+	# generated from the painter's own table. So the scan looks for the named lookup, and the fact the
+	# old literal carried -- that a hatch is in the map's own ground ink -- is asserted on the table
+	# itself two lines down rather than inferred from a word in a call.
+	if AssayHud.mark_ink(&"dead_end") != AssayHud.MAP_BG:
+		return _fail("the dead-end hatch is no longer drawn in the map's own ink: %s"
+				% AssayHud.mark_ink(&"dead_end"))
+	var hatch_at := source.find(
+			"draw_line(strokes[i], strokes[i + 1], AssayHud.mark_ink_of(&\"dead_end\", ink), thick)")
 	if hatch_at < 0:
 		return _fail("main.gd does not paint `AssayHud.hatch_segments` as lines, so a dead-end rock "
 				+ "is drawn exactly like one that pays (ASSA-199 box 2)")
 	# The glyph is the ONLY `draw_string` in the deposit loop, and it is the one that follows.
-	var glyph_at := source.find("HORIZONTAL_ALIGNMENT_LEFT, -1, glyph, disc[\"ink\"])")
+	var glyph_at := source.find(
+			"AssayHud.mark_ink_of(&\"species_glyph\", disc[\"ink\"]))")
 	if glyph_at < 0:
 		return _fail("main.gd no longer draws the species letter with `disc[\"ink\"]`, so this scan "
 				+ "cannot say whether the hatch goes under it")
@@ -2661,7 +2671,7 @@ func test_the_hatch_is_painted_before_the_species_letter() -> bool:
 		return _fail("main.gd paints the hatch AFTER the species letter, so every dead end's letter "
 				+ "is cut by two bars of MAP_BG -- 55.1% of rocks over Maren's 30 seeds")
 	# AND THE FILL IS UNDER BOTH: a hatch painted before the disc it marks is simply invisible.
-	var fill_at := source.find("draw_circle(at, radius, colour)")
+	var fill_at := source.find("draw_circle(at, radius, AssayHud.mark_ink_of(&\"deposit\", colour))")
 	if fill_at < 0 or fill_at > hatch_at:
 		return _fail("main.gd paints the deposit's fill at %d and the hatch at %d: a hatch under its "
 				+ "own disc marks nothing" % [fill_at, hatch_at])
@@ -2707,15 +2717,23 @@ func test_both_player_marks_carry_the_maps_own_keyline() -> bool:
 	var source := FileAccess.get_file_as_string("res://scripts/main.gd")
 	if source == "":
 		return _fail("could not read res://scripts/main.gd, so nothing was scanned")
-	var call_at := source.find("draw_rect(AssayHud.mark_keyline_rect(body), AssayHud.MAP_BG, true)")
+	# THE RIM'S INK IS LOOKED UP BY THE MARK'S NAME NOW (ASSA-206), so the scan names the lookup and
+	# the ink is checked against the table -- which is the stronger half: the old scan would have been
+	# satisfied by the word `MAP_BG` in a call that drew something else.
+	if AssayHud.mark_ink(&"player_keyline") != AssayHud.MAP_BG:
+		return _fail("a player's keyline is no longer the map's own ink: %s"
+				% AssayHud.mark_ink(&"player_keyline"))
+	var call_at := source.find(
+			"draw_rect(AssayHud.mark_keyline_rect(body), AssayHud.mark_ink(&\"player_keyline\"), true)")
 	if call_at < 0:
 		return _fail("no player mark in main.gd draws `AssayHud.mark_keyline_rect` in MAP_BG, so a "
 				+ "partner on a light species letter still fuses with it (Maren's ASSA-189 ruling 2)")
 	# **UNDER THE BODY AND NOT OVER IT.** Both bodies: one `draw_rect(body, colour, true)` serves
 	# MINE and THEIRS, so the rim is on the partner by construction rather than by a second call.
-	var body_at := source.find("draw_rect(body, colour, true)")
+	var body_at := source.find(
+			"draw_rect(body, AssayHud.mark_ink_of(&\"player_mine\" if mine else &\"player_theirs\", colour),")
 	if body_at < 0:
-		return _fail("main.gd no longer paints a player body as `draw_rect(body, colour, true)`, so "
+		return _fail("main.gd no longer paints a player body as one `draw_rect` of the mark's own ink, so "
 				+ "this scan cannot say whether the keyline is under it")
 	if call_at > body_at:
 		return _fail("main.gd draws the player keyline AFTER the body, which is a dark frame ON the "
