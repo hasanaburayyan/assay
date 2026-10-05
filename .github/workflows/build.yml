@@ -391,6 +391,37 @@ jobs:
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
             tools/check_every_script.sh
+      # THE THEME IS GENERATED AND COMMITTED, AND UNTIL NOW NOTHING CHECKED THAT
+      # THE TWO AGREE (ASSA-228). `project.godot` names `theme/assay.tres` as
+      # the project theme, so it reaches every Control in the game; the file
+      # that DESCRIBES it is `tools/build_theme.gd`, which CI never ran.
+      #
+      # The dangerous direction is one-way and silent: edit the generator,
+      # forget to regenerate, and the game keeps shipping the old theme while
+      # the reviewed source says something else. The reverse is already caught,
+      # because the suite measures contrast on real controls.
+      #
+      # IT MATTERS MORE THAN A STALE ASSET USUALLY WOULD, because that generator
+      # is the only thing in the repo that can FAIL a look: it refuses to write
+      # a theme whose own text misses 4.5:1. A refusal that never runs in CI
+      # guards nothing. This is the arrangement the art sheets already have
+      # ("A review sheet still matches the art it drew") and the one
+      # `sim-game/CLAUDE.md` states for generated assets: change the script,
+      # rebuild, and a modified file you did not touch is a finding.
+      #
+      # Byte-reproducible: verified on 7f4efb0 and on e834193, same md5 before
+      # and after a rebuild, so this fails only on real drift.
+      - name: The committed theme is the one its generator writes
+        working-directory: sim-game/client
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64"
+          "$GODOT" --headless --path . --script res://tools/build_theme.gd | tee theme.log
+          # GODOT EXITS 0 ON ALMOST ANYTHING, including a refusal: the generator
+          # prints THEME BUILT last and only on success, so that line is the
+          # verdict and the exit code is not.
+          grep -q '^THEME BUILT' theme.log
+          git diff --exit-code -- theme/assay.tres \
+            || { echo "::error::theme/assay.tres is not what build_theme.gd writes -- run it and commit the result"; exit 1; }
       - name: Client suite
         working-directory: sim-game/client
         run: |
