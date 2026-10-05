@@ -511,6 +511,137 @@ static func ground_row(manifest: Dictionary, at: Vector2i) -> String:
 	return "v%d" % variant_of(at, rows)
 
 
+## THE SECOND GROUND LAYER (ASSA-202/210): non-interactive props keyed by the tile coordinate.
+##
+## WHY IT EXISTS, measured rather than felt: 96.3% of the player's view is one material, and the
+## ground is worse than low-variance -- `manifest.ground.block == [8, 8]` is placed BY POSITION, so
+## the picture repeats every 8 tiles = 256 drawn px. The map rect is 912 px = 28.5 tiles, so ONE
+## SCREEN HOLDS 3.5 COPIES OF THE SAME PICTURE and two screens 16 tiles apart are pixel-identical
+## (100.00% over 193,800 px, measured on a real window shot). There is nothing to navigate by
+## because there is literally nothing new to see.
+##
+## SO THIS LAYER IS KEYED BY A HASH AND NEVER BY A BLOCK. A second block would just add a second
+## lattice on another period; a hash is aperiodic, so it cannot be caught repeating. `_scatter_unit`
+## is `variant_of`'s own FNV widened to take a salt, which is also why every peer draws the same
+## props with nothing crossing the wire.
+##
+## TWO SCALES, because the placement study said one was not enough: uniform small props make two
+## places look like the same place, since statistically they ARE. GRIT is regional texture, clumped
+## by a low-frequency field; LARGE is the rare thing you can walk back to. Maren's census of the
+## shipped frames counted 9 landmark props here and 7 twenty tiles east; the roll below is what
+## produces those counts and dropping rows from the list does not change them (see `SCATTER_LARGE`).
+const SCATTER_GRIT := ["grit0", "grit1", "grit2"]
+## **`tuft0`/`tuft1` ARE IN THE SHEET AND ARE DELIBERATELY NOT IN THIS LIST** (Maren, ASSA-202
+## point 2, 22:35). They clear her contrast floor and are still not landmarks: in her own engine
+## frames the five props measure p50 dE 17.4-19.7 -- FLAT across the whole set -- while area spans
+## 3.7x (tuft 106/107 px against boulder 214 and log 358/396) and internal lightness 2.7x (L* sd
+## 3.9/4.2 against 9.0-10.8). A bar returning the same value for a findable prop and an unfindable
+## one is not the bar for findability: **contrast is not findability, and a per-pixel median cannot
+## see mass.** Neither of us can find either tuft at 1x in a frame where every boulder is obvious.
+##
+## WHY THE RATE DOES NOT MOVE WITH THE LIST. `SCATTER_LARGE_ODDS` is ONE roll deciding WHETHER a
+## landmark lands; the list only decides WHICH. So its length never set the landmark rate -- it set
+## what fraction of landmarks are findable, and at six rows that was 4/6. The visible supply was
+## 1/80 x 4/6 = 1/120, about 4.1 a screen against the ~6 the ruling asked for. Dropping two rows at
+## an unchanged 1/80 inflates nothing; it finally pays the ruling. I recommended 1/120 and Maren
+## overruled it with this arithmetic, which is hers and is right.
+##
+## THE ROWS STAY IN `scatter.png` ON PURPOSE. A ground-cover tier that draws them at grit's rate is
+## a later call and nobody is asking for it now; the sheet keeps the art until we do.
+const SCATTER_LARGE := ["boulder0", "boulder1", "log0", "log1"]
+## NOT THE RATE, AND THE NAME SAYS SO. 0.24 is the UNIFORM rate the clumped field was calibrated
+## AGAINST in the placement study -- a null, not a density. Maren ruled on it directly: "do not move
+## the world to match a constant's name; fix the name."
+const SCATTER_GRIT_UNIFORM_NULL := 0.24
+## WHAT IT ACTUALLY DRAWS, counted over all 57,600 tiles of a 240x240 world rather than derived:
+## 0.1525/tile = 81.5 props per 912x600 screen. `SCATTER_FIELD_GAIN` restores 63.1% of the null
+## world-wide (93.7% over the 464 tiles it was tuned on, which is why it is not 100%). QUOTE THIS
+## ONE. Unused by the code on purpose: it is a measurement, not a lever.
+const SCATTER_GRIT_REALISED := 0.1525
+## ONE ROLL, AND IT DECIDES *WHETHER*, NEVER *WHICH*. Realised 0.0124/tile = 6.3 landmark props per
+## 504-tile screen, and since the tuft rows left `SCATTER_LARGE` all 6.3 of them are findable; it was
+## 4.2 before. UNCHANGED BY THE LIST ON PURPOSE -- see `SCATTER_LARGE`.
+const SCATTER_LARGE_ODDS := 1.0 / 80.0
+const SCATTER_FIELD_CELL := 12           # tiles per density-field cell
+const SCATTER_FIELD_GAIN := 2.77
+const SCATTER_FIELD_SHAPE := 2.6
+## DRAWN px, peak-to-peak, at TILE_PX 32. Without a sub-tile offset nine rows would read as nine
+## visible repeats on a grid -- the exact criticism levelled at the six ground variants in ASSA-115.
+const SCATTER_JITTER_GRIT := 18.0
+const SCATTER_JITTER_LARGE := 10.0
+
+
+## FNV-1a over a tile coordinate and a SALT. `variant_of` is this same hash without the salt, and
+## this cannot reuse it because every independent decision on a tile -- draw at all? which row? how
+## far off centre? -- needs its own stream, or they correlate and the props line up.
+##
+## THE RAW HASH AND THE UNIT FLOAT ARE BOTH NEEDED AND ONLY ONE IS THE TRUTH. A row index is taken
+## from the integer, because `% 3` on the unit float would throw away the low bits the division
+## already dropped; a probability is taken from the float.
+static func _scatter_hash(at: Vector2i, salt: int) -> int:
+	var hash := 2166136261
+	for part in [at.x, at.y, salt]:
+		for byte in range(4):
+			hash = (hash ^ ((int(part) >> (byte * 8)) & 255)) * 16777619 & 0xFFFFFFFF
+	return hash
+
+
+static func _scatter_unit(at: Vector2i, salt: int) -> float:
+	return float(_scatter_hash(at, salt) >> 8) / float(0xFFFFFF)
+
+
+## THE LOW-FREQUENCY DENSITY FIELD: value noise on a 12-tile lattice, smoothstepped, so there are
+## stony stretches and bare ones instead of an even rash. Per 12x12 cell the grit runs min 0 / p10 7
+## / median 20 / p90 39 / max 64 where a uniform field at the same realised rate puts 22 in every one.
+##
+## `floori` and `posmod`, NEVER `/` and `%`: a tile coordinate goes negative, and truncating division
+## folds the negative quadrant onto the wrong cell. That is not a style note -- it moves 2,222 of the
+## 4,483 props in the control this file is diffed against.
+static func _scatter_field(at: Vector2i) -> float:
+	var gx := floori(float(at.x) / float(SCATTER_FIELD_CELL))
+	var gy := floori(float(at.y) / float(SCATTER_FIELD_CELL))
+	var fx := float(posmod(at.x, SCATTER_FIELD_CELL)) / float(SCATTER_FIELD_CELL)
+	var fy := float(posmod(at.y, SCATTER_FIELD_CELL)) / float(SCATTER_FIELD_CELL)
+	fx = fx * fx * (3.0 - 2.0 * fx)
+	fy = fy * fy * (3.0 - 2.0 * fy)
+	var c00 := _scatter_unit(Vector2i(gx, gy), 99)
+	var c10 := _scatter_unit(Vector2i(gx + 1, gy), 99)
+	var c01 := _scatter_unit(Vector2i(gx, gy + 1), 99)
+	var c11 := _scatter_unit(Vector2i(gx + 1, gy + 1), 99)
+	var top := c00 + (c10 - c00) * fx
+	var bot := c01 + (c11 - c01) * fx
+	return top + (bot - top) * fy
+
+
+## WHAT ONE TILE CARRIES: `[[row, px_offset], ...]`. Tile coordinate in, nothing else -- no sim
+## field, no `SAVE_VERSION`, no golden hash, no frame counter.
+##
+## THE SALTS ARE PART OF THE SPEC, not an implementation detail: 10 draw-grit, 11 which-grit, 20/21
+## grit offset, 7 draw-landmark, 8 which-landmark, 22/23 landmark offset, 99 the field. Change one
+## and this is a different world. Nothing saved disagrees, but two clients in a session would draw
+## two different fields, which is ASSA-115's "three players, three grounds" one layer up.
+##
+## `px_offset` IS A `Vector2` AND MUST STAY ONE all the way to `dest`. ASSA-197: `_place` took a
+## `Vector2i` corner until it was fixed, so every body was drawn on a whole-tile grid while the
+## camera slid continuously under it. An `int()` or a `round()` here would quantise every prop onto
+## the tile grid and this layer would read as a repeating texture rather than as scattered objects --
+## which is the one thing it exists to not be. `test_scatter_offsets_are_sub_tile_and_reach_dest`
+## fails if it is floored.
+static func scatter_at(at: Vector2i) -> Array:
+	var out: Array = []
+	var density := minf(1.0, SCATTER_FIELD_GAIN * SCATTER_GRIT_UNIFORM_NULL
+			* pow(_scatter_field(at), SCATTER_FIELD_SHAPE))
+	if _scatter_unit(at, 10) < density:
+		out.append([SCATTER_GRIT[_scatter_hash(at, 11) % SCATTER_GRIT.size()],
+				Vector2((_scatter_unit(at, 20) - 0.5) * SCATTER_JITTER_GRIT,
+						(_scatter_unit(at, 21) - 0.5) * SCATTER_JITTER_GRIT)])
+	if _scatter_unit(at, 7) < SCATTER_LARGE_ODDS:
+		out.append([SCATTER_LARGE[_scatter_hash(at, 8) % SCATTER_LARGE.size()],
+				Vector2((_scatter_unit(at, 22) - 0.5) * SCATTER_JITTER_LARGE,
+						(_scatter_unit(at, 23) - 0.5) * SCATTER_JITTER_LARGE)])
+	return out
+
+
 ## WHICH ROW OF `ore.png` A TILE OF A DEPOSIT GETS.
 ##
 ## THE GRADE PICKS THE ROW AND THE SPECIES PICKS THE TINT (`art/mock_scene.py`, Maren ASSA-19/20), so
@@ -686,7 +817,36 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 				place["layer"] = FLOOR
 				out.append(place)
 
+	# THE SECOND GROUND LAYER (ASSA-210), between the ground and the ore it may not sit on.
+	#
+	# `ore` is read above this loop rather than below it, because this loop needs it: ore is one of
+	# the two things in this game you can act on, so scatter may never cover a deposit tile.
+	# Buildings need no such skip -- they are `standing` and sort over FLOOR by construction.
+	#
+	# THE WINDOW IS GROWN ONE TILE ON EVERY SIDE, then re-clipped to the world. A prop is 32x42 drawn
+	# px with up to 9 px of jitter, so a tile just off screen still puts ink on screen; without the
+	# grow, props pop into existence at the edge as the camera moves. Clipping to the world keeps the
+	# promise `visible_tiles` makes -- nothing ever asks about a tile the sim does not have.
 	var ore: Dictionary = view["ore"]
+	var grown := Rect2i(window.position - Vector2i.ONE, window.size + Vector2i.ONE * 2)
+	grown = grown.intersection(Rect2i(Vector2i.ZERO, world))
+	for y in range(grown.position.y, grown.end.y):
+		for x in range(grown.position.x, grown.end.x):
+			var at := Vector2i(x, y)
+			if ore.has(at):
+				continue
+			for prop in scatter_at(at):
+				# THE OFFSET STAYS FRACTIONAL ALL THE WAY TO `dest`. `corner` is in TILES and may be
+				# fractional since ASSA-197, so a drawn-pixel offset is a division and NOT a new
+				# parameter: `_place` already expresses this exactly. An `int()` or `round()` on this
+				# line puts every prop back on the tile grid, which no existing test can see.
+				var corner := Vector2(at) + (prop[1] as Vector2) / TILE_PX
+				var place := _place(manifest, "scatter", prop[0], corner, origin,
+						Color.WHITE, seconds)
+				if not place.is_empty():
+					place["layer"] = FLOOR
+					out.append(place)
+
 	for key in ore:
 		var at: Vector2i = key
 		var tile: Dictionary = ore[key]
