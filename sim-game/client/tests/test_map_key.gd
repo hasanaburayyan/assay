@@ -332,3 +332,43 @@ func test_the_toggle_names_the_key_and_says_which_way_it_goes() -> bool:
 	if not (shown.begins_with("hide") and hidden.begins_with("show")):
 		return _fail("the toggle does not say what pressing it will do: '%s' / '%s'" % [shown, hidden])
 	return true
+
+
+## **THE TABLE'S ORDER IS THE ORDER `_draw` PAINTS IN, AND UNTIL ASSA-213 NOTHING HELD IT THERE.**
+##
+## `MAP_MARKS`' own docstring already claims this -- "the order a player reads the key in is the order
+## `_draw` paints in, so the key reads bottom-of-the-stack first, which is also the order the marks
+## cover each other in" -- and the two tests above only check membership, both ways. So the table
+## could say the letter goes on last while the painter put it on fourth, which is exactly the state
+## ASSA-213 was filed against: a 16px building diamond painting out a 25px species letter, with every
+## assertion in this file green.
+##
+## **WHAT THIS BUYS THAT A SOURCE SCAN FOR TWO CALLS DOES NOT.** The key panel is generated from this
+## list, so a mark's row and a mark's paint order are now one fact. Moving a draw call without moving
+## its row -- or the other way round -- reddens here, whichever direction the mistake goes, for every
+## pair of marks rather than the pair somebody remembered to write a test about.
+##
+## FIRST APPEARANCE, because one call can name two marks (`&"player_mine" if mine else
+## &"player_theirs"`) and a mark can be painted in more than one call.
+func test_the_tables_order_is_the_order_draw_paints_in() -> bool:
+	var code := _code_only(_body(_source(MAIN), "func _draw() -> void:"))
+	if code.is_empty():
+		return _fail("could not find main.gd::_draw to read")
+	var painted := PackedStringArray()
+	for call in _draw_calls(code):
+		for id in _ids_in(call):
+			if not painted.has(id):
+				painted.append(id)
+	var table := _table_ids()
+	if painted.size() != table.size():
+		return _fail(("_draw paints %d of the table's %d marks: %s. The membership tests above say "
+				+ "which; this one cannot speak until they agree") % [painted.size(), table.size(),
+				painted])
+	for i in range(painted.size()):
+		if painted[i] == table[i]:
+			continue
+		return _fail(("the %dth mark `_draw` paints is '%s' and the %dth row of AssayHud.MAP_MARKS "
+				+ "is '%s'. The table IS the paint order -- the key is generated from it bottom of "
+				+ "the stack first -- so one of the two moved without the other: painted %s, table "
+				+ "%s") % [i + 1, painted[i], i + 1, table[i], painted, table])
+	return true

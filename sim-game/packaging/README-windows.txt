@@ -148,6 +148,31 @@ whoever is hosting for their run link and download the same one. Both halves
 -- the relay and your zip -- must come from a single CI run.
 
 
+If we ask "how smooth is it on your machine?"
+---------------------------------------------
+Your copy can answer that itself, with a number instead of a feeling. Open a
+Command Prompt in this folder (type "cmd" in the address bar of the folder
+window and press Enter), then paste one line:
+
+    Assay.exe -- --motion-probe motion.txt 10
+
+In PowerShell it is the same line with ".\" in front of Assay.exe.
+
+A window opens, starts a world of its own, walks your character in a straight
+line for ten seconds and closes. It leaves "motion.txt" beside this README.
+Send us that file.
+
+It is plain text and you are welcome to read it first -- there is nothing in
+it but your machine's name, its graphics adapter, and how evenly your
+character was drawn, frame by frame. It plays no world of yours and saves
+nothing over one.
+
+Why we ask: until now every smoothness number we had was measured on one of
+our own machines, and none of us has a Windows PC. So when somebody told us
+the game looked jumpy on theirs, we had no way to see what they saw. This is
+that way.
+
+
 What to report
 --------------
 - Any "WARNING: desync" message in the client. That means two players'
