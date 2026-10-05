@@ -1,7 +1,8 @@
 extends SceneTree
 ## TWO PLAYERS IN ONE ASSAY WINDOW, PHOTOGRAPHED FOR THE FIRST TIME (Maren).
 ##
-##   godot --path client --script res://tools/maren_coop_shot.gd -- <out_dir> [seed] [peer_name]
+##   godot --path client --script res://tools/maren_coop_shot.gd \
+##       -- <out_dir> [seed] [peer_name] [row] [col] [play]
 ##   (A GUI RUN. Never --headless: a headless viewport photographs nothing.)
 ##
 ## **THE MILESTONE IS CALLED "the minimal CO-OP demo" AND NOTHING HAS EVER PHOTOGRAPHED TWO PLAYERS.**
@@ -23,9 +24,28 @@ extends SceneTree
 ## `goto` at its stdin -- the same command a person at a terminal types. A composed frame would prove
 ## the composition and nothing about the client.
 ##
-## WHAT IT WRITES: `01-close-up-two.png` (the screen you play on) and `02-whole-world-two.png` (the
-## schematic, one V press away), plus a verdict naming both players, which one the client thinks is
-## mine, and how far apart they stand in tiles.
+## WHAT IT WRITES: `01-close-up-two.png` (the screen you play on), `02-whole-world-two.png` (the
+## schematic, one V press away) and `03-whole-world-two-key.png` (the same frame with the key up),
+## plus a verdict naming both players, which one the client thinks is mine, and how far apart they
+## stand in tiles.
+##
+## **AND `play` BUILDS A FACTORY FIRST, WHICH IS WHAT ASSA-206 BOX 3 ASKS FOR AND NOTHING COULD MAKE.**
+## That box wants one frame holding a building, TWO players and a dead-end disc, judged at 1x. The two
+## tools that could each make half of it could not make the other half: `window_shot.gd` plays the
+## whole craft chain and plants machines but is a world with one person in it, and this tool had two
+## real people and an empty map. QA's words on 2026-10-05: "I cannot make two players from the window
+## tool". So `play` runs `AssayButtonPlay` -- the SAME class `button_session.gd` drives, pressing the
+## screen's own buttons -- against this relay until the chain finishes, and then shoots.
+##
+## `advance()` IS CALLED ON `tick_bundle` AND NOT PER FRAME, copied from `button_session.gd` for its
+## reason: the relay owns the clock, and the loop may only read a world that has been stepped.
+##
+## **THEN BOTH BODIES ARE WALKED CLEAR OF EVERY BUILDING, because the first version of the one-player
+## shot photographed a 12px building diamond underneath a 16px player square** (`window_shot.gd`'s
+## `PRESS_V` comment, measured there). A frame where the player mark covers the only building cannot
+## answer a box that asks for both in it, so the walk-off target is CHOSEN against the building list
+## and the distance it achieved is REPORTED -- for the partner's tile too, which is the one the
+## original measurement did not have to think about.
 
 const DEFAULT_SEED := "777042"
 const DEFAULT_PEER := "rainy"
@@ -51,7 +71,23 @@ const JOIN_DEADLINE := 12.0
 const PEER_DEADLINE := 20.0
 const WALK_DEADLINE := 60.0
 const SETTLE_FRAMES := 4
-const RUN_CEILING := 180.0
+## **A CEILING THAT A `play` RUN CAN REACH, and the no-play path is unaffected by the size of it.**
+## `button_session.gd` allows 1400 relay ticks for the same chain, which is 140 s at ten a second, and
+## this run pays a relay spawn, two joins and two walks on top. 180 s was this tool's ceiling while it
+## only ever walked; it would have killed every `play` run mid-chain and printed a bail, which reads
+## as a defect in the client rather than as a tool that was not given time.
+const RUN_CEILING := 600.0
+## How long the craft chain itself gets, counted from the frame it starts.
+const PLAY_DEADLINE := 420.0
+## **HOW FAR EITHER BODY MUST STAND FROM EVERY BUILDING, in tiles, for the schematic to be judgeable.**
+## On the 96x64 world the whole-world view draws a tile at 9 px, a building diamond at
+## `AssayHud.BUILDING_MARK_PX` and a player at `PLAYER_MARK_PX`; three tiles of clearance is already
+## more than either mark is wide, and four leaves room for a 2x2 smelter's footprint to be measured
+## from its top-left tile without the slack becoming a different question.
+const CLEAR_TILES := 4
+## How far out the walk-off search may look for a tile that clears every building. The map is 96x64,
+## so this reaches any of it from anywhere; it is a bound, not a tuning knob.
+const CLEAR_RADIUS := 40
 
 ## WHERE THE PARTNER IS PUT, relative to me, in tiles. The close-up is 32px/tile in an 864x576 map
 ## rect, so about 27x18 tiles: a partner four east and one north is comfortably on screen with me and
@@ -84,6 +120,14 @@ var _ceiling := Time.get_unix_time_from_system() + RUN_CEILING
 var _peer_target := Vector2i.ZERO
 var _said := PackedStringArray()
 
+## THE CRAFT CHAIN, or null when this run was not asked for one. `AssayButtonPlay` is the class
+## `button_session.gd` drives; nothing about the loop is re-spelled here.
+var _play: AssayButtonPlay = null
+var _play_on := false
+var _play_until := 0.0
+var _play_note := ""
+var _clear_target := Vector2i.ZERO
+
 
 func _initialize() -> void:
 	var argv := OS.get_cmdline_user_args()
@@ -100,6 +144,13 @@ func _initialize() -> void:
 		_row = int(argv[3])
 	if argv.size() > 4:
 		_col = int(argv[4])
+	# ANY NON-EMPTY, NON-ZERO WORD TURNS THE CHAIN ON, and the word it was given is printed. A flag
+	# that silently read as false would hand back the empty-map picture under the name of the one
+	# ASSA-206 box 3 asked for, which is the failure that looks like a result.
+	if argv.size() > 5:
+		var word := String(argv[5]).strip_edges().to_lower()
+		_play_on = word != "" and word != "0" and word != "no" and word != "noplay"
+		print("play argument '%s' -> %s" % [word, "PLAY THE CHAIN" if _play_on else "walk only"])
 	DirAccess.make_dir_recursive_absolute(_out)
 	_relay_binary = AssaySoloRelay.find_binary()
 	if _relay_binary == "":
@@ -148,6 +199,12 @@ func _process(_delta: float) -> bool:
 			_start_the_peer()
 		4:
 			_wait_for_the_peer()
+		30:
+			_playing()
+		31:
+			_walk_clear_of_every_building()
+		32:
+			_wait_for_the_clear_arrival()
 		40:
 			_walk_me_to_the_row()
 		41:
@@ -169,8 +226,178 @@ func _process(_delta: float) -> bool:
 			_settle_then(11)
 		11:
 			_shoot("02-whole-world-two.png")
+			_step = 12
+		12:
+			# THE PRESS ITSELF AGAIN, and its VISIBILITY is recorded rather than assumed: a state a
+			# player cannot reach is not worth photographing (`window_shot.gd`'s own words), and this
+			# button is created hidden (`main.gd:592`) and only shown on the schematic.
+			_play_note += "  key toggle visible=%s text='%s'\n" % [
+					_screen._map_key_toggle.visible, _screen._map_key_toggle.text]
+			_screen._map_key_toggle.emit_signal("pressed")
+			_step = 13
+		13:
+			_settle_then(14)
+		14:
+			_shoot("03-whole-world-two-key.png")
 			_report()
 	return _done
+
+
+## **THE CRAFT CHAIN, DRIVEN BY THE SCREEN'S OWN BUTTONS.** Connecting here rather than in
+## `_initialize` is deliberate: `tick_bundle` fires from the moment we join, and `AssayButtonPlay`
+## may only read a world it has a player in.
+func _playing() -> void:
+	_drain_relay()
+	if _play == null:
+		_play = AssayButtonPlay.new(_screen, 0)
+		_screen._client.tick_bundle.connect(_after_bundle)
+		_play_until = _now() + PLAY_DEADLINE
+		print("  playing the craft chain against the relay (%ds allowed)" % int(PLAY_DEADLINE))
+		return
+	if _play.failed != "":
+		# **NOT ALWAYS A BAIL, AND THE TEST IS WHETHER THE PICTURE CAN STILL BE TAKEN.** The box wants
+		# a building in frame; one building is a building. A chain that planted a smelter and then
+		# broke on the drill still produced the subject, so the run goes on and the failure is carried
+		# into the verdict by name instead of being thrown away with the shot.
+		_play_note += "  the chain FAILED on %s: %s\n" % [
+				AssayButtonPlay.Step.keys()[_play.step], _play.failed]
+		if _screen._sim.buildings().is_empty():
+			_bail("the chain failed with no building standing: %s" % _play.failed)
+			return
+		print("  chain failed but %d building(s) stand; shooting anyway"
+				% _screen._sim.buildings().size())
+		_step = 31
+		return
+	if _play.finished:
+		_play_note += "  the chain FINISHED at tick %d: %s\n" % [_screen._sim.tick(), _play.outcome]
+		print("  chain finished at tick %d, %d building(s) standing"
+				% [_screen._sim.tick(), _screen._sim.buildings().size()])
+		_step = 31
+		return
+	if _now() >= _play_until:
+		_play_note += "  the chain RAN OUT OF TIME on %s\n" % AssayButtonPlay.Step.keys()[_play.step]
+		if _screen._sim.buildings().is_empty():
+			_bail("the chain was still on %s at its deadline with nothing built"
+					% AssayButtonPlay.Step.keys()[_play.step])
+			return
+		print("  chain out of time on %s but %d building(s) stand; shooting anyway"
+				% [AssayButtonPlay.Step.keys()[_play.step], _screen._sim.buildings().size()])
+		_step = 31
+
+
+## THE LOOP'S ONLY TICK, on `button_session.gd`'s reasoning: the relay owns the clock, `main.gd` has
+## already stepped the world by the time this runs, and a stepped world is the only state the loop
+## may read.
+func _after_bundle(_tick: int, _inputs: Array, _raw: String) -> void:
+	if _done or _play == null or _play.finished or _play.failed != "":
+		return
+	_play.advance()
+
+
+## **WALK ME TO A TILE THAT CLEARS EVERY BUILDING, AND THE PARTNER'S TILE TOO.**
+##
+## The chain plants on the tile you stand on, so after it the body and the machine are the same tile
+## and the 12px diamond disappears inside the 16px square -- measured in `window_shot.gd`, which is
+## why that tool walks off before it presses V. The partner is placed at `PEER_OFFSET` from wherever I
+## stop, so MY tile decides BOTH marks and the search has to satisfy both at once.
+##
+## A SPIRAL OUT FROM WHERE I STAND and not a jump to a corner: the schematic is the whole map, so any
+## clear tile answers the box, and the nearest one keeps the factory and the two people in the same
+## part of the picture, which is the thing a player would actually be looking at.
+func _walk_clear_of_every_building() -> void:
+	var found: Variant = _tile_of(true)
+	if found == null:
+		if _now() >= _ceiling:
+			_bail("the sim never reported my own player")
+		return
+	var me := Vector2i(int((found as Vector2).x), int((found as Vector2).y))
+	var size: Vector2i = _screen._sim.size_tiles()
+	var pick: Variant = null
+	for radius in range(0, CLEAR_RADIUS + 1):
+		for dy in range(-radius, radius + 1):
+			for dx in range(-radius, radius + 1):
+				if maxi(absi(dx), absi(dy)) != radius:
+					continue
+				var tile := me + Vector2i(dx, dy)
+				if tile.x < 0 or tile.y < 0 or tile.x >= size.x or tile.y >= size.y:
+					continue
+				var mate := Vector2i(clampi(tile.x + PEER_OFFSET.x, 0, size.x - 1),
+						clampi(tile.y + PEER_OFFSET.y, 0, size.y - 1))
+				if _clear_of_buildings(tile) and _clear_of_buildings(mate):
+					pick = tile
+					break
+			if pick != null:
+				break
+		if pick != null:
+			break
+	if pick == null:
+		_bail("no tile within %d of %s clears every building for both bodies"
+				% [CLEAR_RADIUS, me])
+		return
+	_clear_target = pick
+	if _clear_target == me:
+		print("  already clear of every building at %s" % me)
+		_step = 5
+		return
+	if not _screen._client.submit(AssayActions.move_to(_clear_target)):
+		_bail("the client refused a MoveTo to %s" % _clear_target)
+		return
+	print("  walking clear of the factory: %s -> %s" % [me, _clear_target])
+	_step = 32
+	_until = _now() + WALK_DEADLINE
+
+
+func _wait_for_the_clear_arrival() -> void:
+	_drain_relay()
+	var found: Variant = _tile_of(true)
+	if found != null:
+		var me := Vector2i(int((found as Vector2).x), int((found as Vector2).y))
+		if me == _clear_target:
+			_step = 5
+			return
+	if _now() >= _until:
+		# A BAIL, unlike the partner's walk. The partner's framing is cosmetic; this walk is what
+		# makes the building and the player separable at all, and a shot taken half way there could
+		# have the diamond under the square again while reading as the answer to box 3.
+		_bail("never reached the clear tile %s in %ds" % [_clear_target, int(WALK_DEADLINE)])
+
+
+## TRUE when no building's footprint comes within `CLEAR_TILES` of this tile, measured in Chebyshev
+## tiles because that is how the marks overlap on a square grid.
+##
+## `pos` IS THE TOP-LEFT OF THE FOOTPRINT (`sim_host.gd:140`) AND A SMELTER IS 2x2, so every CELL of
+## the footprint is measured and not the one tile the sim names -- and the footprint is taken from the
+## sim's own `Vector2i` (`sim-godot/src/lib.rs:1219`) rather than from a 2 typed here, so a building
+## kind with a different shape cannot quietly go unmeasured.
+## CHEBYSHEV TILES TO THE NEAREST FOOTPRINT CELL, or -1 when nothing is built. -1 AND NOT A BIG
+## NUMBER: "no building" and "very far from a building" are different answers and the verdict says
+## which, because box 3 wants a building in the frame at all.
+func _distance_to_a_building(tile: Vector2i) -> int:
+	var best := -1
+	for entry in _screen._sim.buildings():
+		var b: Dictionary = entry
+		var at: Vector2i = b.get("pos", Vector2i.ZERO) as Vector2i
+		var span: Vector2i = b.get("footprint", Vector2i.ONE) as Vector2i
+		for fy in range(maxi(1, span.y)):
+			for fx in range(maxi(1, span.x)):
+				var cell := at + Vector2i(fx, fy)
+				var d := maxi(absi(cell.x - tile.x), absi(cell.y - tile.y))
+				if best < 0 or d < best:
+					best = d
+	return best
+
+
+func _clear_of_buildings(tile: Vector2i) -> bool:
+	for entry in _screen._sim.buildings():
+		var b: Dictionary = entry
+		var at: Vector2i = b.get("pos", Vector2i.ZERO) as Vector2i
+		var span: Vector2i = b.get("footprint", Vector2i.ONE) as Vector2i
+		for fy in range(maxi(1, span.y)):
+			for fx in range(maxi(1, span.x)):
+				var cell := at + Vector2i(fx, fy)
+				if maxi(absi(cell.x - tile.x), absi(cell.y - tile.y)) < CLEAR_TILES:
+					return false
+	return true
 
 
 func _wait_then_join() -> void:
@@ -214,6 +441,12 @@ func _wait_for_the_peer() -> void:
 	if _peer_welcomed and _screen._sim.players().size() >= 2:
 		# THE WALK IS MINE AND IT HAPPENS BEFORE THE PARTNER IS PLACED, because the partner is placed
 		# relative to where I end up. Walking after would frame the pair around my spawn.
+		#
+		# AND THE CHAIN COMES BEFORE EITHER, for the same reason one step further back: it walks me
+		# across the map to a deposit, so a row reached before it would not survive it.
+		if _play_on:
+			_step = 30
+			return
 		_step = 40 if _row >= 0 else 5
 		return
 	if _now() >= _until:
@@ -351,6 +584,7 @@ func _report() -> void:
 		var apart := ((mine as Vector2) - (theirs as Vector2)).abs()
 		print("  %.0f tiles apart in x, %.0f in y" % [apart.x, apart.y])
 	print("  toggle reads: %s, close_up=%s" % [_screen._view_toggle.text, _screen._close_up])
+	_report_the_subject(mine, theirs)
 	print("  said: %s" % " | ".join(_said))
 	if _is_empty_pair():
 		print("CO-OP SHOT FAILED: fewer than two players, so neither picture is about co-op")
@@ -358,6 +592,48 @@ func _report() -> void:
 		return
 	print("CO-OP SHOT OK")
 	_finish(0)
+
+
+## **WHAT ASSA-206 BOX 3 ASKED TO BE IN THE FRAME, COUNTED IN THE FRAME THAT WAS WRITTEN.**
+##
+## A building, two players and a dead-end disc. Presence is not enough for the first two -- the whole
+## reason this walks off is that a building under a body is a building nobody can see -- so the
+## CLEARANCE IS PRINTED AS A NUMBER for each body against the nearest footprint cell, and whether a
+## mark reads at 9 px is still judged on the picture at 1x, which is the box's own wording and not
+## something a tool may tick for itself.
+func _report_the_subject(mine: Variant, theirs: Variant) -> void:
+	if _play_note != "":
+		print(_play_note.strip_edges())
+	var buildings: Array = _screen._sim.buildings()
+	print("  %d building(s) in the sim:" % buildings.size())
+	for entry in buildings:
+		var b: Dictionary = entry
+		print("    %s at %s footprint %s status %s" % [b.get("kind", "?"), b.get("pos", "?"),
+				b.get("footprint", "?"), b.get("status", "?")])
+	print("  %d mark(s) the schematic painted for them (main.gd::_building_marks)"
+			% _screen._building_marks(buildings).size())
+	# THE SIM'S OWN WORD ON A DEAD END and not a reading of the picture: `reach_note` is what
+	# `hud.gd:583` hatches on, so this counts the discs the frame was told to stripe.
+	var dead := 0
+	var live := 0
+	for entry in _screen._sim.deposits():
+		var d: Dictionary = entry
+		if String(d.get("reach_note", "")) != "":
+			dead += 1
+		elif int(d.get("amount", 0)) > 0:
+			live += 1
+	print("  deposits: %d hatched dead ends, %d workable" % [dead, live])
+	for pair in [["me", mine], [_peer_name, theirs]]:
+		var who: String = pair[0]
+		var at: Variant = pair[1]
+		if at == null:
+			print("  %s: the sim did not report this player" % who)
+			continue
+		var tile := Vector2i(int((at as Vector2).x), int((at as Vector2).y))
+		print("  %s at %s: %d tiles from the nearest building cell%s"
+				% [who, tile, _distance_to_a_building(tile),
+				"" if _clear_of_buildings(tile) else "  <- UNDER %d, THE MARKS OVERLAP"
+				% CLEAR_TILES])
 
 
 func _spawn_relay() -> bool:
