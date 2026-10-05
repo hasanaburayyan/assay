@@ -1018,6 +1018,11 @@ static func mark_keyline_rect(body: Rect2) -> Rect2:
 ## Her words: "it is a readout, not an action, and nothing is lost -- the line already says the word
 ## submitted".
 ##
+## **AND THE CLAUSE SHE NAMED NO LONGER EXISTS AT ALL** (ASSA-239, her ASSA-237 ruling): a submission
+## that succeeded now says NOTHING, so `· submitted at tick 514` is quoted above as the thing this
+## colour used to paint rather than as something still on the screen. `Say.JOINED` keeps its other
+## six readouts; see below.
+##
 ## **IT IS SEVEN READOUTS, NOT THE ONE SHE NAMED, and that is deliberate.** `Say.JOINED` also paints
 ## "joined as player N", "acting on x, y", "walking to x, y" and the link's own notes. Her ruling is
 ## stated as a rule -- *no accent outside a button* -- so fixing only the clause in the shot would

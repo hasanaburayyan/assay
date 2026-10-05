@@ -811,7 +811,7 @@ func test_the_event_log_is_outside_the_box_that_scrolls_the_controls() -> bool:
 ## AND IT STOPS THE MOUSE ON PURPOSE. The map is clicked through `_unhandled_input`, so an `IGNORE`
 ## panel would let a click pass through the log onto the tile under it: a machine placed on a tile you
 ## cannot see. `STOP` means the covered tiles are not clickable while the log is up. The region around
-## the box is `IGNORE`, because 912x600 of empty space answering the mouse is how
+## the box is `IGNORE`, because 912x672 of empty space answering the mouse is how
 ## `_map_note`'s own comment says this goes wrong ("Play solo does nothing", nowhere near that line).
 func test_the_log_over_the_map_holds_no_control_and_eats_the_clicks_it_covers() -> bool:
 	var screen := _screen()
@@ -2192,7 +2192,7 @@ func test_the_empty_map_names_which_kind_of_empty_it_is() -> bool:
 				% [note.horizontal_alignment, door.alignment])
 	elif note.mouse_filter != Control.MOUSE_FILTER_IGNORE \
 			or door.mouse_filter != Control.MOUSE_FILTER_IGNORE:
-		ok = _fail("a 912x600 control that answers the mouse swallows every click on the map, and "
+		ok = _fail("a map-sized control that answers the mouse swallows every click on the map, and "
 				+ "the bug would read as `Play solo does nothing`")
 	else:
 		var ratio := AssayHud.contrast_ratio(_drawn_color(note), AssayHud.MAP_BG)
@@ -2435,7 +2435,7 @@ func _a_part_stack() -> Dictionary:
 ## existing and being right buys nothing until `main.gd` hands it to `camera_origin`, and "I added
 ## the function and forgot to pass it" is a defect that leaves every scene-view assertion green.
 ##
-## So it drives the real screen at the real 912x600 rect, puts the body in row 0, and reads the
+## So it drives the real screen at the real 912x672 rect, puts the body in row 0, and reads the
 ## camera out of the view the screen actually built.
 ##
 ## **WHAT IT CANNOT SEE, MEASURED NOT GUESSED.** Its expectation is `-north_headroom(...)`, so it
@@ -3881,4 +3881,57 @@ func test_the_status_toast_appears_only_with_something_to_say() -> bool:
 			ok = _fail("the toast at %s is not in the world's bottom-left corner: the log owns the "
 					% at + "top and the view/key toggles own the bottom-right")
 	joined.queue_free()
+	return ok
+
+
+## **AN ACCEPTED COMMAND LEAVES THE CLIENT WITH NOTHING TO SAY** (ASSA-239, Maren's ruling on
+## ASSA-237: *"the line is empty when healthy and carries the stall sentence when the sim stalls.
+## `Place 0 · submitted at tick 514` is a tick number, the thing part 1 sent away, so it goes."*).
+##
+## This is what makes the toast a transient rather than the header strip at a quarter of the height:
+## if every press wrote a sentence, the panel would be on screen for the whole of a played session and
+## the geometry Maren ruled away would have come back wearing a smaller frame.
+##
+## **AND IT CLEARS RATHER THAN SKIPS.** Dropping the `_say` would leave the PREVIOUS sentence standing
+## -- so the refusal below would still be on screen after the successful press that followed it, which
+## is a line claiming a state the player is not in (ASSA-176's class). The order here is the test: say
+## something, then act successfully, then read the line.
+func test_an_accepted_command_says_nothing_and_clears_what_came_before() -> bool:
+	var ok := true
+	var joined := _joined_screen()
+	joined._process(0.016)
+	joined._refresh()
+	if not joined._sim.running():
+		joined.queue_free()
+		return _fail("the fixture never simulated, so no command could be accepted")
+
+	joined._say("refused: something earlier", AssayHud.Say.FAILED)
+	if joined._status.text == "":
+		ok = _fail("premise: the line was already empty, so the clear below proves nothing")
+	joined._act("Mine", AssayActions.mine())
+	if joined._status.text != "":
+		ok = _fail("an accepted command left `%s` on the status line; a submission is not news "
+				% joined._status.text + "and the sim's own event says what happened")
+	if joined._says_toast.visible and not joined._join_band.visible:
+		ok = _fail("the toast is still drawn over the world with nothing in it to read")
+	joined.queue_free()
+	return ok
+
+
+## **A REFUSAL IS STILL LOUD, which is the half that must NOT follow the ruling above** (ASSA-239).
+##
+## "No refusal is silent" is a standing rule here, and this is the branch it protects: a press that
+## never reached the wire produces no sim event, so the status line is the only place a player can
+## ever learn it happened. A fix that quietened `_act` all the way would pass the test above and lose
+## this, which is why they are two tests and not one.
+func test_a_command_that_never_reached_the_wire_still_says_so() -> bool:
+	var ok := true
+	var screen := _screen()
+	# NOT JOINED: `AssayNetClient.submit` refuses, which is the real path rather than a stubbed one.
+	screen._act("Mine", AssayActions.mine())
+	if not screen._status.text.contains("not submitted"):
+		ok = _fail("a command that never reached the wire said `%s`" % screen._status.text)
+	if screen._base_level != AssayHud.Say.FAILED:
+		ok = _fail("the refusal is not painted as a failure, so it reads as an instruction")
+	screen.queue_free()
 	return ok

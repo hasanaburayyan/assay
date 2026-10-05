@@ -106,7 +106,7 @@ var _says_toast_box := VBoxContainer.new()
 ## list to remember.
 var _column: Panel = null
 ## **THE DARK SURFACE UNDER THE JOIN COMPOSITION** (ASSA-231). `_world` paints `MAP_BG` over
-## `world_rect` and nowhere else, so with the column hidden the join screen was a 912x600 dark panel
+## `world_rect` and nowhere else, so with the column hidden the join screen was a map-sized dark panel
 ## with a 320 px strip of bare window beside it. This paints the same token over `join_rect`, under
 ## `_world` in child order, so before a world the screen is ONE surface; the moment a world exists it
 ## is hidden and the map is framed exactly as it always was. `MAP_BG` is the existing token -- no new
@@ -119,6 +119,12 @@ var _status := Label.new()
 ## count, which is the difference between a rule and a pair of assignments that have to agree.
 var _base_line := ""
 var _base_level: int = AssayHud.Say.IDLE
+## The world's tick when `_base_line` was said, or -1 if there was no world then. See
+## `_age_the_saying`, which is what stops a healthy sentence becoming a permanent one.
+var _said_at_tick := -1
+## How long a `Say.JOINED` sentence stays on screen, in the WORLD's ticks (ASSA-239). 2 s at the
+## relay's default 10 ticks/s. See `_age_the_saying` for why it is not seconds.
+const SAYING_DWELL_TICKS := 20
 ## Whole seconds the host has been quiet, 0 when it is not. Set only by `AssayNetClient.link_quiet`.
 var _quiet_seconds := 0
 ## **THE DEVELOPER'S READOUT, AND IT IS NOT A PLAYER'S** (ASSA-237, Maren's Gap 2: *"Debug output is
@@ -396,7 +402,7 @@ var _close_up := true
 ## HIDDEN ON FIRST OPEN, WITH A CONTROL THAT NAMES ITS KEY, which is the log's bargain (ASSA-89) and
 ## is a choice Maren left to the builder. **MEASURED, NOT ESTIMATED** (`AssayMapKey.wants` at the
 ## theme's own 13px font, plus the panel's stylebox margins): the content is 286x280 px of the map's
-## 912x600, which at 9 px a tile is 31.8 x 31.1 tiles -- **about 16% of a 96x64 world** -- on the one
+## 912x672, which at 9 px a tile is 31.8 x 31.1 tiles -- **about 16% of a 96x64 world** -- on the one
 ## surface whose job is showing you a deposit you have not walked to. A sixth of the world behind a
 ## key you have already read is a cost a player should be able to put down. The half that makes that
 ## honest is the button -- `show the map key (K)` beside `whole world (V)`, inside the map's own
@@ -600,9 +606,9 @@ func _ready() -> void:
 	#
 	# **MEASURED, NOT NOTICED**: on a real-window shot of main at 1280x720, **16.0% of the window is
 	# `(77, 77, 77)`** -- Godot's default clear colour, which is not in `build_theme.gd`'s palette, not
-	# in `AssayHud`'s marks, and chosen by nobody here. It is the 24px frame around the map and the
-	# header band above it, and it has been in every screenshot of this game we have ever sent the
-	# board.
+	# in `AssayHud`'s marks, and chosen by nobody here. It was the 24px frame around the map and the
+	# 96px header band above it (the band has since gone, ASSA-239; the frame remains), and it had been
+	# in every screenshot of this game we had ever sent the board.
 	#
 	# **AND IT IS A CONTRAST DEFECT, WHICH IS WHY IT IS IN THIS SLICE RATHER THAN A TASTE ITEM.** This
 	# is ASSA-152 one layer out: that item found the HUD column's text rendering on this same default
@@ -690,14 +696,14 @@ func _build_ui() -> void:
 	# world's own rectangle and added straight after it, so it covers exactly the surface it explains
 	# and draws on top of the background `_world` paints.
 	#
-	# `MOUSE_FILTER_IGNORE` IS NOT DECORATION: this control spans 912x600 of the window, and the map
+	# `MOUSE_FILTER_IGNORE` IS NOT DECORATION: this control spans 912x672 of the window, and the map
 	# is clicked through `_unhandled_input`. A label that answered the mouse would swallow every
 	# click on the world and the failure would be "Play solo does nothing", nowhere near this line.
 	# **AND IT IS A COMPOSITION NOW, NOT A SENTENCE** (ASSA-231, Maren's Gap 5). The door spans the
 	# same rectangle the sentence used to span and carries that sentence unchanged; what is new is
 	# that the controls it talks about stand underneath it instead of in the far corner.
 	#
-	# `MOUSE_FILTER_IGNORE` FOR THE REASON THE NOTE HAS IT, one level up: this is a 912x600 Control
+	# `MOUSE_FILTER_IGNORE` FOR THE REASON THE NOTE HAS IT, one level up: this is a 912x672 Control
 	# over the map, and a Container does NOT inherit the note's filter. IGNORE does not apply to
 	# children, so every button inside it still gets its clicks -- and the failure if it did would
 	# read as "Play solo does nothing", nowhere near this line.
@@ -913,9 +919,11 @@ func _build_ui() -> void:
 	# scroll is the derivation -- the scroll is whatever the other two leave, measured by the engine
 	# on the frame they change, and nobody has to remember it.
 	var chrome := VBoxContainer.new()
-	# `COLUMN_TOP`, NOT `MARGIN.y`: the header band spans the map's width, not the window's, so the
-	# column starts at the top of the window and the 347 x 96 of empty chrome in the corner becomes
-	# clip. See `AssayHud.COLUMN_TOP` for the measurement and for why that rectangle gets no label.
+	# `COLUMN_TOP`, WHICH **IS** `MARGIN.y` NOW (ASSA-239). It was 8 against a `MARGIN.y` of 96,
+	# because the header band spanned the map's width and not the window's and the column was allowed to
+	# climb into the 347 x 96 of unowned chrome beside it. The band is gone, so there is nothing to
+	# climb into and the column shares the world's top edge instead. Still named rather than inlined:
+	# see `AssayHud.COLUMN_TOP` for why one decision gets one declaration.
 	var column_rect := Rect2(Vector2(VIEW.x - PANEL - MARGIN.x, AssayHud.COLUMN_TOP),
 			Vector2(PANEL, VIEW.y - AssayHud.COLUMN_TOP - 24.0))
 	# THE COLUMN'S TEXT USED TO SIT ON NOTHING, AND "NOTHING" IS A COLOUR (ASSA-152, Maren).
@@ -1146,7 +1154,7 @@ func _build_ui() -> void:
 ## read what just happened cost you every control you had.
 ##
 ## WHY OVER THE MAP AND NOT A SECOND COLUMN OR A BOTTOM STRIP. Maren left the placement to me and
-## named all three. The map is 912x600 and the window is 1280x720, so a strip under the map would
+## named all three. The map is 912x672 and the window is 1280x720, so a strip under the map would
 ## have to come out of the map's own height -- `assay-rulings` §4 pins 32 px a tile, so that is fewer
 ## tiles, which is buying log space with the world. A second column would come out of the map's width
 ## for the same reason. The map's rectangle is the only surface this window has that is already
@@ -1177,7 +1185,7 @@ func _build_ui() -> void:
 ## `MOUSE_FILTER_IGNORE` panel would let a click pass through the log onto the tile underneath it --
 ## placing a machine on a tile you cannot see. `STOP` means the covered tiles are not clickable while
 ## the log is up, which is the honest version: what you cannot see, you cannot click. The region
-## itself is `IGNORE`, so the 912x600 of empty space around the box answers nothing.
+## itself is `IGNORE`, so the 912x672 of empty space around the box answers nothing.
 func _build_log_over_the_map(world: Rect2) -> void:
 	if _manifest.is_empty():
 		_manifest = AssaySprites.manifest()
@@ -1977,8 +1985,41 @@ func _rebuild_running(lines: PackedStringArray) -> void:
 func _say(line: String, level: int) -> void:
 	_base_line = line
 	_base_level = level
+	# WHEN, IN THE WORLD'S OWN CLOCK, so `_age_the_saying` can let a healthy line go. -1 while there is
+	# no world: a sentence said during the handshake has no tick to be older than, and it is cleared by
+	# the world arriving rather than by ageing.
+	_said_at_tick = _sim.tick() if _sim != null else -1
 	_render_status()
 	print(line)
+
+
+## **A HEALTHY SENTENCE GETS A MOMENT AND THEN THE SCREEN GOES QUIET** (ASSA-239, Maren's ruling on
+## ASSA-237: *"the line is empty when healthy and carries the stall sentence when the sim stalls"*).
+##
+## **FOUND BY MY OWN PROBE, NOT REASONED ABOUT.** `tools/nacre_toast_shot.gd` photographs a played
+## world and REFUSES the run if the toast is drawn on a healthy one. Its first run failed: `joined as
+## player 0` is a `Say.JOINED` line said once at the handshake and never taken back, so the toast sat
+## over the world for the whole session -- the header strip returning at a quarter of the height,
+## which is the exact thing Maren ruled against in advance. Removing `_act`'s echo was not enough; a
+## line that is never cleared is permanent whoever wrote it.
+##
+## **ONLY `JOINED` AGES, AND THE OTHER THREE LEVELS MUST NOT.** `FAILED` is a refusal, and no refusal
+## is silent -- a failure that faded out would be the one class of sentence a player cannot recover.
+## `CONNECTING` is a live state that resolves itself. `IDLE` is already nothing. So this clause is
+## about success only, which is the only level whose sentence stops being true once you can see the
+## thing it announced.
+##
+## **THE DWELL IS IN THE SIM'S TICKS, NOT IN SECONDS.** This client has no clock of its own and must
+## not grow one: the only time it knows is the world's, and a wall-clock dwell would make a line's
+## lifetime depend on the frame rate of the machine reading it. 20 ticks is 2 s at the relay's default
+## 10 ticks/s, and it is long enough to read `walking to 57, 59` and short enough that the resting
+## state of a played screen is world and column and nothing else.
+func _age_the_saying() -> void:
+	if _base_level != AssayHud.Say.JOINED or _base_line == "":
+		return
+	if _said_at_tick < 0 or _sim.tick() - _said_at_tick < SAYING_DWELL_TICKS:
+		return
+	_say("", AssayHud.Say.IDLE)
 
 
 ## **THE STATUS LINE, FROM THE TWO THINGS THAT CAN WANT IT** (ASSA-191). One function so the rule is
@@ -2156,6 +2197,10 @@ func _refresh() -> void:
 	# `crafting_readout` byte for byte, the same sentence that label printed -- plus the mining and
 	# assaying lines that had no surface at all (ASSA-95). Keeping both would print the craft twice.
 	_refresh_running()
+	# AND A HEALTHY SENTENCE AGES OUT OF THE TOAST (ASSA-239). Here rather than in `_process` because
+	# the dwell is counted in the WORLD's ticks and this is the function a tick bundle drives; in
+	# `_process` it would be asked sixty times a second about a number that moves ten.
+	_age_the_saying()
 	# WHICH WORLD, WHICH TICK, WHICH HASH. The seed and the hash are TEXT, because a u64 cannot
 	# survive a GDScript number -- that is not caution, it is measured. The bundle and hash counts are
 	# here because a client that has stopped applying bundles looks exactly like one that is idle.
@@ -2837,13 +2882,27 @@ func _refresh_actions() -> void:
 
 ## ONE DOOR FOR EVERY BUTTON ON THIS SCREEN, and the only place any of them reaches the wire.
 ##
-## It says what it sent, because a button that shows nothing reads as a dead button (Maren's ruling
-## on Join, and the same argument applies here). It does not predict: the world changes when a bundle
-## carrying this command comes back around and the sim steps, which for the player's own action is
-## about a tick later.
+## **IT NO LONGER SAYS WHAT IT SENT, AND THAT IS MAREN'S RULING ON ASSA-237** (2026-10-05): *"both
+## hold if the line is empty when healthy and carries the stall sentence when the sim stalls.
+## `Place 0 · submitted at tick 514` is a tick number, the thing part 1 sent away, so it goes."*
+##
+## **IT WAS A SECOND DESCRIBER AND THE SIM IS THE FIRST.** The old sentence announced a SUBMISSION --
+## a fact about this client's socket, stamped with a tick a player has no use for. What actually
+## happened arrives a moment later as the sim's own event in the log, which is the describer this
+## repo has already settled on twice (ASSA-222). Saying both means the screen reports the press and
+## then reports the outcome, and only one of those is the game.
+##
+## **SUCCESS CLEARS THE LINE RATHER THAN LEAVING IT.** Dropping the `_say` entirely would have left
+## whatever was said last standing -- so a refusal you had already answered would keep sitting over a
+## world where you then acted successfully, which is a sentence claiming a state the player is not in
+## (ASSA-176's class). An accepted command is the client having nothing to say.
+##
+## **THE REFUSAL STAYS, LOUD.** No refusal is silent is not a style rule here, and this is the branch
+## it protects: a press that never reached the wire is the one thing a player cannot find out any
+## other way, because a command that was never sent produces no event to read in the log.
 func _act(what: String, command: Variant) -> void:
 	if _client.submit(command):
-		_say("%s · submitted at tick %d" % [what, _sim.tick()], AssayHud.Say.JOINED)
+		_say("", AssayHud.Say.IDLE)
 		return
 	_say("%s · not submitted; join a world first" % what, AssayHud.Say.FAILED)
 
@@ -3590,7 +3649,7 @@ func _track_hover(at: Vector2) -> void:
 ##
 ## THE SPRITES ARE DRAWN, AND THEY ARE NOT DRAWN HERE. ASSA-119 is the camera at 32 px a tile, and it
 ## lives in `AssayScene` + `AssayWorldLayer` over the same rectangle this paints -- `_close_up` says
-## which of the two is up. This function is the one that fits a 96x64 world into 912x600, which is
+## which of the two is up. This function is the one that fits a 96x64 world into 912x672, which is
 ## what makes it a map rather than a view.
 ##
 ## THAT WAS THE ONE THING IN THE WAY FOR TWO ITEMS (ASSA-46). A tile here is 9 px (measured; 18 px on

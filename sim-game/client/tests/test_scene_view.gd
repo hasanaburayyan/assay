@@ -19,7 +19,7 @@ extends RefCounted
 
 const SPRITES := "res://assets/sprites/"
 const MANIFEST := SPRITES + "manifest.json"
-## A window a bit smaller than the real 912x600, so the numbers in the assertions are easy to check by
+## A window a bit smaller than the real 912x672, so the numbers in the assertions are easy to check by
 ## hand: 20 by 10 tiles exactly.
 const WINDOW := Vector2(640.0, 320.0)
 
@@ -107,7 +107,7 @@ func test_every_tile_the_camera_covers_gets_a_ground_sprite() -> bool:
 	return true
 
 
-## AND THE PARTIAL TILES AT THE EDGE ARE DRAWN. 912x600 is 28.5 by 18.75 tiles; a whole-tile window
+## AND THE PARTIAL TILES AT THE EDGE ARE DRAWN. 912x672 is 28.5 by 21 tiles; a whole-tile window
 ## would leave a dark strip down one side that moves as you walk.
 func test_a_camera_between_tiles_still_covers_the_whole_window() -> bool:
 	var view := _view({"origin": Vector2(16.0, 8.0)})

@@ -6,9 +6,10 @@ extends SceneTree
 ## `AssayScene.player_ceiling` and `north_headroom` are pure, so this is four numbers and no world.
 ## It exists because ASSA-197 moved them -- removing the floor from `_place` made the ceiling the
 ## sprite's top instead of a tile above it -- and a comment that claims "8 lines becomes 9" should be
-## something somebody can re-run rather than something I did once. Measured 2026-10-04 on the real
+## something somebody can re-run rather than something I did once. Measured 2026-10-04 on the then-real
 ## 912x600 map: ceiling 220 -> 252, north_headroom 252 -> 284, log lines 8 -> 9 of 14 at a 22 px
-## pitch. The 640x320 row is the size `tests/test_scene_view.gd` asserts against.
+## pitch. **RE-MEASURED 2026-10-05 ON THE 912x672 MAP (ASSA-239 gave the header strip's 96px to the
+## world): ceiling 288, north_headroom 320, 11 lines of 14 at the same pitch.** The 640x320 row is the size `tests/test_scene_view.gd` asserts against.
 
 ## **A ONE-SHOT TOOL CAN RUN FOR EVER TOO, AND THIS IS THE HALF ASSA-182 DID NOT FIX FIRST TIME.**
 ## `SceneTree`'s own `_process` returns false, so a tool with no `_process` of its own does not end when
