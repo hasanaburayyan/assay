@@ -98,8 +98,13 @@ func _paint_sample(row: Dictionary, box: Rect2, font: Font, font_px: int) -> voi
 		&"disc":
 			draw_circle(middle, box.size.y * 0.45, colour)
 		&"hatch":
+			# **THE DISC UNDER IT IS THE ORE'S, NOT THE HATCH'S** -- and the first version of this line
+			# took the row's own ink, which for a dead end IS `MAP_BG`: a disc painted in the ground
+			# colour with ground-coloured strokes on it, measured 100% `(25,28,33)` in the real-window
+			# shot where a clean disc reads `(80,155,230)`. The row that exists to teach the one mark
+			# Maren says can disappear (ASSA-209) was a black box on black.
 			var radius := box.size.y * 0.45
-			draw_circle(middle, radius, colour)
+			draw_circle(middle, radius, AssayHud.species_tint(AssayHud.KEY_SAMPLE_SPECIES))
 			var strokes := AssayHud.hatch_segments(middle, radius)
 			for i in range(0, strokes.size(), 2):
 				draw_line(strokes[i], strokes[i + 1], AssayHud.mark_ink(&"dead_end"),
