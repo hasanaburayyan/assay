@@ -315,7 +315,18 @@ func test_the_opening_line_offers_the_door_that_needs_nothing_typed() -> bool:
 func test_play_solo_is_the_first_door_in_the_row() -> bool:
 	var screen := _screen()
 	var button: Button = screen._solo_button
-	var reading := _row_reading(screen._join_band.get_parent())
+	# **THE READING IS OF THE FRONT DOOR NOW, AND IT IS STILL A READING ORDER** (ASSA-231). Before a
+	# world the composition is a `VBoxContainer` over the map and the axis is top-to-bottom; the
+	# depth-first flatten below is the order a stranger's eye takes either way, because a
+	# `BoxContainer` of either kind lays its children out in tree order. Asked of the door the
+	# controls are actually in rather than of `_join_band`'s parent, which is the empty in-world row.
+	# CONTROLS, NOT TEXT: the door's first two lines are the game's name and the sentence that names
+	# both doors, which is composition and not something a stranger can press. What the ruling is
+	# about is the first thing they CAN press or type into.
+	var reading := []
+	for control in _row_reading(screen._front_door):
+		if control is Button or control is LineEdit:
+			reading.append(control)
 	var names := PackedStringArray()
 	for control in reading:
 		names.append(control.get_class() + ":" + String(control.get("text")))
@@ -902,6 +913,31 @@ func _lone_note(section: Node) -> String:
 	return said if notes == 1 else ""
 
 
+## THE SAME READING, WITH THE HUD COLUMN FORCED ON SCREEN FOR THE LENGTH OF IT (ASSA-231).
+##
+## **A STRANGER CANNOT SEE ANY OF THIS ANY MORE AND THE WORDING STILL HAS TO BE RIGHT.** Maren's Gap
+## 5 took the column off the join screen entirely ("the empty column not shown at all before a world
+## exists"), so `_on_screen` is false for every label in it there -- and the two ASSA-186 tests that
+## read those sentences would fail on their own premise, which is the instrument refusing rather than
+## passing, and the right behaviour. What they are about is the WORDS, and the words outlive the
+## state: the column has had a no-world state twice (ASSA-134, ASSA-186) and will have one again the
+## day a section is read before a join. So they are read in the state they were written for, by hand,
+## and the state itself is asserted absent by
+## `test_the_hud_column_is_not_on_the_join_screen_and_comes_back_with_a_world`.
+##
+## RESTORED AFTERWARDS, because a test that leaves the screen in a state it invented is the next
+## test's wrong premise.
+func _lone_note_in_the_column(screen: Node, section: Node) -> String:
+	var column: Panel = screen._column
+	var was: bool = column != null and column.visible
+	if column != null:
+		column.visible = true
+	var said := _lone_note(section)
+	if column != null:
+		column.visible = was
+	return said
+
+
 ## **NOTHING ON THE JOIN SCREEN MAY ASK FOR A WORLD IT HAS NOT GOT** (ASSA-186, Maren's ruling).
 ## Three of the six sections did: the bench said "mine, smelt and make parts first", the crafting menu
 ## "mine some rock first", and the event log answered as a world that had not spoken yet. Two of them
@@ -935,8 +971,11 @@ func test_no_section_on_the_join_screen_asks_for_a_world_it_has_not_got() -> boo
 	# THE PREMISE FIRST: the three sections each show exactly one sentence before a join. Without
 	# this a sweep over an empty column passes by having nothing to read -- and an empty section
 	# under a visible heading is its own defect (ASSA-134), not a pass.
-	var sentences := {"the bench": _lone_note(screen._bench),
-			"the crafting menu": _lone_note(screen._make),
+	# READ WITH THE COLUMN FORCED ON SCREEN (ASSA-231): Gap 5 took the column off the join screen, so
+	# these three sentences are the wording of a state a player can no longer reach. The wording is
+	# still under test here; that the state is gone is asserted in its own test.
+	var sentences := {"the bench": _lone_note_in_the_column(screen, screen._bench),
+			"the crafting menu": _lone_note_in_the_column(screen, screen._make),
 			"the event log": _lone_note(screen._log)}
 	for named: String in sentences:
 		if String(sentences[named]) == "":
@@ -989,7 +1028,9 @@ func test_the_empty_sections_say_the_in_world_kind_once_a_world_arrives() -> boo
 	var screen := _screen()
 	screen._log_toggle.emit_signal("pressed")
 	var welcome := AssaySimHost.fresh_welcome_json("777042", "marlow")
-	var before := _lone_note(screen._bench)
+	# WITH THE COLUMN FORCED ON SCREEN FOR THIS ONE READING (ASSA-231): the no-world wording is what
+	# the in-world wording has to differ from, and the column itself is off screen before a world now.
+	var before := _lone_note_in_the_column(screen, screen._bench)
 	if welcome == "" or before != AssayHud.no_designs_line(false):
 		screen.queue_free()
 		return _fail(("premise: with no world the bench reads '%s' and the welcome is %d bytes, so "
@@ -1982,7 +2023,15 @@ func test_an_old_log_line_is_one_row_and_the_newest_is_whole() -> bool:
 ## reachable thing is legitimately its toggle and not a sentence.
 func test_no_visible_heading_on_the_join_screen_stands_over_nothing() -> bool:
 	var screen := _screen()
+	# **A STATE A PLAYER CANNOT REACH ANY MORE, AND A WORDING THAT STILL HAS TO BE RIGHT** (ASSA-231).
+	# Maren's Gap 5 took the whole column off the join screen, and this sweep reads each section's OWN
+	# visible flag rather than its ancestors -- so it would have stayed green while being about a
+	# column nobody can see, which is the worst of both. Shown by hand for the length of the sweep,
+	# with the absence asserted in
+	# `test_the_hud_column_is_not_on_the_join_screen_and_comes_back_with_a_world`.
+	screen._column.visible = true
 	var ok := _sweep_headings(screen, "the join screen")
+	screen._column.visible = false
 	screen.queue_free()
 	return ok
 
@@ -2091,26 +2140,52 @@ func test_the_empty_map_names_which_kind_of_empty_it_is() -> bool:
 	var screen := _screen()
 	var ok := true
 	var note: Label = screen._map_note
-	var world := AssayHud.world_rect()
+	var door: VBoxContainer = screen._front_door
+	# **THE SURFACE THIS IS MEASURED AGAINST IS THE WINDOW, NOT THE MAP** (ASSA-231). It was
+	# `world_rect` while the door was the map's note. Before a world exists there is no map to be on
+	# and no column beside it, so the composition owns the screen -- see `join_rect`.
+	var world := AssayHud.join_rect()
 	if note == null:
 		ok = _fail("the join screen's map has no note at all")
-	elif not note.visible:
+	elif not _on_screen(note):
 		ok = _fail("the map's note exists but is hidden on the first screen a stranger sees")
 	elif note.text != AssayHud.empty_map_line() or note.text.strip_edges() == "":
 		ok = _fail("the map's note is not the shipped sentence: '%s'" % note.text)
-	elif not world.encloses(Rect2(note.position, note.size)):
-		ok = _fail(("the map's note is not on the map it explains: note %s, map %s")
-				% [Rect2(note.position, note.size), world])
-	elif note.size.x * note.size.y < world.size.x * world.size.y * 0.5:
-		ok = _fail(("the map's note covers %d px of a %d px rectangle, so centring it says nothing "
-				+ "about where the words land") % [note.size.x * note.size.y,
+	# **THE SPAN IS THE DOOR'S NOW, AND IT IS THE SAME PROPERTY** (ASSA-231). The sentence is one line
+	# inside `_front_door`; what has to cover the map is the composition the sentence belongs to, and
+	# a one-line label is no longer the thing to measure. The note being INSIDE the door is what ties
+	# the two halves together, so neither can be satisfied by a label parked in a corner.
+	elif note.get_parent() != door:
+		ok = _fail("the map's note is not part of the front door, so its span is nobody's property")
+	elif not world.encloses(Rect2(door.position, door.size)):
+		ok = _fail(("the front door is not on the surface it explains: door %s, surface %s")
+				% [Rect2(door.position, door.size), world])
+	# **CENTRED ON THE WINDOW A PLAYER IS LOOKING AT, AND THIS IS THE LEVER** (ASSA-231). The first
+	# version of this screen centred the door on `world_rect`, which subtracts the 320 px the HUD
+	# column stands in -- and the column is not drawn here. The shot showed the whole composition
+	# sitting 80 px left of centre beside a band of bare window. Reading the door's own centre is
+	# what fails on that build: it answered 480 where the window's middle is 640.
+	elif not is_equal_approx(door.position.x + door.size.x * 0.5, AssayHud.VIEW.x * 0.5):
+		ok = _fail(("the join composition is centred at x=%.0f, and the window's middle is %.0f -- "
+				+ "it is centred on the map's rectangle, which is not drawn here")
+				% [door.position.x + door.size.x * 0.5, AssayHud.VIEW.x * 0.5])
+	elif door.size.x * door.size.y < world.size.x * world.size.y * 0.5:
+		ok = _fail(("the front door covers %d px of a %d px rectangle, so centring it says nothing "
+				+ "about where the words land") % [door.size.x * door.size.y,
 				world.size.x * world.size.y])
+	# AND THE SURFACE UNDER IT IS PAINTED. A centred composition on bare window is the same defect
+	# wearing the other half of the fix: the door is a transparent container and `_world` paints
+	# `MAP_BG` over the map's rectangle only.
+	elif not screen._door_backdrop.visible \
+			or not Rect2(screen._door_backdrop.position, screen._door_backdrop.size).encloses(world):
+		ok = _fail("the join screen's dark surface does not cover the window the door is centred on")
 	elif note.horizontal_alignment != HORIZONTAL_ALIGNMENT_CENTER \
-			or note.vertical_alignment != VERTICAL_ALIGNMENT_CENTER:
-		ok = _fail("Maren's ruling is a CENTRED line; this one is aligned %d/%d"
-				% [note.horizontal_alignment, note.vertical_alignment])
-	elif note.mouse_filter != Control.MOUSE_FILTER_IGNORE:
-		ok = _fail("a 912x600 label that answers the mouse swallows every click on the map, and "
+			or door.alignment != BoxContainer.ALIGNMENT_CENTER:
+		ok = _fail("Maren's ruling is a CENTRED line; the note aligns %d and the door %d"
+				% [note.horizontal_alignment, door.alignment])
+	elif note.mouse_filter != Control.MOUSE_FILTER_IGNORE \
+			or door.mouse_filter != Control.MOUSE_FILTER_IGNORE:
+		ok = _fail("a 912x600 control that answers the mouse swallows every click on the map, and "
 				+ "the bug would read as `Play solo does nothing`")
 	else:
 		var ratio := AssayHud.contrast_ratio(_drawn_color(note), AssayHud.MAP_BG)
@@ -2139,25 +2214,152 @@ func test_the_maps_note_is_shown_exactly_when_the_map_is_empty() -> bool:
 	var screen := _screen()
 	var ok := true
 	# Pre-join: no sim, so `_refresh_world` takes its early return. Seeded wrong first, so a missing
-	# call cannot look like a pass.
-	screen._map_note.visible = false
+	# call cannot look like a pass. **THE FRONT DOOR IS WHAT CARRIES THE VISIBILITY NOW** (ASSA-231):
+	# the sentence is one line inside it, and the column is the same fact the other way up.
+	screen._front_door.visible = false
+	screen._column.visible = true
 	screen._refresh_world()
-	if not screen._map_note.visible:
+	if not screen._front_door.visible:
 		ok = _fail("with no world, _refresh_world left the map silent")
+	elif screen._column.visible:
+		ok = _fail("with no world, the HUD column is still on screen (Maren's Gap 5)")
 	screen.queue_free()
 
 	var joined := _joined_screen()
 	if ok and joined._sim.running():
-		joined._map_note.visible = true
+		joined._front_door.visible = true
+		joined._column.visible = false
 		joined._refresh_world()
 		if joined._world.view.is_empty():
 			ok = _fail("the welcomed screen drew no world, so this half proves nothing")
-		elif joined._map_note.visible:
+		elif joined._front_door.visible:
 			ok = _fail("the map has a world on it and still says there is no world yet")
+		elif not joined._column.visible:
+			ok = _fail("there is a world and the HUD column did not come back with it")
 	elif ok:
 		ok = _fail("could not build an offline world, so the in-world half proves nothing: %s"
 				% joined._sim.fail_reason)
 	joined.queue_free()
+	return ok
+
+
+## **THE EMPTY COLUMN IS NOT SHOWN AT ALL BEFORE A WORLD EXISTS** (ASSA-231, Maren's Gap 5 in doc
+## `assay-ui-direction`, verbatim).
+##
+## Six of its seven sections said which kind of empty they were, which is ASSA-134 and ASSA-186
+## working as ruled, and her own doc calls the composition that produces "a column of six apologies".
+##
+## **ASKED OF EVERY SECTION AND OF THE ANCESTOR CHAIN**, not of the one node this fix happens to hide:
+## `_on_screen` walks the parents, so a later refactor that moves the hide somewhere else still has to
+## pass, and hiding a section's parent cannot read as "the section is fine".
+##
+## **AND BOTH HALVES, BECAUSE THE FIRST HALF ALONE PASSES ON A CLIENT WITH NO COLUMN AT ALL.** The
+## in-world half is what makes this a measurement: the same nodes, on screen, the frame a world
+## arrives. Driven through a real `Welcome` and one `_refresh()`, which is the call `_process` makes.
+func test_the_hud_column_is_not_on_the_join_screen_and_comes_back_with_a_world() -> bool:
+	var screen := _screen()
+	var ok := true
+	var sections := {"you": screen._carrying, "do": screen._actions, "make": screen._make,
+			"bench": screen._bench, "rocks": screen._species, "cursor": screen._cursor,
+			"the log's toggle": screen._log_toggle, "the painted surface": screen._column}
+	for named: String in sections:
+		if _on_screen(sections[named]):
+			ok = _fail(("%s is on the join screen, where it has nothing to say: Gap 5 is that the "
+					+ "empty column is not shown at all before a world exists") % named)
+	# THE HEADINGS TOO, which are Labels in the column rather than fields on the screen, so they are
+	# found the way the sweeps find them: by the variation that MAKES a heading a heading here.
+	var headings := 0
+	for child in screen._make.get_parent().get_children():
+		var label := child as Label
+		if label != null and label.theme_type_variation == &"Heading":
+			headings += 1
+			if _on_screen(label):
+				ok = _fail("the `%s` heading is on the join screen with no world under it"
+						% label.text)
+	if headings < 6:
+		ok = _fail("found %d headings in the column, so this sweep could not fail" % headings)
+	var welcome := AssaySimHost.fresh_welcome_json("14247", "limpet")
+	screen._client.play_offline()
+	screen._client.feed_offline(welcome)
+	screen._refresh()
+	if not screen._sim.running():
+		ok = _fail("premise: nothing is being simulated, so the in-world half asks nothing")
+	else:
+		for named: String in sections:
+			if not _on_screen(sections[named]):
+				ok = _fail("%s did not come back when the world did" % named)
+	screen.queue_free()
+	return ok
+
+
+## **ONE SCREEN, ONE PRIMARY ACTION** (ASSA-231, Maren's Gap 5: *"the one thing a stranger should
+## press, Play solo, is a small outlined button in the top-left corner, visually subordinate to the
+## host field, the name field and Join"*).
+##
+## ASSA-224 answered the colour half -- `Play solo` is the only `Primary` in the client. This is the
+## layout half: the primary has a line to itself above the host path, so it is not sharing its line
+## with two text boxes and a second button, and the whole composition is in the middle of the map
+## rather than in the corner of it.
+##
+## **AND THE CONTROLS GO BACK TO THE ROW IN A WORLD, WHICH IS THE HALF THAT COULD BREAK A DROP.**
+## `_join_address` permits a join attempt at stage DEAD and that band is the client's only reconnect
+## affordance (ASSA-175/ASSA-177), so a composition that kept them on a door hidden by the world
+## would take the way back in away from a dropped player. The same nodes, two homes, asserted both
+## ways: `_place_join_controls` is the only thing that moves them.
+func test_the_primary_has_its_own_line_before_a_world_and_the_row_has_it_after() -> bool:
+	var screen := _screen()
+	var ok := true
+	if screen._solo_button.get_parent() != screen._solo_cell \
+			or screen._solo_cell.get_parent() != screen._door_primary:
+		ok = _fail("Play solo is not in the front door's primary line: %s"
+				% screen._solo_button.get_parent())
+	# THE PRIMARY'S LINE HOLDS NOTHING ELSE. One `Button` and no field: that is the whole of "its own
+	# line", and it is asserted by counting rather than by reading an index.
+	var on_that_line := 0
+	for control in _row_reading(screen._door_primary):
+		if control is Button or control is LineEdit:
+			on_that_line += 1
+	if on_that_line != 1:
+		ok = _fail("%d controls share the primary's line, so it is not alone on it" % on_that_line)
+	# AND THE HOST PATH IS THE LINE UNDER IT, in the door's order and after the primary.
+	var order: Array = screen._front_door.get_children()
+	if order.find(screen._door_primary) > order.find(screen._door_secondary):
+		ok = _fail("the host path is above the primary, so the composition reads host-first")
+	for named: String in ["the host box", "the name box", "Join"]:
+		var control: Control = {"the host box": screen._host, "the name box": screen._name,
+				"Join": screen._join_button}[named]
+		if not _on_screen(control):
+			ok = _fail("%s is not on the join screen, so the other way in is gone" % named)
+		elif not screen._door_secondary.is_ancestor_of(control):
+			ok = _fail("%s is not on the door's second line: %s" % [named, control.get_parent()])
+	# IN A WORLD: back in the top-left row, with `Join` in the row itself rather than in the band.
+	var welcome := AssaySimHost.fresh_welcome_json("14247", "limpet")
+	screen._client.play_offline()
+	screen._client.feed_offline(welcome)
+	screen._refresh()
+	if not screen._sim.running():
+		ok = _fail("premise: nothing is being simulated, so the in-world half asks nothing")
+	else:
+		if _on_screen(screen._front_door):
+			ok = _fail("the front door is still over the world a player is standing in")
+		if screen._solo_cell.get_parent() != screen._join_band \
+				or screen._cred_cell.get_parent() != screen._join_band:
+			ok = _fail("the join controls did not go back into the band: %s / %s"
+					% [screen._solo_cell.get_parent(), screen._cred_cell.get_parent()])
+		if screen._join_button.get_parent() != screen._row:
+			ok = _fail("Join did not go back into the row: %s" % screen._join_button.get_parent())
+		# THE TWO LABELS THE CLIENT SPEAKS THROUGH, back at their own coordinates and their own size.
+		# A container hands a child its width, and a 912px-wide Label at (24, 54) is a rect three
+		# quarters of the window wide for one word of text.
+		if screen._status.get_parent() != screen or screen._status.position != Vector2(24.0, 54.0):
+			ok = _fail("the status line is at %s under %s"
+					% [screen._status.position, screen._status.get_parent()])
+		elif screen._status.size.x > 400.0:
+			ok = _fail("the status line kept the door's width: %s" % screen._status.size)
+		if screen._detail.get_parent() != screen or screen._detail.position != Vector2(24.0, 74.0):
+			ok = _fail("the detail line is at %s under %s"
+					% [screen._detail.position, screen._detail.get_parent()])
+	screen.queue_free()
 	return ok
 
 
