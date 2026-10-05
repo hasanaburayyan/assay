@@ -866,7 +866,7 @@ fn the_insert_line_names_the_leftover_only_when_there_is_one() {
         )],
         1,
     );
-    let line = sim::debug::event_line(&world, Some(me), &events[0]);
+    let line = sim::debug::event_line(&world, Some(me), &events[0], sim::debug::Audience::Typed);
     assert!(
         line.contains(&format!("put {SMELTER_INPUT_CAP} ")),
         "{line}"
@@ -880,7 +880,7 @@ fn the_insert_line_names_the_leftover_only_when_there_is_one() {
         &[Input::player(me, insert(id, Slot::Fuel, ore(FUEL), 4))],
         1,
     );
-    let line = sim::debug::event_line(&world, Some(me), &events[0]);
+    let line = sim::debug::event_line(&world, Some(me), &events[0], sim::debug::Audience::Typed);
     assert!(line.contains("put 4 "), "{line}");
     assert!(
         !line.contains("would not fit"),
@@ -1020,6 +1020,7 @@ fn every_stall_reason_says_the_same_thing_in_the_log_and_on_the_status_line() {
             &world,
             Some(me),
             &Event::SmelterStalled { building: id, why },
+            sim::debug::Audience::Typed,
         );
         assert!(
             line.contains(sentence),

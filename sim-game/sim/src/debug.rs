@@ -7,8 +7,8 @@ use crate::assembly::{
     Assembly, AssemblyError, BreakVerdict, Built, Mount, PART_SPECS, PartKind, Source,
 };
 use crate::building::{
-    Building, BuildingKind, BuildingState, Machine, MachineIdle, MachineStall, MachineState, Slot,
-    SmelterStall, SmelterState,
+    Building, BuildingId, BuildingKind, BuildingState, Machine, MachineIdle, MachineStall,
+    MachineState, Slot, SmelterStall, SmelterState,
 };
 use crate::command::{Event, PlayerCommand, RejectReason, StopReason};
 use crate::item::{Item, ItemKind, ItemStack};
@@ -252,6 +252,50 @@ fn player_name(world: &World, me: Option<PlayerId>, player: PlayerId) -> String 
         .map_or_else(|| format!("player {}", player.0), |p| p.name.clone())
 }
 
+/// HOW THE READER ADDRESSES A THING, which is the one way the two hosts differ
+/// in what a sentence may usefully contain (ASSA-222, Game Director's ruling:
+/// *"the audience is a PARAMETER of the one describer, never a second
+/// describer"*).
+///
+/// **IT NAMES THE READER'S VOCABULARY, NOT A HOST, AND THAT IS PRINCIPLE 1 AND
+/// NOT STYLE.** The tempting pair was `Cli` / `Window`, and either word would
+/// have put a renderer in the `sim` crate -- the thing this crate may not know
+/// exists. What it may know is whether the reader can *say* a `BuildingId`: a
+/// reader with a command line types `take 0`, and for them the id is the
+/// handle. A reader who points at a building has nothing to type it into, so
+/// the same id is a number in the way.
+///
+/// A third host picks a variant by answering that question about itself, not by
+/// finding its own name in this enum.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Audience {
+    /// The reader addresses things by typing them. An id is a handle, and
+    /// printing it is the game's text interface working -- principle 2, which
+    /// is why `sim-cli`'s wording did not change for this item.
+    Typed,
+    /// The reader addresses things by pointing at them. An id is noise; the
+    /// building gets named instead.
+    Pointed,
+}
+
+/// A BUILDING AS THIS READER WOULD REFER TO IT.
+///
+/// **THE FALLBACK IS THE ID FOR BOTH READERS, and it is not laziness.** An
+/// event outlives the building it talks about -- `BuildingRemoved` is described
+/// after the building is gone from the world -- so `world.building` returning
+/// `None` is ordinary, not a bug to paper over. When there is nothing left to
+/// name, the id is the only true thing we hold, which is exactly the shape
+/// `player_name` already uses for a departed player.
+fn building_ref(world: &World, building: BuildingId, audience: Audience) -> String {
+    let id = || format!("building {}", building.0);
+    match audience {
+        Audience::Typed => id(),
+        Audience::Pointed => world
+            .building(building)
+            .map_or_else(id, |b| format!("the {}", building_name(world, b))),
+    }
+}
+
 /// ONE EVENT AS ONE SENTENCE, FOR EVERY HOST. `me` is written "you"; everyone
 /// else is named. `None` means the caller has no player yet -- a client before
 /// its welcome -- so nobody is "you".
@@ -269,9 +313,23 @@ fn player_name(world: &World, me: Option<PlayerId>, player: PlayerId) -> String 
 /// the sim could not grow without the renderer's permission. Here, adding a
 /// variant fails to compile the crate that added it, which is the author who
 /// knows what it should say.
-pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String {
+///
+/// **`audience` CHANGES HOW A BUILDING IS REFERRED TO AND NOTHING ELSE**
+/// (ASSA-222). It is not a second list of which events are worth saying, and it
+/// must never become one: `event_needs_attention` still decides loudness for
+/// every reader, so no host goes back to classifying a sentence by matching its
+/// text. One describer, one set of facts, two ways of pointing at a building --
+/// that is the whole of it, and `no_audience_arm_decides_whether_to_speak`
+/// holds the line.
+pub fn event_line(
+    world: &World,
+    me: Option<PlayerId>,
+    event: &Event,
+    audience: Audience,
+) -> String {
     let who = |p: &PlayerId| player_name(world, me, *p);
     let name = |item: &Item| world.item_name(*item);
+    let site = |b: &BuildingId| building_ref(world, *b, audience);
     match event {
         Event::PlayerJoined { player, name } if me == Some(*player) => {
             format!("you joined as {name}")
@@ -440,10 +498,18 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
             item,
             pos,
         } => format!(
-            "{} placed {} as building {} at ({}, {}){}",
+            "{} placed {}{} at ({}, {}){}",
             who(player),
             name(item),
-            building.0,
+            // THE ITEM IS ALREADY THE NOUN HERE, so a pointing reader needs no
+            // second name for the same thing -- "you placed Minyte smelter (B)
+            // as the Minyte smelter (B)" is what naming it would have said.
+            // What they do not need is the handle, so this arm DROPS rather
+            // than renames.
+            match audience {
+                Audience::Typed => format!(" as building {}", building.0),
+                Audience::Pointed => String::new(),
+            },
             pos.x,
             pos.y,
             // ONLY WHERE IT IS TRUE: a machine takes nothing in
@@ -475,10 +541,10 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
             count,
             left,
         } => format!(
-            "{} put {count} {} into building {}'s {} slot{}",
+            "{} put {count} {} into {}'s {} slot{}",
             who(player),
             name(item),
-            building.0,
+            site(building),
             slot_name(*slot),
             if *left > 0 {
                 format!("; {left} would not fit, still in hand")
@@ -492,10 +558,10 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
             item,
             count,
         } => format!(
-            "{} took {count} {} from building {}",
+            "{} took {count} {} from {}",
             who(player),
             name(item),
-            building.0
+            site(building)
         ),
         Event::BuildingRemoved {
             player,
@@ -503,10 +569,17 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
             item,
             pos,
         } => format!(
-            "{} picked up {} (building {}) from ({}, {})",
+            "{} picked up {}{} from ({}, {})",
             who(player),
             name(item),
-            building.0,
+            // THE BUILDING IS GONE BY NOW, so there is nothing left to name and
+            // `building_ref` would fall back to the id for both readers. The
+            // item already says what it was; a pointing reader gets the plain
+            // sentence.
+            match audience {
+                Audience::Typed => format!(" (building {})", building.0),
+                Audience::Pointed => String::new(),
+            },
             pos.x,
             pos.y
         ),
@@ -523,8 +596,8 @@ pub fn event_line(world: &World, me: Option<PlayerId>, event: &Event) -> String 
                 })
                 .unwrap_or(0);
             format!(
-                "building {} smelted {count} {} ({waiting} waiting to be taken)",
-                building.0,
+                "{} smelted {count} {} ({waiting} waiting to be taken)",
+                site(building),
                 name(item)
             )
         }

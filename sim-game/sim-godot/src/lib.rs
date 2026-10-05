@@ -2100,8 +2100,19 @@ impl AssaySim {
     /// while removing the hole it left: `sim::debug::event_line` is exhaustive in
     /// the crate that owns `Event`, so a new variant now fails to compile for the
     /// person adding it, who is the one who knows what it should say.
+    /// **`Pointed` IS THIS HOST'S ONE WORD IN THE DESCRIBER** (ASSA-222). It is
+    /// not "the Godot wording": `sim::debug::Audience` names what a reader can
+    /// address a building with, and in this host that is a mouse, so a
+    /// `BuildingId` is a number with nothing to type it into. The sim is not
+    /// told a window exists; it is told this reader points.
+    ///
+    /// IT IS SET HERE AND NOWHERE ELSE ON PURPOSE. `event_lines` and
+    /// `attention_lines` both map `last_events` through this one call, which is
+    /// what makes the loud line the SAME STRING as its log line rather than a
+    /// second rendering that agrees today -- and `event_needs_attention` still
+    /// picks which lines those are, for both audiences.
     pub fn describe(&self, me: Option<PlayerId>, event: &Event) -> String {
-        sim::debug::event_line(&self.world, me, event)
+        sim::debug::event_line(&self.world, me, event, sim::debug::Audience::Pointed)
     }
 }
 
@@ -2386,6 +2397,73 @@ mod tests {
         })]);
         let id = sim.world().players.first().expect("a player was added").id;
         (sim, id)
+    }
+
+    /// **THIS HOST'S AUDIENCE IS `Pointed`, AND WITHOUT THIS TEST THAT IS A
+    /// SILENT CHOICE** (ASSA-222).
+    ///
+    /// `sim::debug::event_line` takes an audience now and `sim/tests/
+    /// event_audience.rs` pins what each one produces -- but nothing there can
+    /// see WHICH one this crate passes. Flipping `describe` to `Audience::Typed`
+    /// compiles, keeps all 389 Rust tests green, and quietly puts `building 0`
+    /// back into the window the board called hard on the eyes. That is the
+    /// "diverge silently" case this item's acceptance asks for, and it lives
+    /// here because this is the only crate that knows the answer.
+    ///
+    /// It asserts on the species name read out of the world, never a literal:
+    /// species are generated and nothing may name one.
+    #[test]
+    fn this_client_describes_events_to_a_reader_who_points() {
+        let (mut sim, me) = with_a_player("marlow");
+        let species = sim.world().species[0].id;
+        let smelter = Item::new(sim::ItemKind::Smelter, species, sim::Grade::C);
+        sim.world
+            .player_mut(me)
+            .expect("the player joined")
+            .inventory
+            .add(smelter, 1);
+        let spawn = sim.world().spawn_tile();
+        let pos = sim::TilePos::new(spawn.x + 1, spawn.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place { item: smelter, pos },
+        )]);
+        let building = sim
+            .world()
+            .buildings
+            .first()
+            .expect("the smelter was placed, or this proves nothing")
+            .id;
+        let noun = sim::debug::building_name(
+            sim.world(),
+            sim.world().building(building).expect("it is standing"),
+        );
+
+        // `ItemsTaken` and not `BuildingPlaced`: the placement sentence already
+        // names the item, so its arm DROPS the handle rather than replacing it,
+        // and a test on it could not tell naming from dropping. This event goes
+        // through the naming path against a building that is still standing.
+        let line = sim.describe(
+            Some(me),
+            &sim::Event::ItemsTaken {
+                player: me,
+                building,
+                item: Item::new(sim::ItemKind::Refined, species, sim::Grade::C),
+                count: 1,
+            },
+        );
+
+        assert!(
+            line.contains(&noun),
+            "the window's log does not say WHICH building, which is the defect \
+             Nerite reported at 1x.\nwanted: {noun}\nline:   {line}"
+        );
+        assert!(
+            !line.contains(&format!("building {}", building.0)),
+            "this window has no command line, so a BuildingId in its log is a \
+             number a player can do nothing with. If this is red, `describe` \
+             has been handed the typed reader's audience.\nline: {line}"
+        );
     }
 
     /// WHAT THE HUD SHOWS OF YOUR OWN STACKS. Kind, species and grade are the
@@ -3814,7 +3892,14 @@ mod tests {
             .iter()
             .find(|e| matches!(e, sim::Event::CommandRejected { .. }))
             .expect("an ore frame is refused by `step`, or this proves nothing");
-        let line = sim::debug::event_line(sim.world(), Some(me), rejected);
+        // `Pointed`, because this test is about what THIS client's player reads
+        // twice -- on the press and in the log. `describe` is the same choice.
+        let line = sim::debug::event_line(
+            sim.world(),
+            Some(me),
+            rejected,
+            sim::debug::Audience::Pointed,
+        );
 
         assert!(
             line.contains(&press),
