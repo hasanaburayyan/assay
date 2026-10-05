@@ -506,7 +506,9 @@ func test_the_event_log_starts_hidden_behind_a_named_control() -> bool:
 func test_a_hidden_log_still_carries_its_lines() -> bool:
 	var screen := _screen()
 	var ok := true
-	var planted := PackedStringArray(["41 · you mined 2 ore", "42 · you started walking"])
+	# No `tick N ·` prefix since ASSA-222 — `_remember_events` no longer writes one, and a fixture
+	# that still carried it would be planting a line this client cannot produce.
+	var planted := PackedStringArray(["you mined 2 ore", "you started walking"])
 	screen._log_toggle.pressed.emit()
 	# PLANTED INTO THE MODEL AND DRAWN BY THE REAL REBUILD (ASSA-117). It used to set `_log.text`,
 	# which was a single Label's text and no longer exists -- the log is one Label per line now, so
@@ -1658,7 +1660,11 @@ func test_the_newest_log_line_is_the_brightest_and_the_oldest_is_still_readable(
 	var surface := _panel_surface()
 	var lines := PackedStringArray()
 	for i in 14:
-		lines.append("%d · event number %d" % [100 + i, i])
+		# NO `tick N ·` PREFIX, because `_remember_events` stopped writing one (ASSA-222, Maren's
+		# ruling). A fixture that still carried it would be measuring a line the client cannot
+		# produce -- and these tests are about WIDTH and dimming, so a stale prefix would quietly
+		# measure the wrong string length.
+		lines.append("event number %d" % i)
 	screen._events = lines
 	screen._rebuild_log()
 	var drawn: Array = screen._log.find_children("*", "Label", true, false)
@@ -1912,11 +1918,15 @@ func test_an_old_log_line_is_one_row_and_the_newest_is_whole() -> bool:
 	var long := ("your design broke: mass 1078 of 705 budget · holds 210 · speed 78 (bare hands 25)"
 			+ " · frame(Tonore A 385) + head(Tonore A 120) + hopper(Souktulore B 140) x4")
 	var lines := PackedStringArray()
-	for i in 12:
-		lines.append("%d · %s" % [500 + i, long])
+	for _i in 12:
+		lines.append(long)
 	# THE NEWEST ENTRY IS ALSO A LONG ONE, or "the newest shows whole" would be a claim about a
 	# sentence that fits anyway and the exemption could be deleted with nothing going red.
-	lines.append("%d · %s" % [512, long])
+	#
+	# NO `tick N ·` PREFIX SINCE ASSA-222: `_remember_events` no longer writes one, and this test
+	# measures WRAPPING, so a fixture carrying a prefix the client cannot produce would be wrapping
+	# a string five characters longer than any real line.
+	lines.append(long)
 	screen._events = lines
 	screen._rebuild_log()
 	var drawn: Array = screen._log.find_children("*", "Label", true, false)
@@ -2278,8 +2288,9 @@ func test_the_camera_keeps_you_below_the_panel_in_the_north_rows() -> bool:
 		# quantity here is how many lines the panel actually BUILT, which is downstream of the room
 		# through a division I am not allowed to ask.
 		var lines := PackedStringArray()
-		for i in 14:
-			lines.append("%d · you mined 20 of Tonore ore (A) at (74, 36)" % (400 + i))
+		for _i in 14:
+			# No `tick N ·` prefix since ASSA-222 (ASSA-116 box 2).
+			lines.append("you mined 20 of Tonore ore (A) at (74, 36)")
 		screen._events = lines
 		screen._rebuild_log()
 		rooms[row] = [screen._log_room,
@@ -2340,7 +2351,8 @@ func test_the_log_panel_stops_above_the_body_the_camera_centres() -> bool:
 	for newest in ["you mined 20 of Tonore ore (A) at (74, 36)", long]:
 		var lines := PackedStringArray()
 		for i in 13:
-			lines.append("%d · you mined 20 of Tonore ore (A) at (74, 36)" % (400 + i))
+			# No `tick N ·` prefix since ASSA-222; `i` is unused now, hence `_i`.
+			lines.append("you mined 20 of Tonore ore (A) at (74, 36)")
 		lines.append("413 · %s" % newest)
 		screen._events = lines
 		screen._rebuild_log()
