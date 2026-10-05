@@ -575,9 +575,17 @@ func _report() -> void:
 			else:
 				host_out += 1
 		if is_dry:
-			print("    frame %4d  DRY, held %5.1f ms  depth %.2f  %s"
+			# **AND WHAT HAD ALREADY HAPPENED TO THE HOST BY THEN**, which the charge cannot see: a dry
+			# frame's buffer window is empty, so `_stall_behind` always comes back empty and the frame
+			# is always charged to the client. Printed, never charged (see `_stall_before`).
+			var before := _stall_before(int(entry["frame"]))
+			var lately := "no host stall had happened yet"
+			if not before.is_empty():
+				lately = "nearest earlier host stall %.0f ms/tick, %.2f ticks back" % [
+						float(before["ms"]), float(before["ticks_back"])]
+			print("    frame %4d  DRY, held %5.1f ms  depth %.2f  %s  [%s]"
 					% [int(entry["frame"]), float(entry["probe_dt"]) * 1000.0,
-					float(entry["depth"]), blame])
+					float(entry["depth"]), blame, lately])
 		else:
 			print(("    frame %4d  %6.2f tiles/s  moved %.4f tiles  dt %5.1f ms  (was %6.2f over "
 					+ "played_at %5.1f ms)  clock advances %d  depth %.2f  %s")
@@ -770,6 +778,18 @@ func _host_stalls() -> Array[Dictionary]:
 ## a stall is charged to the host when the stretch it covers overlaps that span. **IT IS A
 ## PERMISSIVE TEST BY CONSTRUCTION** -- any overlap excuses the frame -- which is exactly why
 ## `exposed` is reported beside the counts.
+##
+## **AND IT IS THE OPPOSITE OF PERMISSIVE FOR EXACTLY ONE KIND OF FRAME, WHICH IS THE KIND THE BAR IS
+## ABOUT** (ASSA-197, 2026-10-05, run 3 of three). A DRY frame has `_depth[i] == 0` by definition --
+## the buffer is empty, which is what dry means -- so its window collapses to under one tick and no
+## stall can lie inside it. **A dry frame therefore cannot be charged to the host however badly the
+## host stalled**, and the stall that drained the buffer is necessarily in the ticks BEFORE the
+## window, because draining them is how the buffer emptied. Run 3 charged two dry frames to the
+## client on a Mac whose host stalled 14 times, longest 229 ms against a 250 ms buffer.
+##
+## I am not widening the rule on my own: it is Wren's and he has already said it is permissive.
+## `_stall_before` below MEASURES the nearest preceding stall for every dry frame and prints it beside
+## the charge without changing it, so the question can be ruled on a number.
 func _stall_behind(i: int) -> Dictionary:
 	if _stalls.is_empty() or i >= _play.size() or i >= _depth.size():
 		return {}
@@ -782,6 +802,26 @@ func _stall_behind(i: int) -> Dictionary:
 		if worst.is_empty() or float(stall["ms"]) > float(worst["ms"]):
 			worst = stall
 	return worst
+
+
+## **THE NEAREST HOST STALL THAT HAD ALREADY HAPPENED BY FRAME `i`, and how far back it sits in ticks.**
+## Reported, never charged: this is the number that says whether a dry frame's empty buffer was drained
+## by the host or spent by the clock, which `_stall_behind` cannot see for the reason written above it.
+func _stall_before(i: int) -> Dictionary:
+	if _stalls.is_empty() or i >= _play.size():
+		return {}
+	var at := _play[i]
+	var best := {}
+	for stall: Dictionary in _stalls:
+		if float(stall["to_tick"]) > at:
+			continue
+		if best.is_empty() or float(stall["to_tick"]) > float(best["to_tick"]):
+			best = stall
+	if best.is_empty():
+		return {}
+	var out := best.duplicate()
+	out["ticks_back"] = at - float(best["to_tick"])
+	return out
 
 
 ## THE MOVING STRETCH OF A PER-FRAME SERIES, both ends inclusive, so a distribution over it is about
