@@ -707,7 +707,15 @@ func test_a_walking_body_is_drawn_between_two_tiles_the_sim_produced() -> bool:
 	for _i in range(12):
 		_tick(screen)
 		OS.delay_msec(RELAY_TICK_MS)
-		screen._refresh_world()
+		# **A FRAME'S WORTH OF TIME, STATED, which is what stops this test being a coin flip**
+		# (ASSA-197; Nerite measured 283/1 then 284/0 on the same tree, 2026-10-05). The playout
+		# clock used to advance by wall clock, so each iteration moved it by the 100 ms delay PLUS
+		# whatever the sim step and the rebuild cost on a loaded box -- 130-140 ms against a host
+		# producing 100 ms, which drains the buffer and pins the body on the newest position it
+		# holds. Then whether twelve ticks produced three steps depended on the machine. Now the
+		# frame's delta is an input, so one fed tick is played out by one tick of frame time and the
+		# verdict is the client's rather than the loop's overhead.
+		screen._refresh_world(float(RELAY_TICK_MS) / 1000.0)
 		var was: Vector2i = screen._was.get(screen._client.player_id, from)
 		var now: Vector2i = screen._seen.get(screen._client.player_id, from)
 		if was != now:
@@ -1418,6 +1426,70 @@ func test_a_biased_tick_measurement_does_not_drain_the_playout_buffer() -> bool:
 				+ "controller is modulating the body's drawn speed by that much on its own, ten "
 				+ "times a second, with nothing wrong to correct")
 				% [float(exact["ripple"]) * 100.0])
+	return true
+
+
+## **A FRAME MOVES THE BODY BY ITS OWN DELTA, NOT BY THE CLOCK ON THE WALL** (ASSA-197).
+##
+## THE DEFECT THIS EXISTS FOR WAS THE LAST 15% OF THE BAR AND NOTHING COULD SEE IT. The playout
+## clock advanced by the difference between two `Time.get_ticks_msec()` readings taken wherever the
+## clock happened to be advanced from -- a drawn frame, or a bundle landing between two frames. So
+## the distance published in a frame was sized for an interval that frame was not shown for, and the
+## error alternated: a long frame drew a short step and the next short frame drew a long one. In a
+## real window (`tools/motion_speed_probe.gd`, 2026-10-05, seed 14247) the drawn speed was inside
+## Wren's +/-25% on 95% of frames when the frame rate held steady at 90 fps and on 82-86% when frame
+## time varied between 11 and 28 ms, with the out-of-bar frames in alternating too-fast/too-slow
+## pairs. The reading is also quantised to a millisecond, which is 9% of a 90 fps frame and
+## therefore 9% of the body's drawn speed, for nothing.
+##
+## **AND THE ARRIVAL PATH HAD TO STOP ADVANCING WITH IT**, or a bundle landing mid-frame adds its
+## own wall-clock gap on top of the frame's delta and the clock runs fast by the fraction of the
+## frame it landed in. Both halves are asserted here, because either one alone is a different bug.
+func test_a_frame_moves_the_body_by_its_own_delta_and_not_by_the_wall_clock() -> bool:
+	var screen := _joined()
+	if not screen._sim.running():
+		return _fail("no offline world: %s" % screen._sim.fail_reason)
+	screen._show_close_up(true)
+	# A BUFFER FIRST, fed at the rate the relay really produces -- the WALL delay is what the clock's
+	# own tick estimate is measured from, and it has to be real -- while the frames that play it out
+	# are worth exactly one tick each, so the loop's own overhead cannot drain the buffer before the
+	# measurement starts.
+	for _i in range(8):
+		_tick(screen)
+		OS.delay_msec(RELAY_TICK_MS)
+		screen._refresh_world(float(RELAY_TICK_MS) / 1000.0)
+	if float(screen._play_tick) < 0.0:
+		return _fail("the playout clock never started over 8 ticks, so there is nothing to measure")
+	# **THE TWO CLOCKS ARE THEN MADE TO DISAGREE BY 5x**: six frames of 10 ms each is 0.6 of a tick,
+	# while the wall clock between them runs 300 ms, which is 3 ticks. A clock reading the wall
+	# cannot pass this and a clock reading its frames cannot fail it.
+	var before: float = screen._play_tick
+	for _i in range(6):
+		OS.delay_msec(50)
+		screen._refresh_world(0.01)
+	var moved: float = float(screen._play_tick) - before
+	var want := 6.0 * 0.01 / (float(RELAY_TICK_MS) / 1000.0)
+	if bool(screen._starved):
+		return _fail(("the clock starved during the measurement (depth %.2f): it ran out of "
+				+ "positions, so how far it advanced says nothing about what moved it")
+				% [float(screen._play_depth)])
+	if absf(moved - want) > 0.25:
+		return _fail(("six 10 ms frames spread over 300 ms of wall clock advanced the playout clock "
+				+ "%.3f ticks. The frames are worth %.3f ticks and the wall clock %.3f: the body is "
+				+ "being moved by %s") % [moved, want,
+				6.0 * 0.05 / (float(RELAY_TICK_MS) / 1000.0),
+				"the wall clock" if moved > want * 2.0 else "neither of them"])
+	# AND A BUNDLE LANDING IS NOT A FRAME. It enqueues a position; it does not move the body.
+	var held: float = screen._play_tick
+	_tick(screen)
+	OS.delay_msec(30)
+	_tick(screen)
+	if not is_equal_approx(float(screen._play_tick), held):
+		return _fail(("two bundles landing moved the playout clock from %.3f to %.3f without a "
+				+ "frame being drawn. Then a bundle that lands mid-frame adds its own wall-clock "
+				+ "gap on top of that frame's delta and the clock runs fast")
+				% [held, float(screen._play_tick)])
+	screen.queue_free()
 	return true
 
 

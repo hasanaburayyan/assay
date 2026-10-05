@@ -560,8 +560,45 @@ func _report() -> void:
 					float(entry["probe_dt"]) * 1000.0, float(entry["over_played"]),
 					float(entry["screen_dt"]) * 1000.0, int(entry["advances"]),
 					float(entry["depth"]), blame])
+	# **WHICH FRAME'S DELTA BELONGS TO THIS FRAME'S MOVEMENT, ASKED OF THE DATA.** This probe reads
+	# the rectangle the screen published most recently; if the screen's `_process` runs AFTER this
+	# script's, the rect read at sample i was computed during frame i-1, and dividing its movement by
+	# frame i's delta pairs a numerator with the wrong denominator. On a machine whose frames
+	# alternate 11 ms and 22 ms that mistake alone produces alternating 2x and 0.5x speeds -- which
+	# is what the failing frames look like. So: the screen's own publication interval is compared
+	# against both candidates, over the frames where the clock advanced exactly once (the only ones
+	# where the two quantities describe the same interval at all), and the bar is reported both ways.
+	var same_frame := 0.0
+	var prev_frame := 0.0
+	var pairs := 0
+	var within_shift := 0
+	var shift_n := 0
+	for i in range(from + 2, to + 1):
+		if _starved[i] or _dt[i] <= 0.0 or _dt[i - 1] <= 0.0:
+			continue
+		var moved_px := (_drawn[i] - _drawn[i - 1]).length() / tile_px
+		var shifted := moved_px / _dt[i - 1]
+		shift_n += 1
+		if absf(shifted - TRUE_SPEED) <= TRUE_SPEED * TOLERANCE:
+			within_shift += 1
+		if _advances[i] - _advances[i - 1] != 1:
+			continue
+		var published: float = _screen_at[i] - _screen_at[i - 1]
+		if published <= 0.0:
+			continue
+		pairs += 1
+		same_frame += absf(published - _dt[i])
+		prev_frame += absf(published - _dt[i - 1])
+	if pairs > 0:
+		print(("  THE SCREEN'S PUBLICATION INTERVAL vs this frame's delta: %.2f ms apart on average;"
+				+ " vs the PREVIOUS frame's delta: %.2f ms (n=%d, single-advance frames). The "
+				+ "smaller one is the frame the rectangle was computed in.")
+				% [same_frame / float(pairs) * 1000.0, prev_frame / float(pairs) * 1000.0, pairs])
 	print("  WITHIN THE BAR, ON THE DRAWN RECT: %d of %d moving frames (%.1f%%), %s"
 			% [within_drawn, drawn.size(), share * 100.0, rate])
+	var share_shift := 0.0 if shift_n == 0 else float(within_shift) / float(shift_n)
+	print(("  ... the same rectangles over the PREVIOUS frame's delta: %d of %d (%.1f%%)")
+			% [within_shift, shift_n, share_shift * 100.0])
 	var share_played := 0.0 if probe.is_empty() else float(within_played) / float(probe.size())
 	print(("  ... the same frames divided by `_played_at`, the denominator this probe used until "
 			+ "2026-10-05 and the one Wren's ruling 3 retired: %d of %d (%.1f%%)")
