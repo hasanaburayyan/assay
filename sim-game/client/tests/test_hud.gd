@@ -268,11 +268,13 @@ func test_a_dead_end_rock_is_hatched_and_trades_no_other_channel() -> bool:
 					if hatch_took <= worst_hatch + 1e-9:
 						worst_hatch_at = "slot %d (%s) at purity %d" \
 								% [species, AssayHud.SPECIES_TINTS[species], purity]
-				# **THE LETTER IS JUDGED ON THE FILL IN BOTH STATES, AND SINCE #293 THAT IS TRUE OF
-				# THE PICTURE TOO.** A letter carries `GLYPH_BED_PX` of its own disc colour under its
-				# strokes (ASSA-213), so the surround is the bare fill whatever the hatch painted. An
-				# earlier version of this branch relit the ink against `fill.lerp(hatch, 2/7)`, which
-				# was right before the bed existed and would now pick for a surround that is gone.
+				# **THE LETTER IS JUDGED ON THE FILL IN BOTH STATES, AND THAT IS A STATEMENT ABOUT
+				# THE PICKER, NOT ABOUT THE PICTURE.** This asserts `glyph_color` takes the better of
+				# the two inks against the fill it was handed -- optimal by construction, and that is
+				# all it can mean. It said "and since #293 that is true of the picture too", on the
+				# grounds that the bed restores the bare fill; **ASSA-218 measured the drawn bed at
+				# 4.35:1 where the fill is 9.20:1**, so the picture does not follow and this test
+				# cannot see it. Nothing headless rasterises a glyph; the picture is a window shot.
 				var under := colour
 				var dark := _wcag_ratio(under, AssayHud.GLYPH_DARK)
 				var light := _wcag_ratio(under, AssayHud.GLYPH_LIGHT)
