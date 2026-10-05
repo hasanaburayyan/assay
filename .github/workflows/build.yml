@@ -312,6 +312,20 @@ jobs:
       # point.
       - name: The window alpha probe still does its own arithmetic
         run: python3 art/window_alpha.py --selftest
+      - name: A tester can find the motion probe without being told
+        # **THE ROUTE IS HALF THE INSTRUMENT** (ASSA-211). A flag only the people who
+        # wrote it know about cannot answer "it is jumpy on my PC": the ask has to be
+        # one line a stranger can paste, and the place a stranger looks is the README
+        # inside the zip they just unpacked. These files live outside `client/`, so no
+        # GDScript test can reach them -- and "nothing tests prose" is how this repo
+        # has shipped wrong sentences before (ASSA-207), so the grep lives here.
+        run: |
+          for f in packaging/README-macos.txt packaging/README-windows.txt; do
+            grep -q -- '--motion-probe' "$f" \
+              || { echo "$f does not tell a tester how to run the motion probe"; exit 1; }
+            grep -q 'motion.txt' "$f" \
+              || { echo "$f does not name the file the tester is meant to send back"; exit 1; }
+          done
       # The client's own GDScript suite gates the bundles below. Editor only:
       # running tests needs no export templates, which is the ~1 GB download.
       - name: Godot (editor only)
@@ -723,6 +737,48 @@ jobs:
           name: assay-macos
           path: sim-game/bundle/assay-macos.zip
           if-no-files-found: error
+      - name: The exported client measures its own motion, out of the zip (ASSA-211)
+        # **OUT OF THE ZIP, NOT OUT OF THE BUILD DIRECTORY, and the difference is
+        # the item's own wording.** The acceptance says "from a CI zip": the bytes a
+        # tester actually double-clicks have been through `ditto` and back, and on
+        # macOS an archiver that drops the executable bit produces an .app that
+        # cannot start at all. Running the pre-zip bundle would never see that.
+        #
+        # **THIS IS THE ZIP'S OWN BINARY MEASURING ITSELF, which nothing could do
+        # before this item.** Every motion number the studio had quoted came from a
+        # Godot editor binary on a CHECKOUT: `tools/*` is excluded from the pack, and
+        # lifting that is not enough because `--script` is an X-flag the official
+        # release templates DROP (measured, with a bogus script path as the control).
+        # `-- --motion-probe <file>` is read by `scripts/main.gd`, which IS packed.
+        #
+        # **THE ASSERTION IS `EXPORTED (template)` AND THAT IS THE WHOLE POINT.** A
+        # report produced by the project says "the project (editor binary)" instead,
+        # and would prove nothing this item is about.
+        #
+        # **IT IS DELIBERATELY NOT AN ASSERTION ABOUT MOTION.** A runner with no
+        # window server legitimately refuses and the report says so in its own words;
+        # that still proves the door. What cannot pass is the client IGNORING the
+        # flag -- then there is no file at all, which is precisely how `--script`
+        # failed, so the missing file is the control.
+        #
+        # After the upload above on purpose: a red probe must not cost us the zip to
+        # look at.
+        timeout-minutes: 5
+        run: |
+          rm -rf unzipped motion.txt
+          ditto -x -k bundle/assay-macos.zip unzipped
+          app=unzipped/assay-macos/Assay.app/Contents/MacOS/Assay
+          test -x "$app" || { echo "the zip's Assay is not executable: $app"; exit 1; }
+          code=0
+          "$app" -- --motion-probe "$PWD/motion.txt" 6 || code=$?
+          echo "the zip's own client exited $code"
+          test -f motion.txt || {
+            echo "the zip's client wrote no report: the argument was not honoured"; exit 1; }
+          cat motion.txt
+          grep -q 'MACHINE:' motion.txt
+          grep -q 'EXPORTED (template)' motion.txt \
+            || { echo "the report did not come from an exported build"; exit 1; }
+          rm -rf unzipped motion.txt
 
   windows:
     name: Windows bundle
@@ -870,6 +926,39 @@ jobs:
           name: assay-windows
           path: sim-game/bundle/assay-windows.zip
           if-no-files-found: error
+      - name: The exported client measures its own motion, out of the zip (ASSA-211)
+        # See the macOS job's copy for why it is the extracted zip, why
+        # `EXPORTED (template)` is the assertion and why a missing file is the
+        # control.
+        #
+        # **AND THIS IS THE ONE THAT MATTERS MOST, because the complaint was about a
+        # PC.** `windows-motion-probe` already measures a window on this runner, but
+        # it measures the PROJECT with an editor binary. This measures the `Assay.exe`
+        # a player unzips, which is the only artefact anybody actually runs.
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $report = Join-Path $pwd 'motion.txt'
+          Remove-Item $report, unzipped -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -Path bundle/assay-windows.zip -DestinationPath unzipped
+          # Absolute, via Resolve-Path, for the Start-Process reason the selfcheck
+          # step above gives.
+          $exe = (Resolve-Path unzipped/assay-windows/Assay.exe).Path
+          $p = Start-Process -FilePath $exe `
+            -ArgumentList '--', '--motion-probe', $report, '6' `
+            -Wait -PassThru -NoNewWindow
+          Write-Output "the zip's own client exited $($p.ExitCode)"
+          if (-not (Test-Path $report)) {
+            throw "the zip's client wrote no report: the argument was not honoured"
+          }
+          Get-Content $report
+          if (-not (Select-String -Path $report -Pattern 'MACHINE:' -Quiet)) {
+            throw "the report carries no MACHINE line, so no number in it names its hardware"
+          }
+          if (-not (Select-String -Path $report -Pattern 'EXPORTED \(template\)' -Quiet)) {
+            throw "the report did not come from an exported build"
+          }
+          Remove-Item $report; Remove-Item unzipped -Recurse -Force
 
   windows-motion-probe:
     # **HOW FAST THE BODY IS DRAWN ON A WINDOWS BOX** (ASSA-205). Every motion
