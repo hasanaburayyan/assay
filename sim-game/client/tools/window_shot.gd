@@ -1208,9 +1208,24 @@ func _write_marks_table() -> void:
 				+ Vector2(0.5, 0.5)) * _screen._cell
 		people.append({"id": int(player["id"]), "x": at.x, "y": at.y,
 				"w": AssayHud.PLAYER_MARK_PX, "h": AssayHud.PLAYER_MARK_PX, "shape": "rect"})
+	# **AND THE SPECIES LETTERS, BECAUSE ASSA-213 IS ONE MARK COVERING ANOTHER.** The box, the ink and
+	# the bed come out of `main.gd::_glyph_marks` in the frame that was shot, for the reason at the top
+	# of this function: a script can then count glyph-ink pixels inside the rectangle the painter used,
+	# instead of hunting a letter in a lump of bright pixels and calling the lump a letter.
+	var letters := []
+	for entry in _screen._glyph_marks(_screen._sim.deposits(), ThemeDB.fallback_font):
+		var glyph: Dictionary = entry
+		var box: Rect2 = glyph["box"]
+		var ink: Color = glyph["ink"]
+		var bed: Color = glyph["bed"]
+		letters.append({"symbol": String(glyph["symbol"]), "size": int(glyph["size"]),
+				"x": box.position.x, "y": box.position.y, "w": box.size.x, "h": box.size.y,
+				"ink": [ink.r, ink.g, ink.b], "bed": [bed.r, bed.g, bed.b],
+				"bed_px": float(glyph["bed_px"])})
 	var table := {
 		"shot": "08-whole-world.png",
 		"cell": _screen._cell,
+		"letters": letters,
 		"map_bg": [AssayHud.MAP_BG.r, AssayHud.MAP_BG.g, AssayHud.MAP_BG.b],
 		# **`mark`, NOT `built`, AND IT IS `HOVER` NOW** (ASSA-203). The approved mark spends no new
 		# hue, so the colour a measuring script looks for is one this map already had -- and a key

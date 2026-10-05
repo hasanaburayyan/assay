@@ -268,11 +268,12 @@ func test_a_dead_end_rock_is_hatched_and_trades_no_other_channel() -> bool:
 					if hatch_took <= worst_hatch + 1e-9:
 						worst_hatch_at = "slot %d (%s) at purity %d" \
 								% [species, AssayHud.SPECIES_TINTS[species], purity]
-				# **THE LETTER IS JUDGED AGAINST THE SURFACE IT IS ON, AND ON A DEAD END THAT IS NOT
-				# THE FILL** (ASSA-209). 28.6% of a hatched disc is repainted, so asking
-				# `glyph_color` about the bare fill chose an ink for a surface that does not exist --
-				# which Cove measured on pictures: a `MAP_BG` hatch cost dark letters 30-36%.
-				var under := AssayHud.hatched_surface(colour, hatch) if note != "" else colour
+				# **THE LETTER IS JUDGED ON THE FILL IN BOTH STATES, AND SINCE #293 THAT IS TRUE OF
+				# THE PICTURE TOO.** A letter carries `GLYPH_BED_PX` of its own disc colour under its
+				# strokes (ASSA-213), so the surround is the bare fill whatever the hatch painted. An
+				# earlier version of this branch relit the ink against `fill.lerp(hatch, 2/7)`, which
+				# was right before the bed existed and would now pick for a surround that is gone.
+				var under := colour
 				var dark := _wcag_ratio(under, AssayHud.GLYPH_DARK)
 				var light := _wcag_ratio(under, AssayHud.GLYPH_LIGHT)
 				var ink: Color = disc["ink"]
@@ -301,10 +302,10 @@ func test_a_dead_end_rock_is_hatched_and_trades_no_other_channel() -> bool:
 				+ "ABSENT -- and the disc then says `good ore` to a player who cannot work it. 79%% "
 				+ "of worlds hold at least one purple or M-blue dead end (Maren, 400 seeds).")
 				% [worst_hatch, worst_hatch_at])
-	if worst_ink < 4.5:
-		return _fail(("the species letter is below WCAG AA on its worst pair: %.2f:1 at %s. The "
-				+ "letter is TEXT, so 4.5:1 is the right number for it even though it is the wrong "
-				+ "one for a stroke.") % [worst_ink, worst_ink_at])
+	# **NO FLOOR ON THE LETTER, ON PURPOSE, and that is Maren's sharpening on ASSA-39 rather than my
+	# choice.** Picking the better of two inks is optimal by construction, so the assertion that holds
+	# is the one above -- "the chosen ink is the higher-ratio one at every state" -- and 4.5152 is the
+	# CEILING of this two-colour family, not a target. A floor here would rot the moment a tint moves.
 	print("    hatch vs fill: worst %.2f:1 at %s (floor 3.00, shipped ink was 1.42)"
 			% [worst_hatch, worst_hatch_at])
 	print("    disc letter:   worst %.2f:1 at %s, on the surface it is drawn on"

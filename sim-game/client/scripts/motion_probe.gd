@@ -23,6 +23,20 @@ extends RefCounted
 ## of; see the docstrings on each. What is new here is `begin`/`step`/`report_text` and nothing else.
 
 ## The relay's default clock (`sim-relay`, 10 ticks/s) and the sim's one-tile-per-tick walk.
+##
+## **ONE TILE PER TICK IS THE SPEED OF A WALK ALONG AN AXIS AND OF NO OTHER WALK** (ASSA-201 box 3;
+## Nerite flagged the unguarded sentence, Maren checked it and both were right). `move_players` adds
+## the SIGNUM of the delta to both axes, so a diagonal covers sqrt(2) = 1.414 tiles a tick: a body
+## drawn perfectly correctly at 14.14 tiles/s against a reference of 10.00, which is 41% over a +/-25%
+## bar. And on a healthy host nothing is `sheltered`, so EVERY MOVING FRAME would be charged to the
+## CLIENT -- this tool would print a false P0 against the renderer and look like it had passed its own
+## checks.
+##
+## It is true today because `_walk_target` returns `here.y` on all three branches and `MoveTo` is the
+## only writer of `p.target` (`sim/src/step.rs`), so dy = 0 at issue means dy = 0 for ever. True,
+## unstated and unguarded is the combination that gets edited away by someone aiming the walk
+## somewhere more interesting, so `begin`/`step` now REFUSE a target off this row rather than
+## measuring it. `tests/test_motion_probe_door.gd` holds both halves.
 const TICK_SECONDS := 0.1
 const TRUE_SPEED := 1.0 / TICK_SECONDS
 ## Wren's bar.
@@ -261,8 +275,19 @@ func step(delta: float) -> int:
 			_line(("  WARNING: asked for seed %s and measured seed %s. Pressing Play solo starts "
 					+ "`solo_relay.gd`'s DEFAULT_SEED; no caller can choose the world yet, so the "
 					+ "numbers below are about %s.") % [_expect_seed, _seed, _seed])
-		var here := _me_tile()
+		var found: Variant = _me_tile()
+		if found == null:
+			_line(("FAIL  joined as player %d and the sim lists no body for that id, so the walk "
+					+ "would be ordered from a tile nobody is standing on")
+					% _screen._client.player_id)
+			_give_up()
+			return _status
+		var here: Vector2i = found
 		var to := _walk_target(here)
+		if not walk_is_straight(here, to):
+			_line(_crooked(here, to))
+			_give_up()
+			return _status
 		_screen._client.submit(AssayActions.move_to(to))
 		_walk_at = now
 		_clicks.append(now)
@@ -277,8 +302,18 @@ func step(delta: float) -> int:
 	# events and the item said otherwise. The body has to be standing before this is ordered or it is
 	# a redirect rather than a start.
 	if _second_click_due(now):
-		var here := _me_tile()
+		var found: Variant = _me_tile()
+		if found == null:
+			_line("FAIL  the sim lists no body for player %d at the second walk"
+					% _screen._client.player_id)
+			_give_up()
+			return _status
+		var here: Vector2i = found
 		var to := _walk_target(here)
+		if not walk_is_straight(here, to):
+			_line(_crooked(here, to))
+			_give_up()
+			return _status
 		_screen._client.submit(AssayActions.move_to(to))
 		_clicks.append(now)
 		_click_what.append("warm: ordered from a standstill %0.1f s in, clock long since running"
@@ -343,12 +378,34 @@ func _find_button(node: Node, label: String) -> Button:
 	return null
 
 
-func _me_tile() -> Vector2i:
+## **WHERE MY OWN BODY IS, OR `null`** (ASSA-201 box 3, Maren's second point). This fell back to
+## `spawn_tile()` when the sim listed no body for my id, which is a different tile from the one the
+## probe is about and is REACHABLE: the solo relay keeps its save, so a second run starts wherever the
+## last one left the body. The walk would then be ordered from a tile nobody is standing on, the
+## report would name it as the start, and every number under it would be about a walk that did not
+## happen. A measurement with a plausible wrong answer in it is worse than one that stops.
+func _me_tile() -> Variant:
 	for entry in _screen._sim.players():
 		var player: Dictionary = entry
 		if int(player.get("id", -1)) == _screen._client.player_id:
 			return player["pos"] as Vector2i
-	return _screen._sim.spawn_tile() as Vector2i
+	return null
+
+
+## **THE PRECONDITION `TRUE_SPEED` RESTS ON, AS A FUNCTION RATHER THAN AS A SENTENCE** (ASSA-201 box
+## 3). A walk off this row is not slower or faster than the reference, it is a DIFFERENT reference --
+## sqrt(2) tiles a tick -- and every frame of it would be charged to the client at 41% over the bar.
+static func walk_is_straight(here: Vector2i, to: Vector2i) -> bool:
+	return to.y == here.y
+
+
+## The refusal in words, in both places that order a walk.
+func _crooked(here: Vector2i, to: Vector2i) -> String:
+	return ("FAIL  the walk ordered from %s to %s is not on one row. The sim steps the signum of "
+			+ "BOTH axes, so a diagonal covers 1.414 tiles a tick and this probe's reference of "
+			+ "%.2f tiles/s is wrong by 41%% -- outside the +/-%d%% bar, with every moving frame "
+			+ "charged to the client. Fix `_walk_target`, do not widen the bar.")	% [here, to,
+			TRUE_SPEED, int(TOLERANCE * 100.0)]
 
 
 ## A STRAIGHT WALK THAT STAYS OFF THE CAMERA'S CLAMP AND INSIDE THE WORLD. The solo relay keeps its

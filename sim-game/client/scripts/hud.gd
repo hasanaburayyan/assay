@@ -170,6 +170,25 @@ const SPECIES_TINTS: Array[String] = ["#7A29CC", "#FF3333", "#FF80BF", "#FFFF33"
 const GLYPH_DARK := Color(0.02, 0.02, 0.03)
 const GLYPH_LIGHT := Color(1.0, 1.0, 1.0)
 
+## **THE DISC, CARRIED WITH THE LETTER** (ASSA-213): an outline this many px wide, in the deposit's
+## own fill colour, painted under the glyph's strokes.
+##
+## WHY IT EXISTS. The letter is painted LAST now, over the building marks, because a 16 px diamond on
+## a deposit's centre tile was erasing a 25 px letter whole (Maren's two 1x shots). Over its own disc
+## that was the end of it; over a `HOVER` diamond it is not, because `glyph_color` picks the ink by
+## contrast against the DISC, and `GLYPH_LIGHT` on a pale diamond is the same letter gone for the
+## opposite reason. The bed restores the exact surface the ink was measured against, locally, so
+## Decision #36's 4.52 worst case holds over a mark as well as over a rock.
+##
+## **ON AN UNOCCUPIED DISC IT IS INVISIBLE BY CONSTRUCTION** -- same colour as what is already there --
+## so none of the 600 measured states change, and a hatched disc loses only a 2 px rim around the
+## strokes it was already losing to the glyph itself.
+##
+## 2.0 is the width of `MARK_KEYLINE_PX` for the same reason it is 2 there: it is the thinnest rim
+## that survives at 1x on this map (Cove's keyline-0 finding, ASSA-193), and a wider one would start
+## eating the diamond it sits on.
+const GLYPH_BED_PX := 2.0
+
 ## **EVERY MARK THE WHOLE-WORLD MAP CAN PUT ON SCREEN, IN THE TABLE THE DRAW LOOP ITSELF READS**
 ## (ASSA-206, Maren's ruling: "the key must be GENERATED from the same table the draw loop reads, so
 ## a mark cannot be added without appearing in it").
@@ -207,8 +226,6 @@ const MAP_MARKS: Array[Dictionary] = [
 	# the table's `MAP_BG` is an example and not the colour. `mark_ink_of` is what `_draw` calls.
 	{"id": &"dead_end", "shape": &"hatch", "ink": MAP_BG, "data_ink": true, "in_key": true,
 			"label": "hatched: nothing can get this ore out"},
-	{"id": &"species_glyph", "shape": &"glyph", "ink": GLYPH_LIGHT, "data_ink": true, "in_key": true,
-			"label": "the species, as its own letter"},
 	{"id": &"walk_mine", "shape": &"line", "ink": MINE, "alpha": 0.35, "in_key": true,
 			"label": "where a player is walking to"},
 	{"id": &"walk_theirs", "shape": &"line", "ink": THEIRS, "alpha": 0.25, "in_key": false,
@@ -224,6 +241,15 @@ const MAP_MARKS: Array[Dictionary] = [
 			"keyed_by": &"building", "label": "the map's own ink, under a machine's mark"},
 	{"id": &"building", "shape": &"diamond", "ink": HOVER, "data_ink": true, "in_key": true,
 			"label": "a machine someone built"},
+	# **AFTER THE BUILDING, AND THE TABLE'S ORDER IS THE PAINT ORDER** (ASSA-213). The letter used to
+	# sit between the hatch and the walk lines, which is where it was painted, which is why a machine
+	# standing on a deposit erased it. `tests/test_map_key.gd` now holds this list against the order
+	# `_draw`'s own calls appear in, so these two rows cannot drift back up without a red suite.
+	{"id": &"species_bed", "shape": &"glyph", "ink": MAP_BG, "data_ink": true, "in_key": false,
+			"keyed_by": &"species_glyph",
+			"label": "the deposit's own colour, carried under its letter"},
+	{"id": &"species_glyph", "shape": &"glyph", "ink": GLYPH_LIGHT, "data_ink": true, "in_key": true,
+			"label": "the species, as its own letter"},
 	{"id": &"target", "shape": &"brackets", "ink": HOVER, "in_key": true,
 			"label": "the tile the buttons act on"},
 	{"id": &"hover_tile", "shape": &"outline", "ink": HOVER, "alpha": 0.55, "in_key": true,
@@ -591,16 +617,20 @@ static func glyph_size(drawn_radius: float) -> int:
 static func deposit_disc(deposit: Dictionary, drawn_radius: float) -> Dictionary:
 	var colour := deposit_color(int(deposit["species"]), int(deposit["purity"]))
 	var dead_end := not String(deposit["reach_note"]).is_empty()
-	var ink := hatch_ink(colour)
-	# **THE LETTER IS ASKED ABOUT THE SURFACE IT IS ACTUALLY ON, WHICH ON A DEAD END IS NOT THE FILL**
-	# (ASSA-209). `glyph_color`'s own contract is "whatever is drawn there", and until now it was
-	# handed the bare fill on a disc that then had 28.6% of itself repainted over -- so the letter's
-	# ink was chosen for a surface that does not exist. Cove MEASURED the consequence on ASSA-199's
-	# box 6 control: a `MAP_BG` hatch cost the five near-black letters 30-36% of their contrast and
-	# gave the three white ones 40-46%. Worst letter over all 600 states goes 2.94:1 -> 4.51:1.
-	return {"colour": colour, "filled": true,
-			"ink": glyph_color(hatched_surface(colour, ink) if dead_end else colour),
-			"hatch": dead_end, "hatch_ink": ink,
+	# **THE LETTER IS JUDGED ON THE FILL, AND ASSA-213 IS WHY THAT IS TRUE AGAIN.** I had this asking
+	# `glyph_color` about `hatched_surface(colour, ink)` -- the fill mixed 28.6% toward the hatch --
+	# on the reasoning that a hatched disc is not the surface the ink was picked against. Cove measured
+	# exactly that on ASSA-199's box 6 (a `MAP_BG` hatch costs a dark letter 30-36%) and it lifted the
+	# worst letter over 600 states from 2.94:1 to 4.51:1.
+	#
+	# **IT IS THE WRONG FIX NOW, because #293 landed a better one while this branch was open.** Every
+	# letter carries `GLYPH_BED_PX` of its own DISC COLOUR as an outline under its strokes, painted
+	# last, so the surface a letter sits on is the bare fill whatever the hatch did -- the bed restores
+	# it rather than modelling it. Relighting on top of that would pick an ink for a surround the
+	# letter no longer has. **It also retires the residual I filed on ASSA-209**: the hatch and the
+	# letter can be the same white and still not fuse, because the bed is between them.
+	return {"colour": colour, "filled": true, "ink": glyph_color(colour),
+			"hatch": dead_end, "hatch_ink": hatch_ink(colour),
 			"hatch_width": float(HATCH_ON) / sqrt(2.0),
 			"stroke": clampf(drawn_radius * 0.2, 2.0, 6.0)}
 
@@ -627,24 +657,16 @@ static func deposit_disc(deposit: Dictionary, drawn_radius: float) -> Dictionary
 ## counted 21 colours on ASSA-116). It also keeps every disc that reads today reading exactly as it
 ## does: on the four bright species the pick is unchanged from the shipped ink at most purities.
 ##
-## **WHAT THIS DOES NOT FIX, with its number.** Where the hatch goes white the letter often wants to be
-## white too -- both are "the brightest thing available on a dark disc" -- so hatch-against-letter
-## bottoms out at **1.00:1** on purple at purity 1: the same ink. The letter's CORE still survives,
-## because `_draw` paints the glyph after the hatch and Cove measured 0 core pixels covered; what
-## blends is the antialiased skirt. Removing it needs geometry, not ink: a keep-out around the glyph in
-## [hatch_segments]. Filed on ASSA-209, not fixed here.
+## **THE ONE THING IT COULD HAVE COST, AND WHY IT DOES NOT.** Where the hatch goes white the letter
+## often wants to be white too -- both are "the brightest thing available on a dark disc" -- so
+## hatch-against-letter is **1.00:1**, the same ink, on purple at purity 1. I filed that as this
+## item's residual and then #293 (ASSA-213) retired it from the other side: a letter carries
+## `GLYPH_BED_PX` of its own disc colour under its strokes, so there is fill between the mark and the
+## letter whatever the two inks are. Two marks of one colour that never touch do not fuse.
 static func hatch_ink(fill: Color) -> Color:
 	return MAP_BG if contrast_ratio(fill, MAP_BG) >= contrast_ratio(fill, GLYPH_LIGHT) \
 			else GLYPH_LIGHT
 
-
-## THE SURFACE A LETTER ON A HATCHED DISC IS REALLY ON: the fill mixed toward the hatch ink by the
-## ruled density. **A MODEL, AND IT SAYS SO.** A letter sits on a particular set of pixels, some hatch
-## and some fill, so no single colour is the truth; this is the area-weighted average, which is what a
-## contrast ratio against a patterned ground can mean at all. The share is `HATCH_ON / HATCH_PERIOD`
-## and is read off the painter, never written twice.
-static func hatched_surface(fill: Color, ink: Color) -> Color:
-	return fill.lerp(ink, float(HATCH_ON) / float(HATCH_PERIOD))
 
 
 ## THE HATCH'S LINES FOR ONE DISC: flat pairs of points, each pair one 45-degree stroke.
