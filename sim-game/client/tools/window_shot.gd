@@ -1321,8 +1321,10 @@ func _write_marks_table() -> void:
 	var people := []
 	for entry in _screen._sim.players():
 		var player: Dictionary = entry
-		var at: Vector2 = _screen.MARGIN + (Vector2(player["pos"] as Vector2i)
-				+ Vector2(0.5, 0.5)) * _screen._cell
+		# Through `point_of_tile` as well, and this one moves nothing: it already spelled the middle
+		# (ASSA-220). Converted for the same reason as `main.gd`'s player copy -- a correct copy sitting
+		# beside a wrong one is part of what made the wrong one look deliberate.
+		var at: Vector2 = _screen.point_of_tile(player["pos"] as Vector2i)
 		people.append({"id": int(player["id"]), "x": at.x, "y": at.y,
 				"w": AssayHud.PLAYER_MARK_PX, "h": AssayHud.PLAYER_MARK_PX, "shape": "rect"})
 	# **AND THE SPECIES LETTERS, BECAUSE ASSA-213 IS ONE MARK COVERING ANOTHER.** The box, the ink and
@@ -1360,9 +1362,17 @@ func _write_marks_table() -> void:
 		var disc: Dictionary = AssayHud.deposit_disc(deposit, radius)
 		var fill: Color = disc["colour"]
 		var glyph_ink: Color = disc["ink"]
+		# **THE SCREEN'S OWN ANSWER FOR WHERE THAT TILE IS, NOT A THIRD COPY OF IT** (ASSA-220). These two
+		# lines spelled `MARGIN + tile * _cell` -- the tile's CORNER -- and so did the two draws in
+		# `main.gd` they were describing. That is the whole reason the half-tile error was invisible for
+		# as long as it was: THE INSTRUMENT AGREED WITH THE DEFECT. Every disc centre measured off
+		# `08-whole-world-marks.json` (Cove's disc 9 at (690, 420), Maren's edge-bar control, my own
+		# cap-box numbers) came out of this expression, so had `main.gd` been fixed alone, this file would
+		# have gone on reporting a centre the screen no longer draws and every number downstream would
+		# have been wrong by 4.5 px with nothing red.
+		var at: Vector2 = _screen.point_of_tile(tile)
 		discs.append({"symbol": String(deposit["symbol"]), "tile": [tile.x, tile.y],
-				"x": _screen.MARGIN.x + float(tile.x) * _screen._cell,
-				"y": _screen.MARGIN.y + float(tile.y) * _screen._cell, "r": radius,
+				"x": at.x, "y": at.y, "r": radius,
 				"purity": int(deposit["purity"]), "species": int(deposit["species"]),
 				"hatch": bool(disc["hatch"]), "fill": [fill.r, fill.g, fill.b],
 				"ink": [glyph_ink.r, glyph_ink.g, glyph_ink.b],

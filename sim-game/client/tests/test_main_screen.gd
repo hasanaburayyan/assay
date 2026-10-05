@@ -2796,8 +2796,13 @@ func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> b
 	# The deposit the mark belongs to, and a 1x1 machine planted on its CENTRE tile -- the tile the
 	# play loop plants on, and the one Maren's shots caught.
 	var glyph: Dictionary = marks[0]
-	var centre: Vector2 = glyph["at"]
-	var tile := Vector2i(((centre - screen.MARGIN) / screen._cell).round())
+	# **THE TILE THE MARK NAMES, NOT A TILE RECOVERED FROM ITS PIXEL** (ASSA-220 box 3). This read
+	# `round((at - MARGIN) / _cell)`, which was exact for exactly as long as `at` was the tile's CORNER.
+	# Now that it is the middle, `(at - MARGIN) / _cell` is `tile + 0.5` and `round()` takes it UP: this
+	# test would have planted its machine one tile down and right of the letter and then failed on the
+	# coverage assertion, reporting the case as absent rather than reporting the move. `tile` exists on
+	# the mark for this (ASSA-213 box 2).
+	var tile: Vector2i = glyph["tile"]
 	var planted := [{"pos": tile, "footprint": Vector2i(1, 1), "kind": "machine"}]
 	var mark: Dictionary = (screen._building_marks(planted)[0] as Dictionary)
 	var diamond: PackedVector2Array = mark["points"]
@@ -2904,6 +2909,113 @@ func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> b
 			ok = _fail(("this deposit's letter reads %.2f:1 on its NOMINAL bed and %.2f:1 on the "
 					+ "building mark, so even in the colour table the bed buys nothing here and the "
 					+ "case needs a different deposit") % [on_bed, on_mark])
+	screen.queue_free()
+	return ok
+
+
+## **EVERY DEPOSIT MARK SITS ON THE MIDDLE OF THE TILE IT NAMES** (ASSA-220).
+##
+## **WHY THE INVARIANT THAT ALREADY EXISTS CANNOT SEE THIS**, which is most of why a half-tile shipped
+## for as long as it did. `tests/test_scene_view.gd` holds `_tile_under(point_of_tile(t)) == t` in both
+## views, and that passes on the defect: the tile's top-left CORNER is inside the tile too, so
+## `_tile_under` answers `t` for the corner exactly as it does for the middle. A round trip through a
+## floor cannot tell two points in one cell apart. Only a claim about WHERE IN the cell can.
+##
+## **AND THE WANTED POINT IS DERIVED, NOT COPIED.** Re-spelling `MARGIN + (tile + 0.5) * _cell` here
+## would assert the implementation against itself -- the vacuous shape that has cost me two merged
+## tests. So the claim is the one in the item: a deposit covers tiles `centre +/- radius`, which on
+## screen spans `(c - r) * cell` to `(c + r + 1) * cell`, and a circle drawn concentric with the rock it
+## describes sits at the MIDPOINT of that span. `r` cancels out of that midpoint, which is the point --
+## the answer is the tile's middle as a CONCLUSION about the rock, not as a premise about the formula.
+##
+## **TWO CELL SIZES, because the error is half a CELL and not a number of pixels.** At one cell size a
+## constant 4.5 px offset satisfies this assertion; at two it cannot.
+func test_a_deposit_and_its_letter_are_drawn_on_the_middle_of_the_tile_they_name() -> bool:
+	var screen := _joined_screen()
+	screen._show_close_up(false)
+	screen._refresh()
+	if screen._close_up or not screen._sim.running():
+		screen.queue_free()
+		return _fail(("premise: close_up %s, running %s -- `_draw` returns before any deposit on "
+				+ "either") % [screen._close_up, screen._sim.running()])
+	var font := ThemeDB.fallback_font
+	var deposits := screen._sim.deposits()
+	if deposits.is_empty():
+		screen.queue_free()
+		return _fail("premise: this world has no deposits, so there is no mark to place and this test "
+				+ "is about nothing")
+	var ok := true
+	var checked := 0
+	for cell in [9.0, 23.0]:
+		if not ok:
+			break
+		screen._cell = cell
+		var by_tile := {}
+		for entry in screen._glyph_marks(deposits, font):
+			var mark: Dictionary = entry
+			by_tile[mark["tile"] as Vector2i] = mark
+		if by_tile.is_empty():
+			ok = _fail(("premise: no species letter is placed at %.0fpx a tile, so there is nothing "
+					+ "to measure at this cell size") % [cell])
+			break
+		for raw in deposits:
+			var deposit: Dictionary = raw
+			var tile: Vector2i = deposit["center"]
+			if int(deposit["amount"]) <= 0 or not by_tile.has(tile):
+				continue
+			var mark: Dictionary = by_tile[tile]
+			# The rock's own pixel span, straight off the tiles it covers.
+			var radius := int(deposit["radius"])
+			var low: Vector2 = screen.MARGIN + Vector2(tile - Vector2i(radius, radius)) * cell
+			var high: Vector2 = screen.MARGIN + Vector2(tile + Vector2i(radius + 1, radius + 1)) * cell
+			var want: Vector2 = (low + high) * 0.5
+			var at: Vector2 = mark["at"]
+			if at.distance_to(want) > 1e-4:
+				var off := (at - want) / cell
+				ok = _fail(("the %s deposit at tile %s spans %s..%s at %.0fpx a tile, so a mark "
+						+ "concentric with it belongs at %s -- and it is drawn at %s, off by (%.2f, "
+						+ "%.2f) of a tile. A mark may lie about its size or its colour and never "
+						+ "about its position.") % [mark["symbol"], tile, low, high, cell, want, at,
+						off.x, off.y])
+				break
+			checked += 1
+	if ok and checked < 2:
+		ok = _fail(("only %d deposit marks were measured across both cell sizes, which is too few for "
+				+ "the two-cell argument to mean anything") % [checked])
+	# **AND THE DISC ITSELF, WHICH NOTHING HEADLESS CAN READ.** The letter's position comes out of
+	# `_glyph_marks` and is measured above; the disc's is computed inside `_draw`, where nothing can be
+	# asked what it painted (the same gap the comment on `_building_marks` names). The two were
+	# INDEPENDENT copies of the corner formula, which is exactly how one defect came to sit in two
+	# places, so a scan for the shared helper is what keeps them from drifting apart again.
+	if ok:
+		var source := FileAccess.get_file_as_string("res://scripts/main.gd")
+		if source == "":
+			ok = _fail("main.gd could not be read, so this scan says nothing")
+		elif not source.contains("point_of_tile(deposit.get(\"center\""):
+			ok = _fail("the deposit pass in `_draw` no longer takes its centre from `point_of_tile`, "
+					+ "so the disc and the letter it carries can disagree about which tile they are on")
+		# **THESE TWO MUST KEEP THE CORNER, and that is the whole reason they are asserted** (Maren's
+		# second point on ASSA-220). A rect that COVERS a cell is not a mark that NAMES one: both start
+		# at the tile's top-left and span `_cell`. Their arithmetic is identical to the bug this test is
+		# about, so the next person to grep for `MARGIN + Vector2(` and "finish the job" moves the two
+		# marks that were right -- and would see nothing red without this.
+		elif not source.contains("MARGIN + Vector2(_target) * _cell"):
+			ok = _fail("the target brackets no longer start at the tile's corner: a rect that covers a "
+					+ "cell is not a mark that names it, and ASSA-220 moved the marks, not the rects")
+		elif not source.contains("MARGIN + Vector2(_hover) * _cell"):
+			ok = _fail("the hover outline no longer starts at the tile's corner, so it no longer "
+					+ "covers the cell the readout is talking about")
+	# **AND THE INSTRUMENT, BECAUSE IT CARRIED THE SAME BUG.** `window_shot.gd` recorded each disc's
+	# centre with its own third copy of `MARGIN + tile * _cell`, so it AGREED WITH THE DEFECT: every
+	# centre measured off `08-whole-world-marks.json` was the corner, and `main.gd` fixed alone would
+	# have left the shot reporting a point the screen does not draw, with nothing red anywhere.
+	if ok:
+		var shot := FileAccess.get_file_as_string("res://tools/window_shot.gd")
+		if shot == "":
+			ok = _fail("window_shot.gd could not be read, so this scan says nothing")
+		elif not shot.contains("_screen.point_of_tile(tile)"):
+			ok = _fail("the shot's disc table no longer takes its centre from the screen, so a "
+					+ "measurement off its JSON can be half a tile from what was painted")
 	screen.queue_free()
 	return ok
 
