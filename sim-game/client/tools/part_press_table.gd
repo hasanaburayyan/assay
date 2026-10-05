@@ -45,6 +45,26 @@ var _accepted := 0
 var _rows: Array = []
 
 
+## **A ONE-SHOT TOOL CAN RUN FOR EVER TOO, AND THIS IS THE HALF ASSA-182 DID NOT FIX FIRST TIME.**
+## `SceneTree`'s own `_process` returns false, so a tool with no `_process` of its own does not end when
+## `_initialize` returns -- it ends when something calls `quit()`. A runtime error inside `_initialize`
+## skips that call and the engine spins with no output and no exit: measured 2026-10-04 with a scratch
+## script, alive after 25 s. The looping tools got a wall-clock ceiling; this needs no clock, because
+## there is nothing a one-shot tool legitimately waits for.
+##
+## `_quitting` is set beside every `quit()` in this file rather than at the end of `_initialize`, so a
+## deliberate early exit -- a bad argument, a missing world -- stays deliberate, and only a
+## fall-through reaches the sentence below.
+var _quitting := false
+
+
+func _process(_delta: float) -> bool:
+	if not _quitting:
+		print("FAIL  part_press_table.gd: _initialize ended without asking to quit -- see the error above")
+		quit(1)
+	return true
+
+
 func _initialize() -> void:
 	var argv := OS.get_cmdline_user_args()
 	var seed_text := String(argv[0]) if argv.size() > 0 else DEFAULT_SEED
@@ -150,6 +170,7 @@ func _table(parts: Array) -> void:
 	print("  %d cells: %d accepted, %d refused in the sim's own words"
 			% [_rows.size(), _accepted, _refused])
 	print("PART PRESS TABLE OK")
+	_quitting = true
 	quit(0)
 
 
@@ -249,4 +270,5 @@ func _fail(why: String) -> void:
 	for row in _rows:
 		print("  %-22s press %-6s on %-28s -> %s"
 				% [row["state"], row["word"], row["kind"], row["said"]])
+	_quitting = true
 	quit(1)

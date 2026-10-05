@@ -106,7 +106,8 @@ const NORTH_WALK_TICKS := 600
 enum Phase { SETTLE_JOIN, SHOOT_JOIN, PLAY, SETTLE_PACK, SHOOT_PACK, SETTLE_PLAY, SHOOT_PLAY,
 		SETTLE_FOLD, MEASURE_CONTROLS, SETTLE_MENUS, SHOOT_MENUS, SCROLL_ROCKS, SETTLE_ROCKS,
 		SHOOT_ROCKS, WALK_NORTH, SETTLE_NORTH_LOG, SHOOT_NORTH_LOG, SETTLE_NORTH_CLEAR,
-		SHOOT_NORTH_CLEAR, WALK_OFF, PRESS_V, SETTLE_SCHEMATIC, SHOOT_SCHEMATIC, DONE }
+		SHOOT_NORTH_CLEAR, WALK_OFF, PRESS_V, SETTLE_SCHEMATIC, SHOOT_SCHEMATIC, PRESS_K,
+		SETTLE_KEY, SHOOT_KEY, DONE }
 ## What `_play_frames` did with its last tick.
 enum Ticked { AGAIN, OVER, DEAD }
 
@@ -361,6 +362,22 @@ func _process(_delta: float) -> bool:
 			_schematic_marks = _screen._building_marks(_screen._sim.buildings())
 			_shoot("08-whole-world.png", PackedStringArray())
 			_write_marks_table()
+			_phase = Phase.PRESS_K
+		Phase.PRESS_K:
+			# **THE SAME FRAME WITH THE KEY UP** (ASSA-206). The pair is the point: `08` is what the
+			# board sees when they press V, `09` is the same world with every mark named, so the
+			# cost of the panel (which tiles it covers) and its payoff are measurable against each
+			# other rather than described. The setter the (K) toggle calls, like `_show_close_up`
+			# above -- a state a player cannot reach is not worth photographing.
+			_screen._show_map_key(true)
+			_phase = Phase.SETTLE_KEY
+		Phase.SETTLE_KEY:
+			_settle(Phase.SHOOT_KEY)
+		Phase.SHOOT_KEY:
+			# NO SUBJECT, for `08`'s reason: the subject is the map. `_shoot`'s repeat guard is what
+			# makes this shot a measurement -- if the key drew nothing at all, this frame would be
+			# byte-identical to `08` and the run would fail by name.
+			_shoot("09-whole-world-key.png", PackedStringArray())
 			_phase = Phase.DONE
 		Phase.WALK_NORTH:
 			_walk_north()
