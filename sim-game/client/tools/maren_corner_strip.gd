@@ -48,7 +48,9 @@ var _started := false
 var _done := false
 var _started_at := 0.0
 var _next_tick := 0.0
-var _ceiling := 0.0
+## BUILT WITH THE OBJECT, not in `_initialize` (ASSA-182). A ceiling assigned inside the setup is
+## absent in exactly the case it exists for: a run that dies before the setup finishes.
+var _ceiling := Time.get_unix_time_from_system() + RUN_CEILING
 var _crop_at := Vector2i(-1, -1)
 var _rows: Array[Dictionary] = []
 var _saved := 0
@@ -63,7 +65,6 @@ func _initialize() -> void:
 	_seed = String(argv[1]) if argv.size() > 1 else "14247"
 	if argv.size() > 3:
 		_target = Vector2i(int(argv[2]), int(argv[3]))
-	_ceiling = Time.get_unix_time_from_system() + RUN_CEILING
 	DirAccess.make_dir_recursive_absolute(_out)
 	_screen = load("res://scenes/main.tscn").instantiate()
 	root.add_child(_screen)
