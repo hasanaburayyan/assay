@@ -302,6 +302,26 @@ var _world := AssayWorldLayer.new()
 var _view_toggle := Button.new()
 var _close_up := true
 
+## **THE SHAPE KEY OVER THE MAP** (ASSA-206). Nine marks on this view and one of them named; our own
+## QA misread it three times in six minutes. `AssayMapKey` draws the rows and every row comes out of
+## `AssayHud.MAP_MARKS`, the table `_draw` paints from -- see that script and that constant.
+##
+## HIDDEN ON FIRST OPEN, WITH A CONTROL THAT NAMES ITS KEY, which is the log's bargain (ASSA-89) and
+## is a choice Maren left to the builder. The panel is 309x272 px of the map's 912x600, and the map is
+## a search tool whose whole job is showing you a deposit you have not walked to: 8.4% of the world's
+## tiles behind a key you have already read is a cost a player should be able to put down. The half
+## that makes that honest is the button -- `show the map key (K)` beside `whole world (V)`, inside
+## the map's own corner, the one surface a stranger pressing V is already looking at.
+##
+## ONLY ON THE SCHEMATIC. Every mark it names is painted by `_draw`, which returns on `_close_up`, so
+## in the close-up the key would be a legend for marks nobody can see -- the labelled-empty-gap defect
+## ASSA-134 and ASSA-186 both turned on. The toggle goes with it for ASSA-175's reason: a control that
+## cannot do anything reads as available.
+var _map_key := AssayMapKey.new()
+var _map_key_box := PanelContainer.new()
+var _map_key_toggle := Button.new()
+var _map_key_shown := false
+
 ## WHAT THE MAP SAYS WHILE THERE IS NO WORLD ON IT (Maren's ruling 1, ASSA-127). Built in
 ## `_build_ui`, worded by `AssayHud.empty_map_line`, shown exactly when `_world.view` is empty.
 ##
@@ -529,6 +549,7 @@ func _build_ui() -> void:
 	add_child(_map_note)
 
 	_build_log_over_the_map(world)
+	_build_map_key_over_the_map(world)
 
 	_view_toggle.position = world.end - Vector2(152.0, 36.0)
 	_view_toggle.custom_minimum_size = Vector2(144.0, 0.0)
@@ -553,6 +574,19 @@ func _build_ui() -> void:
 	# `_refresh` is what brings it back, on the world's existence rather than on the join event --
 	# see there for why that is the honest test.
 	_view_toggle.visible = false
+
+	# THE KEY'S TOGGLE, LEFT OF THE VIEW'S, in the same corner and the same size: the two controls
+	# are one sentence -- the view that has the marks, and what the marks mean -- and a key's toggle
+	# anywhere else is a control about a surface it is not on. Hidden for the same two reasons the
+	# view toggle is (no world, ASSA-142 box 3; and no schematic, see `_show_close_up`).
+	_map_key_toggle.position = world.end - Vector2(312.0, 36.0)
+	_map_key_toggle.custom_minimum_size = Vector2(144.0, 0.0)
+	_map_key_toggle.text = AssayHud.map_key_toggle_text(false)
+	_map_key_toggle.tooltip_text = ("every mark the whole-world map can draw, named: the shape key."
+			+ " The species panel beside it is the colour one")
+	_map_key_toggle.pressed.connect(func(): _show_map_key(not _map_key_shown))
+	add_child(_map_key_toggle)
+	_map_key_toggle.visible = false
 
 	var row := HBoxContainer.new()
 	row.position = Vector2(24.0, 20.0)
@@ -952,6 +986,53 @@ func _show_log(shown: bool) -> void:
 	_log_toggle.text = "hide the event log (L)" if shown else "show the event log (L)"
 
 
+## THE SHAPE KEY'S SURFACE, OVER THE MAP, AT THE BOTTOM-LEFT (ASSA-206).
+##
+## THE SAME REGION TRICK AS THE LOG, THE OTHER WAY UP. `SIZE_SHRINK_END` and `SIZE_SHRINK_BEGIN`
+## horizontally put the box in the map's bottom-left corner at the size the panel asks for, so the
+## engine answers for the height and nothing here writes a number that a font change could falsify.
+##
+## BOTTOM-LEFT AND NOT BOTTOM-RIGHT, which is where both buttons are: a panel over its own toggle is
+## ASSA-147's defect exactly (a control a player cannot reach because the thing it opened is on top of
+## it), and the log already owns the top.
+##
+## IT STOPS THE MOUSE for the log's reason, which is a rule about this window and not about this
+## panel: the map is clicked through `_unhandled_input`, so an `IGNORE` panel would let a click land
+## on a tile the player cannot see and place a machine there. The region around it is `IGNORE`.
+func _build_map_key_over_the_map(world: Rect2) -> void:
+	var region := VBoxContainer.new()
+	region.position = world.position
+	region.size = world.size
+	region.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	region.alignment = BoxContainer.ALIGNMENT_END
+	add_child(region)
+	_map_key_box.size_flags_vertical = Control.SIZE_SHRINK_END
+	_map_key_box.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	# SAID RATHER THAN INHERITED, like the log's: `STOP` is a Control's default and the rule above is
+	# the reason this panel has it.
+	_map_key_box.mouse_filter = Control.MOUSE_FILTER_STOP
+	region.add_child(_map_key_box)
+	_map_key_box.add_child(_map_key)
+	_map_key_box.visible = false
+
+
+## SHOW OR HIDE THE SHAPE KEY (ASSA-206).
+##
+## TWO FLAGS, ONE WRITER, for the reason `_show_log`'s docstring gives: `_map_key` is inside the box,
+## so hiding the box alone would be enough on screen and would leave every test and tool that asks
+## `_map_key.visible` reading `true` about a key nobody can see. That is ASSA-117's shape of bug.
+##
+## `not _close_up` IS IN BOTH PLACES ON PURPOSE. The player's intent (`_map_key_shown`) and whether
+## this view is up are different facts, so pressing K in the close-up arms the key for the moment you
+## press V rather than doing nothing -- and `_show_close_up` re-reads the intent instead of keeping a
+## second copy of it.
+func _show_map_key(shown: bool) -> void:
+	_map_key_shown = shown
+	_map_key.visible = shown and not _close_up
+	_map_key_box.visible = shown and not _close_up
+	_map_key_toggle.text = AssayHud.map_key_toggle_text(shown)
+
+
 ## SHOW OR HIDE THE CRAFTING MENU'S ROWS (ASSA-88).
 ##
 ## THE ROWS ONLY, NEVER THE RUNNING CRAFT. Maren's clause from ASSA-89 applies here as she said:
@@ -978,6 +1059,11 @@ func _show_close_up(close_up: bool) -> void:
 	_close_up = close_up
 	_world.visible = close_up
 	_view_toggle.text = AssayHud.view_toggle_text(close_up)
+	# THE KEY IS THE SCHEMATIC'S (ASSA-206). `_show_map_key` re-reads the player's own intent, so
+	# switching views cannot change whether the key is armed -- only whether this view has marks for
+	# it to name.
+	_show_map_key(_map_key_shown)
+	_map_key_toggle.visible = _sim.running() and not close_up
 	if close_up:
 		_refresh_world()
 	queue_redraw()
@@ -992,6 +1078,12 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 	if key.keycode == KEY_L:
 		_show_log(not _log_shown)
+	elif key.keycode == KEY_K:
+		# K ARMS THE KEY IN EITHER VIEW, unlike V's shortcut, and that is not an inconsistency with
+		# ASSA-142's rule: V promises a view of a world that may not exist, while K only records what
+		# you want to see on the schematic when you are next on it. `_show_map_key` is what decides
+		# whether anything appears, and in the close-up nothing does.
+		_show_map_key(not _map_key_shown)
 	elif key.keycode == KEY_M:
 		_show_make(not _make_shown)
 	elif key.keycode == KEY_V:
@@ -1512,6 +1604,9 @@ func _refresh() -> void:
 	# not exist, which is the defect again wearing a different cause. Asking what the renderer can
 	# actually draw is the question; asking whether a handshake succeeded is a proxy for it.
 	_view_toggle.visible = _sim.running()
+	# AND SO DOES THE KEY'S TOGGLE, on the same question and with one more clause: there is nothing to
+	# key in the close-up (ASSA-206).
+	_map_key_toggle.visible = _sim.running() and not _close_up
 	# AND SO DOES WHICH KIND OF EMPTY THE COLUMN IS SAYING (ASSA-186), for the same reason and in the
 	# same place: this is the one stretch of `_refresh` that runs on both sides of the early return,
 	# so it is the only place a world appearing or going away can be noticed at all.
@@ -2860,11 +2955,15 @@ func _draw() -> void:
 	var size := _sim.size_tiles()
 	if size.x <= 0 or size.y <= 0 or _cell <= 0.0:
 		return
-	draw_rect(Rect2(MARGIN, Vector2(size) * _cell), AssayHud.MAP_BG, true)
+	draw_rect(Rect2(MARGIN, Vector2(size) * _cell), AssayHud.mark_ink(&"ground"), true)
 
+	# **ONE TILE, NOT FOUR CELLS** (ASSA-206 box 7, Maren's ruling, taken on two real shots). It was
+	# `cell * 4` square here: 36x36 px, 1296 px, 5.1x the player mark and the largest non-deposit mark
+	# on the view, for a fact about ONE tile. The geometry is `AssayHud.spawn_pad_rect` -- including
+	# the clause that keeps it no bigger than a person on a world with fatter tiles -- so a test can
+	# read the size this view gives it instead of a human counting pixels in a shot.
 	var spawn := _sim.spawn_tile()
-	draw_rect(Rect2(MARGIN + Vector2(spawn) * _cell - Vector2(_cell, _cell) * 2.0,
-			Vector2(_cell, _cell) * 4.0), AssayHud.SPAWN_PAD, true)
+	draw_rect(AssayHud.spawn_pad_rect(spawn, _cell, MARGIN), AssayHud.mark_ink(&"spawn"), true)
 
 	# SPECIES IS A DESIGNED SLOT, PURITY IS BRIGHTNESS, and the rule plus the two versions of this I
 	# got wrong are in `AssayHud.deposit_color`. Grade bands (C < 40, B 40-69, A >= 70) are the
@@ -2898,7 +2997,7 @@ func _draw() -> void:
 		# **ALWAYS SOLID NOW** (ASSA-199 box 4). #259 drew a dead end as a hollow ring, which
 		# spent the fill that purity's brightness and the species hue both live in; Maren ruled
 		# Cove's hatch instead, and the hollow is GONE rather than left underneath it.
-		draw_circle(at, radius, colour)
+		draw_circle(at, radius, AssayHud.mark_ink_of(&"deposit", colour))
 		if bool(disc["hatch"]):
 			# **BEFORE THE LETTER, WHICH IS WHAT KEEPS THE LETTER.** Cove's constraint is that the
 			# hatch repaints only pixels already inside the disc: the strokes are cut to the chord
@@ -2908,7 +3007,7 @@ func _draw() -> void:
 			var ink: Color = disc["hatch_ink"]
 			var thick := float(disc["hatch_width"])
 			for i in range(0, strokes.size(), 2):
-				draw_line(strokes[i], strokes[i + 1], ink, thick)
+				draw_line(strokes[i], strokes[i + 1], AssayHud.mark_ink_of(&"dead_end", ink), thick)
 		var symbol := String(deposit.get("symbol", ""))
 		var glyph := AssayHud.glyph_size(radius)
 		if glyph > 0 and not symbol.is_empty() and font != null:
@@ -2916,7 +3015,8 @@ func _draw() -> void:
 			# vertical nudge is the usual "half the cap height" for a baseline-drawn capital.
 			var wide := font.get_string_size(symbol, HORIZONTAL_ALIGNMENT_LEFT, -1, glyph).x
 			draw_string(font, at + Vector2(-wide * 0.5, float(glyph) * 0.36), symbol,
-					HORIZONTAL_ALIGNMENT_LEFT, -1, glyph, disc["ink"])
+					HORIZONTAL_ALIGNMENT_LEFT, -1, glyph,
+					AssayHud.mark_ink_of(&"species_glyph", disc["ink"]))
 
 	# EVERY PLAYER, AT A SIZE THAT DOES NOT COME FROM THE TILE (ASSA-119 box 6, Maren's finding 1).
 	# This mark used to be two cells square, which made it 18 px on this world and would make it 36 on
@@ -2930,7 +3030,7 @@ func _draw() -> void:
 		var at := MARGIN + (Vector2(player.get("pos", Vector2i.ZERO) as Vector2i)
 				+ Vector2(0.5, 0.5)) * _cell
 		var mine := int(player.get("id", -1)) == _client.player_id
-		var colour := AssayHud.MINE if mine else AssayHud.THEIRS
+		var colour := AssayHud.mark_ink(&"player_mine" if mine else &"player_theirs")
 		# Where the sim is walking them, drawn as a line to there. Not a tween: the sim owns the
 		# position and this is its intention, not a frame of motion we invented. (The scene DOES
 		# tween the body, between two positions the sim produced -- Maren's motion ruling -- and this
@@ -2938,7 +3038,7 @@ func _draw() -> void:
 		var target: Variant = player.get("target")
 		if target != null:
 			draw_line(at, MARGIN + (Vector2(target as Vector2i) + Vector2(0.5, 0.5)) * _cell,
-					Color(colour.r, colour.g, colour.b, 0.35 if mine else 0.25), 1.0)
+					AssayHud.mark_ink_of(&"walk_mine" if mine else &"walk_theirs", colour), 1.0)
 		# **A KEYLINE ON A PERSON, WHICH IS MAREN'S SECOND RULING ON ASSA-189 AND A DEFECT THAT WAS
 		# ALREADY SHIPPING.** `THEIRS` is a pale near-white, and with no rim a partner standing on a
 		# deposit with a light species letter fuses with that letter into one blob -- Cove found it
@@ -2946,10 +3046,12 @@ func _draw() -> void:
 		# UNDER the body and growing outwards, so the 16 px Maren set from a measurement is untouched
 		# in pixels and the rim is not paid for out of the body. See `AssayHud.mark_keyline_rect`.
 		var body := Rect2(at - mark * 0.5, mark)
-		draw_rect(AssayHud.mark_keyline_rect(body), AssayHud.MAP_BG, true)
-		draw_rect(body, colour, true)
+		draw_rect(AssayHud.mark_keyline_rect(body), AssayHud.mark_ink(&"player_keyline"), true)
+		draw_rect(body, AssayHud.mark_ink_of(&"player_mine" if mine else &"player_theirs", colour),
+				true)
 		if mine:
-			draw_rect(Rect2(at - mark * 0.8, mark * 1.6), colour, false, 2.0)
+			draw_rect(Rect2(at - mark * 0.8, mark * 1.6),
+					AssayHud.mark_ink_of(&"mine_ring", colour), false, 2.0)
 
 	# EVERY FACTORY, WHICH THIS VIEW DID NOT DRAW AT ALL UNTIL ASSA-189.
 	#
@@ -2979,8 +3081,9 @@ func _draw() -> void:
 		var shape: Dictionary = shape_entry
 		# TWO POLYGONS, NOT A STROKE. The rim is a bigger diamond UNDER the mark, so the mark keeps
 		# every pixel of its own size; a 2 px stroke on the mark's edge would spend one of them.
-		draw_colored_polygon(shape["keyline_points"], shape["keyline"])
-		draw_colored_polygon(shape["points"], shape["colour"])
+		draw_colored_polygon(shape["keyline_points"],
+				AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]))
+		draw_colored_polygon(shape["points"], AssayHud.mark_ink_of(&"building", shape["colour"]))
 
 	# THE TILE THE BUTTONS ACT ON, AND IT IS A SHAPE NOW, NOT A THINNER YOU (ASSA-119 box 6).
 	#
@@ -2997,15 +3100,15 @@ func _draw() -> void:
 		for step in [Vector2(1.0, 1.0), Vector2(-1.0, 1.0), Vector2(1.0, -1.0), Vector2(-1.0, -1.0)]:
 			var from := corner + Vector2(0.0 if step.x > 0.0 else _cell,
 					0.0 if step.y > 0.0 else _cell)
-			draw_line(from, from + Vector2(reach * step.x, 0.0), AssayHud.HOVER, 2.0)
-			draw_line(from, from + Vector2(0.0, reach * step.y), AssayHud.HOVER, 2.0)
+			draw_line(from, from + Vector2(reach * step.x, 0.0), AssayHud.mark_ink(&"target"), 2.0)
+			draw_line(from, from + Vector2(0.0, reach * step.y), AssayHud.mark_ink(&"target"), 2.0)
 
 	# The tile the readout is talking about, outlined. Drawn last so it is never buried, and only
 	# while the mouse is actually over the map -- an outline left behind would point at an answer the
 	# panel is no longer giving.
 	if _hovering:
 		draw_rect(Rect2(MARGIN + Vector2(_hover) * _cell, Vector2(_cell, _cell)),
-				Color(AssayHud.HOVER.r, AssayHud.HOVER.g, AssayHud.HOVER.b, 0.55), false, 1.0)
+				AssayHud.mark_ink(&"hover_tile"), false, 1.0)
 
 
 ## **WHAT THE SCHEMATIC IS ABOUT TO PAINT FOR EVERY BUILDING** (ASSA-189). One mark per building, in

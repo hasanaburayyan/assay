@@ -170,6 +170,160 @@ const SPECIES_TINTS: Array[String] = ["#7A29CC", "#FF3333", "#FF80BF", "#FFFF33"
 const GLYPH_DARK := Color(0.02, 0.02, 0.03)
 const GLYPH_LIGHT := Color(1.0, 1.0, 1.0)
 
+## **EVERY MARK THE WHOLE-WORLD MAP CAN PUT ON SCREEN, IN THE TABLE THE DRAW LOOP ITSELF READS**
+## (ASSA-206, Maren's ruling: "the key must be GENERATED from the same table the draw loop reads, so
+## a mark cannot be added without appearing in it").
+##
+## WHY A TABLE AND NOT A LEGEND SOMEBODY TYPED, with the measurement in the item itself: the
+## nine-row list in ASSA-206's body was read off `main.gd::_draw` at 9b15fe9 and was ALREADY WRONG a
+## few hours later. It names a hollow circle for a dead end, which ASSA-199 replaced with Cove's
+## hatch that evening, and it stops before the last two marks in the function -- the acted-on tile's
+## brackets and the hover outline. Even the director, counting the draw calls on purpose, produced a
+## key that drifted inside a day. A hand-written one is a second copy of the painter.
+##
+## HOW THE COUPLING IS ENFORCED, because a table that merely sits beside a painter is still two
+## things: every colour `_draw` paints with comes through [mark_ink] or [mark_ink_of], and both
+## refuse an `id` this table does not carry. `tests/test_map_key.gd` then reads that function's own
+## source, paren-matches every `draw_*` call in it, and requires each call to name an entry --
+## both ways round, so an entry nothing draws fails as loudly as a mark no entry names.
+##
+## `in_key` IS NOT AN ESCAPE HATCH, and that matters because it is the obvious way to cheat this.
+## The four entries that are not rows of the panel are not marks a player reads: the ground the marks
+## sit on, and three `keyed_by` variants (a partner's walk line, and the keylines under a person and
+## under a building) whose meaning is another row's. Every entry is either a row or points at the row
+## that speaks for it, and that is asserted too.
+##
+## THE LABELS ARE THIS CLIENT'S WORDS (ASSA-80/93: the sim's sentences stay the sim's). They name the
+## FACT, not the shape -- "ore you can work", not "a filled circle" -- because a player reading a key
+## has the shape in front of them and wants the other half.
+const MAP_MARKS: Array[Dictionary] = [
+	{"id": &"ground", "shape": &"ground", "ink": MAP_BG, "in_key": false,
+			"label": "the world, out to its edge"},
+	{"id": &"spawn", "shape": &"rect", "ink": SPAWN_PAD, "in_key": true,
+			"label": "where a joining player appears"},
+	{"id": &"deposit", "shape": &"disc", "ink": MAP_BG, "data_ink": true, "in_key": true,
+			"label": "ore you can work"},
+	{"id": &"dead_end", "shape": &"hatch", "ink": MAP_BG, "in_key": true,
+			"label": "hatched: nothing can get this ore out"},
+	{"id": &"species_glyph", "shape": &"glyph", "ink": GLYPH_LIGHT, "data_ink": true, "in_key": true,
+			"label": "the species, as its own letter"},
+	{"id": &"walk_mine", "shape": &"line", "ink": MINE, "alpha": 0.35, "in_key": true,
+			"label": "where a player is walking to"},
+	{"id": &"walk_theirs", "shape": &"line", "ink": THEIRS, "alpha": 0.25, "in_key": false,
+			"keyed_by": &"walk_mine", "label": "where a player is walking to"},
+	{"id": &"player_keyline", "shape": &"rect", "ink": MAP_BG, "in_key": false,
+			"keyed_by": &"player_mine", "label": "the map's own ink, so a body never fuses with a letter"},
+	{"id": &"player_mine", "shape": &"rect", "ink": MINE, "in_key": true, "label": "you"},
+	{"id": &"player_theirs", "shape": &"rect", "ink": THEIRS, "in_key": true,
+			"label": "another player"},
+	{"id": &"mine_ring", "shape": &"ring", "ink": MINE, "in_key": true,
+			"label": "the ring is on your own body"},
+	{"id": &"building_keyline", "shape": &"diamond", "ink": MAP_BG, "in_key": false,
+			"keyed_by": &"building", "label": "the map's own ink, under a machine's mark"},
+	{"id": &"building", "shape": &"diamond", "ink": HOVER, "data_ink": true, "in_key": true,
+			"label": "a machine someone built"},
+	{"id": &"target", "shape": &"brackets", "ink": HOVER, "in_key": true,
+			"label": "the tile the buttons act on"},
+	{"id": &"hover_tile", "shape": &"outline", "ink": HOVER, "alpha": 0.55, "in_key": true,
+			"label": "the tile the readout is describing"},
+]
+
+## WHAT A MARK IS PAINTED IN, FOR THE MARKS WHOSE COLOUR IS FIXED.
+##
+## The alpha is the TABLE'S, not the caller's, which is the point of the two weights on a walk line
+## living here: `main.gd::_draw` used to build `Color(colour.r, colour.g, colour.b, 0.35)` inline,
+## and a weight written at a draw call is a weight the key cannot draw its own sample at.
+##
+## **AN UNKNOWN `id` IS MAGENTA AND AN ERROR, NOT A CRASH AND NOT A DEFAULT.** A pushed error fails
+## the suite, and if one ever reaches a build the mark is painted in a colour this game does not own,
+## so it is visible in a screenshot rather than quietly plausible. Returning `MAP_BG` would hide the
+## mark on the map's own ground, which is the one wrong answer that looks like nothing happened.
+static func mark_ink(id: StringName) -> Color:
+	var entry := mark_entry(id)
+	if entry.is_empty():
+		push_error("no map mark named '%s': add it to AssayHud.MAP_MARKS" % id)
+		return Color.MAGENTA
+	var ink: Color = entry["ink"]
+	return Color(ink.r, ink.g, ink.b, float(entry.get("alpha", 1.0)))
+
+
+## WHAT A MARK IS PAINTED IN WHEN THE COLOUR IS DATA: a deposit's species tint at its purity, the
+## glyph ink `glyph_color` picked for that surface, a building mark's own colour out of
+## [building_mark]. The decision stays where it was; this validates that the mark it is for has a row
+## in the key and applies the table's alpha, so those marks cannot skip the table either.
+static func mark_ink_of(id: StringName, colour: Color) -> Color:
+	var entry := mark_entry(id)
+	if entry.is_empty():
+		push_error("no map mark named '%s': add it to AssayHud.MAP_MARKS" % id)
+		return Color.MAGENTA
+	return Color(colour.r, colour.g, colour.b, float(entry.get("alpha", 1.0)))
+
+
+## One entry by `id`, or an empty dictionary. A linear scan over fifteen rows, once per draw call per
+## frame: the alternative is a second const dictionary keyed by id, which is a copy of this table.
+static func mark_entry(id: StringName) -> Dictionary:
+	for entry in MAP_MARKS:
+		if StringName(entry["id"]) == id:
+			return entry
+	return {}
+
+
+## THE ROWS OF THE KEY PANEL, IN TABLE ORDER. Not a hand-written list and not a sort: the order a
+## player reads the key in is the order `_draw` paints in, so the key reads bottom-of-the-stack
+## first, which is also the order the marks cover each other in.
+static func map_key_rows() -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	for entry in MAP_MARKS:
+		if bool(entry.get("in_key", false)):
+			rows.append(entry)
+	return rows
+
+
+## WHICH SPECIES SLOT THE KEY'S ORE SWATCHES BORROW THEIR HUE FROM.
+##
+## The key is the SHAPE key -- `_species` is the colour one (ASSA-73) and Maren's box 5 says this must
+## not displace it -- but a disc has to be drawn in SOME colour, and the one it is drawn in must not
+## make the hatch sample a lie. Slot 5 (`#509BE6`) is chosen on Maren's own species sweep (ASSA-209):
+## the hatch-to-fill contrast runs 2.60..5.83 there, well clear of the two species where the
+## near-black hatch nearly vanishes (purple 1.41, M blue 1.42). The label says what the colour means;
+## the swatch only promises the shape. ASSA-209 is the open hole, and a sample drawn on the worst
+## species would be reporting that hole as this panel's bug.
+const KEY_SAMPLE_SPECIES := 5
+
+## WHAT THE KEY DRAWS A ROW'S MARK IN. The table's ink for the fixed marks; for the three whose colour
+## is data at the draw call (a deposit's tint at its purity, the glyph ink `glyph_color` picks for
+## that surface, a building mark's own colour out of [building_mark]) an example this panel owns.
+static func map_key_sample_ink(entry: Dictionary) -> Color:
+	var id := StringName(entry["id"])
+	if id == &"deposit":
+		return species_tint(KEY_SAMPLE_SPECIES)
+	if id == &"species_glyph":
+		return glyph_color(species_tint(KEY_SAMPLE_SPECIES))
+	return mark_ink(id)
+
+
+## WHAT THE KEY'S TOGGLE SAYS, naming its key like the log's, the crafting menu's and the view's.
+static func map_key_toggle_text(shown: bool) -> String:
+	return "hide the map key (K)" if shown else "show the map key (K)"
+
+
+## **WHERE THE SPAWN PAD IS DRAWN, AND IT IS ONE TILE NOW** (ASSA-206 box 7, Maren's ruling on two
+## real shots: "it STAYS -- `sim/src/step.rs:71` spawns every joining player on `spawn_tile`, so in a
+## co-op demo it is the rendezvous, not trivia -- but it loses its size").
+##
+## It was `cell * 4` square, centred on the tile: 36x36 px on the 96x64 world, 1296 px, 5.1x the
+## player mark and the largest non-deposit mark on the view, for a ONE-tile fact, at 2.22:1 against
+## the ground. The biggest mark on the map was also its quietest.
+##
+## NEVER LARGER THAN A PERSON, which is the clause that makes this a rule rather than a number: a
+## tile is 9 px on the test world and would be 18 px on a 32x32 one, where an unclamped tile-sized
+## pad would again be bigger than the 16 px body standing on it. Centred on the tile's centre so the
+## clamped version still names the same tile.
+static func spawn_pad_rect(spawn: Vector2i, cell: float, origin: Vector2) -> Rect2:
+	var span := minf(cell, PLAYER_MARK_PX)
+	var middle := origin + (Vector2(spawn) + Vector2(0.5, 0.5)) * cell
+	return Rect2(middle - Vector2(span, span) * 0.5, Vector2(span, span))
+
 
 ## The tile size the map is drawn at. THE PANEL'S WIDTH COMES OUT OF THE MAP'S WIDTH TERM, which is
 ## what makes the map shrink instead of hiding under the HUD (Maren's ruling, ASSA-7). Floored to a
