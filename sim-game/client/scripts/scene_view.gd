@@ -387,20 +387,15 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 		# That costs a fifth of a second of standing still at the start of a session and buys a
 		# buffer the rest of the session spends.
 		#
-		# **AND IT STARTS A TICK SHALLOWER THAN THE DELAY, WHICH IS WHAT MAKES THE FIRST FRAME FREE**
-		# (ASSA-212, `tools/start_jump_table.gd` is the table this number came out of). The waiting
-		# body is drawn on `oldest`, so a start that does not jump must start the clock there -- and
-		# `oldest` is `newest - depth` while the loop settles at `newest - delay`. **Starting at a
-		# depth above the target is a surplus the loop then spends at its +10% stop**: measured 1.284
-		# of true speed for half a second at the tick misread this Mac produces, worse than the jump
-		# it replaced. Starting BELOW the target is a deficit, which the loop closes by running SLOW,
-		# and slow is the safe direction -- it deepens the buffer rather than draining it.
-		#
-		# THE DEPTH IS DERIVED, NOT CHOSEN. The loop's error is `produced - (delay + LEAD) - at`, and
-		# `produced` leads `newest` by up to one tick, so starting at `oldest` with a depth of
-		# `delay + LEAD - 1` is the deepest start whose error cannot be positive for any value of
-		# `since`. Deeper and the clock chases; shallower and the buffer is thinner for no gain.
-		var start_depth := delay + PLAYOUT_PRODUCTION_LEAD - 1.0
+		# **AND IT WAITS FOR THE WHOLE `delay`, WHICH IS A HALF TICK OF STALL ABSORPTION AND NOT A
+		# ROUNDING** (ASSA-212). I shipped a tick shallower than this for an hour tonight, because
+		# `delay + LEAD - 1` is the deepest start whose loop error cannot be positive -- and a probe
+		# in a real window found what the arithmetic could not: the half tick I had taken out is what
+		# absorbs a host stall. 1 of 3 GUI runs on the studio Mac went DRY at the start of the session
+		# (7 starved frames, buffer to 0.00) when a 164 ms tick landed in the first second, where the
+		# old rule's three runs bottomed out at 0.835 -- which is exactly what a 164 ms stall leaves
+		# from 2.5. Maren's bar on ASSA-197 is ZERO dry frames, so the buffer stays.
+		var start_depth := delay
 		if newest - oldest < start_depth:
 			# AND THE TRIM DOES NOT INTEGRATE WHILE THE CLOCK IS NOT RUNNING. The depth error is
 			# enormous here by design -- the buffer is deliberately filling -- and a term that learnt
@@ -423,12 +418,15 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 		#   at = oldest, depth >= delay       0.00t  0px  311 ms   0.943-1.238    0 / 0
 		#   at = oldest, depth >= delay+LEAD-1 0.00t 0px  211 ms   0.888-1.045    0 / 0
 		#
-		# The middle row is the one-line fix and it trades a jump for a worse number: 1.238 (1.284 at
-		# 30 fps) is outside both this file's 0.85-1.15 and the +/-25% the board's verdict is judged
-		# on. The surplus half tick has to be spent either in one frame or over time, and the third
-		# row is the only rule that never has it to spend -- it starts a tick short and the loop fills
-		# the rest by running slow. It is also 100 ms less standing still, which is the other half of
-		# what Maren saw.
+		# **ALL THREE COST SOMETHING AND THE MIDDLE ROW IS THE ONE THAT SHIPS.** The surplus half tick
+		# between `oldest` and where the loop settles has to be spent in one frame (a 16 px jump every
+		# player sees once), over time (this rule: up to +10% of rate for half a second, so 1.238 at a
+		# 14% tick misread and 1.284 at 30 fps, over the +/-25% the board's verdict uses) or out of the
+		# buffer (the third row: measured DRY frames on a stalling host). Wren ruled no jump beats a
+		# tight settle; Maren's bar is zero dry frames; so the chase is what is left, and its cost is
+		# a WORST CASE of a misread that current measurements put at 0.93-1.00 (trim median 0.992 on
+		# windows-latest, 0.933 on the loaded Mac), where the same rule reads 0.978-1.094. Pinned by
+		# `test_the_cost_of_a_jump_free_start_is_the_one_that_was_chosen` so it cannot grow quietly.
 		at = oldest
 	else:
 		# The error is in ticks and the correction is in rate. `PLAYOUT_CATCHUP` decides how hard we

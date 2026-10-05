@@ -1382,29 +1382,56 @@ func test_the_clocks_first_running_frame_does_not_jump_the_body() -> bool:
 					+ "tiles. The buffer was %.1f ticks deep and the clock started at %.3f instead of "
 					+ "%.3f") % [moved, moved * AssayScene.TILE_PX, int(AssayScene.TILE_PX), allowed,
 					float(ticks[ticks.size() - 1]) - drawn_before, play, drawn_before])
-		# **AND THE LOOP'S ERROR CANNOT BE POSITIVE ON THE FRAME IT STARTS, which is the whole reason
-		# the start depth is `delay + LEAD - 1` and not `delay`.** A positive error means the clock
-		# starts deeper than it settles and chases the surplus at its rate stop; the error is
-		# `produced - (delay + LEAD) - at` and `produced` leads `newest` by anything up to one whole
-		# tick, so the test is over that whole range rather than at the value this fixture happened to
-		# produce. A start depth of `delay` reads +0.5 here and is what the table measured as 1.284.
+		# **AND THE BUFFER IS STILL THE WHOLE `delay`, WHICH IS THE HALF OF THIS A TABLE GOT WRONG.**
 		var deep := float(ticks[ticks.size() - 1]) - play
-		for lead in [0.0, 0.25, 0.5, 0.75, 1.0]:
-			var err: float = float(ticks[ticks.size() - 1]) + lead - (delay
-					+ AssayScene.PLAYOUT_PRODUCTION_LEAD) - play
-			if err > 0.001:
-				return _fail(("the clock started %.2f ticks deep, so with the host %.2f of a tick "
-						+ "into its next position the loop's error is +%.3f and it spends the "
-						+ "surplus at its rate stop. A start may not be deeper than the loop settles")
-						% [deep, lead, err])
-		# AND IT IS STILL DEEP ENOUGH TO PLAY OUT, or this traded a jump for a starve. One whole tick
-		# is the floor: the clock advances by a frame at a time and a frame is a fraction of a tick,
-		# so a buffer of a tick cannot be crossed before the next position lands.
-		if deep < 1.0:
-			return _fail(("the first running frame left only %.2f ticks of buffer: a jump traded for "
-					+ "a starve") % [deep])
+		if deep < delay - 0.001:
+			return _fail(("the first running frame left %.2f ticks of buffer against a delay of %.1f. "
+					+ "A jump traded for stall absorption is still a trade: starting a tick shallower put "
+					+ "7 dry frames in a GUI run on the studio Mac (ASSA-212)") % [deep, delay])
+		# AND THE SURPLUS IT STARTS WITH IS BOUNDED BY WHAT THE LOOP MAY SPEND ON IT. `at` begins deeper
+		# than the loop settles, which the clock pays off at `rate`, and `PLAYOUT_NUDGE` is the whole
+		# authority it has -- so the start transient's drawn speed cannot exceed `1 + NUDGE` times
+		# whatever the platform's tick misread is. The surplus here is stated so a change to `delay` or
+		# `LEAD` that makes the chase longer shows up as a failing number rather than a slower start.
+		var surplus: float = deep - (delay + AssayScene.PLAYOUT_PRODUCTION_LEAD - 1.0)
+		if surplus > 1.0:
+			return _fail(("the clock starts %.2f ticks deeper than the shallowest start the loop would "
+					+ "not chase, so it spends over a tick at its +%.0f%% stop before it settles")
+					% [surplus, AssayScene.PLAYOUT_NUDGE * 100.0])
 		return true
 	return _fail("the clock never started over 8 ticks, so there was no first running frame to judge")
+
+
+## **WHAT THE CHOSEN START COSTS, PINNED IN BOTH DIRECTIONS SO IT CANNOT MOVE QUIETLY** (ASSA-212).
+##
+## Three rules, three costs, and none of them is free: a 16 px jump once per session, half a second of
+## chase at the loop's +10% stop, or half a tick less stall absorption. The chase is what ships, and
+## **at 30 fps and a 14% tick misread it reads 1.284, which is over the +/-25% the board's verdict
+## uses.** That number is not asserted as acceptable; it is asserted as MEASURED, because the thing
+## that must not happen is it growing while every bar stays green. Current real misreads are 0.93-1.00
+## (trim median 0.992 on windows-latest, 0.933 on this Mac), where the same rule reads 0.978-1.094 --
+## so the failing case is a worst case nobody has measured since the pairing fix, and whether it is
+## acceptable is Maren's to rule, with this number.
+##
+## IT FAILS IF THE COST SHRINKS TOO, which is deliberate: a drop means the start rule or a constant
+## moved, and whoever moved it should come and read this comment.
+func test_the_cost_of_a_jump_free_start_is_the_one_that_was_chosen() -> bool:
+	var worst := _drive_playout(0.86, true, 12.0, 0.0, 1.0, 30.0)
+	var real := _drive_playout(0.93, true, 12.0, 0.0, 1.0, 30.0)
+	if absf(float(worst["ratio_max"]) - 1.284) > 0.03:
+		return _fail(("the start transient at a 14%% misread and 30 fps reads %.3f of true speed "
+				+ "where it measured 1.284 on 2026-10-05. It is over the board's +/-25%% either way; "
+				+ "a change in it means the start rule moved and the trade needs re-reading")
+				% [float(worst["ratio_max"])])
+	if float(real["ratio_max"]) > 1.25:
+		return _fail(("at the misread this hardware actually shows (0.93) the start transient reads "
+				+ "%.3f, outside the +/-25%% the board's verdict uses. The worst case being out is a "
+				+ "stated cost; the measured case being out is a defect") % [float(real["ratio_max"])])
+	if int(worst["starved"]) > 0 or int(real["starved"]) > 0:
+		return _fail(("the start starved (%d, %d frames): the whole reason this rule keeps the full "
+				+ "`delay` of buffer is that a shallower one went dry on the studio Mac")
+				% [int(worst["starved"]), int(real["starved"])])
+	return true
 
 
 ## **AND THE INSTRUMENT THAT SAYS SO CAN SEE THE DEFECT IT CLEARED** (ASSA-212). Every number on this
@@ -1425,10 +1452,14 @@ func test_the_start_jump_harness_still_reads_the_jump_the_old_rule_made() -> boo
 				+ "evidence of anything") % [float(was["start_jump"]), predicted])
 	if float(ships["start_jump"]) > 0.001:
 		return _fail("the shipped rule read %.3f tiles of start jump" % [float(ships["start_jump"])])
-	# AND THE FREEZE IS A TICK SHORTER, which is the other half of what Maren saw in a window.
-	if float(was["freeze_s"]) - float(ships["freeze_s"]) < 0.05:
-		return _fail(("the shipped rule stood still for %.0f ms against the retired rule's %.0f: the "
-				+ "start depth came down by a tick and the freeze should have come down with it")
+	# **AND THE FREEZE IS UNCHANGED, WHICH IS A COST AND IS ASSERTED AS ONE.** A start a tick
+	# shallower cut 100 ms off the stand-still -- the other half of what Maren saw in a window -- and
+	# that is exactly the tick of stall absorption a GUI run then went dry without. The two rules wait
+	# for the same buffer, so they stand still for the same time, and this test says so rather than
+	# leaving the earlier claim in a comment where nothing could contradict it.
+	if absf(float(was["freeze_s"]) - float(ships["freeze_s"])) > 0.02:
+		return _fail(("the shipped rule stood still for %.0f ms against the retired rule's %.0f: they "
+				+ "wait for the same buffer, so a difference means the wait moved")
 				% [float(ships["freeze_s"]) * 1000.0, float(was["freeze_s"]) * 1000.0])
 	return true
 
@@ -1492,15 +1523,12 @@ func test_the_playout_clock_waits_for_a_buffer_and_never_runs_past_the_newest() 
 	# number the old sentinel could not tell from "not started".
 	var play: float = AssayScene.PLAYOUT_UNSTARTED
 	var ticks: Array[int] = []
-	# **THE DEPTH IT WAITS FOR IS NOT `delay`, AND IT IS DERIVED RATHER THAN TYPED** (ASSA-212). It
-	# starts a tick short of the delay on purpose: the waiting body is drawn on `oldest`, so a start
-	# that does not jump has to start there, and `oldest` deeper than the loop settles is a surplus
-	# the loop spends at its +10% stop. `delay + LEAD - 1` is the deepest start whose error cannot be
-	# positive. What this test is about is unchanged -- it may not start on NO buffer.
-	var wait_for: float = delay + AssayScene.PLAYOUT_PRODUCTION_LEAD - 1.0
-	if wait_for < 1.0:
-		return _fail(("the clock would start on %.1f ticks of buffer, under the one tick a frame "
-				+ "cannot cross: a start that shallow starves on its next frame") % [wait_for])
+	# **THE DEPTH IT WAITS FOR IS THE WHOLE `delay`, AND ASSA-212 IS WHY THAT IS WRITTEN DOWN HERE.**
+	# A tick shallower is the deepest start whose loop error cannot be positive, which is why I
+	# shipped it for an hour; the half tick it saves is the stall absorption, and a GUI run went dry
+	# in the first second without it. The buffer the clock waits for and the buffer it runs behind
+	# are the same number on purpose.
+	var wait_for: float = delay
 	for tick in 8:
 		ticks.append(tick)
 		var cursor := AssayScene.playout_at(play, ticks, step, step, delay)
@@ -1889,10 +1917,23 @@ func test_the_playout_trim_settles_from_a_cold_start_without_holding_the_body() 
 		return _fail(("winding up from a 14%% error held the body %d times and jumped it %d times "
 				+ "(90%% of the correction took %.1f s): the bar on this item is zero")
 				% [int(cold["starved"]), int(cold["dragged"]), float(cold["settle90"])])
-	if float(cold["ratio_min"]) < 0.85 or float(cold["ratio_max"]) > 1.15:
-		return _fail(("while the trim wound up the body was drawn at %.3f-%.3f of true speed: the "
-				+ "transient is visible, and it is the first seconds of every session")
-				% [float(cold["ratio_min"]), float(cold["ratio_max"])])
+	# **THE START IS JUDGED ON THE BOARD'S BAR AND THE REST ON THIS FILE'S, which is Wren's ruling of
+	# 04:45 UTC on ASSA-212 and not a widened bar.** Since that item the clock starts at `oldest` --
+	# where the waiting body is drawn, so nothing jumps -- and `oldest` is half a tick deeper than the
+	# loop settles, so the first half second is the loop paying that off at up to its +10% stop. At
+	# this run's 14% misread that stacks to 1.238. The alternatives were a 16 px jump and a buffer
+	# half a tick shallower, which put 7 dry frames in a GUI run; Wren ruled no jump beats a tight
+	# settle and Maren's bar is zero dry.
+	if float(cold["ratio_min"]) < 0.75 or float(cold["ratio_max"]) > 1.25:
+		return _fail(("from its FIRST FRAME the body was drawn at %.3f-%.3f of true speed, outside "
+				+ "the +/-25%% the board's verdict is judged on") % [float(cold["ratio_min"]),
+				float(cold["ratio_max"])])
+	var settled := _drive_playout(bias, true, 12.0, 1.0)
+	if float(settled["ratio_min"]) < 0.85 or float(settled["ratio_max"]) > 1.15:
+		return _fail(("a second in, while the trim was still winding up, the body was drawn at "
+				+ "%.3f-%.3f of true speed: the transient is visible past its start and it is the "
+				+ "first seconds of every session") % [float(settled["ratio_min"]),
+				float(settled["ratio_max"])])
 	if float(cold["settle90"]) > 8.0:
 		return _fail(("the integral took %.1f s to cover 90%% of a 14%% error (and %.1f s to come "
 				+ "within 1%%): the buffer runs shallow for that whole stretch, where a host stall "
