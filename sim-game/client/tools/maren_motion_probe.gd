@@ -61,6 +61,15 @@ var _samples: Array[Vector2] = []
 ## time, which is the ASSA-148 defect. 95 ms leaves a little room under the nominal 100.
 const SHORT_FRAME := 0.095
 
+## THE SIM'S OWN TILE AT EACH SAMPLE (ASSA-201). The snap bar below is written in TILES against a
+## reference of ONE tile per tick, and that reference is only true on an AXIS-ALIGNED walk: the sim
+## moves Chebyshev (`sim/src/step.rs` adds signum to BOTH axes), so a diagonal tick covers sqrt(2)
+## tiles. A correctly tweened diagonal body therefore steps 1.414 and trips a 0.9-tile "snap" with
+## nothing wrong. This probe was safe only because `_walk_target` hardcoded east.
+var _tiles: Array[Vector2i] = []
+## Walk diagonally instead of east, which is what makes the guard above reachable at all.
+var _diag := false
+
 var _parts: Array[float] = []
 var _frames := 0
 ## WHEN EACH SAMPLE WAS TAKEN, which is the premise nobody had checked before building a fix.
@@ -85,6 +94,7 @@ func _initialize() -> void:
 	_seconds = float(argv[1]) if argv.size() > 1 else 4.0
 	_whole = argv.size() > 2 and String(argv[2]) == "whole"
 	_solo = argv.size() > 2 and String(argv[2]) == "solo"
+	_diag = argv.size() > 3 and String(argv[3]) == "diag"
 	_screen = load("res://scenes/main.tscn").instantiate()
 	root.add_child(_screen)
 	_screen._ready()
@@ -134,8 +144,12 @@ func _process(_delta: float) -> bool:
 		print("view=%s close_up=%s running=%s" % ["whole world" if _whole else "close-up",
 				_screen._close_up, _screen._sim.running()])
 		var me := _screen._sim.spawn_tile() as Vector2i
-		_screen._client.submit(AssayActions.move_to(me + Vector2i(WALK, 0)))
-		print("walking from %s to %s" % [me, me + Vector2i(WALK, 0)])
+		# THROUGH `_walk_target` SO THIS PATH IS CLAMPED TOO. It used to add WALK to x inline, which
+		# is in-bounds from any spawn; a DIAGONAL offset is not, and `goto` off the map is refused
+		# and the probe then measures a body that never moved.
+		var to := _walk_target(me)
+		_screen._client.submit(AssayActions.move_to(to))
+		print("walking from %s to %s (%s)" % [me, to, "DIAGONAL" if _diag else "east"])
 	var now := _now()
 	if _solo:
 		if not _joined:
@@ -196,6 +210,15 @@ func _find_button(node: Node, label: String) -> Button:
 ## finding about the subject.
 func _walk_target(here: Vector2i) -> Vector2i:
 	var size: Vector2i = _screen._sim.size_tiles()
+	if _diag:
+		# ASSA-201'S OWN GOTO, not a symmetric one: from the demo spawn (56, 40) this is `goto 76 48`,
+		# which is 8 ticks on BOTH axes and then 12 on x alone. A pure 45-degree walk would have no
+		# straight phase at all, so it could not show the thing the item is about -- the speed
+		# CHANGING mid-walk.
+		var d := Vector2i(20, 8)
+		if here.x + d.x < size.x - 1 and here.y + d.y < size.y - 1:
+			return here + d
+		return here - d
 	if here.x + WALK < size.x - 1:
 		return here + Vector2i(WALK, 0)
 	return here - Vector2i(WALK, 0)
@@ -221,6 +244,7 @@ func _sample() -> void:
 		break
 	_parts.append(_screen._tick_gap)
 	_sampled_at.append(_now())
+	_tiles.append(_me_tile())
 	_depths.append((_screen._pending as Array).size())
 
 
@@ -392,10 +416,24 @@ func _report() -> void:
 		# estimate against a true ~100 ms is a factor of 1.5, not 4. That run moved 0.741 tiles in
 		# a 12 ms frame -- about 61 tiles/s against a true 10 -- which is sub-tile and so invisible
 		# to the bar. Whether a 24 px hop is felt is a design question and mine; see ASSA-167.
-		print("  WHOLE-TILE STEPS IN A FRAME UNDER %.0f ms: %d  <-- THE BAR, must be 0"
-				% [1000.0 * SHORT_FRAME, int(s["snaps_short"])]
-				+ " (of %d whole-tile steps in all; the rest are dropped frames, ASSA-167)"
-				% [int(s["snaps"])])
+		# THE BAR IS ONLY READABLE ON AN AXIS-ALIGNED WALK (ASSA-201), and that was true of every
+		# run this probe had ever done only because `_walk_target` hardcoded east. It is stated
+		# rather than assumed now: a diagonal tick is sqrt(2) tiles of REAL sim motion, so a
+		# correctly tweened body steps 1.414 and every tick trips a 0.9-tile "snap". Refusing to
+		# print a number is the honest outcome; printing one would be a 41% error wearing a bar.
+		var diag_ticks := _diagonal_ticks()
+		if diag_ticks > 0:
+			print("  WHOLE-TILE STEPS: NO VERDICT -- %d of this walk's ticks moved BOTH axes."
+					% diag_ticks)
+			print("     The sim is Chebyshev, so a diagonal tick is sqrt(2) = 1.414 tiles and a")
+			print("     correct tween trips the 0.9-tile snap test. This bar reads 1 tile/tick and")
+			print("     cannot be believed here. Re-run without `diag` for the bar (ASSA-201 box 3).")
+		else:
+			print("  WHOLE-TILE STEPS IN A FRAME UNDER %.0f ms: %d  <-- THE BAR, must be 0"
+					% [1000.0 * SHORT_FRAME, int(s["snaps_short"])]
+					+ " (of %d whole-tile steps in all; the rest are dropped frames, ASSA-167)"
+					% [int(s["snaps"])])
+		_report_regimes()
 		# WHY A MAX IS NOT ENOUGH, AND WHY THIS IS NOT A SECOND BAR (ASSA-167). The bar above counts
 		# WHOLE-tile steps and reads 0. What is left is the SUB-tile hop -- 0.6-0.7 tiles in a 12 ms
 		# frame -- and a max cannot answer the only question that matters about it, which is whether
@@ -458,3 +496,84 @@ func _report() -> void:
 				btotal / maxf(float(_bundle_gaps.size()), 1.0), blo, bhi])
 	print("first %s last %s" % [_samples[0], _samples[-1]])
 	print("PROBE OK")
+
+
+## HOW MANY OF THIS WALK'S SIM TICKS MOVED BOTH AXES, from the sim's own tile sequence rather than
+## from the target we asked for: a goto that runs out of one axis is diagonal for part of the walk
+## and straight for the rest, so the walk as a whole is neither.
+func _diagonal_ticks() -> int:
+	var n := 0
+	var prev := Vector2i(-9999, -9999)
+	for t in _tiles:
+		if prev.x != -9999 and t != prev:
+			if absi(t.x - prev.x) > 0 and absi(t.y - prev.y) > 0:
+				n += 1
+		if t != prev:
+			prev = t
+	return n
+
+
+## THE TWO SPEED REGIMES OF ONE GOTO (ASSA-201), measured on the DRAWN body rather than on the sim.
+## A Chebyshev diagonal covers sqrt(2) tiles a tick and a straight step covers 1, so a goto that is
+## not axis-aligned decelerates by 29.3% mid-walk with a perfect renderer and a perfect clock.
+##
+## SUSTAINED SPEED, NOT THE SPEED AT THE TICK BOUNDARY, and the difference is the whole measurement.
+## My first version sampled only the frames where the sim's tile CHANGED and divided that frame's
+## drawn distance by that frame's duration. That is the catch-up frame: it reported 25.8 and 15.8
+## tiles/s against true values of 14.14 and 10.00, because a ~16 ms frame carrying a tick's worth of
+## tween is an instantaneous rate and not a speed. Every frame of a phase counts here, so the
+## denominator is the time the phase actually took.
+func _report_regimes() -> void:
+	if _tiles.size() != _samples.size() or _tiles.size() < 3:
+		return
+	var diag_dist := 0.0
+	var diag_time := 0.0
+	var straight_dist := 0.0
+	var straight_time := 0.0
+	var diag_frames := 0
+	var straight_frames := 0
+	# The phase a frame belongs to is set by the most recent tile transition at or before it.
+	var phase_diag := false
+	var seen_move := false
+	var prev_tile := _tiles[0]
+	# THE WALK ENDS AND THE BODY STANDS STILL FOREVER AFTER. Counting those frames puts zero
+	# distance over real seconds into whichever phase happened to be last, which is how a straight
+	# phase measured 3.27 tiles/s against a true 10.00 on my first run. Same trap as the "parked
+	# 86% of frames" statistic I had to withdraw on ASSA-200: a window that outlives the motion.
+	var last_move := 0
+	for i in range(1, _tiles.size()):
+		if _tiles[i] != _tiles[i - 1]:
+			last_move = i
+	if last_move < 2:
+		return
+	for i in range(1, last_move + 1):
+		var t := _tiles[i]
+		if t != prev_tile:
+			phase_diag = absi(t.x - prev_tile.x) > 0 and absi(t.y - prev_tile.y) > 0
+			seen_move = true
+			prev_tile = t
+		if not seen_move:
+			continue
+		var d := (_samples[i] - _samples[i - 1]).length()
+		var dt := _sampled_at[i] - _sampled_at[i - 1]
+		if dt <= 0.0:
+			continue
+		if phase_diag:
+			diag_dist += d
+			diag_time += dt
+			diag_frames += 1
+		else:
+			straight_dist += d
+			straight_time += dt
+			straight_frames += 1
+	if diag_time <= 0.0 or straight_time <= 0.0:
+		return
+	var dm := diag_dist / diag_time
+	var sm := straight_dist / straight_time
+	print("  THE TWO REGIMES OF THIS GOTO (ASSA-201), SUSTAINED drawn tiles per second:")
+	print("     diagonal phase  %3d frames, %.2f tiles in %.2fs = %.2f tiles/s  (true 14.14)"
+			% [diag_frames, diag_dist, diag_time, dm])
+	print("     straight phase  %3d frames, %.2f tiles in %.2fs = %.2f tiles/s  (true 10.00)"
+			% [straight_frames, straight_dist, straight_time, sm])
+	print("     change mid-walk %+.1f%%   (the sim's own figure is -29.3%%)"
+			% [100.0 * (sm - dm) / dm])
