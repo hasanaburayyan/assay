@@ -528,9 +528,27 @@ static func ground_row(manifest: Dictionary, at: Vector2i) -> String:
 ## TWO SCALES, because the placement study said one was not enough: uniform small props make two
 ## places look like the same place, since statistically they ARE. GRIT is regional texture, clumped
 ## by a low-frequency field; LARGE is the rare thing you can walk back to. Maren's census of the
-## shipped frames: 9 landmarks here, 7 twenty tiles east.
+## shipped frames counted 9 landmark props here and 7 twenty tiles east; the roll below is what
+## produces those counts and dropping rows from the list does not change them (see `SCATTER_LARGE`).
 const SCATTER_GRIT := ["grit0", "grit1", "grit2"]
-const SCATTER_LARGE := ["boulder0", "boulder1", "tuft0", "tuft1", "log0", "log1"]
+## **`tuft0`/`tuft1` ARE IN THE SHEET AND ARE DELIBERATELY NOT IN THIS LIST** (Maren, ASSA-202
+## point 2, 22:35). They clear her contrast floor and are still not landmarks: in her own engine
+## frames the five props measure p50 dE 17.4-19.7 -- FLAT across the whole set -- while area spans
+## 3.7x (tuft 106/107 px against boulder 214 and log 358/396) and internal lightness 2.7x (L* sd
+## 3.9/4.2 against 9.0-10.8). A bar returning the same value for a findable prop and an unfindable
+## one is not the bar for findability: **contrast is not findability, and a per-pixel median cannot
+## see mass.** Neither of us can find either tuft at 1x in a frame where every boulder is obvious.
+##
+## WHY THE RATE DOES NOT MOVE WITH THE LIST. `SCATTER_LARGE_ODDS` is ONE roll deciding WHETHER a
+## landmark lands; the list only decides WHICH. So its length never set the landmark rate -- it set
+## what fraction of landmarks are findable, and at six rows that was 4/6. The visible supply was
+## 1/80 x 4/6 = 1/120, about 4.1 a screen against the ~6 the ruling asked for. Dropping two rows at
+## an unchanged 1/80 inflates nothing; it finally pays the ruling. I recommended 1/120 and Maren
+## overruled it with this arithmetic, which is hers and is right.
+##
+## THE ROWS STAY IN `scatter.png` ON PURPOSE. A ground-cover tier that draws them at grit's rate is
+## a later call and nobody is asking for it now; the sheet keeps the art until we do.
+const SCATTER_LARGE := ["boulder0", "boulder1", "log0", "log1"]
 ## NOT THE RATE, AND THE NAME SAYS SO. 0.24 is the UNIFORM rate the clumped field was calibrated
 ## AGAINST in the placement study -- a null, not a density. Maren ruled on it directly: "do not move
 ## the world to match a constant's name; fix the name."
@@ -540,7 +558,10 @@ const SCATTER_GRIT_UNIFORM_NULL := 0.24
 ## world-wide (93.7% over the 464 tiles it was tuned on, which is why it is not 100%). QUOTE THIS
 ## ONE. Unused by the code on purpose: it is a measurement, not a lever.
 const SCATTER_GRIT_REALISED := 0.1525
-const SCATTER_LARGE_ODDS := 1.0 / 80.0   # realised 0.0124/tile = 6.3 landmarks per 504-tile screen
+## ONE ROLL, AND IT DECIDES *WHETHER*, NEVER *WHICH*. Realised 0.0124/tile = 6.3 landmark props per
+## 504-tile screen, and since the tuft rows left `SCATTER_LARGE` all 6.3 of them are findable; it was
+## 4.2 before. UNCHANGED BY THE LIST ON PURPOSE -- see `SCATTER_LARGE`.
+const SCATTER_LARGE_ODDS := 1.0 / 80.0
 const SCATTER_FIELD_CELL := 12           # tiles per density-field cell
 const SCATTER_FIELD_GAIN := 2.77
 const SCATTER_FIELD_SHAPE := 2.6

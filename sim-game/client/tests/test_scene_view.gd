@@ -2416,23 +2416,156 @@ func _at_key(at: Vector2) -> String:
 
 ## **SCATTER MAY NEVER COVER A DEPOSIT.** Ore is one of the two things in this game you can act on;
 ## a prop drawn over it hides the thing the whole layer is forbidden to compete with (ASSA-202 box 3).
+## **ORE SITS BESIDE THE PROPS, NOT UNDER THEM, AND THAT IS THE WHOLE REPAIR.** The first version of
+## this test put a deposit on every tile that HAD a prop, so `placements` skipped exactly the ore
+## tiles and the loop below ran over props that could not have been on ore whatever the code did.
+## Nerite's QA note on ASSA-210 named it: "a probe that jitters a prop from a non-ore tile onto an
+## adjacent ore tile is not covered." It was worse than that -- the old fixture could not produce an
+## adjacency at all, so the ONE case the test exists for was the one case it never built.
+##
+## IT ALSO MEASURED THE WRONG TILE. `dest.position / TILE_PX` floored is the FRAME's top-left, and
+## `scatter`'s `anchor_px` is `[0, 20]` = 10 drawn px of headroom, so for every prop less than 0.3125
+## of a tile down its own tile that answer was the row NORTH. Mine, shipped, and not a close call.
+##
+## SO THERE ARE TWO DIFFERENT PROMISES HERE AND THEY NEEDED SEPARATING:
+## 1. **No prop is PLACED on a deposit tile** -- the `ore.has(at)` skip, asserted on the tile the
+##    offset rounds back to (the offsets are sub-tile, so the nearest tile is the one that asked).
+## 2. **A prop's INK may lap onto a neighbouring deposit, and the ore is drawn over it.** This is not
+##    a bound, it is draw order: a prop is 32x42 drawn px with up to 9 px of jitter, so it ALWAYS
+##    laps 10 px onto the tile to its north and laps sideways whenever the offset leans that way.
+##    The layer is appended before the ore loop and `world_layer.gd` draws FLOOR in array order, so
+##    ore paints over the lap. Move the scatter loop below the ore loop and part 2 goes red.
 func test_scatter_never_lands_on_an_ore_tile() -> bool:
+	var manifest := _manifest()
 	var ore := {}
-	var tiles := 0
+	var props := 0
 	for y in range(0, 20):
 		for x in range(0, 20):
 			var at := Vector2i(x, y)
-			if not AssayScene.scatter_at(at).is_empty():
-				ore[at] = {"species": 0, "grade": "C", "depleted": false, "purity": 50}
-				tiles += 1
-	if tiles < 10:
-		return _fail("fixture put only %d deposits down: it cannot see a prop on ore" % tiles)
-	var places := AssayScene.placements(_view({"ore": ore}))
-	for place in _of(places, "scatter"):
-		var dest: Rect2 = (place as Dictionary)["dest"]
-		var tile := Vector2i((dest.position / AssayScene.TILE_PX).floor())
+			if AssayScene.scatter_at(at).is_empty():
+				continue
+			props += 1
+			# EAST OF A PROP, AND ONLY WHERE NOTHING IS DRAWN. Ore on a prop's own tile would
+			# suppress that prop and put the fixture back where it started.
+			for side: Vector2i in [Vector2i.RIGHT, Vector2i.DOWN]:
+				var beside: Vector2i = at + side
+				if AssayScene.scatter_at(beside).is_empty():
+					ore[beside] = {"species": 0, "grade": "C", "depleted": false,
+							"purity": 50}
+	if props < 30 or ore.size() < 30:
+		return _fail(("fixture holds %d props and %d deposits beside them: too few to see a prop "
+				+ "lean onto a deposit") % [props, ore.size()])
+
+	var view := _view({"ore": ore})
+	var places := AssayScene.placements(view)
+	var first_ore := -1
+	var last_scatter := -1
+	var lapping := 0
+	for i in range(places.size()):
+		var place: Dictionary = places[i]
+		if int(place.get("layer", AssayScene.FLOOR)) != AssayScene.FLOOR:
+			continue
+		var asset := String(place.get("asset", ""))
+		if asset == "ore" and first_ore < 0:
+			first_ore = i
+		if asset != "scatter":
+			continue
+		last_scatter = i
+		var dest: Rect2 = place["dest"]
+		# PART 1: the tile that asked for this prop. `round`, not `floor`: both jitter constants
+		# are under half a tile peak-to-peak, so the nearest tile is the source and the floor is
+		# the source MINUS ONE for every negative offset -- about three props in four.
+		var corner := _scatter_corner(manifest, dest, view["origin"])
+		var tile := Vector2i(corner.round())
 		if ore.has(tile):
-			return _fail("a scatter prop is drawn on ore tile %s" % tile)
+			return _fail(("a scatter prop is placed on ore tile %s (drawn corner %s). Ore is one "
+					+ "of the two things in this game you can act on; the layer may not sit on "
+					+ "it.") % [tile, corner])
+		for step: Vector2i in [Vector2i.ZERO, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.UP,
+				Vector2i.LEFT]:
+			var near: Vector2i = tile + step
+			if not ore.has(near):
+				continue
+			if dest.intersects(Rect2(Vector2(near) * AssayScene.TILE_PX - view["origin"],
+					Vector2.ONE * AssayScene.TILE_PX)):
+				lapping += 1
+				break
+	# PART 2'S PREMISE, STATED BEFORE IT IS USED. If no prop's ink reaches a deposit then the draw
+	# order below is guarding nothing and this test is quietly empty again.
+	if lapping < 10:
+		return _fail(("only %d props put ink on a neighbouring deposit, so this cannot tell whether "
+				+ "the ore is drawn over the lap") % lapping)
+	if first_ore < 0:
+		return _fail("no ore was drawn at all beside %d props: the fixture is not reaching the view"
+				% props)
+	if last_scatter > first_ore:
+		return _fail(("a scatter prop is drawn at index %d, AFTER the first ore at %d. Both are "
+				+ "FLOOR and `world_layer.gd` draws FLOOR in array order, so %d props whose ink "
+				+ "laps onto a deposit would be painted ON TOP of it.") % [last_scatter, first_ore,
+				lapping])
+	return true
+
+
+## THE TILE COORDINATE A DRAWN SCATTER RECT CAME FROM: the exact inverse of `_place`, which is
+## `corner * TILE_PX - anchor_px * scale - origin`. Read out of the shipped manifest rather than
+## written here, because `anchor_px` is the art's to change and a number copied into a test is a
+## second source of truth that goes stale silently.
+func _scatter_corner(manifest: Dictionary, dest: Rect2, origin: Vector2) -> Vector2:
+	var spec: Dictionary = manifest["scatter"]
+	var authored := float((spec["frame_px"] as Array)[0]) / float((spec["tiles"] as Array)[0])
+	var scale := AssayScene.TILE_PX / authored
+	var anchor: Array = spec["anchor_px"]
+	var back := Vector2(float(anchor[0]), float(anchor[1])) * scale
+	return (dest.position + back + origin) / AssayScene.TILE_PX
+
+
+## **EVERY ROW THE PICKER CAN CHOOSE IS IN THE SHEET, AND EVERY ROW IN THE SHEET'S LISTS IS
+## REACHABLE.** Maren's builder trap on ASSA-202: the landmark picker was `_fnv([x, y, 8]) % 6` in
+## the Python hand-off, a hardcoded literal, and the moment the tuft rows left `SCATTER_LARGE` a
+## four-row list read with `% 6` either errors or mis-distributes. A modulus smaller than the list
+## is the silent half of that, and it looks like nothing: the last rows simply never appear.
+##
+## AND THE TUFTS ARE ASSERTED TO BE STILL IN THE SHEET AND STILL UNUSED. That is the ruling in a
+## form that can fail: Maren said "do not re-render the tuft, its rows stay in the sheet" for a
+## ground-cover tier we have not designed, so deleting the art and putting tufts back among the
+## landmarks are both changes someone has to make on purpose.
+func test_every_scatter_row_is_in_the_sheet_and_every_row_is_reachable() -> bool:
+	var manifest := _manifest()
+	if not manifest.has("scatter"):
+		return _fail("the shipped manifest has no `scatter` asset")
+	var sheet := {}
+	for row in ((manifest["scatter"] as Dictionary)["rows"] as Array):
+		sheet[String((row as Dictionary).get("name", row))] = true
+	var listed := {}
+	for name in AssayScene.SCATTER_GRIT + AssayScene.SCATTER_LARGE:
+		if not sheet.has(name):
+			return _fail("scatter row %s is picked by the client and is not in scatter.png: %s"
+					% [name, sheet.keys()])
+		listed[name] = true
+	for tuft in ["tuft0", "tuft1"]:
+		if not sheet.has(tuft):
+			return _fail(("%s has gone from scatter.png. Maren ruled on ASSA-202 that the tuft "
+					+ "rows stay in the sheet for a later ground-cover tier even though they are "
+					+ "not landmarks; re-render it or change the ruling, not just the sheet")
+					% tuft)
+		if listed.has(tuft):
+			return _fail(("%s is back among the scatter lists. It clears the contrast floor and is "
+					+ "still not findable -- 106 px flat against a boulder's 214 in Maren's own "
+					+ "engine frames (ASSA-202 point 2, ruled 22:35)") % tuft)
+
+	var seen := {}
+	for y in range(-60, 60):
+		for x in range(-60, 60):
+			for prop in AssayScene.scatter_at(Vector2i(x, y)):
+				seen[String(prop[0])] = true
+	for name in listed:
+		if not seen.has(name):
+			return _fail(("row %s is in a scatter list and was drawn on none of 14,400 tiles, so "
+					+ "the picker cannot reach it -- a modulus that does not match the list's own "
+					+ "size (ASSA-202, Maren's builder trap)") % name)
+	for name in seen:
+		if not listed.has(name):
+			return _fail("row %s is drawn and is in neither scatter list" % name)
 	return true
 
 
@@ -2440,12 +2573,16 @@ func test_scatter_never_lands_on_an_ore_tile() -> bool:
 ## with 9 px of jitter, so a tile just off screen still puts ink on screen. Without the grow the ink
 ## appears only once its own tile crosses the boundary, which is a visible pop as the camera moves.
 func test_scatter_is_drawn_for_tiles_just_outside_the_window() -> bool:
+	var manifest := _manifest()
 	var view := _view({"origin": Vector2(20.0 * AssayScene.TILE_PX, 20.0 * AssayScene.TILE_PX)})
 	var window := AssayScene.visible_tiles(view["origin"], view["size"], view["world_tiles"])
 	var outside := 0
 	for place in _of(AssayScene.placements(view), "scatter"):
 		var dest: Rect2 = (place as Dictionary)["dest"]
-		var tile := Vector2i(((dest.position + view["origin"]) / AssayScene.TILE_PX).floor())
+		# `_scatter_corner` AND NOT A FLOOR OF `dest.position`, which is the frame's top-left and
+		# sits 10 drawn px above the tile -- it answered with the row to the north for a third of
+		# the props and that error is the same one the ore test above carried.
+		var tile := Vector2i(_scatter_corner(manifest, dest, view["origin"]).round())
 		if not window.has_point(tile):
 			outside += 1
 	if outside == 0:
