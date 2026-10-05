@@ -18,14 +18,25 @@ extends SceneTree
 ##                 probe can do and still know how long a frame was.
 ##   sampled       exactly what `maren_motion_probe._sample()` does, copied rather than called so the
 ##                 two files cannot drift into measuring different things.
-##   instrumented  quiet, plus what the ENGINE says about each frame: the time its own `_process`
-##                 took, the node count, and static memory.
+##   instrumented  quiet, plus what the ENGINE says about each frame: the draw calls it issued, the
+##                 node count, static memory, and whether the ore cache rebuilt.
 ##
-## **AND `instrumented` IS WHAT ANSWERS BOX 3, because a frame length alone names nobody.** A 108 ms
-## frame whose `_process` took 2 ms spent its time outside our scripts -- present, swap, texture
-## upload, the window server -- and one whose `_process` took 100 ms is ours to fix. The node count
-## separates a HUD rebuild (this client builds Labels by the dozen when a section's signature moves)
-## from a draw-side stall, and static memory separates a big allocation from both.
+## **WHAT THIS PROBE CANNOT DO IS NAME WHAT A LONG FRAME SPENT ITS TIME ON** -- ASSA-167 box 3, which
+## was rewritten to say so. It used to print a `_process` / `outside` split from
+## `Performance.TIME_PROCESS`, and that column was wrong rather than imprecise: the monitor is a
+## ~1 Hz aggregate, so 703 of 715 consecutive frames report an IDENTICAL value, and the value
+## attached to one frame EXCEEDED that frame's own measured length in 698 of 715. `outside` therefore
+## printed a NEGATIVE millisecond count on 98% of frames. Deleted on Maren's ruling, ASSA-167.
+## **Do not bring back a column that cannot say which frame it belongs to.**
+##
+## **WHAT IS LEFT DOES ELIMINATION, NOT ATTRIBUTION, and that is worth having.** The rest are true
+## per-frame counters, each read at the end of its own frame: if the slowest frame issues the same
+## draw calls over the same node count with no allocation and no ore-cache rebuild, nothing asked
+## that frame to do more and the time went somewhere that is not our work. The node count separates a
+## HUD rebuild (this client builds Labels by the dozen when a section's signature moves) from a
+## draw-side stall, and static memory separates a big allocation from both. A median of 42 draw calls
+## with the ASSA-214 scatter layer and 42 without is how this column killed a published explanation
+## of that layer's cost.
 ##
 ## Run it in a REAL WINDOW. `--headless` has never hitched (137 fps mean, worst 23 ms over 1642
 ## frames) and a dummy driver measures nothing about presenting a frame.
@@ -48,8 +59,8 @@ var _asked: Array = []
 ## WHEN EACH FRAME ENDED, in microseconds. A `PackedInt64Array` and not an `Array[int]`: a packed
 ## array does not box its elements, so the one thing this probe does per frame stays one store.
 var _at := PackedInt64Array()
-## THE ENGINE'S OWN ACCOUNT OF THE SAME FRAME, `instrumented` only.
-var _process_ms := PackedFloat64Array()
+## THE ENGINE'S OWN ACCOUNT OF THE SAME FRAME, `instrumented` only. Per-frame counters only; see the
+## header for why `Performance.TIME_PROCESS` is not among them and must not come back.
 var _nodes := PackedInt64Array()
 var _static_kb := PackedFloat64Array()
 var _draws := PackedInt64Array()
@@ -167,7 +178,6 @@ func _record() -> void:
 		_sampled_at.append(_now())
 		_depths.append((_screen._pending as Array).size())
 	elif _mode == "instrumented":
-		_process_ms.append(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
 		_nodes.append(int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)))
 		_static_kb.append(Performance.get_monitor(Performance.MEMORY_STATIC) / 1024.0)
 		# **HOW MUCH WORK THE FRAME WAS, so a long one can be told from a busy one.** If the slowest
@@ -213,27 +223,23 @@ func _report() -> void:
 		var i: int = order[rank]
 		var line := "    frame %5d  %6.1f ms" % [i + 1, gaps[i]]
 		if _mode == "instrumented" and i + 1 < _draws.size():
-			# THE SPLIT THAT NAMES A CULPRIT. `_process` is every script this window runs in that
-			# frame; the rest is the engine's: draw, present, upload, and whatever the window server
-			# does with us. The node delta is a HUD rebuild; the memory delta is an allocation.
-			line += ("   _process %6.2f ms   outside %6.1f ms   nodes %+d   static %+.0f KB"
-					+ "   draws %d (median %d)   ore cache %s") % [
-					_process_ms[i + 1], gaps[i] - _process_ms[i + 1],
+			# WHAT THE FRAME WAS ASKED TO DO, not where its time went. Every number here is a counter
+			# read at the end of this frame against the end of the one before, so it belongs to this
+			# frame and to nothing else -- which is exactly what the deleted `_process` column could
+			# not say about itself. The node delta is a HUD rebuild; the memory delta is an
+			# allocation; the draw calls against their own median say whether this frame was busier.
+			line += "   nodes %+d   static %+.0f KB   draws %d (median %d)   ore cache %s" % [
 					_nodes[i + 1] - _nodes[i], _static_kb[i + 1] - _static_kb[i],
 					_draws[i + 1], _median(_draws),
 					"REBUILT" if _ore[i + 1] != _ore[i] else "unchanged"]
 		print(line)
 	if _mode == "instrumented":
-		var sorted_ms := _process_ms.duplicate()
-		sorted_ms.sort()
 		var ore_moves := 0
 		for i in range(1, _ore.size()):
 			if _ore[i] != _ore[i - 1]:
 				ore_moves += 1
-		print(("  _process over the run: median %.2f ms, p95 %.2f ms, max %.2f ms, against a %.2f ms"
-				+ " median frame. Ore cache rebuilt in %d of %d frames.")
-				% [sorted_ms[sorted_ms.size() / 2], sorted_ms[int(float(sorted_ms.size()) * 0.95)],
-				sorted_ms[sorted_ms.size() - 1], _median_f(gaps), ore_moves, _ore.size()])
+		print("  ore cache rebuilt in %d of %d frames, against a %.2f ms median frame."
+				% [ore_moves, _ore.size(), _median_f(gaps)])
 		print("  the machine while this ran: %s" % _load())
 	if _mode == "sampled":
 		print("  (the sampled arm also filled %d positions, %d parts, %d depths)"
