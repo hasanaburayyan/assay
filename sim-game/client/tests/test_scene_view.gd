@@ -1317,6 +1317,75 @@ func test_the_measured_tick_rate_is_per_tick_and_tracks_a_drifting_host() -> boo
 	return true
 
 
+## **AND THE FIRST FRAME IT RUNS DOES NOT JUMP** (ASSA-212, found by Maren with a different tool).
+##
+## **THE DEFECT, AND THE NUMBER WAS PREDICTED BEFORE IT WAS CONFIRMED.** While the buffer fills, the
+## branch below returns `index: 0`, so the body is DRAWN ON THE OLDEST POSITION HELD and stands still
+## while the sim runs ahead -- the deliberate quarter-second at the start of a walk. Then the clock
+## started with `at = newest - delay`. Positions arrive one tick at a time, so `newest - oldest`
+## crosses `PLAYOUT_DELAY` 2.5 at exactly **3**, and that assignment moves the drawn body from
+## `oldest` to `newest - 2.5` -- **half a tile, 16 px at 32 px tiles, in one frame.**
+##
+## Maren measured 16 px and a 160 ms freeze in a real window (`maren_corner_strip.gd`, main 9a800c1)
+## and offered me the excuse that it was their harness; the arithmetic above says it is the clock.
+## **Two instruments agreeing, neither of them the probe that signed off box 1a** -- which could not
+## see this at all, because the bar trims the first 150 ms and the jump lives inside it.
+##
+## THE FIX IS TO START AT `oldest`, the position the body is already being drawn on, so the first
+## running frame moves it by one frame's worth and nothing else. That is not a slower start: the
+## buffer is `newest - oldest` deep either way, which is DEEPER than the target rather than shallower,
+## and the loop closes the half tick at its own capped rate. ASSA-119 is untouched -- `oldest` is a
+## position the sim produced.
+func test_the_clocks_first_running_frame_does_not_jump_the_body() -> bool:
+	var delay: float = AssayScene.PLAYOUT_DELAY
+	var step := 0.1
+	# **A REAL FRAME, AND THE FIRST VERSION OF THIS TEST PASSED THE DEFECT FOR WANT OF ONE.** Written
+	# with `dt` equal to a whole tick, "one frame's worth of movement" is a whole tile, and a half-tile
+	# jump hides inside it: 294 green against the unfixed code. A window runs 11 ms frames against a
+	# 100 ms tick, so one frame is worth 0.11 tiles and the jump is four and a half times that. The
+	# tolerance below is derived from this number, never typed.
+	var frame := step / 9.0
+	var play: float = AssayScene.PLAYOUT_UNSTARTED
+	var ticks: Array[int] = []
+	var drawn_before := 0.0
+	for tick in 8:
+		ticks.append(tick)
+		var oldest := float(ticks[0])
+		var was := play
+		var cursor := AssayScene.playout_at(play, ticks, frame, step, delay)
+		play = float(cursor["play_tick"])
+		if was == AssayScene.PLAYOUT_UNSTARTED and play == AssayScene.PLAYOUT_UNSTARTED:
+			# WHERE THE BODY IS BEING DRAWN WHILE IT WAITS: the entry `index` points at, which is the
+			# oldest held. Taken from the function rather than assumed, so a change of that behaviour
+			# moves this test's own premise instead of silently passing.
+			if int(cursor["index"]) != 0:
+				return _fail(("while the buffer fills the clock pointed at entry %d, not the oldest "
+						+ "held: this test's premise is that the waiting body is drawn on `oldest`")
+						% [int(cursor["index"])])
+			drawn_before = oldest
+			continue
+		if was != AssayScene.PLAYOUT_UNSTARTED:
+			continue
+		# **THE FRAME THE CLOCK STARTS ON.** The body was standing on `drawn_before`; one frame of
+		# `frame` at the host's own rate is worth `frame / step` of a tick, so anything beyond that is
+		# a jump the player sees.
+		var moved := absf(play - drawn_before)
+		var allowed := frame / step * (1.0 + AssayScene.PLAYOUT_NUDGE)
+		if moved > allowed + 0.001:
+			return _fail(("the clock's first running frame moved the drawn body %.3f tiles (%.1f px at "
+					+ "%d px tiles) from the position it had been standing on. One frame is worth %.3f "
+					+ "tiles. The buffer was %.1f ticks deep and the clock started at %.3f instead of "
+					+ "%.3f") % [moved, moved * AssayScene.TILE_PX, int(AssayScene.TILE_PX), allowed,
+					float(ticks[ticks.size() - 1]) - drawn_before, play, drawn_before])
+		# AND THE BUFFER IS STILL AT LEAST AS DEEP AS THE DELAY, or this traded a jump for a starve.
+		var deep := float(ticks[ticks.size() - 1]) - play
+		if deep < delay - 0.001:
+			return _fail(("the first running frame left only %.2f ticks of buffer against a delay of "
+					+ "%.1f: a jump traded for a starve") % [deep, delay])
+		return true
+	return _fail("the clock never started over 8 ticks, so there was no first running frame to judge")
+
+
 ## **THE CLOCK WAITS FOR A BUFFER BEFORE IT STARTS, AND NEVER READS PAST THE NEWEST POSITION HELD**
 ## (ASSA-197).
 ##

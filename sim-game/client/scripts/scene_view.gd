@@ -392,7 +392,21 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 			# from it would come out of the join wound to its stop in the wrong direction.
 			return {"play_tick": PLAYOUT_UNSTARTED, "index": 0, "part": 0.0,
 					"starved": false, "rate": 1.0, "trim": trim, "depth": newest - oldest}
-		at = newest - delay
+		# **AND IT STARTS WHERE THE BODY ALREADY IS, WHICH IS `oldest`** (ASSA-212). This read
+		# `at = newest - delay`, and the branch above draws the waiting body on the OLDEST position
+		# held, so the frame the clock started on moved it from `oldest` to `newest - delay` in one
+		# step. Positions arrive one tick at a time, so `newest - oldest` crosses `delay` at exactly
+		# 3 and that step is 0.5 of a tile -- **16 px at 32 px tiles, at the start of every walk.**
+		# Maren measured 16 px and a 160 ms freeze in a real window with their own tool; the
+		# arithmetic here predicted the same number, which is how it was found.
+		#
+		# IT IS NOT A SLOWER START AND IT COSTS NO LATENCY. The clock begins on the same frame either
+		# way, so "press -> first drawn movement" is unchanged; what changes is that the first frame
+		# of movement is worth one frame instead of five. The buffer starts `newest - oldest` deep,
+		# which is DEEPER than the target rather than shallower, and the loop closes the half tick at
+		# its own capped rate -- at most `PLAYOUT_NUDGE` of speed, inside the bar, over half a second.
+		# ASSA-119 is untouched: `oldest` is a position the sim produced.
+		at = oldest
 	else:
 		# The error is in ticks and the correction is in rate. `PLAYOUT_CATCHUP` decides how hard we
 		# lean on it and `PLAYOUT_NUDGE` caps it, so the worst speed error this clock can introduce
