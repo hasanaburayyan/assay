@@ -41,8 +41,14 @@ difference is the machine designer.
 ## What exists today (Built)
 
 The simulation runs headless in Rust (`sim/`), with a terminal client
-(`sim-cli/`) and a multiplayer host (`sim-relay/`). There is no graphical
-client yet; a Godot client is planned.
+(`sim-cli/`) and a multiplayer host (`sim-relay/`). **There is also a graphical
+client** (`sim-game/client/`, Godot 4): it runs the real rules through the
+`sim-godot` GDExtension, ships in every CI bundle as `Assay.app` / `Assay.exe`,
+starts its own relay from a button so you can play solo from a downloaded zip,
+and rejoins your own slot after a drop. The board has opened its window and
+reported on it (Decision #34) and two people have played co-op through it
+(Decision #41). This paragraph said "there is no graphical client yet" until
+2026-10-04 (ASSA-207).
 
 - **World:** a square tile grid split into 16×16-tile chunks. The test world
   is 6×4 chunks (96×64 tiles). A seed number generates the whole world.
@@ -78,6 +84,19 @@ client yet; a Godot client is planned.
 - **Assay and naming:** a species reads as rough bands until someone
   assays a deposit of it. Whoever mines or assays it first discovers it
   and may name it, or let others name it.
+- **The client's two views** (what they CARRY, not what they should — the
+  design ruling for the schematic is in "Art direction" below and is Maren's).
+  The close-up is a camera on you at 32 px a tile, drawing sprites; the
+  whole-world schematic draws all 96×64 at 9 px a tile. On the schematic a
+  deposit is a filled disc whose **hue is the species, brightness the purity
+  and radius the radius**, carrying the species letter; a rock **nothing can
+  get the ore out of** is hatched in the map's own ground colour, which covers
+  both "too hard to mine" and "minable but unsmeltable" (ASSA-187/199 —
+  55.1% of rocks over 30 seeds); **every factory is a white diamond with a
+  2 px keyline** (ASSA-189/203); and each player is a 16 px square, yours
+  ringed, both keylined. Every one of those is a measured read rather than a
+  chosen look, and `client/tools/window_shot.gd` photographs the real window
+  so the Game Director can rule on what shipped instead of on a description.
 
 Gameplay today is the first loop described below. Belts, inserters and
 drills are next.
