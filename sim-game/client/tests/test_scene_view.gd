@@ -822,6 +822,22 @@ func _joined(seed_text := "777042") -> Node:
 	return screen
 
 
+## THE SIM TICK OF EVERY POSITION THE SCREEN IS STILL HOLDING, oldest first -- the queue whose cap
+## decides whether the playout clock can be dragged forward by an arrival (`PLAYOUT_QUEUE`).
+func _queue_ticks(screen: Node) -> Array[int]:
+	var out: Array[int] = []
+	for entry in (screen._pending as Array):
+		out.append(int((entry as Dictionary)["tick"]))
+	return out
+
+
+## HOW FAR ONE DRAWN FRAME OF `delta` MOVES THE PLAYOUT CLOCK, through the real `_process` path.
+func _moved_by_process(screen: Node, delta: float) -> float:
+	var was: float = screen._play_tick
+	screen._process(delta)
+	return float(screen._play_tick) - was
+
+
 func _tick(screen: Node, count := 1) -> void:
 	for _i in range(count):
 		var inputs := []
@@ -1450,39 +1466,39 @@ func test_a_frame_moves_the_body_by_its_own_delta_and_not_by_the_wall_clock() ->
 	if not screen._sim.running():
 		return _fail("no offline world: %s" % screen._sim.fail_reason)
 	screen._show_close_up(true)
-	# A BUFFER FIRST, fed at the rate the relay really produces -- the WALL delay is what the clock's
-	# own tick estimate is measured from, and it has to be real -- while the frames that play it out
-	# are worth exactly one tick each, so the loop's own overhead cannot drain the buffer before the
-	# measurement starts.
-	# A LITTLE UNDER A TICK OF FRAME TIME PER TICK FED, so the warm-up cannot drain the buffer it
-	# exists to build: at exactly one tick the loop's error term (the host has produced most of
-	# another tick by the time the frame runs) puts the rate on its +10% stop and eight iterations
-	# spend the whole 2.5-tick buffer. It starved marginally here and reliably on CI, which is the
-	# fixture draining the thing it was setting up rather than anything about the clock.
-	for _i in range(8):
-		_tick(screen)
+	# **A BUFFER FIRST, AND THE WARM-UP READS THE BOX'S OWN NUMBER BACK SO IT CANNOT DRAIN IT.** The
+	# wall delay has to be real -- it is the only thing `playout_step` has to measure the host's tick
+	# length from -- but how long the box then took to run the loop must not decide how deep the
+	# buffer ends up. So each cycle produces one tick and plays out exactly one tick: the frame delta
+	# handed in is `_tick_gap`, whatever this box just measured it to be.
+	#
+	# TWO EARLIER VERSIONS OF THIS WARM-UP GOT IT WRONG IN BOTH DIRECTIONS, which is why it is spelt
+	# out. Frames of a fixed 0.09 s against a tick the loaded studio Mac measures at 0.16 s drained
+	# the buffer on CI to 0.93 ticks (2026-10-05, run 37254774762); topping it up with three back-to-
+	# back arrivals instead left the clock 5.75 ticks behind with the queue one slot from full, and
+	# the end of this test then failed for a reason that had nothing to do with its subject (see the
+	# premise below). A cycle that is balanced by construction has neither failure mode.
+	for _i in range(12):
 		OS.delay_msec(RELAY_TICK_MS)
-		screen._refresh_world(0.09)
+		_tick(screen)
+		# THROUGH `_process`, NOT `_refresh_world`: the hand-down from the engine's delta to the clock
+		# is a step of this path, and a test that skips it cannot see it break. Nerite mutated
+		# `_process`'s `_refresh_world(delta)` to a constant 1/60 on 2026-10-05 and the whole suite
+		# stayed green, because every assertion here called `_refresh_world` directly.
+		screen._process(float(screen._tick_gap))
 	if float(screen._play_tick) < 0.0:
-		return _fail("the playout clock never started over 8 ticks, so there is nothing to measure")
-	# **AND THEN THE BUFFER IS TOPPED UP WITHOUT ANY WALL CLOCK IN IT.** Three more positions, fed
-	# back to back: frames are driving the clock by now, so an arrival only enqueues, and the depth
-	# this measurement needs stops depending on how fast the box ran the loop above. On CI the
-	# warm-up alone left 0.93 ticks -- the loop refreshes immediately after each delay, which is the
-	# phase where the clock believes the host has produced a whole extra tick, so it leans on its
-	# +10% stop and spends the buffer it was building.
-	_tick(screen, 3)
+		return _fail("the playout clock never started over 12 ticks, so there is nothing to measure")
 	if float(screen._play_depth) < 1.0:
-		return _fail(("the buffer holds %.2f ticks, under the one tick this measurement needs: six "
-				+ "frames of play-out would hit the end of the queue and measure the clamp instead "
-				+ "of what moves the clock") % [float(screen._play_depth)])
+		return _fail(("the buffer holds %.2f ticks after a balanced warm-up, under the one tick this "
+				+ "measurement needs: six frames of play-out would hit the end of the queue and "
+				+ "measure the clamp instead of what moves the clock") % [float(screen._play_depth)])
 	# **THE TWO CLOCKS ARE THEN MADE TO DISAGREE BY 5x**: six frames of 10 ms each is 0.6 of a tick,
 	# while the wall clock between them runs 300 ms, which is 3 ticks. A clock reading the wall
 	# cannot pass this and a clock reading its frames cannot fail it.
 	var before: float = screen._play_tick
 	for _i in range(6):
 		OS.delay_msec(50)
-		screen._refresh_world(0.01)
+		screen._process(0.01)
 	var moved: float = float(screen._play_tick) - before
 	# IN THE CLOCK'S OWN UNITS, not the fixture's: `_tick_gap` is the tick length this client has
 	# measured, and a frame of 10 ms is worth 0.01/_tick_gap of a tick whatever the box managed to
@@ -1499,6 +1515,42 @@ func test_a_frame_moves_the_body_by_its_own_delta_and_not_by_the_wall_clock() ->
 				+ "being moved by %s") % [moved, want,
 				6.0 * 0.05 / maxf(float(screen._tick_gap), 0.001),
 				"the wall clock" if moved > want * 2.0 else "neither of them"])
+	# **AND THE DELTA IS THE ONE THE ENGINE HANDED DOWN, not a constant this path invented.** The
+	# assertion above compares against `_tick_gap` with a tolerance wide enough to swallow both rate
+	# stops, so a `_process` passing a fixed 1/60 can hide inside it at some frame rates. This one
+	# cannot be hidden from: two frames whose deltas differ by 8x must move the clock by 8x. A
+	# constant delta -- of any value -- makes this ratio 1.
+	var small := _moved_by_process(screen, 0.004)
+	var large := _moved_by_process(screen, 0.032)
+	if small <= 0.0:
+		return _fail(("a 4 ms frame moved the playout clock %.4f ticks, so there is no ratio to "
+				+ "measure (depth %.2f)") % [small, float(screen._play_depth)])
+	# 8x, LOOSELY: `rate` is re-derived per frame from a depth the first of these two frames has
+	# already changed, so the two are not scaled copies of each other. +/-25% of 8 still has no
+	# overlap with the 1.0 a constant delta gives.
+	var ratio := large / small
+	if ratio < 6.0 or ratio > 10.0:
+		return _fail(("a 32 ms frame moved the body %.4f ticks and a 4 ms frame %.4f: a ratio of "
+				+ "%.2f where the deltas differ by 8x. The clock is being stepped by something "
+				+ "other than the delta `_process` was handed") % [large, small, ratio])
+	# **THE PREMISE OF THE LAST ASSERTION, WHICH IT DID NOT HAVE AND NEEDED** (ASSA-197, 2026-10-05).
+	# `_pending` is capped at `PLAYOUT_QUEUE` and an arrival pops the oldest entry to make room. If
+	# the clock is further behind than that cap, the position it is drawing FROM is the one thrown
+	# away, and `playout_at`'s ASSA-119 clamp drags the clock up to the oldest position still held.
+	# That is a real forward jump of the body -- `_drive_playout` counts it as `dragged` and the sweep
+	# below requires zero of them -- but it is NOT a bundle moving the clock, and the assertion below
+	# would report it as one. Measured on the version of this fixture that topped the buffer up with
+	# three back-to-back arrivals: the clock sat 5.75 ticks behind with 7 of 8 slots full, two
+	# arrivals evicted tick 6, and the clock went 6.254 -> 7.000 with `starved` false, `depth` 7.00
+	# and no flag of any kind saying it had happened.
+	var queue := _queue_ticks(screen)
+	var cap: int = int((screen.get_script() as GDScript).get_script_constant_map()["PLAYOUT_QUEUE"])
+	if queue.size() + 2 > cap:
+		return _fail(("the queue holds %d of its %d slots (%s) with the clock %.2f ticks behind, so "
+				+ "the two arrivals below would evict the position being drawn from and the clamp "
+				+ "would drag the clock forward. That is a dragged frame, not a bundle moving the "
+				+ "clock, and this fixture is supposed to leave room")
+				% [queue.size(), cap, str(queue), float(screen._play_depth)])
 	# AND A BUNDLE LANDING IS NOT A FRAME. It enqueues a position; it does not move the body.
 	var held: float = screen._play_tick
 	_tick(screen)
