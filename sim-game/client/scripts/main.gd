@@ -1234,7 +1234,26 @@ func _process(delta: float) -> void:
 		_refresh_world(delta)
 	# ABOVE THE EARLY RETURN BELOW, which is about the solo relay and skips most frames of a session.
 	_refresh_join_band()
-	if _solo == null or _solo.address != "" or _solo.failure != "":
+	if _solo == null:
+		return
+	# **AND THE RELAY'S PIPES ARE DRAINED ABOVE THAT RETURN TOO, FOR THE WHOLE SESSION** (ASSA-219).
+	#
+	# THIS LINE IS THE FIX, AND THE GUARD BELOW WAS THE BUG. It read `or _solo.address != ""`, so on
+	# the very frame the relay said where it was listening this screen stopped talking to it -- and
+	# `sim-relay` prints a line per submitted command into a pipe with nobody at the other end. Around
+	# two thousand lines later (measured: 2385 on this Mac, and SMALLER on Windows, where anonymous
+	# pipes can be 4 KB) the pipe is full, the relay's `println!` blocks inside its own tick loop, and
+	# the world stops for good. `poll()` had a matching early return of its own, so fixing
+	# only that one would have changed nothing a player could feel: the call never happened.
+	#
+	# UNCONDITIONAL ON PURPOSE. There is no state of a started relay in which not reading its output
+	# is correct, so there is no condition here to get wrong later.
+	var was_waiting := _solo.address == "" and _solo.failure == ""
+	_solo.pump()
+	# AND THE JOIN STILL HAPPENS ONCE. `was_waiting` is read before the pump because an address that
+	# arrives in it must be acted on in this frame and in no later one -- `_join_address` is not a
+	# question, it opens a socket.
+	if not was_waiting:
 		return
 	if _solo.poll():
 		_join_address(_solo.address)
