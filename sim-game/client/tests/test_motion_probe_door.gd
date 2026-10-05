@@ -317,9 +317,13 @@ func test_a_second_walk_is_due_only_after_the_body_has_moved_and_then_stopped() 
 	var never := AssayMotionProbe.new()
 	never._mode = "start"
 	never._clicks.append(0.0)
+	# **THE CLOCK STARTS ABOVE ZERO AND THAT IS NOT COSMETIC.** With `_note_stillness(0.0)` on the first
+	# frame, `_still_since` becomes exactly 0.0 and the condition's own `_still_since > 0.0` rejects it --
+	# so this control passed a mutation that DELETED the `_moved_once` guard, for a reason that had
+	# nothing to do with the guard. `_now()` is `get_ticks_usec()`, which is never 0.0 in a real run.
 	for i in 10:
 		never._drawn.append(Vector2.ZERO)
-		never._note_stillness(0.1 * float(i))
+		never._note_stillness(0.1 * float(i + 1))
 	if never._second_click_due(5.0):
 		return _fail("a second walk came due for a body that had never moved at all")
 	# AND THE OTHER CONTROL: the shipped door leaves the mode `steady`, which must never fire this.
@@ -327,7 +331,7 @@ func test_a_second_walk_is_due_only_after_the_body_has_moved_and_then_stopped() 
 	steady._clicks.append(0.0)
 	for i in 4:
 		steady._drawn.append(Vector2(10.0 * float(i if i < 2 else 1), 0.0))
-		steady._note_stillness(0.1 * float(i))
+		steady._note_stillness(0.1 * float(i + 1))
 	if steady._second_click_due(5.0):
 		return _fail("`steady` mode ordered a second walk; a player's file must hold one cold click")
 	return true
