@@ -322,7 +322,11 @@ func pump() -> void:
 		budget -= 1
 		var line := _stdio.get_line()
 		if address != "" or failure != "":
-			# THE SESSION'S LOG. Read only so that the host keeps running, and then dropped.
+			# THE SESSION'S LOG. Read so that the host keeps running, and KEPT so that a host which
+			# dies mid-session can be quoted (ASSA-225). It used to be dropped here, and that is what
+			# made `_remember`'s own doc comment false: the comment said the ring "bites only on a
+			# session's log", and the session's log was the one thing that never entered it.
+			_remember(line)
 			continue
 		if line.begins_with(STARTED):
 			# READ, NOT PARSED. Whether the line was said is the whole question; its fields are the
@@ -349,6 +353,13 @@ func pump() -> void:
 ## The relay prints four lines above its contract line, so this bound cannot bite before a join and
 ## every refusal is word for word what it was. It bites only on a session's log, where the newest
 ## lines are the ones a death would be explained by anyway.
+##
+## **AND THAT SECOND SENTENCE WAS FALSE FOR AS LONG AS IT STOOD** (ASSA-225). It describes a bound
+## biting on a session's log, and `pump()`'s first branch `continue`d above this function, so the
+## session's log was the one thing that never arrived here -- the ring could only ever hold the four
+## lines printed before the contract line. The comment described the design and not the code, which
+## is the version of this mistake that cannot be caught by reading either one alone. `pump()` now
+## really does feed it, so the sentence is true instead of aspirational.
 func _remember(line: String) -> void:
 	_heard.append(line)
 	if _heard.size() > HEARD_MAX:
@@ -485,6 +496,31 @@ func _last_words() -> String:
 			if text != "":
 				said.append(text)
 	return " / ".join(said)
+
+
+## **WHAT OUR OWN RELAY SAID ON ITS WAY OUT, IF IT DIED WITH A SESSION ON IT** (ASSA-225). Empty
+## whenever that did not happen, so a caller may always ask.
+##
+## **WHY THIS IS NOT `poll()` AND NOT `failure`, WHICH IS THE HALF THE ITEM'S DIAGNOSIS MISSES.** The
+## item reads: "`poll()` returns as soon as address is set, so `_last_words()` never runs". True, and
+## fixing only that would have been dead code -- `main.gd::_poll_solo_relay` returns on
+## `if not was_waiting` BEFORE it calls `poll()`, so once a world is joined nothing calls `poll()`
+## ever again. Exactly the shape of ASSA-219, where the early return I was pointed at was one of two
+## and the caller held the other. `pump()` is the per-frame entry point that survives a join, so what
+## a death needs is a question a caller can ask, not a return value nobody collects.
+##
+## AND IT STAYS OUT OF `failure` ON PURPOSE. That field means "you cannot have a world of your own"
+## and four callers read it that way, two of them probes that would start reporting "the relay
+## refused" about a session that ran fine for an hour and then ended. A relay dying under a live
+## session is a different event and gets a different question.
+##
+## A DELIBERATE `stop()` CANNOT READ AS A DEATH, and that falls out of `stop()` setting `pid = -1`:
+## `has_exited()` wants `pid > 0`, so the relay we killed ourselves answers no here. That is load
+## bearing -- every test and probe tears down through `stop()`.
+func last_words_if_it_died() -> String:
+	if address == "" or not has_exited():
+		return ""
+	return _last_words()
 
 
 ## Stop the relay this client started, and leave nothing behind.

@@ -560,3 +560,113 @@ func test_the_relays_log_is_drained_for_a_whole_session_and_never_blocks_its_hos
 			+ "%d in %d ms") % [reached, LINES, int(reached) * 31 / 1024, OS.get_name(), LINES,
 			drained_ms])
 	return ok
+
+
+## **A HOST THAT DIES WITH A SESSION ON IT GETS TO SAY WHY** (ASSA-225, Nerite's live SIGKILL).
+##
+## She killed a relay under a joined, drained client and the window said
+## `127.0.0.1:53794 closed the connection` and nothing else -- true, and the one thing a player can
+## already see for themselves. The relay's last words never reached the screen.
+##
+## **THE ITEM'S DIAGNOSIS IS HALF THE CAUSE AND THIS TEST IS WRITTEN AGAINST BOTH HALVES.** It reads
+## "`poll()` returns as soon as address is set, so `_last_words()` never runs". True -- and fixing
+## only that would have been dead code, because `main.gd::_poll_solo_relay` returns on
+## `if not was_waiting` before it ever calls `poll()`. Nothing calls `poll()` again after a join. So
+## what is asserted here is the question a caller CAN ask every frame, not a return value.
+##
+## STDERR IS THE INTERESTING ARM because that is where a relay puts the failure a player can act on,
+## and the stand-in dies the way a real one does: it says its piece and exits in the same breath.
+func test_a_host_that_dies_under_a_live_session_says_what_it_said() -> bool:
+	if OS.get_name() == "Windows":
+		return true  # `echo` is a builtin there; the mechanism is the engine's pipe, not the shell.
+	var solo := AssaySoloRelay.new()
+	var ok := true
+	const DYING := "Could not write the save: No space left on device"
+	# LISTENING FIRST, so the client is in the state the bug is about: a world joined, an address
+	# known, `failure` empty. Then it speaks and dies, which is what a killed relay looks like.
+	if not solo.start("/bin/sh", PackedStringArray(["-c",
+			"echo 'RELAY STARTED protocol 9 rules deadbeef'; echo 'LISTENING 127.0.0.1:54321'; "
+			+ "echo '[tick 400] Limpet: walk north'; sleep 0.2; "
+			+ "echo '" + DYING + "' >&2; exit 3"]), 4000):
+		ok = _fail("could not start the stand-in: %s" % solo.failure)
+		solo.stop()
+		return ok
+
+	# JOIN IT FIRST, through the real reader, exactly as the client does.
+	var started := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - started < 3000 and solo.address == "" and solo.failure == "":
+		solo.poll()
+		OS.delay_msec(20)
+	if solo.address != "127.0.0.1:54321":
+		ok = _fail("the stand-in never got to a joined state: address=`%s` failure=`%s`"
+				% [solo.address, solo.failure])
+		solo.stop()
+		return ok
+
+	# **NOTHING BUT `pump()` FROM HERE, BECAUSE THAT IS ALL `main.gd` CALLS AFTER A JOIN.** A test
+	# that kept calling `poll()` would be testing a path the client has already returned above.
+	var said := ""
+	var waited := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - waited < 3000:
+		solo.pump()
+		said = solo.last_words_if_it_died()
+		if said != "":
+			break
+		OS.delay_msec(20)
+
+	if said == "":
+		ok = _fail(("a relay that printed `%s` and exited under a joined session said nothing: "
+				+ "last_words_if_it_died() is empty after %d ms of pump(). A player whose host dies "
+				+ "gets `closed the connection` and no reason (ASSA-225)")
+				% [DYING, Time.get_ticks_msec() - waited])
+	elif not said.contains(DYING):
+		ok = _fail("the quote is `%s`, which does not carry what the relay actually said" % said)
+
+	# **AND A HOST WE STOPPED OURSELVES IS NOT A DEATH**, which is the control: every test and probe
+	# tears down through `stop()`, so if that read as a dying relay this would report a last-words
+	# sentence on every clean exit in the suite.
+	solo.stop()
+	if solo.last_words_if_it_died() != "":
+		ok = _fail("a relay stopped by stop() still reports last words `%s`: a deliberate shutdown "
+				% solo.last_words_if_it_died() + "would be announced to the player as a crash")
+	return ok
+
+
+## **AND THE SESSION'S LOG IS KEPT, WHICH IS WHAT MAKES A QUOTE POSSIBLE AT ALL** (ASSA-225).
+##
+## `_remember`'s doc comment claimed the ring "bites only on a session's log". It could not: pump()'s
+## first branch dropped every line once an address was known, above the call to `_remember`, so the
+## ring only ever held the four lines printed before the contract line. The comment described the
+## design and the code did something else, and neither one read alone would show it.
+##
+## A relay that dies saying nothing on stderr is the case this buys: `_last_words()` falls back to
+## stdout, and before this there was no stdout to fall back to.
+func test_the_sessions_own_log_is_what_a_silent_death_is_quoted_from() -> bool:
+	if OS.get_name() == "Windows":
+		return true
+	var solo := AssaySoloRelay.new()
+	var ok := true
+	const LATE := "[tick 931] Limpet: mined 3 ore"
+	# NOTHING ON STDERR AT ALL, so the only possible quote is the session log this test is about.
+	if not solo.start("/bin/sh", PackedStringArray(["-c",
+			"echo 'RELAY STARTED protocol 9 rules deadbeef'; echo 'LISTENING 127.0.0.1:54321'; "
+			+ "echo '" + LATE + "'; sleep 0.2; exit 4"]), 4000):
+		ok = _fail("could not start the stand-in: %s" % solo.failure)
+		solo.stop()
+		return ok
+	var started := Time.get_ticks_msec()
+	var said := ""
+	while Time.get_ticks_msec() - started < 3000:
+		solo.pump()
+		if solo.address != "":
+			said = solo.last_words_if_it_died()
+			if said != "":
+				break
+		OS.delay_msec(20)
+	if said == "":
+		ok = _fail("a relay whose only words were its session log was quoted as nothing")
+	elif not said.contains(LATE):
+		ok = _fail(("the quote is `%s` and does not carry the session line `%s`: the log is read and "
+				+ "dropped, so a death mid-session has nothing to quote") % [said, LATE])
+	solo.stop()
+	return ok

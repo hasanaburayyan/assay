@@ -1586,7 +1586,16 @@ func _on_refused(reason: String) -> void:
 ## Left alone the bracket sits over a frozen world and then over the NEXT session, because pressing
 ## Join rejoins the same slot (ASSA-177) and an unconfirmed echo has nothing to clear it.
 func _on_link_failed(reason: String) -> void:
-	_say(reason, AssayHud.Say.FAILED)
+	# **AND IF THE HOST THAT DIED WAS OURS, IT GETS TO SAY WHY** (ASSA-225). Nerite killed a relay
+	# under a joined client and got "127.0.0.1:53794 closed the connection" and nothing else: true,
+	# and useless, because a socket closing is the one thing a player can already see. The relay's own
+	# last words are the only part of this report that is not our guess about it.
+	#
+	# ONLY FOR A RELAY WE STARTED. Someone else's host dying is not ours to explain and we have no
+	# pipe to it, so `last_words_if_it_died()` answers "" and the sentence is unchanged -- which is
+	# every case except Play solo.
+	var said := "" if _solo == null else _solo.last_words_if_it_died()
+	_say(reason if said == "" else "%s It said: %s" % [reason, said], AssayHud.Say.FAILED)
 	_forget_click()
 
 
