@@ -2979,11 +2979,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		# here, inside the input handler, and NOT in `_refresh_world` from the sim's own `target` --
 		# that is the same quarter second of silence with extra steps.
 		#
-		# IT IS WRITTEN TWICE ON PURPOSE AND BOTH WRITES ARE THE SAME DERIVATION. This one is the
-		# frame the click happened in; `_refresh_world` re-derives it every frame afterwards through
-		# `AssayScene.walk_echo`, which is also the only thing that can clear it. Dropping this write
-		# and leaving the one in the refresh would be correct in every frame but the first -- and the
-		# first frame is the entire feature.
+		# **IT IS WRITTEN TWICE, AND I MEASURED WHAT EACH WRITE IS WORTH RATHER THAN ASSERTING IT.**
+		# Deleting this line and keeping only `_refresh_world`'s costs NOTHING on Godot 4.6: input is
+		# flushed before `_process` in the same iteration, so the refresh still publishes the tile
+		# before that frame is drawn -- `tools/limpet_click_echo.gd` reported the mark in the click's
+		# own frame with this line removed. I had written the opposite here ("correct in every frame
+		# but the first") and the lever said no.
+		#
+		# It stays because the guarantee is then this file's rather than the engine's frame ordering,
+		# and because the refresh is skipped entirely while the schematic is up. The lever that DOES
+		# bite is the other one: delete the refresh's write and the mark appears on the click and
+		# then never clears, which that tool's clause (4) catches.
 		#
 		# NO `_refresh()` HERE. That rebuilds the whole HUD (the schematic, every panel) and this is
 		# eight rectangles on the scene; the right-click branch above calls it because a TARGET
