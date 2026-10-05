@@ -52,8 +52,8 @@ REVIEW = os.path.join(ROOT, "assets", "review")
 BLENDER = os.environ.get("BLENDER", "/Applications/Blender.app/Contents/MacOS/Blender")
 SS = 4
 # render order = contact sheet order
-ORDER = ["ground", "ore", "items", "head", "handle", "frame", "hopper", "spawn", "smelter",
-         "player"]
+ORDER = ["ground", "scatter", "ore", "items", "head", "handle", "frame", "hopper", "spawn",
+         "smelter", "player"]
 
 
 def render(name):

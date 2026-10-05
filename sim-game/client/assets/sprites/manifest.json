@@ -279,6 +279,62 @@
   "sheet": "ground.png",
   "columns": 1
  },
+ "scatter": {
+  "name": "scatter",
+  "tiles": [
+   1,
+   1
+  ],
+  "frame_px": [
+   64,
+   84
+  ],
+  "anchor_px": [
+   0,
+   20
+  ],
+  "rows": [
+   {
+    "name": "grit0",
+    "frames": 1
+   },
+   {
+    "name": "grit1",
+    "frames": 1
+   },
+   {
+    "name": "grit2",
+    "frames": 1
+   },
+   {
+    "name": "boulder0",
+    "frames": 1
+   },
+   {
+    "name": "boulder1",
+    "frames": 1
+   },
+   {
+    "name": "tuft0",
+    "frames": 1
+   },
+   {
+    "name": "tuft1",
+    "frames": 1
+   },
+   {
+    "name": "log0",
+    "frames": 1
+   },
+   {
+    "name": "log1",
+    "frames": 1
+   }
+  ],
+  "animations": {},
+  "sheet": "scatter.png",
+  "columns": 1
+ },
  "ore": {
   "name": "ore",
   "tiles": [
