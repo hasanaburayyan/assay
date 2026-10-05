@@ -2920,9 +2920,16 @@ func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> b
 			ok = _fail(("main.gd paints the species letter BEFORE the building marks, so the %.1f%% "
 					+ "of a machine diamond that lands on the letter is painted over it -- and a drill is on a "
 					+ "deposit by definition") % [covered * 100.0])
-		elif not source.contains("_glyph_marks(deposits, font)"):
-			ok = _fail("`_glyph_marks` is never handed the deposits `_draw` read, which is "
-					+ "ASSA-189's shape: a correct mark that nothing paints")
+		# **AND THE BUILDING MARKS GO IN WITH THEM** (ASSA-218 box 9). This read
+		# `_glyph_marks(deposits, font)` and my box-9 change broke it, correctly: the call grew a
+		# third argument. Pinning the new form is strictly stronger, because `bedded` is decided from
+		# those marks — handed `[]`, every letter reports `bedded: false` and the expensive bed is
+		# silently never drawn on the one letter it exists for. `shapes` and not
+		# `_building_marks(...)` inline, so the same list reaches both passes in one frame.
+		elif not source.contains("_glyph_marks(deposits, font, shapes)"):
+			ok = _fail("`_glyph_marks` is not handed the deposits AND the building marks `_draw` "
+					+ "read, which is ASSA-189's shape: a correct mark that nothing paints, or "
+					+ "since box 9 a correct mark nothing beds")
 	# **THE BED, which is what makes painting last safe.** `glyph_color` picks the ink by contrast
 	# against the DISC; over a pale `HOVER` diamond a `GLYPH_LIGHT` letter chosen for a dark rock is
 	# the same letter gone. So the ink must be the one picked for the bed it carries.
@@ -2983,6 +2990,93 @@ func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> b
 			ok = _fail(("this deposit's letter reads %.2f:1 on its NOMINAL bed and %.2f:1 on the "
 					+ "building mark, so even in the colour table the bed buys nothing here and the "
 					+ "case needs a different deposit") % [on_bed, on_mark])
+	screen.queue_free()
+	return ok
+
+
+## **ONLY A LAPPED LETTER PAYS FOR THE EIGHT-STAMP BED** (ASSA-218 box 9, Maren: "it matters" -- 104
+## extra `draw_string` on a 13-letter world against ASSA-214's whole-map median of 42 is 2.5x the
+## map's entire budget, spent to protect the one letter a machine stands on).
+##
+## **WHY THIS TEST CAN EXIST AT ALL, and it is the reason the decision was moved:** `_draw` cannot be
+## asked how many times it called `draw_string`. Nothing headless counts draw calls. So the choice is
+## published as `bedded` on each mark and `_draw` paints what it is told -- the pattern the glyph
+## pass's own comment already claimed ("THE DECISION IS `_glyph_marks`'") but did not yet obey. An
+## `if` inside the loop would have been correct and unprovable.
+##
+## WHAT IT GUARDS, by mutation: `bedded = true` for every letter (the old behaviour, 104 calls) fails
+## on the unlapped letters; `false` for all of them fails on the lapped one; dropping the
+## `letter_occlusions` call fails the same way; and handing `_glyph_marks` no buildings fails the
+## lapped half, which is what would happen if a caller forgot the new argument -- `window_shot.gd`
+## being the caller that would otherwise have photographed a map nobody drew.
+##
+## THE PREMISE IS CHECKED AND NOT ASSUMED: this needs at least two letters and at least one the
+## machine does NOT lap, or "only the lapped one is bedded" is vacuously true.
+func test_only_a_lapped_letter_carries_the_expensive_bed() -> bool:
+	var screen := _joined_screen()
+	screen._show_close_up(false)
+	screen._refresh()
+	if screen._close_up or not screen._sim.running() or screen._cell <= 0.0:
+		screen.queue_free()
+		return _fail(("premise: close_up %s, running %s, cell %f -- `_draw` returns before any mark")
+				% [screen._close_up, screen._sim.running(), screen._cell])
+	var font := ThemeDB.fallback_font
+	var deposits: Array = screen._sim.deposits()
+	var bare: Array = screen._glyph_marks(deposits, font)
+	if bare.size() < 2:
+		screen.queue_free()
+		return _fail(("premise: this world paints %d species letter(s); two are needed so that "
+				+ "'only the lapped one' is not vacuous") % bare.size())
+	# A 1x1 machine on the FIRST letter's own tile -- the tile the play loop plants on.
+	var target: Dictionary = bare[0]
+	var planted := [{"pos": target["tile"], "footprint": Vector2i(1, 1), "kind": "machine"}]
+	var shapes: Array = screen._building_marks(planted)
+	var marks: Array = screen._glyph_marks(deposits, font, shapes)
+	if marks.size() != bare.size():
+		screen.queue_free()
+		return _fail(("passing buildings changed the letter COUNT, %d -> %d: `bedded` must change "
+				+ "which letters are expensive, never which letters exist")
+				% [bare.size(), marks.size()])
+	# WHO IS LAPPED IS `letter_occlusions`' ANSWER, NOT MINE. Asserting "index 0 and no other" would
+	# bake in the assumption that one machine laps exactly one letter, which two deposits sharing a
+	# tile would break -- so the expectation is read from the same function the painter reads.
+	var want := {}
+	for raw in AssayHud.letter_occlusions(shapes, marks):
+		want[int((raw as Dictionary)["letter"])] = true
+	if want.is_empty():
+		screen.queue_free()
+		return _fail(("premise: a machine on letter 0's own tile %s laps no letter at all, so there "
+				+ "is no expensive case in this world and the test measures nothing")
+				% [target["tile"]])
+	if want.size() >= marks.size():
+		screen.queue_free()
+		return _fail(("premise: the machine laps all %d letters, so there is no cheap letter left "
+				+ "to prove the saving against") % marks.size())
+	var ok := true
+	for j in marks.size():
+		var glyph: Dictionary = marks[j]
+		var bedded := bool(glyph["bedded"])
+		if bedded != want.has(j):
+			ok = _fail(("letter %d (`%s`, tile %s) reports bedded=%s and `letter_occlusions` says "
+					+ "lapped=%s. A letter nothing laps sits on its own disc, the surface its ink "
+					+ "was picked against, so eight stamps there are eight draw calls for nothing.")
+					% [j, glyph["symbol"], glyph["tile"], bedded, want.has(j)])
+			break
+	# AND THE SAVING, AS A NUMBER RATHER THAN AS A CLAIM: eight stamps per bedded letter.
+	if ok:
+		var paid := want.size() * AssayHud.GLYPH_BED_STAMPS.size()
+		var everything := marks.size() * AssayHud.GLYPH_BED_STAMPS.size()
+		if paid >= everything:
+			ok = _fail("the bed costs %d draw calls and stamping every letter costs %d: no saving"
+					% [paid, everything])
+	# AND NO BUILDINGS MEANS NO STAMPS, not "stamp everything" -- the default-argument path every
+	# existing caller still takes.
+	if ok:
+		for entry in bare:
+			if bool((entry as Dictionary)["bedded"]):
+				ok = _fail("a letter is bedded on a world with no buildings passed at all: the "
+						+ "empty case must cost nothing, not everything")
+				break
 	screen.queue_free()
 	return ok
 

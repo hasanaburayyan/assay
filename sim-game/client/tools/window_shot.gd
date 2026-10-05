@@ -471,7 +471,11 @@ func _process(_delta: float) -> bool:
 			_shot_buildings = _screen._sim.buildings()
 			_schematic_marks = _screen._building_marks(_shot_buildings)
 			_shot_deposits = _screen._sim.deposits()
-			_letter_marks = _screen._glyph_marks(_shot_deposits, ThemeDB.fallback_font)
+			# THE BUILDING MARKS GO IN, because since ASSA-218 box 9 they decide `bedded` -- which
+			# letters carry the eight stamps. Passing `[]` here would photograph a map whose letters
+			# all report `bedded: false`, and the marks table would then describe a frame nobody drew.
+			_letter_marks = _screen._glyph_marks(_shot_deposits, ThemeDB.fallback_font,
+					_schematic_marks)
 			_shoot("08-whole-world.png", PackedStringArray())
 			_write_marks_table()
 			_phase = Phase.PRESS_K
