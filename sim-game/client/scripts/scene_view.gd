@@ -389,12 +389,19 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 		#
 		# **AND IT WAITS FOR THE WHOLE `delay`, WHICH IS A HALF TICK OF STALL ABSORPTION AND NOT A
 		# ROUNDING** (ASSA-212). I shipped a tick shallower than this for an hour tonight, because
-		# `delay + LEAD - 1` is the deepest start whose loop error cannot be positive -- and a probe
-		# in a real window found what the arithmetic could not: the half tick I had taken out is what
-		# absorbs a host stall. 1 of 3 GUI runs on the studio Mac went DRY at the start of the session
-		# (7 starved frames, buffer to 0.00) when a 164 ms tick landed in the first second, where the
-		# old rule's three runs bottomed out at 0.835 -- which is exactly what a 164 ms stall leaves
-		# from 2.5. Maren's bar on ASSA-197 is ZERO dry frames, so the buffer stays.
+		# `delay + LEAD - 1` is the deepest start whose loop error cannot be positive, so it never
+		# chases. What it gives up is absorption in exactly the window the transient lives in: it
+		# starts 2.0 ticks deep and grows to the target, where this starts 3.0 deep and comes down.
+		#
+		# **AND THE MEASUREMENT THAT SENT ME BACK DOES NOT PROVE WHAT I FIRST SAID IT DID.** A GUI run
+		# on the shallow rule went dry at the start (7 starved frames, buffer 0.00) with a 164 ms tick
+		# in the first second, and I wrote that down as the reason. Three runs of THIS rule then
+		# starved once too (3 frames) and hit 0.00 depth in two of three, at 16-20 host stalls of
+		# 164-248 ms per 9 s. **A stall of 1.6-2.5 ticks is bigger than the half tick between the two
+		# rules, so nothing here attributes a dry frame to the start depth and I am not claiming it.**
+		# The buffer stays because more absorption inside the transient is monotonically better and
+		# the chase's worst case is a tick misread nobody has measured since the pairing fix. The dry
+		# frames themselves are ASSA-208, the relay's own pacing on a Mac running six agents.
 		var start_depth := delay
 		if newest - oldest < start_depth:
 			# AND THE TRIM DOES NOT INTEGRATE WHILE THE CLOCK IS NOT RUNNING. The depth error is

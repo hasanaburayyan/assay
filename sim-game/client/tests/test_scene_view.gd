@@ -1386,8 +1386,9 @@ func test_the_clocks_first_running_frame_does_not_jump_the_body() -> bool:
 		var deep := float(ticks[ticks.size() - 1]) - play
 		if deep < delay - 0.001:
 			return _fail(("the first running frame left %.2f ticks of buffer against a delay of %.1f. "
-					+ "A jump traded for stall absorption is still a trade: starting a tick shallower put "
-					+ "7 dry frames in a GUI run on the studio Mac (ASSA-212)") % [deep, delay])
+					+ "A jump traded for stall absorption is still a trade, and the absorption inside "
+					+ "the start transient is the half tick between the two no-jump rules (ASSA-212)")
+					% [deep, delay])
 		# AND THE SURPLUS IT STARTS WITH IS BOUNDED BY WHAT THE LOOP MAY SPEND ON IT. `at` begins deeper
 		# than the loop settles, which the clock pays off at `rate`, and `PLAYOUT_NUDGE` is the whole
 		# authority it has -- so the start transient's drawn speed cannot exceed `1 + NUDGE` times
