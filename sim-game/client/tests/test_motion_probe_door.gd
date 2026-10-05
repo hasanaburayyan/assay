@@ -335,3 +335,24 @@ func test_a_second_walk_is_due_only_after_the_body_has_moved_and_then_stopped() 
 	if steady._second_click_due(5.0):
 		return _fail("`steady` mode ordered a second walk; a player's file must hold one cold click")
 	return true
+
+
+## **A `start` RUN SAYS ITS OWN BAR IS VOID** (ASSA-212, Marlow; carried here by the ASSA-211 merge).
+## The moving span of a `start` run holds two walks and a deliberate standstill, so its distributions
+## and its VERDICT line are about a fixture. Marlow wrote the warning as two guarded `print`s inside a
+## 400-line `_report` nothing headless can reach; made a function of the mode alone it can be run, and
+## the mode that a player's file is always taken in must stay silent.
+func test_only_a_start_run_warns_that_its_bar_is_void() -> bool:
+	var loud := AssayMotionProbe.void_bar_warning("start")
+	if loud.size() != 2:
+		return _fail("a `start` run printed %d warning lines, not 2" % [loud.size()])
+	var joined := "\n".join(loud)
+	for needed in ["VOID", "FROM THE CLICK", "steady"]:
+		if not joined.contains(needed):
+			return _fail("the void-bar warning does not say `%s`: %s" % [needed, joined])
+	# **THE SHIPPED DOOR'S MODE MUST BE SILENT.** A player's file carries one cold click in `steady`
+	# mode, and a VOID banner on it would retire the one number the board is being asked for.
+	for quiet in ["steady", "", "Start", "START"]:
+		if not AssayMotionProbe.void_bar_warning(quiet).is_empty():
+			return _fail("mode `%s` was warned about as if it were `start`" % [quiet])
+	return true

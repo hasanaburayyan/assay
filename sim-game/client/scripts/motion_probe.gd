@@ -385,6 +385,21 @@ func _note_stillness(now: float) -> void:
 		_still_since = now
 
 
+## **THE LINES THAT SAY A `start` RUN'S BAR IS VOID, empty for every other mode** (ASSA-212, Marlow).
+##
+## A FUNCTION OF THE MODE ALONE, so a test can run it. Marlow wrote it as two guarded `print`s inside a
+## 400-line `_report` that no headless test can reach, and the risk it exists to cover is a reader
+## quoting a VERDICT line out of a fixture run. A warning nothing can test is a warning a merge can
+## delete, which is precisely how this file spent the evening.
+static func void_bar_warning(mode: String) -> PackedStringArray:
+	if mode != "start":
+		return PackedStringArray()
+	return PackedStringArray([
+		"  *** MODE `start`: THE BAR AND VERDICT BELOW ARE VOID (two walks and a standstill in",
+		"  *** one span). Read FROM THE CLICK at the bottom. Use `steady` for the ASSA-197 bar.",
+	])
+
+
 ## **WHEN A SECOND WALK MAY BE ORDERED** (ASSA-212, Marlow), split out for the same reason as above.
 ## `main.gd` writes `_play_tick` once per SESSION and never resets it, so the buffer fills once per
 ## session and not once per walk: the cold first click and a warm later one are different events.
@@ -588,6 +603,14 @@ func _click_report() -> void:
 func _report() -> void:
 	_line("")
 	_line("MOTION SPEED, real window, seed %s, %s" % [_seed, _label])
+	# **AND IN `start` MODE EVERY STATISTIC BELOW IS VOID, SAID HERE RATHER THAN LEFT TO BE READ**
+	# (ASSA-212, Marlow). The moving span runs from the first movement to the last, and in this mode
+	# that span contains two walks with a standstill between them -- so the distributions, the bar and
+	# the VERDICT are over a stretch the body was deliberately parked in. The section this mode exists
+	# for is at the bottom. A reader who takes the verdict line out of a `start` run is reading a
+	# number about a fixture, which is how a probe becomes the first suspect.
+	for warning in void_bar_warning(_mode):
+		_line(warning)
 	_line("  display %s, vsync %d, %d frames watched"
 			% [DisplayServer.get_name(), DisplayServer.window_get_vsync_mode(), _at.size()])
 	var span := _moving_span()
