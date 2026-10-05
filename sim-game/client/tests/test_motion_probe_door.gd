@@ -356,3 +356,93 @@ func test_only_a_start_run_warns_that_its_bar_is_void() -> bool:
 		if not AssayMotionProbe.void_bar_warning(quiet).is_empty():
 			return _fail("mode `%s` was warned about as if it were `start`" % [quiet])
 	return true
+
+
+## **THE PROBE'S REFERENCE RESTS ON A PRECONDITION NOBODY HAD WRITTEN DOWN** (ASSA-201 box 3; Nerite
+## flagged the sentence, Maren checked it, Marlow placed the guard).
+##
+## `TRUE_SPEED` is one tile per tick, which is the sim's speed ALONG AN AXIS. `move_players` adds the
+## signum of the delta to both axes, so a diagonal walk covers sqrt(2) tiles a tick: a body drawn
+## perfectly at 14.14 tiles/s against a reference of 10.00, 41% over a +/-25% bar, with every moving
+## frame charged to the CLIENT because nothing is `sheltered` on a healthy host. The tool would print
+## a false P0 against the renderer and look like it had passed.
+##
+## TWO LEGS, because the sentence and the code can drift apart: the rule itself, and the real
+## `_walk_target` over every start the world can give it. The second is what notices someone aiming
+## the walk somewhere more interesting.
+func test_the_probe_refuses_a_walk_that_is_not_on_one_row() -> bool:
+	if AssayMotionProbe.walk_is_straight(Vector2i(10, 10), Vector2i(32, 11)):
+		return _fail("a walk from (10,10) to (32,11) is called straight: the signum step makes that "
+				+ "1.414 tiles a tick and the reference is 1.0")
+	if not AssayMotionProbe.walk_is_straight(Vector2i(10, 10), Vector2i(32, 10)):
+		return _fail("a walk along one row is called crooked, so no run could ever start")
+	var probe := AssayMotionProbe.new()
+	var screen := _StubScreen.new(Vector2i(96, 64), [])
+	probe._screen = screen
+	# EVERY START THE WORLD HOLDS, not the one the tool happens to use today: both branches of
+	# `_walk_target` (east if it fits, west otherwise) and its clamped fallback.
+	var checked := 0
+	for x in range(0, 96, 3):
+		for y in range(0, 64, 7):
+			var here := Vector2i(x, y)
+			var to: Vector2i = probe._walk_target(here)
+			checked += 1
+			if not AssayMotionProbe.walk_is_straight(here, to):
+				screen.free()
+				return _fail(("`_walk_target` sends a body from %s to %s, which is off the row the "
+						+ "whole reference rests on") % [here, to])
+	if checked < 100:
+		screen.free()
+		return _fail("only %d starts were tried, so this says nothing about the world" % checked)
+	# **AND A MISSING BODY IS A STOP, NOT A GUESS** (Maren's second point). This fell back to
+	# `spawn_tile()`, which is reachable: the solo relay keeps its save, so a second run starts
+	# wherever the last one left the body, and the walk would be ordered from a tile nobody is on.
+	if probe._me_tile() != null:
+		screen.free()
+		return _fail("the probe found a body for player 0 in a sim that lists none, so a run would "
+				+ "be measured from a tile nobody is standing on")
+	screen.free()
+	var standing := _StubScreen.new(Vector2i(96, 64), [{"id": 0, "pos": Vector2i(40, 30)}])
+	probe._screen = standing
+	var found: Variant = probe._me_tile()
+	if found == null or (found as Vector2i) != Vector2i(40, 30):
+		standing.free()
+		return _fail("the probe reports %s for a body the sim puts at (40, 30)" % [found])
+	standing.free()
+	return true
+
+
+## The smallest screen `_walk_target` and `_me_tile` will accept: a world size, a player list and an
+## id. A `Node` because `AssayMotionProbe._screen` is typed as one.
+class _StubScreen extends Node:
+	var _sim: _StubSim
+	var _client: _StubClient
+
+	func _init(size: Vector2i, players: Array) -> void:
+		_sim = _StubSim.new(size, players)
+		_client = _StubClient.new()
+
+
+class _StubSim extends RefCounted:
+	var _size: Vector2i
+	var _players: Array
+
+	func _init(size: Vector2i, players: Array) -> void:
+		_size = size
+		_players = players
+
+	func size_tiles() -> Vector2i:
+		return _size
+
+	func players() -> Array:
+		return _players
+
+	# NEVER CALLED NOW, AND THAT IS THE POINT: `_me_tile` used to reach for this when it could not
+	# find a body. A stub that answers it would let the old fallback pass this test.
+	func spawn_tile() -> Vector2i:
+		push_error("the probe asked for the spawn tile: the missing-body fallback is back")
+		return Vector2i.ZERO
+
+
+class _StubClient extends RefCounted:
+	var player_id := 0
