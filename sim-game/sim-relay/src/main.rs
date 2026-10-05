@@ -92,6 +92,12 @@ struct Options {
     port: u16,
     tps: u32,
     fresh: bool,
+    /// **IS THE STALL THE MACHINE OR `run_tick`?** (ASSA-208) Print a timing
+    /// summary every N ticks; 0 is off, which is every run nobody asked. The
+    /// client measures bundle ARRIVALS and cannot tell a host that woke late
+    /// from a host that worked long -- both read as a gap -- so the two numbers
+    /// have to come from inside this loop.
+    tick_stats: u32,
     /// Which interfaces to listen on. `0.0.0.0` is every one of them, which is
     /// what a relay people join over a network wants and what this has always
     /// done.
@@ -211,7 +217,9 @@ fn main() {
     // Fixed-rate clock. If we fall far behind (machine slept), skip ahead
     // instead of running a burst of catch-up ticks.
     let interval = Duration::from_secs_f64(1.0 / f64::from(opts.tps));
+    let mut stats = TickStats::new(opts.tick_stats);
     let mut next = Instant::now();
+    let mut began = next;
     loop {
         next += interval;
         let now = Instant::now();
@@ -220,7 +228,27 @@ fn main() {
         } else if now - next > interval * 20 {
             next = now;
         }
+        // THE TWO NUMBERS THE CLIENT CANNOT TELL APART, taken on either side of
+        // the work: how late this tick STARTED against the time it was due, and
+        // how long its own work took. A bundle arriving 250 ms after the last
+        // one is the sum of these, and only one of them is ours to fix.
+        let woke = Instant::now();
+        let late = woke.saturating_duration_since(next);
+        // AND THE GAP A PEER ACTUALLY SEES: start to start. Lateness alone
+        // cannot say whether a late tick is followed by a normal one or by an
+        // immediate catch-up, and that difference is the client's whole
+        // problem -- a 200 ms gap and then two bundles at once is a dry frame
+        // and then a full buffer, which is what ASSA-197's probe is fighting.
+        let gap = woke.saturating_duration_since(began);
+        began = woke;
         relay.run_tick(&events_rx);
+        stats.record(
+            late,
+            gap,
+            woke.elapsed(),
+            relay.world.tick,
+            relay.conns.len(),
+        );
     }
 }
 
@@ -590,15 +618,19 @@ fn save_paths(seed: u64) -> (PathBuf, PathBuf) {
 
 fn parse_args() -> Options {
     let usage = "Usage: sim-relay [seed] [--port N] [--tps N] [--fresh] [--bind ADDR]\n\
+         \x20            [--tick-stats N]\n\
          \n\
          --port 0     listen on any free port, and print the one you got\n\
          --bind ADDR  which interfaces to accept on (default 0.0.0.0, every one).\n\
-         \x20            127.0.0.1 makes the relay reachable from this computer only.";
+         \x20            127.0.0.1 makes the relay reachable from this computer only.\n\
+         --tick-stats N  every N ticks, print how late the clock woke and how\n\
+         \x20            long the tick's own work took (ASSA-208).";
     let mut opts = Options {
         seed: 42,
         port: DEFAULT_PORT,
         tps: DEFAULT_TPS,
         fresh: false,
+        tick_stats: 0,
         bind: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
     };
     let mut args = std::env::args().skip(1);
@@ -625,6 +657,10 @@ fn parse_args() -> Options {
                 opts.fresh = true;
                 true
             }
+            "--tick-stats" => value("--tick-stats")
+                .parse()
+                .map(|n| opts.tick_stats = n)
+                .is_ok(),
             "-h" | "--help" => {
                 println!("{usage}");
                 exit(0);
@@ -637,4 +673,80 @@ fn parse_args() -> Options {
         }
     }
     opts
+}
+
+/// **WAS IT THE MACHINE OR `run_tick`?** (ASSA-208.) The client measures bundle
+/// ARRIVALS, so a late wake-up and a long tick reach it as the same gap -- and
+/// on the studio Mac, which runs six agents and this relay at once, 16-20 gaps
+/// over 150 ms in a nine-second run were being read as a host that cannot hold
+/// 10 ticks a second. One of those two causes is ours and the other is the
+/// machine, and nothing outside this loop can separate them.
+///
+/// `late` is the scheduler's: `thread::sleep` returning after the tick was due.
+/// `work` is this process's own: inputs drained, `step`, bundles sent to every
+/// peer, the hash check and the autosave, all of it.
+///
+/// WHOLE SAMPLES AND NOT A RUNNING MEAN, because the thing being hunted is the
+/// TAIL. A mean of a hundred ticks hides one 250 ms stall completely; p95 and
+/// the count over the threshold are the whole report. A hundred ticks is ten
+/// seconds at the default rate, so the vector is never more than a few hundred
+/// `f64` long.
+struct TickStats {
+    every: u32,
+    late: Vec<f64>,
+    gap: Vec<f64>,
+    work: Vec<f64>,
+}
+
+/// The bar the client's own probe charges a frame at (`motion_probe.gd`), so
+/// the two reports can be read against each other.
+const STALL_MS: f64 = 150.0;
+
+impl TickStats {
+    fn new(every: u32) -> Self {
+        TickStats {
+            every,
+            late: Vec::new(),
+            gap: Vec::new(),
+            work: Vec::new(),
+        }
+    }
+
+    fn record(&mut self, late: Duration, gap: Duration, work: Duration, tick: u64, peers: usize) {
+        if self.every == 0 {
+            return;
+        }
+        self.late.push(late.as_secs_f64() * 1000.0);
+        self.gap.push(gap.as_secs_f64() * 1000.0);
+        self.work.push(work.as_secs_f64() * 1000.0);
+        if self.late.len() < self.every as usize {
+            return;
+        }
+        println!(
+            "[tick {tick}] stats over {} ticks, {peers} peer(s) | late {} | gap {} | work {}",
+            self.late.len(),
+            Self::line(&mut self.late),
+            Self::line(&mut self.gap),
+            Self::line(&mut self.work)
+        );
+        let _ = std::io::stdout().flush();
+        self.late.clear();
+        self.gap.clear();
+        self.work.clear();
+    }
+
+    /// p50 / p95 / max in ms, and how many of the sample cleared `STALL_MS`.
+    /// Sorts in place: the caller's vector is cleared straight after.
+    fn line(ms: &mut [f64]) -> String {
+        let over = ms.iter().filter(|v| **v > STALL_MS).count();
+        ms.sort_by(|a, b| a.partial_cmp(b).expect("no NaN in a duration"));
+        let at = |q: f64| ms[((ms.len() - 1) as f64 * q).round() as usize];
+        format!(
+            "p50 {:.1} p95 {:.1} max {:.1} ms (>{:.0}ms: {over})",
+            at(0.5),
+            at(0.95),
+            ms[ms.len() - 1],
+            STALL_MS
+        )
+    }
 }
