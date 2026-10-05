@@ -112,6 +112,17 @@ func _process(_d: float) -> bool:
 				"name": "Minyte smelter (B)"},
 		]
 		_screen._rebuild_pack(_stacks)
+		# **THE COLUMN IS SHOWN ON PURPOSE, AND ASSA-231 IS WHY THIS LINE EXISTS.** Maren's Gap 5
+		# hides the whole HUD column until a world exists, and this probe never joins one -- it
+		# hand-builds stacks and measures how the client lays them out. Without this, the rows are
+		# laid out INSIDE A HIDDEN PANEL, their rects collapse, and the stamp moves: the first run
+		# after Gap 5 reported pack_icons, pack_rows and pack_icon_kinds all STALE against a client
+		# whose pack layout had not changed by one pixel.
+		#
+		# IT RESTORES THE STATE THE SHEET IS A PICTURE OF, rather than inventing one. These sheets
+		# are about icon and plate geometry inside the column, which is a thing a player only ever
+		# sees in a world; the join screen's emptiness is a different picture and window_shot.gd's.
+		_screen._column.visible = true
 		return false
 	if _frames < 6:
 		return false
