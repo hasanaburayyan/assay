@@ -80,6 +80,20 @@ func test_the_clicked_tile_is_bracketed_at_its_corners_and_open_in_the_middle() 
 	if _covered(bars, tile.position + Vector2(TILE * 0.5, inset + 0.5)):
 		return _fail("the destination mark's top arms meet in the middle of the edge: that is a "
 				+ "box, not four corners")
+	# THE KEYLINE COVERS EVERY BAR AND STILL FITS THE TILE. The mark is 1.6:1 against a bright ore
+	# disc without it (measured, see `destination_keyline`), so this is what makes the thing visible
+	# rather than a decoration -- and the inset exists to pay for it: one pixel bigger all round is
+	# exactly the tile's edge, never the neighbour's.
+	var rims := AssayScene.destination_keyline(CLICKED, origin)
+	if rims.size() != bars.size():
+		return _fail("%d bars and %d keylines: every bar is rimmed or the rim has a hole in it"
+				% [bars.size(), rims.size()])
+	for i in range(bars.size()):
+		if not rims[i].encloses(bars[i]):
+			return _fail("the keyline %s does not cover its bar %s" % [rims[i], bars[i]])
+		if not tile.encloses(rims[i]):
+			return _fail(("the destination keyline %s reaches outside the tile %s, so the mark "
+					+ "darkens the tile next door") % [rims[i], tile])
 	# AND IT MOVES WITH THE CAMERA, not with the tile index: the same tile under a camera one tile
 	# further east is drawn 32 px further west, the arithmetic `_place` uses for every sprite.
 	var moved := AssayScene.destination_mark(CLICKED, origin + Vector2(TILE, 0.0))
@@ -182,16 +196,25 @@ func test_the_floor_mark_is_painted_between_the_floor_and_what_stands_on_it() ->
 	# already share, which is the whole of box 6. Read off the `draw_rect` line itself rather than
 	# off the block, so a MINE mentioned in a comment nearby cannot pass for it.
 	var painted := -1
+	var rimmed := -1
 	for line in body.split("\n"):
 		var text := String(line).strip_edges()
 		if text.begins_with("draw_rect(bar"):
 			painted = 0 if text.contains("AssayHud.MINE") else 1
-			break
+		elif text.begins_with("draw_rect(rim"):
+			rimmed = 0 if text.contains("AssayHud.MAP_BG") else 1
 	if painted < 0:
 		return _fail("could not find the draw_rect that paints the destination bars in _draw")
 	if painted == 1:
 		return _fail("the destination mark's draw_rect does not take AssayHud.MINE: it is a 22nd "
 				+ "colour literal for a meaning this client already has an ink for")
+	if rimmed != 0:
+		return _fail("the destination mark's keyline is not painted in AssayHud.MAP_BG, which is "
+				+ "what makes the mark 12.2:1 whatever species it lands on")
+	# THE RIM GOES DOWN FIRST. Painted per bar, a corner's own two bars would notch each other.
+	if body.find("draw_rect(rim") > body.find("draw_rect(bar"):
+		return _fail("the keylines are painted after the bars, so the rim of one bar eats the ink "
+				+ "of the bar it overlaps at every corner")
 	return true
 
 

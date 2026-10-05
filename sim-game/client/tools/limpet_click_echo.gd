@@ -248,8 +248,17 @@ func _sample(since: float, frame: float) -> void:
 	# as a count in the dozens.
 	if _mode == "nomark" and dest != Rect2() and _click_row >= 0 and _rows.size() > _click_row + 1:
 		_suppressed += 1
-	if _clicked_at >= 0.0 and _now() - _clicked_at <= STRIP_SECONDS:
+	# **THE STRIP OPENS BEFORE THE CLICK**, by a tenth of a second, and that is not decoration: the
+	# only picture that proves the mark is the CLICK's is the same tile photographed without it. The
+	# first version started at the click and every frame in it had the mark, so a reader had to take
+	# "it was not there before" from a column of numbers.
+	var photograph := since > SETTLE - 0.12 if _clicked_at < 0.0 \
+			else _now() - _clicked_at <= STRIP_SECONDS
+	if photograph:
 		if _crop_at.x < 0:
+			# POINT_OF_TILE BEFORE THE CLICK IS THE SAME POINT: the camera is on a body that has not
+			# moved yet, so the rect is fixed for the whole strip either way.
+			_click_point = _screen.point_of_tile(_target)
 			_crop_at = Vector2i(_click_point) - CROP / 2
 			_crop_at = _crop_at.clamp(Vector2i.ZERO, Vector2i(root.size) - CROP)
 			print("crop rect fixed at %s %s (click point %s)" % [_crop_at, CROP, _click_point])

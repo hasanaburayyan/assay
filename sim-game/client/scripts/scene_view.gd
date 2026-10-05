@@ -1114,9 +1114,26 @@ static func foot_mark(at: Vector2, origin: Vector2) -> Rect2:
 ## INSET INSIDE THE TILE rather than drawn on its boundary: a bracket centred on the edge would
 ## straddle two tiles and be ambiguous by one tile, which on a click acknowledgement is the one
 ## thing it must not be.
+## **AND A KEYLINE UNDER IT, WHICH IS A MEASUREMENT AND NOT A FLOURISH.** The first version of this
+## mark was bare `MINE` on the world art, and photographed on seed 14247 it scored **1.64:1 against
+## the brightest pixels of the ore disc it was marking and 1.55:1 on ground** (sRGB relative
+## luminance, `shared/assay/limpet-assa215-click-echo/`). The guidance for a graphic that has to be
+## seen is 3:1 and this client already refuses to write a theme under 4.5:1 for text, so a mark at
+## 1.6 is one the player can be looking straight at and miss -- on the one surface whose job is
+## answering their click.
+##
+## `MAP_BG` UNDER THE INK IS THIS PROJECT'S OWN ANSWER, THREE TIMES OVER: `player_keyline` under a
+## body (ASSA-189), `building_keyline` under a factory diamond, and the `GLYPH_BED_PX` bed under
+## every species letter (ASSA-213). It costs no new colour literal and it makes the mark's contrast
+## a fact about two inks we own rather than about whichever species the world rolled: MINE on MAP_BG
+## is 12.2:1 whatever is underneath.
+##
+## GROWN OUTWARD FROM EACH BAR, so the yellow keeps every pixel of its own 2 px width, and the inset
+## above is exactly the keyline's width -- the rim reaches the tile's edge and never crosses it.
 const DESTINATION_ARM_PX := 10.0
 const DESTINATION_THICK_PX := 2.0
 const DESTINATION_INSET_PX := 1.0
+const DESTINATION_KEYLINE_PX := 1.0
 
 
 static func destination_mark(tile: Vector2i, origin: Vector2) -> Array[Rect2]:
@@ -1133,6 +1150,18 @@ static func destination_mark(tile: Vector2i, origin: Vector2) -> Array[Rect2]:
 			var vleft := box.position.x if cx == 0 else box.end.x - DESTINATION_THICK_PX
 			var vtop := box.position.y if cy == 0 else box.end.y - arm
 			out.append(Rect2(Vector2(vleft, vtop), Vector2(DESTINATION_THICK_PX, arm)))
+	return out
+
+
+## THE SAME EIGHT BARS, ONE PIXEL BIGGER ALL ROUND, to be painted in `MAP_BG` underneath them.
+##
+## A SEPARATE FUNCTION AND NOT A `grow()` IN THE RENDERER: `world_layer.gd` holds no geometry by
+## design, and "how much rim" is exactly the kind of number that gets edited in a renderer and then
+## disagrees with the test that measured it.
+static func destination_keyline(tile: Vector2i, origin: Vector2) -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	for bar in destination_mark(tile, origin):
+		out.append(bar.grow(DESTINATION_KEYLINE_PX))
 	return out
 
 

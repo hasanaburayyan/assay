@@ -119,6 +119,11 @@ func _draw() -> void:
 	if destination != null:
 		var tile: Vector2i = destination
 		var origin: Vector2 = view.get("origin", Vector2.ZERO)
+		# EVERY KEYLINE FIRST, THEN EVERY BAR. The two bars of one corner overlap, so a per-bar
+		# keyline painted immediately before its own bar would lay MAP_BG over the yellow of the bar
+		# beside it and bite a notch out of the corner.
+		for rim in AssayScene.destination_keyline(tile, origin):
+			draw_rect(rim, AssayHud.MAP_BG, true)
 		for bar in AssayScene.destination_mark(tile, origin):
 			draw_rect(bar, AssayHud.MINE, true)
 		drawn_destination = Rect2(Vector2(tile) * AssayScene.TILE_PX - origin,
