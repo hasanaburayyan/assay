@@ -822,10 +822,31 @@ func _shoot(name: String, subjects: PackedStringArray, guard_repeat := true) -> 
 ## inside it. That is the node a player sees and the node `_show_log` raises, so "the log is on
 ## screen" is a question about it. Asking `_log` instead would be asking a child whose own rect is
 ## honest about a panel that may not be up.
+## **AND THE EIGHTH IS `stopped`, WHICH THIS REPORT HAS NEVER NAMED** (ASSA-94). `_halt_box` is the
+## one surface built so a player can learn a machine has halted WITHOUT hovering it -- Maren's
+## property, after the board stood beside a cold smelter for two and a half hours. Until now the fold
+## report could not say whether it was on screen at all. A discovery surface nobody can place is the
+## ASSA-116 finding-4 shape exactly: the event log sat 604 px below the fold while its own toggle
+## said "hide the event log", and every test we owned asked the node and got an honest yes.
+##
+## It is listed like the others and NOT made a subject: `_halt_box` hides itself when nothing has
+## stopped (Maren: "a count of zero is not drawn"), so `hidden` is the correct and commonest reading
+## and must not fail a run.
+##
+## **AND ON THIS LOOP IT IS ALWAYS `hidden`, WHICH IS THE USEFUL THING THIS REPORT NOW SAYS.** I
+## first read the play's own `smelter 0 stopped: no fuel` and this section's rect as one observation
+## and nearly filed a defect: the surface built for discovery, hidden while a machine is stopped.
+## They are two different moments. That line is tick 88, between a Place and a Mine; the report is
+## taken at tick 481, by which time the loop has fuelled and smelted and NOTHING is stopped, so
+## `hidden` is correct. **The consequence stands on its own: no window shot we take can contain this
+## block**, because the demo loop resolves every stall it causes, and Maren's "ask me with a
+## screenshot and I will choose in one sentence" is therefore still unanswerable. Shooting on the
+## CONDITION is the fix, the way `04-pack.png` is re-taken on the fullest pack (ASSA-165) rather than
+## at a tick somebody picked.
 func _sections() -> Array:
 	return [["crafting menu", _screen._make], ["you", _screen._carrying], ["do", _screen._actions],
 			["bench", _screen._bench], ["rocks", _screen._species], ["cursor", _screen._cursor],
-			["event log", _screen._log_box]]
+			["event log", _screen._log_box], ["stopped", _screen._halt_box]]
 
 
 func _section(named: String) -> Control:
