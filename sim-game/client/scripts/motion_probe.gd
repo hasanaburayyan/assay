@@ -276,8 +276,7 @@ func step(delta: float) -> int:
 	# SESSION and not once per walk -- which means the first click and every later one are different
 	# events and the item said otherwise. The body has to be standing before this is ordered or it is
 	# a redirect rather than a start.
-	if _mode == "start" and _clicks.size() == 1 and _still_since > 0.0 \
-			and now - _still_since > 0.3 and _moved_once:
+	if _second_click_due(now):
 		var here := _me_tile()
 		var to := _walk_target(here)
 		_screen._client.submit(AssayActions.move_to(to))
@@ -365,6 +364,37 @@ func _walk_target(here: Vector2i) -> Vector2i:
 	return Vector2i(clampi(size.x / 2, EDGE_KEEPOUT, size.x - EDGE_KEEPOUT), here.y)
 
 
+## **HOW LONG A BODY MUST HAVE BEEN STANDING BEFORE A SECOND WALK IS A START AND NOT A REDIRECT.**
+## 0.3 s is Marlow's, inline in ASSA-212; it is a constant here only so the test below can say what it
+## is waiting for rather than repeat a literal.
+const SECOND_CLICK_STILL := 0.3
+
+
+## **WHETHER THE DRAWN RECTANGLE IS STANDING STILL** (ASSA-212, Marlow): the rect rather than the lerp,
+## because the rect is what a player sees stop.
+##
+## A NAMED FUNCTION BECAUSE IT WAS SIX LINES INSIDE `_sample` AND NOTHING COULD REACH IT. A mutation
+## that set `_moved_once` to `false` for ever passed the whole suite -- the second walk would then never
+## be ordered and `start` mode would silently measure one click while printing that it measured two.
+## Logic unchanged from the version this merge carried out of `tools/`.
+func _note_stillness(now: float) -> void:
+	if _drawn.size() > 1 and not _drawn[_drawn.size() - 1].is_equal_approx(_drawn[_drawn.size() - 2]):
+		_still_since = -1.0
+		_moved_once = true
+	elif _still_since < 0.0:
+		_still_since = now
+
+
+## **WHEN A SECOND WALK MAY BE ORDERED** (ASSA-212, Marlow), split out for the same reason as above.
+## `main.gd` writes `_play_tick` once per SESSION and never resets it, so the buffer fills once per
+## session and not once per walk: the cold first click and a warm later one are different events.
+## `_moved_once` is the guard that makes this a START -- a body that has not moved yet has been
+## "standing still" since the first frame, so without it the second click lands on the cold walk.
+func _second_click_due(now: float) -> bool:
+	return _mode == "start" and _clicks.size() == 1 and _still_since > 0.0 \
+			and now - _still_since > SECOND_CLICK_STILL and _moved_once
+
+
 func _sample(delta: float, now: float) -> void:
 	var view: Dictionary = _screen._world.view
 	# **`_world.me`, NOT `view.players[i]` AND NOT `view.me`, AND BOTH WRONG TURNS ARE FINDINGS.**
@@ -408,13 +438,7 @@ func _sample(delta: float, now: float) -> void:
 	_depth.append(float(_screen._play_depth))
 	_trim.append(float(_screen._play_trim))
 	_advances.append(int(_screen._play_advances))
-	# WHETHER THE DRAWN RECTANGLE IS STANDING STILL, which is what decides when a second walk may be
-	# ordered: the rect rather than the lerp, because the rect is what a player sees stop (ASSA-212).
-	if _drawn.size() > 1 and not _drawn[_drawn.size() - 1].is_equal_approx(_drawn[_drawn.size() - 2]):
-		_still_since = -1.0
-		_moved_once = true
-	elif _still_since < 0.0:
-		_still_since = now
+	_note_stillness(now)
 
 
 ## THE MOVING STRETCH ONLY, both ends trimmed. A standing body is on its tile in every frame, so any

@@ -253,3 +253,81 @@ func test_the_click_section_lives_in_the_packed_class_not_the_harness() -> bool:
 	if not tool_text.contains("_probe.begin(screen, seconds, label, want_seed, mode)"):
 		return _fail("%s parses a mode and does not pass it to the probe" % [TOOL])
 	return true
+
+
+## **A CLICK THE BODY ANSWERS IMMEDIATELY, because the fixture above cannot see an off-by-one at the
+## START of the freeze search.** Mutating `range(first + 1, ...)` to `first + 2` passed the whole
+## suite: with five still frames to find, starting the scan one frame later still lands on frame five.
+## The case it breaks is the good one -- a body that moves on the very first frame after the click
+## would be reported as frozen for two, and FREEZE is the number this whole section exists for.
+func test_a_click_with_no_freeze_reports_one_frame_not_two() -> bool:
+	var probe := AssayMotionProbe.new()
+	var screen := FakeScreen.new()
+	probe._screen = screen
+	probe._clicks.append(0.0)
+	probe._click_what.append("synthetic: answered on the next frame")
+	var step := 0.02
+	var per_frame := step * AssayMotionProbe.TRUE_SPEED * AssayScene.TILE_PX
+	for i in 60:
+		probe._clock.append(0.01 + float(i) * step)
+		probe._dt.append(step)
+		probe._drawn.append(Vector2(per_frame * float(i), 0.0))
+	probe._click_report()
+	screen.free()
+	probe._screen = null
+	var text := probe.report_text()
+	if not text.contains("FREEZE   30 ms standing still (1 frames)"):
+		return _fail(("a body that moved on the first frame after the click was not reported as one "
+				+ "frame of freeze. Report:\n%s") % [text])
+	return true
+
+
+## **`start` MODE'S SECOND WALK, which had no test of any kind and silently passed a mutation that
+## disabled it** (ASSA-212, carried here by the ASSA-211 merge). Setting `_moved_once := false` for ever
+## leaves the firing condition permanently false: `start` mode would then measure ONE click while its
+## own report printed that two were ordered, and 320 tests saw nothing. Driving the real two functions,
+## not asserting on their source.
+func test_a_second_walk_is_due_only_after_the_body_has_moved_and_then_stopped() -> bool:
+	var probe := AssayMotionProbe.new()
+	probe._mode = "start"
+	probe._clicks.append(0.0)
+	# WALKING: three frames of real movement. Nothing is due while the body is still going.
+	for i in 3:
+		probe._drawn.append(Vector2(10.0 * float(i + 1), 0.0))
+		probe._note_stillness(0.1 * float(i + 1))
+		if probe._second_click_due(0.1 * float(i + 1)):
+			return _fail("a second walk came due while the drawn body was still moving")
+	# STOPPED: the same rectangle from here on. Due only once it has stood longer than the threshold.
+	var stopped_at := 1.0
+	probe._drawn.append(Vector2(30.0, 0.0))
+	probe._note_stillness(stopped_at)
+	if probe._second_click_due(stopped_at):
+		return _fail("a second walk came due in the very frame the body stopped")
+	if probe._second_click_due(stopped_at + AssayMotionProbe.SECOND_CLICK_STILL - 0.01):
+		return _fail("a second walk came due before %.2f s of standing still"
+				% [AssayMotionProbe.SECOND_CLICK_STILL])
+	if not probe._second_click_due(stopped_at + AssayMotionProbe.SECOND_CLICK_STILL + 0.01):
+		return _fail("a second walk never came due after the body stood still past the threshold")
+	# ONCE ONLY: a report built from three clicks would pair frames with the wrong one.
+	probe._clicks.append(stopped_at + 0.5)
+	if probe._second_click_due(stopped_at + 1.0):
+		return _fail("a THIRD walk came due; `start` mode orders exactly two")
+	# **THE CONTROL THAT THE MUTATION BROKE: a body that has never moved is not standing still, it is
+	# waiting for its first walk.** Without `_moved_once` the second click lands on the cold walk.
+	var never := AssayMotionProbe.new()
+	never._mode = "start"
+	never._clicks.append(0.0)
+	for i in 10:
+		never._drawn.append(Vector2.ZERO)
+		never._note_stillness(0.1 * float(i))
+	if never._second_click_due(5.0):
+		return _fail("a second walk came due for a body that had never moved at all")
+	# AND THE OTHER CONTROL: the shipped door leaves the mode `steady`, which must never fire this.
+	var steady := AssayMotionProbe.new()
+	steady._clicks.append(0.0)
+	for i in 4:
+		steady._drawn.append(Vector2(10.0 * float(i if i < 2 else 1), 0.0))
+		steady._note_stillness(0.1 * float(i))
+	if steady._second_click_due(5.0):
+		return _fail("`steady` mode ordered a second walk; a player's file must hold one cold click")
+	return true
