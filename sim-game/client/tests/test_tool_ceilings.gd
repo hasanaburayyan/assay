@@ -65,6 +65,23 @@ func _called_helper(line: String) -> String:
 	return name if name.is_valid_identifier() else ""
 
 
+## Whether this call hands its helper a zero exit code -- written, or by the signature's own default.
+func _asks_for_zero(source: String, name: String, call_line: String) -> bool:
+	var open := call_line.find("(")
+	var args := call_line.substr(open + 1).trim_suffix(")").strip_edges()
+	if args == "0":
+		return true
+	if args != "":
+		return false
+	for raw in source.split("\n"):
+		var line := String(raw)
+		if not line.begins_with("func %s(" % name):
+			continue
+		# `func _stop(code: int = 0) -> void:` called as `_stop()` is `quit(0)` with extra steps.
+		return line.contains("= 0)") or line.contains("= 0,") or line.contains("= 0 ")
+	return false
+
+
 ## Whether `func <name>` in this source reaches a non-zero `quit()`, following the helpers it calls.
 ##
 ## **TWO HOPS ARE NORMAL IN THIS TREE AND ONE HOP WAS NOT ENOUGH**: the shot tools bail through
@@ -183,7 +200,16 @@ func test_every_ceiling_is_read_and_bails_non_zero() -> bool:
 				bails = true
 				break
 			var called := _called_helper(line)
-			if called != "" and _quits_non_zero_somewhere(String(tools[path]), called):
+			if called == "":
+				continue
+			# **A HELPER ASKED FOR A ZERO IS NOT A BAIL, and a mutation is why this clause exists.**
+			# Reverting the fix below to `_stop(code: int = 0)` left the bail path calling `_stop()`,
+			# whose quit the scan can only see as `quit(code)` -- so the test passed over exactly the
+			# defect it had just found. The call site's own argument closes it: an explicit `0`, or
+			# nothing where the signature defaults to 0, is a run that gave up and reported success.
+			if _asks_for_zero(String(tools[path]), called, line):
+				continue
+			if _quits_non_zero_somewhere(String(tools[path]), called):
 				bails = true
 				break
 		if not bails:
