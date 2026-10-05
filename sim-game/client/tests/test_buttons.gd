@@ -895,15 +895,30 @@ func test_walking_does_not_shout_on_the_always_visible_line() -> bool:
 	if log_text == before or log_text.strip_edges() == "":
 		ok = _fail("the walk produced no event lines, so this proves nothing about what is loud")
 	else:
+		# **AN EMPTY SAMPLE IS THE RESTING STATE NOW, NOT A DEFECT** (ASSA-245). This loop used to fail
+		# on a blank line, because when it was written the status line always held something (offline
+		# play's own `offline, so no hash report was sent` note, which the docstring above names) and a
+		# blank could only mean the line had been wiped. Since ASSA-239/245 a healthy screen IS quiet:
+		# a `Say.JOINED` sentence ages out after `SAYING_DWELL_TICKS`, and that note no longer reaches
+		# the status line at all once you are in a world. So blanks are skipped rather than failed --
+		# **an empty line promotes nothing, which is this test's whole claim** -- and the guard below
+		# is what stops the skip making the test vacuous.
+		var read := 0
 		for said in samples:
 			if said.strip_edges() == "":
-				ok = _fail("the status line was blanked during the walk")
-				break
+				continue
+			read += 1
 			if log_text.contains(said):
 				ok = _fail(("walking promoted one of the log's own sentences onto the "
 						+ "always-visible line: '%s'. Successes are the log's; that surface holds "
 						+ "one line and it is for what went wrong.") % said)
 				break
+		# THE GUARD THE SKIP ABOVE NEEDS. A walk says `walking to x, y` through `_on_map_click`, so at
+		# least one sample must carry something; if every one were blank this test would be reading an
+		# empty surface twenty times and calling it proof.
+		if ok and read == 0:
+			ok = _fail("every one of the %d samples was blank, so nothing was checked for promotion"
+					% samples.size())
 	screen.queue_free()
 	return ok
 
