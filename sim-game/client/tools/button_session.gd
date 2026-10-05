@@ -254,6 +254,43 @@ func _report() -> void:
 	#
 	# `BUTTON SESSION OK` is still the prefix and still the last line, so every existing grep keeps
 	# working; a grep that cares which way it went now has something to match.
+	# **AND THE RUNNING BINDING IS ASKED WHAT A REAL BUILDING CARRIES** (ASSA-183, which is ASSA-141's
+	# box 4 -- the half I did not get then and named rather than left silent).
+	#
+	# WHY HERE AND NOT IN THE SUITE. `AssayScene.SIM_FACTS` declares the sim facts the scene draws,
+	# and ASSA-141's two guards compare that list to the READS in `scene_view.gd`: source against
+	# source. Neither asks the binding what it actually sends, so a key the binding stops sending is
+	# caught at draw time and never by a gate. The suite version of this exists and works for one
+	# dictionary -- `test_hud.gd::test_the_tile_fixture_still_matches_a_real_tile` caught a
+	# seven-minute-stale dylib in under a minute when #231 added `ground_note` -- and `buildings` is
+	# the dict the original defect was in (`lit`, absent before #184) and the one with no such test.
+	#
+	# It cannot go beside the tile one, because **a fresh world has tiles immediately and no
+	# buildings**: a smelter needs the loop played, and there is no `give` command (validating
+	# commands inside `step` is what makes cheating self-defeating). This script has already played
+	# to a placed, mining machine by the time it gets here, headless and deterministic, in CI, for
+	# nothing. Three other shapes were considered and are on the item with the reason each lost: play
+	# 500 ticks inside the suite (complete, duplicates this script's job), a Rust-side guard reading
+	# the .gd (cheap, still source-against-source, so **blind to a stale dylib** -- the whole point),
+	# and a checked-in welcome fixture holding a smelter (pins SAVE 12's shape in a file that rots).
+	var contract: Array = AssayScene.SIM_FACTS["building"]
+	var sample: Array = _screen._sim.buildings()
+	if sample.is_empty():
+		_finish(false, ("the loop ended with no building in the world, so the binding's building "
+				+ "contract was never asked (ASSA-183). Outcome was `%s`") % _play.outcome_kind)
+		return
+	for entry in sample:
+		var building: Dictionary = entry
+		for key in contract:
+			if not building.has(key):
+				_finish(false, ("`AssayScene.SIM_FACTS[\"building\"]` needs `%s` and the RUNNING "
+						+ "binding does not send it. A real building carries: %s. This is the "
+						+ "stale-dylib shape: the scene draws a fact the library stopped "
+						+ "providing, and nothing but a frame could say so (ASSA-183).")
+						% [String(key), str(building.keys())])
+				return
+	print("  binding contract: all %d building(s) carry every one of SIM_FACTS[\"building\"] (%s)"
+			% [sample.size(), ", ".join(contract)])
 	var suffix: String = String({
 		"mining": "MACHINE MINING",
 		"stopped": "MACHINE STOPPED",
