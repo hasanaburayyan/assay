@@ -240,6 +240,8 @@ func _sample(delta: float, now: float) -> void:
 	_starved.append(bool(_screen._starved))
 	_held.append((_screen._pending as Array).size())
 	_sim_tick.append(int(_screen._sim.tick()))
+	_depth.append(float(_screen._play_depth))
+	_trim.append(float(_screen._play_trim))
 
 
 ## THE MOVING STRETCH ONLY, both ends trimmed. A standing body is on its tile in every frame, so any
@@ -398,6 +400,15 @@ func _report() -> void:
 		print("  the SIM moved %.1f tiles in %d ticks = %.3f tiles/tick (true speed assumes 1.000)"
 				% [tiles, ticks, tiles / maxf(1.0, float(ticks))])
 	print("  buffer held: %s" % [_percentiles(_as_floats(_held))])
+	# **THE DEPTH AND THE TRIM: THE LOOP'S OWN TWO NUMBERS** (ASSA-197). Depth is what the PI loop
+	# controls -- `PLAYOUT_DELAY` is the target, and a depth sitting near zero is a clock about to
+	# hold the body still. The trim is what it has learnt about `playout_step`'s bias: 1.000 means
+	# the measurement is being taken at face value, and a trim parked on `PLAYOUT_TRIM_MAX` means the
+	# integral has run out of authority and the next thing to look at is the measurement itself.
+	print("  buffer depth (ticks, target %.1f): %s"
+			% [AssayScene.PLAYOUT_DELAY, _percentiles(_slice(_depth, from, to))])
+	print("  clock trim (1.000 = the measured tick taken as-is, clamp %.2f): %s"
+			% [AssayScene.PLAYOUT_TRIM_MAX, _percentiles(_slice(_trim, from, to))])
 	# **WHAT THE CLIENT THINKS A TICK IS, AGAINST WHAT IT ACTUALLY IS.** The clock divides by the
 	# first number; the second is the sim's own tick count over the wall clock across the same span.
 	# Any gap between them IS a speed error, multiplied straight into every drawn frame.
@@ -458,6 +469,15 @@ func _as_floats(values: Array[int]) -> Array[float]:
 	var out: Array[float] = []
 	for v in values:
 		out.append(float(v))
+	return out
+
+
+## THE MOVING STRETCH OF A PER-FRAME SERIES, both ends inclusive, so a distribution over it is about
+## the walk and not about how long the probe watched a standing body.
+func _slice(values: Array[float], from: int, to: int) -> Array[float]:
+	var out: Array[float] = []
+	for i in range(maxi(from, 0), mini(to + 1, values.size())):
+		out.append(values[i])
 	return out
 
 
