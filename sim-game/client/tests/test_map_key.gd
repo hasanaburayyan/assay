@@ -374,8 +374,15 @@ func test_no_key_swatch_is_invisible_on_the_patch_it_is_drawn_on() -> bool:
 	# AND THE HATCH'S OWN STROKE AGAINST ITS OWN DISC, at the floor the MAP is held to (ASSA-209).
 	# The swatch promises the shape, so the shape has to be there: a stripe the same colour as the
 	# disc under it is the map's 1.42:1 defect reproduced inside the legend.
+	# **THE STRIPE'S COLOUR COMES BACK THROUGH `map_key_sample_ink`, WHICH IS THE PATH `map_key.gd`
+	# ACTUALLY TAKES, and asking `hatch_ink` here instead was a hole my own lever found.** Deleting the
+	# `dead_end` branch from `map_key_sample_ink` -- the whole of Nerite's defect -- left all 326 tests
+	# green, because this line computed the right number about a function the panel does not call.
 	var sample := AssayHud.species_tint(AssayHud.KEY_SAMPLE_SPECIES)
-	var stripe := AssayHud.hatch_ink(sample)
+	var hatch_row := AssayHud.mark_entry(&"dead_end")
+	if hatch_row.is_empty():
+		return _fail("there is no `dead_end` mark to key: this test is measuring nothing")
+	var stripe := AssayHud.map_key_sample_ink(hatch_row)
 	var on_disc := AssayHud.contrast_ratio(stripe, sample)
 	if on_disc < 3.0:
 		return _fail(("the key's hatch stripe is %.2f:1 against its own disc (floor 3.00). The map's "
@@ -383,4 +390,43 @@ func test_no_key_swatch_is_invisible_on_the_patch_it_is_drawn_on() -> bool:
 				+ "describes teaches the wrong mark.") % [on_disc])
 	print("    key swatches: %d rows all visible on the ground; hatch stripe %.2f:1 on its own disc"
 			% [checked, on_disc])
+	return true
+
+
+## **THE HATCH SWATCH'S DISC IS NOT PAINTED IN THE ROW'S OWN INK, AND THIS IS A SOURCE SCAN -- SAID
+## SO, BECAUSE THE ARITHMETIC ABOVE CANNOT REACH IT.**
+##
+## Nerite's defect was `draw_circle(middle, radius, colour)` in the `hatch` branch, where `colour` is
+## `map_key_sample_ink(row)` -- so the disc, its stripes and the `ground` patch under both were three
+## layers of one near-black. **My contrast test cannot catch it and I only know that because a mutation
+## passed.** `KEY_SAMPLE_SPECIES` is slot 5, chosen on Maren's sweep precisely because it is BRIGHT, so
+## `MAP_BG` against it measures ~5.8:1 and clears any floor worth setting. The number was never the
+## problem; what was drawn was. A ratio can only see this once the disc has a colour of its own.
+##
+## So the assertion is structural, and it is the narrowest one that holds: the branch fills its disc
+## from `species_tint`, the way the `deposit` row above it does, and not from the row's ink.
+func test_the_hatch_swatch_fills_its_disc_with_a_tint_not_with_the_rows_ink() -> bool:
+	var text := FileAccess.get_file_as_string(KEY_PANEL)
+	if text.is_empty():
+		return _fail("could not read %s" % KEY_PANEL)
+	var at := text.find("&\"hatch\":")
+	if at < 0:
+		return _fail("%s has no `hatch` branch; the key cannot draw the dead-end row at all"
+				% KEY_PANEL)
+	var next := text.find("&\"glyph\":", at)
+	var branch := text.substr(at, (next - at) if next > at else -1)
+	if not branch.contains("AssayHud.species_tint("):
+		return _fail(("the key's `hatch` branch does not fill its disc from `species_tint`. If it is "
+				+ "back to `colour`, the disc, the stripes and the ground patch are all one "
+				+ "near-black and the row draws NOTHING -- Nerite, ASSA-206: `a flat dark square "
+				+ "with no stripe; the key names a mark it does not draw`."))
+	if branch.contains("draw_circle(middle, radius, colour)"):
+		return _fail(("the key's `hatch` branch still paints its disc in the row's own ink. That ink "
+				+ "is what the STRIPES are drawn in, so the mark is painted on itself."))
+	# AND THE WIDTH, the ASSA-206 density debt: `HATCH_ON` is a count of steps in the `x + y` index,
+	# and used as a pixel width it draws 40% ink where 28.6% was ruled.
+	if not branch.contains("float(AssayHud.HATCH_ON) / sqrt(2.0)"):
+		return _fail(("the key's hatch stroke is not `HATCH_ON / sqrt(2)` wide. `HATCH_ON` as a raw "
+				+ "pixel width is a 2px PERPENDICULAR stroke at 4.95px spacing = 40% ink, half again "
+				+ "the 28.6% Maren ruled; the swatch measured 39.8% against the map's own 2/7."))
 	return true
