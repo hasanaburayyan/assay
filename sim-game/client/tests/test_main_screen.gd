@@ -2461,6 +2461,88 @@ func test_the_schematic_is_handed_every_building_the_sim_reports() -> bool:
 	return ok
 
 
+## **EVERY PLAYER THE SCREEN READS GOES THROUGH ONE BOUNDARY** (ASSA-196 boxes 3 and 5).
+##
+## Five places in `main.gd` read a player's `id` and `pos` with a silent default, so a binding that
+## stopped sending `pos` would draw every player on tile (0,0) CONFIDENTLY and put the camera there
+## too. The fix is one reader, `_players()`, which refuses the frame rather than the player.
+##
+## **THIS SCAN IS THE LEG THAT WOULD HAVE CAUGHT THE DEFECT, and the one my own plan would have left
+## open.** I had written that the boundary would be `_refresh_world` and the other reads would keep
+## their defaults, unreachable behind it -- with the worry that `_my_tile` runs from input handlers,
+## so the ordering needed measuring. The ordering was the wrong question: `_my_tile` does not read
+## `_refresh_world`'s view, it re-reads `_sim.players()` itself, and so do `_remember_positions` and
+## the schematic's own loop. Three readers would have gone on defaulting in any frame order. So what
+## is asserted is DATA FLOW: `_sim.players()` may appear in this file only inside `_players()`, and a
+## sixth reader added next month reddens this instead of quietly defaulting.
+##
+## The `.size()` count in the world line is allowed by name: it reads no fact off a player, only how
+## many there are, and a count cannot be placed on the wrong tile.
+func test_every_player_read_goes_through_the_one_boundary() -> bool:
+	var source := FileAccess.get_file_as_string("res://scripts/main.gd")
+	if source == "":
+		return _fail("could not read res://scripts/main.gd, so nothing was scanned")
+	var strays := PackedStringArray()
+	for line in source.split("\n"):
+		var text := String(line)
+		if not text.contains("_sim.players()"):
+			continue
+		if text.strip_edges().begins_with("#") or text.strip_edges().begins_with("##"):
+			continue
+		if text.contains("var players: Array = _sim.players()"):
+			continue   # the boundary itself
+		if text.contains("_sim.players().size()"):
+			continue   # a count, not a fact
+		strays.append(text.strip_edges())
+	if not strays.is_empty():
+		return _fail(("%d place(s) in main.gd read `_sim.players()` outside the `_players()` "
+				+ "boundary, so they default `pos` to (0,0) on their own and the camera goes to the "
+				+ "world's corner: %s") % [strays.size(), String(" | ").join(strays)])
+	# AND THE BOUNDARY IS ACTUALLY THE ONE THE READERS CALL, not a function nobody uses -- the
+	# ASSA-189 failure, where a correct `_building_marks` was called by nobody for a month.
+	if not source.contains("for entry in _players():"):
+		return _fail("nothing in main.gd iterates `_players()`, so the boundary is dead code and "
+				+ "every player read is somewhere else")
+	# AND A REFUSAL BLANKS THE VIEW RATHER THAN DROPPING A BODY (box 5). Asserted as the branch
+	# existing in `_refresh_world`, because making the real binding stop sending `pos` is a Rust edit
+	# and lives in the lever on the item, not in the suite.
+	if not source.contains("if not _player_facts_missing.is_empty():"):
+		return _fail("`_refresh_world` does not check for a refusal, so a binding that stopped "
+				+ "describing players would draw a world with nobody in it instead of saying so")
+	return true
+
+
+## **THE FACT CHECKER NAMES THE KEY WELL ENOUGH TO ACT ON** (ASSA-196 box 2), in the same words
+## `AssayScene.missing_sim_facts` uses, so one vocabulary covers both boundaries.
+##
+## SWEPT OVER EVERY DECLARED FACT, not just `pos`: the defect was two keys with one shape, and `id`
+## is the worse of them -- every player becomes -1, `id == _client.player_id` is false for everyone,
+## and the camera follows nobody while the bodies are all still drawn.
+func test_a_player_dict_missing_a_fact_is_named_not_defaulted() -> bool:
+	var whole := {}
+	for key in AssaySimHost.PLAYER_FACTS:
+		whole[key] = 0
+	if not AssaySimHost.missing_player_facts([whole, whole]).is_empty():
+		return _fail("two complete player dicts reported missing facts: %s"
+				% [AssaySimHost.missing_player_facts([whole, whole])])
+	if not AssaySimHost.missing_player_facts([]).is_empty():
+		return _fail("an empty list reported missing facts; a world nobody has joined is not a "
+				+ "binding that stopped describing people")
+	for key in AssaySimHost.PLAYER_FACTS:
+		var broken := whole.duplicate()
+		broken.erase(key)
+		var said := AssaySimHost.missing_player_facts([whole, broken])
+		if said.size() != 1:
+			return _fail("erasing `%s` from the second of two players reported %d complaints: %s"
+					% [key, said.size(), said])
+		var want := "player[1 of 2].%s" % String(key)
+		if String(said[0]) != want:
+			return _fail(("erasing `%s` is reported as `%s`; it should be `%s` -- the index, the "
+					+ "count and the key, which is what `missing_sim_facts` says and what a reader "
+					+ "needs to act") % [key, said[0], want])
+	return true
+
+
 ## **THE HATCH GOES ON BEFORE THE LETTER, WHICH IS THE ONLY THING KEEPING THE LETTER** (ASSA-199
 ## box 6; Cove's constraint is that the hatch repaints only pixels already inside the disc).
 ##

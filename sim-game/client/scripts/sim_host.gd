@@ -383,6 +383,24 @@ func designs_of(player: int) -> Array:
 ## STATIC AND WORLDLESS, unlike everything else here, because the counts that needed it are the
 ## HOST's -- players, bundles applied, hashes reported -- and a client must be able to say them
 ## before it has a world.
+## **WHICH DECLARED PLAYER FACTS A LIST OF BINDING DICTS IS NOT CARRYING** (ASSA-196). Empty means
+## every player can be described; otherwise the names are `player[0 of 2].pos`, the same shape
+## `AssayScene.missing_sim_facts` uses, so one vocabulary covers both boundaries.
+##
+## **HERE RATHER THAN IN `main.gd` BECAUSE THIS IS THE BOUNDARY'S OWN SIDE.** `PLAYER_FACTS` is this
+## file's declaration of what a player dict carries, and `test_sim_binding.gd` asks the RUNNING
+## binding whether that list is still true. A checker living next to the declaration cannot drift from
+## it; one living in the renderer can.
+static func missing_player_facts(players: Array) -> PackedStringArray:
+	var missing := PackedStringArray()
+	for i in players.size():
+		var player: Dictionary = players[i]
+		for key in PLAYER_FACTS:
+			if not player.has(key):
+				missing.append("player[%d of %d].%s" % [i, players.size(), String(key)])
+	return missing
+
+
 static func counted(n: int, one: String, many: String) -> String:
 	return AssaySim.counted(n, one, many)
 
