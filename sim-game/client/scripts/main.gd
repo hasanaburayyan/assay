@@ -3175,7 +3175,14 @@ func _draw() -> void:
 		var deposit: Dictionary = entry
 		if int(deposit.get("amount", 0)) <= 0:
 			continue
-		var at := MARGIN + Vector2(deposit.get("center", Vector2i.ZERO) as Vector2i) * _cell
+		# **THE TILE'S MIDDLE, THROUGH `point_of_tile`, AND NOT A COPY OF ITS ARITHMETIC** (ASSA-220).
+		# This read `MARGIN + Vector2(centre) * _cell` -- the tile's top-left CORNER -- while the player,
+		# the spawn pad and every building mark used its middle, so at 9 px a tile every rock on this map
+		# was drawn 4.5 px up and left of itself. Maren's law on ASSA-213 is that a mark may lie about its
+		# size or its colour to be legible and never about its POSITION, and she refused an offset mark at
+		# 13-15 px under it; this was 4.5 px in the opposite direction and had been shipping the whole
+		# time. The hatch follows for free, being a pure function of `at`.
+		var at := point_of_tile(deposit.get("center", Vector2i.ZERO) as Vector2i)
 		var radius := maxf(_cell, float(int(deposit.get("radius", 1))) * _cell)
 		# **HATCHED IF NOTHING CAN GET THE ORE OUT, CLEAN IF THE ROCK PAYS** (ASSA-199, Maren's
 		# ruling on Cove's sheet; it replaces the outline ASSA-187 shipped). Three channels were
@@ -3214,8 +3221,12 @@ func _draw() -> void:
 	var mark := Vector2(AssayHud.PLAYER_MARK_PX, AssayHud.PLAYER_MARK_PX)
 	for entry in _players():
 		var player: Dictionary = entry
-		var at := MARGIN + (Vector2(player.get("pos", Vector2i.ZERO) as Vector2i)
-				+ Vector2(0.5, 0.5)) * _cell
+		# THROUGH `point_of_tile` TOO, AND THIS ONE MOVES NOTHING (ASSA-220). It spelled
+		# `MARGIN + (pos + 0.5) * _cell` itself, which is byte-for-byte what `point_of_tile` returns in
+		# this view -- so it was CORRECT and still a copy. It is converted because the copies are the
+		# defect: the disc's corner formula and this one sat eight lines apart, and nothing could tell
+		# you which of the two was the odd one out. The suite proves no player mark moved.
+		var at := point_of_tile(player.get("pos", Vector2i.ZERO) as Vector2i)
 		var mine := int(player.get("id", -1)) == _client.player_id
 		var colour := AssayHud.mark_ink(&"player_mine" if mine else &"player_theirs")
 		# Where the sim is walking them, drawn as a line to there. Not a tween: the sim owns the
@@ -3224,7 +3235,7 @@ func _draw() -> void:
 		# line stays a line there for the same reason it is one here.)
 		var target: Variant = player.get("target")
 		if target != null:
-			draw_line(at, MARGIN + (Vector2(target as Vector2i) + Vector2(0.5, 0.5)) * _cell,
+			draw_line(at, point_of_tile(target as Vector2i),
 					AssayHud.mark_ink_of(&"walk_mine" if mine else &"walk_theirs", colour), 1.0)
 		# **A KEYLINE ON A PERSON, WHICH IS MAREN'S SECOND RULING ON ASSA-189 AND A DEFECT THAT WAS
 		# ALREADY SHIPPING.** `THEIRS` is a pale near-white, and with no rim a partner standing on a
@@ -3343,6 +3354,12 @@ func _draw() -> void:
 	# as two of something. So the target keeps the tile it marks and loses the hue: four corner
 	# brackets in the neutral ink, which cannot be mistaken for a body at any tile size, and no 22nd
 	# colour literal added to the 21 she counted.
+	# **THIS CORNER AND THE HOVER RECT BELOW ARE THE TWO PLACES THAT MUST NOT GO THROUGH
+	# `point_of_tile`** (ASSA-220, Maren's second point). A RECT THAT COVERS A CELL IS NOT A MARK THAT
+	# NAMES IT: these two start at the tile's top-left and span `_cell`, so the corner IS their correct
+	# origin, and the brackets below are placed off it by `_cell` on each axis. The deposit pass used the
+	# same expression for a CENTRE, which is probably where the habit came from -- so the arithmetic
+	# looking identical to the bug three hundred lines up is not a reason to change it.
 	if _targeted:
 		var corner := MARGIN + Vector2(_target) * _cell
 		var reach := maxf(4.0, _cell * 0.45)
@@ -3413,7 +3430,10 @@ func _glyph_marks(deposits: Array, font: Font) -> Array:
 		# every deposit would stack its glyph on tile (0,0), and `AssayHud.machines_on_letters` would
 		# then report a machine near the origin as standing on all six species at once.
 		var centre: Vector2i = deposit["center"]
-		var at := MARGIN + Vector2(centre) * _cell
+		# **THE SAME `point_of_tile` THE DISC PASS USES** (ASSA-220). These were two independent copies of
+		# the corner formula, which is why one defect sat in two places: a letter centred on `at` inherited
+		# the disc's half-tile error exactly.
+		var at := point_of_tile(centre)
 		var radius := maxf(_cell, float(int(deposit.get("radius", 1))) * _cell)
 		var size := AssayHud.glyph_size(radius)
 		if size <= 0:
