@@ -177,17 +177,56 @@ const GLYPH_LIGHT := Color(1.0, 1.0, 1.0)
 ## a deposit's centre tile was erasing a 25 px letter whole (Maren's two 1x shots). Over its own disc
 ## that was the end of it; over a `HOVER` diamond it is not, because `glyph_color` picks the ink by
 ## contrast against the DISC, and `GLYPH_LIGHT` on a pale diamond is the same letter gone for the
-## opposite reason. The bed restores the exact surface the ink was measured against, locally, so
-## Decision #36's 4.52 worst case holds over a mark as well as over a rock.
+## opposite reason. The bed is meant to restore the exact surface the ink was measured against,
+## locally, so Decision #36's 4.52 worst case holds over a mark as well as over a rock.
+##
+## **THIS OUTLINE ALONE DOES NOT DO THAT, AND THE SENTENCE ABOVE CLAIMED IT DID FOR A DAY** (ASSA-218,
+## Maren). It is antialiased, so a "2 px" rim is about 1 px of solid and 1 px of fade and the letter's
+## boundary inside a mark came out with a 4.5:1 edge on **13%** of itself. `GLYPH_BED_STAMPS` below is
+## what makes the claim true (81%); this constant is the soft outer rim, not the cover.
 ##
 ## **ON AN UNOCCUPIED DISC IT IS INVISIBLE BY CONSTRUCTION** -- same colour as what is already there --
-## so none of the 600 measured states change, and a hatched disc loses only a 2 px rim around the
-## strokes it was already losing to the glyph itself.
+## so none of the 600 measured states change, and a hatched disc loses only a thin rim around the
+## strokes it was already losing to the glyph itself: measured at **0.89-1.32% of a hatched disc's
+## interior** against a bed-0 control, with the hatch's density outside the letter's own box unchanged
+## to the digit (29.8 / 26.5 / 27.7%).
 ##
 ## 2.0 is the width of `MARK_KEYLINE_PX` for the same reason it is 2 there: it is the thinnest rim
 ## that survives at 1x on this map (Cove's keyline-0 finding, ASSA-193), and a wider one would start
 ## eating the diamond it sits on.
 const GLYPH_BED_PX := 2.0
+
+## **THE BED'S SOLID CORE: the letter stamped once per neighbouring pixel** (ASSA-218, and it is the
+## fallback Maren named -- "the string drawn in the bed colour at 8 offsets" -- under the condition
+## she set for it, "only if an outline cannot reach the bar").
+##
+## **THAT CONDITION IS MEASURED, NOT ASSUMED.** On the real light-ink case (seed 777042, a machine
+## standing on Minyte at (74,36), white ink on a near-white `HOVER` diamond), the share of the
+## letter's boundary inside the mark that has a 4.5:1 edge within 2 px:
+##
+##   outline 2 px (shipped)   13%   median 3.42:1   <- the defect
+##   outline 4 px             81%   median 7.29:1
+##   these 8 stamps           81%   median 8.79:1
+##   the glyph drawn fatter   58%   median 8.12:1
+##   a MAP_BG keyline, 2 px   45%   median 4.35:1   <- Maren's own first ruling, also short
+##
+## A 4 px outline reaches the same share with one call instead of eight, and it is rejected for the
+## reason `MARK_KEYLINE_PX` is 2: a 4 px rim eats the 16 px diamond it sits on. The stamps buy the
+## same coverage at a better median without growing the rim.
+##
+## **AND THESE EIGHT COVER THE DISTANCE-1 RING BY CONSTRUCTION, NOT BY LUCK.** A pixel at distance 1
+## from the ink is `q + d` for an ink pixel `q` and a unit offset `d`; the copy displaced by `d`
+## paints `{ink + d}`, which contains it. All eight, or a stroke's END keeps bare diagonals.
+##
+## THE PRICE, STATED: 8 extra `draw_string` calls per letter -- 104 on a 13-letter world, against
+## ASSA-214's whole-map median of 42 draw calls. It is the largest thing on this map's bill and the
+## next move if it matters is to stamp only the letters a mark actually laps, which
+## `letter_occlusions` can already decide.
+const GLYPH_BED_STAMPS: Array[Vector2] = [
+	Vector2(-1.0, -1.0), Vector2(0.0, -1.0), Vector2(1.0, -1.0),
+	Vector2(-1.0, 0.0), Vector2(1.0, 0.0),
+	Vector2(-1.0, 1.0), Vector2(0.0, 1.0), Vector2(1.0, 1.0),
+]
 
 ## **EVERY MARK THE WHOLE-WORLD MAP CAN PUT ON SCREEN, IN THE TABLE THE DRAW LOOP ITSELF READS**
 ## (ASSA-206, Maren's ruling: "the key must be GENERATED from the same table the draw loop reads, so

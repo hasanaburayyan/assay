@@ -1380,6 +1380,74 @@ func test_a_building_on_the_schematic_is_neither_a_disc_nor_a_rect() -> bool:
 	return true
 
 
+## **THE GLYPH BED COVERS EVERY PIXEL AT DISTANCE 1 FROM THE LETTER'S INK** (ASSA-218, Maren's P1 on
+## the half of ASSA-213 that did not work).
+##
+## WHAT WENT WRONG WITH THE SHIPPED BED, measured on a real window rather than argued: an antialiased
+## 2 px outline is about 1 px of solid and 1 px of fade, so on the light-ink case (seed 777042, a
+## machine on Minyte at (74,36), white ink on a near-white `HOVER` diamond) only **13% of the letter's
+## boundary inside the mark had a 4.5:1 edge within 2 px**. 56.8% of the 600 species-and-purity states
+## carry `GLYPH_LIGHT`, so that is the majority case and not a corner.
+##
+## **THIS IS A PROPERTY AND NOT A LIST.** Asserting that the constant holds eight particular vectors
+## would pass any mutation that kept eight vectors. So the test builds an ink mask with the shapes a
+## letter actually has -- a stroke, a stroke's END and a one-pixel serif, where a diagonal neighbour
+## has no ink two pixels away to be covered from -- works out its own 8-neighbour ring, and asks
+## whether every ring pixel lands under some stamped copy. Dropping the four diagonals leaves that
+## mask's corners bare and this reddens; a wider OUTLINE would not satisfy it at all, which is the
+## point of the item.
+##
+## WHAT IT CANNOT SEE: whether the letter is legible. Nothing headless rasterises a glyph, so the
+## 13% -> 81% is `shared/assay/marlow-assa218-bed/ring.py` on a real 1x window, and the judgement on
+## the picture is Maren's.
+func test_the_glyph_bed_covers_every_neighbour_of_the_inks_own_pixels() -> bool:
+	var ink := {}
+	for y in range(0, 5):
+		for x in range(0, 2):
+			ink[Vector2i(x, y)] = true
+	ink[Vector2i(2, 4)] = true
+	ink[Vector2i(4, 0)] = true
+	var stamps: Array[Vector2] = AssayHud.GLYPH_BED_STAMPS
+	if stamps.is_empty():
+		return _fail("the glyph bed stamps no copy of the letter at all, so there is no solid bed "
+				+ "under the ink -- only the antialiased outline that ASSA-218 is about")
+	for offset: Vector2 in stamps:
+		if offset == Vector2.ZERO:
+			return _fail("a bed stamp sits at (0,0), which paints the bed colour over the ink itself "
+					+ "rather than around it")
+	var ring := {}
+	for key in ink:
+		var at: Vector2i = key
+		for dy in [-1, 0, 1]:
+			for dx in [-1, 0, 1]:
+				var near := at + Vector2i(dx, dy)
+				if not ink.has(near):
+					ring[near] = true
+	if ring.is_empty():
+		return _fail("premise: the fixture's ink has no ring, so this test measures nothing")
+	var bare := []
+	for key in ring:
+		var at: Vector2i = key
+		var covered := false
+		for offset: Vector2 in stamps:
+			if ink.has(at - Vector2i(offset.round())):
+				covered = true
+				break
+		if not covered:
+			bare.append(at)
+	if not bare.is_empty():
+		return _fail(("%d of %d pixels at distance 1 from the ink are painted by no bed stamp (%s "
+				+ "first): on a light letter under a near-white mark those pixels read 1.12:1 and the "
+				+ "letter stops having an edge, which is ASSA-218.")
+				% [bare.size(), ring.size(), bare[0]])
+	# AND THE OUTLINE IS STILL UNDER IT: the stamps are the solid core, the outline the soft 2px edge
+	# Maren ruled on ASSA-213. A bed that lost its width would be a different mark.
+	if AssayHud.GLYPH_BED_PX < 2.0:
+		return _fail("the glyph bed's outline is %.1fpx: the stamps cover distance 1, the outline is "
+				% AssayHud.GLYPH_BED_PX + "what makes the rim the width that was ruled")
+	return true
+
+
 ## **A SHOT CAN SAY WHETHER A MACHINE WAS STANDING ON A SPECIES LETTER, INCLUDING "NO"** (ASSA-213 box
 ## 2: "the case is in a shot: a building placed on a deposit CENTRE, not on its edge -- today's shots
 ## cannot report this absent").
