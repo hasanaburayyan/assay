@@ -91,6 +91,12 @@ var _sim_tick: Array[int] = []
 ## which on a machine none of us owns is the only way to see that happening at all.
 var _depth: Array[float] = []
 var _trim: Array[float] = []
+## How many times the screen had advanced its playout clock by this sample. See
+## `main.gd::_play_advances`: more than one between two samples means `_played_at` stepped without a
+## new rectangle being drawn, and the verdict column's denominator is then short.
+var _advances: Array[int] = []
+## One entry per moving frame that failed the bar, with the parts of its own verdict.
+var _outliers: Array[Dictionary] = []
 
 
 func _initialize() -> void:
@@ -242,6 +248,7 @@ func _sample(delta: float, now: float) -> void:
 	_sim_tick.append(int(_screen._sim.tick()))
 	_depth.append(float(_screen._play_depth))
 	_trim.append(float(_screen._play_trim))
+	_advances.append(int(_screen._play_advances))
 
 
 ## THE MOVING STRETCH ONLY, both ends trimmed. A standing body is on its tile in every frame, so any
@@ -341,6 +348,15 @@ func _report() -> void:
 			drawn.append(moved / screen_dt)
 			if absf(drawn[drawn.size() - 1] - TRUE_SPEED) <= TRUE_SPEED * TOLERANCE:
 				within_drawn += 1
+			else:
+				# **EVERY FRAME OUTSIDE THE BAR IS NAMED WITH WHAT ITS DENOMINATOR WAS MADE OF**, which
+				# is the difference between a finding and a plea. `advances` is how many times the
+				# clock stepped between these two samples: two means a bundle landed mid-frame and
+				# moved `_played_at` without publishing a rectangle, so this frame's movement is being
+				# divided by part of its own interval.
+				_outliers.append({"frame": i, "speed": moved / screen_dt, "moved": moved,
+						"screen_dt": screen_dt, "probe_dt": dt, "over_probe": moved / dt,
+						"advances": _advances[i] - _advances[i - 1], "depth": _depth[i]})
 		probe.append(moved / dt)
 		# **BOX 3, MEASURED RATHER THAN BUILT.** The camera is on the drawn position (`main.gd`) and
 		# the foot mark is drawn from it, so the body and its own mark must keep a fixed offset. Any
@@ -435,6 +451,14 @@ func _report() -> void:
 			float(ms.get("median", 0.0)), float(ms.get("p95", 0.0)),
 			1000.0 / maxf(float(ms.get("median", 0.0)), 1e-6), _label]
 	var share := 0.0 if drawn.is_empty() else float(within_drawn) / float(drawn.size())
+	if not _outliers.is_empty():
+		print("  THE FRAMES OUTSIDE THE BAR, one line each (see `_outliers`):")
+		for entry: Dictionary in _outliers:
+			print(("    frame %4d  %6.2f tiles/s  moved %.4f tiles  screen_dt %5.1f ms  "
+					+ "probe_dt %5.1f ms  = %6.2f tiles/s over probe_dt  clock advances %d  depth %.2f")
+					% [int(entry["frame"]), float(entry["speed"]), float(entry["moved"]),
+					float(entry["screen_dt"]) * 1000.0, float(entry["probe_dt"]) * 1000.0,
+					float(entry["over_probe"]), int(entry["advances"]), float(entry["depth"])])
 	print("  WITHIN THE BAR, ON THE DRAWN RECT: %d of %d moving frames (%.1f%%), %s"
 			% [within_drawn, drawn.size(), share * 100.0, rate])
 	var share_lerp := 0.0 if body.is_empty() else float(within) / float(body.size())

@@ -381,6 +381,15 @@ var _play_trim := AssayScene.PLAYOUT_TRIM_NONE
 ## The buffer's depth in ticks on the last advance, for the probes and the debug line: the quantity
 ## the clock is actually controlling, which until now could only be inferred from `_pending.size()`.
 var _play_depth := 0.0
+## HOW MANY TIMES THE CLOCK HAS BEEN ADVANCED, for the probes alone.
+##
+## IT IS HERE BECAUSE A PROBE CANNOT OTHERWISE TELL HOW MANY INTERVALS ITS TWO SAMPLES SPAN. The
+## clock advances on a drawn frame AND on a bundle landing (see `_remember_positions`), and the
+## second kind moves `_played_at` without publishing a new drawn rectangle -- so a probe pairing one
+## frame's worth of movement with `_played_at`'s last step divides by too little time and reports a
+## sprint the screen never drew. `motion_speed_probe.gd` names the frames where that happened
+## instead of leaving them in the distribution as if they were speed.
+var _play_advances := 0
 ## The last few bundle ARRIVAL times, for the measured tick rate. See `AssayScene.playout_step`.
 var _tick_times: Array[float] = []
 ## The sim tick each of those arrivals carried, so the rate is seconds per TICK and not per bundle.
@@ -2569,6 +2578,7 @@ func _advance_playout(now: float) -> float:
 	# loop needs is carried by its caller and by nothing else.
 	_play_trim = float(cursor["trim"])
 	_play_depth = float(cursor["depth"])
+	_play_advances += 1
 	var index := int(cursor["index"])
 	# EVERYTHING THE CLOCK HAS GONE PAST IS DROPPED, except the position being drawn FROM. `_pending`
 	# keeps its documented meaning for the probes that read its depth: produced positions the screen
