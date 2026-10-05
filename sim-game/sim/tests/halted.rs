@@ -373,10 +373,20 @@ fn a_drill_that_is_merely_idle_is_something_to_fix_and_a_smelter_is_not() {
 /// be a second claim about the world — and the sim was already making it, inside
 /// `halted_table`'s first line, where no host could reach it.
 ///
-/// **THE SECOND ASSERTION IS THE ONE THAT MATTERS.** Checking the summary's text
-/// alone would pass happily while `halted_table` went on spelling its own copy,
-/// which is the ASSA-43/52 shape this item exists to avoid. So the table's first
-/// line is required to BE the summary rather than to resemble it.
+/// **AND THE LAST ASSERTION IS HERE BECAUSE A MUTATION PASSED WITHOUT IT.** I
+/// wrote the two below first and said in the pull request that they required the
+/// table's first line to *be* the summary rather than to resemble it. They do
+/// not. I put `halted_table`'s own `format!("{} of {} buildings stopped:\n", …)`
+/// back, which is precisely the duplication this split removes, and all nine
+/// tests in this file stayed green — because a faithful copy produces identical
+/// TEXT, and text is all an equality over output can see. The drift it is meant
+/// to catch is a FUTURE edit to one wording that the other does not follow, and
+/// no comparison of today's two strings can observe that.
+///
+/// So the call itself is asserted, in the source, the same weaker-but-real trick
+/// the client tests use for a disc nothing headless can read. It is brittle to
+/// reformatting on purpose: re-duplicating the sentence must cost somebody a red
+/// test, and nothing else here can make it.
 #[test]
 fn the_stopped_count_is_one_sentence_the_table_and_a_window_both_read() {
     let (mut world, me) = world_with_player();
@@ -397,8 +407,15 @@ fn the_stopped_count_is_one_sentence_the_table_and_a_window_both_read() {
     assert_eq!(
         table.lines().next().unwrap(),
         format!("{}:", sim::debug::halt_summary(&world)),
-        "the terminal's first line must BE the summary, not a second copy of \
-         it: {table}"
+        "the terminal's first line and the summary disagree: {table}"
+    );
+    // THE ONLY ASSERTION HERE A RE-DUPLICATION CANNOT SURVIVE. See the note above:
+    // the equality on the line before passes on a faithful copy.
+    let source = include_str!("../src/debug.rs");
+    assert!(
+        source.contains(r#"format!("{}:\n", halt_summary(world))"#),
+        "`halted_table` no longer builds its first line out of `halt_summary`, \
+         so the count is worded in two places again and they are free to drift"
     );
 }
 
