@@ -2560,9 +2560,14 @@ func _rebuild_make(offers: Array) -> void:
 		# the same way it does for a gear.
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 6)
-		var slot := _icon_box(offer.get("makes", {}) as Dictionary)
-		if slot != null:
-			row.add_child(slot)
+		# **THE COLUMN IS RESERVED WHETHER OR NOT THERE IS ART FOR THIS ROW** (ASSA-240, Maren's
+		# ruling). Measured at 1x on main `03c8966`: `Tonore head`, `handle` and `frame` each carry a
+		# 32px icon and start at x=985; `Tonore gear` carries none and starts at x=946. **One list,
+		# two left edges, 39px apart** -- and the thing that decides which a row gets is not the game,
+		# it is whether `assets/sprites` happens to ship a sheet for that kind (Marlow). An icon column
+		# that is sometimes there is worse than none: it is the only vertical line a list of wrapped
+		# sentences has, and it breaks on the one row whose art has not been drawn yet.
+		row.add_child(_icon_box(offer.get("makes", {}) as Dictionary, true))
 		var body := VBoxContainer.new()
 		body.add_theme_constant_override("separation", 2)
 		# TAKES THE SPACE THE ICON LEAVES, AND THAT IS WHAT KEEPS THE ROW IN THE PANEL (ASSA-98). A
@@ -2675,14 +2680,40 @@ func _pack_shape(stacks: Array) -> String:
 ##
 ## AN EMPTY DICTIONARY IS A VALID ARGUMENT and returns null: `makes` is absent on a row that makes
 ## nothing (`sort` on grade A), and "no art" is already this function's answer for a gear.
-func _icon_box(stack: Dictionary) -> Control:
+## `reserve` KEEPS THE COLUMN WHEN THERE IS NO ART (ASSA-240). Callers that pass `false` get `null`
+## for a kind with no sheet and must skip the child themselves, which is what every caller did until
+## today. Defaulted to `false` ON PURPOSE rather than flipped for everyone: the PACK rows have the
+## same defect and the same fix, but their layout is pinned by `art/pack_icon_layout.gd` and ten files
+## in `art/` are drawn from it -- changing them without redrawing `pack_icons.png`, `pack_rows.png`
+## and `pack_icon_kinds.png` turns CI's "A review sheet is still a picture of the client it drew"
+## red. That half is pipeline work with its own cost, written down on ASSA-240; this half is free.
+func _icon_box(stack: Dictionary, reserve := false) -> Control:
 	# THE ICON IS REDUNDANT AND MOST ROWS DO NOT GET ONE. `items.png` carries ore, refined and
 	# smelter, so a gear comes back null; the four part kinds have a row per grade. Every sentence
 	# beside one of these reads completely without it, which is Maren's rule and the same one the
 	# species glyph carries: a redundant cue promoted to the only cue is no longer redundant.
+	#
+	# **THAT RULE IS UNTOUCHED BY ASSA-240 AND IT IS WORTH SAYING SO.** Nothing below invents an icon
+	# for a kind that has none. What a reserved row gets is SPACE: `ICON_BOX_PX` of nothing, so the
+	# sentence beside it starts where every other sentence in the list starts.
 	var icon := AssaySprites.icon_for(stack)
 	if icon == null:
-		return null
+		if not reserve:
+			return null
+		# **IT DRAWS NOTHING, AND THAT IS MAREN'S RULING WORD FOR WORD** (ASSA-237, 15:50): *"A
+		# reserved-but-empty icon box draws NOTHING -- reserve the 32 px so the text column never
+		# moves; no outline, no ghost, no glyph. A box around nothing is a claim; space is
+		# structure."* So this is a bare `Control`, not a `Panel` with a dimmed plate: the plate would
+		# be the screen asserting there is an item picture here and it is merely dark.
+		#
+		# THE SAME BOX AND THE SAME ANCHORING AS A FILLED ONE, from the same constant, because a
+		# reserved column that is a different width from a drawn one is the defect it was built to
+		# fix wearing smaller numbers.
+		var gap := Control.new()
+		gap.custom_minimum_size = ICON_BOX_PX
+		gap.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		return gap
 	var art := TextureRect.new()
 	art.texture = icon
 	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
