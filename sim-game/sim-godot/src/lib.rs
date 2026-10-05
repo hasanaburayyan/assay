@@ -156,11 +156,23 @@ impl AssaySim {
     /// The same events as sentences, with `me` written as "you".
     ///
     /// -1 means "no player yet", which is what a client has before its
-    /// `Welcome`. Wording lives here, in a host, because presentation is a
-    /// host's job — the other one is `sim-cli`'s `describe_event`, which adds
-    /// typed-command hints this client has no use for. If the two ever have to
-    /// agree word for word, the fix is one describer in `sim::debug`, not a
-    /// copy of this in GDScript.
+    /// `Welcome`.
+    ///
+    /// **THE WORDING DOES NOT LIVE HERE AND THIS COMMENT SAID IT DID.** It
+    /// read "wording lives here, in a host, because presentation is a host's
+    /// job … if the two ever have to agree word for word, the fix is one
+    /// describer in `sim::debug`". That consolidation has already happened:
+    /// `describe` is a one-line delegation to `sim::debug::event_line`, and
+    /// the test module below says so outright — "this crate no longer matches
+    /// on `Event`". So the sentence described a shape that had been replaced,
+    /// which is ASSA-174's lesson with no constant to catch it.
+    ///
+    /// WHAT IS TRUE NOW: `sim::debug::event_line` is the one describer, and
+    /// `sim-cli`'s `describe_event` wraps it to add typed-command hints this
+    /// client has no use for. **One consequence is a live defect** — that
+    /// describer serves a typed client, where a `BuildingId` is the handle you
+    /// pass to `take`/`pickup`, and this window, where "building 0" is an
+    /// index a player can do nothing with (ASSA-222).
     #[func]
     pub fn event_lines(&self, me: i64) -> PackedStringArray {
         self.last_events
