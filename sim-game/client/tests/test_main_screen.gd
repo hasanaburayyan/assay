@@ -3058,3 +3058,70 @@ func test_the_solo_frame_keeps_reading_the_relay_for_the_whole_session() -> bool
 				+ "exists to prevent") % solo.polls)
 	screen.queue_free()
 	return ok
+
+## **EXACTLY ONE GREEN THING TO PRESS PER SCREEN** (ASSA-233, Maren's ruling 2; the hole Nerite
+## measured on ASSA-224).
+##
+## **THIS EXISTS BECAUSE NERITE PROVED NOTHING GUARDED IT.** They replaced
+## `_solo_button.theme_type_variation = &"Primary"` with `pass` and the suite answered 340 passed,
+## 0 failed: no test in `tests/` read the word `Primary` or `Quiet`, so the one-accent rule and the
+## quiet furniture were held up by a screenshot and a reviewer removing the accent would have merged
+## green. A rank nothing can fail is a preference, not a rule.
+##
+## **IT COUNTS ON THE REAL TREE AND NOT AT THE CALL SITES.** A grep of `main.gd` would pass over a
+## `Primary` applied by a loop, a scene file, or a third screen written next month; what the rule is
+## about is how many accented controls a player can see at once, so that is what is counted --
+## every visible `Button` under the screen, in both states the client has.
+##
+## THE JOIN SCREEN'S ONE IS `Play solo`, AND IT IS NAMED. "Exactly one" with no name would stay green
+## if the accent moved to `Join`, which is the quieter path and the opposite of the ruling.
+func test_exactly_one_control_per_screen_wears_the_accent() -> bool:
+	var screen := _screen()
+	var ok := true
+	var before := _accented(screen)
+	if before.size() != 1:
+		ok = _fail(("the join screen shows %d accented controls, not 1: %s (ASSA-233: one screen, "
+				+ "one primary action)") % [before.size(), ", ".join(before)])
+	elif before[0] != "Play solo":
+		ok = _fail("the join screen's one accented control is `%s`, not `Play solo`" % before[0])
+	screen.queue_free()
+	if not ok:
+		return false
+
+	# AND THE PLAYED SCREEN, which is the one the ruling was filed about: nine buttons at identical
+	# weight. `_joined_screen` plays a real world through the binding, so what is counted here is the
+	# column a player actually gets rather than a hand-built row.
+	var joined := _joined_screen()
+	# **ONE FRAME, BECAUSE A WELCOME ALONE IS A STATE PRODUCTION NEVER SITS IN.** `_joined_screen`
+	# feeds a welcome and stops; `_refresh_join_band` and `_refresh_front_door` run in `_process`,
+	# so without this the join controls still wear the visibility they were BUILT with and the
+	# first run of this test reported `Play solo` accented inside a played world. That was my
+	# harness, not the client -- the same trap `test_play_solo_neither_reads_nor_wipes_a_typed_host`
+	# already carries a note about.
+	joined._process(0.016)
+	var during := _accented(joined)
+	if during.size() > 1:
+		ok = _fail(("a played world shows %d accented controls: %s. A green on every row of a list "
+				+ "is a bullet point, not a rank") % [during.size(), ", ".join(during)])
+	elif during.size() == 1 and during[0] != "Mine":
+		ok = _fail("the played screen's one accented control is `%s`, not `Mine`" % during[0])
+	else:
+		# NOT ASSERTED AS EXACTLY ONE, and this is the honest half. `Mine` is Primary only where the
+		# sim says a hand can break the rock under you (`hand_minable`), so on a world where the
+		# body happens to stand on grass the right answer is ZERO accented controls. Demanding one
+		# here would be demanding the accent on a button that would refuse -- the exact thing
+		# Maren's `check, do not assume` clause forbids.
+		print("    accented in a played world: %d (%s)" % [during.size(), ", ".join(during)])
+	joined.queue_free()
+	return ok
+
+
+## Every VISIBLE button under a node wearing the accent weight, by its label.
+func _accented(node: Node) -> PackedStringArray:
+	var found := PackedStringArray()
+	for child in node.get_children():
+		if child is Button and (child as Button).theme_type_variation == &"Primary" \
+				and _on_screen(child):
+			found.append((child as Button).text)
+		found.append_array(_accented(child))
+	return found

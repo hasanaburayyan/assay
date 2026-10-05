@@ -798,6 +798,9 @@ func _build_ui() -> void:
 	# QUIET, BECAUSE IT IS FURNITURE (ASSA-224). On `01-join.png` this toggle reads as loudly as the
 	# section headings it sits above, so the column's structure competes with its own controls.
 	_log_toggle.theme_type_variation = &"Quiet"
+	# LEFT, INTO THE BODY COLUMN (ASSA-233, Maren at 1x). Centred and boxless, this read as the
+	# PANEL'S TITLE -- a dim centred line across the top of a panel is where a title sits.
+	_log_toggle.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_log_toggle.pressed.connect(func(): _show_log(not _log_shown))
 	chrome.add_child(_log_toggle)
 	# WHAT IS RUNNING, THEN WHAT HAS STOPPED, both above the scroll and never inside it (ASSA-133).
@@ -850,6 +853,9 @@ func _build_ui() -> void:
 	# in a 566px clip. The reorder moves the loss to the section that can afford it; it does not
 	# remove it.
 	_make_toggle.theme_type_variation = &"Quiet"  # furniture, same as the log toggle (ASSA-224)
+	# AND LEFT, for the same reason: centred under the `make` heading it read as that heading's
+	# caption rather than as a control (ASSA-233).
+	_make_toggle.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_make_toggle.pressed.connect(func(): _show_make(not _make_shown))
 	# THE EVENT LOG IS NOT IN THIS LIST ANY MORE (ASSA-147). It was the last section; it is now a
 	# panel over the map, built by `_build_log_over_the_map`. Maren's reason in one line: it is the
@@ -2398,7 +2404,13 @@ func _refresh_actions() -> void:
 	var facts := _sim.tile_at(target) if _sim.running() else {}
 	var building: Variant = facts.get("building")
 	var at := -1 if building == null else int((building as Dictionary).get("id", -1))
-	var signature := "%s/%s/%d/%s" % [target, _targeted, at, _building]
+	# **AND THE MINABLE BIT IS IN THE SIGNATURE, WHICH IS THE HALF THAT WOULD HAVE FAILED SILENTLY.**
+	# This row is only rebuilt when the signature changes, and `Mine` acts on the tile you are
+	# STANDING on while every other term here is about the tile you are ACTING on. Walking off a
+	# deposit without touching the cursor changes none of the old terms, so the button would have
+	# kept an accent that no longer meant anything until something else happened to move.
+	var minable := _can_hand_mine_here()
+	var signature := "%s/%s/%d/%s/%s" % [target, _targeted, at, _building, minable]
 	if signature == _actions_showing:
 		return
 	_actions_showing = signature
@@ -2411,8 +2423,24 @@ func _refresh_actions() -> void:
 
 	var here := HBoxContainer.new()
 	here.add_theme_constant_override("separation", 4)
-	here.add_child(_button("Mine", func() -> void: _act("Mine", AssayActions.mine()),
-			"hand-mine the deposit under you. Keeps swinging until you Stop."))
+	# **THE PLAYED SCREEN'S ONE PRIMARY, AND ONLY WHERE IT WOULD WORK** (ASSA-233, Maren's ruling 2).
+	# Nine buttons at identical weight is the join screen's old defect one room over: "Mine is the
+	# verb that makes something from nothing, and the first thing a player with no tutorial must do".
+	#
+	# **HER `CHECK, DO NOT ASSUME` CLAUSE, CHECKED: `do` DOES NOT GATE ANYTHING.** Mine, Stop and
+	# Assay are added unconditionally the moment `_sim.running()`, so a green Mine would be offered
+	# over bare grass and over rock no hand can break -- and "a green button that refuses is worse
+	# than a grey one that refuses" is the whole of her clause.
+	#
+	# **THE FACT IS THE SIM'S BIT, NOT A RULE COPIED INTO THIS FILE.** `hand_minable` on the deposit
+	# comes from `sim::ladder::hand_minable`; the client may not re-derive "hardness <= 40 at grade",
+	# and could not honestly anyway -- a sheet reads as a 25-wide BAND until the species is assayed,
+	# so this screen does not know the hardness it would need. One bit, from the one authority.
+	var mine_button := _button("Mine", func() -> void: _act("Mine", AssayActions.mine()),
+			"hand-mine the deposit under you. Keeps swinging until you Stop.")
+	if minable:
+		mine_button.theme_type_variation = &"Primary"
+	here.add_child(mine_button)
 	here.add_child(_button("Stop", func() -> void: _act("Stop", AssayActions.stop()),
 			"stop walking, mining, crafting and assaying"))
 	here.add_child(_button("Assay", func() -> void: _act("Assay", AssayActions.assay()),
@@ -2972,6 +3000,26 @@ func _advance_playout(now: float, frame_dt := -1.0) -> float:
 	_was = from
 	_seen = to
 	return float(cursor["part"])
+
+
+## **CAN THIS PLAYER SWING AT THE ROCK THEY ARE STANDING ON, RIGHT NOW** (ASSA-233).
+##
+## THREE FACTS, ALL THE SIM'S: there is a deposit under us, it is not worked out, and the sim says a
+## hand can break it. `hand_minable` is `sim::ladder::hand_minable`'s answer carried across the
+## binding as a BIT -- never the deposit's sentence, which is prose for a person and is a wider gate
+## than this one (it also covers rock you can mine and cannot smelt).
+##
+## **THE TILE IS `_my_tile()` AND NOT THE TARGET**, because that is what the button does: "hand-mine
+## the deposit under you". Reading the cursor's tile here would light the accent for a rock across
+## the map that this press would not touch.
+func _can_hand_mine_here() -> bool:
+	if not _sim.running():
+		return false
+	var deposit: Variant = _sim.tile_at(_my_tile()).get("deposit")
+	if deposit == null:
+		return false
+	var rock: Dictionary = deposit
+	return bool(rock.get("hand_minable", false)) and not bool(rock.get("depleted", false))
 
 
 func _my_tile() -> Vector2i:
