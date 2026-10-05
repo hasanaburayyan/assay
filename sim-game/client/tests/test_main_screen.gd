@@ -2057,7 +2057,10 @@ func test_the_empty_map_names_which_kind_of_empty_it_is() -> bool:
 	var ok := true
 	var note: Label = screen._map_note
 	var door: VBoxContainer = screen._front_door
-	var world := AssayHud.world_rect()
+	# **THE SURFACE THIS IS MEASURED AGAINST IS THE WINDOW, NOT THE MAP** (ASSA-231). It was
+	# `world_rect` while the door was the map's note. Before a world exists there is no map to be on
+	# and no column beside it, so the composition owns the screen -- see `join_rect`.
+	var world := AssayHud.join_rect()
 	if note == null:
 		ok = _fail("the join screen's map has no note at all")
 	elif not _on_screen(note):
@@ -2071,12 +2074,27 @@ func test_the_empty_map_names_which_kind_of_empty_it_is() -> bool:
 	elif note.get_parent() != door:
 		ok = _fail("the map's note is not part of the front door, so its span is nobody's property")
 	elif not world.encloses(Rect2(door.position, door.size)):
-		ok = _fail(("the front door is not on the map it explains: door %s, map %s")
+		ok = _fail(("the front door is not on the surface it explains: door %s, surface %s")
 				% [Rect2(door.position, door.size), world])
+	# **CENTRED ON THE WINDOW A PLAYER IS LOOKING AT, AND THIS IS THE LEVER** (ASSA-231). The first
+	# version of this screen centred the door on `world_rect`, which subtracts the 320 px the HUD
+	# column stands in -- and the column is not drawn here. The shot showed the whole composition
+	# sitting 80 px left of centre beside a band of bare window. Reading the door's own centre is
+	# what fails on that build: it answered 480 where the window's middle is 640.
+	elif not is_equal_approx(door.position.x + door.size.x * 0.5, AssayHud.VIEW.x * 0.5):
+		ok = _fail(("the join composition is centred at x=%.0f, and the window's middle is %.0f -- "
+				+ "it is centred on the map's rectangle, which is not drawn here")
+				% [door.position.x + door.size.x * 0.5, AssayHud.VIEW.x * 0.5])
 	elif door.size.x * door.size.y < world.size.x * world.size.y * 0.5:
 		ok = _fail(("the front door covers %d px of a %d px rectangle, so centring it says nothing "
 				+ "about where the words land") % [door.size.x * door.size.y,
 				world.size.x * world.size.y])
+	# AND THE SURFACE UNDER IT IS PAINTED. A centred composition on bare window is the same defect
+	# wearing the other half of the fix: the door is a transparent container and `_world` paints
+	# `MAP_BG` over the map's rectangle only.
+	elif not screen._door_backdrop.visible \
+			or not Rect2(screen._door_backdrop.position, screen._door_backdrop.size).encloses(world):
+		ok = _fail("the join screen's dark surface does not cover the window the door is centred on")
 	elif note.horizontal_alignment != HORIZONTAL_ALIGNMENT_CENTER \
 			or door.alignment != BoxContainer.ALIGNMENT_CENTER:
 		ok = _fail("Maren's ruling is a CENTRED line; the note aligns %d and the door %d"

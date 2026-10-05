@@ -438,6 +438,24 @@ static func world_rect() -> Rect2:
 	return Rect2(MARGIN, Vector2(VIEW.x - MARGIN.x * 2.0 - PANEL, VIEW.y - MARGIN.y - 24.0))
 
 
+## **THE SURFACE THE JOIN SCREEN GETS, WHICH IS ALL OF IT** (ASSA-231, Maren's Gap 5: "one screen,
+## one primary action, the empty column not shown at all before a world exists").
+##
+## `world_rect` subtracts `PANEL` because the HUD column is standing there, and it subtracts the
+## margins because a map wants a frame. Before a world exists NEITHER is true: the column is not
+## drawn, and there is no map to frame. Centring the door on `world_rect` anyway is what the first
+## version of this did, and the shot showed why it is wrong -- a 320 px band of bare window on the
+## right where the column used to be, and the one composition on screen sitting off-centre beside
+## it. The empty column was replaced by an empty margin.
+##
+## SO THIS IS THE WHOLE WINDOW, and the join composition is centred in the window a player is
+## actually looking at. It is a separate function rather than a branch inside `world_rect` because
+## `world_rect` answers "where is the map drawn", which this is not: nothing is drawn here but the
+## door, and `visible_tiles` and `player_ceiling` must never see this number.
+static func join_rect() -> Rect2:
+	return Rect2(Vector2.ZERO, VIEW)
+
+
 ## WHAT THE VIEW'S CONTROL SAYS, naming its key like the log's and the crafting menu's.
 ##
 ## IT NAMES WHAT YOU WILL GET, not what you are looking at, which is the same way round as the other

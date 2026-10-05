@@ -78,6 +78,13 @@ var _door_says := VBoxContainer.new()
 ## ancestor every part of it hangs from, so a section added later is hidden by this with no second
 ## list to remember.
 var _column: Panel = null
+## **THE DARK SURFACE UNDER THE JOIN COMPOSITION** (ASSA-231). `_world` paints `MAP_BG` over
+## `world_rect` and nowhere else, so with the column hidden the join screen was a 912x600 dark panel
+## with a 320 px strip of bare window beside it. This paints the same token over `join_rect`, under
+## `_world` in child order, so before a world the screen is ONE surface; the moment a world exists it
+## is hidden and the map is framed exactly as it always was. `MAP_BG` is the existing token -- no new
+## colour enters the client for this.
+var _door_backdrop := ColorRect.new()
 var _status := Label.new()
 ## **WHAT THE STATUS LINE WOULD SAY IF THE LINK WERE FINE**: the last sentence `_say` was given, kept
 ## because the quiet warning is TEMPORARY and something has to be underneath it when it goes
@@ -599,6 +606,14 @@ func _build_ui() -> void:
 	# child order is what would decide it if one ever did, and a panel UNDER the map is not a defect a
 	# screenshot makes obvious.
 	var world := AssayHud.world_rect()
+	# **THE JOIN SURFACE GOES IN FIRST, UNDER THE MAP** (ASSA-231). Hidden whenever there is a world,
+	# so it can never be between the player and the thing they are playing.
+	var door := AssayHud.join_rect()
+	_door_backdrop.position = door.position
+	_door_backdrop.size = door.size
+	_door_backdrop.color = AssayHud.MAP_BG
+	_door_backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_door_backdrop)
 	_world.position = world.position
 	_world.size = world.size
 	add_child(_world)
@@ -617,8 +632,8 @@ func _build_ui() -> void:
 	# over the map, and a Container does NOT inherit the note's filter. IGNORE does not apply to
 	# children, so every button inside it still gets its clicks -- and the failure if it did would
 	# read as "Play solo does nothing", nowhere near this line.
-	_front_door.position = world.position
-	_front_door.size = world.size
+	_front_door.position = door.position
+	_front_door.size = door.size
 	_front_door.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_front_door.alignment = BoxContainer.ALIGNMENT_CENTER
 	_front_door.add_theme_constant_override("separation", 10)
@@ -2775,6 +2790,7 @@ func _clear(box: Node) -> void:
 func _refresh_front_door() -> void:
 	var empty: bool = _world.view.is_empty()
 	_front_door.visible = empty
+	_door_backdrop.visible = empty
 	if _column != null:
 		_column.visible = not empty
 	_place_join_controls(not empty)
