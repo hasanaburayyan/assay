@@ -1454,12 +1454,21 @@ func test_a_frame_moves_the_body_by_its_own_delta_and_not_by_the_wall_clock() ->
 	# own tick estimate is measured from, and it has to be real -- while the frames that play it out
 	# are worth exactly one tick each, so the loop's own overhead cannot drain the buffer before the
 	# measurement starts.
+	# A LITTLE UNDER A TICK OF FRAME TIME PER TICK FED, so the warm-up cannot drain the buffer it
+	# exists to build: at exactly one tick the loop's error term (the host has produced most of
+	# another tick by the time the frame runs) puts the rate on its +10% stop and eight iterations
+	# spend the whole 2.5-tick buffer. It starved marginally here and reliably on CI, which is the
+	# fixture draining the thing it was setting up rather than anything about the clock.
 	for _i in range(8):
 		_tick(screen)
 		OS.delay_msec(RELAY_TICK_MS)
-		screen._refresh_world(float(RELAY_TICK_MS) / 1000.0)
+		screen._refresh_world(0.09)
 	if float(screen._play_tick) < 0.0:
 		return _fail("the playout clock never started over 8 ticks, so there is nothing to measure")
+	if float(screen._play_depth) < 1.0:
+		return _fail(("the warm-up left %.2f ticks of buffer, under the one tick this measurement "
+				+ "needs: six frames of play-out would hit the end of the queue and measure the "
+				+ "clamp instead of what moves the clock") % [float(screen._play_depth)])
 	# **THE TWO CLOCKS ARE THEN MADE TO DISAGREE BY 5x**: six frames of 10 ms each is 0.6 of a tick,
 	# while the wall clock between them runs 300 ms, which is 3 ticks. A clock reading the wall
 	# cannot pass this and a clock reading its frames cannot fail it.
@@ -1468,7 +1477,11 @@ func test_a_frame_moves_the_body_by_its_own_delta_and_not_by_the_wall_clock() ->
 		OS.delay_msec(50)
 		screen._refresh_world(0.01)
 	var moved: float = float(screen._play_tick) - before
-	var want := 6.0 * 0.01 / (float(RELAY_TICK_MS) / 1000.0)
+	# IN THE CLOCK'S OWN UNITS, not the fixture's: `_tick_gap` is the tick length this client has
+	# measured, and a frame of 10 ms is worth 0.01/_tick_gap of a tick whatever the box managed to
+	# deliver. Pinning this to RELAY_TICK_MS would make a slow runner fail a test about a denominator
+	# it has nothing to do with.
+	var want := 6.0 * 0.01 / maxf(float(screen._tick_gap), 0.001)
 	if bool(screen._starved):
 		return _fail(("the clock starved during the measurement (depth %.2f): it ran out of "
 				+ "positions, so how far it advanced says nothing about what moved it")
@@ -1477,7 +1490,7 @@ func test_a_frame_moves_the_body_by_its_own_delta_and_not_by_the_wall_clock() ->
 		return _fail(("six 10 ms frames spread over 300 ms of wall clock advanced the playout clock "
 				+ "%.3f ticks. The frames are worth %.3f ticks and the wall clock %.3f: the body is "
 				+ "being moved by %s") % [moved, want,
-				6.0 * 0.05 / (float(RELAY_TICK_MS) / 1000.0),
+				6.0 * 0.05 / maxf(float(screen._tick_gap), 0.001),
 				"the wall clock" if moved > want * 2.0 else "neither of them"])
 	# AND A BUNDLE LANDING IS NOT A FRAME. It enqueues a position; it does not move the body.
 	var held: float = screen._play_tick
