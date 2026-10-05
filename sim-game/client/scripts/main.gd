@@ -1571,11 +1571,17 @@ func _log_lines_that_fit() -> int:
 ## has to cost zero pixels when it has nothing to say or it cannot be pinned above the scroll.
 func _refresh_halt() -> void:
 	var lines := _sim.halt_lines() if _sim != null else PackedStringArray()
-	var shape := "\n".join(lines)
+	var summary := _sim.halt_summary() if _sim != null else ""
+	# **THE SUMMARY IS PART OF THE SHAPE, AND LEAVING IT OUT WOULD HAVE BEEN A STALE HEADING**
+	# (ASSA-94). The count is "N of M buildings stopped", so M moves when a building is PLACED --
+	# and placing a working building changes nothing about which buildings are stopped. "1 of 2" and
+	# "1 of 3" therefore have identical `lines`, and a shape made of the lines alone would skip the
+	# rebuild and leave the old total on screen.
+	var shape := summary + "\n" + "\n".join(lines)
 	if shape == _halt_showing:
 		return
 	_halt_showing = shape
-	_rebuild_halt(lines)
+	_rebuild_halt(lines, summary)
 
 
 ## THE BLOCK, FROM LINES. Split from `_refresh_halt` so a test can drive the drawing without a world
@@ -1588,18 +1594,28 @@ func _refresh_halt() -> void:
 ## a live `halt_lines()`: "machine 1 at (71, 38) · idle: no deposit underneath", the sim's sentence,
 ## pinned above the scroll. The suite still cannot reach it -- `button_play.gd` can, and that is the
 ## path a test would take (`test_buttons.gd:300` is where the chain was last declined).
-func _rebuild_halt(lines: PackedStringArray) -> void:
+func _rebuild_halt(lines: PackedStringArray, summary := "") -> void:
 	_clear(_halt)
 	_halt_lines = null
 	if is_instance_valid(_halt_box):
 		_halt_box.visible = not lines.is_empty()
 	if lines.is_empty():
 		return
-	# "stopped" IS THIS CLIENT'S HEADING, the way "you", "do" and "event log" are; the lines under it
-	# are the sim's words. A count would be a second claim about the world and the sim already makes
-	# it (`halted_table`'s "N of M buildings stopped") -- one this block would have to keep true.
+	# **THE HEADING IS THE SIM'S COUNT, AND THE COMMENT THAT USED TO BE HERE WAS RIGHT ABOUT THE
+	# DANGER AND WRONG ABOUT THE FIX** (ASSA-94). It read: *"a count would be a second claim about the
+	# world and the sim already makes it (`halted_table`'s 'N of M buildings stopped') -- one this
+	# block would have to keep true."* The objection holds for a client that COUNTS -- that is the
+	# ASSA-43/52 shape exactly -- and the conclusion does not follow, because the answer was never to
+	# count. It was to read the sentence the sim was already composing, which is now `halt_summary`.
+	#
+	# **AND THIS BLOCK COULD NOT HAVE COUNTED IT ANYWAY.** The ruled total is "N of M", and M -- how
+	# many buildings exist -- is not in `halt_lines` at all. `lines.size()` is N on its own.
+	#
+	# THE GAME DIRECTOR'S RULING: the count is the floor and must never truncate; the reasons are the
+	# extra and are bounded by the column's height. So the number lives in the HEADING, which is
+	# pinned, and the reasons below it are what a short column drops.
 	var heading := Label.new()
-	heading.text = "stopped"
+	heading.text = summary if summary != "" else "stopped"
 	heading.theme_type_variation = &"Heading"
 	_halt.add_child(heading)
 	# THE LINES IN THEIR OWN BOX, so "the lines of this block" is a container and not a filter over
