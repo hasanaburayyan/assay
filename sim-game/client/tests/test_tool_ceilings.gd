@@ -26,15 +26,17 @@ extends RefCounted
 
 var runner = null
 
-## A tool with no `_process` loop cannot sit in one, so it is out of scope here. It is NOT out of
-## danger: a one-shot tool whose `_initialize` dies before its own `quit()` call also runs for ever,
-## because `SceneTree`'s default `_process` returns false. Measured 2026-10-04 with a scratch script
-## that errored in `_initialize`: still alive after 25 s, no output, no exit. That is a second class
-## and it is recorded on ASSA-182 rather than smuggled in here.
+## **THE SECOND CLASS, AND IT IS COVERED NOW TOO.** A tool with no `_process` loop cannot sit in one,
+## but it is not out of danger: `SceneTree`'s default `_process` returns false, so a one-shot tool ends
+## when something calls `quit()` and not when `_initialize` returns. An error inside `_initialize` skips
+## that call and the engine spins with no output and no exit -- measured 2026-10-04 with a scratch
+## script, alive after 25 s. Those twelve tools get a `_process` that refuses to wait instead of a
+## clock, because there is nothing a one-shot tool legitimately waits for.
 const SCOPE := "extends SceneTree"
 ## Below this, something is wrong with the scan and not with the tools: a test whose set is empty
 ## passes for the absence of its data.
 const FEWEST_TOOLS := 12
+const FEWEST_ONE_SHOT := 12
 
 
 func set_runner(r) -> void:
@@ -118,6 +120,60 @@ func _quits_non_zero_somewhere(source: String, name: String, depth: int = 3) -> 
 	return false
 
 
+## Every `tools/*.gd` that extends `SceneTree` and has NO `_process` of its own, as `{path: source}`.
+func _one_shot_tools() -> Dictionary:
+	var out := {}
+	for name in DirAccess.get_files_at("res://tools"):
+		if not String(name).ends_with(".gd"):
+			continue
+		var path := "res://tools/%s" % name
+		var source := FileAccess.get_file_as_string(path)
+		if source == "" or not source.contains(SCOPE):
+			continue
+		# **CLASSIFIED BY THE REFUSAL AND NOT BY "HAS NO `_process`", because the fix GIVES them one.**
+		# My first version of this split read "no `func _process`", which was true of these twelve
+		# until the moment they were fixed -- and then all twelve moved into the looping set and were
+		# failed for having no wall-clock ceiling, which is not what a tool with nothing to wait for
+		# needs. A new one-shot tool with neither pattern still fails: it lands in the looping set and
+		# is named there.
+		if not source.contains("\n\tif not _quitting:"):
+			continue
+		out[path] = source
+	return out
+
+
+## **A ONE-SHOT TOOL THAT FELL OUT OF `_initialize` MUST END, AND SAY SO.** No clock: the `_process`
+## these get returns true on its first frame, which is the only honest thing a tool with nothing to
+## wait for can do. The flag is what tells a deliberate early exit (a bad argument, a missing world)
+## from a fall-through, and it is set beside every `quit()` rather than at the end of `_initialize`,
+## because the end is the line an error never reaches.
+func test_every_one_shot_tool_refuses_to_wait() -> bool:
+	var tools := _one_shot_tools()
+	if tools.size() < FEWEST_ONE_SHOT:
+		return _fail(("only %d one-shot tools were found under res://tools and there are at least %d; "
+				+ "the scan is broken, so this test is about nothing") % [tools.size(), FEWEST_ONE_SHOT])
+	# **THERE IS NO "HAS NO REFUSAL" LEG HERE AND THAT IS DELIBERATE.** The set is selected BY the
+	# refusal, so such a leg could never fire -- a check that cannot fail is not evidence. A one-shot
+	# tool without the pattern falls into `_looping_tools` and is named by the clause above instead.
+	var unmarked := PackedStringArray()
+	for path in tools:
+		var source: String = tools[path]
+		# EVERY `quit()` IS MARKED, not just the last one. A tool whose bad-argument path quits without
+		# setting the flag would print a FAIL about a run that did exactly what it meant to. The
+		# refusal's own `quit(1)` is skipped: it is the line the flag exists to reach.
+		for line in source.split("\n"):
+			var text := String(line).strip_edges()
+			if not text.begins_with("quit(") or text.begins_with("quit(1)"):
+				continue
+			if not source.contains("_quitting = true\n%s" % line):
+				unmarked.append("%s: %s" % [String(path).get_file(), text])
+	if not unmarked.is_empty():
+		return _fail(("%d deliberate `quit()` call(s) are not marked with `_quitting = true`, so a "
+				+ "tool that exited on purpose would be reported as a fall-through: %s")
+				% [unmarked.size(), String(" | ").join(unmarked)])
+	return true
+
+
 ## Every `tools/*.gd` that could sit in a `_process` loop, as `{path: source}`.
 func _looping_tools() -> Dictionary:
 	var out := {}
@@ -129,6 +185,10 @@ func _looping_tools() -> Dictionary:
 		if source == "" or not source.contains(SCOPE):
 			continue
 		if not source.contains("\nfunc _process("):
+			continue
+		# A one-shot tool's `_process` exists to end the run, not to wait in it; it is held to the
+		# clause below rather than to a clock.
+		if source.contains("\n\tif not _quitting:"):
 			continue
 		out[path] = source
 	return out
@@ -153,7 +213,8 @@ func test_every_looping_tool_carries_a_wall_clock_ceiling() -> bool:
 			late.append(String(path).get_file())
 	if not naked.is_empty():
 		return _fail(("%d looping tool(s) have no RUN_CEILING, so a runtime error in `_initialize` "
-				+ "leaves them holding this machine until somebody notices: %s")
+				+ "leaves them holding this machine until somebody notices: %s. A tool with nothing "
+				+ "to wait for wants the one-shot refusal instead -- see the clause above.")
 				% [naked.size(), String(", ").join(naked)])
 	if not late.is_empty():
 		return _fail(("%d tool(s) declare RUN_CEILING but do not build the clock with the object "

@@ -11,10 +11,31 @@ extends SceneTree
 ## It is a question about a SENTENCE, so it also prints the log's children verbatim -- the picture
 ## answers "how does this read", the text answers "which string is it".
 
+## **A ONE-SHOT TOOL CAN RUN FOR EVER TOO, AND THIS IS THE HALF ASSA-182 DID NOT FIX FIRST TIME.**
+## `SceneTree`'s own `_process` returns false, so a tool with no `_process` of its own does not end when
+## `_initialize` returns -- it ends when something calls `quit()`. A runtime error inside `_initialize`
+## skips that call and the engine spins with no output and no exit: measured 2026-10-04 with a scratch
+## script, alive after 25 s. The looping tools got a wall-clock ceiling; this needs no clock, because
+## there is nothing a one-shot tool legitimately waits for.
+##
+## `_quitting` is set beside every `quit()` in this file rather than at the end of `_initialize`, so a
+## deliberate early exit -- a bad argument, a missing world -- stays deliberate, and only a
+## fall-through reaches the sentence below.
+var _quitting := false
+
+
+func _process(_delta: float) -> bool:
+	if not _quitting:
+		print("FAIL  maren_join_log_shot.gd: _initialize ended without asking to quit -- see the error above")
+		quit(1)
+	return true
+
+
 func _initialize() -> void:
 	var argv := OS.get_cmdline_user_args()
 	if argv.is_empty():
 		print("FAIL  need an output directory")
+		_quitting = true
 		quit(1)
 		return
 	var out := String(argv[0])
@@ -46,10 +67,12 @@ func _initialize() -> void:
 	var path := out.path_join("join-log-open.png")
 	if image.save_png(path) != OK:
 		print("FAIL  could not write %s" % path)
+		_quitting = true
 		quit(1)
 		return
 	print("  wrote %s (%dx%d)" % [path, image.get_width(), image.get_height()])
 	print("WINDOW SHOT OK")
+	_quitting = true
 	quit(0)
 
 

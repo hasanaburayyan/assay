@@ -1,4 +1,24 @@
 extends SceneTree
+## **A ONE-SHOT TOOL CAN RUN FOR EVER TOO, AND THIS IS THE HALF ASSA-182 DID NOT FIX FIRST TIME.**
+## `SceneTree`'s own `_process` returns false, so a tool with no `_process` of its own does not end when
+## `_initialize` returns -- it ends when something calls `quit()`. A runtime error inside `_initialize`
+## skips that call and the engine spins with no output and no exit: measured 2026-10-04 with a scratch
+## script, alive after 25 s. The looping tools got a wall-clock ceiling; this needs no clock, because
+## there is nothing a one-shot tool legitimately waits for.
+##
+## `_quitting` is set beside every `quit()` in this file rather than at the end of `_initialize`, so a
+## deliberate early exit -- a bad argument, a missing world -- stays deliberate, and only a
+## fall-through reaches the sentence below.
+var _quitting := false
+
+
+func _process(_delta: float) -> bool:
+	if not _quitting:
+		print("FAIL  maren_north_edge_probe.gd: _initialize ended without asking to quit -- see the error above")
+		quit(1)
+	return true
+
+
 ## ASSA-156 FOLLOW-UP: THE CAMERA CLAMP THE PANEL'S CEILING DOES NOT COVER (Maren).
 ##
 ## `AssayScene.player_ceiling` says in its own words why one number answers for every world: "an
@@ -28,6 +48,7 @@ func _initialize() -> void:
 		print("\n=== camera north bound %.1f px (%s) ===" % [-headroom,
 				"before ASSA-184" if headroom == 0.0 else "shipped"])
 		_walk(map, manifest, world, ceiling, headroom)
+	_quitting = true
 	quit(0)
 
 

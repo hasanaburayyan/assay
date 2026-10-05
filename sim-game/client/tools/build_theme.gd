@@ -74,6 +74,26 @@ const PAD_Y := 6
 const RADIUS := 4
 
 
+## **A ONE-SHOT TOOL CAN RUN FOR EVER TOO, AND THIS IS THE HALF ASSA-182 DID NOT FIX FIRST TIME.**
+## `SceneTree`'s own `_process` returns false, so a tool with no `_process` of its own does not end when
+## `_initialize` returns -- it ends when something calls `quit()`. A runtime error inside `_initialize`
+## skips that call and the engine spins with no output and no exit: measured 2026-10-04 with a scratch
+## script, alive after 25 s. The looping tools got a wall-clock ceiling; this needs no clock, because
+## there is nothing a one-shot tool legitimately waits for.
+##
+## `_quitting` is set beside every `quit()` in this file rather than at the end of `_initialize`, so a
+## deliberate early exit -- a bad argument, a missing world -- stays deliberate, and only a
+## fall-through reaches the sentence below.
+var _quitting := false
+
+
+func _process(_delta: float) -> bool:
+	if not _quitting:
+		print("FAIL  build_theme.gd: _initialize ended without asking to quit -- see the error above")
+		quit(1)
+	return true
+
+
 func _initialize() -> void:
 	var problems := _contrast_problems()
 	if not problems.is_empty():
@@ -109,6 +129,7 @@ func _initialize() -> void:
 	print("  %s  %d type variations, body %dpx, contrast floor %.1f"
 			% [OUT, theme.get_type_variation_list("Label").size(), BODY, MIN_CONTRAST])
 	print("THEME BUILT")
+	_quitting = true
 	quit(0)
 
 
@@ -212,4 +233,5 @@ func _flat(fill: Color) -> StyleBoxFlat:
 
 func _fail(why: String) -> void:
 	print("FAIL  %s" % why)
+	_quitting = true
 	quit(1)
