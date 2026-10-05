@@ -91,10 +91,23 @@ const RADIUS := 4
 ## `font.get_height()` alone, which was exactly right until this margin existed.
 const HEADING_AIR := 10
 
-## `QUIET_EDGE` WAS HERE AND IS GONE (ASSA-233). It was an alpha on `BORDER` giving a quiet button an
-## outline at rest, built for Maren's 14:25Z ruling and deleted for her 17:00Z one six hours later:
-## an outline at rest "makes quiet into default and spends the rank". Recorded rather than silently
-## dropped, because the constant was the whole of the first fix and its absence is the second.
+## **HOW PRESENT A QUIET BUTTON'S EDGE IS AT REST** (ASSA-233). An alpha on `BORDER` rather than a
+## new colour. 0.45 is the weight at which the outline reads as an outline at 1x and still leaves a
+## visible step up to the default button's full `BORDER` on hover.
+##
+## **THIS CONSTANT WENT AWAY AND CAME BACK, AND THE REASON IT IS BACK IS A MEASUREMENT.** Maren ruled
+## the border three times in one day -- keep (14:25Z), delete (17:00Z), keep (18:40Z) -- and I built
+## the middle one, having filed evidence ten minutes after a reversal I had not read. The 17:00Z
+## argument was *"a border at rest makes quiet into default and spends the rank"*. The 18:40Z position
+## measured the same frame and disproved it: **what marks the DEFAULT weight is its FILL**, `RAISED`
+## (53,57,67), while a quiet toggle stays panel-flush on `SURFACE` (37,40,48) and a `LineEdit` sinks
+## to its own darker well (28,30,36). A hairline says "pressable" without buying the default weight;
+## a fill is what would buy it. So the edge costs nothing it was accused of costing.
+##
+## `_style_quiet_button` ASSERTS THAT RANK RATHER THAN RESTATING IT: the test for this weight checks
+## that quiet's fill is the panel's own and default's is not, which is the property the ruling turns
+## on. Flattening the two fills together is what would really spend the rank, and that now reddens.
+const QUIET_EDGE := 0.45
 
 
 ## **A ONE-SHOT TOOL CAN RUN FOR EVER TOO, AND THIS IS THE HALF ASSA-182 DID NOT FIX FIRST TIME.**
@@ -258,16 +271,21 @@ func _style_primary_button(theme: Theme) -> void:
 ## same 4.5:1 as body text by `MIN_MUTED_CONTRAST`, because secondary describes importance and never
 ## legibility.
 ##
-## **AND THE INK IS THE SAME TOKEN THE BODY ROWS USE, WHICH IS THE HALF OF MAREN'S Q1 FIX THIS FILE
-## CANNOT DELIVER.** Her clause (b) is "ink at or above the brightest body row (5.44), not below
-## it", measured off rendered glyphs where these toggles read 4.22 and 4.79. But `_note()` in
+## **AND THE INK IS THE SAME TOKEN THE BODY ROWS USE, WHICH IS WHY A CONTRAST BAR WAS THE WRONG
+## INSTRUMENT HERE.** Maren's Q1 clause (b) asked for "ink at or above the brightest body row
+## (5.44), not below it", off rendered glyphs where these toggles read 4.22 and 4.79. `_note()` in
 ## `main.gd` paints every body row `INK_MUTED` out of this theme and so does this variation: 6.73:1
-## nominal, the identical colour. The gap she measured is `SMALL` (11px) against `BODY` (13px) --
-## a smaller glyph spends proportionally more of itself on partly-covered edge pixels, so the same
-## colour measures dimmer. There is no colour here that would move her number without becoming
-## `INK`, which is the heading weight. The lever that moves it is the SIZE, and the size of a
-## control in the type scale is her call, not a side effect of a contrast patch -- so it is asked
-## on the item with both numbers rather than guessed at here.
+## nominal, the identical 24-bit value on the identical surface. The toggles are not below the
+## brightest body row, they ARE it. Her two numbers were `SMALL` (11px) against `BODY` (13px) on a
+## mean-over-glyph-box reading -- a smaller glyph spends proportionally more of itself on
+## partly-covered edge pixels, so one colour reported two numbers. **She withdrew the 5.44 bar on
+## the measurement (18:40Z).**
+##
+## **AND `SMALL` STAYS AT 11, WHICH IS HER RULING AND THE ARGUMENT I ARGUED AGAINST MYSELF.** I
+## recommended promoting these to `BODY` as the one lever that would move her number, while also
+## writing down the case against; she took the case against, and it is the better one. With no edge,
+## a promoted quiet control would be **pixel-identical to body prose**: same `INK_MUTED`, same 13px,
+## same left alignment, no box. That is not a quieter control, it is a sentence you can click.
 func _style_quiet_button(theme: Theme) -> void:
 	var name := &"Quiet"
 	theme.add_type(name)
@@ -277,19 +295,26 @@ func _style_quiet_button(theme: Theme) -> void:
 	theme.set_color("font_hover_color", name, INK)
 	theme.set_color("font_pressed_color", name, ACCENT)
 	theme.set_color("font_disabled_color", name, INK_MUTED.darkened(0.25))
-	# **NO EDGE AT REST, AND THIS REVERSES WHAT I SHIPPED THIS MORNING** (ASSA-233, Maren at 1x
-	# 17:00Z, reversing her own 14:25Z ruling). Her 14:25 call was "a border at rest at lower alpha",
-	# which is what `QUIET_EDGE` was; her 17:00 call, after looking at the before/after at 1:1, is
-	# the opposite and gives the reason: **"Not a border at rest -- that makes quiet into default and
-	# spends the rank. Alignment is the cue that is left."** Three weights whose quietest one still
-	# carries an outline is two weights.
+	# **AN EDGE AT REST, AT LOWER ALPHA** (ASSA-233, Maren's 18:40Z ruling, which is her third on this
+	# clause and the only one carrying a measurement -- see `QUIET_EDGE`). A dim centred line across
+	# the top of a panel is exactly where a TITLE sits, and that is what she read `show the event log
+	# (L)` as when this weight had no edge at all. Quiet was meant to stop it shouting, not to stop it
+	# being a button.
 	#
-	# WHAT CARRIES "THIS IS A CONTROL" INSTEAD IS THE LEFT ALIGNMENT, in `main.gd`, which also
-	# shipped this morning and stays: every other control in the column sits at the body column's
-	# x=11, and the two toggles were the only centred rows in it. "Centred + boxless + above the
-	# block it controls is a caption by construction" -- so uncentring it is the fix, and the box was
-	# never the part that worked.
-	theme.set_stylebox("normal", name, _box(SURFACE, SURFACE))
+	# **THE RANK IS CARRIED BY THE FILL, WHICH IS WHY THE EDGE IS FREE.** Measured on the real frame:
+	# default `Join` fills `RAISED` (53,57,67), a quiet toggle stays panel-flush on `SURFACE`
+	# (37,40,48), a `LineEdit` sinks to (28,30,36). The accusation against this hairline was that it
+	# "makes quiet into default"; it cannot, because what a player reads as the default weight is that
+	# lighter fill, and this weight never acquires one.
+	#
+	# `QUIET_EDGE` IS AN ALPHA ON `BORDER`, not a seventh colour: the same token this theme already
+	# draws every other edge with, at a weight that reads as "there is an outline here" without
+	# competing with the default button beside it.
+	#
+	# AND THE LEFT ALIGNMENT STAYS TOO, in `main.gd`. It was built as the replacement for this edge
+	# and is now a second cue rather than the only one: every other control in the column sits at the
+	# body column's x=11, and these two were the only centred rows in it.
+	theme.set_stylebox("normal", name, _box(SURFACE, Color(BORDER, QUIET_EDGE)))
 	theme.set_stylebox("hover", name, _box(SURFACE, BORDER))
 	theme.set_stylebox("pressed", name, _box(SURFACE.darkened(0.15), BORDER))
 	theme.set_stylebox("disabled", name, _box(SURFACE, SURFACE))

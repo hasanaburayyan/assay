@@ -3614,12 +3614,18 @@ func test_exactly_one_control_per_screen_wears_the_accent() -> bool:
 ## this half did not, so I shipped an edge at rest for her first ruling and had nothing to fail when
 ## the second ruling took it away again.
 ##
-## **THE TWO CUES ARE OPPOSITE AND BOTH ARE ASSERTED.** Her 14:25 call was "a border at rest at lower
-## alpha"; her 17:00 call, off the before/after at 1:1, is *"Not a border at rest -- that makes quiet
-## into default and spends the rank. Alignment is the cue that is left."* So: no edge at rest, AND
-## left-aligned into the body column, AND a `default` button beside it that DOES carry an edge --
-## because "quiet is quieter than default" is the actual property, and a theme where both lost their
-## border would pass a test that only looked at `Quiet`.
+## **THE CLAUSE WENT ROUND THREE TIMES AND THIS TEST IS WRITTEN AGAINST THE MEASUREMENT, NOT THE
+## ARGUMENT.** Maren ruled the edge at rest keep (14:25Z) -> delete (17:00Z) -> keep (18:40Z), and I
+## built the middle one. The 17:00Z position was reasoning -- *"a border makes quiet into default and
+## spends the rank"* -- and the 18:40Z one measured the same frame and disproved it: **what a player
+## reads as the default weight is its FILL**, `RAISED` (53,57,67), while a quiet toggle stays flush
+## with the panel (37,40,48) and a field sinks to its own darker well (28,30,36).
+##
+## **SO THE FILL IS WHAT IS GUARDED, AND NOTHING GUARDED IT WHILE THREE RULINGS ARGUED ABOUT THE
+## EDGE.** Asserted: quiet HAS an edge at rest; quiet's fill is the panel's own; `default`'s fill is
+## NOT; and quiet's edge is the dimmer of the two, so hover has a step left to make. The third of
+## those is the control -- a theme flattening `Button`'s fill onto the panel would leave every other
+## assertion here true while the rank they exist to protect was gone.
 ##
 ## READ OFF THE REAL CONTROLS, NOT THE GENERATOR (ASSA-152's lesson). `build_theme.gd` refusing to
 ## WRITE something is not the window refusing to DRAW it: the resolved stylebox on the button in the
@@ -3634,9 +3640,15 @@ func test_exactly_one_control_per_screen_wears_the_accent() -> bool:
 ##
 ## **MEASURED, BECAUSE I WOULD OTHERWISE BE TRUSTING A METHOD NAME.** Real window, 1280x720, seed
 ## 14247, `tools/window_shot.gd` `02-play.png`, inside the log toggle's own rect: the fill is
-## (37,40,48) = `SURFACE` with no ring, the brightest glyph pixel is (167,176,190) = `INK_MUTED`
-## exactly, and `INK` appears on 0 pixels of it. The window draws this weight; only the headless
-## read needed telling.
+## (37,40,48) = `SURFACE`, and the brightest glyph pixel is (167,176,190) = `INK_MUTED` exactly,
+## with `INK` on 0 pixels of it. The window draws this weight; only the headless read needed telling.
+##
+## **AND THE INK BAR THIS ONCE CARRIED IS GONE BECAUSE I DISPROVED IT.** Her clause (b) wanted these
+## toggles' ink at or above the brightest body row (5.44). Measured, both toggles and every body row
+## are that same `INK_MUTED` at 6.74:1 on the same surface -- they are not below the brightest body
+## row, they ARE it -- and her 4.22-against-5.44 was `SMALL` (11px) against `BODY` (13px) on a
+## mean-over-glyph-box reading. She withdrew the number. What survives is her intent, asserted below:
+## a control may never be inked dimmer than the prose beside it.
 func test_the_quiet_toggles_are_the_quietest_weight_and_still_read_as_controls() -> bool:
 	var screen := _screen()
 	var ok := true
@@ -3659,21 +3671,34 @@ func test_the_quiet_toggles_are_the_quietest_weight_and_still_read_as_controls()
 		# row sits at the body x=11, so they read as a caption for the heading above them --
 		# "centred + boxless + above the block it controls is a caption by construction".
 		if toggle.alignment != HORIZONTAL_ALIGNMENT_LEFT:
-			ok = _fail(("`%s` is not left-aligned. With no edge at rest, alignment is the only cue "
-					+ "left that it is a control and not a caption (Maren, ASSA-233)") % label)
+			ok = _fail(("`%s` is not left-aligned. Every other control in that column sits at the "
+					+ "body x=11, and these two were the only centred rows in it (Maren, ASSA-233)")
+					% label)
 		var rest := toggle.get_theme_stylebox(&"normal") as StyleBoxFlat
 		if rest == null:
 			ok = _fail("`%s` resolves no StyleBoxFlat at rest, so its weight cannot be read" % label)
 			continue
 		# AN EDGE IS A BORDER WIDTH **AND** A COLOUR YOU CAN SEE AGAINST THE FILL. Either one at zero
-		# is no edge, and the version this replaces had full width with 0.45 alpha on `BORDER`.
+		# is no edge, which is the state Maren read as a panel TITLE rather than as a control.
 		var edge := rest.border_width_left > 0 and rest.border_color.a > 0.0 \
 				and not rest.border_color.is_equal_approx(rest.bg_color)
-		if edge:
-			ok = _fail(("`%s` draws an edge at rest (border %s on fill %s). An outline at rest makes "
-					+ "quiet into default and spends the rank: three weights whose quietest still "
-					+ "has a box is two weights (Maren, ASSA-233 17:00Z)")
+		if not edge:
+			ok = _fail(("`%s` draws no edge at rest (border %s on fill %s). A dim line with no box, "
+					+ "across the top of a panel, is where a TITLE sits -- which is what this read as "
+					+ "when the edge was gone (Maren, ASSA-233 18:40Z)")
 					% [label, rest.border_color, rest.bg_color])
+		# **AND THE FILL IS THE PANEL'S OWN, WHICH IS THE PROPERTY THE RULING ACTUALLY TURNS ON.**
+		# Maren ruled this clause three times in a day -- keep the edge, delete it, keep it -- and
+		# only the last carried a measurement: what a player reads as the DEFAULT weight is its FILL,
+		# `RAISED` (53,57,67), while a quiet toggle stays flush with the panel (37,40,48) and a field
+		# sinks to its own darker well. The charge against the hairline was that it "makes quiet into
+		# default"; it cannot, so long as this stays true. **The fill is the thing to guard, not the
+		# edge**, and nothing guarded it while three rulings argued about the edge.
+		if not rest.bg_color.is_equal_approx(_panel_surface()):
+			ok = _fail(("`%s` fills %s, which is not the panel's own %s. A quiet button acquiring a "
+					+ "fill is what would really spend the rank -- the default weight is read off "
+					+ "exactly that (Maren, ASSA-233 18:40Z)")
+					% [label, rest.bg_color, _panel_surface()])
 		# **MAREN'S CLAUSE (b), IN THE ONE FORM THAT IS ACTUALLY A PROPERTY OF THE CLIENT.** She asked
 		# for "ink at or above the brightest body row (5.44), not below it", off rendered glyph boxes
 		# where these toggles read 4.22 and 4.79. The colour is already equal: `_note()` paints every
@@ -3693,17 +3718,30 @@ func test_the_quiet_toggles_are_the_quietest_weight_and_still_read_as_controls()
 			ok = _fail(("`%s` is inked %s, dimmer than the body rows beside it at %s. The two things "
 					+ "you can click in that column must not be its dimmest text (Maren, ASSA-233)")
 					% [label, toggle_ink, body_ink])
-	# **AND `default` MUST STILL HAVE ONE, or "quieter than default" is a claim about nothing.** This
-	# is the control inside the test: it fails if a theme change flattens both weights together,
-	# which would otherwise read as this ruling being satisfied.
+	# **AND THE TWO FILLS MUST STAY APART, or "quieter than default" is a claim about nothing.** This
+	# is the control inside the test. A theme that flattened `Button`'s fill down onto the panel
+	# would make every assertion above still pass while the rank it exists to protect was gone --
+	# quiet and default would be the same box with the same inside, differing only in a hairline's
+	# alpha. That is the one change this test must not be able to sleep through.
 	var plain := Button.new()
 	screen.add_child(plain)
 	plain.notification(Control.NOTIFICATION_THEME_CHANGED)
 	var plain_rest := plain.get_theme_stylebox(&"normal") as StyleBoxFlat
-	if plain_rest == null or plain_rest.border_width_left <= 0 \
-			or plain_rest.border_color.is_equal_approx(plain_rest.bg_color):
-		ok = _fail("a `default` Button draws no edge at rest either, so `Quiet` having none says "
-				+ "nothing about rank: both weights are the same box")
+	if plain_rest == null:
+		ok = _fail("a `default` Button resolves no StyleBoxFlat at rest, so rank cannot be read")
+	elif plain_rest.bg_color.is_equal_approx(_panel_surface()):
+		ok = _fail(("a `default` Button fills the panel's own %s, so it is as flush as `Quiet` is: "
+				+ "the weights now differ by a hairline alone and the fill no longer ranks them "
+				+ "(Maren's measured reason, ASSA-233)") % _panel_surface())
+	# AND QUIET'S EDGE IS THE QUIETER OF THE TWO, which is the other half of "without competing with
+	# the default button beside it": same token, lower alpha, so hover brightens an existing edge
+	# rather than conjuring one.
+	var quiet_rest := (screen._log_toggle as Button).get_theme_stylebox(&"normal") as StyleBoxFlat
+	if plain_rest != null and quiet_rest != null \
+			and quiet_rest.border_color.a >= plain_rest.border_color.a:
+		ok = _fail(("`Quiet`'s edge at rest is alpha %.2f against `default`'s %.2f: it is not the "
+				+ "quieter of the two, so there is no step left for hover to make")
+				% [quiet_rest.border_color.a, plain_rest.border_color.a])
 	screen.queue_free()
 	return ok
 
