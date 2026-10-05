@@ -177,17 +177,56 @@ const GLYPH_LIGHT := Color(1.0, 1.0, 1.0)
 ## a deposit's centre tile was erasing a 25 px letter whole (Maren's two 1x shots). Over its own disc
 ## that was the end of it; over a `HOVER` diamond it is not, because `glyph_color` picks the ink by
 ## contrast against the DISC, and `GLYPH_LIGHT` on a pale diamond is the same letter gone for the
-## opposite reason. The bed restores the exact surface the ink was measured against, locally, so
-## Decision #36's 4.52 worst case holds over a mark as well as over a rock.
+## opposite reason. The bed is meant to restore the exact surface the ink was measured against,
+## locally, so Decision #36's 4.52 worst case holds over a mark as well as over a rock.
+##
+## **THIS OUTLINE ALONE DOES NOT DO THAT, AND THE SENTENCE ABOVE CLAIMED IT DID FOR A DAY** (ASSA-218,
+## Maren). It is antialiased, so a "2 px" rim is about 1 px of solid and 1 px of fade and the letter's
+## boundary inside a mark came out with a 4.5:1 edge on **13%** of itself. `GLYPH_BED_STAMPS` below is
+## what makes the claim true (81%); this constant is the soft outer rim, not the cover.
 ##
 ## **ON AN UNOCCUPIED DISC IT IS INVISIBLE BY CONSTRUCTION** -- same colour as what is already there --
-## so none of the 600 measured states change, and a hatched disc loses only a 2 px rim around the
-## strokes it was already losing to the glyph itself.
+## so none of the 600 measured states change, and a hatched disc loses only a thin rim around the
+## strokes it was already losing to the glyph itself: measured at **0.89-1.32% of a hatched disc's
+## interior** against a bed-0 control, with the hatch's density outside the letter's own box unchanged
+## to the digit (29.8 / 26.5 / 27.7%).
 ##
 ## 2.0 is the width of `MARK_KEYLINE_PX` for the same reason it is 2 there: it is the thinnest rim
 ## that survives at 1x on this map (Cove's keyline-0 finding, ASSA-193), and a wider one would start
 ## eating the diamond it sits on.
 const GLYPH_BED_PX := 2.0
+
+## **THE BED'S SOLID CORE: the letter stamped once per neighbouring pixel** (ASSA-218, and it is the
+## fallback Maren named -- "the string drawn in the bed colour at 8 offsets" -- under the condition
+## she set for it, "only if an outline cannot reach the bar").
+##
+## **THAT CONDITION IS MEASURED, NOT ASSUMED.** On the real light-ink case (seed 777042, a machine
+## standing on Minyte at (74,36), white ink on a near-white `HOVER` diamond), the share of the
+## letter's boundary inside the mark that has a 4.5:1 edge within 2 px:
+##
+##   outline 2 px (shipped)   13%   median 3.42:1   <- the defect
+##   outline 4 px             81%   median 7.29:1
+##   these 8 stamps           81%   median 8.79:1
+##   the glyph drawn fatter   58%   median 8.12:1
+##   a MAP_BG keyline, 2 px   45%   median 4.35:1   <- Maren's own first ruling, also short
+##
+## A 4 px outline reaches the same share with one call instead of eight, and it is rejected for the
+## reason `MARK_KEYLINE_PX` is 2: a 4 px rim eats the 16 px diamond it sits on. The stamps buy the
+## same coverage at a better median without growing the rim.
+##
+## **AND THESE EIGHT COVER THE DISTANCE-1 RING BY CONSTRUCTION, NOT BY LUCK.** A pixel at distance 1
+## from the ink is `q + d` for an ink pixel `q` and a unit offset `d`; the copy displaced by `d`
+## paints `{ink + d}`, which contains it. All eight, or a stroke's END keeps bare diagonals.
+##
+## THE PRICE, STATED: 8 extra `draw_string` calls per letter -- 104 on a 13-letter world, against
+## ASSA-214's whole-map median of 42 draw calls. It is the largest thing on this map's bill and the
+## next move if it matters is to stamp only the letters a mark actually laps, which
+## `letter_occlusions` can already decide.
+const GLYPH_BED_STAMPS: Array[Vector2] = [
+	Vector2(-1.0, -1.0), Vector2(0.0, -1.0), Vector2(1.0, -1.0),
+	Vector2(-1.0, 0.0), Vector2(1.0, 0.0),
+	Vector2(-1.0, 1.0), Vector2(0.0, 1.0), Vector2(1.0, 1.0),
+]
 
 ## **EVERY MARK THE WHOLE-WORLD MAP CAN PUT ON SCREEN, IN THE TABLE THE DRAW LOOP ITSELF READS**
 ## (ASSA-206, Maren's ruling: "the key must be GENERATED from the same table the draw loop reads, so
@@ -777,6 +816,89 @@ static func diamond(at: Vector2, span: float) -> PackedVector2Array:
 	var h := span * 0.5
 	return PackedVector2Array([at + Vector2(0.0, -h), at + Vector2(h, 0.0),
 			at + Vector2(0.0, h), at + Vector2(-h, 0.0)])
+
+
+## The area of [param points] by shoelace, so a mark that grew a fifth point is measured and not assumed.
+static func polygon_area(points: PackedVector2Array) -> float:
+	if points.size() < 3:
+		return 0.0
+	var sum := 0.0
+	for i in points.size():
+		var a := points[i]
+		var b := points[(i + 1) % points.size()]
+		sum += a.x * b.y - b.x * a.y
+	return absf(sum) * 0.5
+
+
+## **WHICH MACHINES STAND ON THE TILE A SPECIES LETTER NAMES** (ASSA-213 box 2: "the case is in a shot:
+## a building placed on a deposit CENTRE, not on its edge -- today's shots cannot report this absent").
+##
+## **THIS IS THE SIM'S QUESTION AND [method letter_occlusions] IS THE PAINTER'S, AND A SHOT NEEDS BOTH.**
+## Pixels alone cannot tell "no machine was on a rock today" from "a machine was on a rock and the map
+## did not mark it" -- the first is a world the play loop did not reach and the second is ASSA-189
+## exactly. Asking the sim for the case and the painter's own marks for the collision separates them,
+## and that separation is the whole of box 2: a shot can now report the case ABSENT.
+##
+## `pos`, `footprint` and `tile` ARE READ WITHOUT A DEFAULT (ASSA-141), like [method building_mark]:
+## a binding that stopped sending a footprint must empty the frame rather than quietly answer "no
+## machine is on a letter" for every world, which is the answer that reads as good news.
+##
+## [param letter_marks] is `main.gd::_glyph_marks`' own list, so the tile compared here is the tile the
+## letter is actually drawn on rather than a deposit this function picked out of the sim for itself.
+static func machines_on_letters(buildings: Array, letter_marks: Array) -> Array:
+	var out := []
+	for i in buildings.size():
+		var building: Dictionary = buildings[i]
+		# INCLUSIVE OF `pos`, EXCLUSIVE OF `pos + footprint`, which is `Rect2i.has_point` -- a 2x2 at
+		# (56,58) holds (56,58)..(57,59) and a letter at (57,59) is INSIDE it. That corner is the case
+		# Cove's enumeration found worst (24.9-56.2% of the letter's ink), so an off-by-one here would
+		# report the worst placement in the game as not-in-frame.
+		var foot := Rect2i(building["pos"] as Vector2i, building["footprint"] as Vector2i)
+		for j in letter_marks.size():
+			var letter: Dictionary = letter_marks[j]
+			var tile: Vector2i = letter["tile"]
+			if foot.has_point(tile):
+				out.append({"building": i, "letter": j, "tile": tile,
+						"symbol": String(letter["symbol"]), "kind": String(building["kind"])})
+	return out
+
+
+## **HOW MUCH OF EACH SPECIES LETTER A MACHINE'S MARK LANDS ON**, in the frame's own geometry (ASSA-213).
+##
+## IT REPORTS A COLLISION AND NEVER A VERDICT. Since this item the letter is painted LAST, so an
+## overlap is no longer an erasure -- it is the STATE the fix exists for, and a shot containing one is
+## a shot that can be judged. Whether the letter survived is a pixel question about a PNG (Maren's box
+## 1 and her control), and nothing in here may be read as answering it.
+##
+## THE BOX IS THE CAP BOX. `_glyph_marks` leaves the descent out on purpose -- `symbol` is one capital
+## -- because a box reserving room for a descender says a mark lands on the letter when it lands under
+## it. My first premise for this item measured the share of the letter's BOX the diamond covered (9.3%)
+## and called the case absent; the diamond's own share was 99.3%. **Both are reported here**, named,
+## for that reason: `share_of_box` is how much of the letter is at risk, `share_of_mark` is how much of
+## the mark is spent on it, and only the first is a number about the letter.
+static func letter_occlusions(building_marks: Array, letter_marks: Array) -> Array:
+	var out := []
+	for i in building_marks.size():
+		var mark: Dictionary = building_marks[i]
+		var points: PackedVector2Array = mark["points"]
+		var mark_area := polygon_area(points)
+		for j in letter_marks.size():
+			var letter: Dictionary = letter_marks[j]
+			var box: Rect2 = letter["box"]
+			var box_area := box.size.x * box.size.y
+			if box_area <= 0.0 or mark_area <= 0.0:
+				continue
+			var covered := 0.0
+			for piece in Geometry2D.intersect_polygons(points, PackedVector2Array([box.position,
+					Vector2(box.end.x, box.position.y), box.end,
+					Vector2(box.position.x, box.end.y)])):
+				covered += polygon_area(piece as PackedVector2Array)
+			if covered <= 0.0:
+				continue
+			out.append({"building": i, "letter": j, "symbol": String(letter["symbol"]),
+					"covered_px": covered, "share_of_box": covered / box_area,
+					"share_of_mark": covered / mark_area})
+	return out
 
 
 ## The `MAP_BG` keyline behind an axis-aligned mark: [param body] grown by `MARK_KEYLINE_PX` all round.

@@ -3154,9 +3154,13 @@ func _draw() -> void:
 	# **THE ORDER IS THE FIX AND THE BED IS WHAT MAKES THE ORDER SAFE.** Painting a letter over a
 	# `HOVER` diamond on its own would swap one erasure for another: `AssayHud.glyph_color` picks the
 	# ink by contrast against the DISC, so a `GLYPH_LIGHT` letter chosen for a dark rock is white on a
-	# pale diamond. Each letter therefore carries `AssayHud.GLYPH_BED_PX` of its own disc colour as an
-	# outline under its strokes -- the surface Decision #36's 4.52 worst case was measured on. Over an
-	# unoccupied disc the bed is the colour already there and nothing changes.
+	# pale diamond. Each letter therefore carries its own disc colour under its strokes -- the surface
+	# Decision #36's 4.52 worst case was measured on. Over an unoccupied disc the bed is the colour
+	# already there and nothing changes.
+	#
+	# **AND THE BED IS A STAMPED SILHOUETTE, NOT ONLY AN OUTLINE** (ASSA-218). The outline is
+	# antialiased and left 87% of the letter's boundary inside a mark with no 4.5:1 edge, on the
+	# light-ink majority (56.8% of the 600 species-and-purity states). See `GLYPH_BED_STAMPS`.
 	#
 	# **IT IS OVER THE PLAYER MARKS TOO, which is a consequence and not a preference.** Buildings are
 	# painted after players (ASSA-203), so the only position that satisfies the ruling is after both.
@@ -3170,6 +3174,15 @@ func _draw() -> void:
 		draw_string_outline(font, glyph["baseline"], glyph["symbol"], HORIZONTAL_ALIGNMENT_LEFT, -1,
 				int(glyph["size"]), int(glyph["bed_px"]),
 				AssayHud.mark_ink_of(&"species_bed", glyph["bed"]))
+		# **AND A SOLID CORE UNDER IT** (ASSA-218, Maren's P1 on the half of ASSA-213 that did not
+		# work, built as the fallback she named once I had measured her condition for it). The outline
+		# above is antialiased, so a 2 px rim left the letter's boundary inside a mark with a 4.5:1
+		# edge on 13% of itself; stamping the letter once per neighbouring pixel takes that to 81%.
+		# `AssayHud.GLYPH_BED_STAMPS` carries the five candidates I measured and the price of this one.
+		for offset: Vector2 in AssayHud.GLYPH_BED_STAMPS:
+			draw_string(font, glyph["baseline"] + offset, glyph["symbol"],
+					HORIZONTAL_ALIGNMENT_LEFT, -1, int(glyph["size"]),
+					AssayHud.mark_ink_of(&"species_bed", glyph["bed"]))
 		draw_string(font, glyph["baseline"], glyph["symbol"], HORIZONTAL_ALIGNMENT_LEFT, -1,
 				int(glyph["size"]), AssayHud.mark_ink_of(&"species_glyph", glyph["ink"]))
 
@@ -3247,7 +3260,12 @@ func _glyph_marks(deposits: Array, font: Font) -> Array:
 		var symbol := String(deposit.get("symbol", ""))
 		if symbol.is_empty():
 			continue
-		var at := MARGIN + Vector2(deposit.get("center", Vector2i.ZERO) as Vector2i) * _cell
+		# **`center` WITHOUT A DEFAULT** (ASSA-141), unlike `amount` and `symbol` above, where a missing
+		# key means "skip this rock" and costs one letter. A defaulted centre is worse than no letter:
+		# every deposit would stack its glyph on tile (0,0), and `AssayHud.machines_on_letters` would
+		# then report a machine near the origin as standing on all six species at once.
+		var centre: Vector2i = deposit["center"]
+		var at := MARGIN + Vector2(centre) * _cell
 		var radius := maxf(_cell, float(int(deposit.get("radius", 1))) * _cell)
 		var size := AssayHud.glyph_size(radius)
 		if size <= 0:
@@ -3270,5 +3288,11 @@ func _glyph_marks(deposits: Array, font: Font) -> Array:
 			"box": Rect2(baseline - Vector2(0.0, font.get_ascent(size)),
 					Vector2(measured.x, font.get_ascent(size))),
 			"at": at,
+			# **THE TILE, NOT ONLY THE PIXEL** (ASSA-213 box 2). `at` is where the letter is drawn and
+			# cannot be compared with a footprint: a shot has to be able to ask the SIM whether a
+			# machine stands on the tile this letter names, because pixels alone cannot tell "no
+			# machine was on a rock today" from "one was and the map did not mark it".
+			# `AssayHud.machines_on_letters` is the comparison and `tools/window_shot.gd` the caller.
+			"tile": centre,
 		})
 	return marks
