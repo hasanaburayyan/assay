@@ -82,9 +82,24 @@ var _cred_cell := HBoxContainer.new()
 var _door_primary := HBoxContainer.new()
 var _door_secondary := HBoxContainer.new()
 ## What the client is SAYING, under the controls it is saying it about. In a world these two labels
-## go back to (24, 54) and (24, 74); on the join screen a refusal 300 px from the button that earned
-## it is the same defect ASSA-127 fixed for the invitation.
+## move into `_says_toast` over the world's bottom-left corner (ASSA-239 -- they used to go back to
+## (24, 54) and (24, 74), in a header strip that no longer exists); on the join screen a refusal
+## 300 px from the button that earned it is the same defect ASSA-127 fixed for the invitation.
 var _door_says := VBoxContainer.new()
+## **WHERE THE SAME TWO LABELS LIVE ONCE THERE IS A WORLD** (ASSA-239). A panel over the map's
+## bottom-left rather than a line in a strip, because Maren's Gap 2 ruling gives the strip's 96 px to
+## the world and leaves nothing in its place: *"a thinner status line is a thinner version of this
+## defect."*
+##
+## **A TOAST IS NOT FURNITURE.** It is drawn only while it has something to say, so the resting state
+## of a played screen is world and column and nothing else -- which is the Factorio half of Maren's
+## §1 that this client could not have while the status line owned a permanent band.
+##
+## `MOUSE_FILTER_IGNORE`, like `_map_note` and for the same reason: it floats over a map that is
+## clicked through `_unhandled_input`, and a panel that answered the mouse would eat clicks on the
+## world in the one corner a player walks to.
+var _says_toast := PanelContainer.new()
+var _says_toast_box := VBoxContainer.new()
 ## THE PAINTED COLUMN SURFACE, held so the column can leave the screen before a world exists. Not
 ## its sections one at a time: the column is one object to a player and `COLUMN_SURFACE` is the
 ## ancestor every part of it hangs from, so a section added later is hidden by this with no second
@@ -751,12 +766,23 @@ func _build_ui() -> void:
 	add_child(_map_key_toggle)
 	_map_key_toggle.visible = false
 
-	# THE TOP-LEFT ROW IS THE IN-WORLD HOME ONLY (ASSA-231). On the join screen it stands empty and
-	# the three controls are in `_front_door`; `_place_join_controls` moves them here when a world
-	# appears, which is also the state `Join` has to be reachable in (ASSA-175/ASSA-177).
-	_row.position = Vector2(24.0, 20.0)
+	# THE ROW IS THE IN-WORLD HOME ONLY (ASSA-231). On the join screen it stands empty and the three
+	# controls are in `_front_door`; `_place_join_controls` moves them here when a world appears, which
+	# is also the state `Join` has to be reachable in (ASSA-175/ASSA-177).
+	#
+	# **AND IT IS NOT IN THE TOP-LEFT CORNER ANY MORE: IT IS IN THE TOAST** (ASSA-239). It was at
+	# (24, 20), inside the 96px header strip Maren's Gap 2 ruling deleted, and a row left there would
+	# have been the strip surviving its own removal -- the only control still drawn above the world.
+	# My own `test_no_control_is_drawn_above_the_world_in_a_played_screen` is what found it.
+	#
+	# **THE TOAST IS THE RIGHT HOME AND NOT MERELY A FREE ONE.** Everything in this row is reachable
+	# in exactly one in-world state: the link has died and these are the way back in (ASSA-177). The
+	# toast is where the client says *why* it died. Limpet's own rule on ASSA-231 was that *"a refusal
+	# 300 px from the button that earned it is the same defect ASSA-127 fixed"* -- so the sentence and
+	# the button that answers it go in one panel. Added before the labels arrive and moved last by
+	# `_place_join_controls`, so the panel always reads what happened, then what to do about it.
 	_row.add_theme_constant_override("separation", 8)
-	add_child(_row)
+	_says_toast_box.add_child(_row)
 
 	# THE BAND INSIDE THE ROW: everything a player in a world can no longer use (ASSA-175). Same
 	# separation as the row it sits in, so the band is a grouping for the hide and not a layout change
@@ -846,6 +872,19 @@ func _build_ui() -> void:
 	_door_says.add_child(_status)
 	_door_says.add_child(_detail)
 	_front_door.add_child(_door_says)
+
+	# THE TOAST THE SAME TWO LABELS MOVE INTO ONCE THERE IS A WORLD (ASSA-239). Built here, empty:
+	# `_place_join_controls` fills it by reparenting, so there is one copy of each label and never a
+	# second that has to agree with the first.
+	#
+	# ADDED AFTER `_front_door` SO IT DRAWS OVER THE MAP, and `MOUSE_FILTER_IGNORE` on both the panel
+	# and its box so the corner it floats in still answers clicks on the world.
+	_says_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_says_toast_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_says_toast_box.add_theme_constant_override("separation", 2)
+	_says_toast.add_child(_says_toast_box)
+	add_child(_says_toast)
+	_says_toast.visible = false
 	# **AND THE READOUT IS NOT DRAWN** (ASSA-237). Its PLACE is ASSA-231's and untouched here -- this
 	# slice decides who it is drawn for, not where it sits. Called after the node is in the tree so
 	# that "hidden on first open" is a state something actually set, not a default.
@@ -1273,6 +1312,9 @@ func _show_map_key(shown: bool) -> void:
 func _show_dev_readout(shown: bool) -> void:
 	_dev_shown = shown
 	_detail.visible = shown
+	# THE TOAST GROWS AND SHRINKS WITH IT (ASSA-239): the readout is the second line in that panel, so
+	# its arrival changes the panel's height and therefore where its bottom-left corner sits.
+	_place_says_toast()
 
 
 ## SHOW OR HIDE THE CRAFTING MENU'S ROWS (ASSA-88).
@@ -1958,9 +2000,45 @@ func _render_status() -> void:
 		# be the client crying off. Not a new colour -- the one state surface's palette is
 		# `AssayHud.status_color` and ASSA-116 is what happens when something invents its own.
 		_status.modulate = AssayHud.status_color(AssayHud.Say.CONNECTING)
+		_place_says_toast()
 		return
 	_status.text = _base_line
 	_status.modulate = AssayHud.status_color(_base_level)
+	_place_says_toast()
+
+
+## **THE TOAST IS DRAWN ONLY WHILE IT HAS SOMETHING TO SAY, AND IT IS PLACED FROM ITS OWN SIZE**
+## (ASSA-239).
+##
+## Maren's Gap 2 ruling gives the header strip's 96 px to the world and puts NOTHING in its place, so
+## what the client is saying cannot go back to being a permanent line. It is a transient: empty for
+## most of a session, and when it is empty the played screen is world and column and nothing else.
+##
+## **THE PREDICATE IS THE TEXT, NOT A FLAG.** `_status.text` and `_detail.text` are what a player
+## would read; a `_has_said_something` bool would be a second idea of the same fact, free to be true
+## while both labels are blank. `_detail` counts only while the developer toggle is on, because a
+## readout nobody is drawing is not something the screen is saying.
+##
+## `get_combined_minimum_size()` RATHER THAN `size`: the suite runs inside `SceneTree._initialize`
+## where no layout pass has happened, so `size` is whatever the node was born with and a toast placed
+## from it would be in the right corner only in a real window. The minimum size is computed from the
+## children on demand, so the headless tests and the shipped window agree.
+func _place_says_toast() -> void:
+	if _status.get_parent() != _says_toast_box:
+		# PRE-WORLD THE LABELS ARE IN THE CENTRED FRONT DOOR (ASSA-231) and this panel owns nothing.
+		_says_toast.visible = false
+		return
+	# **THE RECONNECT ROW COUNTS TOO** (ASSA-239). It is empty at JOINED -- `_refresh_join_band` hides
+	# every cell in it -- and it is the way back in after a drop, so a toast that only watched the
+	# labels would hide the one control a dropped player needs on the frame the sentence under it
+	# changed. `_join_band.visible` is that row's own answer, not a second copy of the stage.
+	var saying := _status.text != "" or (_dev_shown and _detail.text != "") or _join_band.visible
+	_says_toast.visible = saying
+	if not saying:
+		return
+	var at := AssayHud.status_toast_rect(_says_toast.get_combined_minimum_size())
+	_says_toast.position = at.position
+	_says_toast.size = at.size
 
 
 ## The host went quiet, or came back. `seconds == 0` is "came back": see `AssayNetClient.link_quiet`.
@@ -2996,6 +3074,10 @@ func _refresh_front_door() -> void:
 	if _column != null:
 		_column.visible = not empty
 	_place_join_controls(not empty)
+	# AFTER THE MOVE, NEVER BEFORE IT (ASSA-239): the toast's own predicate is "are the labels mine",
+	# so asking on the frame they arrive is the difference between a toast that appears with the world
+	# and one that appears a tick later.
+	_place_says_toast()
 
 
 ## **WHERE THE THREE JOIN CONTROLS LIVE, WHICH IS A FUNCTION OF WHETHER THERE IS A WORLD** (ASSA-231).
@@ -3013,8 +3095,12 @@ func _place_join_controls(in_world: bool) -> void:
 		_solo_cell: _join_band if in_world else _door_primary,
 		_cred_cell: _join_band if in_world else _door_secondary,
 		_join_button: _row if in_world else _door_secondary,
-		_status: self if in_world else _door_says,
-		_detail: self if in_world else _door_says,
+		# **A CONTAINER AT BOTH ENDS NOW, AND THAT DELETED A WHOLE CLASS OF BUG** (ASSA-239). These two
+		# used to come home to `self` and be parked at (24, 54) and (24, 74) by hand -- two coordinates
+		# in a header strip that no longer exists. They now move between two VBoxes, so nothing here
+		# positions anything and `reset_size` has nothing to undo.
+		_status: _says_toast_box if in_world else _door_says,
+		_detail: _says_toast_box if in_world else _door_says,
 	}
 	var moved := false
 	for control: Control in homes:
@@ -3026,13 +3112,10 @@ func _place_join_controls(in_world: bool) -> void:
 	if not moved:
 		return
 	if in_world:
-		# THE TWO LABELS GO BACK TO THEIR OWN COORDINATES, and `reset_size` with them: a container
-		# hands a child its width, and a 912px-wide Label parked at (24, 54) would report a rect
-		# three quarters of the window wide for one word of text.
-		_status.reset_size()
-		_status.position = Vector2(24.0, 54.0)
-		_detail.reset_size()
-		_detail.position = Vector2(24.0, 74.0)
+		# WHAT HAPPENED, THEN WHAT TO DO ABOUT IT (ASSA-239). `reparent` appends, so the two labels
+		# land after the row they should read above. One move, only on the frame something actually
+		# changed home, which is what the `moved` guard above buys.
+		_says_toast_box.move_child(_row, -1)
 		if _solo_button.has_focus():
 			_solo_button.release_focus()
 

@@ -18,26 +18,40 @@ enum Say { IDLE, CONNECTING, FAILED, JOINED }
 ## WHERE THINGS GO. Here rather than in `main.gd` so the one layout rule that matters can be tested:
 ## the HUD column sits BESIDE the map and never over it.
 const VIEW := Vector2(1280.0, 720.0)
-const MARGIN := Vector2(24.0, 96.0)
+## **24 ON EVERY SIDE, AND THE y USED TO BE 96** (ASSA-239, Maren's Gap 2 ruling 1-2, 2026-10-05:
+## *"the whole strip leaves the player's view ... The 96 px goes to the world"*, and *"the strip gets
+## nothing in its place. A thinner status line is a thinner version of this defect."*).
+##
+## The 96 was never a margin. It was the height of a HEADER BAND carrying three things, and all three
+## are gone: the join row moved into the centred front door (ASSA-231), the developer readout went
+## behind F3 (ASSA-237), and the status line is now a toast over the world (see `status_toast_rect`).
+## Measured on the last real-window shot before this change: that band was **936x96 carrying 905
+## inked px, 1.01% of itself.**
+##
+## **THE WORLD GAINS 72 px OF HEIGHT: 912x600 -> 912x672**, which is +12.0% of world and takes the
+## view from 59.4% to 66.5% of the window. Rainy's words are the reason it is spent this way rather
+## than banked: *"a LARGE dedicated space for the gameplay window"*.
+const MARGIN := Vector2(24.0, 24.0)
 const PANEL := 320.0
 
-## WHERE THE HUD COLUMN STARTS, AND IT IS NOT `MARGIN.y` (ASSA-133, Maren's 96px measurement).
+## WHERE THE HUD COLUMN STARTS, AND IT IS `MARGIN.y` AGAIN (ASSA-239).
 ##
-## `MARGIN.y` is 96 because that is where the MAP starts: the header band above it carries the join
-## row, the status line and the detail line. But that band spans the MAP's width, not the window's --
-## its controls stop near x 620 and the column's x range is 936..1280 -- so the top-right 347 x 96 of
-## the window was 33,312 px of one colour, in a window whose one state surface wants 1746px of a
-## 566px clip. Maren measured the first non-background pixel in the column's x-range at y = 96
-## exactly.
+## **IT WAS 8, AND THE REASON IT WAS 8 HAS BEEN DELETED RATHER THAN OVERRULED.** ASSA-133 set this
+## above the map's own top because the header band spanned the MAP's width and not the window's: its
+## controls stopped near x 620 while the column's x range is 936..1280, so the top-right 347x96 was
+## 33,312 px of one colour that no section owned, and the column was allowed to climb into it and buy
+## ~17% more clip. **There is no band now** (see `MARGIN`), so there is no unowned rectangle to climb
+## into, and a column starting 16 px above the view beside it would be a ragged top edge bought for
+## nothing.
 ##
-## NOTHING MOVES AND NOTHING IS REWORDED to buy this: the column simply starts where there is nothing
-## in its way, which is +96px, about 17% more clip.
+## **DERIVED, NOT TYPED.** It is `MARGIN.y` rather than another 24, because the whole of this
+## constant's remaining job is "the column and the world share a top edge". Written as its own number
+## it would be two declarations of one decision, free to drift the next time the frame is retuned --
+## which is exactly how it came to be 8 while the map started at 96.
 ##
-## IT IS NOT AN EMPTY STATE AND MUST NEVER GET A LABEL (Maren, answering Limpet's question on the
-## item). "Every empty surface says which kind of empty it is" is about a surface that HAS a subject
-## and nothing to show. This rectangle has no subject: a blank that no section owns is a layout that
-## stopped short, and labelling it is the game apologising for its own margin.
-const COLUMN_TOP := 8.0
+## The column loses 16 px of clip by this (688 -> 672) and the world gains 72. Both regions are now
+## 672 tall at y=24, so the window has one 24 px frame on all four sides.
+const COLUMN_TOP := MARGIN.y
 
 ## HOW MUCH OF THE PANEL THE LOG'S TOGGLE TAKES OFF THE TOP (ASSA-89).
 ##
@@ -427,15 +441,48 @@ static func map_cell(size: Vector2i) -> float:
 	return maxf(2.0, floorf(minf(at.size.x / float(size.x), at.size.y / float(size.y))))
 
 
-## WHERE THE WORLD GOES: 912x600 at (24, 96), which is 13% / 63% / 24% of the window with the top
-## strip and the HUD column (Maren's measurement, ASSA-116).
+## WHERE THE WORLD GOES: **912x672 at (24, 24)**, which is **66.5%** of the window beside the HUD
+## column's 23.9% and a 24px frame (ASSA-239). It was 912x600 at (24, 96) = 59.4%, with a 13.3% header
+## strip above it that Maren's Gap 2 ruling deleted.
 ##
 ## FACTORED OUT FOR ASSA-119, because there are two views of the world now and they have to occupy
 ## exactly the same rectangle: the whole-world schematic `map_cell` sizes a tile for, and the scene at
 ## 32 px a tile that `AssayWorldLayer` clips to. Two copies of this arithmetic would be a scene
 ## whose click targets are a few pixels off its own picture.
+##
+## **THE SCHEMATIC'S TILE DID NOT MOVE, AND THAT IS MEASURED RATHER THAN HOPED FOR.** `map_cell` takes
+## the smaller of the two fits, and on a 96x64 world the WIDTH has always been the binding one:
+## 912/96 = 9.5 against 600/64 = 9.375 before, and against 672/64 = 10.5 now. Floored, both are 9. So
+## 72 px of new height is spent entirely on the close-up (2.25 more tile rows at 32 px) and the
+## whole-world view is byte-identical -- which is why ASSA-220's letter placement and the schematic's
+## mark geometry are untouched by this item.
 static func world_rect() -> Rect2:
 	return Rect2(MARGIN, Vector2(VIEW.x - MARGIN.x * 2.0 - PANEL, VIEW.y - MARGIN.y - 24.0))
+
+
+## HOW FAR THE STATUS TOAST SITS INSIDE THE WORLD'S CORNER (ASSA-239).
+const TOAST_INSET := 12.0
+
+
+## **WHERE WHAT THE CLIENT IS SAYING GOES, NOW THAT THERE IS NO STRIP TO SAY IT IN** (ASSA-239).
+##
+## Maren's Gap 2 ruling is that the header strip gets NOTHING in its place -- *"a thinner status line
+## is a thinner version of this defect"* -- so the status line could not simply be moved up. It is not
+## furniture: it is a TRANSIENT, the last thing the client was asked or told, and it is empty for most
+## of a session. So it stops reserving layout at all and becomes a toast over the world, drawn only
+## when it has something to say (`main.gd::_render_status`).
+##
+## **THE WORLD'S BOTTOM-LEFT, AND THE CORNER IS THE ONLY FREE ONE.** The log panel is anchored to the
+## map's TOP (ASSA-147/156) and `whole world (V)` / `show the map key (K)` sit in the map's
+## BOTTOM-RIGHT. Bottom-left is what is left, and it is also where this kind of line lives in the two
+## games Maren set as our bar.
+##
+## IT TAKES THE TOAST'S OWN MEASURED SIZE rather than guessing one: a panel sized here would be a
+## second opinion about how tall a themed `PanelContainer` holding one or two labels is, and the first
+## time the type scale moved the two would disagree.
+static func status_toast_rect(toast: Vector2) -> Rect2:
+	var world := world_rect()
+	return Rect2(Vector2(world.position.x + TOAST_INSET, world.end.y - TOAST_INSET - toast.y), toast)
 
 
 ## **THE SURFACE THE JOIN SCREEN GETS, WHICH IS ALL OF IT** (ASSA-231, Maren's Gap 5: "one screen,
