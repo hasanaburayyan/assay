@@ -1074,7 +1074,10 @@ jobs:
             Remove-Item $log -ErrorAction SilentlyContinue
             # The label is printed inside the probe's own report, so a number
             # cannot be quoted without the harness it came from.
-            $label = "windows-latest runner, run $($env:GITHUB_RUN_NUMBER), driver $tag, no GPU, NOT the board's PC"
+            # NO SPACES IN THE LABEL: Start-Process joins -ArgumentList with spaces and
+            # does not quote, so a spaced label split into "runner," and the probe
+            # read it as its mode (run 37277028434 measured nothing). ASSA-205.
+            $label = "windows-latest_runner,_run_$($env:GITHUB_RUN_NUMBER),_driver_$tag,_no_GPU,_NOT_the_board's_PC"
             # `--audio-driver Dummy` is the one deviation from the player's own
             # launch and it is here because a runner has no sound device at all.
             # It cannot touch a drawn-rect distribution; a WASAPI driver failing
