@@ -270,7 +270,7 @@ impl AssaySim {
     /// here to render in the healthy case.
     #[func]
     pub fn halt_summary(&self) -> GString {
-        GString::from(sim::debug::halt_summary(&self.world))
+        gstring(&sim::debug::halt_summary(&self.world))
     }
 
     /// EVERY ACTIVITY THIS PLAYER HAS RUNNING, one sentence each, in `step`'s

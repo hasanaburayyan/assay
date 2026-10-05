@@ -1572,16 +1572,24 @@ func _log_lines_that_fit() -> int:
 func _refresh_halt() -> void:
 	var lines := _sim.halt_lines() if _sim != null else PackedStringArray()
 	var summary := _sim.halt_summary() if _sim != null else ""
-	# **THE SUMMARY IS PART OF THE SHAPE, AND LEAVING IT OUT WOULD HAVE BEEN A STALE HEADING**
-	# (ASSA-94). The count is "N of M buildings stopped", so M moves when a building is PLACED --
-	# and placing a working building changes nothing about which buildings are stopped. "1 of 2" and
-	# "1 of 3" therefore have identical `lines`, and a shape made of the lines alone would skip the
-	# rebuild and leave the old total on screen.
-	var shape := summary + "\n" + "\n".join(lines)
+	var shape := _halt_shape(summary, lines)
 	if shape == _halt_showing:
 		return
 	_halt_showing = shape
 	_rebuild_halt(lines, summary)
+
+
+## **WHAT THIS BLOCK IS SHOWING, AS ONE STRING, AND THE SUMMARY IS PART OF IT** (ASSA-94). Split out
+## for `_rebuild_halt`'s reason: the suite cannot reach a world with a stalled building in it, so a
+## hazard that lives inside `_refresh_halt` is a hazard nothing can hold me to.
+##
+## **THE HAZARD IT EXISTS FOR.** The count is "N of M buildings stopped", so M moves when a building
+## is PLACED -- and placing a WORKING building changes nothing about which buildings are stopped. "1
+## of 2" and "1 of 3" therefore carry identical `lines`, and a shape made of the lines alone would
+## compare equal, skip the rebuild and leave the old total on screen. The number the Game Director
+## ruled must always be stated would be quietly wrong, which is worse than absent.
+func _halt_shape(summary: String, lines: PackedStringArray) -> String:
+	return summary + "\n" + "\n".join(lines)
 
 
 ## THE BLOCK, FROM LINES. Split from `_refresh_halt` so a test can drive the drawing without a world
