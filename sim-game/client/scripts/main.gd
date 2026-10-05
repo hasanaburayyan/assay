@@ -1418,10 +1418,22 @@ func _on_tick_bundle(_tick: int, _inputs: Array, raw: String) -> void:
 
 ## What the tick we just applied did, kept where it can be read. The sim holds only the newest tick's
 ## events, so a line not copied out here is gone a tenth of a second later.
+## **NO `tick N ·` PREFIX, AND THAT IS A RULING NOT A TIDY-UP** (ASSA-222, Maren: *"drop the `tick N
+## ·` prefix: the log is already in order, newest last, and a tick is the inspector's clock, not a
+## player's"*). This appended `"%d · %s"` and Nerite read the result at 1x as **"292 ·"** — a number
+## a player cannot interpret, in front of every line, on the surface the board called *hard on the
+## eyes*. Order is already carried by position, and `_log_row`'s dimming reads age by index, not by
+## parsing this. Nothing anywhere splits on it: the repo has no `split(" · ")`.
+##
+## **THIS IS SLICE 1 OF THAT RULING AND THE OTHER TWO CLAUSES ARE NOT HERE.** "Name the building"
+## and "drop the bare `building 0`" need `sim::debug::event_line` to take an audience, because the
+## same describer serves `sim-cli`, where a `BuildingId` is the handle you type into `take`/`pickup`.
+## Doing those in the client would be a second wording of one fact, which is the drift Maren's
+## ruling and my own guard on that item both forbid. So the sim half waits for a wake-up that can
+## afford the Rust gate; this clause stands alone because it is purely presentational.
 func _remember_events() -> void:
-	var tick := _sim.tick()
 	for line in _sim.event_lines(_client.player_id):
-		_events.append("%d · %s" % [tick, line])
+		_events.append(line)
 	_events = AssayHud.trimmed_log(_events, LOG_LINES)
 	# WHAT A HIDDEN LOG MAY NOT SWALLOW (ASSA-89). The sim says which lines those are
 	# (`sim::debug::event_needs_attention`) and these are the SAME SENTENCES, word for word -- a
