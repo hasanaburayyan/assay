@@ -389,8 +389,8 @@ func test_the_probe_refuses_a_walk_that_is_not_on_one_row() -> bool:
 			checked += 1
 			if not AssayMotionProbe.walk_is_straight(here, to):
 				screen.free()
-				return _fail("`_walk_target` sends a body from %s to %s, which is off the row the "
-						+ "whole reference rests on" % [here, to])
+				return _fail(("`_walk_target` sends a body from %s to %s, which is off the row the "
+						+ "whole reference rests on") % [here, to])
 	if checked < 100:
 		screen.free()
 		return _fail("only %d starts were tried, so this says nothing about the world" % checked)
