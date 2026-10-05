@@ -177,13 +177,29 @@ const GLYPH_LIGHT := Color(1.0, 1.0, 1.0)
 ## a deposit's centre tile was erasing a 25 px letter whole (Maren's two 1x shots). Over its own disc
 ## that was the end of it; over a `HOVER` diamond it is not, because `glyph_color` picks the ink by
 ## contrast against the DISC, and `GLYPH_LIGHT` on a pale diamond is the same letter gone for the
-## opposite reason. The bed is meant to restore the exact surface the ink was measured against,
-## locally, so Decision #36's 4.52 worst case holds over a mark as well as over a rock.
+## opposite reason. The bed was SPECIFIED to restore the exact surface the ink was measured against,
+## locally, so Decision #36's 4.52 worst case would hold over a mark as well as over a rock.
 ##
-## **THIS OUTLINE ALONE DOES NOT DO THAT, AND THE SENTENCE ABOVE CLAIMED IT DID FOR A DAY** (ASSA-218,
-## Maren). It is antialiased, so a "2 px" rim is about 1 px of solid and 1 px of fade and the letter's
-## boundary inside a mark came out with a 4.5:1 edge on **13%** of itself. `GLYPH_BED_STAMPS` below is
-## what makes the claim true (81%); this constant is the soft outer rim, not the cover.
+## **IT DOES NOT RESTORE THAT SURFACE, AND NO ANTIALIASED BED CAN** (ASSA-218; Cove's arm-C lever
+## found it, I re-measured it on main). Every copy of the bed is itself a `draw_string`, so a bed
+## pixel gets the glyph's own partial coverage and comes out a BLEND of the fill and whatever is
+## underneath -- never the fill. Measured on the real light-ink case (seed 777042, a machine on the
+## M at (74,36), white ink on a near-white `HOVER` diamond), the bed as drawn, against the letter:
+##
+##   the disc's bare fill (41,41,204)   9.20:1   <- what `glyph_color` picked the ink against
+##   bed as drawn, outline only         3.23:1   (0 of 47 bed px are the solid fill)
+##   bed as drawn, + these 8 stamps     4.35:1   (5 of 63 are) <- shipped, and BELOW the 4.5 floor
+##   the machine mark (242,242,242)     1.12:1   <- bare, which is the defect ASSA-218 was filed on
+##
+## **SO THE GUARANTEE THAT TRANSFERS UNDER A MARK IS AN EDGE, NOT A SURFACE, AND I CLAIMED THE WRONG
+## ONE FOR SIX HOURS.** #301 replaced "the outline restores the surface" with "`GLYPH_BED_STAMPS` is
+## what makes that claim true (81%)" -- but the 81% is a different bar (below), about whether the
+## letter's boundary has a readable edge. It does not say the surface came back, and the table above
+## says it did not. Decision #36's 4.52 is a disc-vs-ink number and it stops at the edge of a mark.
+##
+## What is true: the stamps take the letter's boundary inside a mark from a 4.5:1 edge on 13% of
+## itself to 81%, median 3.42:1 -> 8.79:1. A reader gets a letter with an edge; `glyph_color`'s
+## measured surround is gone for as long as the mark is over it. This constant is the soft outer rim.
 ##
 ## **ON AN UNOCCUPIED DISC IT IS INVISIBLE BY CONSTRUCTION** -- same colour as what is already there --
 ## so none of the 600 measured states change, and a hatched disc loses only a thin rim around the
@@ -662,12 +678,23 @@ static func deposit_disc(deposit: Dictionary, drawn_radius: float) -> Dictionary
 	# exactly that on ASSA-199's box 6 (a `MAP_BG` hatch costs a dark letter 30-36%) and it lifted the
 	# worst letter over 600 states from 2.94:1 to 4.51:1.
 	#
-	# **IT IS THE WRONG FIX NOW, because #293 landed a better one while this branch was open.** Every
-	# letter carries `GLYPH_BED_PX` of its own DISC COLOUR as an outline under its strokes, painted
-	# last, so the surface a letter sits on is the bare fill whatever the hatch did -- the bed restores
-	# it rather than modelling it. Relighting on top of that would pick an ink for a surround the
-	# letter no longer has. **It also retires the residual I filed on ASSA-209**: the hatch and the
-	# letter can be the same white and still not fuse, because the bed is between them.
+	# **IT WAS REPLACED, because #293 landed a bed while this branch was open** -- every letter carries
+	# `GLYPH_BED_PX` of its own DISC COLOUR plus `GLYPH_BED_STAMPS` under its strokes, painted last.
+	# The reasoning for dropping the relight was that the bed restores the bare fill, so relighting
+	# would pick an ink for a surround the letter no longer has.
+	#
+	# **THAT PREMISE IS MEASURED FALSE AND THE DROP IS THEREFORE UNJUSTIFIED AS WRITTEN** (Cove,
+	# ASSA-199, re-measured by me on main: `shared/assay/marlow-assa218-bedclaim/`). A bed copy is
+	# itself an antialiased `draw_string`, so a bed pixel is a BLEND of the fill and what is under it.
+	# On this seed's eight hatched discs the bed closes about a QUARTER of the gap to an unhatched
+	# disc at distance 1 and nothing at distance 2, and the worst letter:surround is 2.33:1 -- the
+	# relight's own 4.51:1 was measured against the bare fill, which is not what gets drawn.
+	#
+	# **WHAT IS NOT DECIDED HERE, ON PURPOSE.** Whether the relight comes back is a design call with
+	# a price (it re-picks ink per disc, so a letter can change colour when a rock turns out dead) and
+	# it is Maren's, on ASSA-199. This comment is only corrected to stop asserting the premise.
+	# **The ASSA-209 residual it claimed to retire is NOT retired on the same arithmetic**: the hatch
+	# and the letter can be the same white, and the bed between them is a blend, not a separator.
 	return {"colour": colour, "filled": true, "ink": glyph_color(colour),
 			"hatch": dead_end, "hatch_ink": hatch_ink(colour),
 			"hatch_width": float(HATCH_ON) / sqrt(2.0),

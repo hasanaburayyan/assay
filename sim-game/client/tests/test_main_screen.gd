@@ -2844,14 +2844,50 @@ func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> b
 				ok = _fail("a letter carries a bed %.1fpx wide, which is no bed at all"
 						% [each["bed_px"] as float])
 				break
-	# AND THE REASON THE BED IS LOAD-BEARING, as a number rather than as a sentence: the ink this
-	# world actually picked, read against the diamond it now sits on.
+	# **AND THE BED IS A COLOUR OFF THE DISC TABLE, NOT ONE THE PAINTER CHOSE.** This is what makes
+	# `hud.gd`'s "on an unoccupied disc the bed is invisible by construction" true, and it is the
+	# sentence a bed of any other colour would break: a bed that is merely DARK would pass the ink
+	# check above on every light-ink letter and paint a rim on all thirteen.
+	#
+	# WHY THIS IS NOT THE CHECK ABOVE IN A SECOND COSTUME, and it took three levers to show it. I
+	# expected `"bed": Color.BLACK` to slip past the suite; it reddened the INK check, because seed
+	# 777042 carries dark-ink letters whose verdict a black bed flips. So did `lightened(0.25)`. The
+	# lever that separates the two is the realistic regression -- the bed nudged **3% darker, alpha
+	# held at 1**, which preserves every ink verdict on this world and so is invisible above:
+	# 336 passed, 1 failed, and the one failure is this assertion by name. The check above is strong
+	# here by accident of the seed holding both ink kinds; this one is not.
+	if ok:
+		var table := {}
+		for raw in screen._sim.deposits():
+			var deposit: Dictionary = raw
+			table[AssayHud.deposit_color(int(deposit["species"]), int(deposit["purity"]))] = true
+		if table.is_empty():
+			ok = _fail("premise: this world has no deposits, so there is no disc table to check the "
+					+ "bed colours against and this assertion measures nothing")
+		else:
+			for entry in marks:
+				var each: Dictionary = entry
+				if not table.has(each["bed"] as Color):
+					ok = _fail(("a letter's bed is %s, which is no deposit's fill on this world: the "
+							+ "bed is the disc's own colour or it is a new mark on every disc that "
+							+ "has no building on it") % [each["bed"]])
+					break
+	# AND THE REASON THIS DEPOSIT IS A CASE AT ALL, as a number rather than as a sentence: the ink
+	# this world actually picked, read against the diamond it now sits on.
+	#
+	# **`on_bed` IS THE NOMINAL BED, NOT THE BED AS DRAWN, AND THE DIFFERENCE IS LARGE** (ASSA-218).
+	# `glyph["bed"]` is a colour out of the table; every bed copy is an antialiased `draw_string`, so
+	# the pixels beside the ink are a blend. On seed 777042's light-ink case the nominal figure here
+	# is 9.20:1 and the drawn bed measures **4.35:1** -- below the 4.5 floor. So this is a PREMISE
+	# CHECK ("a bed could help this letter"), not a measurement of what a reader gets, and it must
+	# never be quoted as one. The drawn figure comes from a real window:
+	# `shared/assay/marlow-assa218-bedclaim/` (three arms, the bed levered out).
 	if ok:
 		var on_mark := AssayHud.contrast_ratio(glyph["ink"] as Color, AssayHud.HOVER)
 		var on_bed := AssayHud.contrast_ratio(glyph["ink"] as Color, glyph["bed"] as Color)
 		if on_bed <= on_mark:
-			ok = _fail(("this deposit's letter reads %.2f:1 on its bed and %.2f:1 on the building "
-					+ "mark, so the bed buys nothing here and the case needs a different deposit")
-					% [on_bed, on_mark])
+			ok = _fail(("this deposit's letter reads %.2f:1 on its NOMINAL bed and %.2f:1 on the "
+					+ "building mark, so even in the colour table the bed buys nothing here and the "
+					+ "case needs a different deposit") % [on_bed, on_mark])
 	screen.queue_free()
 	return ok

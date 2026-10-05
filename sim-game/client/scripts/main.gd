@@ -3254,9 +3254,17 @@ func _draw() -> void:
 	# **THE ORDER IS THE FIX AND THE BED IS WHAT MAKES THE ORDER SAFE.** Painting a letter over a
 	# `HOVER` diamond on its own would swap one erasure for another: `AssayHud.glyph_color` picks the
 	# ink by contrast against the DISC, so a `GLYPH_LIGHT` letter chosen for a dark rock is white on a
-	# pale diamond. Each letter therefore carries its own disc colour under its strokes -- the surface
-	# Decision #36's 4.52 worst case was measured on. Over an unoccupied disc the bed is the colour
-	# already there and nothing changes.
+	# pale diamond. Each letter therefore carries its own disc colour under its strokes. Over an
+	# unoccupied disc the bed is the colour already there and nothing changes -- measured, not argued:
+	# the four unhatched, unoccupied discs of seed 777042 read **0 px changed** with the whole bed
+	# levered out (`shared/assay/marlow-assa218-bedclaim/sweep.py`).
+	#
+	# **IT IS NOT "THE SURFACE DECISION #36's 4.52 WAS MEASURED ON", WHICH IS WHAT THIS COMMENT SAID
+	# UNTIL ASSA-218.** Every bed copy is an antialiased `draw_string`, so a bed pixel is a blend: on
+	# the light-ink case the bed as drawn reads 4.35:1 against the letter where the bare fill reads
+	# 9.20:1, and 5 of 63 bed pixels are the fill itself. What the bed buys is a readable EDGE at the
+	# letter's boundary (13% -> 81% of it carrying 4.5:1 within 2 px), not the surround the ink was
+	# picked against. See `AssayHud.GLYPH_BED_PX` for the table and the lever that produced it.
 	#
 	# **AND THE BED IS A STAMPED SILHOUETTE, NOT ONLY AN OUTLINE** (ASSA-218). The outline is
 	# antialiased and left 87% of the letter's boundary inside a mark with no 4.5:1 edge, on the
