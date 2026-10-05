@@ -364,10 +364,22 @@ func test_the_target_line_says_where_a_button_will_act() -> bool:
 			{"in_bounds": true, "pos": Vector2i(40, 31)})
 	if not standing.contains("40, 31") or not standing.contains("where you stand"):
 		return _fail("before anything is chosen the target should be where you stand: %s" % standing)
+	# **THIS FIXTURE AND ITS ASSERTION BOTH PINNED THE DEFECT (ASSA-244).** It was
+	# `{"kind": "smelter", "id": 3}` with no `name` key — a dict the binding never
+	# produces — and it asserted `contains("smelter 3")`, which is the exact form
+	# Maren's ASSA-136 ruling forbids and ASSA-222 says carries a dead index. So
+	# the suite was holding the wrong wording in place while Nerite read it at 1x.
+	#
+	# The fixture now carries what `building_fact` carries, and the assertion is
+	# the ruled form. The real-dict version of this check, which no fixture can
+	# fake, is `test_buttons.gd::test_the_do_panel_names_a_building_the_sims_way_
+	# and_carries_no_id`.
 	var chosen := AssayHud.target_line(Vector2i(44, 30), true, {"in_bounds": true,
-			"building": {"kind": "smelter", "id": 3}})
-	if not chosen.contains("44, 30") or not chosen.contains("smelter 3"):
+			"building": {"kind": "smelter", "id": 3, "name": "Tonore smelter (A)"}})
+	if not chosen.contains("44, 30") or not chosen.contains("Tonore smelter (A)"):
 		return _fail("a chosen tile with a building on it should name it: %s" % chosen)
+	if chosen.contains("smelter 3") or chosen.contains("(A) 3"):
+		return _fail("the target line still carries the BuildingId: %s" % chosen)
 	if chosen.contains("where you stand"):
 		return _fail("a chosen tile should not still read as where you stand: %s" % chosen)
 	# **THE BARE TILE READS `clear ground`** (Maren's ruling on ASSA-146, 2026-10-04). The literal is
@@ -390,7 +402,7 @@ func test_the_target_line_says_where_a_button_will_act() -> bool:
 	var deposit := AssayHud.target_line(Vector2i(40, 31), false, {"in_bounds": true,
 			"deposit": {"id": 9}})
 	var built := AssayHud.target_line(Vector2i(40, 31), false, {"in_bounds": true,
-			"building": {"kind": "smelter", "id": 3}})
+			"building": {"kind": "smelter", "id": 3, "name": "Tonore smelter (A)"}})
 	var readings := [standing, deposit, built]
 	for i in readings.size():
 		for j in range(i + 1, readings.size()):

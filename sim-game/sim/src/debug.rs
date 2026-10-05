@@ -665,9 +665,9 @@ pub fn event_line(
             building,
             pos,
         } => format!(
-            "{} planted machine {} at ({}, {})",
+            "{} planted {} at ({}, {})",
             who(player),
-            building.0,
+            site(building),
             pos.x,
             pos.y
         ),
@@ -721,8 +721,8 @@ pub fn event_line(
             held,
             ..
         } => format!(
-            "machine {} mined {amount} {} ({held} waiting inside)",
-            building.0,
+            "{} mined {amount} {} ({held} waiting inside)",
+            site(building),
             name(item)
         ),
         Event::MachineStalled {
@@ -730,11 +730,17 @@ pub fn event_line(
             held,
             capacity,
         } => format!(
-            "machine {} is full at {held} of {capacity} and has stopped: take the ore out, or give it a hopper",
-            building.0
+            "{} is full at {held} of {capacity} and has stopped: take the ore out, or give it a hopper",
+            site(building)
         ),
+        // **THE ORDER IS NOT TOUCHED HERE AND THAT IS DELIBERATE.** The Game
+        // Director ruled the reason comes first on the STOPPED BLOCK
+        // (`halt_lines`, ASSA-94) and in the same breath drew the line this arm
+        // sits on the other side of: *"a refusal is a MOMENT; a stall is a
+        // CONDITION"*. This is the moment — the edge into the stall, said once —
+        // so it keeps a sentence's order. Only the noun and the id change.
         Event::SmelterStalled { building, why } => {
-            format!("smelter {} stopped: {}", building.0, stall_reason(*why))
+            format!("{} stopped: {}", site(building), stall_reason(*why))
         }
         Event::MoveStarted { player, from, to } => format!(
             "{} started walking from ({}, {}) to ({}, {})",

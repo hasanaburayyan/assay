@@ -1592,3 +1592,53 @@ func _inputs_and_outputs(offers: Array) -> String:
 		var makes: Dictionary = offer.get("makes", {})
 		out.append("%s -> %s" % [_input_of(offer), String(makes.get("kind", "nothing"))])
 	return " | ".join(out)
+
+
+## **WHAT THE `do` PANEL CALLS A BUILDING, READ OFF THE REAL DICT (ASSA-244).**
+##
+## **IT EXISTS BECAUSE THE OLD TEST ASSERTED THE DEFECT.** `test_actions.gd` pinned
+## `chosen.contains("smelter 3")` against a hand-built `{"kind": "smelter", "id": 3}` — a fixture
+## with no `name` key at all, so it could not represent what the binding actually returns and it
+## froze the wrong form. Nerite read `chosen · smelter 0` at 1x on a real window; no test could.
+##
+## **SO THIS ONE OWNS NO FIXTURE.** The smelter is built by presses (`_a_placed_smelter`: mine,
+## Craft, right-click, Place) and the dictionary comes from `tile_at`, which is the same dict
+## `main.gd` hands `target_line`. A form the sim does not produce cannot pass here.
+##
+## The two rulings asserted are both already ruled and were both already written in `hud.gd`:
+## **ASSA-136** — a building is named `Tonore smelter (A)`, not `smelter` — and **ASSA-222** — a
+## reader who points carries no `BuildingId`, because there is nothing to type it into.
+##
+## NON-VACUITY: the species name is read out of the sim and asserted non-empty before it is used,
+## because `contains("")` is true of every string and would make this whole test green by accident.
+func test_the_do_panel_names_a_building_the_sims_way_and_carries_no_id() -> bool:
+	var screen := _joined()
+	var id := _a_placed_smelter(screen)
+	if id < 0:
+		return false
+	var spot: Vector2i = screen._target_tile()
+	var facts: Dictionary = screen._sim.tile_at(spot)
+	var building: Variant = facts.get("building")
+	if building == null:
+		return _fail("no building in tile_at(%s) after _a_placed_smelter" % spot)
+	var named := String((building as Dictionary).get("name", ""))
+	if named == "":
+		return _fail("the binding gave a building with no `name`; run `make client-lib`")
+	if not named.contains("smelter"):
+		return _fail("expected the sim's noun to mention the kind, got \"%s\"" % named)
+	# THE NOUN CARRIES THE SPECIES, which is the whole point of ASSA-136: the species in that name
+	# is the one that caps the fire and the one that comes back in your pack.
+	if named == "smelter":
+		return _fail(("the sim's noun is the bare kind, so this test cannot tell the ruled form "
+				+ "from the defect: \"%s\"") % named)
+	var line := AssayHud.target_line(spot, true, facts)
+	if not line.contains(named):
+		return _fail(("the do panel does not name the building the sim's way (ASSA-136).\n"
+				+ "wanted: %s\nline:   %s") % [named, line])
+	# AND NO INDEX, in either spelling the defect used: `smelter 0` or a trailing bare number.
+	if line.contains("smelter %d" % id):
+		return _fail(("the do panel still spells the building `kind id` (ASSA-136/222): %s")
+				% line)
+	if line.contains("%s %d" % [named, id]):
+		return _fail("the do panel still appends the BuildingId after the noun: %s" % line)
+	return true
