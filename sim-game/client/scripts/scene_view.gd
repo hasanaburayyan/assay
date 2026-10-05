@@ -627,6 +627,41 @@ static func _scatter_field(at: Vector2i) -> float:
 ## the tile grid and this layer would read as a repeating texture rather than as scattered objects --
 ## which is the one thing it exists to not be. `test_scatter_offsets_are_sub_tile_and_reach_dest`
 ## fails if it is floored.
+## THE WINDOW'S WHOLE SCATTER PLAN, CACHED ON THE WINDOW RECT (ASSA-214).
+##
+## WHY THIS EXISTS, measured and not assumed: the shipped layer cost **+5.7 ms on the median frame**
+## (10.7 -> 16.4 ms over three interleaved pairs of 12 s real-window runs), and a probe arm that
+## computed this plan and then drew NOTHING from it cost **+5.2 of those 5.7 ms**. So the price was
+## never the ~85 extra sprites -- median draw calls are 42 with the layer and 42 without it -- it was
+## ~5,900 hash calls per frame for a plan that does not change while the camera stays on the same
+## tile. I published "~130 extra sprites a frame is the obvious cause" in PR #280 and it was wrong.
+##
+## `scatter_at` is a pure function of the tile coordinate, so a plan for a rect is valid for ever.
+## The rect changes when the camera crosses a tile boundary -- about once per 100 ms during a walk,
+## against a ~16 ms frame -- so most frames do no hashing at all and a standing player does none.
+## **The entries carry the FRACTIONAL corner, not the raw offset**, so the division that ASSA-197's
+## defect lives in happens once per prop per rect instead of once per prop per frame.
+##
+## THE ORE SKIP IS DELIBERATELY NOT CACHED. A deposit can deplete and the window can hold a different
+## patch, so `ore.has(at)` stays a per-frame question; the cache holds only what cannot change.
+static var _scatter_plan_rect := Rect2i()
+static var _scatter_plan_cache: Array = []
+
+
+static func _scatter_plan(grown: Rect2i) -> Array:
+	if grown == _scatter_plan_rect:
+		return _scatter_plan_cache
+	var fresh: Array = []
+	for y in range(grown.position.y, grown.end.y):
+		for x in range(grown.position.x, grown.end.x):
+			var at := Vector2i(x, y)
+			for prop in scatter_at(at):
+				fresh.append([at, prop[0], Vector2(at) + (prop[1] as Vector2) / TILE_PX])
+	_scatter_plan_cache = fresh
+	_scatter_plan_rect = grown
+	return fresh
+
+
 static func scatter_at(at: Vector2i) -> Array:
 	var out: Array = []
 	var density := minf(1.0, SCATTER_FIELD_GAIN * SCATTER_GRIT_UNIFORM_NULL
@@ -830,22 +865,19 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 	var ore: Dictionary = view["ore"]
 	var grown := Rect2i(window.position - Vector2i.ONE, window.size + Vector2i.ONE * 2)
 	grown = grown.intersection(Rect2i(Vector2i.ZERO, world))
-	for y in range(grown.position.y, grown.end.y):
-		for x in range(grown.position.x, grown.end.x):
-			var at := Vector2i(x, y)
-			if ore.has(at):
-				continue
-			for prop in scatter_at(at):
-				# THE OFFSET STAYS FRACTIONAL ALL THE WAY TO `dest`. `corner` is in TILES and may be
-				# fractional since ASSA-197, so a drawn-pixel offset is a division and NOT a new
-				# parameter: `_place` already expresses this exactly. An `int()` or `round()` on this
-				# line puts every prop back on the tile grid, which no existing test can see.
-				var corner := Vector2(at) + (prop[1] as Vector2) / TILE_PX
-				var place := _place(manifest, "scatter", prop[0], corner, origin,
-						Color.WHITE, seconds)
-				if not place.is_empty():
-					place["layer"] = FLOOR
-					out.append(place)
+	for entry in _scatter_plan(grown):
+		var at: Vector2i = entry[0]
+		if ore.has(at):
+			continue
+		# THE OFFSET STAYS FRACTIONAL ALL THE WAY TO `dest`. `entry[2]` is the corner in TILES and is
+		# fractional since ASSA-197, so a drawn-pixel offset is a division and NOT a new parameter:
+		# `_place` already expresses this exactly. An `int()` or `round()` anywhere on this path puts
+		# every prop back on the tile grid, which no existing test could see before ASSA-210.
+		var place := _place(manifest, "scatter", entry[1], entry[2], origin,
+				Color.WHITE, seconds)
+		if not place.is_empty():
+			place["layer"] = FLOOR
+			out.append(place)
 
 	for key in ore:
 		var at: Vector2i = key
