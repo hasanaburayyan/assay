@@ -3473,28 +3473,57 @@ func test_exactly_one_control_per_screen_wears_the_accent() -> bool:
 	# AND THE PLAYED SCREEN, which is the one the ruling was filed about: nine buttons at identical
 	# weight. `_joined_screen` plays a real world through the binding, so what is counted here is the
 	# column a player actually gets rather than a hand-built row.
-	var joined := _joined_screen()
-	# **ONE FRAME, BECAUSE A WELCOME ALONE IS A STATE PRODUCTION NEVER SITS IN.** `_joined_screen`
-	# feeds a welcome and stops; `_refresh_join_band` and `_refresh_front_door` run in `_process`,
-	# so without this the join controls still wear the visibility they were BUILT with and the
-	# first run of this test reported `Play solo` accented inside a played world. That was my
-	# harness, not the client -- the same trap `test_play_solo_neither_reads_nor_wipes_a_typed_host`
-	# already carries a note about.
-	joined._process(0.016)
-	var during := _accented(joined)
-	if during.size() > 1:
-		ok = _fail(("a played world shows %d accented controls: %s. A green on every row of a list "
-				+ "is a bullet point, not a rank") % [during.size(), ", ".join(during)])
-	elif during.size() == 1 and during[0] != "Mine":
-		ok = _fail("the played screen's one accented control is `%s`, not `Mine`" % during[0])
-	else:
-		# NOT ASSERTED AS EXACTLY ONE, and this is the honest half. `Mine` is Primary only where the
-		# sim says a hand can break the rock under you (`hand_minable`), so on a world where the
-		# body happens to stand on grass the right answer is ZERO accented controls. Demanding one
-		# here would be demanding the accent on a button that would refuse -- the exact thing
-		# Maren's `check, do not assume` clause forbids.
-		print("    accented in a played world: %d (%s)" % [during.size(), ", ".join(during)])
-	joined.queue_free()
+	#
+	# **TWO WORLDS, OPPOSITE EXPECTATIONS, AND THE SIM SAYS WHICH IS WHICH.** This half used to run
+	# one world and accept any count of 0 or 1, under a comment of mine calling that "the honest
+	# half": `Mine` is Primary only where a hand can break the rock under you, so on a world where
+	# the body stands on grass ZERO really is the right answer, and demanding one would demand an
+	# accent on a button that refuses. The reasoning was right and the conclusion was wrong -- a
+	# test that accepts both answers asserts neither. Nerite measured what it cost: BOTH one-line
+	# mutations of the played-screen accent merged green (345/0).
+	#
+	#     `if minable:` -> `if true:`     the gate Maren asked for, held by nothing
+	#     Mine's `Primary` deleted        the rank this test is named after, held by nothing
+	#
+	# So the expectation is DERIVED, not picked: ask `_can_hand_mine_here()` -- the same call
+	# `_refresh_actions` gates the accent on, so the test cannot drift from the client by consulting
+	# a different authority -- and then assert the exact count that follows from its answer.
+	var arms := {}
+	for seed_text in ["14247", "777042"]:
+		var joined := _joined_screen(seed_text)
+		# **ONE FRAME, BECAUSE A WELCOME ALONE IS A STATE PRODUCTION NEVER SITS IN.**
+		# `_joined_screen` feeds a welcome and stops; `_refresh_join_band` and `_refresh_front_door`
+		# run in `_process`, so without this the join controls still wear the visibility they were
+		# BUILT with and the first run of this test reported `Play solo` accented inside a played
+		# world. That was my harness, not the client -- the same trap
+		# `test_play_solo_neither_reads_nor_wipes_a_typed_host` already carries a note about.
+		joined._process(0.016)
+		var minable: bool = joined._can_hand_mine_here()
+		var during := _accented(joined)
+		arms[minable] = seed_text
+		if minable and during.size() != 1:
+			ok = _fail(("seed %s spawns on a rock a hand can break, so the played screen must show "
+					+ "exactly 1 accented control and shows %d: %s. `Mine` is this screen's one "
+					+ "primary (ASSA-233 ruling 2)") % [seed_text, during.size(), ", ".join(during)])
+		elif minable and during[0] != "Mine":
+			ok = _fail(("seed %s: the played screen's one accented control is `%s`, not `Mine`")
+					% [seed_text, during[0]])
+		elif not minable and during.size() != 0:
+			ok = _fail(("seed %s spawns where no hand can mine, so the played screen must show 0 "
+					+ "accented controls and shows %d: %s. A green button that refuses is worse "
+					+ "than a grey one that refuses (Maren, ASSA-233)")
+					% [seed_text, during.size(), ", ".join(during)])
+		joined.queue_free()
+
+	# **AND BOTH ARMS HAVE TO HAVE HAPPENED, OR THIS TEST IS VACUOUS.** Which seed spawns on a
+	# minable deposit is the sim's doing and not a property of this file: a worldgen change, or
+	# someone editing the seed list, could leave every arm on the same side and the loop above would
+	# go green over exactly the two mutations it exists to catch. This is the control inside the
+	# test -- it fails on the absence of a case rather than on a number I chose.
+	if not arms.has(true) or not arms.has(false):
+		ok = _fail(("the played-screen arms are vacuous: the seeds covered %s. One world must spawn "
+				+ "on a hand-minable deposit and one must not, or deleting Mine's accent passes "
+				+ "this test") % str(arms))
 	return ok
 
 
