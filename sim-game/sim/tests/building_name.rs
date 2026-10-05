@@ -266,6 +266,15 @@ fn renaming_the_species_renames_what_is_already_standing() {
 /// **ONE PLACE DECIDES HOW A BUILDING IS ADDRESSED.** `halt_lines` is the
 /// surface a player reads when something has stopped; it must carry the same
 /// name, and still carry the walk-to-it coordinates.
+///
+/// **REORDERED FOR ASSA-94, AND THE ORDER IS NOW PART OF WHAT THIS PINS.** Two
+/// assertions here asserted the address came FIRST, which was true and is now
+/// wrong: the Game Director ruled on the 1x shot that *"a stopped-machine line
+/// exists to say what to do, and 'no fuel' is that; the identity is how you find
+/// it afterwards."* The intent of this test is unchanged — one place decides the
+/// name, and a player can still walk to it — so rather than delete the two
+/// assertions I turned them round, and the reason-first ruling now has a guard
+/// where it previously had only a comment.
 #[test]
 fn the_halted_surface_names_the_building_and_still_says_where_it_is() {
     let (mut world, me) = world_with_player();
@@ -274,14 +283,20 @@ fn the_halted_surface_names_the_building_and_still_says_where_it_is() {
     clear_deposits_from(&mut world, pos);
     let id = plant_drill(&mut world, me, Grade::B, pos);
     step(&mut world, &[], &mut Vec::new());
-    let lines = sim::debug::halt_lines(&world);
+    let lines = sim::debug::halt_lines(&world, sim::debug::Audience::Typed);
     assert_eq!(
         lines.len(),
         1,
         "a drill on no deposit is idle and must be listed: {lines:?}"
     );
+    let state = sim::debug::building_state_line(&world, world.building(id).unwrap());
     assert!(
-        lines[0].starts_with(&format!("Chassium machine (B) {}", id.0)),
+        lines[0].starts_with(&state),
+        "the REASON comes first on a stopped line (ASSA-94): {}",
+        lines[0]
+    );
+    assert!(
+        lines[0].contains(&format!("Chassium machine (B) {}", id.0)),
         "the halted line is addressed by the sim's own name: {}",
         lines[0]
     );
@@ -294,8 +309,12 @@ fn the_halted_surface_names_the_building_and_still_says_where_it_is() {
         lines[0],
         format!(
             "{} · {}",
-            sim::debug::building_address(&world, world.building(id).unwrap()),
-            sim::debug::building_state_line(&world, world.building(id).unwrap())
+            state,
+            sim::debug::building_address(
+                &world,
+                world.building(id).unwrap(),
+                sim::debug::Audience::Typed
+            )
         ),
         "address and state are each written in exactly one place"
     );

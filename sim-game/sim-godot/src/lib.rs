@@ -1892,8 +1892,12 @@ impl AssaySim {
     /// standing states need a person. The Variant side is guarded from
     /// GDScript, in `tests/test_sim_binding.gd`, because that is the only side
     /// that can see it (ASSA-105).
+    /// `Audience::Pointed` for the same reason `describe` uses it (ASSA-222):
+    /// this reader has a mouse, not a command line, so the `BuildingId` that
+    /// used to sit between the grade and the tile is a number with nothing to
+    /// type it into. The tile stays — that is how you find the thing.
     pub fn halt_line_texts(&self) -> Vec<String> {
-        sim::debug::halt_lines(&self.world)
+        sim::debug::halt_lines(&self.world, sim::debug::Audience::Pointed)
     }
 
     /// EVERY BUILDING IN THE WORLD, FOR DRAWING, in the world's own order.
@@ -4400,7 +4404,7 @@ mod tests {
         )]);
 
         let lines = sim.halt_line_texts();
-        let expected = sim::debug::halt_lines(sim.world());
+        let expected = sim::debug::halt_lines(sim.world(), sim::debug::Audience::Pointed);
         assert!(
             !expected.is_empty(),
             "the fixture stalled nothing, so this test proves nothing"
@@ -4416,12 +4420,40 @@ mod tests {
                 "line {i} is not the sim's own sentence, in the sim's own order"
             );
         }
-        // AND THE SENTENCE IS THE TERMINAL'S. `halted` in sim-cli prints a
-        // block built from these same lines, so a stall worded one way on
-        // screen and another in text would show up right here.
+
+        // **THIS USED TO ASSERT THE TERMINAL'S TABLE CONTAINED THE WINDOW'S LINE
+        // VERBATIM, AND ASSA-222 BREAKS THAT ON PURPOSE.** The window's reader
+        // points, so its line carries no `BuildingId`; the terminal's reader
+        // types `take 0`, so its line must. Byte-identity between the two
+        // surfaces is no longer the invariant and quietly deleting the check
+        // would have thrown away the part that still holds.
+        //
+        // WHAT STILL HOLDS, AND IT IS THE PART WITH TEETH: they are one wording
+        // that differs ONLY by the id. So the terminal's line, with the id taken
+        // back out, must be the window's line exactly -- a stall reworded on one
+        // surface still shows up right here, which is what this test was for.
+        let typed = sim::debug::halt_lines(sim.world(), sim::debug::Audience::Typed);
+        let id = sim.world().buildings[0].id.0;
         assert!(
-            sim::debug::halted_table(sim.world()).contains(&expected[0]),
-            "the window's line is absent from the terminal's table: {}",
+            typed[0].contains(&format!(" {id} at (")),
+            "the terminal's reader lost the handle they type into `take`: {}",
+            typed[0]
+        );
+        assert!(
+            !expected[0].contains(&format!(" {id} at (")),
+            "the window's reader still carries a handle with nothing to type it \
+             into: {}",
+            expected[0]
+        );
+        assert_eq!(
+            typed[0].replace(&format!(" {id} at ("), " at ("),
+            expected[0],
+            "the two surfaces differ by more than the id, so one of them has \
+             been reworded"
+        );
+        assert!(
+            sim::debug::halted_table(sim.world()).contains(&typed[0]),
+            "the terminal's own table no longer contains the terminal's line: {}",
             sim::debug::halted_table(sim.world())
         );
     }

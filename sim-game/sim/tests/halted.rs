@@ -185,11 +185,21 @@ fn state_of(world: &World, id: BuildingId) -> MachineState {
     world.machine_state(b, m)
 }
 
-/// The reason portion of a halt line: everything after the address.
+/// The reason portion of a halt line.
+///
+/// **IT TAKES THE FIRST FIELD NOW, NOT THE LAST** (ASSA-94). This read
+/// "everything after the address" and returned `.1`, because the line used to be
+/// `address · reason`. The Game Director reversed it on the 1x shot — *"a
+/// stopped-machine line exists to say what to do, and 'no fuel' is that; the
+/// identity is how you find it afterwards"* — so the reason is the leading
+/// field. Two tests failed on this one helper, and both were right to.
+///
+/// The address half still contains a ` · `-free name, so a single split is
+/// enough: `splitn` from the left takes the reason whole.
 fn reason_in(line: &str) -> &str {
     line.split_once(" · ")
-        .expect("a halt line is an address and a reason")
-        .1
+        .expect("a halt line is a reason and an address")
+        .0
 }
 
 // ---------------------------------------------------------------------------
@@ -272,7 +282,7 @@ fn a_cold_smelter_is_still_reported_long_after_its_event_has_scrolled_away() {
             .any(|e| matches!(e, Event::SmelterStalled { .. })),
         "a smelter that sits stalled must not shout (ASSA-80 rule 2)"
     );
-    let lines = sim::debug::halt_lines(&world);
+    let lines = sim::debug::halt_lines(&world, sim::debug::Audience::Typed);
     assert_eq!(
         lines.len(),
         1,
@@ -319,7 +329,7 @@ fn a_smelter_with_nothing_in_it_is_not_something_to_fix() {
     );
     assert!(!world.building_state(b).halted());
     assert_eq!(
-        sim::debug::halt_lines(&world),
+        sim::debug::halt_lines(&world, sim::debug::Audience::Typed),
         Vec::<String>::new(),
         "an empty smelter is not a problem"
     );
@@ -353,7 +363,7 @@ fn a_drill_that_is_merely_idle_is_something_to_fix_and_a_smelter_is_not() {
         "a drill on nothing is eight refined doing nothing: it must be reported"
     );
     assert_eq!(
-        sim::debug::halt_lines(&world).len(),
+        sim::debug::halt_lines(&world, sim::debug::Audience::Typed).len(),
         1,
         "the idle drill is the one thing reported"
     );
@@ -394,7 +404,7 @@ fn the_stopped_count_is_one_sentence_the_table_and_a_window_both_read() {
     let nowhere = TilePos::new(spawn.x + 4, spawn.y + 4);
     clear_deposits_from(&mut world, nowhere);
     plant_drill(&mut world, me, nowhere);
-    let stopped = sim::debug::halt_lines(&world).len();
+    let stopped = sim::debug::halt_lines(&world, sim::debug::Audience::Typed).len();
     assert_eq!(
         stopped, 1,
         "the fixture must stop exactly one of the buildings"
@@ -442,7 +452,7 @@ fn nothing_stopped_is_an_empty_summary_and_a_spoken_table() {
         1,
     );
     assert!(
-        sim::debug::halt_lines(&world).is_empty(),
+        sim::debug::halt_lines(&world, sim::debug::Audience::Typed).is_empty(),
         "the fixture must have nothing stopped, or this test is about nothing"
     );
     assert_eq!(sim::debug::halt_summary(&world), "");
@@ -602,7 +612,7 @@ fn the_halt_surface_and_the_status_line_cannot_word_a_condition_differently() {
         "one of each kind must be halted: {halted:?}"
     );
 
-    let lines = sim::debug::halt_lines(&world);
+    let lines = sim::debug::halt_lines(&world, sim::debug::Audience::Typed);
     for (id, line) in halted.iter().zip(&lines) {
         let status = sim::debug::building_status(&world, world.building(*id).unwrap());
         let reason = reason_in(line);

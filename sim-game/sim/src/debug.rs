@@ -1994,14 +1994,23 @@ pub fn building_name(world: &World, b: &Building) -> String {
 /// tile panel and the Godot client each hand-rolled `kind + id + pos` of their
 /// own. Four copies of one decision is how ASSA-43, ASSA-52 and ASSA-128
 /// happened; the surfaces call this now.
-pub fn building_address(world: &World, b: &Building) -> String {
-    format!(
-        "{} {} at ({}, {})",
-        building_name(world, b),
-        b.id.0,
-        b.pos.x,
-        b.pos.y
-    )
+///
+/// **IT TAKES AN [`Audience`] FOR THE REASON `event_line` DOES, AND THIS WAS THE
+/// SECOND HALF OF ONE DEFECT** (ASSA-222). The bare id sits immediately after
+/// the grade here — `Minyte smelter (B) 0 at (76, 38)` — where the Game Director
+/// and QA independently read `0` as a *quantity*. For a reader with a command
+/// line it is the handle they type into `take`/`pickup`; for a reader who points
+/// there is nothing to type it into. Same sentence, two jobs, so the same
+/// parameter.
+///
+/// Note the shape: the id is dropped, not moved. A pointing reader still gets
+/// the tile, which is how they find the thing on a 96x64 map.
+pub fn building_address(world: &World, b: &Building, audience: Audience) -> String {
+    let name = building_name(world, b);
+    match audience {
+        Audience::Typed => format!("{} {} at ({}, {})", name, b.id.0, b.pos.x, b.pos.y),
+        Audience::Pointed => format!("{} at ({}, {})", name, b.pos.x, b.pos.y),
+    }
 }
 
 /// Every building that has stopped, one line each, worst-placed first in
@@ -2016,14 +2025,24 @@ pub fn building_address(world: &World, b: &Building) -> String {
 ///
 /// Empty when nothing has stopped, so a caller can render nothing at all
 /// rather than a reassuring line nobody asked for.
-pub fn halt_lines(world: &World) -> Vec<String> {
+/// **THE REASON COMES FIRST, AND THAT IS THE GAME DIRECTOR'S RULING** (ASSA-94,
+/// judging the 1x shot): *"a stopped-machine line exists to say what to do, and
+/// 'no fuel' is that; the identity is how you find it afterwards."* It used to
+/// read `Minyte smelter (B) 0 at (76, 38) · stalled: no fuel` — three tokens of
+/// metadata before the only part a reader can act on.
+///
+/// **IT IS REORDERED HERE AND NOT IN A CLIENT, ON HER INSTRUCTION**: a host
+/// resequencing the sim's sentence is a second wording of one fact, which is the
+/// ASSA-43/52 shape this function's own vocabulary rule exists to prevent. One
+/// change, one place, both surfaces.
+pub fn halt_lines(world: &World, audience: Audience) -> Vec<String> {
     world
         .halted()
         .map(|b| {
             format!(
                 "{} · {}",
-                building_address(world, b),
-                building_state_line(world, b)
+                building_state_line(world, b),
+                building_address(world, b, audience)
             )
         })
         .collect()
@@ -2052,7 +2071,7 @@ pub fn halt_lines(world: &World) -> Vec<String> {
 /// cannot render one by accident. `halted_table` keeps its own fuller sentence
 /// for the terminal, where a reply to a typed `halted` must say something.
 pub fn halt_summary(world: &World) -> String {
-    let stopped = halt_lines(world).len();
+    let stopped = halt_lines(world, Audience::Typed).len();
     if stopped == 0 {
         return String::new();
     }
@@ -2060,7 +2079,7 @@ pub fn halt_summary(world: &World) -> String {
 }
 
 pub fn halted_table(world: &World) -> String {
-    let lines = halt_lines(world);
+    let lines = halt_lines(world, Audience::Typed);
     if lines.is_empty() {
         // Says what was checked, because "nothing has stopped" and "you have
         // built nothing" look identical to a player and are not the same news.
