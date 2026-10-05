@@ -64,6 +64,22 @@ var _done := false
 var _started_at := 0.0
 var _walk_at := -1.0
 var _ceiling := Time.get_unix_time_from_system() + RUN_CEILING
+## **WHAT THE BOARD'S HAND DOES: A CLICK, AND THEN A WAIT THEY DID NOT ASK FOR** (ASSA-212). Every
+## statistic above starts at the body's FIRST MOVEMENT and trims 150 ms off that, for the defensible
+## reason that a standing body is on its tile in every frame. The freeze and the jump at the start of
+## a walk live inside exactly that trim, so the bar on ASSA-197 could read 100% while the first thing
+## a player sees after pressing is a quarter-second of nothing and a half-tile step. These are the
+## instants a walk was ORDERED, so the same frames can be judged from the click instead.
+var _clicks: Array[float] = []
+## WHAT EACH CLICK WAS: the first is ordered in the frame the join completes, so the playout clock has
+## not started and the buffer is empty -- which is the one case the arithmetic predicts a jump in, and
+## also exactly what Maren's harness does. `start` mode orders a SECOND walk from a standstill with
+## the clock long since running, because `main.gd` writes `_play_tick` once per session and the two
+## clicks are therefore not the same measurement at all.
+var _click_what: Array[String] = []
+var _mode := "steady"
+var _still_since := -1.0
+var _moved_once := false
 
 ## One row per frame, from the frame the walk was ordered.
 var _at: Array[Vector2] = []
@@ -121,6 +137,12 @@ func _initialize() -> void:
 	_seed = String(argv[0]) if argv.size() > 0 else "14247"
 	_seconds = float(argv[1]) if argv.size() > 1 else 8.0
 	_label = String(argv[2]) if argv.size() > 2 else "run"
+	_mode = String(argv[3]) if argv.size() > 3 else "steady"
+	if _mode != "steady" and _mode != "start":
+		print("FAIL  mode must be `steady` or `start`, not %s" % _mode)
+		_done = true
+		quit(2)
+		return
 	if DisplayServer.get_name() == "headless":
 		print("FAIL  headless: this probe measures frame pacing and there is none here")
 		# **`_done` FIRST, BECAUSE `quit()` INSIDE `_initialize` DOES NOT STOP `_process`.** Measured
@@ -188,10 +210,27 @@ func _process(delta: float) -> bool:
 		var to := _walk_target(here)
 		_screen._client.submit(AssayActions.move_to(to))
 		_walk_at = now
-		print("joined as player %d at %s, walking to %s on seed %s (%s)"
-				% [_screen._client.player_id, here, to, _seed, _label])
+		_clicks.append(now)
+		_click_what.append("cold: ordered in the frame the join completed, clock unstarted")
+		print("joined as player %d at %s, walking to %s on seed %s (%s, mode %s)"
+				% [_screen._client.player_id, here, to, _seed, _label, _mode])
 		return false
 	_sample(delta, now)
+	# **A SECOND CLICK, FROM A STANDSTILL, WITH THE CLOCK ALREADY RUNNING** (ASSA-212). `main.gd`
+	# writes `_play_tick` in one place and never resets it, so the buffer fills once per SESSION and
+	# not once per walk -- which means the first click and every later one are different events and
+	# the item said otherwise. The body has to be standing before this is ordered or it is a redirect
+	# rather than a start.
+	if _mode == "start" and _clicks.size() == 1 and _still_since > 0.0 \
+			and now - _still_since > 0.3 and _moved_once:
+		var here := _me_tile()
+		var to := _walk_target(here)
+		_screen._client.submit(AssayActions.move_to(to))
+		_clicks.append(now)
+		_click_what.append("warm: ordered from a standstill %0.1f s in, clock long since running"
+				% [now - _clicks[0]])
+		print("second walk ordered at %s -> %s, %.1f s after the first"
+				% [here, to, now - _clicks[0]])
 	if now - _started_at > _seconds:
 		_report()
 		# THE ONLY PATH THAT EARNED A ZERO.
@@ -286,6 +325,13 @@ func _sample(delta: float, now: float) -> void:
 	_depth.append(float(_screen._play_depth))
 	_trim.append(float(_screen._play_trim))
 	_advances.append(int(_screen._play_advances))
+	# WHETHER THE DRAWN RECTANGLE IS STANDING STILL, which is what decides when a second walk may be
+	# ordered: the rect rather than the lerp, because the rect is what a player sees stop.
+	if _drawn.size() > 1 and not _drawn[_drawn.size() - 1].is_equal_approx(_drawn[_drawn.size() - 2]):
+		_still_since = -1.0
+		_moved_once = true
+	elif _still_since < 0.0:
+		_still_since = now
 
 
 ## THE MOVING STRETCH ONLY, both ends trimmed. A standing body is on its tile in every frame, so any
@@ -332,6 +378,104 @@ func _say(name: String, stats: Dictionary) -> void:
 	print("  %-14s n=%3d  min %6.2f  p5 %6.2f  median %6.2f  p95 %6.2f  max %6.2f"
 			% [name, int(stats["n"]), stats["min"], stats["p5"], stats["median"],
 			stats["p95"], stats["max"]])
+
+
+## **EVERY CLICK JUDGED FROM THE CLICK, with nothing trimmed off the front** (ASSA-212, Wren's gate
+## 04:45 UTC). Three numbers per click and not one, because the three say different things:
+##
+##   FREEZE   click -> the first frame whose drawn RECTANGLE differs. The deliberate cost of the
+##            playout buffer plus the relay round trip, and reported rather than passed or failed.
+##   JUMP     the largest single frame's movement in the first 500 ms, as a multiple of what that
+##            frame is worth at a constant 10 tiles/s. Wren's bar (a) is 2x. **It is stated here that
+##            2x cannot catch the defect this item is about on the runner the gate names**: a 16 px
+##            jump is 0.5 tiles, and a frame at the windows-latest 30 fps is worth 0.33, so 2x allows
+##            0.67. The same frame at 90 fps is worth 0.11 and 2x allows 0.22, which catches it. So
+##            the +/-25% column beside it is printed as well and is the one that is frame-rate blind.
+##   SPEED    from the first movement on, every frame within +/-25%, with NO trim at the start.
+##
+## The pairing is the settled one (ASSA-197, #284): the rectangle read on a frame was computed in the
+## previous one, so a movement between two rectangles spans the PREVIOUS frame's delta. Both columns
+## are printed because the age line is what chooses, and it is printed above.
+func _click_report() -> void:
+	print("")
+	print("FROM THE CLICK (ASSA-212), %d click%s, nothing trimmed off the front"
+			% [_clicks.size(), "" if _clicks.size() == 1 else "s"])
+	if _clicks.is_empty() or _drawn.size() < 3:
+		print("  no clicks or too few frames to judge")
+		return
+	for c in _clicks.size():
+		var click: float = _clicks[c]
+		print("  CLICK %d -- %s" % [c + 1, _click_what[c]])
+		var first := -1
+		for i in _clock.size():
+			if _clock[i] >= click:
+				first = i
+				break
+		if first < 0 or first + 2 >= _drawn.size():
+			print("    no frames after this click")
+			continue
+		var moved_at := -1
+		for i in range(first + 1, _drawn.size()):
+			if not _drawn[i].is_equal_approx(_drawn[first]):
+				moved_at = i
+				break
+		if moved_at < 0:
+			print("    the drawn body never moved after this click")
+			continue
+		print("    FREEZE   %.0f ms standing still (%d frames) before the rectangle moved"
+				% [(_clock[moved_at] - click) * 1000.0, moved_at - first])
+		# THE WORST SINGLE FRAME OF THE FIRST 500 MS, both pairings, in the unit the gate is written
+		# in: a multiple of what that frame is worth at a constant true speed.
+		var worst := 0.0
+		var worst_prev := 0.0
+		var worst_px := 0.0
+		var worst_at := -1
+		var judged := 0
+		for i in range(maxi(first + 1, 1), _drawn.size()):
+			if _clock[i] - click > 0.5:
+				break
+			var px: float = (_drawn[i] - _drawn[i - 1]).length()
+			var own: float = _dt[i] * TRUE_SPEED * AssayScene.TILE_PX
+			var prev: float = _dt[i - 1] * TRUE_SPEED * AssayScene.TILE_PX
+			judged += 1
+			if own > 0.0 and px / own > worst:
+				worst = px / own
+			if prev > 0.0 and px / prev > worst_prev:
+				worst_prev = px / prev
+				worst_px = px
+				worst_at = i
+		if judged == 0:
+			print("    the first 500 ms held no judged frame")
+			continue
+		print(("    JUMP     worst frame of the first 500 ms (%d frames): %.1f px = %.2fx what the "
+				+ "frame is worth") % [judged, worst_px, worst_prev])
+		print(("             %.2fx on this frame's delta. Wren's bar (a) is 2.00x; +/-25%% is 1.25x "
+				+ "and is the frame-rate-blind one") % [worst])
+		if worst_at > 0:
+			print("             worst was frame %d, dt %.1f ms, %.3f tiles"
+					% [worst_at - first, _dt[worst_at - 1] * 1000.0,
+					worst_px / AssayScene.TILE_PX])
+		# AND THE WHOLE STRETCH FROM FIRST MOVEMENT, UNTRIMMED AT THE START (Wren's bar (b)).
+		var out := 0
+		var seen := 0
+		for i in range(moved_at + 1, _drawn.size()):
+			if c + 1 < _clicks.size() and _clock[i] >= _clicks[c + 1]:
+				break
+			if _clock[_clock.size() - 1] - _clock[i] < EDGE_TRIM:
+				break
+			var px: float = (_drawn[i] - _drawn[i - 1]).length()
+			if px <= 0.0:
+				continue
+			var prev: float = _dt[i - 1] * TRUE_SPEED * AssayScene.TILE_PX
+			if prev <= 0.0:
+				continue
+			seen += 1
+			if absf(px / prev - 1.0) > TOLERANCE:
+				out += 1
+		print(("    SPEED    %d of %d moving frames outside +/-%d%% from the first movement on, no "
+				+ "start trim") % [out, seen, int(TOLERANCE * 100.0)])
+	print("    DRAGGED  %d frames where the queue cap dragged the body forward (bar: 0)"
+			% [int(_screen._play_dragged)])
 
 
 func _report() -> void:
@@ -751,6 +895,9 @@ func _report() -> void:
 		print(("  NOT AN UNQUALIFIED PASS: %d frames failed and every one of them is charged to the "
 				+ "host. That closes box 1a on Wren's terms and leaves the host's pacing open.")
 				% [_outliers.size()])
+	# **AND THE FRAMES EVERYTHING ABOVE TRIMMED** (ASSA-212). Last, not first, because it is the one
+	# section whose window is chosen by the player's hand rather than by the body's movement.
+	_click_report()
 
 
 func _as_floats(values: Array[int]) -> Array[float]:
