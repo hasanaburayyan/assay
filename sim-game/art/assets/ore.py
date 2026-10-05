@@ -23,9 +23,29 @@ gradient in this one file. The square seams I spent a wake-up blaming on the
 shadow catcher were that invention becoming visible; intermediate densities
 would have spent renders making a lie continuous.
 
-The hard boundary is a FEATURE. `contains()` is exactly where mining and
-placing stop working, and a faded rim hides a hard rule. What ships is the
-digital disc the sim describes, which already staircases at tile resolution.
+THE HARD BOUNDARY IS STILL A FEATURE, BUT NOT FOR THE REASON THIS PARAGRAPH
+GAVE FOR WEEKS (ASSA-216, Maren 10-05). What stood here was: "`contains()` is
+exactly where mining and placing stop working, and a faded rim hides a hard
+rule." `contains()` is where ore EXISTS, which is necessary and not
+sufficient. `Mine` also needs `sim::ladder::hand_minable`, a property of the
+SPECIES - so on a hard species the whole disc draws and none of it can be dug
+by hand, and the rim I was defending marked nothing. A silhouette could never
+have carried that rule: it is one bit per species, and a rim is a shape.
+
+What carries it is the client, per tile, and it is tested: `main.gd:2704`
+computes `minable := _can_hand_mine_here()`, `:2733` branches on it, and
+`:3364` reads the sim's own bit (`hand_minable and not depleted`). ASSA-233
+made that lit control the primary answer to "can I mine here", which is
+Maren's rule: AN ACTIONABLE CONTROL STATES MEMBERSHIP; THE ART NEED NOT.
+
+So the rim's remaining job is SILHOUETTE AT DISTANCE, not tile-exactness -
+which is why a chunkier boundary was accepted when clumping emptied the tile
+corners (45 runs of ore at 8.5 px became 32 runs at 10.8 px). A FADED rim is
+still refused, and for the original reason, which never depended on
+`contains()`: there is no edge tile, every tile in a deposit is identical in
+the sim, and a density step is a mark for a difference that does not exist.
+What ships is the digital disc the sim describes. Its staircase was never the
+argument; the absence of an invented gradient is.
 
 IF IT EVER LOOKS STAMPED-ON, THE LEVER IS MORE ARRANGEMENT VARIANTS, NEVER
 DENSITY: a variant moves rocks around without claiming anything about
