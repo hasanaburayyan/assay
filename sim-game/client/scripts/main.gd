@@ -335,6 +335,11 @@ var _map_note: Label = null
 ## (`AssayScene.playout`), one segment at a time, in the order the sim produced them.
 var _was := {}
 var _seen := {}
+
+## WHICH PLAYER FACTS THE BINDING LAST FAILED TO SEND, so the refusal is said ONCE and not at the
+## frame rate (ASSA-196). Empty is the healthy state. A member initializer, not set in `_ready`:
+## `_players()` is reachable from an input handler before any refresh has run.
+var _player_facts_missing := PackedStringArray()
 var _facing := {}
 ## POSITIONS THE SIM HAS PRODUCED THAT THE SCREEN HAS NOT FINISHED DRAWING, oldest first, and when
 ## the current segment started playing.
@@ -2391,6 +2396,50 @@ func _refresh_map_note() -> void:
 	_map_note.visible = _world.view.is_empty()
 
 
+## **EVERY PLAYER THE BINDING IS SENDING, OR NOTHING AT ALL** (ASSA-196 box 3, and box 5 is the
+## decision this implements: REFUSE THE FRAME, not the player).
+##
+## Five places in this file read a player's `id` and `pos` with a silent default, so a binding that
+## stopped sending `pos` would put every player on tile (0, 0) -- one tile off the world's corner --
+## CONFIDENTLY, and one that stopped sending `id` would make every player -1, so `id ==
+## _client.player_id` is false and the camera follows nobody. Marlow found it in my file and left it
+## for me; `AssayScene.missing_sim_facts` cannot see it, because by the time it looks the view carries
+## `at`/`facing`/`moving` and all three are present.
+##
+## **WHY THE FRAME AND NOT THE PLAYER.** A dict with no `pos` is not one missing body in an otherwise
+## honest picture: the same dicts decide where the CAMERA is, so a view that cannot place one player
+## cannot say what it is looking at, and every other body, building and tile in that frame sits at an
+## offset nobody checked. "Nothing to draw" is a state this screen already has words for (ASSA-161,
+## ASSA-186), so refusing costs no new vocabulary.
+##
+## **AND IT IS HERE RATHER THAN IN `_refresh_world`, WHICH IS A CORRECTION TO MY OWN PLAN.** I wrote
+## that the boundary would be `_refresh_world` and that the other reads would keep their defaults
+## "with a comment naming the boundary that makes them unreachable", with the open worry that
+## `_my_tile` is called from INPUT handlers so the ordering would need measuring. The ordering turns
+## out not to be the question: **`_my_tile` does not read `_refresh_world`'s view at all, it re-reads
+## `_sim.players()` itself**, and so does `_remember_positions`, and so does the schematic's own loop.
+## A refusal in `_refresh_world` would have left three readers defaulting on their own, no matter what
+## order the engine ran things in. A data-flow fact, and it would have survived any frame-ordering
+## measurement I made, because the measurement was of the wrong claim.
+##
+## So every reader goes through here and the defaults downstream are genuinely unreachable: on a
+## refusal the list is EMPTY, so each loop runs zero times instead of once with a made-up tile.
+func _players() -> Array:
+	var players: Array = _sim.players()
+	var missing := AssaySimHost.missing_player_facts(players)
+	if missing.is_empty():
+		_player_facts_missing = PackedStringArray()
+		return players
+	# SAID ONCE, NOT EVERY FRAME. This runs at the frame rate, and a log that repeats sixty times a
+	# second buries the first copy -- which is the one with the context in it.
+	if String(", ").join(missing) != String(", ").join(_player_facts_missing):
+		_player_facts_missing = missing
+		_note("the simulation is not describing its players (%s) -- nothing to draw"
+				% String(", ").join(missing))
+		push_error("AssaySim.players() is missing %s" % String(", ").join(missing))
+	return []
+
+
 func _refresh_world() -> void:
 	if not _sim.running():
 		_world.view = {}
@@ -2412,7 +2461,18 @@ func _refresh_world() -> void:
 	var part := _advance_playout(now)
 	var players: Array = []
 	var me: Variant = null
-	for entry in _sim.players():
+	var described := _players()
+	# **THE REFUSAL, WHICH IS BOX 5's DECISION AND NOT A DROPPED PLAYER.** An empty list here is two
+	# different worlds -- one nobody has joined yet, and one whose binding stopped describing people --
+	# and only the second may blank the screen. `_players()` tells them apart; a mid-join frame and
+	# `--selfcheck` both legitimately have no players and must still draw their world.
+	if not _player_facts_missing.is_empty():
+		_world.view = {}
+		_world.me = null
+		_refresh_map_note()
+		_world.queue_redraw()
+		return
+	for entry in described:
 		var player: Dictionary = entry
 		var id := int(player.get("id", -1))
 		var at_now: Vector2i = _seen.get(id, player.get("pos", Vector2i.ZERO))
@@ -2506,7 +2566,7 @@ func _ore_under(origin: Vector2, size: Vector2i) -> Dictionary:
 ## snapping south.
 func _remember_positions() -> void:
 	var produced := {}
-	for entry in _sim.players():
+	for entry in _players():
 		var player: Dictionary = entry
 		produced[int(player.get("id", -1))] = player.get("pos", Vector2i.ZERO) as Vector2i
 	var now := float(Time.get_ticks_msec()) / 1000.0
@@ -2578,7 +2638,7 @@ func _advance_playout(now: float) -> float:
 
 
 func _my_tile() -> Vector2i:
-	for entry in _sim.players():
+	for entry in _players():
 		var player: Dictionary = entry
 		if int(player.get("id", -1)) == _client.player_id:
 			return player.get("pos", Vector2i.ZERO) as Vector2i
@@ -2790,7 +2850,7 @@ func _draw() -> void:
 	# times smaller than one pink patch. `AssayHud.PLAYER_MARK_PX` now says how big a person is on any
 	# world, and yours carries a ring so two players at the same size are still told apart.
 	var mark := Vector2(AssayHud.PLAYER_MARK_PX, AssayHud.PLAYER_MARK_PX)
-	for entry in _sim.players():
+	for entry in _players():
 		var player: Dictionary = entry
 		var at := MARGIN + (Vector2(player.get("pos", Vector2i.ZERO) as Vector2i)
 				+ Vector2(0.5, 0.5)) * _cell
