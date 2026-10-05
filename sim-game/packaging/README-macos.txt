@@ -168,6 +168,27 @@ whoever is hosting for their run link and download the same one. Both halves
 -- the relay and your zip -- must come from a single CI run.
 
 
+If we ask "how smooth is it on your machine?"
+---------------------------------------------
+Your copy can answer that itself, with a number instead of a feeling. In
+Terminal, in this folder, paste one line:
+
+    Assay.app/Contents/MacOS/Assay -- --motion-probe motion.txt 10
+
+A window opens, starts a world of its own, walks your character in a straight
+line for ten seconds and closes. It leaves "motion.txt" beside this README.
+Send us that file.
+
+It is plain text and you are welcome to read it first -- there is nothing in
+it but your machine's name, its graphics adapter, and how evenly your
+character was drawn, frame by frame. It plays no world of yours and saves
+nothing over one.
+
+Why we ask: until now every smoothness number we had was measured on one of
+our own machines, so when somebody told us the game looked jumpy we had no
+way to see what they saw. This is that way.
+
+
 What to report
 --------------
 - Any "WARNING: desync" message in a client, or "DESYNC" in the relay
