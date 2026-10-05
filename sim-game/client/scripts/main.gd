@@ -307,11 +307,14 @@ var _close_up := true
 ## `AssayHud.MAP_MARKS`, the table `_draw` paints from -- see that script and that constant.
 ##
 ## HIDDEN ON FIRST OPEN, WITH A CONTROL THAT NAMES ITS KEY, which is the log's bargain (ASSA-89) and
-## is a choice Maren left to the builder. The panel is 309x272 px of the map's 912x600, and the map is
-## a search tool whose whole job is showing you a deposit you have not walked to: 8.4% of the world's
-## tiles behind a key you have already read is a cost a player should be able to put down. The half
-## that makes that honest is the button -- `show the map key (K)` beside `whole world (V)`, inside
-## the map's own corner, the one surface a stranger pressing V is already looking at.
+## is a choice Maren left to the builder. **MEASURED, NOT ESTIMATED** (`AssayMapKey.wants` at the
+## theme's own 13px font, plus the panel's stylebox margins): the content is 286x280 px of the map's
+## 912x600, which at 9 px a tile is 31.8 x 31.1 tiles -- **about 16% of a 96x64 world** -- on the one
+## surface whose job is showing you a deposit you have not walked to. A sixth of the world behind a
+## key you have already read is a cost a player should be able to put down. The half that makes that
+## honest is the button -- `show the map key (K)` beside `whole world (V)`, inside the map's own
+## corner, the one surface a stranger pressing V is already looking at. Default-on is one line
+## (`_show_map_key(true)` at build) if Maren rules it on the 08/09 shot pair.
 ##
 ## ONLY ON THE SCHEMATIC. Every mark it names is painted by `_draw`, which returns on `_close_up`, so
 ## in the close-up the key would be a legend for marks nobody can see -- the labelled-empty-gap defect
