@@ -23,10 +23,10 @@ fn limpet_find_a_seed_with_a_dark_dead_end_pair() {
             }
             let slot = (d.species.0 as usize) % 6;
             let p = d.purity as u32;
-            if slot == 0 && purple.map_or(true, |q| p < q) {
+            if slot == 0 && purple.is_none_or(|q| p < q) {
                 purple = Some(p);
             }
-            if slot == 4 && mblue.map_or(true, |q| p < q) {
+            if slot == 4 && mblue.is_none_or(|q| p < q) {
                 mblue = Some(p);
             }
         }
