@@ -481,6 +481,15 @@ func _click_report() -> void:
 func _report() -> void:
 	print("")
 	print("MOTION SPEED, real window, seed %s, %s" % [_seed, _label])
+	# **AND IN `start` MODE EVERY STATISTIC BELOW IS VOID, SAID HERE RATHER THAN LEFT TO BE READ.**
+	# The moving span runs from the first movement to the last, and in this mode that span contains
+	# two walks with a standstill between them -- so the distributions, the bar and the VERDICT are
+	# over a stretch the body was deliberately parked in. The section this mode exists for is at the
+	# bottom. A reader who takes the verdict line out of a `start` run is reading a number about a
+	# fixture, which is how a probe becomes the first suspect.
+	if _mode == "start":
+		print("  *** MODE `start`: THE BAR AND VERDICT BELOW ARE VOID (two walks and a standstill in")
+		print("  *** one span). Read FROM THE CLICK at the bottom. Use `steady` for the ASSA-197 bar.")
 	print("  display %s, vsync %d, %d frames watched"
 			% [DisplayServer.get_name(), DisplayServer.window_get_vsync_mode(), _at.size()])
 	var span := _moving_span()
