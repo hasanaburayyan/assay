@@ -91,6 +91,11 @@ const RADIUS := 4
 ## `font.get_height()` alone, which was exactly right until this margin existed.
 const HEADING_AIR := 10
 
+## **HOW PRESENT A QUIET BUTTON'S EDGE IS AT REST** (ASSA-233). An alpha on `BORDER` rather than a
+## new colour. 0.45 is the weight at which the outline reads as an outline at 1x and still leaves a
+## visible step up to the default button's full `BORDER` on hover.
+const QUIET_EDGE := 0.45
+
 
 ## **A ONE-SHOT TOOL CAN RUN FOR EVER TOO, AND THIS IS THE HALF ASSA-182 DID NOT FIX FIRST TIME.**
 ## `SceneTree`'s own `_process` returns false, so a tool with no `_process` of its own does not end when
@@ -261,7 +266,16 @@ func _style_quiet_button(theme: Theme) -> void:
 	theme.set_color("font_hover_color", name, INK)
 	theme.set_color("font_pressed_color", name, ACCENT)
 	theme.set_color("font_disabled_color", name, INK_MUTED.darkened(0.25))
-	theme.set_stylebox("normal", name, _box(SURFACE, SURFACE))
+	# **AN EDGE AT REST, AT LOWER ALPHA** (ASSA-233, Maren at 1x: "a border at rest at lower alpha,
+	# so hover brightens an existing edge instead of conjuring one"). The first version of this
+	# weight had no edge at all, and she read `show the event log (L)` as the PANEL'S TITLE -- a dim
+	# centred line across the top of a panel is exactly where a title sits. Quiet was meant to stop
+	# it shouting, not to stop it being a button.
+	#
+	# `QUIET_EDGE` IS AN ALPHA ON `BORDER`, not a seventh colour: the same token this theme already
+	# draws every other edge with, at a weight that reads as "there is an outline here" without
+	# competing with the default button beside it.
+	theme.set_stylebox("normal", name, _box(SURFACE, Color(BORDER, QUIET_EDGE)))
 	theme.set_stylebox("hover", name, _box(SURFACE, BORDER))
 	theme.set_stylebox("pressed", name, _box(SURFACE.darkened(0.15), BORDER))
 	theme.set_stylebox("disabled", name, _box(SURFACE, SURFACE))
