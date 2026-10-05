@@ -109,6 +109,12 @@ func _initialize() -> void:
 	_label = String(argv[2]) if argv.size() > 2 else "run"
 	if DisplayServer.get_name() == "headless":
 		print("FAIL  headless: this probe measures frame pacing and there is none here")
+		# **`_done` FIRST, BECAUSE `quit()` INSIDE `_initialize` DOES NOT STOP `_process`.** Measured
+		# 2026-10-04: this refusal printed, `quit(2)` was requested, `_process` ran anyway against a
+		# null `_screen`, crashed in `_find_button`, printed "FAIL no Play solo button" -- and the
+		# process exited **0**, so the refusal reported success twice over. The guard that is actually
+		# honoured is the one `_process` reads on its own first line.
+		_done = true
 		quit(2)
 		return
 	_screen = load("res://scenes/main.tscn").instantiate()
@@ -174,16 +180,22 @@ func _process(delta: float) -> bool:
 	_sample(delta, now)
 	if now - _started_at > _seconds:
 		_report()
-		_stop()
+		# THE ONLY PATH THAT EARNED A ZERO.
+		_stop(0)
 		return true
 	return false
 
 
-func _stop() -> void:
+## **THE EXIT CODE IS AN ARGUMENT, because this function was reporting success for a probe that had
+## given up** (ASSA-182). Every FAIL path here -- the ceiling, no Play solo button, no world after 30 s
+## -- ended in `quit(0)`, so a caller reading the exit code (`gh` step, `until` loop, `&&` chain) saw a
+## pass and only a reader of the log saw the word FAIL. Found by the ceiling audit, which asked whether
+## reaching a ceiling ends the run LOUDLY and not merely whether it ends it.
+func _stop(code: int = 1) -> void:
 	_done = true
 	if _screen != null and _screen.has_method("stop_solo_relay"):
 		_screen.stop_solo_relay()
-	quit(0)
+	quit(code)
 
 
 func _find_button(node: Node, label: String) -> Button:

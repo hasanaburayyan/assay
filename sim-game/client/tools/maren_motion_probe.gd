@@ -79,10 +79,29 @@ var _sampled_at: Array[float] = []
 var _depths: Array[int] = []
 
 
+## **A WALL-CLOCK CEILING, AND IT IS A MEMBER INITIALIZER** (ASSA-182). A `SceneTree` whose
+## `_initialize` dies still gets `_process` every frame -- Godot exits 0 on a parse error and does not
+## exit AT ALL on a runtime error in `_initialize` -- so a probe waiting for state that `_initialize`
+## never set waits for ever. Measured on this machine: one typo held a headless Godot for 45 minutes,
+## and an orphan that holds a port or an account makes somebody else's run fail for a reason they will
+## never find. **Set at the end of `_initialize` it would be absent in exactly the case it is for**,
+## which is the mistake the first version of this made (#242).
+##
+## 300 s is above every honest run these tools have: their own budgets are a 10 s join timeout plus a
+## few hundred frames. The five with a budget of their own raise the ceiling from it -- two from the
+## duration argument, three from the `_run_deadline` they already compute -- so this floor can
+## never shorten a run somebody asked for.
+const RUN_CEILING := 300.0
+var _ceiling := Time.get_unix_time_from_system() + RUN_CEILING
+
+
 func _initialize() -> void:
 	var argv := OS.get_cmdline_user_args()
 	_seed = String(argv[0]) if argv.size() > 0 else "14247"
 	_seconds = float(argv[1]) if argv.size() > 1 else 4.0
+	# A LONGER RUN MAY BE ASKED FOR, and the floor above still covers the case where
+	# `_initialize` dies before this line runs at all.
+	_ceiling = maxf(_ceiling, Time.get_unix_time_from_system() + _seconds * 3.0 + 60.0)
 	_whole = argv.size() > 2 and String(argv[2]) == "whole"
 	_solo = argv.size() > 2 and String(argv[2]) == "solo"
 	_screen = load("res://scenes/main.tscn").instantiate()
@@ -104,6 +123,11 @@ func _now() -> float:
 
 func _process(_delta: float) -> bool:
 	if _done:
+		return true
+	if Time.get_unix_time_from_system() > _ceiling:
+		print("FAIL  maren_motion_probe.gd ran past its %ds ceiling (started=%s): nothing finished it"
+				% [int(RUN_CEILING), _started])
+		quit(1)
 		return true
 	if not _started:
 		var welcome := AssaySimHost.fresh_welcome_json(_seed, "maren")
