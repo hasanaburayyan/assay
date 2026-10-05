@@ -3079,8 +3079,12 @@ func test_scatter_slides_with_a_sub_tile_camera_inside_one_cached_window() -> bo
 ##
 ## THE SENTINEL IS A NEGATIVE-SIZE RECT, which the real path cannot produce: `grown` is a window
 ## grown by one tile and then intersected with the world, and `Rect2i.intersection` returns sizes of
-## zero or more. A ZERO rect would not do as a sentinel for exactly that reason -- `intersection`
-## returns `Rect2i()` for two rects that do not overlap, so zero is a value, not an absence.
+## zero or more. `Rect2i()` is the value that same call returns for two rects that do not overlap,
+## so zero is an answer on this path rather than an absence, and a negative size is not an answer at
+## all. **THAT IS A PRECAUTION AND NOT A MEASUREMENT, AND I RAN THE LEVER THAT SAYS SO: swap this
+## line for `Rect2i()` and the suite is still 316/0.** No window any test asks for lands on a zero
+## rect, so nothing here can tell the two apart; the negative size costs nothing and stops a future
+## fixture whose camera sits outside the world from being handed a plan it did not fill.
 func _clear_scatter_plan() -> void:
 	AssayScene._scatter_plan_rect = Rect2i(0, 0, -1, -1)
 	AssayScene._scatter_plan_cache = []
@@ -3096,13 +3100,23 @@ func _clear_scatter_plan() -> void:
 ## of `placements`.
 ##
 ## It earns its place twice.
-##   - **Every other scatter test in this file would pass against a `_scatter_plan` that computed a
-##     fresh plan every frame and threw the cache away** -- which is the shape of a later "cleanup"
-##     that silently puts the +5 ms back. This one cannot: it only passes if the planted plan is the
-##     one drawn.
+##   - **Every other scatter test in this file passes against a `_scatter_plan` that computes a fresh
+##     plan every frame and throws the cache away** -- which is the shape of a later "cleanup" that
+##     silently puts the +5 ms back. Run, not reasoned: stub the early return to `if false` and the
+##     suite is **315 passed, 1 failed**, this test alone, saying it drew 69 props where the planted
+##     plan holds 1.
 ##   - It makes the order-dependence Marlow named VISIBLE instead of reasoned about. If that state
 ##     were per-instance, or wiped between tests by the runner, the poison could not survive the
 ##     call and the first half here could not pass at all.
+##
+## AND ONE THING THE CLEAR COST, WHICH IS WORTH KNOWING BEFORE SOMEONE FINDS IT AS A REGRESSION.
+## Marlow's mutation (`if not _scatter_plan_cache.is_empty()`) reddened FOUR tests on his machine,
+## one of them `test_scatter_slides_with_a_sub_tile_camera_inside_one_cached_window`. With the cold
+## start it reddens THREE, and that test is not one of them -- because from a cold start a cache that
+## never invalidates behaves exactly like a correct one inside a single rect, which is all that test
+## asks about. **Its red was an artefact of whatever filled the plan before it ran, not of the test
+## seeing the defect.** The walk test above still catches the mutation from a cold start, at visit 2
+## rather than visit 1, and so do two others: `313 passed, 3 failed`.
 ##
 ## IT MUST LEAVE THE CACHE CLEAN ON EVERY EXIT PATH. The checks therefore run in a nested call that
 ## returns a reason rather than calling `_fail` itself, and the clear happens after it returns
