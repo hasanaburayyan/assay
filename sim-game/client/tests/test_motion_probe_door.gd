@@ -169,3 +169,87 @@ func test_a_report_carries_the_machine_before_anything_can_fail() -> bool:
 		return _fail("the machine line says %s on a build whose `template` feature is %s"
 				% ["EXPORTED" if says_exported else "the project", exported])
 	return true
+
+
+## A STAND-IN FOR `main.gd` HOLDING THE ONE FIELD THE CLICK SECTION READS OFF THE SCREEN.
+## `_play_dragged` is `main.gd`'s (ASSA-212): frames the playout queue cap pulled the body forward in.
+class FakeScreen:
+	extends Node
+	var _play_dragged := 0
+
+
+## **THE CLICK SECTION IS ARITHMETIC AND THIS RUNS IT, which is why it is not another grep** (ASSA-212,
+## carried into `scripts/` by the ASSA-211 merge). Marlow wrote FREEZE / JUMP / SPEED inside
+## `tools/motion_speed_probe.gd`; `tools/*` is excluded from both export presets, so the one section
+## written about what a player's HAND feels could never run on a player's build. Moving it was the
+## merge resolution, and a move is exactly the kind of change a later merge drops silently.
+##
+## The fixture has a known answer, so a wrong pairing or a wrong trim fails rather than printing
+## something plausible: 50 fps frames, a body that stands still for five of them after the click and
+## then takes ONE frame worth three frames of travel before settling at exactly the true speed.
+func test_the_click_section_computes_freeze_and_jump_from_a_known_series() -> bool:
+	var probe := AssayMotionProbe.new()
+	var screen := FakeScreen.new()
+	probe._screen = screen
+	probe._clicks.append(0.0)
+	probe._click_what.append("synthetic: a fixture, not a run")
+	var step := 0.02
+	var per_frame := step * AssayMotionProbe.TRUE_SPEED * AssayScene.TILE_PX
+	var x := 0.0
+	for i in 60:
+		probe._clock.append(0.01 + float(i) * step)
+		probe._dt.append(step)
+		# Frames 0-4 stand still; frame 5 moves three frames' worth; after that, true speed exactly.
+		if i == 5:
+			x += per_frame * 3.0
+		elif i > 5:
+			x += per_frame
+		probe._drawn.append(Vector2(x, 0.0))
+	probe._click_report()
+	# **FREED THE FRAME IT STOPS BEING NEEDED, not at the end.** A `Node` built with `new()` and never
+	# put in the tree is leaked unless something frees it, and every `_fail` below is an early return.
+	screen.free()
+	probe._screen = null
+	var text := probe.report_text()
+	# FREEZE: the click is at 0.0 and the rectangle first differs on the frame clocked at 0.11.
+	if not text.contains("FREEZE   110 ms standing still (5 frames)"):
+		return _fail(("the click section did not report a 110 ms / 5 frame freeze for a series built "
+				+ "to have one. Report:\n%s") % [text])
+	# JUMP: one frame of three frames' travel is 3.00x what a frame is worth, on either pairing, because
+	# the fixture's deltas are constant. **A CONSTANT-DELTA FIXTURE CANNOT TELL THE TWO PAIRINGS APART**
+	# and is not trying to: #284's phase is measured on real runs. What it does catch is a lost divisor.
+	if not text.contains("3.00x what the frame is worth"):
+		return _fail("the worst frame of the first 500 ms did not come out at 3.00x. Report:\n%s" % [text])
+	# SPEED: every frame after the jump travels exactly one frame's worth, so none is outside +/-25%.
+	if not text.contains("SPEED    0 of"):
+		return _fail("frames moving at exactly the true speed were judged outside the band. Report:\n%s"
+				% [text])
+	if not text.contains("DRAGGED  0 frames"):
+		return _fail("the dragged count is not read off the screen any more. Report:\n%s" % [text])
+	return true
+
+
+## **THE SECTION IS WHERE AN EXPORT CAN REACH IT, AND THE WAY IN IS NOT.** This one IS a source-text
+## check and is worth exactly that: it cannot prove behaviour, only that the halves have not swapped
+## sides again. The test above is the behavioural one.
+func test_the_click_section_lives_in_the_packed_class_not_the_harness() -> bool:
+	var packed := FileAccess.get_file_as_string(PROBE)
+	var tool_text := FileAccess.get_file_as_string(TOOL)
+	if not packed.contains("func _click_report()"):
+		return _fail(("`_click_report` is not in %s. ASSA-212's FREEZE/JUMP/SPEED section must live "
+				+ "inside the pack or no player's build can produce it.") % [PROBE])
+	if not packed.contains("_click_report()\n"):
+		return _fail("`_report` no longer calls `_click_report`, so the section is dead code")
+	for owned in ["_still_since", "_moved_once", "_clicks.append"]:
+		if not packed.contains(owned):
+			return _fail("`%s` left %s: the second-walk arithmetic is back outside the pack" % [owned, PROBE])
+	if tool_text.contains("_click_report") or tool_text.contains("_still_since"):
+		return _fail(("%s has grown click arithmetic again. The harness owns the way in (argv[3] mode) "
+				+ "and nothing else; `tools/*` is excluded from both export presets.") % [TOOL])
+	# THE WAY IN IS STILL THERE AND STILL VALIDATED: a mistyped mode must refuse, not measure `steady`
+	# and label it something else.
+	if not tool_text.contains("mode must be `steady` or `start`"):
+		return _fail("%s stopped refusing an unknown mode" % [TOOL])
+	if not tool_text.contains("_probe.begin(screen, seconds, label, want_seed, mode)"):
+		return _fail("%s parses a mode and does not pass it to the probe" % [TOOL])
+	return true
