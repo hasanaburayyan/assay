@@ -1607,10 +1607,23 @@ func _refresh_log() -> void:
 ## AND IT MAKES BRIGHTNESS AND POSITION AGREE: the line you reach first is the line that is most
 ## legible, instead of the eye having to travel to the bottom to find the bright one.
 ##
-## CHRONOLOGY SURVIVES BECAUSE EVERY LINE ALREADY CARRIES ITS TICK (`_remember_events` prefixes
-## "%d · "), so the order is a presentation of a sequence that is still legible either way. That is
-## the one thing that makes this cheap rather than confusing, and if the tick prefix ever goes, this
-## decision has to be made again.
+## **THE CLAUSE IN THIS PARAGRAPH FIRED, SO THE DECISION IS RE-MADE HERE.** It used to read
+## *"chronology survives because every line already carries its tick (`_remember_events` prefixes
+## `%d · `) ... and if the tick prefix ever goes, this decision has to be made again"*. It went
+## (ASSA-222 slice 1, Maren: *"a tick is the inspector's clock, not a player's"*), and the sentence
+## sat here for three merges describing a prefix that no longer exists -- the ASSA-174 shape, in a
+## repo that reads its own prose as fact.
+##
+## **RE-MADE, AND IT COMES OUT NEWEST-FIRST AGAIN.** The fold argument is untouched: this section is
+## still the last in a column reporting 2023px of content into a 720px window. What carried direction
+## is now the RAMP rather than a number in the text -- the brightest line is the newest and it is the
+## one at the top, so position and brightness say the same thing instead of one of them standing in
+## for a tick. What is genuinely lost is reconstructing the order from the words alone, which was
+## exactly the trade Maren made -- and it is about to be the whole of it: the only other tick on this
+## screen is `_detail`'s (`_render_detail`), which ASSA-237 puts behind F3, and the status line only
+## carries one in the moment after a command. So the ramp is not one cue among several; soon it is
+## the only one. Ordering is presentation, so this is mine to make and hers to overrule in one
+## sentence (ASSA-117 box 3) -- and if the ramp ever goes, this decision has to be made again.
 ##
 ## THE INKS COME OUT OF THE THEME, NEVER OUT OF THIS FILE. `get_theme_color` asks the theme actually
 ## in force (`gui/theme/custom`, ASSA-116), so Maren's corrected ruling 3 holds by construction: the

@@ -901,6 +901,69 @@ func test_walking_does_not_shout_on_the_always_visible_line() -> bool:
 	return ok
 
 
+## WHAT THE LOG KEEPS IS THE SIM'S OWN SENTENCE, WITH NOTHING THIS CLIENT ADDED TO IT (ASSA-222).
+##
+## **IT EXISTS BECAUSE NERITE'S MUTATION PASSED.** On main `25c18b2` they put the old prefix back --
+## `_events.append("%d · %s" % [_sim.tick(), line])` -- and the client suite stayed **345 / 0**. The
+## defect ASSA-222 slice 1 fixed could be rebuilt in one line with nothing red. The reason is that
+## every other test about this section PLANTS lines into `_events` and drives `_rebuild_log`, so the
+## one function that decides what gets stored had comments saying "no `tick N ·` prefix" and no
+## guard. This drives the real path instead: a real sim, a real bundle, `_on_tick_bundle` ->
+## `_remember_events`.
+##
+## **VERBATIM EQUALITY, NOT "DOES NOT BEGIN WITH A DIGIT".** A tick prefix is one way a host can add
+## to the sim's wording; a suffix, a bullet, a re-worded refusal or a renamed building are others,
+## and ASSA-222 is the item saying all of them are the same defect -- one describer, two audiences,
+## chosen in `AssaySim::describe` and nowhere else. So the claim asserted is the general one: the
+## stored line IS the sim's line. A test shaped around the prefix would go green the day someone
+## adds something else.
+##
+## **WHY `event_lines` STILL ANSWERS AFTER THE TICK.** `_on_tick_bundle` applies the bundle and then
+## copies, and nothing clears the sim's events until the next apply -- so reading them back here
+## reads the same strings the copy saw. That is a fact about the Rust side, and it is not assumed:
+## if it stopped holding, every comparison would be skipped and the non-vacuity check below fails.
+##
+## **NON-VACUITY IS ASSERTED, because the way this test dies is silently.** A seed where the click
+## lands on the tile we already stand on walks nowhere, says nothing, compares nothing, and reports
+## green. I have shipped that shape twice this week; `compared` is the cure.
+func test_the_log_keeps_the_sims_sentence_and_adds_nothing_to_it() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := true
+	_click(screen, screen._my_tile() + Vector2i(2, 0), MOUSE_BUTTON_LEFT)
+	var compared := 0
+	for _i in range(20):
+		_tick(screen, 1)
+		var said := PackedStringArray()
+		for line in screen._sim.event_lines(screen._client.player_id):
+			said.append(String(line))
+		# A tick saying more than the log keeps would make the tail comparison meaningless: the
+		# oldest of those lines is trimmed away by design (`trimmed_log`), and that is not a defect.
+		# One tick of a walk says one to three things, so this skip is a guard and not the usual case.
+		if said.is_empty() or said.size() > screen.LOG_LINES:
+			continue
+		var kept: PackedStringArray = screen._events
+		if kept.size() < said.size():
+			ok = _fail(("the sim said %d lines this tick and the log holds %d in total, so lines "
+					+ "the sim produced were never stored: %s") % [said.size(), kept.size(), said])
+			break
+		for at in said.size():
+			var stored := String(kept[kept.size() - said.size() + at])
+			if stored != said[at]:
+				ok = _fail(("the sim said `%s` and the log stored `%s`. The window's wording is "
+						+ "chosen in the sim (ASSA-222); a host that adds to the line is a second "
+						+ "describer, and the `tick N ·` prefix came back this way.")
+						% [said[at], stored])
+				break
+		if not ok:
+			break
+		compared += said.size()
+	if ok and compared == 0:
+		ok = _fail("twenty ticks of a walk produced no event line at all, so nothing was compared")
+	screen.queue_free()
+	return ok
+
+
 ## ASSA-88: THE BUG THE BOARD HIT, AT THE WINDOW. Maren measured their pack: two ore species drew two
 ## buttons both labelled exactly `Craft smelter`, building smelters with DIFFERENT WALLS, told apart
 ## only by which row you were standing on. Walls decide what a smelter can ever melt.
