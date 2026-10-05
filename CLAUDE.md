@@ -154,8 +154,14 @@ why determinism rules are non-negotiable.
 ## Decisions already made (don't relitigate without the founders)
 
 - **Genre**: automation/colony sim first; MOBA/MMO rejected (see `reports/`).
-- **Engine**: Godot planned for the client, with the sim staying a separate
-  Rust crate. Three.js/Unreal rejected. No Godot code exists yet.
+- **Engine**: Godot for the client, with the sim staying a separate Rust crate.
+  Three.js/Unreal rejected. **It is built, not planned** — `sim-game/client/`
+  is a Godot 4 project running the real rules through the `sim-godot`
+  GDExtension, it ships in every CI bundle as `Assay.app` / `Assay.exe`, and it
+  has its own test suite (`client/tests/run_tests.gd`) and a compile check over
+  every script (`client/tools/check_every_script.sh`), both green in CI. This
+  line said "No Godot code exists yet" until 2026-10-04 (ASSA-207), three days
+  after the board opened the window themselves (Decision #34).
 - **Multiplayer**: lockstep with a relay now; a galaxy service later (maybe
   SpacetimeDB) that talks to relays, never to the tick. External effects enter
   a world only as tick-stamped system commands and leave only as events.
@@ -228,10 +234,19 @@ Not built yet, roughly in order: mining drills as entities (which is what
 lets hardness progress past hand mining; needs the step-factor decision
 that ADR 0001 left open), belts, inserters
 (the modular design system), assemblers, items on belts, generated looks
-for species, the Godot client, reconnect without restart **in `sim-cli`**
+for species, reconnect without restart **in `sim-cli`**
 (the Godot client turns out to have it — see the rough edges below),
 client-side movement prediction, time-based autosave, binary saves, graceful
 relay shutdown, Steam auth, galaxy layer.
+
+**"the Godot client" WAS IN THAT LIST UNTIL 2026-10-04 AND HAD NO BUSINESS
+BEING THERE** (ASSA-207). It ships in every CI bundle, the board has opened its
+window and reported on it (Decision #34), and two people have played co-op
+through it (Decision #41). The same paragraph then said the client "turns out
+to have" reconnect, which is a thing only an existing client can turn out to
+have — the list contradicted itself two lines apart. This is ASSA-174's lesson
+with no constant to catch it: nothing tests prose, and the board reads ours as
+fact.
 
 Known rough edges: the relay loses up to 2 s on Ctrl-C; your own moves wait
 for the host (~1 tick).
