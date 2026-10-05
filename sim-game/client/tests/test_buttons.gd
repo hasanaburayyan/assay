@@ -464,7 +464,6 @@ func test_an_insert_submits_the_count_it_read_at_the_press() -> bool:
 				button.pressed.emit()
 				var want: Variant = AssayActions.insert(at, AssayActions.SLOT_FUEL,
 						AssayActions.item_of_stack(stack), now)
-				var said: String = screen._status.text
 				if _asked.size() != 1:
 					ok = _fail("`Fuel` on a targeted smelter submitted %s, not one Insert" % [_asked])
 				elif _asked[0] != want:
@@ -476,10 +475,18 @@ func test_an_insert_submits_the_count_it_read_at_the_press() -> bool:
 							% [_asked[0], want, before, now])
 				elif AssaySimHost.command_echo(_asked[0]) == "":
 					ok = _fail("Insert submitted %s, which serde refuses" % [_asked[0]])
-				elif not said.contains(str(now)):
-					# THE NUMBER TOLD AND THE NUMBER SENT ARE ONE NUMBER. `_act`'s sentence is the only
-					# report the player gets, and a true command under a stale sentence is still a lie.
-					ok = _fail("submitted an Insert of %d and told the player: %s" % [now, said])
+				# **THE "NUMBER TOLD" CLAUSE IS GONE BECAUSE THE SENTENCE IS** (ASSA-239). It read
+				# `said.contains(str(now))` on `_act`'s echo, with the note "`_act`'s sentence is the
+				# only report the player gets, and a true command under a stale sentence is still a
+				# lie". Maren's ruling on ASSA-237 deleted that echo -- an accepted command now says
+				# nothing, because what happened arrives as the sim's own event in the log and a
+				# submission stamped with a tick is not news.
+				#
+				# **NOTHING THIS TEST EXISTS FOR IS LOST, AND THAT IS THE POINT:** ASSA-55's invariant
+				# is that the COMMAND carries the count read at the press, which `_asked[0] != want`
+				# above asserts directly against the sim's own total. The deleted clause guarded a
+				# sentence disagreeing with that command, and a sentence that is never written cannot
+				# disagree with anything. If the echo ever comes back, this clause comes back with it.
 	screen.queue_free()
 	return ok
 

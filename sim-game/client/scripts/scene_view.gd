@@ -187,8 +187,10 @@ static func camera_origin(centre_tile: Vector2, world_tiles: Vector2i, view: Vec
 	return at
 
 
-## EVERY TILE THE VIEW TOUCHES, including the two partial ones at each edge: 912x600 is 28.5 by 18.75
-## tiles, so a whole-tile window would leave a dark strip down one side that moves as you walk.
+## EVERY TILE THE VIEW TOUCHES, including the two partial ones at each edge: 912x672 is 28.5 by 21
+## tiles, so a whole-tile window would leave a dark strip down one side that moves as you walk. (The
+## height was 600 = 18.75 tiles until ASSA-239 gave the header strip's 96px to the world; the WIDTH
+## is what makes this clause true either way.)
 ## Clipped to the world, so no caller ever asks the sim about a tile outside it.
 static func visible_tiles(origin: Vector2, view: Vector2, world_tiles: Vector2i) -> Rect2i:
 	var low := Vector2i((origin / TILE_PX).floor())
@@ -603,7 +605,8 @@ const SCATTER_LARGE := ["boulder0", "boulder1", "log0", "log1"]
 ## the world to match a constant's name; fix the name."
 const SCATTER_GRIT_UNIFORM_NULL := 0.24
 ## WHAT IT ACTUALLY DRAWS, counted over all 57,600 tiles of a 240x240 world rather than derived:
-## 0.1525/tile = 81.5 props per 912x600 screen. `SCATTER_FIELD_GAIN` restores 63.1% of the null
+## 0.1525/tile = 91.3 props per 912x672 screen (81.5 on the 912x600 map this was tuned on, before
+## ASSA-239; the per-tile rate is the measurement and the per-screen count follows the rect). `SCATTER_FIELD_GAIN` restores 63.1% of the null
 ## world-wide (93.7% over the 464 tiles it was tuned on, which is why it is not 100%). QUOTE THIS
 ## ONE. Unused by the code on purpose: it is a measurement, not a lever.
 const SCATTER_GRIT_REALISED := 0.1525
@@ -1247,9 +1250,10 @@ static func player_ceiling(manifest: Dictionary, view: Vector2) -> float:
 	# too generous and the north clamp then bound at row 1.25, pinning the body and jerking the world
 	# a tile per step.
 	#
-	# **IT IS WORTH ONE MORE LINE OF THE EVENT LOG, measured on the real 912x600 map**: ceiling
-	# 220 -> 252 px, `north_headroom` 252 -> 284, `AssayHud.log_lines_that_fit` 8 -> 9 of 14 at
-	# today's 22 px pitch (`tools/ceiling_numbers.gd` prints all four). So the board's "logs are hard
+	# **IT IS WORTH ONE MORE LINE OF THE EVENT LOG, measured on the 912x600 map this was written on**:
+	# ceiling 220 -> 252 px, `north_headroom` 252 -> 284, `AssayHud.log_lines_that_fit` 8 -> 9 of 14 at
+	# today's 22 px pitch. **RE-MEASURED ON THE 912x672 MAP (ASSA-239): ceiling 288, north_headroom 320,
+	# 11 lines of 14.** Re-run `tools/ceiling_numbers.gd` rather than trusting either pair. So the board's "logs are hard
 	# on the eyes" gets a little better out of a motion fix rather than out of a layout change.
 	#
 	# WHAT THAT COSTS, SAID PLAINLY: the panel now ends exactly where the player's sprite begins
@@ -1273,7 +1277,8 @@ static func player_ceiling(manifest: Dictionary, view: Vector2) -> float:
 ## its caller keeps all fourteen log lines; the matching answer here is "do not leave the world",
 ## which is exactly today's camera. A missing manifest must not move the camera.
 ##
-## 252px ON THE REAL 912x600 MAP, and `camera_origin` explains why that bound binds only in row 0
+## 320px ON THE REAL 912x672 MAP (284 on the 912x600 one this sentence was written on, ASSA-239),
+## and `camera_origin` explains why that bound binds only in row 0
 ## rather than through all eight rows the defect covered.
 static func north_headroom(manifest: Dictionary, view: Vector2) -> float:
 	var ceiling := player_ceiling(manifest, view)

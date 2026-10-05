@@ -9,7 +9,7 @@ extends Control
 ## `tests/test_scene_view.gd`, and what is left here is `draw_texture_rect_region` in a loop. There
 ## is no judgement in this file to get wrong.
 ##
-## A `Control` WITH `clip_contents`, AND THAT IS WHY IT IS A CONTROL. The world is 912x600 inside a
+## A `Control` WITH `clip_contents`, AND THAT IS WHY IT IS A CONTROL. The world is 912x672 inside a
 ## 1280x720 window and 912 is 28.5 tiles, so the camera's edge tiles are always half outside the
 ## view. Without a clip they would paint over the HUD column beside them. A `Camera2D` would have
 ## wanted a `SubViewport` to be confined to a panel, which is a second input path for clicks to be

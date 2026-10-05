@@ -811,7 +811,7 @@ func test_the_event_log_is_outside_the_box_that_scrolls_the_controls() -> bool:
 ## AND IT STOPS THE MOUSE ON PURPOSE. The map is clicked through `_unhandled_input`, so an `IGNORE`
 ## panel would let a click pass through the log onto the tile under it: a machine placed on a tile you
 ## cannot see. `STOP` means the covered tiles are not clickable while the log is up. The region around
-## the box is `IGNORE`, because 912x600 of empty space answering the mouse is how
+## the box is `IGNORE`, because 912x672 of empty space answering the mouse is how
 ## `_map_note`'s own comment says this goes wrong ("Play solo does nothing", nowhere near that line).
 func test_the_log_over_the_map_holds_no_control_and_eats_the_clicks_it_covers() -> bool:
 	var screen := _screen()
@@ -2192,7 +2192,7 @@ func test_the_empty_map_names_which_kind_of_empty_it_is() -> bool:
 				% [note.horizontal_alignment, door.alignment])
 	elif note.mouse_filter != Control.MOUSE_FILTER_IGNORE \
 			or door.mouse_filter != Control.MOUSE_FILTER_IGNORE:
-		ok = _fail("a 912x600 control that answers the mouse swallows every click on the map, and "
+		ok = _fail("a map-sized control that answers the mouse swallows every click on the map, and "
 				+ "the bug would read as `Play solo does nothing`")
 	else:
 		var ratio := AssayHud.contrast_ratio(_drawn_color(note), AssayHud.MAP_BG)
@@ -2355,17 +2355,17 @@ func test_the_primary_has_its_own_line_before_a_world_and_the_row_has_it_after()
 					% [screen._solo_cell.get_parent(), screen._cred_cell.get_parent()])
 		if screen._join_button.get_parent() != screen._row:
 			ok = _fail("Join did not go back into the row: %s" % screen._join_button.get_parent())
-		# THE TWO LABELS THE CLIENT SPEAKS THROUGH, back at their own coordinates and their own size.
-		# A container hands a child its width, and a 912px-wide Label at (24, 54) is a rect three
-		# quarters of the window wide for one word of text.
-		if screen._status.get_parent() != screen or screen._status.position != Vector2(24.0, 54.0):
-			ok = _fail("the status line is at %s under %s"
-					% [screen._status.position, screen._status.get_parent()])
-		elif screen._status.size.x > 400.0:
-			ok = _fail("the status line kept the door's width: %s" % screen._status.size)
-		if screen._detail.get_parent() != screen or screen._detail.position != Vector2(24.0, 74.0):
-			ok = _fail("the detail line is at %s under %s"
-					% [screen._detail.position, screen._detail.get_parent()])
+		# **THE TWO LABELS THE CLIENT SPEAKS THROUGH GO INTO THE TOAST NOW** (ASSA-239). They came
+		# home to the screen itself at (24, 54) and (24, 74) until today -- two hand-written
+		# coordinates inside the 96px header strip that Maren's Gap 2 ruling deleted. There is no
+		# strip, so there is no coordinate: they move between two containers and nothing positions
+		# them.
+		for named: String in ["the status line", "the detail line"]:
+			var label: Label = {"the status line": screen._status,
+					"the detail line": screen._detail}[named]
+			if label.get_parent() != screen._says_toast_box:
+				ok = _fail("%s is under %s, not in the toast over the world"
+						% [named, label.get_parent()])
 	screen.queue_free()
 	return ok
 
@@ -2435,7 +2435,7 @@ func _a_part_stack() -> Dictionary:
 ## existing and being right buys nothing until `main.gd` hands it to `camera_origin`, and "I added
 ## the function and forgot to pass it" is a defect that leaves every scene-view assertion green.
 ##
-## So it drives the real screen at the real 912x600 rect, puts the body in row 0, and reads the
+## So it drives the real screen at the real 912x672 rect, puts the body in row 0, and reads the
 ## camera out of the view the screen actually built.
 ##
 ## **WHAT IT CANNOT SEE, MEASURED NOT GUESSED.** Its expectation is `-north_headroom(...)`, so it
@@ -3791,3 +3791,147 @@ func test_the_window_background_is_a_colour_this_game_names() -> bool:
 		return _fail("the status line reads %.2f:1 on the window's own background, under the 4.5 "
 				% ratio + "floor `build_theme.gd` refuses to write a theme under")
 	return true
+
+
+## **NOTHING IS DRAWN ABOVE THE WORLD ANY MORE** (ASSA-239, Maren's Gap 2 ruling 2: *"the strip gets
+## nothing in its place. A thinner status line is a thinner version of this defect."*).
+##
+## **THE ASSERTION IS A SWEEP, NOT A CONSTANT.** Checking `AssayHud.MARGIN.y == 24` would read the fix
+## back to itself and would pass on a screen that had quietly parked a label at y=10. This walks every
+## visible `Control` on a played screen and fails on any whose rect begins above the world's own top
+## edge -- so it fails for a strip that comes back under any name, including one nobody called a
+## strip.
+##
+## THE COLUMN IS NOT AN EXCEPTION AND DOES NOT NEED TO BE: `COLUMN_TOP` is `MARGIN.y` now, so the two
+## regions share a top edge rather than the column climbing 16px above the view beside it.
+func test_no_control_is_drawn_above_the_world_in_a_played_screen() -> bool:
+	var ok := true
+	var joined := _joined_screen()
+	joined._process(0.016)
+	joined._refresh()
+	if not joined._sim.running():
+		joined.queue_free()
+		return _fail("the fixture never simulated, so this test asked nothing")
+	var top: float = AssayHud.world_rect().position.y
+	var above := PackedStringArray()
+	var walk: Array[Node] = [joined]
+	while not walk.is_empty():
+		var node: Node = walk.pop_back()
+		for child in node.get_children():
+			walk.append(child)
+		var control := node as Control
+		if control == null or control == joined or not _on_screen(control):
+			continue
+		if _top_edge_of(control) < top - 0.01:
+			above.append("%s at y=%.0f" % [control.name, _top_edge_of(control)])
+	if not above.is_empty():
+		ok = _fail("%d control(s) are drawn above the world's top edge (y=%.0f), which is the header "
+				% [above.size(), top] + "strip coming back: %s" % ", ".join(above))
+	# AND THE WORLD ACTUALLY TOOK THE ROOM, read off the node rather than off the constant.
+	if joined._world.position.y > top + 0.01 or joined._world.size.y < 600.0:
+		ok = _fail("the world layer is %s at %s, so the room the strip gave up went nowhere"
+				% [joined._world.size, joined._world.position])
+	joined.queue_free()
+	return ok
+
+
+## Summed up the ancestor chain, for the same reason `_left_edge_of` is: the suite runs before any
+## layout pass, so `get_global_position` is about a node that is not anywhere yet.
+func _top_edge_of(node: Node) -> float:
+	var y := 0.0
+	var walk: Node = node
+	while walk != null and not (walk is Node2D):
+		if walk is Control:
+			y += (walk as Control).position.y
+		walk = walk.get_parent()
+	return y
+
+
+## **THE TOAST IS DRAWN ONLY WHILE THE CLIENT HAS SOMETHING TO SAY** (ASSA-239).
+##
+## The status line stopped being furniture when the strip died: it is a transient, empty for most of a
+## session, and a panel that sat there empty would be the strip again at a quarter of the height --
+## which is the version of this fix Maren ruled against in advance.
+##
+## **AND WHERE IT LANDS IS CHECKED AGAINST THE WORLD, NOT AGAINST A PAIR OF NUMBERS.** The rule is
+## "inside the world's bottom-left corner"; the arithmetic that places it is `status_toast_rect`'s, so
+## a test repeating those numbers would only prove I can add. This asks whether the panel is inside
+## the world rect and in its lower-left quadrant, which is the thing a player sees.
+func test_the_status_toast_appears_only_with_something_to_say() -> bool:
+	var ok := true
+	var joined := _joined_screen()
+	joined._process(0.016)
+	joined._refresh()
+
+	joined._say("", AssayHud.Say.IDLE)
+	if joined._says_toast.visible and not joined._dev_shown:
+		ok = _fail("the toast is drawn with nothing to say, which is the header strip again at a "
+				+ "quarter of the height")
+
+	joined._say("mined 1 x ore", AssayHud.Say.IDLE)
+	if not joined._says_toast.visible:
+		ok = _fail("the client said something and the toast did not appear")
+	else:
+		var world := AssayHud.world_rect()
+		var at := Rect2(joined._says_toast.position, joined._says_toast.size)
+		if not world.encloses(at):
+			ok = _fail("the toast at %s is not inside the world %s" % [at, world])
+		elif at.position.x > world.position.x + world.size.x * 0.5 \
+				or at.position.y < world.position.y + world.size.y * 0.5:
+			ok = _fail("the toast at %s is not in the world's bottom-left corner: the log owns the "
+					% at + "top and the view/key toggles own the bottom-right")
+	joined.queue_free()
+	return ok
+
+
+## **AN ACCEPTED COMMAND LEAVES THE CLIENT WITH NOTHING TO SAY** (ASSA-239, Maren's ruling on
+## ASSA-237: *"the line is empty when healthy and carries the stall sentence when the sim stalls.
+## `Place 0 · submitted at tick 514` is a tick number, the thing part 1 sent away, so it goes."*).
+##
+## This is what makes the toast a transient rather than the header strip at a quarter of the height:
+## if every press wrote a sentence, the panel would be on screen for the whole of a played session and
+## the geometry Maren ruled away would have come back wearing a smaller frame.
+##
+## **AND IT CLEARS RATHER THAN SKIPS.** Dropping the `_say` would leave the PREVIOUS sentence standing
+## -- so the refusal below would still be on screen after the successful press that followed it, which
+## is a line claiming a state the player is not in (ASSA-176's class). The order here is the test: say
+## something, then act successfully, then read the line.
+func test_an_accepted_command_says_nothing_and_clears_what_came_before() -> bool:
+	var ok := true
+	var joined := _joined_screen()
+	joined._process(0.016)
+	joined._refresh()
+	if not joined._sim.running():
+		joined.queue_free()
+		return _fail("the fixture never simulated, so no command could be accepted")
+
+	joined._say("refused: something earlier", AssayHud.Say.FAILED)
+	if joined._status.text == "":
+		ok = _fail("premise: the line was already empty, so the clear below proves nothing")
+	joined._act("Mine", AssayActions.mine())
+	if joined._status.text != "":
+		ok = _fail("an accepted command left `%s` on the status line; a submission is not news "
+				% joined._status.text + "and the sim's own event says what happened")
+	if joined._says_toast.visible and not joined._join_band.visible:
+		ok = _fail("the toast is still drawn over the world with nothing in it to read")
+	joined.queue_free()
+	return ok
+
+
+## **A REFUSAL IS STILL LOUD, which is the half that must NOT follow the ruling above** (ASSA-239).
+##
+## "No refusal is silent" is a standing rule here, and this is the branch it protects: a press that
+## never reached the wire produces no sim event, so the status line is the only place a player can
+## ever learn it happened. A fix that quietened `_act` all the way would pass the test above and lose
+## this, which is why they are two tests and not one.
+func test_a_command_that_never_reached_the_wire_still_says_so() -> bool:
+	var ok := true
+	var screen := _screen()
+	# NOT JOINED: `AssayNetClient.submit` refuses, which is the real path rather than a stubbed one.
+	screen._act("Mine", AssayActions.mine())
+	if not screen._status.text.contains("not submitted"):
+		ok = _fail("a command that never reached the wire said `%s`" % screen._status.text)
+	if screen._base_level != AssayHud.Say.FAILED:
+		ok = _fail("the refusal is not painted as a failure, so it reads as an instruction")
+	screen.queue_free()
+	return ok

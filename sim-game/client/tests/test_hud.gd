@@ -1307,7 +1307,9 @@ func test_a_species_row_carries_the_sims_own_fuel_clause() -> bool:
 ##
 ## THE TERMS ARE THE REAL ONES, measured off the engine in `tools/log_room_probe.gd` against the
 ## shipped theme: a row is 18px, separation 4, the panel's margins 12, the heading 22, and the room
-## at 912x600 is 220. `chrome + newest + (n - 1) * pitch` is the panel's height, which is the same
+## at 912x600 is 220 -- **288 on the 912x672 map since ASSA-239**, which is why the rows below are a
+## spread of plausible rooms rather than today's one number: this is a test of the ARITHMETIC, and it
+## must not need editing every time the map's rect moves. `chrome + newest + (n - 1) * pitch` is the panel's height, which is the same
 ## sum `main.gd` leaves to the engine -- the model is checked against a laid-out window in
 ## `window_shot.gd::_reveal_report`, because no headless test in this repo can see a real rect.
 func test_the_log_line_count_fills_the_room_without_overflowing_it() -> bool:
