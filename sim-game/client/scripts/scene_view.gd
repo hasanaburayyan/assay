@@ -92,18 +92,32 @@ const PLAYOUT_NUDGE := 0.1
 ## is not a speed error -- it is the removal of one.** Drawn speed is `rate * trim / s` tiles/s and
 ## the loop is only at rest when that equals the host's true `1/T`, whatever `s` claims.
 ##
-## **0.05 AND NOT FASTER, because this term's job is a bias and the depth signal is mostly jitter.**
-## Depth swings ±0.5 ticks around target at a steady 10 tps (measured in the same simulation) and
-## that ripple integrates to 2.5% a second if it were one-sided; it is not, so the real ripple is
-## well under a per cent, while a 2-tick error moves the trim 10% a second and converges in about a
-## second and a half.
+## **0.15, AND THE 0.05 IT REPLACES WAS CHOSEN WITHOUT MEASURING THE ONLY THING IT DECIDES: HOW LONG
+## THE CLOCK IS WRONG FOR.** The sentence here used to read "0.05 and not faster", arguing from a
+## 2-tick error converging in a second and a half. A real error is not 2 ticks: once the clock is
+## running, depth sits a fraction of a tick from its target, so at 0.05 the integral crawls.
+## Measured with the sweep in `tests/test_scene_view.gd` (2026-10-05, 90 fps, synthetic host):
+##
+##   trim 0.05: 90% of a 14% bias learnt in 13.3 s (within 1% at 16.8 s); buffer down to 1.20 ticks;
+##              and from a cold start at a 25% bias the body HELD STILL 13 TIMES while it wound up
+##   trim 0.15: 90% in 4.3 s; buffer never below 1.43; zero held frames anywhere in 0.75x-1.25x
+##
+## The steady-state ripple -- the thing the old number was protecting -- is unchanged to three
+## decimals (drawn speed 0.957-1.049 of true at 1.25x, both constants), because the depth signal it
+## integrates swings symmetrically about zero and a faster gain does not make a symmetric signal
+## one-sided. The whole cost of 0.05 was a longer stretch of a session being wrong, which is the
+## stretch a player judges.
+##
+## **AND NOT FASTER THAN THAT:** at 0.30 the same sweep settles in 2.0 s but a WARM clock -- one
+## handed a settled trim -- starts moving its trim again (1.1-2.9 s of settling where 0.15 shows
+## 0.0), which is the integral chasing jitter it should be leaving to the proportional term.
 ##
 ## **±35% IS AN UNWIND BUDGET, NOT A BELIEF ABOUT MEASUREMENT ERROR.** Depth error is not always a
 ## rate bias -- a host that stops and restarts, or a queue cap that drops positions, drives it too --
 ## and an unbounded integral would wind up and then take tens of seconds to come back. At 35% a fully
 ## wound trim unwinds in about seven seconds of a 1-tick error and the client still plays out at a
 ## third off the host's rate at worst, which the proportional term alone cannot survive for a moment.
-const PLAYOUT_TRIM := 0.05
+const PLAYOUT_TRIM := 0.15
 const PLAYOUT_TRIM_MAX := 0.35
 ## WHAT A CLOCK THAT HAS LEARNT NOTHING YET TRIMS BY: the measured rate, untouched.
 const PLAYOUT_TRIM_NONE := 1.0

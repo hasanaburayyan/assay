@@ -707,7 +707,15 @@ func test_a_walking_body_is_drawn_between_two_tiles_the_sim_produced() -> bool:
 	for _i in range(12):
 		_tick(screen)
 		OS.delay_msec(RELAY_TICK_MS)
-		screen._refresh_world()
+		# **A FRAME'S WORTH OF TIME, STATED, which is what stops this test being a coin flip**
+		# (ASSA-197; Nerite measured 283/1 then 284/0 on the same tree, 2026-10-05). The playout
+		# clock used to advance by wall clock, so each iteration moved it by the 100 ms delay PLUS
+		# whatever the sim step and the rebuild cost on a loaded box -- 130-140 ms against a host
+		# producing 100 ms, which drains the buffer and pins the body on the newest position it
+		# holds. Then whether twelve ticks produced three steps depended on the machine. Now the
+		# frame's delta is an input, so one fed tick is played out by one tick of frame time and the
+		# verdict is the client's rather than the loop's overhead.
+		screen._refresh_world(float(RELAY_TICK_MS) / 1000.0)
 		var was: Vector2i = screen._was.get(screen._client.player_id, from)
 		var now: Vector2i = screen._seen.get(screen._client.player_id, from)
 		if was != now:
@@ -812,6 +820,22 @@ func _joined(seed_text := "777042") -> Node:
 	screen._client.play_offline()
 	screen._client.feed_offline(welcome)
 	return screen
+
+
+## THE SIM TICK OF EVERY POSITION THE SCREEN IS STILL HOLDING, oldest first -- the queue whose cap
+## decides whether the playout clock can be dragged forward by an arrival (`PLAYOUT_QUEUE`).
+func _queue_ticks(screen: Node) -> Array[int]:
+	var out: Array[int] = []
+	for entry in (screen._pending as Array):
+		out.append(int((entry as Dictionary)["tick"]))
+	return out
+
+
+## HOW FAR ONE DRAWN FRAME OF `delta` MOVES THE PLAYOUT CLOCK, through the real `_process` path.
+func _moved_by_process(screen: Node, delta: float) -> float:
+	var was: float = screen._play_tick
+	screen._process(delta)
+	return float(screen._play_tick) - was
 
 
 func _tick(screen: Node, count := 1) -> void:
@@ -1384,14 +1408,21 @@ func test_a_biased_tick_measurement_does_not_drain_the_playout_buffer() -> bool:
 				+ "holding the depth it is aimed at, it is parked somewhere else")
 				% [float(learnt["depth_mean"]), AssayScene.PLAYOUT_DELAY])
 	# **AND THE CORRECTION COSTS NO DRAWN SPEED, which is the half a buffer number cannot show.** The
-	# clock must play out ticks at the rate the HOST produced them -- 1000/RELAY_TICK_MS a second, a
-	# fixture constant -- or the body walks at the wrong speed for as long as the session lasts.
-	var want := 1000.0 / float(RELAY_TICK_MS)
-	var played := float(learnt["played_rate"])
-	if absf(played / want - 1.0) > 0.02:
-		return _fail(("the clock played out %.3f ticks a second against a host producing %.3f "
-				+ "(%.1f%% of true) over the steady stretch: a body drawn at that rate is walking at "
-				+ "the wrong speed, buffer or no buffer") % [played, want, played / want * 100.0])
+	# clock must advance ticks at the rate the HOST produced them, or the body walks at the wrong
+	# speed for as long as the session lasts.
+	#
+	# **THIS USED TO READ THE CLOCK'S PLAYED-OUT RATE AND THAT ASSERTION COULD NOT FAIL** (found by
+	# sweeping it, 2026-10-05). `playout_at` clamps `at` into the span the queue holds, so a clock
+	# running 2.2x too fast is dragged back to `newest` every frame and its AVERAGE rate comes out at
+	# the host's exactly -- measured 1.000 of true at an estimate 45% short, while 600 frames of the
+	# same run were starved. The quantity that is not laundered by the clamp is what the loop
+	# INTENDED: `rate * trim` over the believed tick length, which is the speed the body is drawn at
+	# whenever the clock is not against a stop. See `_drive_playout`.
+	var intended := float(learnt["intend_mean"])
+	if absf(intended - 1.0) > 0.02:
+		return _fail(("the loop settled on %.1f%% of the host's real tick rate over the steady "
+				+ "stretch: a body drawn at that rate is walking at the wrong speed, buffer or no "
+				+ "buffer") % [intended * 100.0])
 	# A HONEST MEASUREMENT MUST NOT BE MADE WORSE BY ANY OF THIS. The same drive with the estimate
 	# exactly right is the case every number on this item was taken in.
 	var exact := _drive_playout(1.0, true)
@@ -1414,6 +1445,315 @@ func test_a_biased_tick_measurement_does_not_drain_the_playout_buffer() -> bool:
 	return true
 
 
+## **A FRAME MOVES THE BODY BY ITS OWN DELTA, NOT BY THE CLOCK ON THE WALL** (ASSA-197).
+##
+## THE DEFECT THIS EXISTS FOR WAS THE LAST 15% OF THE BAR AND NOTHING COULD SEE IT. The playout
+## clock advanced by the difference between two `Time.get_ticks_msec()` readings taken wherever the
+## clock happened to be advanced from -- a drawn frame, or a bundle landing between two frames. So
+## the distance published in a frame was sized for an interval that frame was not shown for, and the
+## error alternated: a long frame drew a short step and the next short frame drew a long one. In a
+## real window (`tools/motion_speed_probe.gd`, 2026-10-05, seed 14247) the drawn speed was inside
+## Wren's +/-25% on 95% of frames when the frame rate held steady at 90 fps and on 82-86% when frame
+## time varied between 11 and 28 ms, with the out-of-bar frames in alternating too-fast/too-slow
+## pairs. The reading is also quantised to a millisecond, which is 9% of a 90 fps frame and
+## therefore 9% of the body's drawn speed, for nothing.
+##
+## **AND THE ARRIVAL PATH HAD TO STOP ADVANCING WITH IT**, or a bundle landing mid-frame adds its
+## own wall-clock gap on top of the frame's delta and the clock runs fast by the fraction of the
+## frame it landed in. Both halves are asserted here, because either one alone is a different bug.
+func test_a_frame_moves_the_body_by_its_own_delta_and_not_by_the_wall_clock() -> bool:
+	var screen := _joined()
+	if not screen._sim.running():
+		return _fail("no offline world: %s" % screen._sim.fail_reason)
+	screen._show_close_up(true)
+	# **A BUFFER FIRST, AND THE WARM-UP READS THE BOX'S OWN NUMBER BACK SO IT CANNOT DRAIN IT.** The
+	# wall delay has to be real -- it is the only thing `playout_step` has to measure the host's tick
+	# length from -- but how long the box then took to run the loop must not decide how deep the
+	# buffer ends up. So each cycle produces one tick and plays out exactly one tick: the frame delta
+	# handed in is `_tick_gap`, whatever this box just measured it to be.
+	#
+	# TWO EARLIER VERSIONS OF THIS WARM-UP GOT IT WRONG IN BOTH DIRECTIONS, which is why it is spelt
+	# out. Frames of a fixed 0.09 s against a tick the loaded studio Mac measures at 0.16 s drained
+	# the buffer on CI to 0.93 ticks (2026-10-05, run 37254774762); topping it up with three back-to-
+	# back arrivals instead left the clock 5.75 ticks behind with the queue one slot from full, and
+	# the end of this test then failed for a reason that had nothing to do with its subject (see the
+	# premise below). A cycle that is balanced by construction has neither failure mode.
+	for _i in range(12):
+		OS.delay_msec(RELAY_TICK_MS)
+		_tick(screen)
+		# THROUGH `_process`, NOT `_refresh_world`: the hand-down from the engine's delta to the clock
+		# is a step of this path, and a test that skips it cannot see it break. Nerite mutated
+		# `_process`'s `_refresh_world(delta)` to a constant 1/60 on 2026-10-05 and the whole suite
+		# stayed green, because every assertion here called `_refresh_world` directly.
+		screen._process(float(screen._tick_gap))
+	if float(screen._play_tick) < 0.0:
+		return _fail("the playout clock never started over 12 ticks, so there is nothing to measure")
+	if float(screen._play_depth) < 1.0:
+		return _fail(("the buffer holds %.2f ticks after a balanced warm-up, under the one tick this "
+				+ "measurement needs: six frames of play-out would hit the end of the queue and "
+				+ "measure the clamp instead of what moves the clock") % [float(screen._play_depth)])
+	# **THE TWO CLOCKS ARE THEN MADE TO DISAGREE BY 5x**: six frames of 10 ms each is 0.6 of a tick,
+	# while the wall clock between them runs 300 ms, which is 3 ticks. A clock reading the wall
+	# cannot pass this and a clock reading its frames cannot fail it.
+	var before: float = screen._play_tick
+	for _i in range(6):
+		OS.delay_msec(50)
+		screen._process(0.01)
+	var moved: float = float(screen._play_tick) - before
+	# IN THE CLOCK'S OWN UNITS, not the fixture's: `_tick_gap` is the tick length this client has
+	# measured, and a frame of 10 ms is worth 0.01/_tick_gap of a tick whatever the box managed to
+	# deliver. Pinning this to RELAY_TICK_MS would make a slow runner fail a test about a denominator
+	# it has nothing to do with.
+	var want := 6.0 * 0.01 / maxf(float(screen._tick_gap), 0.001)
+	if bool(screen._starved):
+		return _fail(("the clock starved during the measurement (depth %.2f): it ran out of "
+				+ "positions, so how far it advanced says nothing about what moved it")
+				% [float(screen._play_depth)])
+	if absf(moved - want) > 0.25:
+		return _fail(("six 10 ms frames spread over 300 ms of wall clock advanced the playout clock "
+				+ "%.3f ticks. The frames are worth %.3f ticks and the wall clock %.3f: the body is "
+				+ "being moved by %s") % [moved, want,
+				6.0 * 0.05 / maxf(float(screen._tick_gap), 0.001),
+				"the wall clock" if moved > want * 2.0 else "neither of them"])
+	# **AND THE DELTA IS THE ONE THE ENGINE HANDED DOWN, not a constant this path invented.** The
+	# assertion above compares against `_tick_gap` with a tolerance wide enough to swallow both rate
+	# stops, so a `_process` passing a fixed 1/60 can hide inside it at some frame rates. This one
+	# cannot be hidden from: two frames whose deltas differ by 8x must move the clock by 8x. A
+	# constant delta -- of any value -- makes this ratio 1.
+	var small := _moved_by_process(screen, 0.004)
+	var large := _moved_by_process(screen, 0.032)
+	if small <= 0.0:
+		return _fail(("a 4 ms frame moved the playout clock %.4f ticks, so there is no ratio to "
+				+ "measure (depth %.2f)") % [small, float(screen._play_depth)])
+	# 8x, LOOSELY: `rate` is re-derived per frame from a depth the first of these two frames has
+	# already changed, so the two are not scaled copies of each other. +/-25% of 8 still has no
+	# overlap with the 1.0 a constant delta gives.
+	var ratio := large / small
+	if ratio < 6.0 or ratio > 10.0:
+		return _fail(("a 32 ms frame moved the body %.4f ticks and a 4 ms frame %.4f: a ratio of "
+				+ "%.2f where the deltas differ by 8x. The clock is being stepped by something "
+				+ "other than the delta `_process` was handed") % [large, small, ratio])
+	# **THE PREMISE OF THE LAST ASSERTION, WHICH IT DID NOT HAVE AND NEEDED** (ASSA-197, 2026-10-05).
+	# `_pending` is capped at `PLAYOUT_QUEUE` and an arrival pops the oldest entry to make room. If
+	# the clock is further behind than that cap, the position it is drawing FROM is the one thrown
+	# away, and `playout_at`'s ASSA-119 clamp drags the clock up to the oldest position still held.
+	# That is a real forward jump of the body -- `_drive_playout` counts it as `dragged` and the sweep
+	# below requires zero of them -- but it is NOT a bundle moving the clock, and the assertion below
+	# would report it as one. Measured on the version of this fixture that topped the buffer up with
+	# three back-to-back arrivals: the clock sat 5.75 ticks behind with 7 of 8 slots full, two
+	# arrivals evicted tick 6, and the clock went 6.254 -> 7.000 with `starved` false, `depth` 7.00
+	# and no flag of any kind saying it had happened.
+	var queue := _queue_ticks(screen)
+	var cap: int = int((screen.get_script() as GDScript).get_script_constant_map()["PLAYOUT_QUEUE"])
+	if queue.size() + 2 > cap:
+		return _fail(("the queue holds %d of its %d slots (%s) with the clock %.2f ticks behind, so "
+				+ "the two arrivals below would evict the position being drawn from and the clamp "
+				+ "would drag the clock forward. That is a dragged frame, not a bundle moving the "
+				+ "clock, and this fixture is supposed to leave room")
+				% [queue.size(), cap, str(queue), float(screen._play_depth)])
+	# AND A BUNDLE LANDING IS NOT A FRAME. It enqueues a position; it does not move the body.
+	var held: float = screen._play_tick
+	_tick(screen)
+	OS.delay_msec(30)
+	_tick(screen)
+	if not is_equal_approx(float(screen._play_tick), held):
+		return _fail(("two bundles landing moved the playout clock from %.3f to %.3f without a "
+				+ "frame being drawn. Then a bundle that lands mid-frame adds its own wall-clock "
+				+ "gap on top of that frame's delta and the clock runs fast")
+				% [held, float(screen._play_tick)])
+	screen.queue_free()
+	return true
+
+
+## **HOW WRONG THE CLIENT'S IDEA OF A TICK MAY BE BEFORE A PLAYER SEES IT** (ASSA-197; Wren asked
+## for this test ahead of the three window runs, and it is the only thing on this item that speaks
+## about a machine none of us owns).
+##
+## The board plays on Windows. `playout_step` measures the host's tick length from arrival instants,
+## and on Windows the relay child's sleep and the loopback socket sit on a ~15.6 ms timer, so the
+## measurement can be biased there in a way no probe of ours can see. This test asks the arithmetic
+## instead: how wrong may that measurement be before the body holds still or jumps?
+##
+## **MEASURED HERE, 2026-10-05 (and printed when it passes, because it is the number the demo
+## request quotes):** zero held frames and zero jumps from an estimate **0.58x to 1.49x of the true
+## tick length**, with the buffer at its target and the body's drawn speed inside +/-7% of true
+## every frame. Wren asked for 0.75-1.25; the mechanism is wider than that on both sides.
+##
+## **AND THE EDGES ARE NOT A COINCIDENCE, WHICH IS WHY THEY ARE ASSERTED AGAINST THE CONSTANTS.**
+## Depth rests only where the clock advances at the host's real rate, which needs
+## `rate * trim = bias`. `rate` is clamped to 1 +/- `PLAYOUT_NUDGE` and `trim` to
+## 1 +/- `PLAYOUT_TRIM_MAX`, so the widest bias the loop can answer is their product -- 0.585 and
+## 1.485 with today's constants. The search below finds the real edge in 1% steps and requires it to
+## sit within 0.05 of that product: if someone widens a clamp, the tolerance moves with it and this
+## test says so with both numbers.
+func test_the_playout_clock_states_how_wrong_a_tick_measurement_may_be() -> bool:
+	# **THE PREMISE, FIRST.** The sweep is only evidence if the swept range is a range the clock
+	# needs its integral for: with the trim discarded every frame, both ends must break, and they
+	# must break in the two different ways (see `_drive_playout`).
+	var low_control := _drive_playout(0.75, false, 40.0, 20.0)
+	var high_control := _drive_playout(1.25, false, 40.0, 20.0)
+	if int(low_control["starved"]) == 0 or int(high_control["dragged"]) == 0:
+		return _fail(("THE CONTROL HELD: with the integral discarded, an estimate 25% short starved "
+				+ "%d frames and one 25% long dragged the body %d times. Both must be non-zero or "
+				+ "the sweep below is a sweep of a range the proportional term covers on its own, "
+				+ "and it proves nothing about the trim")
+				% [int(low_control["starved"]), int(high_control["dragged"])])
+	var biases: Array[float] = []
+	var bias := 0.75
+	while bias <= 1.2501:
+		biases.append(bias)
+		bias += 0.05
+	for b in biases:
+		var steady := _drive_playout(b, true, 40.0, 20.0)
+		if int(steady["starved"]) > 0 or int(steady["dragged"]) > 0:
+			return _fail(("an estimate at %.0f%% of the true tick length held the body %d times and "
+					+ "jumped it %d times after settling (depth %.2f-%.2f, trim %.3f): the bar on "
+					+ "this item is zero of either") % [b * 100.0, int(steady["starved"]),
+					int(steady["dragged"]), float(steady["depth_min"]), float(steady["depth_max"]),
+					float(steady["trim"])])
+		if absf(float(steady["depth_mean"]) - AssayScene.PLAYOUT_DELAY) > 0.6:
+			return _fail(("at %.0f%% of true the buffer settled %.2f ticks deep against a target of "
+					+ "%.1f: the loop is parked somewhere other than where it is aimed, so the next "
+					+ "late bundle is felt") % [b * 100.0, float(steady["depth_mean"]),
+					AssayScene.PLAYOUT_DELAY])
+		if absf(float(steady["intend_mean"]) - 1.0) > 0.02:
+			return _fail(("at %.0f%% of true the loop settled on %.1f%% of the host's rate: the body "
+					+ "walks at that speed for the whole session")
+					% [b * 100.0, float(steady["intend_mean"]) * 100.0])
+		# AND THE BAR ITSELF, per frame, on the quantity the window probe reads off the screen.
+		if float(steady["ratio_min"]) < 1.0 - 0.25 or float(steady["ratio_max"]) > 1.0 + 0.25:
+			return _fail(("at %.0f%% of true the drawn speed ranged %.3f-%.3f of true frame by "
+					+ "frame, outside the +/-25%% this item is gated on")
+					% [b * 100.0, float(steady["ratio_min"]), float(steady["ratio_max"])])
+		# **THE COLD START IS JUDGED TOO, AND IT IS THE HALF THAT WAS RED ON MAIN.** The sweep above
+		# skips the first 20 s; a player does not. Judged from the first frame the clock runs, an
+		# estimate 25% short used to hold the body 13 times while the trim wound up (`PLAYOUT_TRIM`
+		# 0.05, 2026-10-04). That is a session's first second, which is the one the board feels.
+		var cold := _drive_playout(b, true, 40.0, 0.0)
+		if int(cold["starved"]) > 0 or int(cold["dragged"]) > 0:
+			return _fail(("FROM A COLD START at %.0f%% of true the body held still %d times and "
+					+ "jumped %d times while the integral wound up (90%% of the correction took "
+					+ "%.1f s, buffer down to %.2f ticks): the first seconds of a session are what "
+					+ "a player judges") % [b * 100.0, int(cold["starved"]), int(cold["dragged"]),
+					float(cold["settle90"]), float(cold["wind_depth"])])
+	# **NOT A FUNCTION OF THE FRAME RATE.** The integral learns per second (`dt` is in it) rather
+	# than per frame, so the same host must be tracked the same way on a 30 Hz laptop and a 144 Hz
+	# PC. Both ends of the swept range, both rates.
+	for fps in [30.0, 144.0]:
+		for b in [0.75, 1.25]:
+			var paced := _drive_playout(float(b), true, 40.0, 20.0, AssayScene.PLAYOUT_TRIM_NONE,
+					float(fps))
+			if int(paced["starved"]) > 0 or int(paced["dragged"]) > 0:
+				return _fail(("at %.0f fps an estimate at %.0f%% of true held the body %d times and "
+						+ "jumped it %d times, where the same estimate is clean at 90 fps: the loop "
+						+ "is learning per frame instead of per second")
+						% [float(fps), float(b) * 100.0, int(paced["starved"]),
+						int(paced["dragged"])])
+	var predicted_low := (1.0 - AssayScene.PLAYOUT_NUDGE) * (1.0 - AssayScene.PLAYOUT_TRIM_MAX)
+	var predicted_high := (1.0 + AssayScene.PLAYOUT_NUDGE) * (1.0 + AssayScene.PLAYOUT_TRIM_MAX)
+	var edge_low := _playout_edge(predicted_low, -1.0)
+	var edge_high := _playout_edge(predicted_high, 1.0)
+	if edge_low < 0.0 or edge_high < 0.0:
+		return _fail(("the search for the clock's breaking point did not find one within 8% of the "
+				+ "%.3f-%.3f the clamps predict: either the clamps are no longer what bounds this, "
+				+ "or the fixture has stopped being able to break the clock at all")
+				% [predicted_low, predicted_high])
+	if absf(edge_low - predicted_low) > 0.05 or absf(edge_high - predicted_high) > 0.05:
+		return _fail(("the clock breaks at %.2fx and %.2fx the true tick length, where the clamps "
+				+ "(rate 1+/-%.2f, trim 1+/-%.2f) predict %.3f and %.3f. Something other than the "
+				+ "two clamps is bounding the tolerance, so the sentence this test exists to say -- "
+				+ "how wrong a PC's tick measurement may be -- is no longer derivable from them")
+				% [edge_low, edge_high, AssayScene.PLAYOUT_NUDGE, AssayScene.PLAYOUT_TRIM_MAX,
+				predicted_low, predicted_high])
+	# THE EDGES ARE THE FIRST BIAS THAT BROKE, so what the clock HOLDS is one 1% step inside them.
+	print(("  the playout clock holds a tick-rate misread from %.2fx to %.2fx of true (%.0f%% short "
+			+ "to %.0f%% long) with no held and no jumped frame; it first breaks at %.2fx (holds "
+			+ "still) and %.2fx (jumps), and the clamps predict %.2fx/%.2fx")
+			% [edge_low + 0.01, edge_high - 0.01, (1.0 - edge_low - 0.01) * 100.0,
+			(edge_high - 0.01 - 1.0) * 100.0, edge_low, edge_high, predicted_low, predicted_high])
+	return true
+
+
+## THE FIRST MISREAD THAT BREAKS THE CLOCK, searched in 1% steps from inside the range the clamps
+## predict outwards. Returns -1.0 if nothing broke within 8%, which is a failure of the fixture
+## rather than a wider tolerance: a loop that cannot be broken by a 2x misread is not being driven.
+func _playout_edge(predicted: float, direction: float) -> float:
+	var bias := predicted - direction * 0.06
+	for _step in range(14):
+		var run := _drive_playout(bias, true, 40.0, 20.0)
+		if int(run["starved"]) > 0 or int(run["dragged"]) > 0:
+			return bias
+		bias += direction * 0.01
+	return -1.0
+
+
+## **WHAT THE BODY DOES WHILE THE INTEGRAL IS STILL LEARNING** (ASSA-197, Wren's third ask), at the
+## error this Mac actually produced: the client measured 89.8 ms against a host sending every
+## 104.2 ms, 86% of true, before the pairing fix. A clock that ends up right after twenty seconds of
+## winding is still wrong for twenty seconds, and the first seconds of a walk are what a player
+## judges.
+##
+## **MEASURED: nothing visible.** 90% of the correction is in by 4.3 s, no held frame, no jump, the
+## buffer never shallower than 1.4 of its 2.5 ticks, and the drawn speed inside 0.94-1.07 of true
+## for the whole wind-up. **And it is paid once per session, not once per walk:** the trim is a
+## member of `main.gd` written only from this function's output, so the second walk starts where the
+## first left off -- asserted below on the source, because the bias belongs to the platform and a
+## reset hidden in a join or a respawn would put the transient back on every walk.
+func test_the_playout_trim_settles_from_a_cold_start_without_holding_the_body() -> bool:
+	var bias := 0.86
+	var cold := _drive_playout(bias, true, 40.0, 0.0)
+	# PREMISE: there has to be something to learn, or every assertion below passes on a clock that
+	# never moved its trim at all.
+	if absf(float(cold["trim"]) - 1.0) < 0.10:
+		return _fail(("THE TRIM BARELY MOVED (%.3f) at an estimate 14%% short, so this test is not "
+				+ "watching an integral wind up and its numbers mean nothing")
+				% [float(cold["trim"])])
+	if int(cold["starved"]) > 0 or int(cold["dragged"]) > 0:
+		return _fail(("winding up from a 14%% error held the body %d times and jumped it %d times "
+				+ "(90%% of the correction took %.1f s): the bar on this item is zero")
+				% [int(cold["starved"]), int(cold["dragged"]), float(cold["settle90"])])
+	if float(cold["ratio_min"]) < 0.85 or float(cold["ratio_max"]) > 1.15:
+		return _fail(("while the trim wound up the body was drawn at %.3f-%.3f of true speed: the "
+				+ "transient is visible, and it is the first seconds of every session")
+				% [float(cold["ratio_min"]), float(cold["ratio_max"])])
+	if float(cold["settle90"]) > 8.0:
+		return _fail(("the integral took %.1f s to cover 90%% of a 14%% error (and %.1f s to come "
+				+ "within 1%%): the buffer runs shallow for that whole stretch, where a host stall "
+				+ "has less to absorb it") % [float(cold["settle90"]), float(cold["settle_s"])])
+	if float(cold["wind_depth"]) < 0.75:
+		return _fail(("the buffer fell to %.2f ticks during the first five seconds while the trim "
+				+ "learnt: that is a quarter of a tick from holding the body still, and the next "
+				+ "late bundle spends it") % [float(cold["wind_depth"])])
+	# **A WARM START, which is what every walk after the first one is.** Handed the trim the cold run
+	# settled on, the clock has no transient at all: judged from its very first frame.
+	var warm := _drive_playout(bias, true, 12.0, 0.0, float(cold["trim"]))
+	if int(warm["starved"]) > 0 or int(warm["dragged"]) > 0:
+		return _fail(("a clock STARTED at the settled trim %.3f still held the body %d times and "
+				+ "jumped it %d times: then the wind-up is not what the first seconds cost and the "
+				+ "cause is elsewhere") % [float(cold["trim"]), int(warm["starved"]),
+				int(warm["dragged"])])
+	if float(warm["ratio_min"]) < 0.88 or float(warm["ratio_max"]) > 1.12:
+		return _fail(("a warm clock drew the body at %.3f-%.3f of true from its first frame: the "
+				+ "steady state is not steady") % [float(warm["ratio_min"]),
+				float(warm["ratio_max"])])
+	# **AND THE TRIM IS SESSION STATE.** One assignment in `main.gd` and it is the loop's own output;
+	# a `_play_trim = PLAYOUT_TRIM_NONE` anywhere -- a join, a respawn, a new walk -- would put the
+	# wind-up above back on every walk, and no run of this fixture could see it.
+	var source := FileAccess.get_file_as_string("res://scripts/main.gd")
+	if source.is_empty():
+		return _fail("could not read res://scripts/main.gd to check how the trim is carried")
+	var writes: Array[String] = []
+	for line in source.split("\n"):
+		var text := String(line).strip_edges()
+		if text.begins_with("_play_trim =") or text.begins_with("_play_trim:"):
+			writes.append(text)
+	if writes.size() != 1 or writes[0] != "_play_trim = float(cursor[\"trim\"])":
+		return _fail(("the playout trim is written %d times in main.gd (%s). It must be written "
+				+ "once, from the loop's own output: anything that resets it hands every walk the "
+				+ "wind-up this test just measured") % [writes.size(), ", ".join(writes)])
+	return true
+
+
 ## DRIVE `playout_at` AGAINST A SYNTHETIC HOST: `bias` is how long the clock BELIEVES a tick is as a
 ## fraction of how long it really is, and `learn` is whether the integral term is handed back.
 ##
@@ -1421,12 +1761,26 @@ func test_a_biased_tick_measurement_does_not_drain_the_playout_buffer() -> bool:
 ## this is the same arithmetic the window runs with none of the load that makes a probe unrepeatable.
 ## The queue cap and the dropping of positions the clock has passed are `main.gd`'s, copied here
 ## because they decide what `ticks` holds and therefore what depth means.
-func _drive_playout(bias: float, learn: bool) -> Dictionary:
+##
+## **TWO FAILURES, NOT ONE, AND A COUNT OF STARVED FRAMES ONLY SEES THE FIRST.** A clock that runs
+## too fast outruns its data and the body HOLDS (`starved`). A clock that runs too slow falls behind
+## until the queue cap evicts history the clock has not played yet, and then `playout_at`'s own
+## `clampf(at, oldest, newest)` DRAGS the body forward to catch the tail -- a jump, from a loop that
+## never starved once. `dragged` counts a frame whose free-running advance landed behind `oldest`,
+## which is the mirror of `starved` and the only way the slow side is visible at all.
+##
+## `judge_from` is when the statistics start, so a caller can ask about the steady state (the default
+## skips the buffer filling and the integral learning) or about the cold start (0.0, which judges
+## every frame from the first one the clock runs). `trim_in` is a WARM START: the trim a previous
+## session settled on, because that is what the real client carries (`main.gd::_play_trim` is a
+## member written only from this function's own output).
+func _drive_playout(bias: float, learn: bool, seconds := 12.0, judge_from := 3.0,
+		trim_in := AssayScene.PLAYOUT_TRIM_NONE, fps := 90.0) -> Dictionary:
 	var tick := float(RELAY_TICK_MS) / 1000.0
-	var frame := 1.0 / 90.0
+	var frame := 1.0 / fps
 	var delay: float = AssayScene.PLAYOUT_DELAY
 	var play: float = AssayScene.PLAYOUT_UNSTARTED
-	var trim: float = AssayScene.PLAYOUT_TRIM_NONE
+	var trim := trim_in
 	var ticks: Array[int] = []
 	var next_tick := 0.0
 	var tick_no := 0
@@ -1435,14 +1789,23 @@ func _drive_playout(bias: float, learn: bool) -> Dictionary:
 	# is what `main.gd` stamps. The loop's error is measured against it (see `playout_at`).
 	var landed := 0.0
 	var starved := 0
+	var dragged := 0
 	var frames := 0
 	var depth_min := INF
 	var depth_max := -INF
 	var depth_sum := 0.0
+	var wind_depth := INF
+	var intend_min := INF
+	var intend_max := -INF
+	var intend_sum := 0.0
+	var ratio_min := INF
+	var ratio_max := -INF
 	var ripple := 0.0
-	var steady_from := 0.0
-	var steady_play := 0.0
-	while now < 12.0:
+	var play_prev := -1.0
+	var started_at := -1.0
+	var trim_path: Array[float] = []
+	var trim_when: Array[float] = []
+	while now < seconds:
 		now += frame
 		while next_tick <= now:
 			ticks.append(tick_no)
@@ -1451,19 +1814,33 @@ func _drive_playout(bias: float, learn: bool) -> Dictionary:
 			landed = now
 			while ticks.size() > 8:
 				ticks.pop_front()
+		var oldest := float(ticks[0]) if not ticks.is_empty() else 0.0
+		var was := play
 		var cursor := AssayScene.playout_at(play, ticks, frame, tick * bias, delay, now - landed, trim)
 		play = float(cursor["play_tick"])
 		if learn:
 			trim = float(cursor["trim"])
 		for _i in range(int(cursor["index"])):
 			ticks.pop_front()
-		# THE FIRST THREE SECONDS ARE NOT JUDGED: the clock is waiting for its buffer and then the
-		# integral is still learning, and a transient is not what this test is about.
-		if now < 3.0:
+		if was >= 0.0:
+			var free := was + frame / (tick * bias) * float(cursor["rate"]) * float(cursor["trim"])
+			if free < oldest - 1e-9:
+				dragged += 1
+		if play >= 0.0 and started_at < 0.0:
+			started_at = now
+		# HOW FAR THE CLOCK ACTUALLY MOVED THIS FRAME, as a fraction of the host's true tick rate:
+		# the drawn speed of a body walking one tile a tick, which is the bar on ASSA-197.
+		var ratio := -1.0
+		if play >= 0.0 and play_prev >= 0.0:
+			ratio = (play - play_prev) / frame * tick
+		play_prev = play
+		if play >= 0.0:
+			trim_path.append(trim)
+			trim_when.append(now)
+			if now - started_at < 5.0:
+				wind_depth = minf(wind_depth, float(cursor["depth"]))
+		if now < judge_from or play < 0.0:
 			continue
-		if steady_from <= 0.0:
-			steady_from = now
-			steady_play = play
 		frames += 1
 		if bool(cursor["starved"]):
 			starved += 1
@@ -1471,16 +1848,45 @@ func _drive_playout(bias: float, learn: bool) -> Dictionary:
 		depth_min = minf(depth_min, depth)
 		depth_max = maxf(depth_max, depth)
 		depth_sum += depth
+		# WHAT THE LOOP INTENDED, which the clamp launders out of any measurement of what it did:
+		# `rate * trim` believed ticks a second over `bias` real ones. See the test above.
+		var intend := float(cursor["rate"]) * float(cursor["trim"]) / bias
+		intend_min = minf(intend_min, intend)
+		intend_max = maxf(intend_max, intend)
+		intend_sum += intend
+		if ratio >= 0.0:
+			ratio_min = minf(ratio_min, ratio)
+			ratio_max = maxf(ratio_max, ratio)
 		ripple = maxf(ripple, absf(float(cursor["rate"]) - 1.0))
+	# **WHEN THE INTEGRAL ARRIVED**, two ways, because one number hides the shape: `settle_s` is the
+	# last instant it was more than 1% from where it ends (a slow tail keeps this high), `settle90`
+	# the first instant it had covered 90% of the correction it eventually makes.
+	var settle := 0.0
+	var settle90 := 0.0
+	var need := absf(trim - 1.0) * 0.9
+	for i in trim_path.size():
+		if absf(trim_path[i] - trim) > 0.01:
+			settle = trim_when[i] - started_at
+		if absf(trim_path[i] - 1.0) < need:
+			settle90 = trim_when[i] - started_at
 	return {
 		"starved": starved,
+		"dragged": dragged,
 		"frames": frames,
 		"depth_min": depth_min,
 		"depth_max": depth_max,
 		"depth_mean": depth_sum / maxf(float(frames), 1.0),
+		"wind_depth": wind_depth if wind_depth < INF else -1.0,
+		"intend_min": intend_min if intend_min < INF else -1.0,
+		"intend_max": intend_max if intend_max > -INF else -1.0,
+		"intend_mean": intend_sum / maxf(float(frames), 1.0),
+		"ratio_min": ratio_min if ratio_min < INF else -1.0,
+		"ratio_max": ratio_max if ratio_max > -INF else -1.0,
 		"ripple": ripple,
 		"trim": trim,
-		"played_rate": (play - steady_play) / maxf(now - steady_from, 0.001),
+		"trim_in": trim_in,
+		"settle_s": settle,
+		"settle90": settle90,
 	}
 
 

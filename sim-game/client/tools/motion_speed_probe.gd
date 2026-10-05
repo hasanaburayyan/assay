@@ -36,6 +36,16 @@ const TICK_SECONDS := 0.1
 const TRUE_SPEED := 1.0 / TICK_SECONDS
 ## Wren's bar.
 const TOLERANCE := 0.25
+## **WHEN THE HOST ITSELF IS THE CAUSE** (Wren's ruling, ASSA-197, 2026-10-05 01:10Z). The bar's
+## reference is a CONSTANT 10.00 tiles/s and stays constant, because that is what the eye expects;
+## but `sim-relay` is a child process on the same Mac as six agents and it does not hold 10 tps
+## under that load -- measured tick median 96-99 ms, p95 190-232 ms, 11-14 stalls over 150 ms in
+## every 8-second run. A client that follows a stalled host faithfully is drawn outside a constant
+## bar through no fault of its own. So every frame that fails is charged to the HOST (a produced
+## tick gap over this threshold lies inside the buffer window the frame drew from) or to the CLIENT,
+## and the gate is ZERO CLIENT frames. Host-stalled frames are counted and reported with the stall
+## that caused them; they are ASSA-208, not a pass.
+const STALL_SECONDS := 0.15
 ## Both ends of the walk are excluded: starting and stopping are not the steady state under test.
 const EDGE_TRIM := 0.15
 const WALK := 22
@@ -100,6 +110,10 @@ var _trim: Array[float] = []
 var _advances: Array[int] = []
 ## One entry per moving frame that failed the bar, with the parts of its own verdict.
 var _outliers: Array[Dictionary] = []
+## **EVERY STRETCH THE HOST TOOK OVER `STALL_SECONDS` A TICK TO PRODUCE**, with the ticks it covers,
+## so a failing frame can be charged to the host or to the client (Wren's ruling). Built once per
+## report from the arrivals, collapsed per socket drain exactly as `_host_ticks` does.
+var _stalls: Array[Dictionary] = []
 
 
 func _initialize() -> void:
@@ -109,6 +123,12 @@ func _initialize() -> void:
 	_label = String(argv[2]) if argv.size() > 2 else "run"
 	if DisplayServer.get_name() == "headless":
 		print("FAIL  headless: this probe measures frame pacing and there is none here")
+		# **`_done` FIRST, BECAUSE `quit()` INSIDE `_initialize` DOES NOT STOP `_process`.** Measured
+		# 2026-10-04: this refusal printed, `quit(2)` was requested, `_process` ran anyway against a
+		# null `_screen`, crashed in `_find_button`, printed "FAIL no Play solo button" -- and the
+		# process exited **0**, so the refusal reported success twice over. The guard that is actually
+		# honoured is the one `_process` reads on its own first line.
+		_done = true
 		quit(2)
 		return
 	_screen = load("res://scenes/main.tscn").instantiate()
@@ -174,16 +194,22 @@ func _process(delta: float) -> bool:
 	_sample(delta, now)
 	if now - _started_at > _seconds:
 		_report()
-		_stop()
+		# THE ONLY PATH THAT EARNED A ZERO.
+		_stop(0)
 		return true
 	return false
 
 
-func _stop() -> void:
+## **THE EXIT CODE IS AN ARGUMENT, because this function was reporting success for a probe that had
+## given up** (ASSA-182). Every FAIL path here -- the ceiling, no Play solo button, no world after 30 s
+## -- ended in `quit(0)`, so a caller reading the exit code (`gh` step, `until` loop, `&&` chain) saw a
+## pass and only a reader of the log saw the word FAIL. Found by the ceiling audit, which asked whether
+## reaching a ceiling ends the run LOUDLY and not merely whether it ends it.
+func _stop(code: int = 1) -> void:
 	_done = true
 	if _screen != null and _screen.has_method("stop_solo_relay"):
 		_screen.stop_solo_relay()
-	quit(0)
+	quit(code)
 
 
 func _find_button(node: Node, label: String) -> Button:
@@ -335,13 +361,22 @@ func _report() -> void:
 	var dry: Array[float] = []
 	var within := 0
 	var within_drawn := 0
+	var within_played := 0
 	var within_wall := 0
+	# **HOW MANY FRAMES COULD HAVE BEEN EXCUSED, which is the denominator of the whole
+	# host-versus-client split and the number that says how much the split is worth.** A run where
+	# nearly every frame has a stall inside its buffer window cannot distinguish a clean client from
+	# a broken one, however few CLIENT frames it reports.
+	var exposed := 0
 	var tile_px: float = AssayScene.TILE_PX
 	var offset: Vector2 = _drawn[from] - _foot[from]
+	_stalls = _host_stalls()
 	for i in range(from + 1, to + 1):
 		var dt: float = _dt[i]
 		if dt <= 0.0:
 			continue
+		if not _stall_behind(i).is_empty():
+			exposed += 1
 		# **A DRY FRAME IS COUNTED AND EXCLUDED, on Maren's wording (ASSA-197).** The mechanism
 		# permits a hold -- when the buffer runs out the only honest thing to draw is the newest
 		# position the sim produced -- and box 1 forbids a 0-speed frame. Both stand: a held frame is
@@ -349,26 +384,45 @@ func _report() -> void:
 		# on it is ZERO of them, reported with its duration.
 		if _starved[i]:
 			dry.append(dt * 1000.0)
+			var held_stall := _stall_behind(i)
+			_outliers.append({"frame": i, "dry": true, "speed": 0.0, "moved": 0.0,
+					"screen_dt": 0.0, "probe_dt": dt, "over_played": 0.0,
+					"advances": _advances[i] - _advances[i - 1], "depth": _depth[i],
+					"stall": held_stall})
 			continue
-		# **THE RECTANGLE THAT WAS BLITTED, OVER THE SCREEN'S OWN FRAME TIME.** This is the verdict
-		# column. `probe dt` below is the same distance over this script's `delta`, kept so the
-		# phase error between the two samplers stays visible rather than being tidied away.
+		# **THE RECTANGLE THAT WAS BLITTED, OVER THE FRAME'S OWN DELTA.** This is the verdict column
+		# and the denominator is the one the bar has named since 19:45Z on 2026-10-04: "dt is the
+		# frame's own dt".
+		#
+		# **IT USED TO DIVIDE BY `_played_at` AND THAT WAS THE INSTRUMENT, NOT THE BAR** (Wren's
+		# ruling 3, 2026-10-05). `_played_at` is a `Time.get_ticks_msec()` reading -- quantised to a
+		# millisecond -- written by TWO call sites, a drawn frame and a bundle landing, so on a frame
+		# where a bundle landed mid-way the movement of a whole frame was divided by part of its own
+		# interval. On run 5 of six, 4 of the 6 worst frames read INSIDE the bar on the frame's own
+		# delta. The old column is still computed and printed beside this one, ONCE, so the
+		# side-by-side is on the record; it does not decide anything.
 		var moved := (_drawn[i] - _drawn[i - 1]).length() / tile_px
-		var screen_dt: float = _screen_at[i] - _screen_at[i - 1]
-		if screen_dt > 0.0:
-			drawn.append(moved / screen_dt)
-			if absf(drawn[drawn.size() - 1] - TRUE_SPEED) <= TRUE_SPEED * TOLERANCE:
-				within_drawn += 1
-			else:
-				# **EVERY FRAME OUTSIDE THE BAR IS NAMED WITH WHAT ITS DENOMINATOR WAS MADE OF**, which
-				# is the difference between a finding and a plea. `advances` is how many times the
-				# clock stepped between these two samples: two means a bundle landed mid-frame and
-				# moved `_played_at` without publishing a rectangle, so this frame's movement is being
-				# divided by part of its own interval.
-				_outliers.append({"frame": i, "speed": moved / screen_dt, "moved": moved,
-						"screen_dt": screen_dt, "probe_dt": dt, "over_probe": moved / dt,
-						"advances": _advances[i] - _advances[i - 1], "depth": _depth[i]})
-		probe.append(moved / dt)
+		var speed_drawn := moved / dt
+		drawn.append(speed_drawn)
+		if absf(speed_drawn - TRUE_SPEED) <= TRUE_SPEED * TOLERANCE:
+			within_drawn += 1
+		else:
+			# **EVERY FRAME OUTSIDE THE BAR IS NAMED WITH WHAT ITS DENOMINATOR WAS MADE OF AND WHO IS
+			# CHARGED FOR IT**, which is the difference between a finding and a plea. `advances` is
+			# how many times the clock stepped between these two samples: two means a bundle landed
+			# mid-frame and moved `_played_at` without publishing a rectangle, which is what used to
+			# make the old column short.
+			_outliers.append({"frame": i, "dry": false, "speed": speed_drawn, "moved": moved,
+					"screen_dt": _screen_at[i] - _screen_at[i - 1], "probe_dt": dt,
+					"over_played": 0.0 if _screen_at[i] <= _screen_at[i - 1]
+							else moved / (_screen_at[i] - _screen_at[i - 1]),
+					"advances": _advances[i] - _advances[i - 1], "depth": _depth[i],
+					"stall": _stall_behind(i)})
+		var played_dt: float = _screen_at[i] - _screen_at[i - 1]
+		if played_dt > 0.0:
+			probe.append(moved / played_dt)
+			if absf(moved / played_dt - TRUE_SPEED) <= TRUE_SPEED * TOLERANCE:
+				within_played += 1
 		# **BOX 3, MEASURED RATHER THAN BUILT.** The camera is on the drawn position (`main.gd`) and
 		# the foot mark is drawn from it, so the body and its own mark must keep a fixed offset. Any
 		# deviation is the body and the camera disagreeing about where you are -- Maren measured 34.2
@@ -395,7 +449,8 @@ func _report() -> void:
 	print("  true speed %.2f tiles/s (one tile per %.0f ms tick), bar is +/-%d%%"
 			% [TRUE_SPEED, TICK_SECONDS * 1000.0, int(TOLERANCE * 100.0)])
 	_say("DRAWN tiles/s", _percentiles(drawn))
-	_say("drawn/probe dt", _percentiles(probe))
+	# THE SUPERSEDED COLUMN, printed once for the side-by-side Wren asked for and then gone.
+	_say("(was) /played", _percentiles(probe))
 	_say("body-vs-mark px", _percentiles(apart))
 	_say("lerp tiles/s", _percentiles(body))
 	_say("lerp (wall)", _percentiles(wall))
@@ -409,16 +464,18 @@ func _report() -> void:
 	# competing for the same cores. So the host's own tick length is stated beside the body's speed,
 	# and a stall is counted rather than left inside a percentage.
 	_say("host tick ms", _percentiles(_scaled(_host_ticks(), 1000.0)))
-	var stalls := 0
+	# ONE DEFINITION OF A STALL decides both this count and which frames are charged to the host:
+	# `_stalls`, built by `_host_stalls()`. Two thresholds would be two bars.
 	var worst_tick := 0.0
-	for seconds in _host_ticks():
-		if seconds > TICK_SECONDS * 1.5:
-			stalls += 1
-			worst_tick = maxf(worst_tick, seconds)
-	if stalls > 0:
+	var worst_silence := 0.0
+	for stall: Dictionary in _stalls:
+		worst_tick = maxf(worst_tick, float(stall["ms"]))
+		worst_silence = maxf(worst_silence, float(stall["silence"]))
+	if not _stalls.is_empty():
 		print(("  the HOST stalled %d times (a tick it took over %.0f ms to produce, longest %.0f "
-				+ "ms): production the clock can only answer by slowing down or running dry")
-				% [stalls, TICK_SECONDS * 1500.0, worst_tick * 1000.0])
+				+ "ms, longest silence %.0f ms): production the clock can only answer by slowing "
+				+ "down or running dry")
+				% [_stalls.size(), STALL_SECONDS * 1000.0, worst_tick, worst_silence])
 	# **WHAT A FROZEN FRAME ACTUALLY WAS.** A drawn speed of zero has three different causes and they
 	# need different fixes: the clock ran out of produced positions (starved), the sim produced the
 	# same position twice (the body is not walking every tick), or the clock advanced but the segment
@@ -479,16 +536,85 @@ func _report() -> void:
 			float(ms.get("median", 0.0)), float(ms.get("p95", 0.0)),
 			1000.0 / maxf(float(ms.get("median", 0.0)), 1e-6), _label]
 	var share := 0.0 if drawn.is_empty() else float(within_drawn) / float(drawn.size())
+	# **EVERY FAILING FRAME CHARGED TO THE HOST OR TO THE CLIENT** (Wren's ruling 2). A frame is the
+	# host's when a stall of its own production lies inside the buffer window the frame drew from;
+	# anything else is ours. The gate is zero CLIENT frames, dry ones included.
+	var host_out := 0
+	var client_out := 0
+	var host_dry := 0
+	var client_dry := 0
 	if not _outliers.is_empty():
-		print("  THE FRAMES OUTSIDE THE BAR, one line each (see `_outliers`):")
-		for entry: Dictionary in _outliers:
-			print(("    frame %4d  %6.2f tiles/s  moved %.4f tiles  screen_dt %5.1f ms  "
-					+ "probe_dt %5.1f ms  = %6.2f tiles/s over probe_dt  clock advances %d  depth %.2f")
+		print("  THE FRAMES THAT FAILED, one line each, charged to the HOST or to the CLIENT:")
+	for entry: Dictionary in _outliers:
+		var stall: Dictionary = entry["stall"]
+		var is_dry: bool = bool(entry["dry"])
+		var blame := "CLIENT"
+		if stall.is_empty():
+			if is_dry:
+				client_dry += 1
+			else:
+				client_out += 1
+		else:
+			blame = "HOST (%.0f ms/tick over ticks %d-%d, silence %.0f ms)" % [float(stall["ms"]),
+					int(stall["from_tick"]), int(stall["to_tick"]), float(stall["silence"])]
+			if is_dry:
+				host_dry += 1
+			else:
+				host_out += 1
+		if is_dry:
+			print("    frame %4d  DRY, held %5.1f ms  depth %.2f  %s"
+					% [int(entry["frame"]), float(entry["probe_dt"]) * 1000.0,
+					float(entry["depth"]), blame])
+		else:
+			print(("    frame %4d  %6.2f tiles/s  moved %.4f tiles  dt %5.1f ms  (was %6.2f over "
+					+ "played_at %5.1f ms)  clock advances %d  depth %.2f  %s")
 					% [int(entry["frame"]), float(entry["speed"]), float(entry["moved"]),
-					float(entry["screen_dt"]) * 1000.0, float(entry["probe_dt"]) * 1000.0,
-					float(entry["over_probe"]), int(entry["advances"]), float(entry["depth"])])
+					float(entry["probe_dt"]) * 1000.0, float(entry["over_played"]),
+					float(entry["screen_dt"]) * 1000.0, int(entry["advances"]),
+					float(entry["depth"]), blame])
+	# **WHICH FRAME'S DELTA BELONGS TO THIS FRAME'S MOVEMENT, ASKED OF THE DATA.** This probe reads
+	# the rectangle the screen published most recently; if the screen's `_process` runs AFTER this
+	# script's, the rect read at sample i was computed during frame i-1, and dividing its movement by
+	# frame i's delta pairs a numerator with the wrong denominator. On a machine whose frames
+	# alternate 11 ms and 22 ms that mistake alone produces alternating 2x and 0.5x speeds -- which
+	# is what the failing frames look like. So: the screen's own publication interval is compared
+	# against both candidates, over the frames where the clock advanced exactly once (the only ones
+	# where the two quantities describe the same interval at all), and the bar is reported both ways.
+	var same_frame := 0.0
+	var prev_frame := 0.0
+	var pairs := 0
+	var within_shift := 0
+	var shift_n := 0
+	for i in range(from + 2, to + 1):
+		if _starved[i] or _dt[i] <= 0.0 or _dt[i - 1] <= 0.0:
+			continue
+		var moved_px := (_drawn[i] - _drawn[i - 1]).length() / tile_px
+		var shifted := moved_px / _dt[i - 1]
+		shift_n += 1
+		if absf(shifted - TRUE_SPEED) <= TRUE_SPEED * TOLERANCE:
+			within_shift += 1
+		if _advances[i] - _advances[i - 1] != 1:
+			continue
+		var published: float = _screen_at[i] - _screen_at[i - 1]
+		if published <= 0.0:
+			continue
+		pairs += 1
+		same_frame += absf(published - _dt[i])
+		prev_frame += absf(published - _dt[i - 1])
+	if pairs > 0:
+		print(("  THE SCREEN'S PUBLICATION INTERVAL vs this frame's delta: %.2f ms apart on average;"
+				+ " vs the PREVIOUS frame's delta: %.2f ms (n=%d, single-advance frames). The "
+				+ "smaller one is the frame the rectangle was computed in.")
+				% [same_frame / float(pairs) * 1000.0, prev_frame / float(pairs) * 1000.0, pairs])
 	print("  WITHIN THE BAR, ON THE DRAWN RECT: %d of %d moving frames (%.1f%%), %s"
 			% [within_drawn, drawn.size(), share * 100.0, rate])
+	var share_shift := 0.0 if shift_n == 0 else float(within_shift) / float(shift_n)
+	print(("  ... the same rectangles over the PREVIOUS frame's delta: %d of %d (%.1f%%)")
+			% [within_shift, shift_n, share_shift * 100.0])
+	var share_played := 0.0 if probe.is_empty() else float(within_played) / float(probe.size())
+	print(("  ... the same frames divided by `_played_at`, the denominator this probe used until "
+			+ "2026-10-05 and the one Wren's ruling 3 retired: %d of %d (%.1f%%)")
+			% [within_played, probe.size(), share_played * 100.0])
 	var share_lerp := 0.0 if body.is_empty() else float(within) / float(body.size())
 	print("  ... the same frames on the LERP's output, which is what every number before 2026-10-04"
 			+ " was read off: %d of %d (%.1f%%)" % [within, body.size(), share_lerp * 100.0])
@@ -514,7 +640,23 @@ func _report() -> void:
 				% ((_clock[int(span["raw_from"]) + 1] - _walk_at) * 1000.0))
 	# **BOTH HALVES, OR IT IS NOT A PASS.** Box 1 is every moving frame inside the bar AND no dry
 	# frame; a run that holds for 200 ms and then draws beautifully is the thing the board felt.
-	print("  VERDICT: %s" % ("WITHIN BAR" if share >= 1.0 and dry.is_empty() else "OUTSIDE BAR"))
+	#
+	# **AND THE GATE IS THE CLIENT'S HALF OF THAT** (Wren, 2026-10-05): host-stalled frames are
+	# counted and reported, they do not fail the client's bar, and they do not vanish -- they are
+	# ASSA-208. `exposed` is printed beside the split because the attribution is permissive: if most
+	# frames in a run sit inside some stall's window, zero client frames is weak evidence and
+	# whoever reads this is entitled to see that.
+	print(("  CHARGED: %d out-of-bar + %d dry to the HOST (a stall inside the frame's own buffer "
+			+ "window), %d + %d to the CLIENT. %d of %d judged frames had a stall in their window "
+			+ "at all.") % [host_out, host_dry, client_out, client_dry, exposed,
+			drawn.size() + dry.size()])
+	var clean := client_out == 0 and client_dry == 0
+	print("  VERDICT: %s" % [("WITHIN BAR (no client frame failed)" if clean
+			else "OUTSIDE BAR (%d client frames)" % [client_out + client_dry])])
+	if clean and not (share >= 1.0 and dry.is_empty()):
+		print(("  NOT AN UNQUALIFIED PASS: %d frames failed and every one of them is charged to the "
+				+ "host. That closes box 1a on Wren's terms and leaves the host's pacing open.")
+				% [_outliers.size()])
 
 
 func _as_floats(values: Array[int]) -> Array[float]:
@@ -542,6 +684,53 @@ func _host_ticks() -> Array[float]:
 		last_at = _bundle_at[i]
 		last_tick = _bundle_tick[i]
 	return out
+
+
+## **EVERY STRETCH THE HOST TOOK OVER `STALL_SECONDS` A TICK TO PRODUCE**, one entry per stretch,
+## carrying the ticks it covers so a frame can be matched to it.
+##
+## SAME COLLAPSE AS `_host_ticks`, same reason: raw arrival gaps are bimodal because this client
+## drains its socket once a frame, so an uncollapsed series reports the renderer's frame rate as the
+## host's pacing. `ms` is per TICK over the stretch, which is the host's production rate; `silence`
+## is the whole wall-clock gap, which is what the buffer actually felt. They differ when several
+## ticks land in one drain, and that difference is why both are reported.
+func _host_stalls() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	var last_at := -1.0
+	var last_tick := -1
+	for i in _bundle_at.size():
+		if last_at >= 0.0 and _bundle_at[i] - last_at <= AssayScene.SAME_FRAME:
+			continue
+		if last_at >= 0.0 and _bundle_tick[i] > last_tick:
+			var silence: float = _bundle_at[i] - last_at
+			var each := silence / float(_bundle_tick[i] - last_tick)
+			if each > STALL_SECONDS:
+				out.append({"from_tick": last_tick, "to_tick": _bundle_tick[i],
+						"ms": each * 1000.0, "silence": silence * 1000.0})
+		last_at = _bundle_at[i]
+		last_tick = _bundle_tick[i]
+	return out
+
+
+## **THE WORST HOST STALL INSIDE THE BUFFER WINDOW FRAME `i` DREW FROM**, or an empty dictionary.
+##
+## The window is Wren's wording made arithmetic: the frame drew a position at `_play[i]` out of a
+## queue whose newest entry is `_play[i] + _depth[i]`, so the ticks it depended on are that span, and
+## a stall is charged to the host when the stretch it covers overlaps that span. **IT IS A
+## PERMISSIVE TEST BY CONSTRUCTION** -- any overlap excuses the frame -- which is exactly why
+## `exposed` is reported beside the counts.
+func _stall_behind(i: int) -> Dictionary:
+	if _stalls.is_empty() or i >= _play.size() or i >= _depth.size():
+		return {}
+	var oldest := floorf(_play[i])
+	var newest := _play[i] + _depth[i]
+	var worst := {}
+	for stall: Dictionary in _stalls:
+		if float(stall["to_tick"]) < oldest or float(stall["from_tick"]) > newest:
+			continue
+		if worst.is_empty() or float(stall["ms"]) > float(worst["ms"]):
+			worst = stall
+	return worst
 
 
 ## THE MOVING STRETCH OF A PER-FRAME SERIES, both ends inclusive, so a distribution over it is about

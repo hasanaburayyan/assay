@@ -23,6 +23,22 @@ var _listen_until := 0.0
 var _welcome_tick := -1
 
 
+## **A WALL-CLOCK CEILING, AND IT IS A MEMBER INITIALIZER** (ASSA-182). A `SceneTree` whose
+## `_initialize` dies still gets `_process` every frame -- Godot exits 0 on a parse error and does not
+## exit AT ALL on a runtime error in `_initialize` -- so a probe waiting for state that `_initialize`
+## never set waits for ever. Measured on this machine: one typo held a headless Godot for 45 minutes,
+## and an orphan that holds a port or an account makes somebody else's run fail for a reason they will
+## never find. **Set at the end of `_initialize` it would be absent in exactly the case it is for**,
+## which is the mistake the first version of this made (#242).
+##
+## 300 s is above every honest run these tools have: their own budgets are a 10 s join timeout plus a
+## few hundred frames. The five with a budget of their own raise the ceiling from it -- two from the
+## duration argument, three from the `_run_deadline` they already compute -- so this floor can
+## never shorten a run somebody asked for.
+const RUN_CEILING := 300.0
+var _ceiling := Time.get_unix_time_from_system() + RUN_CEILING
+
+
 func _initialize() -> void:
 	var argv := OS.get_cmdline_user_args()
 	if argv.size() < 2:
@@ -46,6 +62,10 @@ func _initialize() -> void:
 
 func _process(_delta: float) -> bool:
 	if _done:
+		return true
+	if Time.get_unix_time_from_system() > _ceiling:
+		print("FAIL  join_probe.gd ran past its %ds ceiling: nothing finished it" % int(RUN_CEILING))
+		quit(1)
 		return true
 	var now := Time.get_unix_time_from_system()
 	if _client.stage == AssayNetClient.Stage.JOINED:

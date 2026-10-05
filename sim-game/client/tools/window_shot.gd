@@ -179,6 +179,22 @@ var _walk_off_ticks := 0
 var _walk_off_target := Vector2i.ZERO
 
 
+## **A WALL-CLOCK CEILING, AND IT IS A MEMBER INITIALIZER** (ASSA-182). A `SceneTree` whose
+## `_initialize` dies still gets `_process` every frame -- Godot exits 0 on a parse error and does not
+## exit AT ALL on a runtime error in `_initialize` -- so a tool waiting on a phase that `_initialize`
+## never set up waits for ever, holding a window, a relay and a port. Set at the end of `_initialize`
+## it would be absent in exactly the case it is for.
+##
+## **ASSA-182's OWN SCOPE WAS WRONG ABOUT THIS FILE**: it said window_shot "has something of the kind
+## already", because a grep for "ceiling" matched `AssayScene.player_ceiling`, which is a layout number
+## in pixels and has nothing to do with time. A word matched; nothing was measured.
+##
+## 600 s, double the probes', because this tool joins a world, walks a body and settles a dozen phases
+## before it writes its last PNG; a shot run of 90-120 s is normal and a loaded Mac triples it.
+const RUN_CEILING := 600.0
+var _ceiling := Time.get_unix_time_from_system() + RUN_CEILING
+
+
 func _initialize() -> void:
 	var argv := OS.get_cmdline_user_args()
 	if argv.is_empty():
@@ -242,6 +258,11 @@ func _initialize() -> void:
 
 func _process(_delta: float) -> bool:
 	if _done:
+		return true
+	if Time.get_unix_time_from_system() > _ceiling:
+		print("FAIL  window_shot.gd ran past its %ds ceiling in phase %d: nothing advanced it"
+				% [int(RUN_CEILING), _phase])
+		quit(1)
 		return true
 	match _phase:
 		Phase.SETTLE_JOIN:
