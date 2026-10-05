@@ -413,6 +413,13 @@ var _frames_drive_playout := false
 ## The buffer's depth in ticks on the last advance, for the probes and the debug line: the quantity
 ## the clock is actually controlling, which until now could only be inferred from `_pending.size()`.
 var _play_depth := 0.0
+## **HOW MANY FRAMES THE QUEUE CAP HAS DRAGGED THE BODY FORWARD** (ASSA-212, Wren's gate (c)). The
+## mirror of `_starved`: a clock running slow falls behind until `PLAYOUT_QUEUE` evicts history it has
+## not played, and the clamp inside `playout_at` then pulls the drawn body to the tail. It is a jump a
+## player sees, out of a loop that never starved, and no probe of a real window could report it --
+## only the synthetic drive in `tests/test_scene_view.gd` counted it. A count rather than a flag
+## because one dragged frame in a session is a different story from forty.
+var _play_dragged := 0
 ## HOW MANY TIMES THE CLOCK HAS BEEN ADVANCED, for the probes alone.
 ##
 ## IT IS HERE BECAUSE A PROBE CANNOT OTHERWISE TELL HOW MANY INTERVALS ITS TWO SAMPLES SPAN. The
@@ -2788,6 +2795,8 @@ func _advance_playout(now: float, frame_dt := -1.0) -> float:
 	# loop needs is carried by its caller and by nothing else.
 	_play_trim = float(cursor["trim"])
 	_play_depth = float(cursor["depth"])
+	if bool(cursor["dragged"]):
+		_play_dragged += 1
 	_play_advances += 1
 	var index := int(cursor["index"])
 	# EVERYTHING THE CLOCK HAS GONE PAST IS DROPPED, except the position being drawn FROM. `_pending`

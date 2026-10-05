@@ -1433,6 +1433,46 @@ func test_the_start_jump_harness_still_reads_the_jump_the_old_rule_made() -> boo
 	return true
 
 
+## **THE FLAG A WINDOW WILL REPORT SAYS THE SAME THING THIS HARNESS DERIVES** (ASSA-212, Wren's gate
+## (c) wants `dragged` zero from a real window and nothing could report it).
+##
+## `playout_at` now says when its own clamp dragged the drawn body forward to the tail of a queue that
+## evicted history the clock had not played. The synthetic drive has counted that since ASSA-197 by
+## re-deriving the free-running advance, which is the number every bar on ASSA-197 was read against.
+## **So the new flag is checked against the old derivation on a run where drag really happens**, not
+## only on a healthy one: a flag that is always false agrees with a zero count perfectly.
+func test_the_clock_reports_its_own_drag_and_agrees_with_the_derived_count() -> bool:
+	var healthy := _drive_playout(1.0, true, 6.0, 0.0)
+	if int(healthy["dragged"]) != 0 or int(healthy["dragged_said"]) != 0:
+		return _fail(("a clock at an exactly right tick measurement reported drag: derived %d, said "
+				+ "%d") % [int(healthy["dragged"]), int(healthy["dragged_said"])])
+	# A TICK MEASUREMENT SO LONG THE CLOCK CANNOT KEEP UP, which is the slow-side failure: it falls
+	# behind, `PLAYOUT_QUEUE` evicts what it has not drawn, and the clamp catches it up in one frame.
+	# The bias is searched for rather than typed, because the edge moves with the clamps.
+	var bias := 1.2
+	var hurt := {}
+	for _step in range(12):
+		hurt = _drive_playout(bias, false, 8.0, 0.0)
+		if int(hurt["dragged"]) > 0:
+			break
+		bias += 0.1
+	if int(hurt["dragged"]) == 0:
+		return _fail(("no bias up to %.1f could make this harness drag the body, so there is nothing "
+				+ "to check the flag against and this test proves nothing") % [bias])
+	if int(hurt["dragged_said"]) == 0:
+		return _fail(("the harness derived %d dragged frames at a bias of %.1f and the function "
+				+ "reported none: `main.gd::_play_dragged` would read zero through a defect a probe "
+				+ "is meant to catch") % [int(hurt["dragged"]), bias])
+	# WITHIN ONE, not equal: the derivation looks at the advance a frame WOULD have made from the
+	# clock's previous value, and the function looks at the advance it did make, so the two can differ
+	# by the single frame on which the clamp first bites.
+	if absf(float(int(hurt["dragged"]) - int(hurt["dragged_said"]))) > 1.0:
+		return _fail(("derived %d dragged frames and the function said %d at a bias of %.1f: the two "
+				+ "are measuring different things") % [int(hurt["dragged"]),
+				int(hurt["dragged_said"]), bias])
+	return true
+
+
 ## **THE CLOCK WAITS FOR A BUFFER BEFORE IT STARTS, AND NEVER READS PAST THE NEWEST POSITION HELD**
 ## (ASSA-197).
 ##
@@ -1941,6 +1981,7 @@ func _drive_playout(bias: float, learn: bool, seconds := 12.0, judge_from := 3.0
 	var landed := 0.0
 	var starved := 0
 	var dragged := 0
+	var dragged_said := 0
 	var frames := 0
 	var depth_min := INF
 	var depth_max := -INF
@@ -2008,6 +2049,13 @@ func _drive_playout(bias: float, learn: bool, seconds := 12.0, judge_from := 3.0
 			var free := was + frame / (tick * bias) * float(cursor["rate"]) * float(cursor["trim"])
 			if free < oldest - 1e-9:
 				dragged += 1
+		# **AND THE FUNCTION'S OWN ANSWER BESIDE THIS LOOP'S, because a window now reads the
+		# function's** (ASSA-212: `main.gd::_play_dragged`). This harness has derived drag from its own
+		# copy of the advance since ASSA-197; the copy is what the suite's bars were measured against,
+		# so it stays, and `dragged_said` is the flag a probe will report. Two numbers that must
+		# agree, rather than one that replaced the other without being checked.
+		if bool(cursor["dragged"]):
+			dragged_said += 1
 		if play < 0.0:
 			waiting_on = oldest
 		if play >= 0.0 and started_at < 0.0:
@@ -2059,6 +2107,7 @@ func _drive_playout(bias: float, learn: bool, seconds := 12.0, judge_from := 3.0
 	return {
 		"starved": starved,
 		"dragged": dragged,
+		"dragged_said": dragged_said,
 		"frames": frames,
 		"depth_min": depth_min,
 		"depth_max": depth_max,

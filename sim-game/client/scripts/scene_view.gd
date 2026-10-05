@@ -367,7 +367,7 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 		delay: float, since: float = 0.0, trim: float = PLAYOUT_TRIM_NONE) -> Dictionary:
 	if ticks.is_empty():
 		return {"play_tick": play_tick, "index": -1, "part": 1.0, "starved": true, "rate": 1.0,
-				"trim": trim, "depth": 0.0}
+				"trim": trim, "depth": 0.0, "dragged": false}
 	var newest := float(ticks[ticks.size() - 1])
 	var oldest := float(ticks[0])
 	var at := play_tick
@@ -405,8 +405,8 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 			# AND THE TRIM DOES NOT INTEGRATE WHILE THE CLOCK IS NOT RUNNING. The depth error is
 			# enormous here by design -- the buffer is deliberately filling -- and a term that learnt
 			# from it would come out of the join wound to its stop in the wrong direction.
-			return {"play_tick": PLAYOUT_UNSTARTED, "index": 0, "part": 0.0,
-					"starved": false, "rate": 1.0, "trim": trim, "depth": newest - oldest}
+			return {"play_tick": PLAYOUT_UNSTARTED, "index": 0, "part": 0.0, "starved": false,
+					"rate": 1.0, "trim": trim, "depth": newest - oldest, "dragged": false}
 		# **AND IT STARTS WHERE THE BODY ALREADY IS, WHICH IS `oldest`** (ASSA-212). This read
 		# `at = newest - delay`, and the branch above draws the waiting body on the OLDEST position
 		# held, so the frame the clock started on moved it from `oldest` to `newest - delay` in one
@@ -445,6 +445,13 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 				1.0 - PLAYOUT_TRIM_MAX, 1.0 + PLAYOUT_TRIM_MAX)
 		at += dt / maxf(step, MIN_PLAYOUT_STEP) * rate * trim
 	var starved := at > newest
+	# **AND THE MIRROR OF STARVED, WHICH NOTHING IN A WINDOW COULD REPORT UNTIL NOW** (ASSA-212,
+	# Wren's gate (c)). A clock running slow falls behind until the queue cap evicts history it has
+	# not played yet, and then the clamp below DRAGS the drawn body forward to catch the tail -- a
+	# jump, out of a loop that never starved once. `tests/test_scene_view.gd::_drive_playout` has
+	# counted it against its own copy of the rule since ASSA-197; a real window had no way to say it,
+	# so the probe's only answer to "did the body jump" was the size of its own steps.
+	var dragged := play_tick >= 0.0 and at < oldest - 1e-9
 	at = clampf(at, oldest, newest)
 	var index := 0
 	while index + 1 < ticks.size() and float(ticks[index + 1]) <= at:
@@ -454,7 +461,7 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 		var span := float(ticks[index + 1] - ticks[index])
 		part = clampf((at - float(ticks[index])) / maxf(span, 1.0), 0.0, 1.0)
 	return {"play_tick": at, "index": index, "part": part, "starved": starved, "rate": rate,
-			"trim": trim, "depth": newest - at}
+			"trim": trim, "depth": newest - at, "dragged": dragged}
 
 
 static func playout(seg_at: float, step_seconds: float, now: float, arrived: Array[float],
