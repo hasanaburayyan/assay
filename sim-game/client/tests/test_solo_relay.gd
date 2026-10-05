@@ -670,3 +670,62 @@ func test_the_sessions_own_log_is_what_a_silent_death_is_quoted_from() -> bool:
 				+ "dropped, so a death mid-session has nothing to quote") % [said, LATE])
 	solo.stop()
 	return ok
+
+
+## **AND THE SENTENCE REACHES THE SCREEN** (ASSA-225). The half above proves the relay's last words
+## are ASKABLE; this proves `main.gd` asks and a player reads them.
+##
+## **IT EXISTS BECAUSE I SHIPPED THE OTHER HALF WITHOUT IT AND SAID SO.** The first version of this
+## work tested `last_words_if_it_died()` and left the one-line concatenation in `_on_link_failed`
+## with no lever, so deleting the surfacing would have merged green -- the whole defect being that a
+## true fact about the relay never got in front of the person it was about.
+##
+## THE CONTROL IS THE SECOND ARM: a drop with no dead relay of ours behind it must say exactly what
+## it said before, or this has turned every lost connection into a report about Play solo.
+func test_the_drop_sentence_carries_the_dead_hosts_words_to_the_screen() -> bool:
+	if OS.get_name() == "Windows":
+		return true
+	var ok := true
+	const DYING := "Could not write the save: No space left on device"
+	var solo := AssaySoloRelay.new()
+	if not solo.start("/bin/sh", PackedStringArray(["-c",
+			"echo 'RELAY STARTED protocol 9 rules deadbeef'; echo 'LISTENING 127.0.0.1:54321'; "
+			+ "sleep 0.2; echo '" + DYING + "' >&2; exit 3"]), 4000):
+		solo.stop()
+		return _fail("could not start the stand-in: %s" % solo.failure)
+	var started := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - started < 3000:
+		solo.pump()
+		if solo.address != "" and solo.last_words_if_it_died() != "":
+			break
+		OS.delay_msec(20)
+	if solo.last_words_if_it_died() == "":
+		solo.stop()
+		return _fail("the stand-in never reached a died-after-listening state")
+
+	var screen: Node = load("res://scenes/main.tscn").instantiate()
+	runner.root_node.add_child(screen)
+	screen._ready()
+	# THE DROP THE NET CLIENT REALLY REPORTS, word for word from `net_client.gd`.
+	const DROP := "127.0.0.1:54321 closed the connection"
+	screen._solo = solo
+	screen._on_link_failed(DROP)
+	var said: String = screen._status.text
+	if not said.contains(DROP):
+		ok = _fail("the drop sentence lost the reason the player can see: `%s`" % said)
+	elif not said.contains(DYING):
+		ok = _fail(("the window said `%s` and never carried what the host said. A socket closing is "
+				+ "the one thing a player can already see; the relay's words are the only part that "
+				+ "is not our guess (ASSA-225)") % said)
+
+	# **CONTROL: SOMEBODY ELSE'S HOST DYING IS NOT OURS TO EXPLAIN.** With no solo relay behind the
+	# drop the sentence must be untouched, or every lost connection now reports on Play solo.
+	screen._solo = null
+	screen._on_link_failed(DROP)
+	var plain: String = screen._status.text
+	if plain != DROP:
+		ok = _fail(("a drop with no relay of ours behind it was reworded to `%s`: that is every join "
+				+ "to someone else's host") % plain)
+	screen.queue_free()
+	solo.stop()
+	return ok
