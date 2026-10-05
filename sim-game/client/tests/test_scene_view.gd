@@ -2914,8 +2914,13 @@ func _fresh_scatter_keys(view: Dictionary) -> Array:
 ## ASSA-214: THE CACHED PLAN MUST FOLLOW THE WINDOW, AND A CACHE IS EXACTLY HOW A LAYER STARTS
 ## DRAWING YESTERDAY'S WORLD.
 ##
-## `_scatter_plan` holds one window's whole plan in a `static var` so that most frames do no hashing
-## (+5.39 ms on the median frame became +0.56 ms, measured in a real window). Everything that can go
+## `_scatter_plan` holds one window's whole plan in a `static var` so that most frames do no hashing:
+## the layer cost **+5.39 ms** on the median frame uncached (arms A/B, `fps_ab.log`) and **+0.43 ms**
+## cached (arm F against its own interleaved A reps, `fps_cf.log`), both in a real window. **This line
+## said +0.56 until ASSA-217, which is arm C — `_scatter_hash` unrolled AS WELL as cached, and those
+## twelve lines were deliberately never shipped.** Every number here names its own interleave now,
+## because a cost divided by another run's baseline is how the published "96% of it is the hash"
+## became 85–96% when I paired the arms inside one run. Everything that can go
 ## wrong with it goes wrong silently: a key that never changes draws the first window for ever, a key
 ## that is wrong by one tile shifts the layer under the camera, and a cache that is never dropped
 ## leaks the world a tile at a time. None of those make a sprite look broken -- the props are still
@@ -2928,6 +2933,10 @@ func test_the_scatter_plan_follows_a_moving_window_and_is_not_cached_once() -> b
 	var manifest := _manifest()
 	if not manifest.has("scatter"):
 		return _fail("the shipped manifest has no `scatter` asset, so this layer cannot draw at all")
+	# ASSA-217: COLD, WHATEVER RAN BEFORE. The plan is process-wide `static` state, so without this
+	# "visit 1" means "visit 1 of this test" and not "the first visit", and which it is depends on
+	# this test's position in the file. See `_clear_scatter_plan`.
+	_clear_scatter_plan()
 	var here := Vector2(10.0, 10.0) * AssayScene.TILE_PX
 	var away := Vector2(44.0, 28.0) * AssayScene.TILE_PX
 	# THE PREMISE, ASSERTED BEFORE ANYTHING IS CONCLUDED. If the two windows asked for the same
@@ -2995,6 +3004,8 @@ func test_scatter_slides_with_a_sub_tile_camera_inside_one_cached_window() -> bo
 	# grows the rect to cover the partial tiles at both edges, so a flush camera gives a 20x10 window
 	# and a camera one pixel off it gives 21x11. The constant window is the one BETWEEN two crossings,
 	# never the one that starts on a crossing.
+	# ASSA-217: cold, whatever ran before -- `first` must be the window that FILLS the cache below.
+	_clear_scatter_plan()
 	var step := Vector2(0.5, 0.25) * AssayScene.TILE_PX
 	var first := Vector2(10.25, 10.25) * AssayScene.TILE_PX
 	var second := first + step
@@ -3051,3 +3062,123 @@ func test_scatter_slides_with_a_sub_tile_camera_inside_one_cached_window() -> bo
 					+ "it -- ASSA-197's defect one layer up, and it looks like working props.")
 					% [step, got[k], want[k]])
 	return true
+
+## ASSA-217: CLEARING THE PLAN CACHE, AND WHY A TEST FILE NEEDS THIS AT ALL.
+##
+## `_scatter_plan_rect` and `_scatter_plan_cache` are `static var`s, so they live as long as the
+## PROCESS and not as long as a test. Marlow found that reviewing ASSA-214: he removed the
+## invalidation by hand and `visit 1` of the walk test above failed -- the plan was already full,
+## filled by an earlier test in the same `run_tests.gd` run.
+##
+## NOTHING IS WRONG TODAY. The key is the window rect and `scatter_at` is a pure function of a tile
+## coordinate, so a plan left behind by another test is either dropped (a different rect) or
+## identical (the same one). THE TRAP IS LAID FOR THE NEXT TEST: anything that asserts a COLD start
+## -- a first-visit miss, a count of hash calls, a poisoned plan -- would pass or fail on where it
+## sits in this file, and nothing would say so. Call this first and the start is cold whatever ran
+## before.
+##
+## THE SENTINEL IS A NEGATIVE-SIZE RECT, which the real path cannot produce: `grown` is a window
+## grown by one tile and then intersected with the world, and `Rect2i.intersection` returns sizes of
+## zero or more. A ZERO rect would not do as a sentinel for exactly that reason -- `intersection`
+## returns `Rect2i()` for two rects that do not overlap, so zero is a value, not an absence.
+func _clear_scatter_plan() -> void:
+	AssayScene._scatter_plan_rect = Rect2i(0, 0, -1, -1)
+	AssayScene._scatter_plan_cache = []
+
+
+## ASSA-217: THE ONLY TEST IN THIS FILE THAT PROVES THE CACHE IS READ, AND THE ONLY ONE THAT WOULD
+## NOTICE IF `_scatter_plan` IGNORED ITS OWN CACHE ENTIRELY.
+##
+## Marlow's ASSA-214 review removed the invalidation by hand and watched the walk test redden. That
+## is the right experiment and it lived in his terminal for one afternoon. This is the same
+## experiment from the other side and it stays in the suite: rather than stopping the cache being
+## refilled, POISON it for the window the renderer is about to ask about, and look at what comes out
+## of `placements`.
+##
+## It earns its place twice.
+##   - **Every other scatter test in this file would pass against a `_scatter_plan` that computed a
+##     fresh plan every frame and threw the cache away** -- which is the shape of a later "cleanup"
+##     that silently puts the +5 ms back. This one cannot: it only passes if the planted plan is the
+##     one drawn.
+##   - It makes the order-dependence Marlow named VISIBLE instead of reasoned about. If that state
+##     were per-instance, or wiped between tests by the runner, the poison could not survive the
+##     call and the first half here could not pass at all.
+##
+## IT MUST LEAVE THE CACHE CLEAN ON EVERY EXIT PATH. The checks therefore run in a nested call that
+## returns a reason rather than calling `_fail` itself, and the clear happens after it returns
+## whatever it returned -- GDScript has no `defer` and an early `return _fail(...)` from the middle
+## of a poisoned frame would hand the poison to whichever scatter test runs next, which is precisely
+## the hazard this is about.
+func test_the_scatter_plan_cache_is_read_and_can_be_cleared() -> bool:
+	var problem := _poisoned_plan_problem()
+	_clear_scatter_plan()
+	if problem != "":
+		return _fail(problem)
+	return true
+
+
+## The body of the test above: a reason to fail, or "" for a pass. No `_fail` from in here -- see the
+## exit-path note on the caller.
+func _poisoned_plan_problem() -> String:
+	var manifest := _manifest()
+	if not manifest.has("scatter"):
+		return "the shipped manifest has no `scatter` asset, so this layer cannot draw at all"
+	# OFF THE TILE GRID ON BOTH AXES, for the reason the sub-tile test above had to learn: a flush
+	# camera and a camera one pixel off it do not share a window rect, so an off-grid origin is the
+	# one whose `grown` can be mirrored here and hit.
+	var origin := Vector2(12.25, 9.5) * AssayScene.TILE_PX
+	var view := _view({"origin": origin})
+	var honest := _fresh_scatter_keys(view)
+	if honest.size() < 20:
+		return ("only %d scatter props in this window, which is too few to tell a poisoned plan "
+				+ "from an honest one") % honest.size()
+
+	# THE RECT `placements` WILL ASK ABOUT, mirrored from it on purpose. If that arithmetic ever
+	# changes, the poison lands on a key the renderer never looks up, the cache misses, and the first
+	# check below fails loudly -- rather than this test quietly measuring nothing.
+	var world: Vector2i = view["world_tiles"]
+	var window := AssayScene.visible_tiles(origin, view["size"], world)
+	var grown := Rect2i(window.position - Vector2i.ONE, window.size + Vector2i.ONE * 2)
+	grown = grown.intersection(Rect2i(Vector2i.ZERO, world))
+
+	# ONE prop, on the tile in the middle of the window so the clip rect cannot be what drops it, at
+	# a corner the hash would not produce. The ROW is a real one out of `SCATTER_GRIT`, so `_place`
+	# cannot refuse it for a reason that has nothing to do with the cache.
+	var tile := window.position + window.size / 2
+	var corner := Vector2(tile) + Vector2(0.5, 0.5)
+	AssayScene._scatter_plan_rect = grown
+	AssayScene._scatter_plan_cache = [[tile, AssayScene.SCATTER_GRIT[0], corner]]
+
+	var drew := []
+	for place in _of(AssayScene.placements(view), "scatter"):
+		drew.append(_at_key(((place as Dictionary)["dest"] as Rect2).position))
+	if drew.size() != 1:
+		return ("a plan of ONE prop was planted on %s, the very rect the renderer then asked about, "
+				+ "and it drew %d props. `_scatter_plan` is not reading its cache, so the +5 ms this "
+				+ "layer used to cost is back and every other scatter test here passes without it.")\
+				% [grown, drew.size()]
+	# THE PREMISE, AFTER THE FACT BUT BEFORE THE CONCLUSION: if the planted prop happens to sit on a
+	# pixel the tile hash asks for anyway, the check above cannot tell a read cache from an ignored
+	# one and this test is an instrument that can only pass.
+	var honest_set := {}
+	for key in honest:
+		honest_set[key] = true
+	if honest_set.has(drew[0]):
+		return ("the planted prop landed at %s, which is a pixel the tile hash asks for in this "
+				+ "window anyway, so this cannot tell a read cache from an ignored one") % drew[0]
+
+	# AND THE OTHER HALF: the clear has to work, or every test after this one inherits the poison.
+	_clear_scatter_plan()
+	var after := []
+	for place in _of(AssayScene.placements(view), "scatter"):
+		after.append(_at_key(((place as Dictionary)["dest"] as Rect2).position))
+	after.sort()
+	if after.size() != honest.size():
+		return ("after the plan cache was cleared the window drew %d scatter props where the tile "
+				+ "hash asks for %d: the sentinel rect is colliding with a real window, or the "
+				+ "cleared plan is being handed back") % [after.size(), honest.size()]
+	for k in range(after.size()):
+		if after[k] != honest[k]:
+			return ("after the plan cache was cleared the layer drew a prop at %s where the tile "
+					+ "hash puts one at %s") % [after[k], honest[k]]
+	return ""
