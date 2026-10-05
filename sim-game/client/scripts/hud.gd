@@ -203,7 +203,9 @@ const MAP_MARKS: Array[Dictionary] = [
 			"label": "where a joining player appears"},
 	{"id": &"deposit", "shape": &"disc", "ink": MAP_BG, "data_ink": true, "in_key": true,
 			"label": "ore you can work"},
-	{"id": &"dead_end", "shape": &"hatch", "ink": MAP_BG, "in_key": true,
+	# `data_ink` SINCE ASSA-209: the hatch is near-black on a light disc and WHITE on a dark one, so
+	# the table's `MAP_BG` is an example and not the colour. `mark_ink_of` is what `_draw` calls.
+	{"id": &"dead_end", "shape": &"hatch", "ink": MAP_BG, "data_ink": true, "in_key": true,
 			"label": "hatched: nothing can get this ore out"},
 	{"id": &"species_glyph", "shape": &"glyph", "ink": GLYPH_LIGHT, "data_ink": true, "in_key": true,
 			"label": "the species, as its own letter"},
@@ -299,6 +301,14 @@ static func map_key_sample_ink(entry: Dictionary) -> Color:
 		return species_tint(KEY_SAMPLE_SPECIES)
 	if id == &"species_glyph":
 		return glyph_color(species_tint(KEY_SAMPLE_SPECIES))
+	# **THE DEAD-END ROW'S SWATCH USED TO COME BACK `MAP_BG` AND THAT MADE THE WHOLE SAMPLE INVISIBLE**
+	# (Nerite, ASSA-206, 01:02 EDT: "a flat dark square with no stripe -- the key names a mark it does
+	# not draw"). `map_key.gd` painted the swatch's DISC in this colour and then its strokes in the
+	# same one, on a patch of `ground` which is also `MAP_BG`: three layers of one near-black, 1.00:1,
+	# exactly nothing. The row is a hatch ON a disc, so its ink is the ink the map would use on the
+	# sample disc -- which since ASSA-209 depends on that disc's colour.
+	if id == &"dead_end":
+		return hatch_ink(species_tint(KEY_SAMPLE_SPECIES))
 	return mark_ink(id)
 
 
@@ -581,12 +591,60 @@ static func glyph_size(drawn_radius: float) -> int:
 static func deposit_disc(deposit: Dictionary, drawn_radius: float) -> Dictionary:
 	var colour := deposit_color(int(deposit["species"]), int(deposit["purity"]))
 	var dead_end := not String(deposit["reach_note"]).is_empty()
-	# THE LETTER SITS ON THE FILL IN BOTH STATES NOW, which is the quiet win in dropping the hollow:
-	# the ink no longer has to be re-picked for a surface that is sometimes `MAP_BG`.
-	return {"colour": colour, "filled": true, "ink": glyph_color(colour),
-			"hatch": dead_end, "hatch_ink": MAP_BG,
+	var ink := hatch_ink(colour)
+	# **THE LETTER IS ASKED ABOUT THE SURFACE IT IS ACTUALLY ON, WHICH ON A DEAD END IS NOT THE FILL**
+	# (ASSA-209). `glyph_color`'s own contract is "whatever is drawn there", and until now it was
+	# handed the bare fill on a disc that then had 28.6% of itself repainted over -- so the letter's
+	# ink was chosen for a surface that does not exist. Cove MEASURED the consequence on ASSA-199's
+	# box 6 control: a `MAP_BG` hatch cost the five near-black letters 30-36% of their contrast and
+	# gave the three white ones 40-46%. Worst letter over all 600 states goes 2.94:1 -> 4.51:1.
+	return {"colour": colour, "filled": true,
+			"ink": glyph_color(hatched_surface(colour, ink) if dead_end else colour),
+			"hatch": dead_end, "hatch_ink": ink,
 			"hatch_width": float(HATCH_ON) / sqrt(2.0),
 			"stroke": clampf(drawn_radius * 0.2, 2.0, 6.0)}
+
+
+## **WHAT A DEAD-END HATCH IS PAINTED IN: NEAR-BLACK OR WHITE, WHICHEVER THE DISC CAN SHOW** (ASSA-209).
+##
+## **IT WAS ONE FIXED `MAP_BG` AND THE MARK'S LEGIBILITY WAS THEREFORE A PROPERTY OF THE DISC, WHICH
+## THE MARK DOES NOT CHOOSE.** Maren found it while judging ASSA-199 and ruled the bar: the worst
+## species pair, never the shipped seed. Measured out of this file by `tools/hatch_ink_sweep.gd` over
+## all 6 x 100 states:
+##
+## ```
+##                             worst hatch:fill   worst letter:surround
+## one fixed MAP_BG (shipped)        1.42:1               2.94:1
+## this, MAP_BG or GLYPH_LIGHT       4.13:1               4.51:1
+## ```
+##
+## At 1.42:1 a dark-on-dark hatch is not subtle, it is ABSENT, and the disc then says "good ore" to a
+## player who cannot mine or smelt it -- the exact defect ASSA-187 and ASSA-199 exist to kill. Purple
+## and M-blue are 51.4% and 54.5% dead across 400 worlds and **79% of worlds hold at least one**
+## (Maren's sweep), so it is the common case and not an edge.
+##
+## **`MAP_BG` AND NOT `GLYPH_DARK` AS THE DARK HALF, so the mark still spends no new literal** (Maren
+## counted 21 colours on ASSA-116). It also keeps every disc that reads today reading exactly as it
+## does: on the four bright species the pick is unchanged from the shipped ink at most purities.
+##
+## **WHAT THIS DOES NOT FIX, with its number.** Where the hatch goes white the letter often wants to be
+## white too -- both are "the brightest thing available on a dark disc" -- so hatch-against-letter
+## bottoms out at **1.00:1** on purple at purity 1: the same ink. The letter's CORE still survives,
+## because `_draw` paints the glyph after the hatch and Cove measured 0 core pixels covered; what
+## blends is the antialiased skirt. Removing it needs geometry, not ink: a keep-out around the glyph in
+## [hatch_segments]. Filed on ASSA-209, not fixed here.
+static func hatch_ink(fill: Color) -> Color:
+	return MAP_BG if contrast_ratio(fill, MAP_BG) >= contrast_ratio(fill, GLYPH_LIGHT) \
+			else GLYPH_LIGHT
+
+
+## THE SURFACE A LETTER ON A HATCHED DISC IS REALLY ON: the fill mixed toward the hatch ink by the
+## ruled density. **A MODEL, AND IT SAYS SO.** A letter sits on a particular set of pixels, some hatch
+## and some fill, so no single colour is the truth; this is the area-weighted average, which is what a
+## contrast ratio against a patterned ground can mean at all. The share is `HATCH_ON / HATCH_PERIOD`
+## and is read off the painter, never written twice.
+static func hatched_surface(fill: Color, ink: Color) -> Color:
+	return fill.lerp(ink, float(HATCH_ON) / float(HATCH_PERIOD))
 
 
 ## THE HATCH'S LINES FOR ONE DISC: flat pairs of points, each pair one 45-degree stroke.
