@@ -377,12 +377,6 @@ func designs_of(player: int) -> Array:
 	return _sim.designs_of(player) if _sim != null else []
 
 
-## **A COUNT AND ITS NOUN, AGREEING** (ASSA-145). `sim::debug::counted`, so the window and `sim-cli`
-## cannot drift on a sentence a player reads: "1 player" and "2 players" from one rule.
-##
-## STATIC AND WORLDLESS, unlike everything else here, because the counts that needed it are the
-## HOST's -- players, bundles applied, hashes reported -- and a client must be able to say them
-## before it has a world.
 ## **WHICH DECLARED PLAYER FACTS A LIST OF BINDING DICTS IS NOT CARRYING** (ASSA-196). Empty means
 ## every player can be described; otherwise the names are `player[0 of 2].pos`, the same shape
 ## `AssayScene.missing_sim_facts` uses, so one vocabulary covers both boundaries.
@@ -401,6 +395,15 @@ static func missing_player_facts(players: Array) -> PackedStringArray:
 	return missing
 
 
+## **A COUNT AND ITS NOUN, AGREEING** (ASSA-145). `sim::debug::counted`, so the window and `sim-cli`
+## cannot drift on a sentence a player reads: "1 player" and "2 players" from one rule.
+##
+## STATIC AND WORLDLESS, unlike everything else here, because the counts that needed it are the
+## HOST's -- players, bundles applied, hashes reported -- and a client must be able to say them
+## before it has a world.
+##
+## (This block spent a day above `missing_player_facts`, fused to that function's own docstring, so
+## the wrong function carried it and this one carried nothing -- Nerite, ASSA-196, 20:39 EDT.)
 static func counted(n: int, one: String, many: String) -> String:
 	return AssaySim.counted(n, one, many)
 

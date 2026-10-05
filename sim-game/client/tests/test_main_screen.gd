@@ -2543,6 +2543,92 @@ func test_a_player_dict_missing_a_fact_is_named_not_defaulted() -> bool:
 	return true
 
 
+## A HOST THAT HANDS THE SCREEN EXACTLY THE PLAYER DICTS IT IS GIVEN.
+##
+## Subclassed rather than faked, this file's `_RelayThatIsListening` idiom: only `players()` is
+## replaced, so the boundary below still runs the real `AssaySimHost.missing_player_facts` over the
+## real `PLAYER_FACTS`, and a fact added to that list is covered here without an edit.
+class _SimSaying extends AssaySimHost:
+	var said: Array
+
+	func _init(players_to_say: Array) -> void:
+		said = players_to_say
+
+	func players() -> Array:
+		return said
+
+
+## **THE REFUSAL ITSELF, PRESSED** (ASSA-196, Nerite's mutation at 20:39 EDT).
+##
+## Changing `_players()`'s `return []` on the refusal path to `return players` reddened NOTHING in a
+## 286-test suite. Both legs above are reads: one scans source for who calls the boundary, the other
+## asks `missing_player_facts` about dicts without going near `main.gd`. So the suite proved that
+## every reader goes through the boundary and never once that the boundary REFUSES -- which is the
+## whole claim the `player.get("pos", Vector2i.ZERO)` defaults downstream rest on for being
+## unreachable. A boundary that lets a bad dict past is the original defect with one more function in
+## front of it.
+##
+## **THE CONTROL IS IN THE SAME TEST**, because a `_players()` that returned `[]` for every world
+## would pass the first half: a complete dict must come back whole and must leave no complaint behind.
+func test_a_player_dict_without_pos_makes_the_boundary_refuse_the_frame() -> bool:
+	var screen := _screen()
+	var ok := true
+	var whole := {}
+	for key in AssaySimHost.PLAYER_FACTS:
+		whole[key] = 0
+	# THE CONTROL FIRST, so a refusal below cannot be the only behaviour this function has, and so
+	# the complaint counted further down belongs to the broken dict rather than to a dirty screen.
+	screen._sim = _SimSaying.new([whole])
+	var described: Array = screen._players()
+	if described.size() != 1:
+		ok = _fail("a complete player dict was refused: `_players()` returned %s" % [described])
+	elif not screen._player_facts_missing.is_empty():
+		ok = _fail("a complete player dict left a complaint behind: %s"
+				% [screen._player_facts_missing])
+	var broken: Dictionary = whole.duplicate()
+	broken.erase("pos")
+	screen._sim = _SimSaying.new([broken])
+	if ok and not screen._players().is_empty():
+		ok = _fail("a player dict with no `pos` came back out of `_players()`, so every reader "
+				+ "downstream defaults it to tile (0,0) and the camera follows it to the corner")
+	if ok and screen._player_facts_missing.is_empty():
+		ok = _fail("the refusal recorded no `_player_facts_missing`, so `_refresh_world` has nothing "
+				+ "to blank the frame on and the screen says a world with nobody in it is normal")
+	# **AND THE SCREEN SAYS SO, NAMING THE KEY.** This leg is the one that found the defect: the
+	# refusal called `_note`, which BUILDS a Label and returns it for a caller to add, and this caller
+	# dropped it -- so the sentence existed in the source and nowhere a player could see it. It goes
+	# to the status line now.
+	if ok and not screen._status.text.contains("player[0 of 1].pos"):
+		ok = _fail("the refusal did not name the key on screen; the status line says '%s'"
+				% screen._status.text)
+	# **SAID ONCE PER CAUSE, NOT LATCHED ONCE.** Counting repetitions is not available to a test: the
+	# sentence goes to a status line that holds one sentence, so a second identical frame leaves no
+	# trace either way. What IS observable is the half that can actually rot -- the guard comparing
+	# WHAT IS MISSING rather than whether it has ever complained. A latch would leave the screen
+	# reporting the first cause while a second, different one went unsaid.
+	screen._players()
+	var worse: Dictionary = whole.duplicate()
+	worse.erase("id")
+	screen._sim = _SimSaying.new([worse])
+	if ok and not screen._players().is_empty():
+		ok = _fail("a player dict with no `id` came back out of `_players()`; every player becomes "
+				+ "-1, so `id == _client.player_id` is false and the camera follows nobody")
+	if ok and not screen._status.text.contains("player[0 of 1].id"):
+		ok = _fail(("a second, different missing fact was not said: the status line still reads "
+				+ "'%s'. The guard is latching instead of comparing what is missing")
+				% screen._status.text)
+	# AND IT RECOVERS. A boundary that refuses for ever after one bad frame would blank a healthy
+	# world, which is the same screen the defect produced for the opposite reason.
+	screen._sim = _SimSaying.new([whole])
+	if ok and screen._players().size() != 1:
+		ok = _fail("a whole dict after a refused one was still refused, so one bad frame blanks the "
+				+ "screen for good")
+	if ok and not screen._player_facts_missing.is_empty():
+		ok = _fail("the complaint outlived the problem: %s" % [screen._player_facts_missing])
+	screen.queue_free()
+	return ok
+
+
 ## **THE HATCH GOES ON BEFORE THE LETTER, WHICH IS THE ONLY THING KEEPING THE LETTER** (ASSA-199
 ## box 6; Cove's constraint is that the hatch repaints only pixels already inside the disc).
 ##

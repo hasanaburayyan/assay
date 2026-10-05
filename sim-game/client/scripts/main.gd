@@ -2447,12 +2447,20 @@ func _players() -> Array:
 	if missing.is_empty():
 		_player_facts_missing = PackedStringArray()
 		return players
-	# SAID ONCE, NOT EVERY FRAME. This runs at the frame rate, and a log that repeats sixty times a
-	# second buries the first copy -- which is the one with the context in it.
+	# SAID ONCE, NOT EVERY FRAME. This runs at the frame rate, and a line that repeats sixty times a
+	# second buries the first copy -- which is the one with the context in it. The comparison is on
+	# WHAT IS MISSING and not a latch, so a second, different cause still gets said.
 	if String(", ").join(missing) != String(", ").join(_player_facts_missing):
 		_player_facts_missing = missing
-		_note("the simulation is not describing its players (%s) -- nothing to draw"
-				% String(", ").join(missing))
+		# **`_say`, NOT `_note`, AND THAT WAS A DEFECT I SHIPPED IN #273.** `_note` BUILDS a Label and
+		# returns it; every other caller in this file hands the result to an `add_child`. This one
+		# dropped it, so the player-facing half of the refusal was a sentence nobody could ever see --
+		# found by the behavioural test ASSA-196 was missing, which counted the sentence on screen and
+		# got zero. `_log` is not the home for it either: `_rebuild_log` clears that container and
+		# re-fills it from `_events`, which are the SIM's lines, so a child added here would vanish on
+		# the next frame. The status line is where this client's own sentences live (ASSA-161/186/191).
+		_say("the simulation is not describing its players (%s) -- nothing to draw"
+				% String(", ").join(missing), AssayHud.Say.FAILED)
 		push_error("AssaySim.players() is missing %s" % String(", ").join(missing))
 	return []
 
