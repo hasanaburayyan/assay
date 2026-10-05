@@ -112,6 +112,19 @@ const BUILDING_MARK_PX := 16.0
 ## thickness, same colour, same reason -- a building-specific name would now be a false one.
 const MARK_KEYLINE_PX := 2.0
 
+## THE DEAD-END HATCH'S DENSITY, IN STEPS OF THE `x + y` INDEX, NOT IN PIXELS (Cove, ASSA-187/199).
+##
+## `(x + y) % HATCH_PERIOD < HATCH_ON` is the rule the sheet Maren ruled on was rendered from, so it
+## is the rule here and [hatch_segments] derives its pixel width from it rather than the other way
+## round. It covers 2/7 = 28.6% of a disc on paper and Cove measured 22.2-27.1% on real hatched discs
+## against 0.0% on solid ones -- the letter and the edge account for the difference.
+##
+## **RAISED FROM 1-IN-7, WHICH IS A RULING AND NOT A TUNING.** Maren: one line in seven was too quiet
+## on a dark red disc. Two densities for two kinds of dead end was offered and REJECTED by Cove: this
+## is one bit, and a hatch that came in two strengths would be read as a quantity.
+const HATCH_ON := 2
+const HATCH_PERIOD := 7
+
 ## HOW BIG A PLAYER'S MARK IS ON THE SCHEMATIC, IN SCREEN PIXELS AND NOT IN TILES (ASSA-119 box 6).
 ##
 ## It used to be two cells square, which on the 96x64 world is 18 px and on a 32x32 world would be 36.
@@ -382,33 +395,84 @@ static func glyph_size(drawn_radius: float) -> int:
 ## itself, and not by colour"). 25.4% of deposits over 16 seeds are rock nothing can mine, and they
 ## were drawn exactly like the ones that pay.
 ##
-## **FILL IS THE CHANNEL, BECAUSE IT IS THE ONLY ONE A DISC HAD SPARE.** Colour is the species slot,
-## brightness is purity, radius is the deposit's radius -- Decision #36 and ASSA-119 box 6 spend those
-## three between them -- so the fourth fact gets GEOMETRY: a rock nothing can mine is an outline, a
-## rock you can work is solid. **Geometry survives a greyscale copy by construction**, which is the
-## half of the ruling no dimming or re-tinting could keep.
+## **A HATCH, AND THE DISC STAYS SOLID** (Maren's ruling on Cove's sheet, ASSA-199 box 2; it replaces
+## the hollow disc ASSA-187 shipped in #259). Colour is the species slot, brightness is purity, radius
+## is the deposit's radius -- Decision #36 and ASSA-119 box 6 spend those three between them -- so the
+## fourth fact gets GEOMETRY, which is the half of the ruling no dimming or re-tinting could keep.
 ##
-## **THE INK FOLLOWS THE SURFACE THE LETTER ACTUALLY SITS ON.** A hollow disc puts the glyph on
-## `MAP_BG`, not on the species colour, so this asks [glyph_color] about the species colour AT ZERO
-## COVERAGE -- which is what hollow means, and which that function already composites correctly. The
-## letter therefore clears a measured contrast in both states instead of inheriting an ink chosen for
-## a fill that is not there.
+## **WHY NOT THE OUTLINE #259 SHIPPED, WHICH WAS MINE AND WAS NOT WRONG SO MUCH AS EXPENSIVE.** An
+## outline spends the fill, and the fill is carrying two channels already: a hue at a few per cent
+## coverage reads as grey, and brightness IS the purity channel. The hatch repaints a share of the
+## interior and leaves radius and purity at full strength. Maren judged both at 1x on
+## `shared/assay/cove-assa187/assa-187-hatch-2026-10-04.png` and ruled the hatch, with the density
+## raised from 1-in-7, which was too quiet on a dark red disc.
 ##
-## **THE STROKE IS THICK ON PURPOSE.** A 1px ring would trade purity's brightness away: a hue at a
-## few per cent coverage reads as grey, and brightness IS the purity channel. A fifth of the radius,
-## floored at 2px and capped at 6px, keeps enough colour on screen to read species and purity off the
-## outline of the smallest disc this map draws.
+## **THE INK IS THE MAP'S OWN GROUND AND THAT IS NOT A NEW COLOUR**, the same argument as the building
+## mark's keyline one function down: a mark made of the surface a disc sits on cannot be read as a
+## sixth species.
 ##
-## `hand_minable` IS READ WITHOUT A DEFAULT (ASSA-141, and it is the sim's own
-## `ladder::hand_minable`). A binding that stopped sending it must empty the frame rather than draw
-## every dead end as a patch worth a 40-tile walk; `test_sim_binding.gd` is what notices first.
+## **`reach_note` AND NOT `hand_minable`, WHICH IS MARLOW'S CORRECTION OF HIS OWN ITEM.**
+## `hand_minable` catches only "too hard to mine" and marks 6 of 13 discs on 777042; there are 8 dead
+## ends, because a rock can be minable and still unsmeltable, and those two drew exactly like good ore
+## -- ASSA-187's defect surviving its own fix. `sim-godot`'s own comment says the two "are no longer
+## opposites". Maren's rate over 30 seeds and 423 deposits: 38.8% too hard, 16.3% minable-but-dead,
+## **55.1% dead**. The mark landing on the majority is fine because a hatch is SUBTRACTIVE -- the
+## clean disc becomes the signal -- and it is still one bit, so Cove's two-density rejection stands.
+##
+## `reach_note` IS READ WITHOUT A DEFAULT (ASSA-141). A binding that stopped sending it must empty the
+## frame rather than draw every dead end as a patch worth a 40-tile walk; `test_sim_binding.gd` is
+## what notices first. It is the sim's own wording, from `debug::deposit_dead_end_note`, and empty
+## means the rock pays -- this reads whether there IS a note and never what it says, because the
+## sentence is `sim::debug`'s to word and the map's job is one bit.
 static func deposit_disc(deposit: Dictionary, drawn_radius: float) -> Dictionary:
 	var colour := deposit_color(int(deposit["species"]), int(deposit["purity"]))
-	var minable := bool(deposit["hand_minable"])
-	# THE SPECIES COLOUR AT ZERO COVERAGE IS WHAT A HOLLOW DISC SHOWS THE LETTER.
-	var surface := colour if minable else Color(colour.r, colour.g, colour.b, 0.0)
-	return {"colour": colour, "filled": minable, "ink": glyph_color(surface),
+	var dead_end := not String(deposit["reach_note"]).is_empty()
+	# THE LETTER SITS ON THE FILL IN BOTH STATES NOW, which is the quiet win in dropping the hollow:
+	# the ink no longer has to be re-picked for a surface that is sometimes `MAP_BG`.
+	return {"colour": colour, "filled": true, "ink": glyph_color(colour),
+			"hatch": dead_end, "hatch_ink": MAP_BG,
+			"hatch_width": float(HATCH_ON) / sqrt(2.0),
 			"stroke": clampf(drawn_radius * 0.2, 2.0, 6.0)}
+
+
+## THE HATCH'S LINES FOR ONE DISC: flat pairs of points, each pair one 45-degree stroke.
+##
+## **THE RULED DENSITY IS `HATCH_ON` IN `HATCH_PERIOD` ALONG `x + y`, AND COVE'S PROSE AND COVE'S
+## SHEET DISAGREE ABOUT WHAT THAT IS IN PIXELS.** Their hand-off says "45 degrees, 2px wide, every 7px
+## along x+y". Those are two different widths: the sheet Maren actually ruled was rendered by
+## `cove_187_hatch.py` from the PIXEL rule `(x + y) % 7 < 2`, which covers exactly 2/7 = 28.6% of a
+## disc, and they measured 22.2-27.1% on real hatched discs. A stroke 2px wide PERPENDICULAR, spaced
+## 7/sqrt(2) = 4.95px apart, would cover 40% -- half again as much ink as the picture she approved.
+## **So the rule here is the sheet's and the width is derived from it**: a band of `HATCH_ON` steps in
+## the `x + y` index is `HATCH_ON / sqrt(2)` px across, because that index advances by sqrt(2) for
+## every pixel of perpendicular travel. The measurement is the arbiter -- `assa187_measure.py` on a
+## real shot has to land in Cove's band, and 40% would not.
+##
+## **THE CHORD IS CUT AT `radius - halfwidth`, NOT AT `radius`.** Godot's `draw_line` is a quad, so a
+## stroke ending exactly on the circle pokes its corners outside it, and Cove's constraint is that the
+## hatch only ever repaints pixels already inside the disc -- which is what leaves the antialiased
+## edge and the species letter alone BY CONSTRUCTION rather than by a clip nobody can see in a test.
+static func hatch_segments(at: Vector2, radius: float) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	var half_width := float(HATCH_ON) / sqrt(2.0) * 0.5
+	var inner := maxf(0.0, radius - half_width)
+	# `x + y` at the centre, and how far it ranges over the disc: the index moves sqrt(2) per pixel.
+	var sum := at.x + at.y
+	var reach := radius * sqrt(2.0)
+	var normal := Vector2(1.0, 1.0).normalized()
+	var along := Vector2(1.0, -1.0).normalized()
+	for step in range(int(floorf((sum - reach) / float(HATCH_PERIOD))),
+			int(ceilf((sum + reach) / float(HATCH_PERIOD))) + 1):
+		# The BAND's middle, not its first line: `(x + y) % P < ON` covers [m*P, m*P + ON).
+		var band := float(step * HATCH_PERIOD) + float(HATCH_ON) * 0.5
+		var offset := (band - sum) / sqrt(2.0)
+		if absf(offset) >= inner:
+			continue
+		var reach_along := sqrt(inner * inner - offset * offset)
+		var foot := at + normal * offset
+		out.append(foot - along * reach_along)
+		out.append(foot + along * reach_along)
+	return out
 
 
 ## **WHAT ONE BUILDING IS ON THE SCHEMATIC** (ASSA-189, Maren's P1: "the whole-world view draws no

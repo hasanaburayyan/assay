@@ -642,6 +642,9 @@ impl AssaySim {
             .deposits
             .iter()
             .map(|deposit| {
+                // Resolved once per deposit: both keys below come out of it and
+                // `deposit_dead_end_note` walks the roster.
+                let (minable, dead_end) = map_disc_facts(&self.world, deposit);
                 vdict! {
                     "id" => deposit.id.0 as i64,
                     "species" => deposit.species.0 as i64,
@@ -673,9 +676,23 @@ impl AssaySim {
                     // its mild lie: "hand" is where the gate started and the
                     // gate is now one function every miner asks. A second name
                     // for one rule is how two surfaces drift.
-                    "hand_minable" => sim::ladder::hand_minable(
-                        self.world.species(deposit.species),
-                    ),
+                    "hand_minable" => minable,
+                    // **THE SENTENCE, AND IT IS A WIDER GATE THAN `hand_minable`**
+                    // (ASSA-199, Maren's ruling; ASSA-187 was mine and it marked
+                    // the wrong set). `hand_minable` is one of TWO kinds of dead
+                    // end. The other is quieter: a rock you CAN break and cannot
+                    // smelt. On 777042 that is the difference between 6 of 13 and
+                    // 8 of 13, and the two Naersernium patches it misses were
+                    // drawn exactly like good ore -- this item's own defect
+                    // surviving its own fix.
+                    //
+                    // THE SIM'S OWN WORDING, EMPTY WHEN THE ROCK YIELDS, which is
+                    // the same contract `deposit_dict::reach_note` carries and the
+                    // same name on purpose: one rule, one key, so the schematic
+                    // and the cursor readout cannot tell a player two stories
+                    // about one rock. The client reads "is it empty"; it does not
+                    // work the gate out.
+                    "reach_note" => &gstring(&dead_end).to_variant(),
                 }
             })
             .collect()
@@ -1058,6 +1075,27 @@ fn packed(lines: &[String]) -> PackedStringArray {
 /// else's.
 fn player_id_of(id: i64) -> Option<PlayerId> {
     u32::try_from(id).ok().map(PlayerId)
+}
+
+/// **THE TWO FACTS THE SCHEMATIC DECIDES A DISC FROM, ENGINE-FREE** (ASSA-199).
+///
+/// `AssaySim::deposits` is the one payload the map draws from and it builds its
+/// dictionary inline, so until now nothing in `cargo test` could see what that
+/// payload says — `building_facts` has had the same split since ASSA-94 and for
+/// the same reason: a `VarDictionary` cannot be built in a Rust unit test at all.
+/// This is the half a sweep over seeds can read.
+///
+/// **THEY ARE NOT OPPOSITES AND THAT IS THE POINT.** `hand_minable` is whether
+/// anything this world can build gets the ore OUT; the note is the sim's sentence
+/// for why the rock is a dead end, which also covers the ore you can break and
+/// cannot smelt. A rock can be perfectly minable and still carry a sentence, so a
+/// mark keyed on `hand_minable` misses the quieter half — 6 of 13 against 8 of 13
+/// on seed 777042, and 38.8% against 55.1% over the Game Director's 30 seeds.
+pub fn map_disc_facts(world: &World, deposit: &sim::ore::OreDeposit) -> (bool, String) {
+    (
+        sim::ladder::hand_minable(world.species(deposit.species)),
+        sim::debug::deposit_dead_end_note(world, deposit).unwrap_or_default(),
+    )
 }
 
 fn deposit_dict(deposit: &DepositFacts) -> VarDictionary {
@@ -3095,6 +3133,58 @@ mod tests {
             in_reach.reach_note, "",
             "nothing to say about a rock that yields, and an empty note is how \
              `hud.gd` knows to leave the line alone"
+        );
+    }
+
+    /// **THE SCHEMATIC'S MARK IS KEYED ON THE WIDER GATE, AND THE TWO REALLY DO
+    /// DIFFER** (ASSA-199; ASSA-187 was mine and it marked the narrower set).
+    ///
+    /// `hand_minable` asks whether anything gets the ore OUT. The sim's dead-end
+    /// note also covers the quieter case — a rock you can break and cannot smelt
+    /// — so a mark keyed on `hand_minable` draws those exactly like good ore.
+    ///
+    /// **THE SWEEP IS THE ASSERTION, NOT THE SEED.** One world could differ by
+    /// luck, so this walks thirty and requires the gap to be REAL somewhere and
+    /// the containment to hold EVERYWHERE: a rock nothing can mine is always a
+    /// dead end, so `!hand_minable` must imply a note on every deposit of every
+    /// world. A note that stopped covering the unsmeltable half would keep the
+    /// containment and lose the gap, which is why both are checked.
+    #[test]
+    fn the_dead_end_note_is_a_wider_gate_than_hand_minable() {
+        let mut worlds_with_a_gap = 0;
+        let mut deposits = 0;
+        let mut minable_but_dead = 0;
+        for seed in 1..=30u64 {
+            let world = sim_net::fresh_world(seed);
+            let mut gap_here = 0;
+            for deposit in &world.deposits {
+                let (minable, note) = map_disc_facts(&world, deposit);
+                deposits += 1;
+                assert!(
+                    minable || !note.is_empty(),
+                    "seed {seed}: a rock nothing can mine carries no dead-end sentence, so the \
+                     note cannot be the mark's predicate"
+                );
+                if minable && !note.is_empty() {
+                    gap_here += 1;
+                }
+            }
+            minable_but_dead += gap_here;
+            if gap_here > 0 {
+                worlds_with_a_gap += 1;
+            }
+        }
+        assert!(
+            worlds_with_a_gap > 0,
+            "over 30 worlds and {deposits} deposits, not one rock was minable-but-dead. Either \
+             the two gates have become opposites again or this sweep is measuring nothing — and \
+             the Game Director counted 16.3% of 423 deposits in that state."
+        );
+        assert!(
+            minable_but_dead * 20 > deposits,
+            "{minable_but_dead} of {deposits} deposits are minable and still a dead end (under \
+             5%). The Game Director measured 16.3%; a number this small means the note stopped \
+             carrying the unsmeltable half and `hand_minable` would do."
         );
     }
 

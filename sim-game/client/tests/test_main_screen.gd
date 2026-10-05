@@ -1006,7 +1006,7 @@ func test_the_empty_sections_say_the_in_world_kind_once_a_world_arrives() -> boo
 ##
 ## This is the wiring half, and it is the half that cannot be checked in `test_hud.gd`:
 ## `AssayHud.deposit_disc` being right buys nothing until the list `main.gd::_draw` iterates actually
-## carries `hand_minable`, and it reads that key WITHOUT A DEFAULT on purpose. So a binding that
+## carries `reach_note`, and it reads that key WITHOUT A DEFAULT on purpose. So a binding that
 ## stopped sending it does not draw a wrong map, it draws NO map -- the frame aborts on the first
 ## disc, and the one surface for crossing a 96x64 world goes blank. That is a failure mode worth a
 ## test of its own, because the pure test above and the shot below would both survive it: the shot
@@ -1019,8 +1019,8 @@ func test_the_empty_sections_say_the_in_world_kind_once_a_world_arrives() -> boo
 ## **WHAT IT CANNOT SEE, SAID PLAINLY: whether `_draw` branches on any of it.** Nothing in a headless
 ## suite can read a `draw_circle`, and `--headless` has no frame to photograph. The picture is
 ## `tools/maren_whole_world_shot.gd` (a GUI run) measured by `shared/assay/assa187_measure.py` against
-## the geometry `tools/schematic_disc_table.gd` prints, and that is the evidence for boxes 1 to 3:
-## solid discs 99.3-100% lit inside, hollow 0-15.4%, with hue discarded.
+## the geometry `tools/schematic_disc_table.gd` prints. Since ASSA-199 the number is Cove's:
+## share of the interior at `MAP_BG` ink, 22.2-27.1% hatched against 0.0% on a clean disc.
 func test_the_schematic_has_the_minability_of_every_disc_it_draws() -> bool:
 	var screen := _joined_screen()
 	screen._show_close_up(false)
@@ -1036,16 +1036,28 @@ func test_the_schematic_has_the_minability_of_every_disc_it_draws() -> bool:
 		if int(deposit.get("amount", 0)) <= 0:
 			continue
 		drawn += 1
-		if not deposit.has("hand_minable"):
-			ok = _fail(("the screen is about to draw a deposit with no `hand_minable` on it: %s. "
-					+ "`deposit_disc` reads that key with no default, so this is a blank schematic.")
-					% [deposit.keys()])
+		# **`reach_note` IS THE KEY NOW, NOT `hand_minable`** (ASSA-199): a rock can be dug and not
+		# smelted, so the two are not opposites and the mark follows the note. Both are checked
+		# for presence, because the tile readout still reads the other one.
+		var missing := []
+		for key: String in ["hand_minable", "reach_note"]:
+			if not deposit.has(key):
+				missing.append(key)
+		if not missing.is_empty():
+			ok = _fail(("the screen is about to draw a deposit with no %s on it: %s. "
+					+ "`deposit_disc` reads `reach_note` with no default, so this is a blank schematic.")
+					% [missing, deposit.keys()])
 			break
 		var disc := AssayHud.deposit_disc(deposit, 18.0)
-		states[bool(disc["filled"])] = true
+		if not bool(disc["filled"]):
+			ok = _fail(("the screen is about to draw an UNFILLED disc at %s. ASSA-199 box 4: the "
+					+ "hollow of #259 is gone, not left underneath the hatch.")
+					% [deposit.get("center", Vector2i.ZERO)])
+			break
+		states[bool(disc["hatch"])] = true
 	if ok and (drawn < 2 or states.size() != 2):
-		ok = _fail(("premise: %d discs and %d distinct fill states on seed 777042. The Game "
-				+ "Director counted 6 of 13 unminable there; one state means this world cannot "
+		ok = _fail(("premise: %d discs and %d distinct HATCH states on seed 777042. The Game "
+				+ "Director counted 8 of 13 dead ends there; one state means this world cannot "
 				+ "show the distinction and the assertions above are vacuous")
 				% [drawn, states.size()])
 	screen.queue_free()
@@ -2447,6 +2459,45 @@ func test_the_schematic_is_handed_every_building_the_sim_reports() -> bool:
 					+ "orders are photographed at 1x and the ruling is Maren's")
 	screen.queue_free()
 	return ok
+
+
+## **THE HATCH GOES ON BEFORE THE LETTER, WHICH IS THE ONLY THING KEEPING THE LETTER** (ASSA-199
+## box 6; Cove's constraint is that the hatch repaints only pixels already inside the disc).
+##
+## The hatch is `MAP_BG` strokes across the disc's interior and the species letter sits in the middle
+## of that interior. Nothing clips the strokes away from the glyph -- `hatch_segments` knows about a
+## circle and not about typography -- so what protects the letter is that `_draw` paints it AFTER.
+## Swap those two statements and the letter is cut by two dark bars on every dead end, which is 55.1%
+## of rocks.
+##
+## **A SOURCE ORDER, AND IT IS WHY THIS IS NOT A PIXEL TEST.** `_draw`'s statements run in written
+## order, which is the one frame-ordering fact in here I do not have to ask the engine about. I also
+## tried to measure it on the real shot and could not: glyph-ink pixels inside a hatched disc come
+## out within a few per cent of a clean one at the same radius, but the discs carry DIFFERENT LETTERS
+## (M, H, N, D, P), and a letter's own pixel count swamps the effect. A control would need the same
+## glyph at the same radius with and without the mark. The picture is Maren's box 1.
+func test_the_hatch_is_painted_before_the_species_letter() -> bool:
+	var source := FileAccess.get_file_as_string("res://scripts/main.gd")
+	if source == "":
+		return _fail("could not read res://scripts/main.gd, so nothing was scanned")
+	var hatch_at := source.find("draw_line(strokes[i], strokes[i + 1], ink, thick)")
+	if hatch_at < 0:
+		return _fail("main.gd does not paint `AssayHud.hatch_segments` as lines, so a dead-end rock "
+				+ "is drawn exactly like one that pays (ASSA-199 box 2)")
+	# The glyph is the ONLY `draw_string` in the deposit loop, and it is the one that follows.
+	var glyph_at := source.find("HORIZONTAL_ALIGNMENT_LEFT, -1, glyph, disc[\"ink\"])")
+	if glyph_at < 0:
+		return _fail("main.gd no longer draws the species letter with `disc[\"ink\"]`, so this scan "
+				+ "cannot say whether the hatch goes under it")
+	if hatch_at > glyph_at:
+		return _fail("main.gd paints the hatch AFTER the species letter, so every dead end's letter "
+				+ "is cut by two bars of MAP_BG -- 55.1% of rocks over Maren's 30 seeds")
+	# AND THE FILL IS UNDER BOTH: a hatch painted before the disc it marks is simply invisible.
+	var fill_at := source.find("draw_circle(at, radius, colour)")
+	if fill_at < 0 or fill_at > hatch_at:
+		return _fail("main.gd paints the deposit's fill at %d and the hatch at %d: a hatch under its "
+				+ "own disc marks nothing" % [fill_at, hatch_at])
+	return true
 
 
 ## **A PARTNER ON A LIGHT SPECIES LETTER FUSES WITH IT INTO ONE BLOB** (Maren's second ruling on
