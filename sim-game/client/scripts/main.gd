@@ -359,6 +359,21 @@ var _map_note: Label = null
 var _was := {}
 var _seen := {}
 
+## **THE CLICK YOU HAVE NOT HAD AN ANSWER TO YET** (ASSA-215, Maren's ruling): `{}`, or
+## `{"tile": Vector2i, "confirmed": bool}` for the tile this client last asked to walk to.
+##
+## IT IS AN INPUT, NOT STATE, and that is the whole reason it may exist beside `_was`/`_seen` above
+## without breaking the ruling they are written under. Those two are positions the SIM produced and
+## nothing may extrapolate past them; this is a tile the PLAYER named, echoed back at them while the
+## sim has not answered. The drawn body never reads it -- `AssayScene.placements` cannot see it --
+## so no body moves a pixel sooner than the sim says it does.
+##
+## EVERY TRANSITION IS `AssayScene.walk_echo`'S and none of them is here: set on an accepted submit,
+## cleared on arrival, on a refusal, and on the sim dropping a target it once confirmed. That is a
+## state machine with four ways out and this file can only be tested through a window, so it lives
+## where `tests/test_scene_view.gd` can hold each clause on its own.
+var _walk_echo: Dictionary = {}
+
 ## WHICH PLAYER FACTS THE BINDING LAST FAILED TO SEND, so the refusal is said ONCE and not at the
 ## frame rate (ASSA-196). Empty is the healthy state. A member initializer, not set in `_ready`:
 ## `_players()` is reachable from an input handler before any refresh has run.
@@ -496,8 +511,8 @@ func _ready() -> void:
 	_built = true
 	_client = AssayNetClient.new()
 	_client.welcomed.connect(_on_welcomed)
-	_client.refused.connect(func(reason): _say("refused: %s" % reason, AssayHud.Say.FAILED))
-	_client.link_failed.connect(func(reason): _say(reason, AssayHud.Say.FAILED))
+	_client.refused.connect(_on_refused)
+	_client.link_failed.connect(_on_link_failed)
 	_client.tick_bundle.connect(_on_tick_bundle)
 	# THE WARNING BEFORE THE DROP (ASSA-191). Not a `_say`: it is reversible, so it may not become the
 	# last real sentence the window remembers. See `_render_status`.
@@ -1302,6 +1317,38 @@ func _join_address(address: String) -> void:
 	# path where `connect_to_host` succeeds, so this is the line that is true either way.
 	_say("connecting to %s…" % address, AssayHud.Say.CONNECTING)
 	_client.join(address, _name.text if _name.text != "" else "player")
+
+
+## **A REFUSAL TAKES THE DESTINATION MARK WITH IT** (ASSA-215, Maren's box 4). This was a one-line
+## lambda that only said the sentence; the mark is the reason it is a method now.
+##
+## WHY THE MARK GOES ON ANY REFUSAL AND NOT ONLY A REFUSED WALK. The signal carries a reason STRING
+## and no command, so "was that my walk?" would have to be decided by matching prose -- which is the
+## shape of bug this file has been bitten by twice (a sentence test that passed off the digits in an
+## unrelated message). An unrelated refusal clearing the mark costs a mark the player can re-ask for
+## with one click; a refused WALK keeping its mark is the game promising to go somewhere it has
+## already declined to go. Of the two wrong answers, this is the honest one, and it is still strictly
+## better than before, where a refused walk and an accepted one looked identical for a quarter second.
+func _on_refused(reason: String) -> void:
+	_say("refused: %s" % reason, AssayHud.Say.FAILED)
+	_forget_click()
+
+
+## A DEAD LINK ABANDONS THE CLICK TOO, and this one is mine rather than Maren's (ASSA-215). The walk
+## is not refused here, it is unanswerable: the host is gone, so nothing will ever confirm or arrive.
+## Left alone the bracket sits over a frozen world and then over the NEXT session, because pressing
+## Join rejoins the same slot (ASSA-177) and an unconfirmed echo has nothing to clear it.
+func _on_link_failed(reason: String) -> void:
+	_say(reason, AssayHud.Say.FAILED)
+	_forget_click()
+
+
+## THE CLICK ECHO GOES, THROUGH THE SAME FUNCTION THE REFRESH USES. Two callers, one derivation --
+## a `_walk_echo = {}` here would be a third place that knows what the mark means.
+func _forget_click() -> void:
+	_walk_echo = AssayScene.walk_echo(_walk_echo, null, null, true)
+	_world.destination = null
+	_world.queue_redraw()
 
 
 ## THE RAW TEXT GOES TO THE SIM, the dictionary does not. By the time a `Welcome` is a Godot
@@ -2664,9 +2711,18 @@ func _refresh_world(frame_dt := -1.0) -> void:
 		_refresh_map_note()
 		_world.queue_redraw()
 		return
+	# THE TWO SIM FACTS THE CLICK ECHO DIES ON (ASSA-215), picked up in the loop that is already
+	# reading my player: the tile the sim says I am ON, and the tile the sim says it is walking me
+	# TO. Null when the sim has not said -- which is the normal state for the first 190-394 ms after
+	# a click and is why `walk_echo` cannot read a missing target as "stop drawing it".
+	var my_pos: Variant = null
+	var my_target: Variant = null
 	for entry in described:
 		var player: Dictionary = entry
 		var id := int(player.get("id", -1))
+		if id == _client.player_id:
+			my_pos = player.get("pos")
+			my_target = player.get("target")
 		var at_now: Vector2i = _seen.get(id, player.get("pos", Vector2i.ZERO))
 		var at_was: Vector2i = _was.get(id, at_now)
 		players.append({
@@ -2703,6 +2759,17 @@ func _refresh_world(frame_dt := -1.0) -> void:
 		"seconds": now,
 	}
 	_world.me = me
+	# **THE CLICK ECHO, RE-DERIVED EVERY FRAME AND CLEARED ONLY HERE** (ASSA-215). The input handler
+	# sets it; this is the only place that can take it away, which is what keeps "it clears when the
+	# walk arrives" a fact about the SIM's position rather than about the drawn one -- the body is
+	# still tweening toward that tile for up to a tick after the sim has put it there.
+	#
+	# `refused` IS FALSE HERE AND THAT IS NOT A SHRUG: a refusal is an event, not a per-frame state,
+	# and `_on_refused` already passes `true` through this same function the moment one arrives. A
+	# flag latched for the refresh to read would be a mark that survives one more frame than the
+	# refusal that killed it, on the one surface whose whole job this frame is answering the click.
+	_walk_echo = AssayScene.walk_echo(_walk_echo, my_target, my_pos, false)
+	_world.destination = _walk_echo.get("tile")
 	_refresh_map_note()
 	_world.queue_redraw()
 
@@ -2906,6 +2973,24 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if _client.submit(AssayActions.move_to(tile)):
 		_say("walking to %d, %d" % [tile.x, tile.y], AssayHud.Say.JOINED)
+		# **THE ONE THING ON THIS SCREEN THAT ANSWERS IN THE FRAME YOU CLICKED IN** (ASSA-215).
+		# Everything else about this walk takes 190-394 ms: the command goes to the host, the host
+		# orders it into a tick, the bundle comes back, the playout buffer holds it. So this is set
+		# here, inside the input handler, and NOT in `_refresh_world` from the sim's own `target` --
+		# that is the same quarter second of silence with extra steps.
+		#
+		# IT IS WRITTEN TWICE ON PURPOSE AND BOTH WRITES ARE THE SAME DERIVATION. This one is the
+		# frame the click happened in; `_refresh_world` re-derives it every frame afterwards through
+		# `AssayScene.walk_echo`, which is also the only thing that can clear it. Dropping this write
+		# and leaving the one in the refresh would be correct in every frame but the first -- and the
+		# first frame is the entire feature.
+		#
+		# NO `_refresh()` HERE. That rebuilds the whole HUD (the schematic, every panel) and this is
+		# eight rectangles on the scene; the right-click branch above calls it because a TARGET
+		# changes what the buttons say.
+		_walk_echo = {"tile": tile, "confirmed": false}
+		_world.destination = tile
+		_world.queue_redraw()
 
 
 ## Which tile a screen position is on, or null for anywhere that is not a tile. ONE PLACE DOES THIS,
@@ -3111,10 +3196,19 @@ func _draw() -> void:
 
 	# EVERY FACTORY, WHICH THIS VIEW DID NOT DRAW AT ALL UNTIL ASSA-189.
 	#
-	# **AFTER THE PLAYERS, WHICH IS THE ONE CLAUSE OF THE APPROVED DESIGN I HAVE NOT APPLIED, AND IT
-	# IS OPEN ON ASSA-203 FOR MAREN TO RULE.** Cove's hand-off and her 17:40 ruling both say
-	# deposits -> buildings -> players, for a reason I agree with as a sentence: *a drill must be
-	# visible on the rock it works, and a person must never be hidden by a thing.*
+	# **AFTER THE PLAYERS, WHICH IS WHAT MAREN RULED ON ASSA-203 (01:22Z, box 5) AND WHAT THE CALLS
+	# IN THIS FUNCTION DO:** deposits, then players, then these marks, then the species letter last
+	# (ASSA-213). Cove's hand-off and Maren's 17:40 ruling had both said deposits -> buildings ->
+	# players, for a reason that is right as a sentence: *a drill must be visible on the rock it
+	# works, and a person must never be hidden by a thing.*
+	#
+	# **THIS PARAGRAPH CLAIMED THE OPPOSITE FOR A DAY AFTER THE RULING LANDED** -- "the one clause of
+	# the approved design I have not applied, and it is open for Maren to rule" -- sitting directly
+	# above the calls that refute it. Maren read it and believed it for a minute before checking the
+	# line numbers (ASSA-203, 02:55). Mine, and left there by me: nothing tests prose and this studio
+	# reads its own prose as fact (ASSA-207). What she measured when she ruled: of a machine's mark,
+	# 134 px -- 92.4% -- survives with the buildings painted after the players and 0 px, 0.0%, with
+	# them painted before; a smelter's 162 px survives either way, because nobody stands on it.
 	#
 	# The measurement is that on this world it costs the first half to buy the second. The play loop
 	# plants on the tile you are STANDING on (`_targeted` false is "where you stand"), so a machine's
