@@ -1243,7 +1243,24 @@ func _panel_surface() -> Color:
 ## a direct read of one property. The 4.091:1 defect ASSA-117 fixed was a `modulate` going around the
 ## outside of the theme's own contrast guard -- so a test that read `font_color` alone would have
 ## passed over it, and so would one that read `modulate` alone.
+##
+## **AND IT POKES THE LABEL FIRST, WHICH IS THE WHOLE OF ASSA-246 FOR THE FOUR SWEEPS THAT USE THIS.**
+## Our theme is a PROJECT theme (`project.godot` `gui/theme/custom`), and a control themed that way
+## keeps resolving the PLAIN type's entries -- `Label` -- ignoring its own `theme_type_variation`
+## until it receives `NOTIFICATION_THEME_CHANGED`. Running `_process` frames does not deliver it. So
+## headless, a `Heading` label reported `Label`'s colour and a `Quiet` button reported `INK` where
+## the window draws `INK_MUTED`; a test of mine on ASSA-233 asserted the opposite of what ships and
+## passed.
+##
+## **THE SWEEPS WERE RIGHT BY COINCIDENCE, NOT BY CONSTRUCTION, AND THAT IS WHY THIS IS A ONE-LINE
+## FIX TO A HELPER RATHER THAN A SWEEP OF 27 CALL SITES.** All 7 `Heading` labels and the 1 `Display`
+## go through here, and they came back correct only because `_style_label` sets plain `Label`'s
+## `font_color` to `INK` as well. Retune `Heading`'s ink away from `Label`'s -- which Maren has
+## already done once, `INK_MUTED` -> `INK` on ASSA-224 -- and ASSA-117's 4.5:1 floor would have gone
+## blind to every heading in the window while staying green. One poke here fixes every caller at
+## once, and no caller has to remember.
 func _drawn_color(label: Label) -> Color:
+	label.notification(Control.NOTIFICATION_THEME_CHANGED)
 	var c := label.get_theme_color(&"font_color")
 	var m := label.modulate
 	return Color(c.r * m.r, c.g * m.g, c.b * m.b, c.a * m.a)
@@ -4096,5 +4113,85 @@ func test_a_command_that_never_reached_the_wire_still_says_so() -> bool:
 		ok = _fail("a command that never reached the wire said `%s`" % screen._status.text)
 	if screen._base_level != AssayHud.Say.FAILED:
 		ok = _fail("the refusal is not painted as a failure, so it reads as an instruction")
+	screen.queue_free()
+	return ok
+
+
+## **THE POKE IN `_drawn_color` IS LOAD-BEARING, AND TODAY NO COLOUR CAN PROVE IT** (ASSA-246).
+##
+## Our theme is a PROJECT theme, and a control themed that way ignores its own
+## `theme_type_variation` until it receives `NOTIFICATION_THEME_CHANGED` -- `_process` frames do not
+## deliver it. Four contrast sweeps read every label in the window through `_drawn_color`, including
+## all 7 `Heading`s and the 1 `Display`.
+##
+## **THEY CAME BACK CORRECT BY COINCIDENCE.** `_style_label` sets plain `Label`'s `font_color` to
+## `INK`, and `Heading` and `Display` are `INK` too, so reading the base type returned the
+## variation's answer by luck. That is why removing the poke from `_drawn_color` CANNOT be caught by
+## a colour assertion on this build -- there is no Label variation whose ink differs from `Label`'s
+## for a test to catch it with. Saying so is the point of this test rather than a reason to skip it.
+##
+## **SO IT ASSERTS THE TWO THINGS THAT ARE ACTUALLY CHECKABLE.**
+##
+## 1. **THE MECHANISM IS LIVE**, shown on `font_size`, where `Heading` (15) and `Label` (13) do
+##    differ: an un-poked read reports the base type's size and a poked read reports the variation's.
+##    If that ever stops differing, Godot has changed this behaviour and the poke can be deleted --
+##    the failure message says so, so a future reader gets an instruction and not a puzzle.
+## 2. **THE COINCIDENCE IS DECLARED, AND THE GUARD GROWS TEETH THE DAY IT ENDS.** For every Label
+##    variation, either its ink equals `Label`'s -- recorded here as a known coincidence -- or
+##    `_drawn_color` must demonstrably return the variation's ink and not the base type's. The second
+##    branch is dead code today and becomes the real assertion the moment anybody retunes a heading,
+##    which Maren has already done once (`INK_MUTED` -> `INK`, ASSA-224). Nacre's tab strip will add
+##    variations whose colours do NOT coincide, and they will land straight in branch two.
+func test_the_theme_poke_is_load_bearing_and_the_sweeps_coincidence_is_declared() -> bool:
+	var screen := _screen()
+	var ok := true
+	var theme: Theme = load("res://theme/assay.tres")
+	if theme == null:
+		screen.queue_free()
+		return _fail("no theme/assay.tres to read declared values from")
+
+	# 1. THE MECHANISM, ON A PROPERTY WHERE THE TWO TYPES DISAGREE.
+	var probe := Label.new()
+	probe.theme_type_variation = &"Heading"
+	screen.add_child(probe)
+	var unpoked := probe.get_theme_font_size(&"font_size")
+	probe.notification(Control.NOTIFICATION_THEME_CHANGED)
+	var poked := probe.get_theme_font_size(&"font_size")
+	var declared_heading := theme.get_font_size(&"font_size", &"Heading")
+	var declared_label := theme.get_font_size(&"font_size", &"Label")
+	if poked != declared_heading:
+		ok = _fail(("a poked `Heading` label reports font_size %d, not the theme's declared %d: the "
+				+ "poke does not resolve the variation and `_drawn_color` cannot be trusted")
+				% [poked, declared_heading])
+	elif unpoked == poked:
+		ok = _fail(("an UN-poked `Heading` label already reports %d, the variation's own size. The "
+				+ "project-theme behaviour ASSA-246 is about has changed -- GOOD NEWS: delete the "
+				+ "`notification()` line in `_drawn_color` and this assertion with it.") % unpoked)
+	elif unpoked != declared_label:
+		ok = _fail(("an un-poked `Heading` label reports %d, which is neither the variation's %d nor "
+				+ "the base type's %d. The fallback is not what ASSA-246 measured, so re-measure "
+				+ "before trusting any headless theme read") % [unpoked, declared_heading,
+				declared_label])
+
+	# 2. EVERY LABEL VARIATION: EITHER A DECLARED COINCIDENCE, OR THE POKE IS PROVED ON IT.
+	var coincident := PackedStringArray()
+	for v in [&"Heading", &"Display"]:
+		var base := theme.get_color(&"font_color", &"Label")
+		var mine := theme.get_color(&"font_color", v)
+		var tell := Label.new()
+		tell.theme_type_variation = v
+		screen.add_child(tell)
+		var drawn := _drawn_color(tell)
+		if mine.is_equal_approx(base):
+			# KNOWN COINCIDENCE. Recorded, not asserted away: a sweep reading this label cannot tell
+			# a working poke from a broken one, and the poke is what makes it safe to retune.
+			coincident.append(String(v))
+		elif not drawn.is_equal_approx(mine):
+			ok = _fail(("`%s`'s ink %s differs from `Label`'s %s, and `_drawn_color` returned %s -- "
+					+ "the base type's. The contrast sweeps are now measuring the wrong colour for "
+					+ "every `%s` in the window (ASSA-246)") % [v, mine, base, drawn, v])
+		tell.queue_free()
+	print("    ASSA-246: Label variations whose ink coincides with `Label`'s, so the sweeps cannot "
+			+ "prove the poke: %s" % [", ".join(coincident) if coincident.size() > 0 else "none"])
 	screen.queue_free()
 	return ok
