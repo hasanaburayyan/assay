@@ -1731,7 +1731,8 @@ func test_an_empty_log_says_nothing_has_happened_rather_than_nothing() -> bool:
 ##
 ## AND THE LINES ARE THE SIM'S, IN THE SIM'S ORDER. `sim::debug::halt_lines` is "every building that
 ## has stopped, one line each, worst-placed first in placement order"; this block may not sort,
-## re-word or count them.
+## re-word or count them. The total on the heading is the sim's own sentence and not this block's
+## arithmetic over the rows -- see the test below, which is what holds that apart.
 func test_what_has_stopped_is_pinned_outside_the_scroll_and_reads_verbatim() -> bool:
 	var screen := _screen()
 	var ok := true
@@ -1768,6 +1769,79 @@ func test_what_has_stopped_is_pinned_outside_the_scroll_and_reads_verbatim() -> 
 				ok = _fail("the smelter was fixed and the panel still says it is stopped")
 			elif screen._halt_lines != null:
 				ok = _fail("the lines are still in the block, one `visible` away from coming back")
+	screen.queue_free()
+	return ok
+
+
+## **THE STOPPED HEADING CARRIES A TOTAL THIS BLOCK COULD NOT HAVE WORKED OUT** (ASSA-94).
+##
+## The Game Director ruled the count the floor of this surface: *"a player who reads '3 machines
+## stopped' and can see one reason knows there are two more to find; a player who sees one reason and
+## no count does not know anything is missing."* The block declined one in a comment, on the correct
+## objection that a count would be a second claim about the world -- and the answer was never for the
+## client to count, it was to read the sentence the sim was already composing (`halt_summary`).
+##
+## **THE ASSERTION IS THAT THE HEADING HOLDS A NUMBER THE ROWS DO NOT CONTAIN, and that is the whole
+## design of this test.** Asserting `heading.text == summary` alone is nearly vacuous -- `summary` is
+## the argument that was just passed in. So the fixture is deliberately **2 stopped out of 7**: a
+## block counting its own rows can produce the 2 and can NEVER produce the 7, because how many
+## buildings exist is not in `halt_lines` at all. That is also the fact that made the old comment
+## wrong on the merits rather than on taste.
+func test_the_stopped_headings_total_is_one_this_block_could_not_have_counted() -> bool:
+	var screen := _screen()
+	var ok := true
+	var planted := PackedStringArray([
+		"smelter 3 at (12, 7) · walls stone · stalled: the fuel will not light",
+		"machine 1 at (4, 9) · nothing here to mine",
+	])
+	# Two stopped, SEVEN built. `planted.size()` is 2 and no arithmetic over these rows reaches 7.
+	var summary := "2 of 7 buildings stopped"
+	screen._rebuild_halt(planted, summary)
+	var heading: Label = null
+	for child in screen._halt.get_children():
+		if child is Label and (child as Label).theme_type_variation == &"Heading":
+			heading = child
+			break
+	if heading == null:
+		ok = _fail("the stopped block has no heading, so there is nowhere for the total to survive "
+				+ "when the reasons are dropped")
+	elif heading.text != summary:
+		ok = _fail(("the stopped heading reads '%s' and the sim's sentence is '%s': the count is the "
+				+ "sim's wording or it is a second claim about the world") % [heading.text, summary])
+	elif not heading.text.contains("7"):
+		ok = _fail(("the stopped heading reads '%s', which carries no total beyond the %d rows it was "
+				+ "handed -- a block counting its own rows would read exactly like this, and the "
+				+ "ruling is that the player is told how many there ARE") % [heading.text,
+				planted.size()])
+	# AND THE ROWS ARE UNTOUCHED BY IT: the heading is not one of them, so a short column drops
+	# reasons and never the number.
+	if ok:
+		var rows: Array = screen._halt_lines.find_children("*", "Label", true, false)
+		if rows.size() != planted.size():
+			ok = _fail("%d lines went in and %d came out once the heading carried a count"
+					% [planted.size(), rows.size()])
+	# **AND THE TOTAL IS PART OF WHAT "THE BLOCK IS ALREADY SHOWING THIS" MEANS.** `_refresh_halt`
+	# rebuilds only when the shape changes, and M moves when a WORKING building is placed -- which
+	# changes no line. So "1 of 2" and "1 of 3" carry identical lines, and a shape built from the
+	# lines alone would compare equal and leave the old total on screen: the number that must always
+	# be stated, quietly wrong. The suite cannot reach a world with a stalled building in it, so this
+	# is asserted on the shape itself rather than left to a comment.
+	if ok:
+		var same := PackedStringArray(["machine 1 at (4, 9) · nothing here to mine"])
+		if screen._halt_shape("1 of 2 buildings stopped", same) \
+				== screen._halt_shape("1 of 3 buildings stopped", same):
+			ok = _fail("placing a working building moves the total and no line, and this block "
+					+ "cannot tell those two states apart, so it would keep showing the old count")
+	# AND WITH NO SENTENCE FROM THE SIM IT FALLS BACK TO THE SECTION'S NAME rather than inventing a
+	# number -- the state every other test here drives it in.
+	if ok:
+		screen._rebuild_halt(planted)
+		for child in screen._halt.get_children():
+			if child is Label and (child as Label).theme_type_variation == &"Heading":
+				if (child as Label).text != "stopped":
+					ok = _fail(("with no summary the heading reads '%s'; it must fall back to the "
+							+ "section's own name") % [(child as Label).text])
+				break
 	screen.queue_free()
 	return ok
 

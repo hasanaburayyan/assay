@@ -1957,6 +1957,35 @@ pub fn halt_lines(world: &World) -> Vec<String> {
 }
 
 /// [`halt_lines`] as a block, for the terminal.
+/// **HOW MANY BUILDINGS HAVE STOPPED, OUT OF HOW MANY THERE ARE** — the one
+/// sentence over the stopped list, with no trailing punctuation so a caller can
+/// end it however its surface ends things (ASSA-94).
+///
+/// It exists because the Game Director ruled the count is the floor: *"a player
+/// who reads '3 machines stopped' and can see one reason knows there are two
+/// more to find; a player who sees one reason and no count does not know
+/// anything is missing."* The reasons are bounded by the space a surface has;
+/// the number never is.
+///
+/// **SPLIT OUT OF `halted_table` RATHER THAN WRITTEN AGAIN, which is the whole
+/// value of it.** The window declined a count on the correct objection that it
+/// would be a second claim about the world — but the sim already made that
+/// claim here, so the fix was never the client counting its own rows. That
+/// really would be the ASSA-43/52 shape. One wording, two surfaces.
+///
+/// **EMPTY WHEN NOTHING HAS STOPPED, and that is a decision, not a degenerate
+/// case.** "0 of 2 buildings stopped" is the cry-wolf failure one step removed
+/// (Maren: *"a count of zero is not drawn"*), and returning `""` means a caller
+/// cannot render one by accident. `halted_table` keeps its own fuller sentence
+/// for the terminal, where a reply to a typed `halted` must say something.
+pub fn halt_summary(world: &World) -> String {
+    let stopped = halt_lines(world).len();
+    if stopped == 0 {
+        return String::new();
+    }
+    format!("{} of {} buildings stopped", stopped, world.buildings.len())
+}
+
 pub fn halted_table(world: &World) -> String {
     let lines = halt_lines(world);
     if lines.is_empty() {
@@ -1968,11 +1997,11 @@ pub fn halted_table(world: &World) -> String {
             n => format!("Nothing has stopped. All {n} buildings you have placed are working.\n"),
         };
     }
-    let mut out = format!(
-        "{} of {} buildings stopped:\n",
-        lines.len(),
-        world.buildings.len()
-    );
+    // THE SUMMARY IS NOT SPELLED AGAIN HERE (ASSA-94). This string was the only
+    // place the count was worded, and the window could not reach it; it is now
+    // `halt_summary`, and this table reads it so the terminal and the window
+    // cannot drift into two sentences about one fact.
+    let mut out = format!("{}:\n", halt_summary(world));
     for line in lines {
         let _ = writeln!(out, "  {line}");
     }

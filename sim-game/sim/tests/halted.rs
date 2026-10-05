@@ -365,6 +365,93 @@ fn a_drill_that_is_merely_idle_is_something_to_fix_and_a_smelter_is_not() {
     );
 }
 
+/// **THE COUNT IS THE SIM'S SENTENCE AND IT IS WORDED EXACTLY ONCE** (ASSA-94).
+///
+/// The Game Director ruled the count the floor of this surface: *"a player who
+/// reads '3 machines stopped' and can see one reason knows there are two more to
+/// find."* The window declined one, on the correct objection that a count would
+/// be a second claim about the world — and the sim was already making it, inside
+/// `halted_table`'s first line, where no host could reach it.
+///
+/// **AND THE LAST ASSERTION IS HERE BECAUSE A MUTATION PASSED WITHOUT IT.** I
+/// wrote the two below first and said in the pull request that they required the
+/// table's first line to *be* the summary rather than to resemble it. They do
+/// not. I put `halted_table`'s own `format!("{} of {} buildings stopped:\n", …)`
+/// back, which is precisely the duplication this split removes, and all nine
+/// tests in this file stayed green — because a faithful copy produces identical
+/// TEXT, and text is all an equality over output can see. The drift it is meant
+/// to catch is a FUTURE edit to one wording that the other does not follow, and
+/// no comparison of today's two strings can observe that.
+///
+/// So the call itself is asserted, in the source, the same weaker-but-real trick
+/// the client tests use for a disc nothing headless can read. It is brittle to
+/// reformatting on purpose: re-duplicating the sentence must cost somebody a red
+/// test, and nothing else here can make it.
+#[test]
+fn the_stopped_count_is_one_sentence_the_table_and_a_window_both_read() {
+    let (mut world, me) = world_with_player();
+    let spawn = world.spawn_tile();
+    let nowhere = TilePos::new(spawn.x + 4, spawn.y + 4);
+    clear_deposits_from(&mut world, nowhere);
+    plant_drill(&mut world, me, nowhere);
+    let stopped = sim::debug::halt_lines(&world).len();
+    assert_eq!(
+        stopped, 1,
+        "the fixture must stop exactly one of the buildings"
+    );
+    assert_eq!(
+        sim::debug::halt_summary(&world),
+        format!("1 of {} buildings stopped", world.buildings.len())
+    );
+    let table = sim::debug::halted_table(&world);
+    assert_eq!(
+        table.lines().next().unwrap(),
+        format!("{}:", sim::debug::halt_summary(&world)),
+        "the terminal's first line and the summary disagree: {table}"
+    );
+    // THE ONLY ASSERTION HERE A RE-DUPLICATION CANNOT SURVIVE. See the note above:
+    // the equality on the line before passes on a faithful copy.
+    let source = include_str!("../src/debug.rs");
+    assert!(
+        source.contains(r#"format!("{}:\n", halt_summary(world))"#),
+        "`halted_table` no longer builds its first line out of `halt_summary`, \
+         so the count is worded in two places again and they are free to drift"
+    );
+}
+
+/// **A COUNT OF ZERO IS NOT DRAWN** (Game Director, ASSA-94): a surface saying
+/// "0 stopped" in the healthy case is the cry-wolf failure one step removed.
+///
+/// The summary is empty rather than `"0 of 2 buildings stopped"`, so a host
+/// cannot render one by accident — the emptiness is the instruction. The
+/// terminal keeps its own fuller sentence, because a reply to a typed `halted`
+/// has to say something, and the two are deliberately not the same string.
+#[test]
+fn nothing_stopped_is_an_empty_summary_and_a_spoken_table() {
+    let (mut world, me) = world_with_player();
+    let smelter = Item::new(ItemKind::Smelter, WALLS, Grade::C);
+    world.player_mut(me).unwrap().inventory.add(smelter, 1);
+    let spawn = world.spawn_tile();
+    let pos = TilePos::new(spawn.x + 1, spawn.y);
+    run(
+        &mut world,
+        &[Input::player(
+            me,
+            PlayerCommand::Place { item: smelter, pos },
+        )],
+        1,
+    );
+    assert!(
+        sim::debug::halt_lines(&world).is_empty(),
+        "the fixture must have nothing stopped, or this test is about nothing"
+    );
+    assert_eq!(sim::debug::halt_summary(&world), "");
+    assert!(
+        sim::debug::halted_table(&world).contains("Nothing has stopped"),
+        "the terminal still answers a typed `halted`"
+    );
+}
+
 /// Every state a machine can be in is reachable, and each has its own
 /// sentence.
 ///
