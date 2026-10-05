@@ -383,6 +383,10 @@ var _starved := false
 ## means the clock has learnt that it is 14% short and is playing out that much slower than the
 ## measurement alone would. It lives here rather than in the scene because `playout_at` is pure.
 var _play_trim := AssayScene.PLAYOUT_TRIM_NONE
+## WHETHER DRAWN FRAMES ARE MOVING THE PLAYOUT CLOCK. Set the first time `_advance_playout` is
+## called with a frame's delta; while it is false the clock is advanced by arrivals instead, which
+## is the only thing a headless harness has. See `_remember_positions`.
+var _frames_drive_playout := false
 ## The buffer's depth in ticks on the last advance, for the probes and the debug line: the quantity
 ## the clock is actually controlling, which until now could only be inferred from `_pending.size()`.
 var _play_depth := 0.0
@@ -1070,13 +1074,23 @@ func _on_play_solo() -> void:
 ##
 ## IN `_process` AND NOT IN `_refresh`, because `_refresh` runs on tick bundles and there are no
 ## bundles until we have joined -- polling there would wait for the thing it is waiting to start.
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	# THE SCENE IS THE ONLY THING ON THIS SCREEN THAT MOVES BETWEEN TICKS, so it is the only thing
 	# that redraws per frame: a body tweening between two tiles the sim produced, and two gaits
 	# running off the wall clock. The schematic does not redraw here -- it is painted when a tick
 	# lands, which is every state it has.
+	#
+	# **AND THE FRAME'S OWN DELTA GOES WITH IT** (ASSA-197). This used to be `_delta`, thrown away,
+	# and the playout clock moved the body by its own `Time.get_ticks_msec()` readings instead. Two
+	# things were wrong with that and both are visible in a real window: the reading is quantised to
+	# a millisecond, which is 9% of a 90 fps frame and therefore 9% of the body's drawn speed; and
+	# the interval it measures runs between the clock's own advance instants, which are not the
+	# frame boundaries, so the movement published in a frame was sized for a different interval than
+	# the one the frame was shown for. Measured: on runs where frame time was steady the drawn speed
+	# was inside the bar 95% of the time, and on runs where it varied 11-28 ms it fell to 82-86%,
+	# with the failing frames alternating too-fast and too-slow in pairs.
 	if _close_up and _sim.running():
-		_refresh_world()
+		_refresh_world(delta)
 	# ABOVE THE EARLY RETURN BELOW, which is about the solo relay and skips most frames of a session.
 	_refresh_join_band()
 	if _solo == null or _solo.address != "" or _solo.failure != "":
@@ -2465,7 +2479,7 @@ func _players() -> Array:
 	return []
 
 
-func _refresh_world() -> void:
+func _refresh_world(frame_dt := -1.0) -> void:
 	if not _sim.running():
 		_world.view = {}
 		_world.me = null
@@ -2483,7 +2497,7 @@ func _refresh_world() -> void:
 	# of a segment the body stops on the newest position it has been given rather than carrying on
 	# toward one the sim has not produced. 1.0 before any tick has landed, so an unplayed world draws
 	# everyone exactly where the Welcome put them.
-	var part := _advance_playout(now)
+	var part := _advance_playout(now, frame_dt)
 	var players: Array = []
 	var me: Variant = null
 	var described := _players()
@@ -2614,7 +2628,14 @@ func _remember_positions() -> void:
 	# ADVANCED ON THIS PATH TOO, not only on a drawn frame, and that is not belt-and-braces: every
 	# headless test and probe runs inside `SceneTree._initialize` where `_process` never fires, so a
 	# playout that only moved on a frame would leave the suite drawing a body that never starts.
-	_advance_playout(now)
+	#
+	# **BUT NOT ONCE FRAMES ARE DRIVING THE CLOCK** (ASSA-197). With the frame's own delta as the
+	# step, an arrival that also advanced would add its own wall-clock gap on top of a frame's delta
+	# and the clock would run fast by whatever fraction of the frame it landed in. In a window
+	# `_process` fires for seconds before any bundle arrives, so this is off by the time it matters;
+	# headless, nothing ever sets it and the behaviour is exactly as it was.
+	if not _frames_drive_playout:
+		_advance_playout(now)
 
 
 ## MOVE THE DRAWN SEGMENT ON IF THE PLAYOUT CLOCK SAYS SO, and answer how far through it we are.
@@ -2627,16 +2648,34 @@ func _remember_positions() -> void:
 ##
 ## THE FACING IS TAKEN AT PROMOTION, so the sprite faces the step it is DRAWING rather than one the
 ## sim has produced but nobody has seen yet. Still the step they actually took, never a target.
-func _advance_playout(now: float) -> float:
+func _advance_playout(now: float, frame_dt := -1.0) -> float:
 	if _pending.is_empty():
 		return 1.0
+	if frame_dt >= 0.0:
+		_frames_drive_playout = true
 	var ticks: Array[int] = []
 	for entry in _pending:
 		ticks.append(int(entry["tick"]))
-	# THE FRAME'S OWN ELAPSED TIME, clamped. This function also runs when a bundle lands (see
-	# `_remember_positions`), so `dt` is "time since the clock last moved" rather than a frame delta,
-	# which is the same quantity on a drawn frame and the right one on a headless tick.
+	# **THE FRAME'S OWN ELAPSED TIME, FROM THE ENGINE, clamped** (ASSA-197). `frame_dt` is the delta
+	# `_process` was handed; the fallback is "time since the clock last moved", which is what every
+	# caller that is not a frame has to use -- a bundle landing in a headless harness, where
+	# `_process` never fires at all.
+	#
+	# THEY ARE NOT THE SAME NUMBER AND THE DIFFERENCE IS A PLAYER-VISIBLE ONE. The fallback is built
+	# from `Time.get_ticks_msec()`, quantised to a millisecond, and it measures the gap between the
+	# clock's own advance instants rather than between two frames -- so the movement published in a
+	# frame was sized for an interval the frame was not shown for. See `_process`.
 	var dt := 0.0 if _played_at <= 0.0 else clampf(now - _played_at, 0.0, 1.0)
+	if frame_dt >= 0.0:
+		dt = clampf(frame_dt, 0.0, 1.0)
+	elif _frames_drive_playout:
+		# **ONLY A FRAME MOVES THE CLOCK.** This function is also reached from a tick landing and
+		# from two UI refreshes, none of which is a frame; while frames are driving the clock those
+		# callers repaint at the position it is already at. Letting them advance by their own
+		# wall-clock gap is how a bundle that lands mid-frame used to add that gap on top of the
+		# frame's delta -- the clock then runs fast by the fraction of the frame it landed in, and
+		# the body is drawn somewhere the next frame has to take back.
+		dt = 0.0
 	_played_at = now
 	# **HOW LONG AGO THE NEWEST POSITION LANDED**, so the loop's error is measured against what the
 	# host has produced by now rather than against its last whole tick (see `playout_at`): the
