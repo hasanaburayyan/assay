@@ -42,6 +42,16 @@ var view := {}
 ## the client, not about the world.
 var me: Variant = null
 
+## **THE TILE YOU CLICKED, OR null** (ASSA-215). A `Vector2i`, set by `main.gd` from the player's own
+## click and cleared by `AssayScene.walk_echo` the frame the walk arrives, is refused or is dropped.
+##
+## BESIDE `view` FOR `me`'s REASON, and it is the stronger case of the two: a destination is not a
+## fact about the world at all -- the sim has not heard of it yet when it is first drawn -- so a
+## `view` key for it would put a client's unanswered input in the dictionary `AssayScene.placements`
+## reads as sim state. `placements` cannot see this, which is the ASSA-119 guarantee: nothing here
+## can move a body.
+var destination: Variant = null
+
 ## **THE RECTANGLES THIS FUNCTION ACTUALLY BLITTED LAST FRAME, for the probes only** (ASSA-197).
 ## Map pixels. Nothing here reads them and no decision depends on them; `_draw` writes them on its
 ## way past.
@@ -59,6 +69,17 @@ var me: Variant = null
 var drawn_body := Rect2()
 var drawn_foot := Rect2()
 
+## **THE TILE THE DESTINATION BRACKETS WERE ACTUALLY PAINTED ON LAST FRAME, for the probes only**
+## (ASSA-215), in map pixels, and `Rect2()` when nothing was painted. Written on the way past like
+## the two above, and read by nothing in the client.
+##
+## IT IS WHAT MAKES "THE MARK WAS ON SCREEN IN THAT FRAME" A MEASUREMENT. A probe can ask `main.gd`
+## what it thinks the destination is, and then it is reading the state rather than the picture --
+## which is exactly how a mark that was computed every frame and drawn in none of them would pass.
+## This is set inside `_draw`, after the `draw_rect` calls, so it cannot be true of a frame the
+## brackets were not painted in.
+var drawn_destination := Rect2()
+
 
 func _init() -> void:
 	clip_contents = true
@@ -72,6 +93,7 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), AssayHud.MAP_BG, true)
 	drawn_body = Rect2()
 	drawn_foot = Rect2()
+	drawn_destination = Rect2()
 	if view.is_empty():
 		return
 	var all := AssayScene.placements(view)
@@ -85,6 +107,27 @@ func _draw() -> void:
 	for place in all:
 		if int(place.get("layer", AssayScene.FLOOR)) == AssayScene.FLOOR:
 			_blit(place)
+	# WHERE YOU ASKED TO GO (ASSA-215), ON THE FLOOR AND UNDER EVERYTHING THAT STANDS ON IT. Above
+	# the ground and the ore because the tile it marks is one of those two; below the bodies and the
+	# buildings because it marks the GROUND there, so a person or a machine standing on that tile is
+	# in front of their own floor, the way the spawn pad already is.
+	#
+	# `MINE` AT A FOURTH WEIGHT AND NO NEW LITERAL (Maren's box 6): the schematic's walk line is
+	# `MINE` at 0.35, the foot mark below is 0.55, the player mark is solid. This is the brightest
+	# of the three because it is the only one that answers an input, and it is on screen for a
+	# quarter of a second.
+	if destination != null:
+		var tile: Vector2i = destination
+		var origin: Vector2 = view.get("origin", Vector2.ZERO)
+		# EVERY KEYLINE FIRST, THEN EVERY BAR. The two bars of one corner overlap, so a per-bar
+		# keyline painted immediately before its own bar would lay MAP_BG over the yellow of the bar
+		# beside it and bite a notch out of the corner.
+		for rim in AssayScene.destination_keyline(tile, origin):
+			draw_rect(rim, AssayHud.MAP_BG, true)
+		for bar in AssayScene.destination_mark(tile, origin):
+			draw_rect(bar, AssayHud.MINE, true)
+		drawn_destination = Rect2(Vector2(tile) * AssayScene.TILE_PX - origin,
+				Vector2(AssayScene.TILE_PX, AssayScene.TILE_PX))
 	if me != null:
 		# THE ONE MARK ON THIS VIEW THAT IS NOT ART (ASSA-119 box 5). Drawn in the colour the
 		# schematic has used for "yours" since ASSA-7 rather than in a new one, because Maren's

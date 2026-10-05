@@ -1092,6 +1092,121 @@ static func foot_mark(at: Vector2, origin: Vector2) -> Rect2:
 			Vector2(TILE_PX * 0.84, TILE_PX * 0.36))
 
 
+## THE TILE YOU CLICKED, AS FOUR CORNER BRACKETS TO FILL (ASSA-215, Maren's ruling).
+##
+## WHAT IT IS FOR. The round trip is 190-394 ms and we are keeping it (ASSA-197, ASSA-212), so for a
+## quarter of a second after a click the world is motionless -- and until now the close-up drew
+## nothing at all in that time, which is a button that looks broken rather than a walk that looks
+## slow. This is the acknowledgement: the tile the player themselves named, drawn from their own
+## click in the frame it happened in.
+##
+## IT IS NOT A PREDICTION AND IT MAY NOT BECOME ONE (ASSA-119). Nothing here says where a BODY is
+## or will be -- it takes a tile the player chose and returns rectangles on it. The body is still
+## drawn only from positions the sim produced, by `placements` above, which cannot see this.
+##
+## BRACKETS AND NOT A FILLED TILE OR A RING, and the shape is the whole of Maren's box 3. A filled
+## tile in `MINE` would cover the ore disc or ground it marks and read as a thing placed there; a
+## ring is the mark `mine_ring` already means on the schematic ("which body is yours"); the foot
+## ellipse under your own feet is the other `MINE` mark on THIS surface. Four corners leave the
+## middle of the tile -- the sprite, the rock, the letter -- untouched, which is why it can sit on an
+## ore disc without hiding what you clicked.
+##
+## INSET INSIDE THE TILE rather than drawn on its boundary: a bracket centred on the edge would
+## straddle two tiles and be ambiguous by one tile, which on a click acknowledgement is the one
+## thing it must not be.
+## **AND A KEYLINE UNDER IT, WHICH IS A MEASUREMENT AND NOT A FLOURISH.** The first version of this
+## mark was bare `MINE` on the world art, and photographed on seed 14247 it scored **1.64:1 against
+## the brightest pixels of the ore disc it was marking and 1.55:1 on ground** (sRGB relative
+## luminance, `shared/assay/limpet-assa215-click-echo/`). The guidance for a graphic that has to be
+## seen is 3:1 and this client already refuses to write a theme under 4.5:1 for text, so a mark at
+## 1.6 is one the player can be looking straight at and miss -- on the one surface whose job is
+## answering their click.
+##
+## `MAP_BG` UNDER THE INK IS THIS PROJECT'S OWN ANSWER, THREE TIMES OVER: `player_keyline` under a
+## body (ASSA-189), `building_keyline` under a factory diamond, and the `GLYPH_BED_PX` bed under
+## every species letter (ASSA-213). It costs no new colour literal and it makes the mark's contrast
+## a fact about two inks we own rather than about whichever species the world rolled: MINE on MAP_BG
+## is 12.2:1 whatever is underneath.
+##
+## GROWN OUTWARD FROM EACH BAR, so the yellow keeps every pixel of its own 2 px width, and the inset
+## above is exactly the keyline's width -- the rim reaches the tile's edge and never crosses it.
+const DESTINATION_ARM_PX := 10.0
+const DESTINATION_THICK_PX := 2.0
+const DESTINATION_INSET_PX := 1.0
+const DESTINATION_KEYLINE_PX := 1.0
+
+
+static func destination_mark(tile: Vector2i, origin: Vector2) -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	var side := TILE_PX - DESTINATION_INSET_PX * 2.0
+	var box := Rect2(Vector2(tile) * TILE_PX - origin + Vector2.ONE * DESTINATION_INSET_PX,
+			Vector2(side, side))
+	var arm := minf(DESTINATION_ARM_PX, side * 0.5)
+	for cx in [0, 1]:
+		for cy in [0, 1]:
+			var left := box.position.x if cx == 0 else box.end.x - arm
+			var top := box.position.y if cy == 0 else box.end.y - DESTINATION_THICK_PX
+			out.append(Rect2(Vector2(left, top), Vector2(arm, DESTINATION_THICK_PX)))
+			var vleft := box.position.x if cx == 0 else box.end.x - DESTINATION_THICK_PX
+			var vtop := box.position.y if cy == 0 else box.end.y - arm
+			out.append(Rect2(Vector2(vleft, vtop), Vector2(DESTINATION_THICK_PX, arm)))
+	return out
+
+
+## THE SAME EIGHT BARS, ONE PIXEL BIGGER ALL ROUND, to be painted in `MAP_BG` underneath them.
+##
+## A SEPARATE FUNCTION AND NOT A `grow()` IN THE RENDERER: `world_layer.gd` holds no geometry by
+## design, and "how much rim" is exactly the kind of number that gets edited in a renderer and then
+## disagrees with the test that measured it.
+static func destination_keyline(tile: Vector2i, origin: Vector2) -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	for bar in destination_mark(tile, origin):
+		out.append(bar.grow(DESTINATION_KEYLINE_PX))
+	return out
+
+
+## WHICH TILE THE CLICK ECHO IS ON AFTER ONE FRAME OF SIM FACTS, or `{}` for no mark (ASSA-215).
+##
+## `echo` is `{}` or `{"tile": Vector2i, "confirmed": bool}`; the caller sets it from its own click
+## and hands it back here every frame. `sim_target` is where the SIM says it is walking me (the key
+## the schematic's walk line already reads) and `pos` is the tile the SIM says I am on -- both null
+## when there is no such fact yet.
+##
+## WHY THIS IS A FUNCTION AND NOT FOUR `if`s IN THE INPUT HANDLER. Every clause below is a way the
+## mark must DIE, and a mark that outlives its walk is worse than no mark: it is a promise the game
+## has stopped keeping. `main.gd` can only be tested through a window; this can be asserted headless,
+## one clause at a time, which is Maren's box 7.
+##
+## **`confirmed` IS WHY A PENDING CLICK AND AN ABANDONED WALK ARE DIFFERENT STATES.** For the first
+## 190-394 ms the sim has no target for me -- that is the silence this mark exists to fill -- so
+## "the sim is not walking me there" cannot mean "clear it" until the sim has once said it IS. After
+## that, the sim dropping the target is the walk ending for any reason the sim likes (a Stop, a
+## second walk, a rule change) and the mark goes with it rather than hanging over a tile nobody is
+## heading to.
+static func walk_echo(echo: Dictionary, sim_target: Variant, pos: Variant,
+		abandoned: bool) -> Dictionary:
+	# A REFUSED WALK MUST NOT LOOK LIKE AN ACCEPTED ONE (Maren's box 4). The client already receives
+	# this; before ASSA-215 both looked like nothing happening, which is why a refusal was invisible.
+	#
+	# `abandoned` IS BOTH WAYS A COMMAND CAN STOP BEING ANSWERABLE, not just the `Refused` message:
+	# `main.gd` passes it on a refusal AND on the link dying under the command. The second is not
+	# Maren's clause and I am not claiming it is -- it is the same bug one cause along. A client that
+	# was dropped mid-walk and then rejoins would otherwise carry a bracket over a tile from the
+	# previous session, promising a walk no host ever heard.
+	if abandoned or echo.is_empty():
+		return {}
+	var tile: Vector2i = echo["tile"]
+	# ARRIVAL. The sim's own position, not a drawn one: the mark goes when you are THERE, and the
+	# drawn body is still catching up to that tile for up to one tick afterwards.
+	if pos != null and (pos as Vector2i) == tile:
+		return {}
+	if sim_target != null and (sim_target as Vector2i) == tile:
+		return {"tile": tile, "confirmed": true}
+	if bool(echo.get("confirmed", false)):
+		return {}
+	return echo
+
+
 ## HOW FAR DOWN THE MAP A PANEL ANCHORED TO ITS TOP MAY REACH BEFORE IT COVERS YOU (ASSA-156).
 ##
 ## Map-local pixels, and -1.0 when there is no player art to ask, because a claim about where a
