@@ -368,6 +368,10 @@ func _report() -> void:
 	# nearly every frame has a stall inside its buffer window cannot distinguish a clean client from
 	# a broken one, however few CLIENT frames it reports.
 	var exposed := 0
+	var exposed_pass := 0
+	var exposed_fail := 0
+	var judged_pass := 0
+	var judged_fail := 0
 	var tile_px: float = AssayScene.TILE_PX
 	var offset: Vector2 = _drawn[from] - _foot[from]
 	_stalls = _host_stalls()
@@ -388,8 +392,25 @@ func _report() -> void:
 		var dt: float = _dt[i - 1]
 		if dt <= 0.0 or _dt[i] <= 0.0:
 			continue
-		if not _stall_behind(i).is_empty():
+		# **AND WHETHER THE EXCUSE IS TRUE OF PASSING FRAMES TOO, which is Maren's ruling of 00:20 on
+		# 2026-10-05 and the thing that decides whether the charge means anything at all.** "A charge
+		# that fires on 90% of frames by construction cannot name a culprit": the predicate is a
+		# property of the HOST'S CADENCE, not of the frame that failed, so if it is true of passing
+		# frames at the same rate it has no discriminating power and box 1 cannot be ticked from it.
+		# `exposed` was already printed as a courtesy; splitting it pass/fail is what makes it a test.
+		var sheltered := not _stall_behind(i).is_empty()
+		if sheltered:
 			exposed += 1
+		var failed := _starved[i] or absf((_drawn[i] - _drawn[i - 1]).length() / tile_px / dt
+				- TRUE_SPEED) > TRUE_SPEED * TOLERANCE
+		if failed:
+			judged_fail += 1
+			if sheltered:
+				exposed_fail += 1
+		else:
+			judged_pass += 1
+			if sheltered:
+				exposed_pass += 1
 		# **A DRY FRAME IS COUNTED AND EXCLUDED, on Maren's wording (ASSA-197).** The mechanism
 		# permits a hold -- when the buffer runs out the only honest thing to draw is the newest
 		# position the sim produced -- and box 1 forbids a 0-speed frame. Both stand: a held frame is
@@ -709,6 +730,20 @@ func _report() -> void:
 			+ "window), %d + %d to the CLIENT. %d of %d judged frames had a stall in their window "
 			+ "at all.") % [host_out, host_dry, client_out, client_dry, exposed,
 			drawn.size() + dry.size()])
+	# **AND WHETHER THAT EXCUSE DISCRIMINATES AT ALL** (Maren's ruling, 2026-10-05 00:20). The base rate
+	# among PASSING frames is the control the charge never had: if a stall sits in the window of as many
+	# passing frames as failing ones, the predicate is reading the host's cadence rather than the cause
+	# of a failure, and a zero on these terms is not evidence that the client is correct.
+	var pass_rate := 0.0 if judged_pass == 0 else float(exposed_pass) / float(judged_pass)
+	var fail_rate := 0.0 if judged_fail == 0 else float(exposed_fail) / float(judged_fail)
+	print(("  DISCRIMINATING POWER OF THE EXCUSE: a stall sat in the window of %d of %d FAILING frames "
+			+ "(%.0f%%) and %d of %d PASSING frames (%.0f%%).")
+			% [exposed_fail, judged_fail, fail_rate * 100.0,
+			exposed_pass, judged_pass, pass_rate * 100.0])
+	if judged_fail > 0 and fail_rate <= pass_rate:
+		print(("    ^ THE EXCUSE HAS NO DISCRIMINATING POWER ON THIS RUN: it fires no more often on the "
+				+ "frames that failed than on the ones that passed, so it is a property of the host's "
+				+ "cadence and not a diagnosis. Box 1 cannot be ticked from this run (Maren's ruling)."))
 	var clean := client_out == 0 and client_dry == 0
 	print("  VERDICT: %s" % [("WITHIN BAR (no client frame failed)" if clean
 			else "OUTSIDE BAR (%d client frames)" % [client_out + client_dry])])
