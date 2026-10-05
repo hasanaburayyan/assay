@@ -367,13 +367,13 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 		delay: float, since: float = 0.0, trim: float = PLAYOUT_TRIM_NONE) -> Dictionary:
 	if ticks.is_empty():
 		return {"play_tick": play_tick, "index": -1, "part": 1.0, "starved": true, "rate": 1.0,
-				"trim": trim, "depth": 0.0}
+				"trim": trim, "depth": 0.0, "dragged": false}
 	var newest := float(ticks[ticks.size() - 1])
 	var oldest := float(ticks[0])
 	var at := play_tick
 	var rate := 1.0
 	if at < 0.0:
-		# **THE CLOCK DOES NOT START UNTIL THE BUFFER IS `delay` TICKS DEEP**, and getting this wrong
+		# **THE CLOCK DOES NOT START UNTIL THE BUFFER IS DEEP ENOUGH TO PLAY OUT**, and getting this wrong
 		# is what a trace of a real walk caught (ASSA-197, `tools/playout_trace.gd`). This read
 		# `at = maxf(newest - delay, oldest)`, so with one position held it started the clock AT the
 		# newest -- zero buffer, exactly what the sentence below it forbids -- and the only way back
@@ -383,16 +383,58 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 		# this item is ZERO dry frames.
 		#
 		# So while the buffer is shallow the clock WAITS: the body is drawn on the oldest position
-		# held, the sim runs ahead, and nothing moves until there is `delay` of history to play out.
-		# That costs a quarter of a second of standing still at the start of a session and buys a
+		# held, the sim runs ahead, and nothing moves until there is enough history to play out.
+		# That costs a fifth of a second of standing still at the start of a session and buys a
 		# buffer the rest of the session spends.
-		if newest - oldest < delay:
+		#
+		# **AND IT WAITS FOR THE WHOLE `delay`, WHICH IS A HALF TICK OF STALL ABSORPTION AND NOT A
+		# ROUNDING** (ASSA-212). I shipped a tick shallower than this for an hour tonight, because
+		# `delay + LEAD - 1` is the deepest start whose loop error cannot be positive, so it never
+		# chases. What it gives up is absorption in exactly the window the transient lives in: it
+		# starts 2.0 ticks deep and grows to the target, where this starts 3.0 deep and comes down.
+		#
+		# **AND THE MEASUREMENT THAT SENT ME BACK DOES NOT PROVE WHAT I FIRST SAID IT DID.** A GUI run
+		# on the shallow rule went dry at the start (7 starved frames, buffer 0.00) with a 164 ms tick
+		# in the first second, and I wrote that down as the reason. Three runs of THIS rule then
+		# starved once too (3 frames) and hit 0.00 depth in two of three, at 16-20 host stalls of
+		# 164-248 ms per 9 s. **A stall of 1.6-2.5 ticks is bigger than the half tick between the two
+		# rules, so nothing here attributes a dry frame to the start depth and I am not claiming it.**
+		# The buffer stays because more absorption inside the transient is monotonically better and
+		# the chase's worst case is a tick misread nobody has measured since the pairing fix. The dry
+		# frames themselves are ASSA-208, the relay's own pacing on a Mac running six agents.
+		var start_depth := delay
+		if newest - oldest < start_depth:
 			# AND THE TRIM DOES NOT INTEGRATE WHILE THE CLOCK IS NOT RUNNING. The depth error is
 			# enormous here by design -- the buffer is deliberately filling -- and a term that learnt
 			# from it would come out of the join wound to its stop in the wrong direction.
-			return {"play_tick": PLAYOUT_UNSTARTED, "index": 0, "part": 0.0,
-					"starved": false, "rate": 1.0, "trim": trim, "depth": newest - oldest}
-		at = newest - delay
+			return {"play_tick": PLAYOUT_UNSTARTED, "index": 0, "part": 0.0, "starved": false,
+					"rate": 1.0, "trim": trim, "depth": newest - oldest, "dragged": false}
+		# **AND IT STARTS WHERE THE BODY ALREADY IS, WHICH IS `oldest`** (ASSA-212). This read
+		# `at = newest - delay`, and the branch above draws the waiting body on the OLDEST position
+		# held, so the frame the clock started on moved it from `oldest` to `newest - delay` in one
+		# step -- half a tile, **16 px at 32 px tiles**, in one frame. Maren measured 16 px and a
+		# 160 ms freeze in a real window with their own tool; the arithmetic here predicted the same
+		# number, which is how it was found. `oldest` is a position the sim produced, so ASSA-119 is
+		# untouched, and the clock begins on the same frame either way: no latency is bought or sold.
+		#
+		# **THE THREE CANDIDATES AND WHAT EACH COSTS, at the 14% tick misread this Mac produces and
+		# 90 fps** (`tools/start_jump_table.gd`, cold statistics from the first running frame):
+		#
+		#   start rule                        jump        freeze   drawn speed    starved/dragged
+		#   at = newest - delay (was)         0.50t 16px  311 ms   0.938-1.046    0 / 0
+		#   at = oldest, depth >= delay       0.00t  0px  311 ms   0.943-1.238    0 / 0
+		#   at = oldest, depth >= delay+LEAD-1 0.00t 0px  211 ms   0.888-1.045    0 / 0
+		#
+		# **ALL THREE COST SOMETHING AND THE MIDDLE ROW IS THE ONE THAT SHIPS.** The surplus half tick
+		# between `oldest` and where the loop settles has to be spent in one frame (a 16 px jump every
+		# player sees once), over time (this rule: up to +10% of rate for half a second, so 1.238 at a
+		# 14% tick misread and 1.284 at 30 fps, over the +/-25% the board's verdict uses) or out of the
+		# buffer (the third row: measured DRY frames on a stalling host). Wren ruled no jump beats a
+		# tight settle; Maren's bar is zero dry frames; so the chase is what is left, and its cost is
+		# a WORST CASE of a misread that current measurements put at 0.93-1.00 (trim median 0.992 on
+		# windows-latest, 0.933 on the loaded Mac), where the same rule reads 0.978-1.094. Pinned by
+		# `test_the_cost_of_a_jump_free_start_is_the_one_that_was_chosen` so it cannot grow quietly.
+		at = oldest
 	else:
 		# The error is in ticks and the correction is in rate. `PLAYOUT_CATCHUP` decides how hard we
 		# lean on it and `PLAYOUT_NUDGE` caps it, so the worst speed error this clock can introduce
@@ -408,6 +450,13 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 				1.0 - PLAYOUT_TRIM_MAX, 1.0 + PLAYOUT_TRIM_MAX)
 		at += dt / maxf(step, MIN_PLAYOUT_STEP) * rate * trim
 	var starved := at > newest
+	# **AND THE MIRROR OF STARVED, WHICH NOTHING IN A WINDOW COULD REPORT UNTIL NOW** (ASSA-212,
+	# Wren's gate (c)). A clock running slow falls behind until the queue cap evicts history it has
+	# not played yet, and then the clamp below DRAGS the drawn body forward to catch the tail -- a
+	# jump, out of a loop that never starved once. `tests/test_scene_view.gd::_drive_playout` has
+	# counted it against its own copy of the rule since ASSA-197; a real window had no way to say it,
+	# so the probe's only answer to "did the body jump" was the size of its own steps.
+	var dragged := play_tick >= 0.0 and at < oldest - 1e-9
 	at = clampf(at, oldest, newest)
 	var index := 0
 	while index + 1 < ticks.size() and float(ticks[index + 1]) <= at:
@@ -417,7 +466,7 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 		var span := float(ticks[index + 1] - ticks[index])
 		part = clampf((at - float(ticks[index])) / maxf(span, 1.0), 0.0, 1.0)
 	return {"play_tick": at, "index": index, "part": part, "starved": starved, "rate": rate,
-			"trim": trim, "depth": newest - at}
+			"trim": trim, "depth": newest - at, "dragged": dragged}
 
 
 static func playout(seg_at: float, step_seconds: float, now: float, arrived: Array[float],
