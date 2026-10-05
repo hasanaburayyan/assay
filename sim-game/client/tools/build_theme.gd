@@ -91,10 +91,10 @@ const RADIUS := 4
 ## `font.get_height()` alone, which was exactly right until this margin existed.
 const HEADING_AIR := 10
 
-## **HOW PRESENT A QUIET BUTTON'S EDGE IS AT REST** (ASSA-233). An alpha on `BORDER` rather than a
-## new colour. 0.45 is the weight at which the outline reads as an outline at 1x and still leaves a
-## visible step up to the default button's full `BORDER` on hover.
-const QUIET_EDGE := 0.45
+## `QUIET_EDGE` WAS HERE AND IS GONE (ASSA-233). It was an alpha on `BORDER` giving a quiet button an
+## outline at rest, built for Maren's 14:25Z ruling and deleted for her 17:00Z one six hours later:
+## an outline at rest "makes quiet into default and spends the rank". Recorded rather than silently
+## dropped, because the constant was the whole of the first fix and its absence is the second.
 
 
 ## **A ONE-SHOT TOOL CAN RUN FOR EVER TOO, AND THIS IS THE HALF ASSA-182 DID NOT FIX FIRST TIME.**
@@ -257,6 +257,17 @@ func _style_primary_button(theme: Theme) -> void:
 ## variation where "quiet" could have become "invisible", so the ink stays `INK_MUTED` -- held to the
 ## same 4.5:1 as body text by `MIN_MUTED_CONTRAST`, because secondary describes importance and never
 ## legibility.
+##
+## **AND THE INK IS THE SAME TOKEN THE BODY ROWS USE, WHICH IS THE HALF OF MAREN'S Q1 FIX THIS FILE
+## CANNOT DELIVER.** Her clause (b) is "ink at or above the brightest body row (5.44), not below
+## it", measured off rendered glyphs where these toggles read 4.22 and 4.79. But `_note()` in
+## `main.gd` paints every body row `INK_MUTED` out of this theme and so does this variation: 6.73:1
+## nominal, the identical colour. The gap she measured is `SMALL` (11px) against `BODY` (13px) --
+## a smaller glyph spends proportionally more of itself on partly-covered edge pixels, so the same
+## colour measures dimmer. There is no colour here that would move her number without becoming
+## `INK`, which is the heading weight. The lever that moves it is the SIZE, and the size of a
+## control in the type scale is her call, not a side effect of a contrast patch -- so it is asked
+## on the item with both numbers rather than guessed at here.
 func _style_quiet_button(theme: Theme) -> void:
 	var name := &"Quiet"
 	theme.add_type(name)
@@ -266,16 +277,19 @@ func _style_quiet_button(theme: Theme) -> void:
 	theme.set_color("font_hover_color", name, INK)
 	theme.set_color("font_pressed_color", name, ACCENT)
 	theme.set_color("font_disabled_color", name, INK_MUTED.darkened(0.25))
-	# **AN EDGE AT REST, AT LOWER ALPHA** (ASSA-233, Maren at 1x: "a border at rest at lower alpha,
-	# so hover brightens an existing edge instead of conjuring one"). The first version of this
-	# weight had no edge at all, and she read `show the event log (L)` as the PANEL'S TITLE -- a dim
-	# centred line across the top of a panel is exactly where a title sits. Quiet was meant to stop
-	# it shouting, not to stop it being a button.
+	# **NO EDGE AT REST, AND THIS REVERSES WHAT I SHIPPED THIS MORNING** (ASSA-233, Maren at 1x
+	# 17:00Z, reversing her own 14:25Z ruling). Her 14:25 call was "a border at rest at lower alpha",
+	# which is what `QUIET_EDGE` was; her 17:00 call, after looking at the before/after at 1:1, is
+	# the opposite and gives the reason: **"Not a border at rest -- that makes quiet into default and
+	# spends the rank. Alignment is the cue that is left."** Three weights whose quietest one still
+	# carries an outline is two weights.
 	#
-	# `QUIET_EDGE` IS AN ALPHA ON `BORDER`, not a seventh colour: the same token this theme already
-	# draws every other edge with, at a weight that reads as "there is an outline here" without
-	# competing with the default button beside it.
-	theme.set_stylebox("normal", name, _box(SURFACE, Color(BORDER, QUIET_EDGE)))
+	# WHAT CARRIES "THIS IS A CONTROL" INSTEAD IS THE LEFT ALIGNMENT, in `main.gd`, which also
+	# shipped this morning and stays: every other control in the column sits at the body column's
+	# x=11, and the two toggles were the only centred rows in it. "Centred + boxless + above the
+	# block it controls is a caption by construction" -- so uncentring it is the fix, and the box was
+	# never the part that worked.
+	theme.set_stylebox("normal", name, _box(SURFACE, SURFACE))
 	theme.set_stylebox("hover", name, _box(SURFACE, BORDER))
 	theme.set_stylebox("pressed", name, _box(SURFACE.darkened(0.15), BORDER))
 	theme.set_stylebox("disabled", name, _box(SURFACE, SURFACE))
