@@ -1,11 +1,12 @@
 extends SceneTree
 ## MAREN, ASSA-201 BOX 4: WHAT A DIAGONAL `goto` LOOKS LIKE WHEN IT TURNS THE CORNER.
 ##
-##   godot --path client --script res://tools/maren_corner_strip.gd -- <out_dir> [seed] [tx] [ty]
+##   godot --path client --script res://tools/maren_corner_strip.gd --
+##       <out_dir> [seed] [tx] [ty] [capture_from_s] [capture_to_s]
 ##
 ## NOT `--headless`. The question on box 4 is not "what is the number", it is "can my eye see it at
 ## 1x", and a dummy rendering driver answers that with a blank image (`window_shot.gd` says the same
-## thing at more length). Every frame between `CAPTURE_FROM` and `CAPTURE_TO` seconds after the
+## thing at more length). Every frame between `_from` and `_to` seconds after the
 ## `goto` is read back off the real window and written as a crop, so the strip is consecutive
 ## frames and not every nth.
 ##
@@ -34,8 +35,11 @@ const TILE_PX := 32.0
 const TICK_SECONDS := 0.1
 ## The corner on seed 14247's `goto 76 48` is at tick 8, i.e. 0.8 s in. Capture a window around it
 ## wide enough to hold the last diagonal frames and the first straight ones.
-const CAPTURE_FROM := 0.45
-const CAPTURE_TO := 1.25
+## Overridable, because ASSA-212 lives in the first 500 ms FROM THE CLICK and the corner lives at
+## 0.8 s: one hardcoded window cannot photograph both, and a tool that can only frame the defect it
+## was written for is a tool that reports the other one absent.
+var _from := 0.45
+var _to := 1.25
 const CROP := Vector2i(192, 192)
 const RUN_CEILING := 180.0
 
@@ -65,6 +69,9 @@ func _initialize() -> void:
 	_seed = String(argv[1]) if argv.size() > 1 else "14247"
 	if argv.size() > 3:
 		_target = Vector2i(int(argv[2]), int(argv[3]))
+	if argv.size() > 5:
+		_from = float(argv[4])
+		_to = float(argv[5])
 	DirAccess.make_dir_recursive_absolute(_out)
 	_screen = load("res://scenes/main.tscn").instantiate()
 	root.add_child(_screen)
@@ -113,7 +120,7 @@ func _process(_delta: float) -> bool:
 	var since := now - _started_at
 	var frame := now - _last_frame
 	_last_frame = now
-	if since > CAPTURE_TO + 0.35:
+	if since > _to + 0.35:
 		_report()
 		return true
 	if now >= _next_tick:
@@ -153,9 +160,22 @@ func _sample(since: float, frame: float) -> void:
 	var players: Array = view.get("players", [])
 	if not players.is_empty():
 		facing = String((players[0] as Dictionary).get("facing", ""))
+	# THE GAIT, because it is the only thing in the frame that keeps a rate of its own.
+	# `frame_of` is `posmod(int(floor(seconds * fps)), frames)` on the WALL CLOCK, so the legs run
+	# at a fixed 12 fps whatever the body's drawn speed is. Recording it here answers the question
+	# the pixels otherwise only hint at: do the legs keep walking while the body stands still?
+	var gait := -1
+	var gait_row := ""
+	if not players.is_empty():
+		var me: Dictionary = players[0]
+		gait_row = AssayScene.player_row(String(me.get("facing", "")), bool(me.get("moving", false)))
+		var manifest: Dictionary = view.get("manifest", {})
+		var spec: Dictionary = manifest.get("player", {})
+		if not spec.is_empty():
+			gait = AssayScene.frame_of(spec, gait_row, float(view.get("seconds", 0.0)))
 	var row := {"t": since, "frame": frame, "body": body, "scroll": scroll,
-			"tile": _my_tile(), "facing": facing, "shot": ""}
-	if since >= CAPTURE_FROM and since <= CAPTURE_TO:
+			"tile": _my_tile(), "facing": facing, "gait": gait, "gait_row": gait_row, "shot": ""}
+	if since >= _from and since <= _to:
 		if _crop_at.x < 0:
 			# FIXED FOR THE RUN, from the first captured frame. A rect that followed the body would
 			# subtract the motion this strip exists to show.
@@ -167,8 +187,19 @@ func _sample(since: float, frame: float) -> void:
 			var cut := image.get_region(Rect2i(_crop_at, CROP))
 			var name := "f%03d.png" % _saved
 			if cut.save_png("%s/%s" % [_out, name]) == OK:
-				row["shot"] = name
 				_saved += 1
+				# **THE READ-BACK IS ONE FRAME BEHIND THE VIEW SAMPLED IN THIS SAME CALL**, and the
+				# first version of this tool labelled every crop with the row it was taken in.
+				# `_process` runs BEFORE the engine draws, so `root.get_texture()` still holds the
+				# PREVIOUS frame. Caught by the pixels, not by reading the code: one captured pair
+				# came back byte-identical while the view it was labelled with had moved 16 px, and
+				# a pixel-identical pair can only be a zero-motion pair. So the shot belongs to the
+				# row before this one. A strip whose captions are one frame out is worse than no
+				# strip: every number under every picture is wrong by exactly one frame.
+				if _rows.size() >= 1:
+					_rows[_rows.size() - 1]["shot"] = name
+				else:
+					row["shot"] = name
 	_rows.append(row)
 
 
@@ -185,7 +216,7 @@ func _report() -> void:
 	_done = true
 	print("")
 	print("frames %d, crops %d, crop rect %s %s" % [_rows.size(), _saved, _crop_at, CROP])
-	print("  t     frame_ms  body.x   body.y   scroll.x scroll.y  d_scroll.x d_scroll.y  tile      face shot")
+	print("  t     frame_ms  body.x   body.y   scroll.x scroll.y  d_scroll.x d_scroll.y  tile      face gait row       shot")
 	var prev: Dictionary = {}
 	for entry in _rows:
 		var r: Dictionary = entry
@@ -194,14 +225,14 @@ func _report() -> void:
 		if not prev.is_empty():
 			dx = (r["scroll"] as Vector2).x - (prev["scroll"] as Vector2).x
 			dy = (r["scroll"] as Vector2).y - (prev["scroll"] as Vector2).y
-		print("%6.3f %8.1f %8.2f %8.2f %9.2f %9.2f %11.2f %10.2f  %-9s %-4s %s"
+		print("%6.3f %8.1f %8.2f %8.2f %9.2f %9.2f %11.2f %10.2f  %-9s %-4s %3d  %-8s %s"
 				% [r["t"], r["frame"] * 1000.0, (r["body"] as Vector2).x, (r["body"] as Vector2).y,
 				(r["scroll"] as Vector2).x, (r["scroll"] as Vector2).y, dx, dy,
-				str(r["tile"]), r["facing"], r["shot"]])
+				str(r["tile"]), r["facing"], r["gait"], r["gait_row"], r["shot"]])
 		prev = r
 	# THE TWO COMPONENTS, REPORTED APART. A magnitude hides which of them changed.
 	_leg("DIAGONAL leg (both axes stepping)", 0.15, 0.78)
-	_leg("STRAIGHT leg (x only)", 0.92, CAPTURE_TO)
+	_leg("STRAIGHT leg (x only)", 0.92, _to)
 	print("")
 	print("NOTE: the scroll is the world moving under a camera locked to the drawn body, so its")
 	print("per-frame delta IS the drawn speed. x and y are printed apart on purpose: on this walk")
