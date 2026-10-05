@@ -69,9 +69,27 @@ const INK_MUTED := Color(0.655, 0.690, 0.745)
 ## good status are the same colour rather than two opinions about success.
 const ACCENT := Color(0.50, 0.90, 0.55)
 
+## **THE INK THAT GOES ON TOP OF THE ACCENT** (ASSA-224 / Maren's Gap 1). The primary button is a
+## filled accent rectangle, which is a surface this theme never had before, and `INK` on it would be
+## pale-on-pale. It is `SURFACE` rather than a new colour because the palette already owns that value
+## and the result reads as the panel punched out of the accent rather than as a seventh grey.
+##
+## NOT TAKEN ON TRUST: it is a pair in `_contrast_problems` like every other ink-on-surface here, so
+## the build refuses the theme if this is ever nudged under 4.5:1.
+const ON_ACCENT := SURFACE
+
 const PAD_X := 10
 const PAD_Y := 6
 const RADIUS := 4
+## **AIR ABOVE A HEADING, WHICH IS WHAT MAKES IT A HEADING AND NOT A FIRST LINE** (Maren's Gap 1:
+## "headings at INK with air above them"). A heading with the same gap above it as below belongs to
+## the block before it as much as to its own.
+##
+## A STYLEBOX ON THE TYPE, NOT A SPACER AT EIGHT CALL SITES: the column, the log and any screen
+## nobody has written yet get the same rhythm by saying `theme_type_variation = "Heading"`.
+## `_log_lines_that_fit` in `main.gd` had to learn to ask for it -- it measured a heading with
+## `font.get_height()` alone, which was exactly right until this margin existed.
+const HEADING_AIR := 10
 
 
 ## **A ONE-SHOT TOOL CAN RUN FOR EVER TOO, AND THIS IS THE HALF ASSA-182 DID NOT FIX FIRST TIME.**
@@ -144,7 +162,12 @@ func _contrast_problems() -> PackedStringArray:
 			["button label", INK, RAISED, MIN_CONTRAST],
 			["secondary text", INK_MUTED, SURFACE, MIN_MUTED_CONTRAST],
 			["secondary on a button", INK_MUTED, RAISED, MIN_MUTED_CONTRAST],
-			["accent on a field", ACCENT, RAISED, MIN_CONTRAST]]:
+			["accent on a field", ACCENT, RAISED, MIN_CONTRAST],
+			# **THE PRIMARY BUTTON IS A NEW SURFACE WITH TEXT ON IT, SO IT IS A NEW PAIR** (ASSA-224).
+			# A variation added without its pair would be the one surface in the game this file
+			# cannot refuse -- which is how a check stops covering the thing it exists for.
+			["primary button label", ON_ACCENT, ACCENT, MIN_CONTRAST],
+			["quiet button label", INK_MUTED, SURFACE, MIN_MUTED_CONTRAST]]:
 		var ratio := AssayHud.contrast_ratio(pair[1], pair[2])
 		if ratio < float(pair[3]):
 			problems.append("%s: %.2f:1, needs %.1f:1" % [pair[0], ratio, pair[3]])
@@ -157,13 +180,20 @@ func _contrast_problems() -> PackedStringArray:
 func _style_label(theme: Theme) -> void:
 	theme.set_color("font_color", "Label", INK)
 	theme.set_font_size("font_size", "Label", BODY)
-	for variation in [["Display", DISPLAY, INK], ["Heading", HEADING, INK_MUTED],
+	# **`Heading` IS `INK`, AND IT WAS `INK_MUTED`** (Maren, Gap 1): "the section headings are
+	# Heading, which is INK_MUTED: the structure of the column is dimmer than its contents." A
+	# heading that is quieter than the paragraph under it inverts the one job a heading has. The
+	# muted ink keeps its own name, `Muted`, for the lines that really are secondary.
+	for variation in [["Display", DISPLAY, INK], ["Heading", HEADING, INK],
 			["Muted", SMALL, INK_MUTED]]:
 		var name := StringName(variation[0])
 		theme.add_type(name)
 		theme.set_type_variation(name, "Label")
 		theme.set_font_size("font_size", name, variation[1])
 		theme.set_color("font_color", name, variation[2])
+	var air := StyleBoxEmpty.new()
+	air.content_margin_top = HEADING_AIR
+	theme.set_stylebox("normal", &"Heading", air)
 
 
 func _style_button(theme: Theme) -> void:
@@ -179,6 +209,63 @@ func _style_button(theme: Theme) -> void:
 	# A FOCUS RING THAT IS VISIBLE, because keyboard focus is the half nobody looks at. Godot's
 	# default focus box is a flat outline that vanishes on a dark panel.
 	theme.set_stylebox("focus", "Button", _box(RAISED, ACCENT))
+	_style_primary_button(theme)
+	_style_quiet_button(theme)
+
+
+## **THE WEIGHT FOR THE ONE THING YOU ARE MOST LIKELY TO PRESS NEXT** (Maren, Gap 1: "a Button
+## variation set -- primary (accent fill), default, quiet ... The accent belongs to the thing you are
+## most likely to press next"). Until now this game had ONE button style, so Mine, Stop, Assay, Take,
+## Pick up, Fuel, Smelt, Mount, Frame, Make and Play solo were the same grey box at the same 11 px
+## and nothing on the screen had rank.
+##
+## IT IS BIGGER AS WELL AS GREENER, and that is the half that survives a greyscale print: a primary
+## action told apart only by hue is no primary action for the players Maren's contrast floor exists
+## for. `BODY` against the default's `SMALL`.
+##
+## **THE FOCUS RING INVERTS HERE, AND IT HAS TO.** Every other control rings itself in `ACCENT`
+## against a grey fill; on a button whose fill IS the accent that ring would be invisible. `INK`
+## instead, which is the same decision the default style makes -- ring in whatever the fill is not.
+func _style_primary_button(theme: Theme) -> void:
+	var name := &"Primary"
+	theme.add_type(name)
+	theme.set_type_variation(name, "Button")
+	theme.set_font_size("font_size", name, BODY)
+	theme.set_color("font_color", name, ON_ACCENT)
+	theme.set_color("font_hover_color", name, ON_ACCENT)
+	theme.set_color("font_pressed_color", name, ON_ACCENT)
+	theme.set_color("font_disabled_color", name, INK_MUTED)
+	theme.set_stylebox("normal", name, _box(ACCENT, ACCENT.darkened(0.15)))
+	theme.set_stylebox("hover", name, _box(ACCENT.lightened(0.12), ACCENT))
+	theme.set_stylebox("pressed", name, _box(ACCENT.darkened(0.18), ACCENT.darkened(0.3)))
+	theme.set_stylebox("disabled", name, _box(SURFACE, BORDER.darkened(0.3)))
+	theme.set_stylebox("focus", name, _box(ACCENT, INK))
+
+
+## **THE WEIGHT FOR A CONTROL THAT MUST BE THERE AND MUST NOT SHOUT** -- the toggles that name their
+## own key ("show the event log (L)", "hide what I can make (M)"). On `01-join.png` those two read
+## as loudly as the section headings they sit between, so the column's structure competes with its
+## own furniture.
+##
+## IT KEEPS ITS EDGE ONLY WHILE POINTED AT. The fill and border are the panel's own colour, so at
+## rest it is a label; on hover the border arrives and it admits to being a button. This is the one
+## variation where "quiet" could have become "invisible", so the ink stays `INK_MUTED` -- held to the
+## same 4.5:1 as body text by `MIN_MUTED_CONTRAST`, because secondary describes importance and never
+## legibility.
+func _style_quiet_button(theme: Theme) -> void:
+	var name := &"Quiet"
+	theme.add_type(name)
+	theme.set_type_variation(name, "Button")
+	theme.set_font_size("font_size", name, SMALL)
+	theme.set_color("font_color", name, INK_MUTED)
+	theme.set_color("font_hover_color", name, INK)
+	theme.set_color("font_pressed_color", name, ACCENT)
+	theme.set_color("font_disabled_color", name, INK_MUTED.darkened(0.25))
+	theme.set_stylebox("normal", name, _box(SURFACE, SURFACE))
+	theme.set_stylebox("hover", name, _box(SURFACE, BORDER))
+	theme.set_stylebox("pressed", name, _box(SURFACE.darkened(0.15), BORDER))
+	theme.set_stylebox("disabled", name, _box(SURFACE, SURFACE))
+	theme.set_stylebox("focus", name, _box(SURFACE, ACCENT))
 
 
 func _style_line_edit(theme: Theme) -> void:

@@ -657,6 +657,15 @@ func _build_ui() -> void:
 	# only time it can succeed, and it costs the suite nothing.
 	_solo_button.text = "Play solo"
 	_solo_button.tooltip_text = "start a world of your own on this machine and join it"
+	# **THE ONE CONTROL ON THIS SCREEN THAT IS THE POINT OF IT** (ASSA-224, Maren's Gap 1: "the
+	# accent belongs to the thing you are most likely to press next", and Gap 5: "the one thing a
+	# stranger should press is a small outlined button in the top-left corner"). Until now every
+	# button in the game was one grey box at 11 px, so the screen had no way to say this.
+	#
+	# IT IS THE ONLY `Primary` IN THE CLIENT, and deliberately: a second one would make it a colour
+	# rather than a rank. WHICH IN-WORLD VERB EARNS THIS IS MAREN'S RULING AND NOT MINE -- picking
+	# between Mine, Assay and Make from a theme file would be tuning the game's emphasis by hand.
+	_solo_button.theme_type_variation = &"Primary"
 	_solo_button.focus_mode = Control.FOCUS_ALL
 	_solo_button.pressed.connect(_on_play_solo)
 	_solo_button.tree_entered.connect(_solo_button.grab_focus)
@@ -786,6 +795,9 @@ func _build_ui() -> void:
 	# written here would be overwritten on the first layout pass and believed by every headless test
 	# until a real window disagreed with it.
 	pad.add_child(chrome)
+	# QUIET, BECAUSE IT IS FURNITURE (ASSA-224). On `01-join.png` this toggle reads as loudly as the
+	# section headings it sits above, so the column's structure competes with its own controls.
+	_log_toggle.theme_type_variation = &"Quiet"
 	_log_toggle.pressed.connect(func(): _show_log(not _log_shown))
 	chrome.add_child(_log_toggle)
 	# WHAT IS RUNNING, THEN WHAT HAS STOPPED, both above the scroll and never inside it (ASSA-133).
@@ -837,6 +849,7 @@ func _build_ui() -> void:
 	# menu row wraps to two lines because it repeats the material, and the panel still wants ~1746px
 	# in a 566px clip. The reorder moves the loss to the section that can afford it; it does not
 	# remove it.
+	_make_toggle.theme_type_variation = &"Quiet"  # furniture, same as the log toggle (ASSA-224)
 	_make_toggle.pressed.connect(func(): _show_make(not _make_shown))
 	# THE EVENT LOG IS NOT IN THIS LIST ANY MORE (ASSA-147). It was the last section; it is now a
 	# panel over the map, built by `_build_log_over_the_map`. Maren's reason in one line: it is the
@@ -1531,6 +1544,14 @@ func _log_lines_that_fit() -> int:
 	var chrome := pad.y + float(inside.get_theme_constant(&"separation"))
 	if head != null:
 		chrome += head.get_height(head_size)
+	# **AND THE AIR ABOVE THAT HEADING, WHICH THE FONT DOES NOT KNOW ABOUT** (ASSA-224). `Heading`
+	# now carries a stylebox with a top margin, so a heading occupies more height than
+	# `get_height()` reports -- and this function decides how many log lines fit. Measuring the
+	# heading by its font alone was exactly right until the margin existed, and would now
+	# over-count the room by `HEADING_AIR` and let the log run past the bottom of its box.
+	var head_style: StyleBox = _log_heading.get_theme_stylebox(&"normal", &"Heading")
+	if head_style != null:
+		chrome += head_style.get_margin(SIDE_TOP) + head_style.get_margin(SIDE_BOTTOM)
 	var newest := font.get_multiline_string_size(_events[_events.size() - 1],
 			HORIZONTAL_ALIGNMENT_LEFT, AssayHud.world_rect().size.x - pad.x, size).y
 	return AssayHud.log_lines_that_fit(_log_room, chrome, newest,
