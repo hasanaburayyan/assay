@@ -3349,7 +3349,26 @@ func _draw() -> void:
 	# painted after players (ASSA-203), so the only position that satisfies the ruling is after both.
 	# A letter is strokes and not a fill, so a body keeps its own colour around them, and the pale
 	# `THEIRS` body on a light letter is exactly the fusion ASSA-189's keyline was added for -- which
-	# the bed now states instead of hoping for. The 1x cost to a body is measured in the item.
+	# the bed now states instead of hoping for.
+	#
+	# **"THE 1x COST TO A BODY IS MEASURED IN THE ITEM" IS WHAT THIS LINE SAID, AND IT WAS FALSE**
+	# (Maren, who went looking because I wrote the claim here rather than letting her find it).
+	# ASSA-213 box 1 measures what a building costs a LETTER; box 5 says the player rect and ring are
+	# untouched, which is true of their SHAPE in code and silent about what paints on top afterwards.
+	# **No box on ASSA-213 measures a body at all.** It is now ASSA-221.
+	#
+	# WHAT IS MEASURED, AND IT IS SMALLER THAN THE FIRST ANSWER: Maren's geometry said 94.1% of a body
+	# eaten, then she photographed it and corrected herself to **36.3% player ink left under the
+	# letter against 100% for a body with nothing over it** -- the first figure measured the glyph on
+	# an r=27 disc and applied that footprint to a body on a small one. "A control must be the same
+	# object", her words, twice in one morning.
+	#
+	# **AND THE CASE THAT MATTERS IS STILL NOT PHOTOGRAPHED.** Your own mark carries the ring, which
+	# grows OUTWARDS (`hud.gd`'s `PLAYER_MARK_PX` ring) and survives outside the glyph box, so you can
+	# always find yourself. `THEIRS` is the body alone. The body that goes substantially missing is a
+	# PARTNER's, on the one screen for "where is everyone", on a milestone called the minimal co-op
+	# demo -- and the co-op shot tool spaced the two players four tiles apart, so no frame we have
+	# holds a partner on a deposit centre. Do not build to a number here; ASSA-221 carries the state.
 	#
 	# THE DECISION IS `_glyph_marks`', like `_building_marks` above; this loop paints what it is told.
 	for glyph_entry in _glyph_marks(deposits, font):
