@@ -639,9 +639,29 @@ func _ready() -> void:
 	_client.desynced.connect(func(tick): _say(
 			"desync at tick %d. Restart the client to rejoin: a desync leaves you joined, so Join "
 			% tick + "cannot help.", AssayHud.Say.FAILED))
-	# A note is narration, so its state is whatever the link's state already is.
-	_client.note.connect(func(line): _say(line, AssayHud.Say.JOINED
-			if _client.stage == AssayNetClient.Stage.JOINED else AssayHud.Say.CONNECTING))
+	# **A NOTE IS NARRATION, AND ONCE YOU ARE IN A WORLD IT STOPS BEING THE PLAYER'S** (ASSA-245,
+	# Maren's Gap 2; found at 1x by Nerite and independently by my own suite).
+	#
+	# Before a world, a note is the only thing describing a door that has not opened yet --
+	# `connecting to <host> as <name>`, `said hello on protocol 9`, `not joined, so nothing was sent`
+	# -- so it goes on the status line, where a stranger is already looking.
+	#
+	# **AFTER a world exists, exactly one note can still fire: `offline, so no hash report was sent`**
+	# (`net_client.gd:204`, every time a report is owed, which offline is every 20 ticks). That is a
+	# sentence about THIS CLIENT'S HASH REPORTING on the screen we send the board -- the same category
+	# Gap 2 sent away, and Maren named this very line in her ruling. Offline it also re-fires on
+	# exactly the dwell `_age_the_saying` uses, so it owned the toast for the whole of a played
+	# session: the status line was never once empty on a healthy world, which is what box 5 claims.
+	#
+	# **IT IS STILL PRINTED, SO NOTHING IS LOST TO US.** `_say` prints every sentence it shows; this
+	# branch keeps the print and drops only the drawing, so every probe and session log reads exactly
+	# as it did. The words are untouched -- they are not mine to change (Marlow's boundary); where
+	# they are DRAWN is.
+	_client.note.connect(func(line):
+		if _client.stage == AssayNetClient.Stage.JOINED:
+			print(line)
+		else:
+			_say(line, AssayHud.Say.CONNECTING))
 	add_child(_client)
 	_build_ui()
 	# **TWO DOORS, SOLO FIRST** (Maren, ASSA-113). This used to read "enter a host address and join",
@@ -2882,27 +2902,39 @@ func _refresh_actions() -> void:
 
 ## ONE DOOR FOR EVERY BUTTON ON THIS SCREEN, and the only place any of them reaches the wire.
 ##
-## **IT NO LONGER SAYS WHAT IT SENT, AND THAT IS MAREN'S RULING ON ASSA-237** (2026-10-05): *"both
-## hold if the line is empty when healthy and carries the stall sentence when the sim stalls.
-## `Place 0 · submitted at tick 514` is a tick number, the thing part 1 sent away, so it goes."*
+## **IT SAYS THE ACCEPTANCE AND NOT THE TICK, AND I HAD DELETED BOTH** (ASSA-245).
 ##
-## **IT WAS A SECOND DESCRIBER AND THE SIM IS THE FIRST.** The old sentence announced a SUBMISSION --
-## a fact about this client's socket, stamped with a tick a player has no use for. What actually
-## happened arrives a moment later as the sim's own event in the log, which is the describer this
-## repo has already settled on twice (ASSA-222). Saying both means the screen reports the press and
-## then reports the outcome, and only one of those is the game.
+## ASSA-239 shipped this as `_say("", IDLE)` -- an accepted command said nothing at all. That was my
+## reading of half of Maren's ASSA-237 ruling (*"the line is empty when healthy"*) and I missed the
+## other half, which she had already written: **"The acceptance is a fact a player uses; the tick is
+## not. Press-to-motion on this relay is 204-362 ms, so 'the game took your command' is real feedback
+## and must not simply be deleted. Keep the acceptance, drop `at tick 514`, and move it out of the
+## band."**
 ##
-## **SUCCESS CLEARS THE LINE RATHER THAN LEAVING IT.** Dropping the `_say` entirely would have left
-## whatever was said last standing -- so a refusal you had already answered would keep sitting over a
-## world where you then acted successfully, which is a sentence claiming a state the player is not in
-## (ASSA-176's class). An accepted command is the client having nothing to say.
+## **SHE IS RIGHT AND THE NUMBER IS WHY.** A fifth of a second to a third of a second passes between
+## the press and anything moving, because this client never predicts: the world changes when a bundle
+## carrying this command comes back round and the sim steps. For that long, a silent screen and a
+## dead button are the same picture. The sim's own event in the log is the describer for WHAT
+## HAPPENED (ASSA-222, and that has not changed); this line is the only thing that answers *did it
+## hear me*, which the log cannot answer until the tick it is waiting for.
+##
+## **THE TICK GOES AND NOTHING ELSE DOES.** `Place 0 · submitted at tick 514` becomes `Place 0 ·
+## submitted`. A tick number is the thing Gap 2 sent off this screen, and re-admitting it on a
+## different line would be the debug readout coming back one clause at a time.
+##
+## **"OUT OF THE BAND" AND "TRANSIENT" ARE BOTH ALREADY TRUE** (ASSA-239): there is no band -- the
+## status line lives in a toast over the world's bottom-left -- and a `Say.JOINED` line ages out
+## after `SAYING_DWELL_TICKS` of the world's own clock, so the resting state of a played screen is
+## still world and column and nothing else. Maren offered the log or a transient; this is the
+## transient.
 ##
 ## **THE REFUSAL STAYS, LOUD.** No refusal is silent is not a style rule here, and this is the branch
 ## it protects: a press that never reached the wire is the one thing a player cannot find out any
-## other way, because a command that was never sent produces no event to read in the log.
+## other way, because a command that was never sent produces no event to read in the log. It is also
+## the one `_say` here that must NOT age out, which is why only `Say.JOINED` does.
 func _act(what: String, command: Variant) -> void:
 	if _client.submit(command):
-		_say("", AssayHud.Say.IDLE)
+		_say("%s · submitted" % what, AssayHud.Say.JOINED)
 		return
 	_say("%s · not submitted; join a world first" % what, AssayHud.Say.FAILED)
 

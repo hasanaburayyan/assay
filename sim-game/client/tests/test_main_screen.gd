@@ -2636,7 +2636,16 @@ func test_a_quiet_host_covers_the_status_line_and_gives_back_what_it_covered() -
 	# A REAL SENTENCE ARRIVES WHILE THE HOST IS QUIET -- through the path that composes them, not by
 	# assignment. It must not show (the warning outranks it, `main.gd::_render_status`) and it must be
 	# what comes back, which is what proves the line is derived rather than saved and restored.
-	screen._client.note.emit("said hello on protocol 9")
+	#
+	# **THE VEHICLE IS A REFUSAL NOW AND IT USED TO BE A NOTE** (ASSA-245). `note.emit` no longer
+	# reaches the status line once the stage is JOINED -- the only note that can still fire there is
+	# `offline, so no hash report was sent`, a sentence about this client's hash reporting that Maren's
+	# Gap 2 ruling named and sent off the player's screen. So a note at JOINED is printed and not
+	# drawn, and a test using one as its "real sentence" was testing a path that no longer exists.
+	# `refused` is the same shape and still composes through a real handler (`_on_refused` -> `_say`),
+	# and it is a `FAILED` line, which also means the dwell cannot age it out underneath this
+	# assertion.
+	screen._client.refused.emit("the relay said no")
 	if ok and screen._status.text != AssayHud.quiet_host_line(7):
 		ok = _fail(("a note displaced the quiet warning: \"%s\". The world is not moving; the newest "
 				+ "sentence is not the most useful one.") % screen._status.text)
@@ -2647,7 +2656,7 @@ func test_a_quiet_host_covers_the_status_line_and_gives_back_what_it_covered() -
 	elif ok and back.strip_edges() == "":
 		ok = _fail(("the warning took the status line down with it. It covered \"%s\"; a player who "
 				+ "waited out a hiccup now has less than they started with.") % joined_said)
-	elif ok and back != "said hello on protocol 9":
+	elif ok and not back.contains("the relay said no"):
 		ok = _fail(("the line came back as \"%s\" and not as the sentence that arrived under the "
 				+ "warning. The label is being restored from a copy rather than derived.") % back)
 	elif ok and screen._status.modulate == AssayHud.status_color(AssayHud.Say.CONNECTING) \
@@ -3884,19 +3893,22 @@ func test_the_status_toast_appears_only_with_something_to_say() -> bool:
 	return ok
 
 
-## **AN ACCEPTED COMMAND LEAVES THE CLIENT WITH NOTHING TO SAY** (ASSA-239, Maren's ruling on
-## ASSA-237: *"the line is empty when healthy and carries the stall sentence when the sim stalls.
-## `Place 0 · submitted at tick 514` is a tick number, the thing part 1 sent away, so it goes."*).
+## **AN ACCEPTED COMMAND SAYS IT WAS ACCEPTED, AND NEVER SAYS WHEN** (ASSA-245, Maren's full ruling
+## on ASSA-237: *"The acceptance is a fact a player uses; the tick is not. Press-to-motion on this
+## relay is 204-362 ms, so 'the game took your command' is real feedback and must not simply be
+## deleted. **Keep the acceptance, drop `at tick 514`, and move it out of the band.**"*).
 ##
-## This is what makes the toast a transient rather than the header strip at a quarter of the height:
-## if every press wrote a sentence, the panel would be on screen for the whole of a played session and
-## the geometry Maren ruled away would have come back wearing a smaller frame.
+## **THIS TEST ASSERTED THE OPPOSITE ONE COMMIT AGO AND I WAS WRONG.** ASSA-239 shipped `_act` saying
+## nothing at all on success, because I read "the line is empty when healthy" and stopped there. For a
+## fifth to a third of a second after a press, a silent screen and a dead button are the same picture,
+## and this client never predicts -- so deleting the acceptance deleted the only answer to *did it
+## hear me*. The log answers what HAPPENED, a tick later; it cannot answer this.
 ##
-## **AND IT CLEARS RATHER THAN SKIPS.** Dropping the `_say` would leave the PREVIOUS sentence standing
-## -- so the refusal below would still be on screen after the successful press that followed it, which
-## is a line claiming a state the player is not in (ASSA-176's class). The order here is the test: say
-## something, then act successfully, then read the line.
-func test_an_accepted_command_says_nothing_and_clears_what_came_before() -> bool:
+## **TWO CLAUSES, AND THE SECOND IS THE ONE THAT ROTS QUIETLY.** The sentence must carry the
+## acceptance, and it must carry no tick -- a tick number is what Gap 2 sent off this screen, and
+## re-admitting it on another line is the debug readout returning one clause at a time. A fix that
+## only checked for the word `submitted` would pass on a line that had grown its tick back.
+func test_an_accepted_command_says_so_without_a_tick() -> bool:
 	var ok := true
 	var joined := _joined_screen()
 	joined._process(0.016)
@@ -3905,17 +3917,68 @@ func test_an_accepted_command_says_nothing_and_clears_what_came_before() -> bool
 		joined.queue_free()
 		return _fail("the fixture never simulated, so no command could be accepted")
 
-	joined._say("refused: something earlier", AssayHud.Say.FAILED)
-	if joined._status.text == "":
-		ok = _fail("premise: the line was already empty, so the clear below proves nothing")
 	joined._act("Mine", AssayActions.mine())
-	if joined._status.text != "":
-		ok = _fail("an accepted command left `%s` on the status line; a submission is not news "
-				% joined._status.text + "and the sim's own event says what happened")
-	if joined._says_toast.visible and not joined._join_band.visible:
-		ok = _fail("the toast is still drawn over the world with nothing in it to read")
+	var said: String = joined._status.text
+	if not said.contains("submitted"):
+		ok = _fail("an accepted command said `%s`: for up to a third of a second that is the only "
+				% said + "thing telling a player the game heard them")
+	# NO TICK, ASKED OF THE SENTENCE RATHER THAN OF MY MEMORY OF IT: any run of digits long enough to
+	# be a tick count is the readout coming back. The world is well past tick 9 by here.
+	if said.contains("tick") or said.to_lower().contains("at tick"):
+		ok = _fail("the acceptance line names a tick again: `%s`" % said)
+	for digits in [str(joined._sim.tick()), str(joined._sim.tick() - 1)]:
+		if said.contains(digits):
+			ok = _fail("the acceptance line carries the world's tick (%s) in `%s`" % [digits, said])
+	# AND IT IS A TRANSIENT, not furniture: `Say.JOINED` is the level that ages out.
+	if joined._base_level != AssayHud.Say.JOINED:
+		ok = _fail("the acceptance is level %d, so it never ages out of the toast"
+				% joined._base_level)
 	joined.queue_free()
 	return ok
+
+
+## **AND IT AGES OUT, WHICH IS WHAT KEEPS THE TOAST A TRANSIENT** (ASSA-245/ASSA-239).
+##
+## If an accepted command's sentence stayed, the toast would be on screen for the whole of a played
+## session and the 96 px Maren reclaimed would have come back wearing a smaller frame. The dwell is
+## counted in the WORLD's ticks, so this drives the sim rather than a clock.
+func test_the_acceptance_ages_out_of_the_toast() -> bool:
+	var ok := true
+	var joined := _joined_screen()
+	joined._process(0.016)
+	joined._refresh()
+	joined._act("Mine", AssayActions.mine())
+	if joined._status.text == "":
+		joined.queue_free()
+		return _fail("premise: nothing was said, so there is nothing to age out")
+
+	# **THE WORLD REALLY STEPS, rather than the stamp being back-dated.** My first version set
+	# `_said_at_tick = tick - DWELL`, and on a fresh welcome that is a NEGATIVE number -- which
+	# `_age_the_saying` reads as "said before there was a world" and correctly refuses to age. The
+	# test failed, and it was the test that was wrong: faking the arithmetic walked straight into a
+	# sentinel the production code is right to have.
+	_step_the_world(joined, joined.SAYING_DWELL_TICKS + 1)
+	if joined._status.text != "":
+		ok = _fail("the acceptance is still on screen %d ticks later: `%s`"
+				% [joined.SAYING_DWELL_TICKS + 1, joined._status.text])
+
+	# A REFUSAL IN THE SAME PLACE MUST NOT AGE. No refusal is silent, and this is the half that a
+	# "clear the line after a while" fix would quietly lose.
+	joined._say("refused: nothing there", AssayHud.Say.FAILED)
+	_step_the_world(joined, joined.SAYING_DWELL_TICKS * 3)
+	if joined._status.text == "":
+		ok = _fail("a refusal aged out of the toast, so a player can miss the one sentence the log "
+				+ "cannot tell them")
+	joined.queue_free()
+	return ok
+
+
+## Step an offline screen's world by feeding it the `Tick` frames a relay would have sent, the same
+## way `test_buttons.gd` does. Empty input lists: this is about the clock, not about commands.
+func _step_the_world(screen: Node, count: int) -> void:
+	for _i in range(count):
+		var at: int = screen._sim.tick()
+		screen._client.feed_offline(JSON.stringify({"Tick": {"tick": at, "inputs": []}}))
 
 
 ## **A REFUSAL IS STILL LOUD, which is the half that must NOT follow the ruling above** (ASSA-239).

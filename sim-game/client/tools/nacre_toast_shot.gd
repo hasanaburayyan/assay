@@ -8,10 +8,11 @@ extends SceneTree
 ##
 ## **WHY `window_shot.gd` CANNOT TAKE THIS ONE.** Maren's Gap 2 ruling gives the 96px header strip to
 ## the world and puts nothing in its place, so what the client is saying became a toast over the
-## world's bottom-left that is drawn ONLY while it has something to say. Her ruling on ASSA-237 then
-## emptied the healthy case: an accepted command says nothing now. So on a world that is behaving --
-## which is every frame `window_shot.gd` photographs -- the toast is correctly invisible, and a shot
-## set that only contains invisible toasts is a shot set that proves nothing about it.
+## world's bottom-left that is drawn ONLY while it has something to say. An accepted command DOES say
+## something -- `Mine · submitted`, her ASSA-237 ruling: *"the acceptance is a fact a player uses; the
+## tick is not"* -- but it is a `Say.JOINED` line, so it ages out after `SAYING_DWELL_TICKS` of the
+## world's clock. So a world left alone for a couple of seconds has no toast at all, and a shot set
+## that only ever catches that state proves nothing about the panel.
 ##
 ## **THE DROP IS REACHED BY KILLING THE RELAY, NOT BY CALLING THE HANDLER.** `_on_refused` and
 ## `_say` are one function call away and would photograph my own model of a dead link. Stopping the
@@ -206,7 +207,7 @@ func _report() -> void:
 	var world := AssayHud.world_rect()
 	print("")
 	print("TOAST SHOT: seed %s, world rect %s" % [_seed, world])
-	print("  healthy: toast visible = %s (want false -- an accepted command says nothing)"
+	print("  healthy: toast visible = %s (want false -- a settled world has nothing to say)"
 			% _healthy_toast)
 	print("  dropped: toast visible = %s at %s" % [_dropped_toast, _dropped_rect])
 	print("  said: %s" % " | ".join(_said))
