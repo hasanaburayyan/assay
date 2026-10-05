@@ -332,3 +332,55 @@ func test_the_toggle_names_the_key_and_says_which_way_it_goes() -> bool:
 	if not (shown.begins_with("hide") and hidden.begins_with("show")):
 		return _fail("the toggle does not say what pressing it will do: '%s' / '%s'" % [shown, hidden])
 	return true
+
+
+## **EVERY SWATCH IS VISIBLE AGAINST THE PATCH IT IS DRAWN ON, which the key did not manage for the
+## one row it exists to contrast** (Nerite, ASSA-206 01:02 EDT: *"a flat dark square with no stripe --
+## the key names a mark it does not draw"*). `map_key_sample_ink` returned `MAP_BG` for `dead_end`;
+## `_draw` paints each row's sample on a patch of `ground`, which IS `MAP_BG`; and the hatch branch
+## then painted its disc in the sample ink and its strokes in the row's ink. **Three layers of one
+## near-black: 1.00:1, exactly nothing**, for 1 of the 11 rows and the one whose whole job is to be
+## the other half of the row above it.
+##
+## THE FLOOR IS 1.5:1 AND IT IS DELIBERATELY LOW. Maren ruled the spawn pad's SIZE rather than its
+## colour and it sits at 2.23:1 against the ground, and the panel's own docstring says a key that
+## flattered a mark would be worse than none. So this is not a readability bar -- it is "did anything
+## get drawn", which is the defect that actually happened, and it must not become a back door to
+## re-rule a colour the director has already looked at.
+func test_no_key_swatch_is_invisible_on_the_patch_it_is_drawn_on() -> bool:
+	var ground := AssayHud.mark_ink(&"ground")
+	var floor_ratio := 1.5
+	var checked := 0
+	for row in AssayHud.map_key_rows():
+		var id := StringName(row["id"])
+		var ink := AssayHud.map_key_sample_ink(row)
+		# **WHAT A ROW PUTS ON THE GROUND IS NOT ALWAYS ITS `ink`, AND GETTING THAT WRONG MADE THIS
+		# TEST ACCUSE AN INNOCENT ROW.** My first version compared `ink` for every shape and failed
+		# `species_glyph` at 1.19:1 -- but that branch paints a species-tinted DISC first and the
+		# letter on top, so 1.19:1 was the letter against the ground it is never drawn on. Both
+		# shapes that sit a mark on a disc are listed here, read off `map_key.gd`'s own branches.
+		var shape := StringName(row["shape"])
+		var body: Color = AssayHud.species_tint(AssayHud.KEY_SAMPLE_SPECIES) \
+				if shape == &"hatch" or shape == &"glyph" else ink
+		var against_ground := AssayHud.contrast_ratio(body, ground)
+		if against_ground < floor_ratio:
+			return _fail(("the key's `%s` swatch is %.2f:1 against the ground patch it is drawn on "
+					+ "(floor %.2f). A row that draws nothing is a row that names a mark the panel "
+					+ "does not draw, which is worse than leaving it out.")
+					% [id, against_ground, floor_ratio])
+		checked += 1
+	if checked < 10:
+		return _fail("only %d key rows were checked; the scan is broken, not the panel" % checked)
+	# AND THE HATCH'S OWN STROKE AGAINST ITS OWN DISC, at the floor the MAP is held to (ASSA-209).
+	# The swatch promises the shape, so the shape has to be there: a stripe the same colour as the
+	# disc under it is the map's 1.42:1 defect reproduced inside the legend.
+	var sample := AssayHud.species_tint(AssayHud.KEY_SAMPLE_SPECIES)
+	var stripe := AssayHud.hatch_ink(sample)
+	var on_disc := AssayHud.contrast_ratio(stripe, sample)
+	if on_disc < 3.0:
+		return _fail(("the key's hatch stripe is %.2f:1 against its own disc (floor 3.00). The map's "
+				+ "worst pair clears 4.13:1 since ASSA-209; a legend quieter than the thing it "
+				+ "describes teaches the wrong mark.") % [on_disc])
+	print("    key swatches: %d rows all visible on the ground; hatch stripe %.2f:1 on its own disc"
+			% [checked, on_disc])
+	return true
