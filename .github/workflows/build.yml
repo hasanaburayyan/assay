@@ -24,6 +24,21 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      # OFF BY DEFAULT, AND OFF FOR EVERY PUSH AND PR. The motion probe below
+      # opens a real window on a runner with no GPU: it is an experiment whose
+      # failure is a result (ASSA-205), so it must never be able to redden the
+      # bundle the board downloads, and nobody dispatching a build to get a zip
+      # should pay fifteen minutes for it.
+      #   gh workflow run build.yml --ref <branch> -f motion_probe=true
+      motion_probe:
+        description: "Also run the Windows motion probe (ASSA-205)"
+        type: boolean
+        default: false
+      motion_seconds:
+        description: "Seconds to watch the body walk, per attempt"
+        type: string
+        default: "8"
 
 defaults:
   run:
@@ -843,6 +858,200 @@ jobs:
           name: assay-windows
           path: sim-game/bundle/assay-windows.zip
           if-no-files-found: error
+
+  windows-motion-probe:
+    # **HOW FAST THE BODY IS DRAWN ON A WINDOWS BOX** (ASSA-205). Every motion
+    # number this studio owns was taken on the one Mac; the board's "terrible,
+    # very jumpy" verdict is about `assay-windows` on their PC. This job is the
+    # only Windows machine we can reach.
+    #
+    # **IT IS NOT THE BOARD'S PC AND IT IS NOT THE EXPORTED ZIP, AND NEITHER GAP
+    # IS HIDDEN: both are printed on every number it produces.**
+    #
+    # WHY THE PROBE RUNS THROUGH THE GODOT BINARY AND NOT THROUGH `Assay.exe`,
+    # measured on 4.6.1 before this job was written, not assumed:
+    #   1. Both export presets carry `exclude_filter="tests/*, tools/*"`, so
+    #      `res://tools/motion_speed_probe.gd` is not inside the pack players get.
+    #   2. Lifting that exclusion is not enough. `--script` is an X-flag in
+    #      `godot --help` ("editor builds, and export templates compiled with
+    #      disable_path_overrides=false"), and the official 4.6.1 template drops
+    #      it: an export carrying the probe, asked to run it, printed its banner
+    #      and quit with no error and no probe output -- and a deliberately bogus
+    #      `--script res://tools/no_such_probe.gd` behaved identically, which is
+    #      the control that says the flag is ignored rather than the file missing.
+    # So an exported build cannot be asked to measure itself today. Making it
+    # measurable needs an argument the client itself honours, the way
+    # `-- --selfcheck <file>` already works; that is a separate item, and it is
+    # the only route to a number from the board's own machine.
+    name: Windows motion probe (ASSA-205)
+    # Deliberately NOT a step in "Windows bundle" and deliberately not
+    # `needs: test`: a window that will not open is one of this job's two
+    # legitimate results, so it must be incapable of reddening the zip the board
+    # downloads, and it needs nothing the ubuntu job spends ten minutes on.
+    if: github.event_name == 'workflow_dispatch' && inputs.motion_probe
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: sim-game
+          # The action keys its cache on the job, so without a shared key of its
+          # own this job would pay a cold Windows release build every run.
+          shared-key: windows-motion-probe
+      - name: Build the relay and the binding, with the flags the bundle ships
+        # The same invocation and the same RUSTFLAGS as the bundle job above: a
+        # pacing number taken against a binding built with different flags is a
+        # number about a build nobody downloads. `sim-cli` is not built because
+        # the probe never runs it.
+        run: cargo build --release -p sim-relay -p sim-godot
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+      - name: Godot
+        shell: pwsh
+        run: |
+          # THE _console WRAPPER, for the reason the export step gives: the plain
+          # Windows editor is a GUI-subsystem binary that detaches and returns 0,
+          # so every exit code below would be meaningless. No export templates
+          # here -- this job never exports, it runs the project.
+          $base = "https://github.com/godotengine/godot/releases/download/$($env:GODOT_VERSION)"
+          Invoke-WebRequest "$base/Godot_v$($env:GODOT_VERSION)_win64.exe.zip" -OutFile godot.zip
+          Expand-Archive godot.zip -DestinationPath godot
+      - name: Import, with the binding where sim.gdextension looks for it
+        shell: pwsh
+        working-directory: sim-game/client
+        run: |
+          $godot = "$($env:GITHUB_WORKSPACE)\sim-game\godot\Godot_v$($env:GODOT_VERSION)_win64_console.exe"
+          New-Item -ItemType Directory -Force bin | Out-Null
+          Copy-Item ../target/release/sim_godot.dll bin/
+          if (-not (Test-Path bin/sim_godot.dll)) { throw "no bin/sim_godot.dll to run with" }
+          # First import crashes on exit in Godot's own doc generation for
+          # extension classes; the second must not. Same dance as the test job.
+          & $godot --headless --import
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "first --import exited $LASTEXITCODE; retrying once"
+            & $godot --headless --import
+            if ($LASTEXITCODE -ne 0) { throw "godot --import exited $LASTEXITCODE twice" }
+          }
+          if (-not (Select-String -Path .godot/extension_list.cfg -Pattern 'sim.gdextension' -Quiet)) {
+            throw "the import registered no sim.gdextension, so the probe would run no rules"
+          }
+      - name: The probe, in a real window
+        # The step's own ceiling is a backstop, not the mechanism: the probe holds
+        # a 180 s run ceiling and a 30 s join deadline of its own (ASSA-182), and
+        # each attempt below is additionally watchdogged.
+        timeout-minutes: 25
+        shell: pwsh
+        working-directory: sim-game/client
+        env:
+          PROBE_SECONDS: ${{ inputs.motion_seconds }}
+        run: |
+          $godot = "$($env:GITHUB_WORKSPACE)\sim-game\godot\Godot_v$($env:GODOT_VERSION)_win64_console.exe"
+          # ABSOLUTE, AND THE CHILD'S WORKING DIRECTORY SAID OUT LOUD. Start-Process
+          # resolves relative paths against the process's own directory and not
+          # PowerShell's `Set-Location` (measured in run 36925261824, see the
+          # bundle job), so a relative `--path .` here would hand the engine a
+          # project that is not this one -- and a missing project is a window that
+          # never opens, which would have been filed as result (b).
+          $proj = (Resolve-Path .).Path
+          $out = Join-Path $proj 'probe-out'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $seconds = if ($env:PROBE_SECONDS) { $env:PROBE_SECONDS } else { "8" }
+          # SEED 14247 IS PINNED BY THE ITEM: it is the demo and solo default, so
+          # it is the world the board walked in when they called it jumpy.
+          $seed = "14247"
+          # **EVERY ATTEMPT IS KEPT, PASSING OR NOT.** Result (b) on ASSA-205 is
+          # the verbatim error text, so a driver that cannot open a window is
+          # evidence and not noise. A GPU-less runner may well fail the first of
+          # these; the order is cheapest first, most emulated last.
+          $drivers = @('', 'd3d12', 'opengl3', 'opengl3_angle')
+          $won = ''
+          foreach ($d in $drivers) {
+            $tag = if ($d -eq '') { 'default' } else { $d }
+            $log = Join-Path $out "probe-$tag.log"
+            Remove-Item $log -ErrorAction SilentlyContinue
+            # The label is printed inside the probe's own report, so a number
+            # cannot be quoted without the harness it came from.
+            $label = "windows-latest runner, run $($env:GITHUB_RUN_NUMBER), driver $tag, no GPU, NOT the board's PC"
+            # `--audio-driver Dummy` is the one deviation from the player's own
+            # launch and it is here because a runner has no sound device at all.
+            # It cannot touch a drawn-rect distribution; a WASAPI driver failing
+            # to initialise on an audio-less box could end the run.
+            $argv = @('--path', $proj, '--audio-driver', 'Dummy', '--log-file', $log)
+            if ($d -ne '') { $argv += @('--rendering-driver', $d) }
+            $argv += @('--script', 'res://tools/motion_speed_probe.gd', '--', $seed, $seconds, $label)
+            Write-Output "== attempt: $tag"
+            $p = Start-Process -FilePath $godot -ArgumentList $argv -PassThru -NoNewWindow -WorkingDirectory $proj `
+              -RedirectStandardOutput (Join-Path $out "stdout-$tag.txt") `
+              -RedirectStandardError (Join-Path $out "stderr-$tag.txt")
+            if (-not $p.WaitForExit(300000)) {
+              Write-Output "   attempt $tag did not exit in 300s; killing it"
+              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+              Add-Content $log "ATTEMPT KILLED: no exit in 300s"
+            } else {
+              Write-Output "   exit $($p.ExitCode)"
+            }
+            # A KILLED PROBE LEAVES ITS RELAY RUNNING, and the solo relay keeps
+            # its save: the next attempt would otherwise join the previous
+            # attempt's world and measure a body already standing where it was
+            # walking to.
+            Get-Process sim-relay -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            if (Test-Path $log) {
+              Get-Content $log | ForEach-Object { "   | $_" }
+              if (Select-String -Path $log -Pattern 'VERDICT:' -Quiet) { $won = $tag; break }
+            } else {
+              Write-Output "   | (the engine wrote no log file at all)"
+            }
+          }
+          # **THE RESULT IS WRITTEN DOWN IN ONE PLACE, IN THE ITEM'S OWN TWO
+          # SHAPES.** Silence does not close ASSA-205 and neither does a green
+          # tick, so this says which of (a) and (b) happened and carries the text
+          # either way.
+          $result = Join-Path $out 'RESULT.md'
+          $head = @(
+            "# ASSA-205: the motion probe on a Windows runner",
+            "",
+            "Harness: GitHub Actions ``windows-latest``, run $($env:GITHUB_RUN_NUMBER), commit ``$($env:GITHUB_SHA.Substring(0,7))``.",
+            "Godot $($env:GODOT_VERSION) editor binary on the project (the job comment says why not ``Assay.exe``).",
+            "No GPU, seed $seed, $seconds s per attempt.",
+            "**This is a fact about this runner. It is not the board's PC and it is not the exported zip.**",
+            ""
+          )
+          if ($won -ne '') {
+            $head += @("## RESULT (a): the probe ran, on driver ``$won``", "", '```')
+            $head += (Get-Content (Join-Path $out "probe-$won.log"))
+            $head += '```'
+          } else {
+            $head += @("## RESULT (b): could not run", "",
+              "No driver opened a window the probe would measure. Every attempt's own output:")
+            foreach ($d in $drivers) {
+              $tag = if ($d -eq '') { 'default' } else { $d }
+              $log = Join-Path $out "probe-$tag.log"
+              $head += @("", "### driver ``$tag``", '```')
+              if (Test-Path $log) { $head += (Get-Content $log | Select-Object -Last 40) }
+              else { $head += "the engine wrote no log file" }
+              $err = Join-Path $out "stderr-$tag.txt"
+              if ((Test-Path $err) -and (Get-Item $err).Length -gt 0) {
+                $head += "--- stderr:"
+                $head += (Get-Content $err | Select-Object -Last 20)
+              }
+              $head += '```'
+            }
+          }
+          Set-Content $result ($head -join "`n")
+          Add-Content $env:GITHUB_STEP_SUMMARY ($head -join "`n")
+          Get-Content $result
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: motion-probe-windows
+          path: sim-game/client/probe-out
+          # WARN, not ERROR, unlike every other upload here: if the job dies
+          # before the probe step runs there is nothing to collect, and a missing
+          # artifact must not become the loudest line in a log whose real failure
+          # is further up.
+          if-no-files-found: warn
 
   release:
     name: Attach bundles to release
