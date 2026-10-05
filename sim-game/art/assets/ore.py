@@ -151,6 +151,37 @@ def glint(r, s, loc):
                verts=5, rot=(random.uniform(-0.4, 0.4), random.uniform(-0.4, 0.4), ang))
 
 
+# **THE CLUMPS SIT ON THE TILE'S JOINS, NOT INSIDE IT** (ASSA-216). Gathering
+# rocks toward four centres INSIDE a tile was the first thing I rendered and it
+# draws a lattice: the structure stops at 32 px, every copy of a variant has its
+# holes in the same place, and at 1x the patch reads as a grid of blobs -- the
+# tile lattice QA has caught us drawing before, traded for the confetti it was
+# meant to fix. Three pulls, three renders, all of them a grid.
+#
+# A clump may only be bigger than a tile if it CROSSES one. These four centres
+# are the midpoints of the tile's four edges, so a clump is completed by the
+# neighbour's clump on the other side of the join, whichever variant that is --
+# the one arrangement a hash-placed sheet can make that is larger than its own
+# cell. Nothing else changes: same count, same sizes, same colours, same draws.
+CLUMP_EDGES = ((0.5, 0.0), (0.0, 0.5), (-0.5, 0.0), (0.0, -0.5))
+CLUMP_PULL = 0.50  # 1.0 = today's uniform scatter; 0 = every rock on its centre
+
+
+def clump(spots):
+    """The same rocks, gathered onto the joins. Spot i joins edge `i % 4` and is
+    pulled `CLUMP_PULL` of the way toward it, wrapped into the tile, because the
+    tile is seamless and a rock that leaves one side arrives at the other.
+    """
+    if CLUMP_PULL >= 1.0:
+        return spots
+    out = []
+    for i, (x, y, s) in enumerate(spots):
+        cx, cy = CLUMP_EDGES[i % len(CLUMP_EDGES)]
+        nx, ny = cx + (x - cx) * CLUMP_PULL, cy + (y - cy) * CLUMP_PULL
+        out.append(((nx + 0.5) % 1.0 - 0.5, (ny + 0.5) % 1.0 - 0.5, s))
+    return out
+
+
 def tile(step, seed):
     """`step` is the grade index 0..2, or -1 for depleted.
 
@@ -186,6 +217,21 @@ def tile(step, seed):
         count = 9 + step * 5
         smin, smax = 0.065 + step * 0.020, 0.115 + step * 0.032
         spots = [(random.uniform(-0.5, 0.5), random.uniform(-0.5, 0.5), random.uniform(smin, smax)) for _ in range(count)]
+        # **ARRANGEMENT, NOT DENSITY** (ASSA-216, Maren's ruling). The complaint
+        # is "candy"/"confetti", which is a word about texture before it is a
+        # word about value: 19 rocks spread uniformly over a tile leave holes of
+        # one size everywhere, so a patch of them integrates to a flat mass at
+        # 1x however the colours are arranged.
+        #
+        # THIS DOES NOT DRAW ANYTHING NEW. The same `count`, the same sizes and
+        # the same colours come off the same `random` draws in the same order --
+        # only WHERE each rock sits changes, by pulling it toward its cluster's
+        # centre. So coverage is the only quantity that can move, it moves only
+        # through overlap, and `CLUMP_PULL` is the one number to argue about.
+        # (The header's own rule: "if it ever looks stamped-on, the lever is
+        # more arrangement variants, NEVER density". This is that lever used on
+        # the arrangement itself rather than on the count.)
+        spots = clump(spots)
         colors = [shade(step, random.choice((0.0, 0.20, -0.15))) for _ in spots]
     for dx in (-1, 0, 1):
         for dy in (-1, 0, 1):
