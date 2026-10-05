@@ -10,7 +10,11 @@ use sim::world::{World, WorldConfig};
 fn limpet_find_a_seed_with_a_dark_dead_end_pair() {
     let mut found: Vec<(u32, u32, u32, u32, usize)> = Vec::new();
     for seed in 1..=4000u64 {
-        let w = World::new(WorldConfig { seed, width_chunks: 6, height_chunks: 4 });
+        let w = World::new(WorldConfig {
+            seed,
+            width_chunks: 6,
+            height_chunks: 4,
+        });
         let mut purple: Option<u32> = None;
         let mut mblue: Option<u32> = None;
         for d in &w.deposits {
@@ -31,7 +35,10 @@ fn limpet_find_a_seed_with_a_dark_dead_end_pair() {
         }
     }
     found.sort_by_key(|r| r.3);
-    println!("seeds carrying BOTH a purple and an M-blue dead end: {} of 4000", found.len());
+    println!(
+        "seeds carrying BOTH a purple and an M-blue dead end: {} of 4000",
+        found.len()
+    );
     println!("seed    purple purity  M-blue purity  worse of the two  deposits");
     for r in found.iter().take(12) {
         println!("{:<7} {:>13} {:>14} {:>17} {:>9}", r.0, r.1, r.2, r.3, r.4);
