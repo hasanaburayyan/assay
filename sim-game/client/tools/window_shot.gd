@@ -135,6 +135,9 @@ var _letter_marks: Array = []
 ## still ticking while the legs are printed, and a machine finished in between made `_schematic_report`
 ## say "3 buildings and 2 marks" about a frame where both were 2. Captured once, compared by everyone.
 var _shot_buildings: Array = []
+## The sim's deposit list in that frame, for `_shot_buildings`' reason: a deposit can be mined empty
+## between two reads, and a letter in the table that the frame no longer carries is worse than none.
+var _shot_deposits: Array = []
 ## Fingerprint of every frame already written, to the name it was written under. See `_shoot`.
 var _taken := {}
 ## Shot name -> what its own subjects were doing instead of being on screen. Keyed by name and
@@ -371,8 +374,8 @@ func _process(_delta: float) -> bool:
 			# geometry is only true in the frame that was actually written.
 			_shot_buildings = _screen._sim.buildings()
 			_schematic_marks = _screen._building_marks(_shot_buildings)
-			_letter_marks = _screen._glyph_marks(_screen._sim.deposits(),
-					ThemeDB.fallback_font)
+			_shot_deposits = _screen._sim.deposits()
+			_letter_marks = _screen._glyph_marks(_shot_deposits, ThemeDB.fallback_font)
 			_shoot("08-whole-world.png", PackedStringArray())
 			_write_marks_table()
 			_phase = Phase.PRESS_K
@@ -1248,6 +1251,28 @@ func _write_marks_table() -> void:
 	# `overlaps` the PAINTER's (a diamond landing on the letter's cap box); a reader of this file can
 	# tell "no machine stood on a rock in this run" from "one did and the map did not mark it", which
 	# is the distinction the `letters` leg is built on and the one two QA shots could not make today.
+	# **AND THE DISCS THE LETTERS ARE ON** (ASSA-213 boxes 6 and 7: the hatch and the purity). A letter
+	# painted last lands on three surfaces -- the fill, a dead end's hatch and a building's diamond --
+	# and a script measuring whether purity brightness or the hatch survived needs the circle the
+	# painter used, not a circle fitted to a lump of coloured pixels. `AssayHud.deposit_disc` is asked
+	# here rather than the colours being re-derived, so this table and the frame cannot disagree.
+	var discs := []
+	for entry in _shot_deposits:
+		var deposit: Dictionary = entry
+		if int(deposit["amount"]) <= 0:
+			continue
+		var tile: Vector2i = deposit["center"]
+		var radius := maxf(_screen._cell, float(int(deposit["radius"])) * _screen._cell)
+		var disc: Dictionary = AssayHud.deposit_disc(deposit, radius)
+		var fill: Color = disc["colour"]
+		var glyph_ink: Color = disc["ink"]
+		discs.append({"symbol": String(deposit["symbol"]), "tile": [tile.x, tile.y],
+				"x": _screen.MARGIN.x + float(tile.x) * _screen._cell,
+				"y": _screen.MARGIN.y + float(tile.y) * _screen._cell, "r": radius,
+				"purity": int(deposit["purity"]), "species": int(deposit["species"]),
+				"hatch": bool(disc["hatch"]), "fill": [fill.r, fill.g, fill.b],
+				"ink": [glyph_ink.r, glyph_ink.g, glyph_ink.b],
+				"hatch_width": float(disc["hatch_width"])})
 	var on_letters := []
 	for entry in AssayHud.machines_on_letters(_shot_buildings, _letter_marks):
 		var hit: Dictionary = entry
@@ -1268,6 +1293,7 @@ func _write_marks_table() -> void:
 		"keyline_px": AssayHud.MARK_KEYLINE_PX,
 		"buildings": rows,
 		"players": people,
+		"deposits": discs,
 		"case": {"on_letters": on_letters, "overlaps": overlaps},
 	}
 	var path := "%s/08-whole-world-marks.json" % _out
@@ -1277,8 +1303,8 @@ func _write_marks_table() -> void:
 		return
 	file.store_string(JSON.stringify(table, "  "))
 	file.close()
-	_shots.append("    marks table   %d building(s), %d player(s), %d letter(s) -> %s"
-			% [rows.size(), people.size(), letters.size(), path.get_file()])
+	_shots.append("    marks table   %d building(s), %d player(s), %d letter(s), %d disc(s) -> %s"
+			% [rows.size(), people.size(), letters.size(), discs.size(), path.get_file()])
 
 
 ## **DOES THIS SHOT CONTAIN THE ASSA-213 CASE: A MACHINE STANDING ON A SPECIES LETTER** (box 2, "today's
