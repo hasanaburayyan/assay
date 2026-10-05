@@ -1465,10 +1465,17 @@ func test_a_frame_moves_the_body_by_its_own_delta_and_not_by_the_wall_clock() ->
 		screen._refresh_world(0.09)
 	if float(screen._play_tick) < 0.0:
 		return _fail("the playout clock never started over 8 ticks, so there is nothing to measure")
+	# **AND THEN THE BUFFER IS TOPPED UP WITHOUT ANY WALL CLOCK IN IT.** Three more positions, fed
+	# back to back: frames are driving the clock by now, so an arrival only enqueues, and the depth
+	# this measurement needs stops depending on how fast the box ran the loop above. On CI the
+	# warm-up alone left 0.93 ticks -- the loop refreshes immediately after each delay, which is the
+	# phase where the clock believes the host has produced a whole extra tick, so it leans on its
+	# +10% stop and spends the buffer it was building.
+	_tick(screen, 3)
 	if float(screen._play_depth) < 1.0:
-		return _fail(("the warm-up left %.2f ticks of buffer, under the one tick this measurement "
-				+ "needs: six frames of play-out would hit the end of the queue and measure the "
-				+ "clamp instead of what moves the clock") % [float(screen._play_depth)])
+		return _fail(("the buffer holds %.2f ticks, under the one tick this measurement needs: six "
+				+ "frames of play-out would hit the end of the queue and measure the clamp instead "
+				+ "of what moves the clock") % [float(screen._play_depth)])
 	# **THE TWO CLOCKS ARE THEN MADE TO DISAGREE BY 5x**: six frames of 10 ms each is 0.6 of a tick,
 	# while the wall clock between them runs 300 ms, which is 3 ticks. A clock reading the wall
 	# cannot pass this and a clock reading its frames cannot fail it.
