@@ -1487,8 +1487,15 @@ func test_the_join_band_is_on_screen_in_every_stage_except_joined() -> bool:
 		if _on_screen(label):
 			ok = _fail("the `%s` label is still standing over a hidden field"
 					% (label as Label).text)
-	if not _on_screen(joined._join_button):
-		ok = _fail("hiding the band took `Join` with it, which is the one control that can still act")
+	# **AND `Join` GOES WITH THEM NOW** (ASSA-237, Maren's Gap 2: *"a `Join` button sits in the
+	# top-left corner of a world you are already in"*). This assertion was its own opposite until
+	# today -- it read *"hiding the band took `Join` with it, which is the one control that can still
+	# act"*. That reason is true at IDLE, CONNECTING and DEAD and false here: `_join_address` returns
+	# on its first line unless the stage is IDLE or DEAD, so the only thing this press can reach at
+	# JOINED is a refusal. The DEAD half below is what keeps the half of ASSA-175 that was real.
+	if _on_screen(joined._join_button):
+		ok = _fail("`Join` is still on screen in a world you are already in, where the only thing "
+				+ "pressing it can produce is a refusal")
 	if not ok:
 		joined.queue_free()
 		return ok
@@ -3305,3 +3312,148 @@ func _accented(node: Node) -> PackedStringArray:
 			found.append((child as Button).text)
 		found.append_array(_accented(child))
 	return found
+
+
+## **THE DEBUG READOUT IS NOT IN THE PLAYER'S VIEW, AND EVERY WORD OF IT IS STILL THERE** (ASSA-237,
+## Maren's Gap 2: *"none of it in the player's view. Keep every word of it behind a developer toggle
+## (it is genuinely useful to us)"*).
+##
+## **THE SECOND HALF IS THE HALF WORTH TESTING.** "Hidden" is one line of production code and one
+## assertion; the way this fix fails in six weeks is that somebody also stops WRITING the line,
+## because nothing on screen was reading it -- and then F3 answers with a stale tick, or with nothing,
+## at the exact moment someone is using it to debug a desync. So this drives a real played world and
+## reads the hidden label's own text back.
+##
+## IT ASKS FOR THE SEED AND THE HASH BY NAME rather than for a non-empty string: those two are the
+## reason the readout exists (a `u64` neither GDScript nor a person can reconstruct), and a readout
+## that had quietly become "tick 12" alone would pass any length check.
+func test_the_debug_readout_is_hidden_but_still_written() -> bool:
+	var ok := true
+	var screen := _screen()
+	if _on_screen(screen._detail):
+		ok = _fail("the debug readout is drawn on the first screen a stranger sees")
+	screen.queue_free()
+	if not ok:
+		return ok
+
+	var joined := _joined_screen()
+	joined._process(0.016)
+	joined._refresh()
+	if _on_screen(joined._detail):
+		ok = _fail("the debug readout is drawn in a played world, which is the screen we send "
+				+ "the board")
+	var written: String = joined._detail.text
+	for word in ["world seed", "hash", "tick", "bundle"]:
+		if not written.contains(word):
+			ok = _fail("the hidden readout has stopped saying `%s`: `%s`" % [word, written])
+	joined.queue_free()
+	return ok
+
+
+## **F3 GIVES IT BACK, WITH THE WORLD'S STATE AS IT IS NOW AND NOT AS IT WAS WHEN IT WENT AWAY**
+## (ASSA-237). The toggle only gates the drawing, never the write, which is what makes the first press
+## honest; a version that stopped refreshing while hidden would pass a "becomes visible" test and show
+## a tick from whenever the window opened.
+##
+## DRIVEN THROUGH `_unhandled_key_input` WITH A REAL `InputEventKey`, not through `_show_dev_readout`.
+## Calling the setter would pass with nothing in production ever reaching it -- the same lever-that-
+## cannot-fail that `test_the_join_band_is_on_screen_in_every_stage_except_joined` carries a note
+## about.
+func test_f3_shows_the_debug_readout_and_shows_it_current() -> bool:
+	var ok := true
+	var joined := _joined_screen()
+	joined._process(0.016)
+	joined._refresh()
+	var before: String = joined._detail.text
+
+	var press := InputEventKey.new()
+	press.keycode = KEY_F3
+	press.pressed = true
+	joined._unhandled_key_input(press)
+	if not _on_screen(joined._detail):
+		ok = _fail("F3 did not bring the debug readout back")
+
+	# AND IT IS STILL BEING REWRITTEN NOW THAT IT IS VISIBLE. `_refresh` is the only writer; a fix
+	# that had moved the write inside the toggle would leave this blank, and one that cached it would
+	# leave F3 answering with the tick the window opened on.
+	joined._detail.text = ""
+	joined._refresh()
+	if joined._detail.text == "":
+		ok = _fail("nothing rewrote the readout while it was visible, so F3 shows whatever was "
+				+ "last written rather than the world's state now")
+	elif not joined._detail.text.contains("world seed"):
+		ok = _fail("the visible readout is not the readout: `%s`" % joined._detail.text)
+
+	# AND F3 AGAIN TAKES IT AWAY, because a developer toggle a player can trip into is a developer
+	# toggle a player cannot get out of.
+	var again := InputEventKey.new()
+	again.keycode = KEY_F3
+	again.pressed = true
+	joined._unhandled_key_input(again)
+	if _on_screen(joined._detail):
+		ok = _fail("F3 is a one-way door: it showed the readout and will not hide it again")
+	if before == "":
+		ok = _fail("the fixture never wrote a readout, so this test asked nothing")
+	joined.queue_free()
+	return ok
+
+
+## **HIDING THE READOUT MUST NOT HIDE THE ONE SENTENCE IN IT THAT WAS NEVER DEBUG** (ASSA-237).
+##
+## `_refresh` wrote *"joined at tick N, but no world is being simulated: ..."* into `_detail`. That is
+## a client that joined and can draw nothing -- the state where saying something matters most -- and
+## the moment `_detail` stopped being drawn it would have become the one state this client says
+## nothing about. "No refusal is silent" lost to a layout change is the quietest way this slice could
+## have gone wrong, so it is the one with a test.
+##
+## THE STATE IS BUILT THE WAY THE BRANCH DEFINES IT -- a joined client whose sim is not running --
+## rather than by calling the branch. A fresh `AssaySimHost` has never been started, which is exactly
+## `running() == false`, and `_client.joined_world` is left as the real welcome put it.
+func test_a_joined_client_with_no_world_says_so_on_the_status_line() -> bool:
+	var ok := true
+	var joined := _joined_screen()
+	if joined._client.joined_world.is_empty():
+		joined.queue_free()
+		return _fail("the fixture never joined, so there is no `joined but not simulating` state")
+	joined._sim = AssaySimHost.new()
+	if joined._sim.running():
+		joined.queue_free()
+		return _fail("a never-started host reports running, so this test asked nothing")
+	joined._refresh()
+	if not joined._status.text.contains("no world is being simulated"):
+		ok = _fail("a joined client that cannot simulate says `%s` on its status line"
+				% joined._status.text)
+	if _on_screen(joined._detail):
+		ok = _fail("the sentence is on the status line AND the debug readout is visible, so this "
+				+ "test could pass with the fix reverted")
+	joined.queue_free()
+	return ok
+
+
+## **NO PIXEL OF THIS WINDOW IS A COLOUR NOBODY CHOSE** (ASSA-237).
+##
+## 16.0% of a real-window shot of `02-play` was `(77, 77, 77)` -- Godot's default clear colour, which
+## appears in no palette in this repo. It is the frame around the map and the band above it, and it is
+## the surface the STATUS LINE is drawn on, at **3.86:1** against a 4.5 floor once ASSA-233 moved that
+## line to `INK_MUTED`. This is ASSA-152's finding one layer out: that item painted the HUD column
+## because "nothing is a colour"; the window itself was still nothing.
+##
+## **THE ASSERTION IS `== AssayHud.MAP_BG`, NOT `!= GREY`.** "Not the default" would pass for any
+## colour anybody ever typed here, which is the defect rather than the fix -- the rule is that this
+## surface is a NAMED one, so the test names it. It also fails if `MAP_BG` is retuned without the
+## window following, which is the pair this exists to keep together.
+func test_the_window_background_is_a_colour_this_game_names() -> bool:
+	var screen := _screen()
+	var painted := RenderingServer.get_default_clear_color()
+	screen.queue_free()
+	if not painted.is_equal_approx(AssayHud.MAP_BG):
+		return _fail(("the window clears to %s, which is not `AssayHud.MAP_BG` (%s). Every other "
+				+ "surface in this client comes from a named palette; this one is whatever the "
+				+ "engine shipped") % [painted, AssayHud.MAP_BG])
+	# AND IT CLEARS THE FLOOR THE THEME REFUSES TO WRITE ITSELF UNDER, for the one line drawn on it.
+	var muted := Color(0.655, 0.690, 0.745)
+	var ratio := AssayHud.contrast_ratio(muted, painted)
+	if ratio < 4.5:
+		return _fail("the status line reads %.2f:1 on the window's own background, under the 4.5 "
+				% ratio + "floor `build_theme.gd` refuses to write a theme under")
+	return true

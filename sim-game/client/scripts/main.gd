@@ -45,7 +45,19 @@ var _name := LineEdit.new()
 ## and cannot leave a label standing over a field that is gone -- which is ASSA-127's defect
 ## recreated by this fix. `Join` is deliberately NOT in here; see `_refresh_join_band`.
 var _join_band := HBoxContainer.new()
-## The door that stays in every stage. A field only so a test can assert it stayed.
+## **THE DOOR THAT STAYS IN EVERY STAGE A DOOR MEANS ANYTHING, WHICH IS NOT ALL OF THEM** (ASSA-237,
+## Maren's Gap 2: *"A `Join` button sits in the top-left corner of a world you are already in."*).
+##
+## ASSA-175 left this outside `_join_band` on the reasoning that it is "the one control in the row
+## that can still do something". **That is true in three stages and false in the fourth**, and the
+## fourth is the one the board looks at: `_join_address` returns at its first line unless the stage is
+## IDLE or DEAD, so a press at JOINED can only ever produce *"you are already in a world — restart the
+## client to change host"*. A control whose single outcome is a refusal is exactly the class ASSA-175
+## removed; it removed the three beside it and left this one.
+##
+## **THE RECONNECT HALF — the whole point of that item — IS UNTOUCHED**, because the stages differ:
+## the band and this button are both gone at JOINED and both back at DEAD, which is where a dropped
+## player reaches for them. See `_refresh_join_band`, which now carries one predicate for both.
 var _join_button := Button.new()
 var _status := Label.new()
 ## **WHAT THE STATUS LINE WOULD SAY IF THE LINK WERE FINE**: the last sentence `_say` was given, kept
@@ -56,7 +68,29 @@ var _base_line := ""
 var _base_level: int = AssayHud.Say.IDLE
 ## Whole seconds the host has been quiet, 0 when it is not. Set only by `AssayNetClient.link_quiet`.
 var _quiet_seconds := 0
+## **THE DEVELOPER'S READOUT, AND IT IS NOT A PLAYER'S** (ASSA-237, Maren's Gap 2: *"Debug output is
+## the second-loudest text on the player's screen ... A **hex state hash**, on the screen we send the
+## board. Fixed looks like: none of it in the player's view. Keep every word of it behind a developer
+## toggle (it is genuinely useful to us)"*).
+##
+## Every word is kept and nothing is reworded -- the seed, the tile count, the species count, the
+## player count, the tick, the state hash, the bundle and hash counts and the frame rate are still
+## written on every refresh. What changed is who it is drawn for. (The hash is not quoted here even as
+## an example: `test_shipped_scripts.gd` greps these files for a pinned one, correctly, because a
+## golden hash copied into prose is a golden hash that goes stale the next time a rule moves.)
+## `_refresh`'s own comment handed this call here by name: *"ASSA-198 decides where a player-facing one
+## belongs."*
+##
+## **THE ONE SENTENCE THAT WAS NEVER DEBUG WENT WITH IT, AND HAD TO BE TAKEN BACK OUT** -- see
+## `_refresh`. This label also printed *"joined at tick N, but no world is being simulated"*, which is
+## a failure a player must see, and hiding the label would have hidden it. It is on the status line
+## now, which is the surface this client already uses for the state it is in.
 var _detail := Label.new()
+## WHETHER THE READOUT ABOVE IS BEING DRAWN. INITIALISED TO THE WRONG ANSWER ON PURPOSE, which is this
+## file's standing rule for a default a test has to be able to catch (`_log_shown`, `_make_shown`):
+## `_build_ui` calls `_show_dev_readout(false)`, and starting this at `false` would make "the debug
+## readout is hidden on first open" true before any code ran.
+var _dev_shown := true
 ## THE PACK, AS ROWS YOU CAN ACT ON (ASSA-37). A container and not a Label any more: a stack's row
 ## carries the verbs that stack affords, which is what turns "3 × ore" from a readout into the start
 ## of the craft chain. The words are still `AssayHud.stack_line`'s, so the list reads the same.
@@ -509,6 +543,26 @@ func _ready() -> void:
 	if _built:
 		return
 	_built = true
+	# **THE WINDOW'S OWN BACKGROUND IS A COLOUR SOMEBODY CHOSE** (ASSA-237).
+	#
+	# **MEASURED, NOT NOTICED**: on a real-window shot of main at 1280x720, **16.0% of the window is
+	# `(77, 77, 77)`** -- Godot's default clear colour, which is not in `build_theme.gd`'s palette, not
+	# in `AssayHud`'s marks, and chosen by nobody here. It is the 24px frame around the map and the
+	# header band above it, and it has been in every screenshot of this game we have ever sent the
+	# board.
+	#
+	# **AND IT IS A CONTRAST DEFECT, WHICH IS WHY IT IS IN THIS SLICE RATHER THAN A TASTE ITEM.** This
+	# is ASSA-152 one layer out: that item found the HUD column's text rendering on this same default
+	# grey at **3.86:1** against a 4.5 floor, and fixed it by painting the column. The STATUS LINE
+	# still sits on the bare window, and ASSA-233 has just moved it to `INK_MUTED` -- which on
+	# `(77,77,77)` is that same **3.86:1**. On `MAP_BG` it is **7.79:1**. Maren's doc: *"Contrast floor
+	# 4.5:1 ... not negotiable for a look."*
+	#
+	# `AssayHud.MAP_BG` AND NOT A LITERAL, and not a new token either: the window is the surface
+	# FURTHEST back, the map's backing is the darkest value this game names, and two greys that have to
+	# agree about one thing is the ASSA-116 defect. Set here rather than in `project.godot` for the
+	# same reason -- a colour in a settings file is a second declaration of a value `hud.gd` owns.
+	RenderingServer.set_default_clear_color(AssayHud.MAP_BG)
 	_client = AssayNetClient.new()
 	_client.welcomed.connect(_on_welcomed)
 	_client.refused.connect(_on_refused)
@@ -694,6 +748,11 @@ func _build_ui() -> void:
 	add_child(_status)
 	_detail.position = Vector2(24.0, 74.0)
 	add_child(_detail)
+	# **AND IT IS NOT DRAWN** (ASSA-237). The position is unchanged on purpose: this slice takes the
+	# readout out of the player's VIEW, and the 96px header band it sat in is a separate measurement
+	# (ASSA-238) -- shrinking that band re-derives the log panel's ceiling, the camera's north headroom
+	# and the scatter density, which are numbers to re-measure rather than prose to re-word.
+	_show_dev_readout(false)
 
 	# THE HUD COLUMN, beside the map. Each section is the plainest thing that answers one question:
 	# what am I carrying, what can I do here, what have I built, what is under the cursor, what just
@@ -870,8 +929,9 @@ func _build_ui() -> void:
 	# SET HERE, ONCE, because there is no `_refresh_cursor` to derive it in and inventing one for a
 	# single Label would be two places that have to agree about one sentence. The limit that leaves:
 	# if a joined world STOPS, this keeps its last tile reading rather than returning to this line --
-	# the sentence `_detail` prints in that case ("no world is being simulated") is the surface that
-	# says so, and a frozen readout beside it is stale, not wrong.
+	# the sentence the STATUS LINE carries in that case ("no world is being simulated") is the surface
+	# that says so, and a frozen readout beside it is stale, not wrong. (That sentence was `_detail`'s
+	# until ASSA-237 hid `_detail` from the player; it moved so that this clause stayed true.)
 	_cursor.text = AssayHud.quiet_cursor_line()
 	# EVERY SECTION IN ONE LIST, IN THE ORDER MAREN RULED. `make` used to be built by hand above this
 	# loop because it is the only section with more than one body -- the chosen-parts box, its toggle
@@ -1091,6 +1151,20 @@ func _show_map_key(shown: bool) -> void:
 	_map_key_toggle.text = AssayHud.map_key_toggle_text(shown)
 
 
+## SHOW OR HIDE THE DEVELOPER'S READOUT (ASSA-237, Maren's Gap 2).
+##
+## **THE TEXT IS NEVER STOPPED, ONLY THE DRAWING.** `_refresh` writes `_detail.text` on every tick
+## whatever this says, which is what makes F3 answer instantly with the CURRENT tick and hash instead
+## of with whatever was on screen when it was last hidden. A toggle that also gated the write would be
+## a toggle that lies for one tick, and the one thing this readout is for is being exact.
+##
+## NO TOGGLE CONTROL AND NO LEGEND: see `_unhandled_key_input`. A visible control for this would put
+## the debug readout back in the player's view one press away from where it just left.
+func _show_dev_readout(shown: bool) -> void:
+	_dev_shown = shown
+	_detail.visible = shown
+
+
 ## SHOW OR HIDE THE CRAFTING MENU'S ROWS (ASSA-88).
 ##
 ## THE ROWS ONLY, NEVER THE RUNNING CRAFT. Maren's clause from ASSA-89 applies here as she said:
@@ -1152,6 +1226,18 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		# about what the control can DO, not about where it is drawn.
 		if _sim.running():
 			_show_close_up(not _close_up)
+	elif key.keycode == KEY_F3:
+		# **F3, AND IT IS NOT NAMED ON THE SCREEN ANYWHERE** (ASSA-237). Every other toggle in this
+		# client prints its key on its own control -- `show the event log (L)`, `whole world (V)` --
+		# because a player cannot be expected to guess one. This one has no control and no legend, and
+		# that is the difference between the two kinds of toggle: those three are features, this is an
+		# instrument. A labelled control for it would put the debug readout back on the player's screen
+		# one indirection later, which is the thing Gap 2 is about.
+		#
+		# F3 rather than a launch flag, because the readout's whole value is being able to ask a
+		# RUNNING client what tick and hash it is on -- the state a flag set before the window opened
+		# cannot reach. It costs a player nothing: F3 is bound to nothing else here.
+		_show_dev_readout(not _dev_shown)
 
 
 ## **THE THREE CONTROLS NOTHING READS ANY MORE LEAVE THE SCREEN** (ASSA-175, Maren's ruling: "a
@@ -1185,7 +1271,18 @@ func _unhandled_key_input(event: InputEvent) -> void:
 ## stage every frame cannot miss a transition, and `CanvasItem.set_visible` early-returns when the
 ## value is unchanged.
 func _refresh_join_band() -> void:
-	_join_band.visible = _client.stage != AssayNetClient.Stage.JOINED
+	# **ONE PREDICATE, AND `Join` IS NOW UNDER IT TOO** (ASSA-237, Maren's Gap 2). The band's own
+	# docstring above says `Join` is excluded because "it is the one control in the row that can still
+	# do something" -- true at IDLE, CONNECTING and DEAD, and false at JOINED, where `_join_address`
+	# returns on its first line and the only reachable outcome is a refusal. The stage that makes the
+	# other three dead makes this one dead as well, so it is the same predicate rather than a new rule.
+	#
+	# NOT MOVED INTO `_join_band`, which would have been the tidier diff: the band is the pre-world
+	# composition ASSA-231 is rebuilding in #316, and re-parenting a control inside it would make this
+	# fix and that one collide over a node neither of them is about.
+	var before_a_world := _client.stage != AssayNetClient.Stage.JOINED
+	_join_band.visible = before_a_world
+	_join_button.visible = before_a_world
 
 
 ## START A RELAY OF OUR OWN AND JOIN IT (ASSA-106).
@@ -1804,8 +1901,27 @@ func _refresh() -> void:
 		var joined: Dictionary = _client.joined_world
 		if joined.is_empty():
 			return
-		_detail.text = ("joined at tick %d, but no world is being simulated: %s"
+		# **THIS SENTENCE IS NOT DEBUG AND IT CHANGED SURFACE RATHER THAN WORDS** (ASSA-237). It was
+		# written into `_detail`, which is now hidden unless a developer asks for it -- so leaving it
+		# there would have made the one state where the client joined and can draw nothing the one
+		# state the client says nothing about. That is "no refusal is silent" lost to a layout change,
+		# which is the quietest way this fix could have gone wrong.
+		#
+		# THE STRING IS BYTE-FOR-BYTE THE ONE `_detail` PRINTED: the words a client composes are not
+		# mine to retune (they are Marlow's), and this item is about where a thing is drawn.
+		#
+		# `FAILED`, BECAUSE THAT IS WHAT IT IS. `_say` also prints it to the console, so the probes
+		# that read this client's output gain a line here rather than losing one.
+		#
+		# **GUARDED, BECAUSE A LABEL IS IDEMPOTENT AND `_say` IS NOT.** `_detail.text = ...` could run
+		# on every bundle for free; `_say` prints, and this branch is a CONDITION the client can sit in
+		# for a whole session -- unguarded it would put the same line in the console ten times a second
+		# and bury the one that matters. The comparison is against `_base_line` rather than a flag of
+		# my own: that field already is "the last sentence this screen was given".
+		var stalled := ("joined at tick %d, but no world is being simulated: %s"
 				% [int(joined.get("tick", -1)), _sim.fail_reason])
+		if stalled != _base_line:
+			_say(stalled, AssayHud.Say.FAILED)
 		return
 	# The tile under the mouse, or your own tile until the mouse has been over the map. Which one it
 	# is has to be on screen: a readout that silently changed subject would be unreadable.
