@@ -3896,9 +3896,17 @@ func _draw() -> void:
 		#
 		# **`bedded` AND NOT EVERY LETTER, BECAUSE THE PRICE IS REAL** (box 9): eight extra
 		# `draw_string` each, 104 on a 13-letter world against ASSA-214's whole-map median of 42. A
-		# letter nothing laps sits on its own disc, which is the surface `glyph_color` picked its ink
-		# against, so the stamps buy it nothing. `_glyph_marks` decides; this loop paints what it is
-		# told. On seed 777042 that is 8 stamps, not 104.
+		# letter with nothing over it and no hatch through it sits on its own disc, which is the
+		# surface `glyph_color` picked its ink against, so the stamps buy it nothing. `_glyph_marks`
+		# decides; this loop paints what it is told.
+		#
+		# **THE NUMBER MOVED WHEN MAREN AMENDED BOX 9** (lapped -> lapped OR hatched): on seed 777042
+		# that is **9 of 13 letters, so 72 stamps** where lapped-only paid 8 and every letter would
+		# pay 104. Said plainly, because I wrote the looser version first: 72 is **1.7x** ASSA-214's
+		# whole-map median of 42, and what that costs in frame time is NOT measured by anyone. She
+		# ruled it with the 96 -> 32 saving in front of her and the legibility delta beside it
+		# (+1.16 to +2.43 ratio points per hatched letter); the trade is hers, the unmeasured half
+		# is mine to say out loud.
 		if bool(glyph["bedded"]):
 			for offset: Vector2 in AssayHud.GLYPH_BED_STAMPS:
 				draw_string(font, glyph["baseline"] + offset, glyph["symbol"],
@@ -3976,24 +3984,31 @@ func _building_marks(buildings: Array) -> Array:
 ##
 ## A DEPOSIT WITH NOTHING LEFT CARRIES NO LETTER, the same `amount` test the disc pass makes -- a
 ## spent patch keeps its tint on this map but has no species worth naming over a factory.
-## **`building_marks` IS WHY ONLY SOME LETTERS GET THE EXPENSIVE BED** (ASSA-218 box 9, Maren: "it
-## matters"). The eight stamps are eight extra `draw_string` per letter, and a 13-letter world paid
-## 104 of them against ASSA-214's whole-map median of 42 draw calls -- 2.5x the map's entire budget,
-## to protect the one letter a machine was standing on. `AssayHud.letter_occlusions` already decides
-## which letters a building diamond laps, so it decides this too: on seed 777042 that is **1 letter,
-## so 8 stamps instead of 104.**
+## **`building_marks` IS HALF OF WHY ONLY SOME LETTERS GET THE EXPENSIVE BED** (ASSA-218 box 9, Maren:
+## "it matters"). The eight stamps are eight extra `draw_string` per letter, and a 13-letter world
+## paid 104 of them against ASSA-214's whole-map median of 42 draw calls -- 2.5x the map's entire
+## budget, to protect the one letter a machine was standing on. `AssayHud.letter_occlusions` already
+## decides which letters a building diamond laps, so it decides this half.
+##
+## **THE OTHER HALF IS THE HATCH, AND IT IS THE BIGGER ONE** (box 9 AMENDED, 13:00 EDT). Box 9 first
+## shipped as lapped-only and Maren measured what that cost: the stamps are worth **+1.16 to +2.43
+## ratio points on every hatched disc** of seed 777042 against **+1.55** on the lapped one, because
+## `hatch_ink` and `glyph_ink` can be the **same white** -- the footprint with no bed measures 1.00:1,
+## no edge at all. So lapped-only kept the bed on the letter least at risk. The widened rule is
+## `lapped OR hatched`, and `hatched` is the sim's `reach_note`, not a palette.
 ##
 ## **THE DECISION IS A FACT ON THE MARK, NOT AN `if` IN THE DRAW LOOP**, which is the whole reason
 ## this is testable. `_draw` cannot be asked how many times it called `draw_string`; a dictionary
 ## can. So `bedded` is published here and `_draw` paints what it is told, exactly as the comment
-## over the glyph pass already claims ("THE DECISION IS `_glyph_marks`'"). Mutating this to `true`
-## for every letter, or to `false` for all of them, reddens
-## `test_only_a_lapped_letter_carries_the_expensive_bed`.
+## over the glyph pass already claims ("THE DECISION IS `_glyph_marks`'"). Mutating either half --
+## back to lapped-only, or `true` everywhere -- reddens
+## `test_a_letter_is_bedded_when_a_mark_laps_it_or_a_hatch_crosses_it`.
 ##
-## AN EMPTY LIST MEANS NO BUILDINGS, AND THEREFORE NO STAMPS -- not "stamp everything". A letter with
-## nothing over it is on its own disc, where `glyph_color` picked its ink against that exact surface
-## and the bed is invisible by construction; the stamps buy nothing there. That is the case the
-## `hud.gd` comment has always described and it is now the case that also costs nothing.
+## AN EMPTY LIST MEANS NO BUILDINGS, AND THEREFORE ONLY THE HATCHED LETTERS -- not "stamp
+## everything", and no longer "stamp nothing", which is what this paragraph said until the amendment.
+## A hatch is a property of the rock, so it decides the bed whether or not anything stands on the
+## map; a letter with neither is on its own disc, where `glyph_color` picked its ink against that
+## exact surface, and the stamps buy it nothing.
 func _glyph_marks(deposits: Array, font: Font, building_marks: Array = []) -> Array:
 	var marks := []
 	if font == null:
@@ -4042,9 +4057,25 @@ func _glyph_marks(deposits: Array, font: Font, building_marks: Array = []) -> Ar
 			# machine was on a rock today" from "one was and the map did not mark it".
 			# `AssayHud.machines_on_letters` is the comparison and `tools/window_shot.gd` the caller.
 			"tile": centre,
-			# Filled in below, once every letter's box exists: `letter_occlusions` needs the whole
-			# list, so it cannot be answered one letter at a time inside this loop.
-			"bedded": false,
+			# **BEDDED IF A HATCH CROSSES IT, AND ALSO IF A MARK LAPS IT** (ASSA-218 box 9 as Maren
+			# AMENDED it, 13:00 EDT, after measuring my own priced alternative). Box 9 first shipped
+			# as *lapped only*, and the measurement says that keeps the bed on the one letter that
+			# was never at risk and strips it from the eight that are: on seed 777042 the eight
+			# stamps are worth **1.16 to 2.43 ratio points** on every hatched disc (2 H 1.67->3.37,
+			# 3 N 1.93->4.36, 12 D 1.42->2.59), against **+1.55** on the lapped one.
+			#
+			# WHY A HATCH IS THE WORSE SURFACE OF THE TWO, which is not what either of us expected:
+			# on discs 2/5/12 `hatch_ink` IS white and so is `glyph_ink`, so where a stroke crosses
+			# the letter there is **no edge at all** -- the footprint with no bed measures 100% pure
+			# white, 1.00:1. A building mark at least has its own grey. The stamps are the only thing
+			# holding a white letter and a white hatch apart.
+			#
+			# `hatch` IS THE SIM'S FACT, not a look: `deposit_disc` sets it from a non-empty
+			# `reach_note`, so this reads "nothing can get this ore out" and never a palette.
+			#
+			# The lapped half is filled in below, once every letter's box exists: `letter_occlusions`
+			# needs the whole list, so it cannot be answered one letter at a time inside this loop.
+			"bedded": bool(disc["hatch"]),
 		})
 	# **WHICH LETTERS A BUILDING ACTUALLY LAPS** -- the same `letter_occlusions` the window shot's
 	# `case` leg reports, so the painter and the picture cannot disagree about which letter was at

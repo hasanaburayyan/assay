@@ -249,9 +249,14 @@ const GLYPH_BED_PX := 2.0
 ## paints `{ink + d}`, which contains it. All eight, or a stroke's END keeps bare diagonals.
 ##
 ## THE PRICE, STATED: 8 extra `draw_string` calls per letter -- 104 on a 13-letter world, against
-## ASSA-214's whole-map median of 42 draw calls. It is the largest thing on this map's bill and the
-## next move if it matters is to stamp only the letters a mark actually laps, which
-## `letter_occlusions` can already decide.
+## ASSA-214's whole-map median of 42 draw calls. It is the largest thing on this map's bill.
+##
+## **THAT NEXT MOVE HAS BEEN MADE, TWICE, AND THIS IS WHERE IT LANDED** (ASSA-218 box 9). This said
+## "stamp only the letters a mark actually laps", that shipped, and Maren then measured it and
+## amended the rule: `main.gd::_glyph_marks` beds a letter that is **lapped OR hatched**, because
+## `hatch_ink` and `glyph_ink` can be the same white and the stamps are worth more there (+1.16 to
+## +2.43 ratio points) than on the lapped letter (+1.55). On seed 777042 that is 9 letters, **72
+## calls of the 104**, and nobody has measured what 72 costs in frame time.
 const GLYPH_BED_STAMPS: Array[Vector2] = [
 	Vector2(-1.0, -1.0), Vector2(0.0, -1.0), Vector2(1.0, -1.0),
 	Vector2(-1.0, 0.0), Vector2(1.0, 0.0),

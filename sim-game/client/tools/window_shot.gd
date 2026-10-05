@@ -1396,7 +1396,15 @@ func _write_marks_table() -> void:
 		letters.append({"symbol": String(glyph["symbol"]), "size": int(glyph["size"]),
 				"x": box.position.x, "y": box.position.y, "w": box.size.x, "h": box.size.y,
 				"ink": [ink.r, ink.g, ink.b], "bed": [bed.r, bed.g, bed.b],
-				"bed_px": float(glyph["bed_px"]), "tile": [tile.x, tile.y]})
+				"bed_px": float(glyph["bed_px"]), "tile": [tile.x, tile.y],
+				# **AND WHETHER THE EIGHT STAMPS WERE PAINTED ON THIS LETTER** (ASSA-218 box 9, as
+				# amended). `_draw` cannot be asked how many times it called `draw_string` and
+				# nothing headless counts draw calls, so the `if bool(glyph["bedded"])` inside the
+				# glyph loop is the one step of this chain no test can reach -- Nerite turned it into
+				# `if false:` and the suite stayed 342/0. The DECISION is guarded by
+				# `test_main_screen.gd`; this is how a 1x arm checks the decision against the
+				# PICTURE, which is the only thing that can see the draw.
+				"bedded": bool(glyph["bedded"])})
 	# **AND WHETHER THE ASSA-213 CASE IS IN THIS FRAME AT ALL** -- the half of box 2 a picture cannot
 	# carry. `on_letters` is the SIM's answer (a footprint holding the tile a letter names) and
 	# `overlaps` the PAINTER's (a diamond landing on the letter's cap box); a reader of this file can
