@@ -98,12 +98,26 @@ func _paint_sample(row: Dictionary, box: Rect2, font: Font, font_px: int) -> voi
 		&"disc":
 			draw_circle(middle, box.size.y * 0.45, colour)
 		&"hatch":
+			# **THIS ROW IS A HATCH *ON A DISC*, AND IT USED TO BE THREE LAYERS OF ONE NEAR-BLACK**
+			# (Nerite, ASSA-206: "a flat dark square with no stripe -- the key names a mark it does
+			# not draw"). The disc was painted in `map_key_sample_ink`, which returned `MAP_BG` for
+			# this row, over a `ground` patch that is also `MAP_BG`, and then striped in `MAP_BG`
+			# again: 1.00:1 three times over. **The disc is the sample species' fill now, exactly as
+			# the `deposit` row above it**, so there is a surface for the mark to be a mark on -- and
+			# the only difference a player sees between the two rows is the thing the rows are about.
 			var radius := box.size.y * 0.45
-			draw_circle(middle, radius, colour)
+			var fill := AssayHud.species_tint(AssayHud.KEY_SAMPLE_SPECIES)
+			draw_circle(middle, radius, fill)
 			var strokes := AssayHud.hatch_segments(middle, radius)
 			for i in range(0, strokes.size(), 2):
-				draw_line(strokes[i], strokes[i + 1], AssayHud.mark_ink(&"dead_end"),
-						float(AssayHud.HATCH_ON))
+				# **THE WIDTH IS `HATCH_ON / sqrt(2)`, NOT `HATCH_ON`** (ASSA-206 debt, folded into
+				# ASSA-209). `HATCH_ON` is a count of steps in the `x + y` index, not a pixel width;
+				# used as one it draws a 2px PERPENDICULAR stroke at 4.95px spacing = 40% ink, half
+				# again the 28.6% Maren ruled, and the swatch was measured at 39.8% against the map's
+				# own 2/7. The derivation lives in `AssayHud.hatch_segments`' docstring and the
+				# painter's own `hatch_width`; this reads it rather than repeating the mistake.
+				draw_line(strokes[i], strokes[i + 1], colour,
+						float(AssayHud.HATCH_ON) / sqrt(2.0))
 		&"glyph":
 			var radius := box.size.y * 0.45
 			draw_circle(middle, radius, AssayHud.species_tint(AssayHud.KEY_SAMPLE_SPECIES))

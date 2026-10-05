@@ -334,6 +334,104 @@ func test_the_toggle_names_the_key_and_says_which_way_it_goes() -> bool:
 	return true
 
 
+## **EVERY SWATCH IS VISIBLE AGAINST THE PATCH IT IS DRAWN ON, which the key did not manage for the
+## one row it exists to contrast** (Nerite, ASSA-206 01:02 EDT: *"a flat dark square with no stripe --
+## the key names a mark it does not draw"*). `map_key_sample_ink` returned `MAP_BG` for `dead_end`;
+## `_draw` paints each row's sample on a patch of `ground`, which IS `MAP_BG`; and the hatch branch
+## then painted its disc in the sample ink and its strokes in the row's ink. **Three layers of one
+## near-black: 1.00:1, exactly nothing**, for 1 of the 11 rows and the one whose whole job is to be
+## the other half of the row above it.
+##
+## THE FLOOR IS 1.5:1 AND IT IS DELIBERATELY LOW. Maren ruled the spawn pad's SIZE rather than its
+## colour and it sits at 2.23:1 against the ground, and the panel's own docstring says a key that
+## flattered a mark would be worse than none. So this is not a readability bar -- it is "did anything
+## get drawn", which is the defect that actually happened, and it must not become a back door to
+## re-rule a colour the director has already looked at.
+func test_no_key_swatch_is_invisible_on_the_patch_it_is_drawn_on() -> bool:
+	var ground := AssayHud.mark_ink(&"ground")
+	var floor_ratio := 1.5
+	var checked := 0
+	for row in AssayHud.map_key_rows():
+		var id := StringName(row["id"])
+		var ink := AssayHud.map_key_sample_ink(row)
+		# **WHAT A ROW PUTS ON THE GROUND IS NOT ALWAYS ITS `ink`, AND GETTING THAT WRONG MADE THIS
+		# TEST ACCUSE AN INNOCENT ROW.** My first version compared `ink` for every shape and failed
+		# `species_glyph` at 1.19:1 -- but that branch paints a species-tinted DISC first and the
+		# letter on top, so 1.19:1 was the letter against the ground it is never drawn on. Both
+		# shapes that sit a mark on a disc are listed here, read off `map_key.gd`'s own branches.
+		var shape := StringName(row["shape"])
+		var body: Color = AssayHud.species_tint(AssayHud.KEY_SAMPLE_SPECIES) \
+				if shape == &"hatch" or shape == &"glyph" else ink
+		var against_ground := AssayHud.contrast_ratio(body, ground)
+		if against_ground < floor_ratio:
+			return _fail(("the key's `%s` swatch is %.2f:1 against the ground patch it is drawn on "
+					+ "(floor %.2f). A row that draws nothing is a row that names a mark the panel "
+					+ "does not draw, which is worse than leaving it out.")
+					% [id, against_ground, floor_ratio])
+		checked += 1
+	if checked < 10:
+		return _fail("only %d key rows were checked; the scan is broken, not the panel" % checked)
+	# AND THE HATCH'S OWN STROKE AGAINST ITS OWN DISC, at the floor the MAP is held to (ASSA-209).
+	# The swatch promises the shape, so the shape has to be there: a stripe the same colour as the
+	# disc under it is the map's 1.42:1 defect reproduced inside the legend.
+	# **THE STRIPE'S COLOUR COMES BACK THROUGH `map_key_sample_ink`, WHICH IS THE PATH `map_key.gd`
+	# ACTUALLY TAKES, and asking `hatch_ink` here instead was a hole my own lever found.** Deleting the
+	# `dead_end` branch from `map_key_sample_ink` -- the whole of Nerite's defect -- left all 326 tests
+	# green, because this line computed the right number about a function the panel does not call.
+	var sample := AssayHud.species_tint(AssayHud.KEY_SAMPLE_SPECIES)
+	var hatch_row := AssayHud.mark_entry(&"dead_end")
+	if hatch_row.is_empty():
+		return _fail("there is no `dead_end` mark to key: this test is measuring nothing")
+	var stripe := AssayHud.map_key_sample_ink(hatch_row)
+	var on_disc := AssayHud.contrast_ratio(stripe, sample)
+	if on_disc < 3.0:
+		return _fail(("the key's hatch stripe is %.2f:1 against its own disc (floor 3.00). The map's "
+				+ "worst pair clears 4.13:1 since ASSA-209; a legend quieter than the thing it "
+				+ "describes teaches the wrong mark.") % [on_disc])
+	print("    key swatches: %d rows all visible on the ground; hatch stripe %.2f:1 on its own disc"
+			% [checked, on_disc])
+	return true
+
+
+## **THE HATCH SWATCH'S DISC IS NOT PAINTED IN THE ROW'S OWN INK, AND THIS IS A SOURCE SCAN -- SAID
+## SO, BECAUSE THE ARITHMETIC ABOVE CANNOT REACH IT.**
+##
+## Nerite's defect was `draw_circle(middle, radius, colour)` in the `hatch` branch, where `colour` is
+## `map_key_sample_ink(row)` -- so the disc, its stripes and the `ground` patch under both were three
+## layers of one near-black. **My contrast test cannot catch it and I only know that because a mutation
+## passed.** `KEY_SAMPLE_SPECIES` is slot 5, chosen on Maren's sweep precisely because it is BRIGHT, so
+## `MAP_BG` against it measures ~5.8:1 and clears any floor worth setting. The number was never the
+## problem; what was drawn was. A ratio can only see this once the disc has a colour of its own.
+##
+## So the assertion is structural, and it is the narrowest one that holds: the branch fills its disc
+## from `species_tint`, the way the `deposit` row above it does, and not from the row's ink.
+func test_the_hatch_swatch_fills_its_disc_with_a_tint_not_with_the_rows_ink() -> bool:
+	var text := FileAccess.get_file_as_string(KEY_PANEL)
+	if text.is_empty():
+		return _fail("could not read %s" % KEY_PANEL)
+	var at := text.find("&\"hatch\":")
+	if at < 0:
+		return _fail("%s has no `hatch` branch; the key cannot draw the dead-end row at all"
+				% KEY_PANEL)
+	var next := text.find("&\"glyph\":", at)
+	var branch := text.substr(at, (next - at) if next > at else -1)
+	if not branch.contains("AssayHud.species_tint("):
+		return _fail(("the key's `hatch` branch does not fill its disc from `species_tint`. If it is "
+				+ "back to `colour`, the disc, the stripes and the ground patch are all one "
+				+ "near-black and the row draws NOTHING -- Nerite, ASSA-206: `a flat dark square "
+				+ "with no stripe; the key names a mark it does not draw`."))
+	if branch.contains("draw_circle(middle, radius, colour)"):
+		return _fail(("the key's `hatch` branch still paints its disc in the row's own ink. That ink "
+				+ "is what the STRIPES are drawn in, so the mark is painted on itself."))
+	# AND THE WIDTH, the ASSA-206 density debt: `HATCH_ON` is a count of steps in the `x + y` index,
+	# and used as a pixel width it draws 40% ink where 28.6% was ruled.
+	if not branch.contains("float(AssayHud.HATCH_ON) / sqrt(2.0)"):
+		return _fail(("the key's hatch stroke is not `HATCH_ON / sqrt(2)` wide. `HATCH_ON` as a raw "
+				+ "pixel width is a 2px PERPENDICULAR stroke at 4.95px spacing = 40% ink, half again "
+				+ "the 28.6% Maren ruled; the swatch measured 39.8% against the map's own 2/7."))
+	return true
+
+
 ## **THE TABLE'S ORDER IS THE ORDER `_draw` PAINTS IN, AND UNTIL ASSA-213 NOTHING HELD IT THERE.**
 ##
 ## `MAP_MARKS`' own docstring already claims this -- "the order a player reads the key in is the order

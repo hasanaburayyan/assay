@@ -215,6 +215,9 @@ func test_the_species_letter_always_takes_the_higher_contrast_colour() -> bool:
 func test_a_dead_end_rock_is_hatched_and_trades_no_other_channel() -> bool:
 	var checked := 0
 	var worst_ink := 99.0
+	var worst_ink_at := ""
+	var worst_hatch := 99.0
+	var worst_hatch_at := ""
 	for species in range(AssayHud.SPECIES_TINTS.size()):
 		for purity in range(1, 101):
 			var want := AssayHud.deposit_color(species, purity)
@@ -242,24 +245,71 @@ func test_a_dead_end_rock_is_hatched_and_trades_no_other_channel() -> bool:
 							+ "hatched=%s. The mark follows the NOTE -- a rock you can dig and "
 							+ "cannot smelt is a dead end too, and that is the one `hand_minable` "
 							+ "misses.") % [species, purity, case["minable"], note, disc["hatch"]])
-				if disc["hatch_ink"] != AssayHud.MAP_BG:
-					return _fail("the hatch ink is %s and not MAP_BG, which is a new colour on a map "
-							+ "whose named set exists to stop that" % disc["hatch_ink"])
-				# THE LETTER SITS ON THE FILL IN BOTH STATES NOW, so the ink is simply the better of
-				# the two -- optimal by construction, which is an invariant a moved tint cannot rot.
-				var dark := _wcag_ratio(colour, AssayHud.GLYPH_DARK)
-				var light := _wcag_ratio(colour, AssayHud.GLYPH_LIGHT)
+				# **THE HATCH INK IS ONE OF TWO NAMED COLOURS AND NEVER A THIRD** (ASSA-209). It
+				# used to be the single `MAP_BG`, and because `MAP_BG` is a near-black the mark's
+				# legibility was a property of the DISC, which the mark does not choose: 1.42:1 on a
+				# dim purple, where absent and subtle are the same picture. It is now the better of
+				# `MAP_BG` and `GLYPH_LIGHT` for that fill, which spends no new literal.
+				var hatch: Color = disc["hatch_ink"]
+				if hatch != AssayHud.MAP_BG and hatch != AssayHud.GLYPH_LIGHT:
+					return _fail(("species %d at purity %d: the hatch ink is %s, which is neither "
+							+ "MAP_BG nor GLYPH_LIGHT. A map whose named set exists to be countable "
+							+ "may not grow a colour here.") % [species, purity, hatch])
+				var on_bg := _wcag_ratio(colour, AssayHud.MAP_BG)
+				var on_white := _wcag_ratio(colour, AssayHud.GLYPH_LIGHT)
+				var hatch_took: float = on_bg if hatch == AssayHud.MAP_BG else on_white
+				if hatch_took < maxf(on_bg, on_white) - 1e-6:
+					return _fail(("species %d at purity %d: the hatch took the ink worth %f when %f "
+							+ "was on the table. Picking the better of two is optimal by "
+							+ "construction; a threshold would be tuned to today's six tints.")
+							% [species, purity, hatch_took, maxf(on_bg, on_white)])
+				if note != "":
+					worst_hatch = minf(worst_hatch, hatch_took)
+					if hatch_took <= worst_hatch + 1e-9:
+						worst_hatch_at = "slot %d (%s) at purity %d" \
+								% [species, AssayHud.SPECIES_TINTS[species], purity]
+				# **THE LETTER IS JUDGED ON THE FILL IN BOTH STATES, AND SINCE #293 THAT IS TRUE OF
+				# THE PICTURE TOO.** A letter carries `GLYPH_BED_PX` of its own disc colour under its
+				# strokes (ASSA-213), so the surround is the bare fill whatever the hatch painted. An
+				# earlier version of this branch relit the ink against `fill.lerp(hatch, 2/7)`, which
+				# was right before the bed existed and would now pick for a surround that is gone.
+				var under := colour
+				var dark := _wcag_ratio(under, AssayHud.GLYPH_DARK)
+				var light := _wcag_ratio(under, AssayHud.GLYPH_LIGHT)
 				var ink: Color = disc["ink"]
 				var took: float = dark if ink == AssayHud.GLYPH_DARK else light
 				if took < maxf(dark, light) - 1e-6:
-					return _fail(("species %d at purity %d: the letter took the ink worth %f when "
-							+ "%f was there.") % [species, purity, took, maxf(dark, light)])
+					return _fail(("species %d at purity %d, note `%s`: the letter took the ink worth "
+							+ "%f when %f was there, on the surface it is actually drawn on.")
+							% [species, purity, note, took, maxf(dark, light)])
 				worst_ink = minf(worst_ink, took)
+				if took <= worst_ink + 1e-9:
+					worst_ink_at = "slot %d (%s) at purity %d, %s" % [species,
+							AssayHud.SPECIES_TINTS[species], purity,
+							"hatched" if note != "" else "clean"]
 				checked += 1
 	if checked != 2400:
 		return _fail("swept %d states, expected 2400" % checked)
-	print("    disc letter: worst %f over every tint and purity, on the fill in both states"
-			% worst_ink)
+	# **THE FLOOR, AT THE WORST PAIR, AND THE FAILURE NAMES THE SPECIES** (ASSA-209 box 6: "it must
+	# name the worst species pair, not an average"). 3.0:1 is chosen as a floor the SHIPPED ink fails
+	# by a wide margin (1.42:1 on a dim purple, 1.43:1 on a dim M-blue) and the two-value ink clears
+	# by a wide margin (4.13:1) -- so it is a bar, not a tuning, and no reading of the arithmetic puts
+	# the old code the right side of it. It is NOT 4.5: WCAG AA is a rule about text, and this is a
+	# 1.41px diagonal stroke at 28.6% coverage, which that number was never written about.
+	if worst_hatch < 3.0:
+		return _fail(("THE DEAD-END HATCH IS BELOW THE FLOOR ON ITS WORST PAIR: %.2f:1 at %s, floor "
+				+ "3.00:1. The ink is near-black, so on a dark species the mark is not subtle, it is "
+				+ "ABSENT -- and the disc then says `good ore` to a player who cannot work it. 79%% "
+				+ "of worlds hold at least one purple or M-blue dead end (Maren, 400 seeds).")
+				% [worst_hatch, worst_hatch_at])
+	# **NO FLOOR ON THE LETTER, ON PURPOSE, and that is Maren's sharpening on ASSA-39 rather than my
+	# choice.** Picking the better of two inks is optimal by construction, so the assertion that holds
+	# is the one above -- "the chosen ink is the higher-ratio one at every state" -- and 4.5152 is the
+	# CEILING of this two-colour family, not a target. A floor here would rot the moment a tint moves.
+	print("    hatch vs fill: worst %.2f:1 at %s (floor 3.00, shipped ink was 1.42)"
+			% [worst_hatch, worst_hatch_at])
+	print("    disc letter:   worst %.2f:1 at %s, on the surface it is drawn on"
+			% [worst_ink, worst_ink_at])
 	return true
 
 

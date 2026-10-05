@@ -83,6 +83,13 @@ func _initialize() -> void:
 				"dead_end": not String(deposit["reach_note"]).is_empty(),
 				"hatch": bool(disc["hatch"]), "filled": bool(disc["filled"]),
 				"hatch_width": float(disc["hatch_width"]), "stroke": float(disc["stroke"]),
+				# **THE INK THE PAINTER CHOSE, NOT ONE A MEASURER RE-DERIVES** (ASSA-209). Since the
+				# hatch ink is near-black on a light disc and WHITE on a dark one, python looking for
+				# `MAP_BG` in every disc would report 0.0% on exactly the two species this item is
+				# about and call the fix a regression. Cove's ASSA-181 rule: prefer the value the
+				# frame came from over any re-derivation of it.
+				"hatch_ink": [disc["hatch_ink"].r, disc["hatch_ink"].g, disc["hatch_ink"].b],
+				"glyph_ink": [disc["ink"].r, disc["ink"].g, disc["ink"].b],
 				"x": at.x, "y": at.y, "r": radius,
 				"colour": [disc["colour"].r, disc["colour"].g, disc["colour"].b]})
 	var table := {"seed": seed_text, "cell": cell, "margin": [margin.x, margin.y],
