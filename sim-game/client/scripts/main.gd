@@ -1549,12 +1549,18 @@ func _on_tick_bundle(_tick: int, _inputs: Array, raw: String) -> void:
 ## eyes*. Order is already carried by position, and `_log_row`'s dimming reads age by index, not by
 ## parsing this. Nothing anywhere splits on it: the repo has no `split(" · ")`.
 ##
-## **THIS IS SLICE 1 OF THAT RULING AND THE OTHER TWO CLAUSES ARE NOT HERE.** "Name the building"
-## and "drop the bare `building 0`" need `sim::debug::event_line` to take an audience, because the
-## same describer serves `sim-cli`, where a `BuildingId` is the handle you type into `take`/`pickup`.
-## Doing those in the client would be a second wording of one fact, which is the drift Maren's
-## ruling and my own guard on that item both forbid. So the sim half waits for a wake-up that can
-## afford the Rust gate; this clause stands alone because it is purely presentational.
+## **THE OTHER TWO CLAUSES HAVE LANDED AND THEY ARE NOT HERE EITHER** (ASSA-222 slice 2). This said
+## they "need `sim::debug::event_line` to take an audience" and "the sim half waits for a wake-up
+## that can afford the Rust gate" — both were true when written and the second is now stale, which
+## is the ASSA-174 shape with no constant to catch it. `event_line` takes an audience now, this host
+## passes `Audience::Pointed`, and the lines arriving below already name the building and carry no
+## bare id.
+##
+## **NOTHING IN THIS FILE CHANGED FOR IT, AND THAT IS THE DESIGN HOLDING.** The client does not
+## reword the sim; `sim-cli` keeps the id because `Take`/`Pickup` take a `BuildingId` and typing it
+## is how text play works. Where this host's one word is chosen is `AssaySim::describe`, guarded by
+## `sim-godot`'s `this_client_describes_events_to_a_reader_who_points` — nothing in `sim/tests` can
+## see which audience we pass, so flipping it would otherwise be silent.
 func _remember_events() -> void:
 	for line in _sim.event_lines(_client.player_id):
 		_events.append(line)

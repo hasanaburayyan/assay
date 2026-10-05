@@ -1029,8 +1029,16 @@ fn status(s: &Session, paused: bool, tps: u32) {
 /// events the assembly model added and showed players raw Rust `Debug`. It is
 /// `sim::debug::event_line` now, and the exhaustive match is in the crate that
 /// owns `Event`, where adding a variant is the author's job to word.
+///
+/// **`Typed` IS NOT A PRESENTATION CHOICE, IT IS WHAT THIS CLIENT IS** (ASSA-222).
+/// A reader here addresses a building by typing `take 0`, so the id in a
+/// scrollback line is the handle for the next command -- which is principle 2
+/// (the game is playable in text) doing its job, not the dead index the same
+/// describer was printing into a window. `tests/first_plate.rs` asserts these
+/// strings and is unchanged by that item, which is the evidence that this
+/// reader's wording was never the defect.
 fn describe_event(event: &Event, world: &World, me: PlayerId) -> String {
-    debug::event_line(world, Some(me), event)
+    debug::event_line(world, Some(me), event, debug::Audience::Typed)
 }
 
 /// An item as `kind:species:grade`. Re-exported from `sim::debug` so the two

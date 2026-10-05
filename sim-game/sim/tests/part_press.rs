@@ -290,7 +290,12 @@ fn the_press_refusal_and_the_rejection_event_are_one_sentence() {
         seed: 9,
         ..sim::WorldConfig::default()
     });
-    let line = debug::event_line(&world, Some(sim::PlayerId(0)), &event);
+    let line = debug::event_line(
+        &world,
+        Some(sim::PlayerId(0)),
+        &event,
+        debug::Audience::Typed,
+    );
     assert!(
         line.contains(&phrase),
         "the log and the press must say the same thing.\n\

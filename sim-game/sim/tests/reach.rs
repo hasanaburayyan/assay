@@ -145,7 +145,7 @@ fn a_refused_mine_says_why_and_promises_no_drill() {
         "the swing must be refused, or this test is about nothing"
     );
 
-    let line = sim::debug::event_line(&world, Some(me), &events[0]);
+    let line = sim::debug::event_line(&world, Some(me), &events[0], sim::debug::Audience::Typed);
     assert!(
         line.contains(&HAND_MINE_MAX_HARDNESS.to_string()),
         "the player is told the gate: {line}"
