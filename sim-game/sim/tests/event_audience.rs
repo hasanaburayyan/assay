@@ -76,11 +76,19 @@ fn a_smelters_life() -> Life {
     world.species_mut(WALLS).sheet = sheet(30, 60, FUEL_MIN_REACTIVITY as u8 - 1);
     world.species_mut(FUEL).sheet = sheet(30, HAND_SPARK_TEMPERATURE as u8, 60);
     let mut events = Vec::new();
+    // **TWO PLAYERS, AND THE SECOND ONE IS NOT DECORATION.** With only a reader
+    // in the world, `PlayerJoined` takes the `me ==` arm and the other arm is
+    // unreachable — so the corpus held exactly ONE building-free sentence and my
+    // first mutation of `a_sentence_without_a_building_is_byte_identical` patched
+    // a branch nothing visited and stayed green. A joiner who is not the reader
+    // covers both arms, and with them the pronoun split this describer has got
+    // wrong twice (ASSA-74).
     step(
         &mut world,
-        &[Input::System(SystemCommand::AddPlayer {
-            name: "ada".into(),
-        })],
+        &[
+            Input::System(SystemCommand::AddPlayer { name: "ada".into() }),
+            Input::System(SystemCommand::AddPlayer { name: "bex".into() }),
+        ],
         &mut events,
     );
     let me = PlayerId(0);
@@ -328,9 +336,16 @@ fn a_sentence_without_a_building_is_byte_identical() {
              is outside the ruling it exists for: {event:?}"
         );
     }
+    // **MORE THAN ONE, AND THE NUMBER IS THE LESSON.** `> 0` was the original
+    // bar and it was too weak: the corpus had exactly one building-free sentence
+    // (`PlayerJoined` taking the `me ==` arm), so a mutation of the OTHER arm
+    // left this test green. Two players make both arms reachable, and this bar
+    // now fails if the corpus ever shrinks back to the version that fooled me.
     assert!(
-        compared > 0,
-        "no building-free sentence was compared, so this guard is vacuous"
+        compared > 1,
+        "only {compared} building-free sentence(s) compared. One is enough to \
+         be non-vacuous and not enough to be a guard: a sentence the corpus \
+         never reaches cannot be caught."
     );
 }
 
