@@ -462,6 +462,12 @@ var _hovering := false
 ## The newest event lines, oldest first. View state: the sim keeps only the last tick's events, so
 ## anything older than that is remembered here or nowhere.
 var _events := PackedStringArray()
+## **THE MOTION PROBE, WHEN THE PLAYER'S OWN BUILD WAS ASKED TO MEASURE ITSELF** (ASSA-211). Null on
+## every normal run. Not a tool: `tools/*` is excluded from both export presets and `--script` is
+## dropped by the official release templates, so a probe that lives out there can only ever measure a
+## developer's project. This one comes in through the same door as `--selfcheck`.
+var _motion_probe: AssayMotionProbe
+var _motion_probe_path := ""
 
 
 func _ready() -> void:
@@ -512,6 +518,14 @@ func _ready() -> void:
 	# above a silent 59%. One sentence in one place, and the status line goes back to being what it is
 	# everywhere else in this client: what just happened, not what to do.
 	_say("", AssayHud.Say.IDLE)
+	# **THE PLAYER'S OWN BUILD, MEASURING ITSELF** (ASSA-211). After `_build_ui`, because the probe
+	# presses the real "Play solo" button and a button that does not exist yet cannot be found. Not
+	# before the UI the way `--selfcheck` is: that one answers without a window, this one is ABOUT the
+	# window, so it needs the whole screen standing.
+	_motion_probe_path = AssayMotionProbe.requested_path()
+	if _motion_probe_path != "":
+		_motion_probe = AssayMotionProbe.new()
+		_motion_probe.begin(self, AssayMotionProbe.requested_seconds(), OS.get_name())
 
 
 ## WHETHER `_ready` HAS ALREADY RUN. `tests/test_main_screen.gd` and `tools/button_session.gd` both
@@ -1170,6 +1184,16 @@ func _on_play_solo() -> void:
 ## IN `_process` AND NOT IN `_refresh`, because `_refresh` runs on tick bundles and there are no
 ## bundles until we have joined -- polling there would wait for the thing it is waiting to start.
 func _process(delta: float) -> void:
+	# **THE PROBE STEPS FIRST, AND THE ORDER IS THE MEASUREMENT** (ASSA-211). `_refresh_world` below
+	# publishes the rectangle the probe reads, so stepping afterwards would hand it a rectangle from
+	# THIS frame where the dev tool's SceneTree loop reads one from the PREVIOUS frame -- measured age
+	# 0.99-1.01 frames over six Windows runs. #284's verdict divides by the previous frame's delta
+	# precisely because of that one-frame phase, so sampling in the other phase would silently invert
+	# the fix and charge the client for the instrument again. Stepping above the publish keeps both
+	# drivers in the same phase, and the report states the age it measured so the claim is checkable
+	# rather than asserted: a run whose age came out near 0 would be this comment being wrong.
+	if _motion_probe != null:
+		_step_motion_probe(delta)
 	# THE SCENE IS THE ONLY THING ON THIS SCREEN THAT MOVES BETWEEN TICKS, so it is the only thing
 	# that redraws per frame: a body tweening between two tiles the sim produced, and two gaits
 	# running off the wall clock. The schematic does not redraw here -- it is painted when a tick
@@ -1212,6 +1236,30 @@ func stop_solo_relay() -> void:
 	if _solo != null:
 		_solo.stop()
 		_solo = null
+
+
+## **ONE FRAME OF THE PROBE, THEN THE FILE, THEN OUT** (ASSA-211). The counterpart of
+## `AssaySelfCheck.run`: the measuring is the probe's, the window and the frames are this screen's, and
+## writing a file and quitting is a host's job and never the sim's or the measurement's.
+##
+## **A FILE THAT COULD NOT BE WRITTEN EXITS NON-ZERO AND SAYS WHICH PATH** -- the whole ask is "send me
+## the text file", so a run that measured perfectly and saved nothing is a failed run. `push_error` as
+## well as the line, because on an exported build stdout is often nobody's terminal.
+func _step_motion_probe(delta: float) -> void:
+	if _motion_probe.step(delta) == AssayMotionProbe.Status.RUNNING:
+		return
+	var code := _motion_probe.exit_code()
+	var out := FileAccess.open(_motion_probe_path, FileAccess.WRITE)
+	if out == null:
+		push_error("the motion probe could not write %s (error %d)"
+				% [_motion_probe_path, FileAccess.get_open_error()])
+		code = 1
+	else:
+		out.store_string(_motion_probe.report_text())
+		out.close()
+		print("motion probe report written to %s" % _motion_probe_path)
+	_motion_probe = null
+	get_tree().quit(code)
 
 
 ## THE JOIN BUTTON: the address is whatever is in the box, and only this path reads the box.
