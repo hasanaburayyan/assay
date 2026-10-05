@@ -373,7 +373,7 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 	var at := play_tick
 	var rate := 1.0
 	if at < 0.0:
-		# **THE CLOCK DOES NOT START UNTIL THE BUFFER IS `delay` TICKS DEEP**, and getting this wrong
+		# **THE CLOCK DOES NOT START UNTIL THE BUFFER IS DEEP ENOUGH TO PLAY OUT**, and getting this wrong
 		# is what a trace of a real walk caught (ASSA-197, `tools/playout_trace.gd`). This read
 		# `at = maxf(newest - delay, oldest)`, so with one position held it started the clock AT the
 		# newest -- zero buffer, exactly what the sentence below it forbids -- and the only way back
@@ -383,10 +383,25 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 		# this item is ZERO dry frames.
 		#
 		# So while the buffer is shallow the clock WAITS: the body is drawn on the oldest position
-		# held, the sim runs ahead, and nothing moves until there is `delay` of history to play out.
-		# That costs a quarter of a second of standing still at the start of a session and buys a
+		# held, the sim runs ahead, and nothing moves until there is enough history to play out.
+		# That costs a fifth of a second of standing still at the start of a session and buys a
 		# buffer the rest of the session spends.
-		if newest - oldest < delay:
+		#
+		# **AND IT STARTS A TICK SHALLOWER THAN THE DELAY, WHICH IS WHAT MAKES THE FIRST FRAME FREE**
+		# (ASSA-212, `tools/start_jump_table.gd` is the table this number came out of). The waiting
+		# body is drawn on `oldest`, so a start that does not jump must start the clock there -- and
+		# `oldest` is `newest - depth` while the loop settles at `newest - delay`. **Starting at a
+		# depth above the target is a surplus the loop then spends at its +10% stop**: measured 1.284
+		# of true speed for half a second at the tick misread this Mac produces, worse than the jump
+		# it replaced. Starting BELOW the target is a deficit, which the loop closes by running SLOW,
+		# and slow is the safe direction -- it deepens the buffer rather than draining it.
+		#
+		# THE DEPTH IS DERIVED, NOT CHOSEN. The loop's error is `produced - (delay + LEAD) - at`, and
+		# `produced` leads `newest` by up to one tick, so starting at `oldest` with a depth of
+		# `delay + LEAD - 1` is the deepest start whose error cannot be positive for any value of
+		# `since`. Deeper and the clock chases; shallower and the buffer is thinner for no gain.
+		var start_depth := delay + PLAYOUT_PRODUCTION_LEAD - 1.0
+		if newest - oldest < start_depth:
 			# AND THE TRIM DOES NOT INTEGRATE WHILE THE CLOCK IS NOT RUNNING. The depth error is
 			# enormous here by design -- the buffer is deliberately filling -- and a term that learnt
 			# from it would come out of the join wound to its stop in the wrong direction.
@@ -395,17 +410,25 @@ static func playout_at(play_tick: float, ticks: Array[int], dt: float, step: flo
 		# **AND IT STARTS WHERE THE BODY ALREADY IS, WHICH IS `oldest`** (ASSA-212). This read
 		# `at = newest - delay`, and the branch above draws the waiting body on the OLDEST position
 		# held, so the frame the clock started on moved it from `oldest` to `newest - delay` in one
-		# step. Positions arrive one tick at a time, so `newest - oldest` crosses `delay` at exactly
-		# 3 and that step is 0.5 of a tile -- **16 px at 32 px tiles, at the start of every walk.**
-		# Maren measured 16 px and a 160 ms freeze in a real window with their own tool; the
-		# arithmetic here predicted the same number, which is how it was found.
+		# step -- half a tile, **16 px at 32 px tiles**, in one frame. Maren measured 16 px and a
+		# 160 ms freeze in a real window with their own tool; the arithmetic here predicted the same
+		# number, which is how it was found. `oldest` is a position the sim produced, so ASSA-119 is
+		# untouched, and the clock begins on the same frame either way: no latency is bought or sold.
 		#
-		# IT IS NOT A SLOWER START AND IT COSTS NO LATENCY. The clock begins on the same frame either
-		# way, so "press -> first drawn movement" is unchanged; what changes is that the first frame
-		# of movement is worth one frame instead of five. The buffer starts `newest - oldest` deep,
-		# which is DEEPER than the target rather than shallower, and the loop closes the half tick at
-		# its own capped rate -- at most `PLAYOUT_NUDGE` of speed, inside the bar, over half a second.
-		# ASSA-119 is untouched: `oldest` is a position the sim produced.
+		# **THE THREE CANDIDATES AND WHAT EACH COSTS, at the 14% tick misread this Mac produces and
+		# 90 fps** (`tools/start_jump_table.gd`, cold statistics from the first running frame):
+		#
+		#   start rule                        jump        freeze   drawn speed    starved/dragged
+		#   at = newest - delay (was)         0.50t 16px  311 ms   0.938-1.046    0 / 0
+		#   at = oldest, depth >= delay       0.00t  0px  311 ms   0.943-1.238    0 / 0
+		#   at = oldest, depth >= delay+LEAD-1 0.00t 0px  211 ms   0.888-1.045    0 / 0
+		#
+		# The middle row is the one-line fix and it trades a jump for a worse number: 1.238 (1.284 at
+		# 30 fps) is outside both this file's 0.85-1.15 and the +/-25% the board's verdict is judged
+		# on. The surplus half tick has to be spent either in one frame or over time, and the third
+		# row is the only rule that never has it to spend -- it starts a tick short and the loop fills
+		# the rest by running slow. It is also 100 ms less standing still, which is the other half of
+		# what Maren saw.
 		at = oldest
 	else:
 		# The error is in ticks and the correction is in rate. `PLAYOUT_CATCHUP` decides how hard we
