@@ -411,10 +411,22 @@ fn the_typed_reader_keeps_the_handle_and_the_pointer_gets_a_noun() {
     let typed = debug::event_line(&life.live, Some(life.me), taken, debug::Audience::Typed);
     let pointed = debug::event_line(&life.live, Some(life.me), taken, debug::Audience::Pointed);
 
+    // **THE HANDLE IS THE ID, NOT THE WORD `building` — and pinning the word was
+    // my mistake (ASSA-244).** This asserted `contains("building 0")`, so when
+    // the typed form became `smelter 0` (kind + handle, which says strictly
+    // more) this went red on a change that improved the thing it guards. What
+    // principle 2 actually needs is that the number they type into `take` is in
+    // the sentence, and that the sentence says what the number refers to.
+    let kind = life
+        .live
+        .building(life.id)
+        .expect("`live` has it")
+        .kind
+        .name();
     assert!(
-        typed.contains(&format!("building {}", life.id.0)),
-        "the typed reader lost the handle they pass to `take`, which is \
-         principle 2 regressing: {typed}"
+        typed.contains(&format!("{kind} {}", life.id.0)),
+        "the typed reader lost the handle they pass to `take`, or stopped saying \
+         what it refers to, which is principle 2 regressing: {typed}"
     );
     assert!(
         pointed.contains(&noun),

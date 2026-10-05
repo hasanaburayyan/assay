@@ -131,16 +131,31 @@ fn the_guard_reads_event_line_and_not_the_tables() {
 /// tracking, and a new arm that prints the id bare goes red on the line it was
 /// written on.
 ///
-/// **DEPOSIT IDS ARE OUT OF SCOPE AND THAT IS NOT AN OVERSIGHT.** Six sites
-/// print `deposit.0`, and no `PlayerCommand` carries a `DepositId` at all
-/// (`Mine`/`Assay` act on the tile you stand on), so that id is dead for *both*
-/// readers — ASSA-130's shape, not this one, and an audience parameter is the
-/// wrong tool for it. It is the Game Director's call, open on ASSA-222. A guard
-/// quietly covering them would make her ruling look taken.
+/// **AND DEPOSIT IDS ARE NOW IN SCOPE TOO, BY A DIFFERENT RULE.** I filed them
+/// as out of scope while they were an open question: no `PlayerCommand` carries
+/// a `DepositId` (`Mine`/`Assay` act on the tile you stand on), so that id is
+/// dead for *both* readers and an audience parameter is the wrong tool. The Game
+/// Director ruled it ASSA-130's shape and said drop it for everyone, so there is
+/// no typed exemption to allow: **no `deposit.0` may reach a reader at all.**
+/// Five of the six sentences already named the species; `DepositDepleted` did
+/// not, and names it out of the world instead of losing its subject.
 #[test]
 fn a_building_id_reaches_a_reader_only_through_a_typed_arm() {
     let body = event_line_body();
     let mut ids = 0;
+    for (n, line) in body.lines().enumerate() {
+        if line.trim_start().starts_with("//") {
+            continue;
+        }
+        assert!(
+            !line.contains("deposit.0"),
+            "event_line prints a DepositId, body line {n}:\n{line}\n\
+             No PlayerCommand carries one, so it is a dead index for EVERY \
+             reader -- ASSA-130's shape, and the Game Director ruled it dropped \
+             for everyone (ASSA-244). Name the species, or the species and the \
+             tile if the sentence would otherwise lose its subject."
+        );
+    }
     for (n, line) in body.lines().enumerate() {
         if line.trim_start().starts_with("//") {
             continue;

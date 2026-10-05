@@ -179,8 +179,8 @@ quit
         format!("you started mining {m}"),
         format!("you crafted 1 {m} smelter ({g})"),
         format!("you placed {m} smelter ({g}) as building 0"),
-        format!("building 0 smelted 1 {m} refined ({g})"),
-        format!("you took 10 {m} refined ({g}) from building 0"),
+        format!("smelter 0 smelted 1 {m} refined ({g})"),
+        format!("you took 10 {m} refined ({g}) from smelter 0"),
         format!("you crafted 1 {m} gear ({g})"),
     ] {
         assert!(
@@ -259,7 +259,7 @@ quit
             "machine 1 mined {} {m} ore ({g})",
             YIELD_BY_GRADE[material.grade() as usize]
         ),
-        "from building 1".to_string(),
+        "from machine 1".to_string(),
     ] {
         assert!(
             stdout.contains(&expected),
