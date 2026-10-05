@@ -236,7 +236,7 @@ fn the_corpus_contains_every_event_that_carries_a_building() {
         );
     }
     assert!(
-        kinds.iter().any(|k| *k == "other"),
+        kinds.contains(&"other"),
         "the corpus has no building-free event either, and \
          `a_sentence_without_a_building_is_byte_identical` needs one to mean \
          anything. Got: {kinds:?}"
