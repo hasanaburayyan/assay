@@ -450,3 +450,113 @@ func test_prose_is_not_mistaken_for_the_relay_saying_it_started() -> bool:
 			ok = _fail("prose and no marker should still be `did not run`: %s" % solo.failure)
 	solo.stop()
 	return ok
+
+
+## **A SOLO WORLD THAT NOBODY LISTENS TO STOPS TICKING, AND IT USED TO STOP FOR GOOD** (ASSA-219,
+## found by Nerite). The P0 in the build the board was asked to play.
+##
+## `sim-relay`'s `log()` is a `println!` on every submitted command, join, leave, refusal and desync.
+## Rust line-buffers stdout, so a full pipe blocks that write INSIDE `run_tick` and the host stops;
+## nothing drained it, so it never came back. The cure was quitting the game.
+##
+## **THE CONTROL IS INSIDE THIS TEST, AND IT IS NOT DECORATION.** The drained arm on its own would
+## pass just as happily against a flood that FITS in the pipe, which would make this a test of
+## nothing -- the exact way three instruments of mine have passed this week for reasons they could
+## not see. So the undrained arm must FAIL to finish, and if it ever finishes this test fails and
+## says the flood is too small rather than quietly going green.
+##
+## **AND THE UNDRAINED ARM IS TIMED OFF THE DRAINED ONE RATHER THAN OFF A NUMBER I PICKED.** A fixed
+## wait is a guess about the slowest CI runner, and the arm where it is too short is the arm that
+## reports "blocked" about a child that was merely slow. Three times whatever the drained arm just
+## needed, on this machine, this run.
+##
+## Measured here on macOS 14 / Godot 4.6.1: undrained, the child stops after 2149 lines of 31 bytes
+## (~66 KB, one pipe buffer) with its process still alive. The CI log carries the Linux number.
+func test_the_relays_log_is_drained_for_a_whole_session_and_never_blocks_its_host() -> bool:
+	if OS.get_name() == "Windows":
+		# No `/bin/sh` to flood with, and `cmd`'s `for /l` is a different enough animal that a
+		# stand-in written in it would be its own thing to debug. The mechanism is the engine's pipe
+		# and the fix is platform-independent; what is NOT covered here is the Windows pipe's
+		# CAPACITY, which is smaller (anonymous pipes there can be 4 KB) and therefore fills SOONER.
+		# Said on the item as not measured rather than carried across from this machine.
+		return true
+	const LINES := 4000
+	var progress := OS.get_user_data_dir().path_join("limpet-assa219-flood.txt")
+	# **THE REDIRECT TARGET IS QUOTED, AND THE FIRST VERSION OF THIS TEST WAS NOT.** Godot's user data
+	# directory is under `Application Support` on macOS, so an unquoted `> $progress` word-splits: the
+	# child wrote no progress file at all and printed a shell error PER LINE instead -- 4000 of them,
+	# down STDERR. Both arms still behaved as this test expected, which is the point: the undrained arm
+	# blocked on the wrong pipe and the drained arm was being saved by `_drain_stderr`. The reported
+	# line was `<no file>` and that blank is the only reason I looked.
+	var flood := ("echo 'RELAY STARTED protocol 9 rules deadbeef'; echo 'LISTENING 127.0.0.1:54321'; "
+			+ "i=0; while [ $i -lt " + str(LINES) + " ]; do i=$((i+1)); "
+			+ "echo \"[tick $i] Limpet: walk north\"; echo $i > '" + progress + "'; done; "
+			+ "echo FLOODED > '" + progress + "'")
+	var ok := true
+	if FileAccess.file_exists(progress):
+		DirAccess.remove_absolute(progress)
+
+	# ARM ONE: DRAINED, which is what the client does now. The child must get all of it out and exit.
+	var drained := AssaySoloRelay.new()
+	var drained_ms := -1
+	if not drained.start("/bin/sh", PackedStringArray(["-c", flood]), 4000):
+		drained.stop()
+		return _fail("could not start the flooding stand-in: %s" % drained.failure)
+	var begun := Time.get_ticks_msec()
+	while drained.address == "" and drained.failure == "" and Time.get_ticks_msec() - begun < 4000:
+		drained.poll()
+		OS.delay_msec(5)
+	if drained.address == "":
+		drained.stop()
+		return _fail("the flooding stand-in never said it was listening: %s" % drained.failure)
+	# EXACTLY WHAT `main.gd` NOW DOES EVERY FRAME, and nothing else.
+	begun = Time.get_ticks_msec()
+	while not drained.has_exited() and Time.get_ticks_msec() - begun < 20000:
+		drained.pump()
+		OS.delay_msec(5)
+	drained_ms = Time.get_ticks_msec() - begun
+	if not drained.has_exited():
+		ok = _fail(("a pumped relay printing %d lines was still blocked after %d ms, so the drain is "
+				+ "not keeping up") % [LINES, drained_ms])
+	drained.stop()
+	if not ok:
+		return false
+
+	# ARM TWO, THE CONTROL: the same flood with nobody reading, given THREE TIMES the time arm one
+	# needed. It must still be unfinished -- otherwise the pipe swallowed the whole flood and arm one
+	# proved nothing about draining.
+	var undrained := AssaySoloRelay.new()
+	if not undrained.start("/bin/sh", PackedStringArray(["-c", flood]), 4000):
+		undrained.stop()
+		return _fail("could not start the flooding stand-in a second time: %s" % undrained.failure)
+	begun = Time.get_ticks_msec()
+	while undrained.address == "" and undrained.failure == "" and Time.get_ticks_msec() - begun < 4000:
+		undrained.poll()
+		OS.delay_msec(5)
+	if undrained.address == "":
+		undrained.stop()
+		return _fail("the control stand-in never said it was listening: %s" % undrained.failure)
+	var patience: int = maxi(3 * drained_ms, 1500)
+	begun = Time.get_ticks_msec()
+	while Time.get_ticks_msec() - begun < patience:
+		# NOT A SINGLE `poll()` OR `pump()` HERE. This is the shipped client before the fix.
+		OS.delay_msec(5)
+	var control_finished := undrained.has_exited()
+	undrained.stop()
+	# **A PRECONDITION, CHECKED BEFORE THE VERDICT, BECAUSE A BLANK HERE IS NOT A RESULT.** If the
+	# child could not write its progress file then it was not doing what this test says it does, and
+	# every number below is about some other experiment. Refuse and say what to look at.
+	if not FileAccess.file_exists(progress):
+		return _fail(("the flooding stand-in never wrote %s, so it was not flooding the way this test "
+				+ "claims -- check the shell quoting, not the drain") % progress)
+	var reached := FileAccess.get_file_as_string(progress).strip_edges()
+	if not reached.is_valid_int():
+		return _fail(("the undrained child reached `%s`, not a line number: it finished the flood, so "
+				+ "the pipe swallowed all %d lines and arm one proved nothing") % [reached, LINES])
+	if control_finished:
+		return _fail(("THIS TEST IS MEASURING NOTHING: %d lines fit in the pipe with nobody reading, "
+				+ "so arm one could pass without draining. Raise LINES.") % LINES)
+	print(("    ASSA-219: undrained, the child stopped at line %s of %d (~%d KB) on %s; drained, all "
+			+ "%d in %d ms") % [reached, LINES, int(reached) * 31 / 1024, OS.get_name(), LINES,
+			drained_ms])
+	return ok

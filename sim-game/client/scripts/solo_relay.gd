@@ -58,6 +58,22 @@ const DEFAULT_DEADLINE_MS := 8000
 ## The seed solo plays by default (ruling 4): the friend seed, known playable from spawn.
 const DEFAULT_SEED := "14247"
 
+## **HOW MANY LINES ONE `pump()` MAY TAKE** (ASSA-219). An unbounded `while` on a pipe is the shape of
+## the hang the top of this file was written to avoid: a child that prints faster than we read would
+## hold the main thread inside this loop instead of blocking on its own write. The budget is far
+## above anything `sim-relay` can produce -- it logs about one line per submitted command and a
+## player submits a handful per frame -- so in practice this empties the pipe every frame and the cap
+## never binds. It exists so that the pathological case degrades into a backlog rather than a freeze.
+const DRAIN_LINES := 512
+
+## **HOW MANY LINES ARE REMEMBERED FOR A FAILURE'S QUOTE** (ASSA-219), newest wins.
+##
+## This used to be unbounded, which was fine while the only lines kept were the four the relay prints
+## above its contract line, and a leak the moment anything drained the pipe for a whole session: the
+## board plays for two and a half hours, at a line per command. Sixty-four is far above the greeting,
+## so every pre-join refusal is word for word what it was.
+const HEARD_MAX := 64
+
 ## **A SOLO REFUSAL IS THREE PARTS IN THIS ORDER** (Maren, ASSA-113): what you cannot do now · why
 ## (the file, the path, the seconds) · **the door that is still open**. All five sentences I shipped
 ## in ASSA-106 had the first two and none had the third, which is the only part that changes what a
@@ -112,7 +128,11 @@ var failure := ""
 var _stdio: FileAccess = null
 var _stderr: FileAccess = null
 ## Prose the relay printed above its contract line, kept only so a failure can quote it.
+## BOUNDED TO `HEARD_MAX`, newest wins -- see `_remember`.
 var _heard := PackedStringArray()
+## What the relay has said on STDERR, moved out of the pipe as it arrives rather than read once after
+## it died (ASSA-219). Bounded the same way. This is what `_last_words` quotes.
+var _err_heard := PackedStringArray()
 var _deadline_ms := DEFAULT_DEADLINE_MS
 var _started_at := 0
 var _binary := ""
@@ -248,6 +268,7 @@ func start(binary: String, extra: PackedStringArray, deadline_ms := DEFAULT_DEAD
 	_stdio = pipe["stdio"]
 	_stderr = pipe.get("stderr")
 	_heard = PackedStringArray()
+	_err_heard = PackedStringArray()
 	_started_at = Time.get_ticks_msec()
 	return true
 
@@ -263,30 +284,112 @@ func start_solo(seed_text := DEFAULT_SEED, deadline_ms := DEFAULT_DEADLINE_MS) -
 	return start(find_binary(), PackedStringArray([seed_text]), deadline_ms)
 
 
-## HAS IT SAID IT IS LISTENING YET. True once `address` is set; `failure` is set instead when the
-## relay died or ran out of time. Called every frame; it reads a flag and a clock and nothing else.
-func poll() -> bool:
-	if address != "" or failure != "":
-		return address != ""
-	# THE WAITING BYTES FIRST, AND ONLY THEN THE PROCESS'S STATE. A relay that printed its address
-	# and then died has still told us where it is, and joining it is the right answer; checking
-	# liveness first would throw that away for no reason.
-	while _stdio != null and _stdio.get_length() > _stdio.get_position():
+## **READ THE RELAY'S PIPES. CALLED EVERY FRAME, AT EVERY STAGE, FOR THE WHOLE LIFE OF THE RELAY**
+## (ASSA-219, found by Nerite).
+##
+## **A CHILD WHOSE PIPE NOBODY READS STOPS RUNNING, AND THIS ONE STOPPED FOR GOOD.** `sim-relay`'s
+## `log()` is a `println!`, called on every submitted command, every join, every leave, every refusal
+## and every desync. Rust's stdout is line-buffered, so once the pipe is full that write BLOCKS --
+## inside `run_tick`, which is the host's own loop -- and the world stops ticking. Because nothing
+## ever drained the pipe it could not recover: the only cure was quitting the game. It is in the
+## build the board was asked to play.
+##
+## **IT WAS TWO GUARDS WITH ONE SYMPTOM, AND THE SECOND IS THE ONE THAT MATTERED.** `poll()` returned
+## at its first line once `address` was set, so it never looked at `_stdio` again -- but `main.gd`
+## ALSO stopped CALLING it, on the very frame the address arrived, so a drain added inside `poll()`
+## would have been dead code in the shipped client. That is why this is its own function and why
+## `main.gd` calls it ABOVE that guard: one entry point, unconditional, impossible to stop calling by
+## being further along in the session.
+##
+## MEASURED BY THE SUITE, not by me once: `test_the_relays_log_is_drained_for_a_whole_session_and_
+## never_blocks_its_host` runs both arms against a stand-in printing 31-byte lines like the relay's.
+## On macOS 14 / Godot 4.6.1 the undrained child stops around line 2385 of 4000 (~72 KB, one pipe
+## buffer plus whatever the parent had already taken, so the exact line moves run to run) with its
+## process still alive; drained by this function it printed all 4000 and exited in 321 ms. The second
+## arm is the half that makes the first a measurement of BLOCKED rather than of SLOW.
+##
+## **WHAT IS KEPT AND WHAT IS DROPPED.** Before the contract line every line is read for `RELAY
+## STARTED` and `LISTENING`, and the prose around them is kept so a failure can quote it. Afterwards
+## the log is running commentary on a world we are already inside, so it is read and THROWN AWAY.
+## Keeping it would trade a hang for a leak -- the board plays for two and a half hours at about a
+## line per command -- and nothing in the client has ever read a word of it.
+func pump() -> void:
+	var budget := DRAIN_LINES
+	while _stdio != null and budget > 0 and _stdio.get_length() > _stdio.get_position():
+		# `get_length() > get_position()` IS THE WHOLE NON-BLOCKING TRICK and it is this file's own,
+		# from the header: it asks "will a read return immediately" before every read, so there is
+		# still no thread here and still nothing that can stall a frame waiting on a line.
+		budget -= 1
 		var line := _stdio.get_line()
+		if address != "" or failure != "":
+			# THE SESSION'S LOG. Read only so that the host keeps running, and then dropped.
+			continue
 		if line.begins_with(STARTED):
 			# READ, NOT PARSED. Whether the line was said is the whole question; its fields are the
-			# relay's business. Recorded before the `LISTENING` branch can return, because a relay
+			# relay's business. Recorded before the `LISTENING` branch can take effect, because a relay
 			# fast enough to print both between two polls must still be seen to have printed this.
 			said_it_ran = true
 			continue
 		if line.begins_with(LISTENING):
 			address = line.substr(LISTENING.length()).strip_edges()
-			return true
+			# NOT A `return`, WHICH IS WHAT IT USED TO BE. The rest of this batch is already out of the
+			# pipe, and the branch above now drops it as session log. Leaving the loop here would put
+			# the first lines of a flood back into the queue for a frame and gain nothing.
+			continue
 		# EVERYTHING ELSE IS PROSE FOR A PERSON and is skipped rather than parsed. `main.rs` prints
 		# "Hosting world N at tick ... on port ..." ABOVE the contract line, so a reader that took
 		# the first line would have handed the join screen a sentence instead of an address -- which
 		# is what my own test caught when it put the prose first on purpose.
-		_heard.append(line)
+		_remember(line)
+	_drain_stderr()
+
+
+## KEEP A LINE FOR A FAILURE'S QUOTE: NEWEST WINS, AND BOUNDED (ASSA-219).
+##
+## The relay prints four lines above its contract line, so this bound cannot bite before a join and
+## every refusal is word for word what it was. It bites only on a session's log, where the newest
+## lines are the ones a death would be explained by anyway.
+func _remember(line: String) -> void:
+	_heard.append(line)
+	if _heard.size() > HEARD_MAX:
+		_heard.remove_at(0)
+
+
+## **STDERR IS DRAINED TOO, AND FOR THE SAME REASON** (ruling 1).
+##
+## It is the quieter pipe -- `main.rs` writes it when it cannot bind, and when a save fails -- but a
+## save that fails fails on EVERY autosave, so it is the same hang arriving slowly. Until now it was
+## read in exactly one place, `_last_words()`, after the relay had already died.
+##
+## **AND WHAT IT SAID IS KEPT, NOT DROPPED**, which is the difference between draining this pipe and
+## silencing it. The relay's last words are the only part of a failure report that is the relay's own
+## rather than ours, so they move into a bounded ring here instead of being thrown away (ruling 1
+## again: the drain must not cost us the failure sentence).
+func _drain_stderr() -> void:
+	var budget := DRAIN_LINES
+	while _stderr != null and budget > 0 and _stderr.get_length() > _stderr.get_position():
+		budget -= 1
+		var line := _stderr.get_line().strip_edges()
+		if line == "":
+			continue
+		_err_heard.append(line)
+		if _err_heard.size() > HEARD_MAX:
+			_err_heard.remove_at(0)
+
+
+## HAS IT SAID IT IS LISTENING YET. True once `address` is set; `failure` is set instead when the
+## relay died or ran out of time.
+##
+## **THE PIPE WORK IS `pump()`'s NOW, AND IS DONE ON EVERY CALL** (ASSA-219) -- including the calls
+## made after an address is known, where this function used to return before reading anything. Every
+## existing caller therefore drains by calling what it already called.
+func poll() -> bool:
+	pump()
+	# THE WAITING BYTES FIRST, AND ONLY THEN THE PROCESS'S STATE. A relay that printed its address
+	# and then died has still told us where it is, and joining it is the right answer; checking
+	# liveness first would throw that away for no reason.
+	if address != "" or failure != "":
+		return address != ""
 	if has_exited():
 		# ITS LAST WORDS IF IT HAD ANY. "It stopped" with no reason is the report nobody can act on,
 		# and a relay that cannot bind says so on stderr before exiting.
@@ -366,13 +469,16 @@ func has_exited() -> bool:
 ##
 ## STDERR FIRST because that is where `main.rs` puts the one failure a player can act on -- "Could
 ## not listen on 127.0.0.1:0" -- while stdout carries the greeting.
+##
+## **IT READS A RING, NOT THE PIPE, SINCE ASSA-219.** The pipe is now emptied as the relay speaks, so
+## by the time a death is noticed the bytes are long gone from it; what was said is in `_err_heard`
+## instead. The one read below is still here because the relay writes its last line and exits in the
+## same breath, and that line may never have been through a `pump()`.
 func _last_words() -> String:
+	_drain_stderr()
 	var said := PackedStringArray()
-	if _stderr != null:
-		while _stderr.get_length() > _stderr.get_position():
-			var line := _stderr.get_line().strip_edges()
-			if line != "":
-				said.append(line)
+	for line in _err_heard:
+		said.append(line)
 	if said.is_empty():
 		for line in _heard:
 			var text := String(line).strip_edges()

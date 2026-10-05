@@ -27,6 +27,21 @@ class _RelayThatIsListening extends AssaySoloRelay:
 		return true
 
 
+## A relay the screen is ALREADY playing through: mid-session, address long since known. Counts both
+## calls separately, because ASSA-219 is exactly the difference between them -- a `pump()` that must
+## happen on every one of these frames and a `poll()` that must not happen on any of them.
+class _RelayMidSession extends AssaySoloRelay:
+	var polls := 0
+	var pumps := 0
+
+	func poll() -> bool:
+		polls += 1
+		return address != ""
+
+	func pump() -> void:
+		pumps += 1
+
+
 func set_runner(r) -> void:
 	runner = r
 
@@ -2853,5 +2868,45 @@ func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> b
 			ok = _fail(("this deposit's letter reads %.2f:1 on its bed and %.2f:1 on the building "
 					+ "mark, so the bed buys nothing here and the case needs a different deposit")
 					% [on_bed, on_mark])
+	screen.queue_free()
+	return ok
+
+
+## **THE OTHER HALF OF ASSA-219, AND THE HALF THAT MADE IT A FREEZE A PLAYER MET.**
+##
+## `solo_relay.gd`'s `poll()` had an early return that stopped it reading the pipe once an address
+## was known. Fixing that alone would have changed nothing, because THIS function had a matching
+## guard -- `if _solo == null or _solo.address != "" ... : return` -- so from the frame the relay said
+## where it was listening, the screen never called it again. The relay prints a line per submitted
+## command into that pipe; about two thousand lines later it blocks inside its own tick loop and the
+## world stops for good.
+##
+## So what is pinned here is the CALL, on a frame that is deep in a session, which is the one state
+## the old code is guaranteed to skip. The drain itself is measured against a real flooding process
+## in `test_solo_relay.gd::test_the_relays_log_is_drained_for_a_whole_session_and_never_blocks_its_host`;
+## a counter here would be happy with a `pump()` that did nothing, so neither test is worth much
+## without the other.
+##
+## **AND `poll()` MUST NOT BE CALLED ON THESE FRAMES**, which is not a style point: `_join_address`
+## opens a socket, and the guard this fix moves is also what stops it re-joining every frame. A fix
+## that drained the pipe by dropping the guard outright would have traded a freeze for a reconnect
+## storm, so the two counters are asserted together.
+func test_the_solo_frame_keeps_reading_the_relay_for_the_whole_session() -> bool:
+	var screen := _screen()
+	var solo := _RelayMidSession.new()
+	# MID-SESSION: the address arrived frames ago and the join already happened.
+	solo.address = "127.0.0.1:54321"
+	screen._solo = solo
+	screen._process(0.016)
+	screen._process(0.016)
+	screen._process(0.016)
+	screen._solo = null
+	var ok := true
+	if solo.pumps != 3:
+		ok = _fail(("three frames of a joined solo session read the relay %d times, not 3 -- its "
+				+ "stdout fills and the host stops ticking (ASSA-219)") % solo.pumps)
+	elif solo.polls != 0:
+		ok = _fail(("a joined solo session asked poll() %d times; that is the re-join the moved guard "
+				+ "exists to prevent") % solo.polls)
 	screen.queue_free()
 	return ok
