@@ -149,6 +149,19 @@ jobs:
       # with 25 rows over, player/walk_SW worst at 47.6%. Stdlib only, ~3s.
       - name: No shipped surface sits on the ceiling
         run: python3 art/check_headroom.py
+      # GRADE-A ORE IS CLUMPED, AND NOTHING ELSE HERE CAN SEE THAT (ASSA-216).
+      # Maren's ruling was arrangement, not value: the same rocks, the same
+      # sizes, the same colours and -- since `relax()` -- the same coverage,
+      # gathered into clumps that straddle a tile's joins, because a uniform
+      # scatter integrates to one flat yellow mass at 1x. Every quantity the
+      # other checks measure is deliberately unchanged by that, so all of them
+      # would stay green on a revert. This measures the GAP a clump makes: mean
+      # distance from open ground to the nearest rock, wrapping. Proved red
+      # before it was trusted green -- the pre-clump sheet fails all four rows
+      # (`art/check_clumped.py <old sheet.png>` judges any sheet, so anyone can
+      # repeat that). Stdlib only, 0.1s.
+      - name: Grade-A ore still reads as clumps
+        run: python3 art/check_clumped.py
       # A FIRE IS NOT MADE OF THE WALLS (ASSA-137). The check above guards the
       # surfaces the species tint MAY shade; this one guards the rows it may
       # not touch at all. The client tints a world sprite with `modulate`, a

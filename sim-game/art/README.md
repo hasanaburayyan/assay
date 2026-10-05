@@ -563,6 +563,46 @@ the C hopper falls under L\* 35 and its gap from the head drops to 7.7.
 - Review at 1× game size (the small copies on the contact sheet). If it
   doesn't read there, it doesn't matter how it looks zoomed in.
 
+## A CLUMP MAY ONLY BE BIGGER THAN A TILE IF IT CROSSES ONE
+
+**Structure confined to one 32 px cell, placed by a hash over a handful of
+variants, gives the eye a lattice to find.** Recorded as a law by the Game
+Director (ASSA-216) because it outlives the sheet it was learned on, and it has
+now been learned twice from opposite ends:
+
+- **The ground (ASSA-153/202).** A 4×4 block of ground variants passed every
+  measurement and at 1× you could point at the block; it went to 8×8.
+- **Ore (ASSA-216).** Gathering a tile's rocks toward four centres *inside* the
+  tile was the first thing rendered, at three strengths, and all three drew a
+  grid: every copy of a variant has its holes in the same place, so a patch
+  reads as rows of blobs with straight gaps — the tile lattice QA has caught us
+  drawing before, traded for the confetti it was meant to fix. Uniform scatter's
+  one virtue is that it has no structure to align.
+
+So an arrangement may only carry structure larger than a rock **if that
+structure crosses a tile join**: `ore.py`'s cluster centres are the midpoints of
+the tile's four edges, and a clump is completed by whichever variant the hash put
+on the other side. That is the one arrangement a hash-placed sheet can make that
+is bigger than its own cell, and it needs no new rows and no engine change.
+
+**Two corollaries, both measured rather than reasoned:**
+
+- **A clump spends coverage, and coverage is the grade ladder.** Pulling rocks
+  together buries them: grade A fell 65.1% → 62.0% before `relax()` pushed any
+  two rocks closer than `CLUMP_SEP * (si + sj)` apart again. An arrangement
+  change must claim nothing about quantity, so the constant is set by a sweep
+  that returns coverage to the shipped number, never by eye.
+- **It also empties the tile's border**, which is a deposit's rim wherever that
+  tile lands. That is a trade with the hard `contains()` boundary and it is the
+  Director's to take, not a number to tune away. Centres on the tile's *corners*
+  were tried and are worse: a corner is shared by four tiles, the four clumps
+  meet, and the field fills in flat again.
+
+**Reopen condition, so this is not taste:** if a sheet ever gets enough variants
+that a repeat cannot be found at 1× — or if placement stops being a hash — the
+in-cell arrangement is open again. Judge it on a 9×9 field at 32 px
+(`cove-assa216-clump/patch_field.py`), never on one tile at 256 px.
+
 ## Animation: what makes a loop read as a settle rather than a flicker
 
 Two of ASSA-115's boxes were animation timing, and both of my first readings were

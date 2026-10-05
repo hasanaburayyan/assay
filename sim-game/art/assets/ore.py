@@ -151,6 +151,81 @@ def glint(r, s, loc):
                verts=5, rot=(random.uniform(-0.4, 0.4), random.uniform(-0.4, 0.4), ang))
 
 
+# **THE CLUMPS SIT ON THE TILE'S JOINS, NOT INSIDE IT** (ASSA-216). Gathering
+# rocks toward four centres INSIDE a tile was the first thing I rendered and it
+# draws a lattice: the structure stops at 32 px, every copy of a variant has its
+# holes in the same place, and at 1x the patch reads as a grid of blobs -- the
+# tile lattice QA has caught us drawing before, traded for the confetti it was
+# meant to fix. Three pulls, three renders, all of them a grid.
+#
+# A clump may only be bigger than a tile if it CROSSES one. These four centres
+# are the midpoints of the tile's four edges, so a clump is completed by the
+# neighbour's clump on the other side of the join, whichever variant that is --
+# the one arrangement a hash-placed sheet can make that is larger than its own
+# cell. Nothing else changes: same count, same sizes, same colours, same draws.
+CLUMP_EDGES = ((0.5, 0.0), (0.0, 0.5), (-0.5, 0.0), (0.0, -0.5))
+CLUMP_PULL = 0.50  # 1.0 = today's uniform scatter; 0 = every rock on its centre
+
+# **A PULL TOWARD A POINT SPENDS COVERAGE, AND COVERAGE IS THE GRADE LADDER**
+# (ASSA-216 box 4/5). Pulling 19 rocks toward a centre compresses the area they
+# sit in, so they bury each other: grade A's coverage fell 65.1% -> 62.0%, about
+# a fifth of the shipped B->A gap, for an arrangement change that is supposed to
+# claim nothing about quantity (rule 4 and the header's own "NEVER density").
+# It also broke `check_headroom`, which measures pinned pixels as a SHARE of a
+# row's opaque pixels: lose rock and keep glints and the share rises with the
+# art unchanged.
+#
+# So the clump is relaxed afterwards: any two rocks closer than
+# `CLUMP_SEP * (si + sj)` are pushed apart along their own axis, on the TORUS,
+# because the tile wraps. Rocks may touch and overlap -- the shipped scatter
+# already does, at 19 discs whose footprints sum to more than a tile -- they may
+# not bury each other. `CLUMP_SEP` is set by a measurement and not by eye: it is
+# the value that returns grade-A coverage to the shipped 65.1%, so the clump is
+# an arrangement change and only an arrangement change.
+CLUMP_SEP = 0.42
+CLUMP_PASSES = 48
+
+
+def clump(spots):
+    """The same rocks, gathered onto the joins. Spot i joins edge `i % 4` and is
+    pulled `CLUMP_PULL` of the way toward it, wrapped into the tile, because the
+    tile is seamless and a rock that leaves one side arrives at the other.
+    """
+    if CLUMP_PULL >= 1.0:
+        return spots
+    out = []
+    for i, (x, y, s) in enumerate(spots):
+        cx, cy = CLUMP_EDGES[i % len(CLUMP_EDGES)]
+        nx, ny = cx + (x - cx) * CLUMP_PULL, cy + (y - cy) * CLUMP_PULL
+        out.append(((nx + 0.5) % 1.0 - 0.5, (ny + 0.5) % 1.0 - 0.5, s))
+    return relax(out)
+
+
+def relax(spots):
+    """Push buried rocks apart, on the torus. Deterministic and `random`-free:
+    it must not consume a draw, or every rotation after it changes and the arm
+    stops being the same rocks in a different place."""
+    if CLUMP_SEP <= 0.0:
+        return spots
+    out = [[x, y, s] for (x, y, s) in spots]
+    for _ in range(CLUMP_PASSES):
+        for i in range(len(out)):
+            for j in range(i + 1, len(out)):
+                dx = (out[j][0] - out[i][0] + 0.5) % 1.0 - 0.5
+                dy = (out[j][1] - out[i][1] + 0.5) % 1.0 - 0.5
+                d = math.hypot(dx, dy)
+                want = CLUMP_SEP * (out[i][2] + out[j][2])
+                if d >= want:
+                    continue
+                if d < 1e-6:  # dead centre on each other: part them along x
+                    dx, dy, d = 1e-6, 0.0, 1e-6
+                push = (want - d) / 2.0
+                ux, uy = dx / d * push, dy / d * push
+                out[i][0] -= ux; out[i][1] -= uy
+                out[j][0] += ux; out[j][1] += uy
+    return [((x + 0.5) % 1.0 - 0.5, (y + 0.5) % 1.0 - 0.5, s) for (x, y, s) in out]
+
+
 def tile(step, seed):
     """`step` is the grade index 0..2, or -1 for depleted.
 
@@ -186,15 +261,44 @@ def tile(step, seed):
         count = 9 + step * 5
         smin, smax = 0.065 + step * 0.020, 0.115 + step * 0.032
         spots = [(random.uniform(-0.5, 0.5), random.uniform(-0.5, 0.5), random.uniform(smin, smax)) for _ in range(count)]
+        # **ARRANGEMENT, NOT DENSITY** (ASSA-216, Maren's ruling). The complaint
+        # is "candy"/"confetti", which is a word about texture before it is a
+        # word about value: 19 rocks spread uniformly over a tile leave holes of
+        # one size everywhere, so a patch of them integrates to a flat mass at
+        # 1x however the colours are arranged.
+        #
+        # THIS DOES NOT DRAW ANYTHING NEW. The same `count`, the same sizes and
+        # the same colours come off the same `random` draws in the same order --
+        # only WHERE each rock sits changes, by pulling it toward its cluster's
+        # centre. So coverage is the only quantity that can move, it moves only
+        # through overlap, and `CLUMP_PULL` is the one number to argue about.
+        # (The header's own rule: "if it ever looks stamped-on, the lever is
+        # more arrangement variants, NEVER density". This is that lever used on
+        # the arrangement itself rather than on the count.)
+        #
+        # THE GLINT SET IS DECIDED HERE, ON THE UNIFORM POSITIONS, BEFORE THE
+        # CLUMP MOVES ANYTHING. The test below used to read the rock's FINAL
+        # position, which quietly made an arrangement change a glint change:
+        # moving the rocks re-rolled which of them sparkle, and with 19 rocks
+        # that is +-2 glints a row. It showed up as `check_headroom` moving by
+        # five points on one row and nothing on another, out of a change that
+        # does not touch light at all. A glint belongs to a ROCK (its own size
+        # and seed), not to the square of tile it ends up on, and because
+        # `glint()` consumes random draws, pinning the set also keeps every
+        # later rock's rotation identical to the shipped art.
+        glints = [(x * 7 + y * 13) % 1 < 0.3 for (x, y, _s) in spots]
+        spots = clump(spots)
         colors = [shade(step, random.choice((0.0, 0.20, -0.15))) for _ in spots]
+    if step < 0:
+        glints = [False] * len(spots)
     for dx in (-1, 0, 1):
         for dy in (-1, 0, 1):
             random.seed(seed * 7 + 1)  # same rotations in every wrapped copy
-            for (x, y, s), c in zip(spots, colors):
+            for (x, y, s), c, lit in zip(spots, colors, glints):
                 rock(r, s, (x + dx, y + dy, 0.01), c)
                 # Grade A only. A glint is the rig's "this changes a number"
                 # mark, and A is the top of the ladder the parts already use.
-                if step == 2 and (x * 7 + y * 13) % 1 < 0.3:
+                if step == 2 and lit:
                     glint(r, s, (x + dx, y + dy, 0))
     r.frame(1, 1)
     return r
