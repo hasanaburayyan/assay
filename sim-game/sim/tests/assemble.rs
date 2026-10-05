@@ -90,7 +90,7 @@ fn rejection_line(world: &World, me: PlayerId, events: &[Event]) -> String {
         .iter()
         .find(|e| matches!(e, Event::CommandRejected { .. }))
         .expect("the command was supposed to be refused");
-    debug::event_line(world, Some(me), rejected)
+    debug::event_line(world, Some(me), rejected, debug::Audience::Typed)
 }
 
 /// Hand the player every part of `assembly`, so `Assemble` can take them.
@@ -827,7 +827,7 @@ fn assemble_and_read(world: &mut World, me: PlayerId, design: &Assembly) -> (u32
         .iter()
         .find(|e| matches!(e, Event::Assembled { .. }))
         .expect("Assemble emits Assembled");
-    let line = debug::event_line(world, Some(me), event);
+    let line = debug::event_line(world, Some(me), event, debug::Audience::Typed);
     let Event::Assembled { assembly, .. } = event else {
         unreachable!("found by matches!")
     };
@@ -858,7 +858,7 @@ fn the_sheet_is_printed_on_assembling_and_not_again_on_equipping() {
     let equipped = events
         .iter()
         .find(|e| matches!(e, Event::Equipped { .. }))
-        .map(|e| debug::event_line(&world, Some(me), e))
+        .map(|e| debug::event_line(&world, Some(me), e, debug::Audience::Typed))
         .expect("Equip emits Equipped");
 
     assert!(

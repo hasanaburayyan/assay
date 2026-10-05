@@ -184,6 +184,7 @@ fn placed(item: Item) -> String {
             item,
             pos: TilePos::new(1, 1),
         },
+        debug::Audience::Typed,
     )
 }
 
@@ -259,19 +260,34 @@ fn an_event_about_the_reader_says_your_and_about_anyone_else_says_their() {
     let world = world_with_players();
     let (me, them) = (PlayerId(0), PlayerId(1));
 
-    let mine = debug::event_line(&world, Some(me), &Event::Unequipped { player: me });
+    let mine = debug::event_line(
+        &world,
+        Some(me),
+        &Event::Unequipped { player: me },
+        debug::Audience::Typed,
+    );
     assert_eq!(
         mine, "you put your tool away",
         "the reader's own tool is theirs to be told about"
     );
-    let theirs = debug::event_line(&world, Some(me), &Event::Unequipped { player: them });
+    let theirs = debug::event_line(
+        &world,
+        Some(me),
+        &Event::Unequipped { player: them },
+        debug::Audience::Typed,
+    );
     assert_eq!(
         theirs, "grace put their tool away",
         "and somebody else's is not the reader's"
     );
     // `None` is a client before its welcome: nobody is "you", so nothing is
     // "your" either.
-    let nobody = debug::event_line(&world, None, &Event::Unequipped { player: me });
+    let nobody = debug::event_line(
+        &world,
+        None,
+        &Event::Unequipped { player: me },
+        debug::Audience::Typed,
+    );
     assert_eq!(nobody, "ada put their tool away", "{nobody}");
 }
 
@@ -302,6 +318,7 @@ fn a_worn_out_tool_is_named_for_its_owner_twice() {
                     Grade::C,
                 ),
             },
+            debug::Audience::Typed,
         )
     };
     let (mine, theirs) = (worn(Some(me)), worn(Some(them)));
@@ -346,6 +363,7 @@ fn refusal(world: &World, command: PlayerCommand, reason: RejectReason) -> Strin
             command,
             reason,
         },
+        debug::Audience::Typed,
     )
 }
 
@@ -548,6 +566,7 @@ fn a_refusal_mirrors_the_success_it_would_have_been() {
             count,
             left: 0,
         },
+        debug::Audience::Typed,
     );
     let object = success
         .split_once(" put ")
@@ -586,6 +605,7 @@ fn a_refusal_mirrors_the_success_it_would_have_been() {
             },
             reason: RejectReason::OutOfBounds,
         },
+        debug::Audience::Typed,
     );
     assert!(
         theirs.starts_with("ada's moving to (12, 5) was refused"),

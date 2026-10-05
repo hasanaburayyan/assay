@@ -248,7 +248,7 @@ fn the_offer_and_the_refusal_name_the_same_grade() {
     let refusal = events
         .iter()
         .find(|e| matches!(e, Event::CommandRejected { .. }))
-        .map(|e| debug::event_line(&world, Some(me), e))
+        .map(|e| debug::event_line(&world, Some(me), e, debug::Audience::Typed))
         .expect("the sim refuses it");
 
     assert!(refusal.contains(debug::best_grade_note()), "{refusal}");
