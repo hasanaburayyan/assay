@@ -372,8 +372,21 @@ func _report() -> void:
 	var offset: Vector2 = _drawn[from] - _foot[from]
 	_stalls = _host_stalls()
 	for i in range(from + 1, to + 1):
-		var dt: float = _dt[i]
-		if dt <= 0.0:
+		# **THE DELTA OF THE FRAME THE MOVEMENT HAPPENED IN, WHICH IS THE PREVIOUS SAMPLE'S** (ASSA-197,
+		# 2026-10-05). Still Wren's ruling 3 -- "dt is the frame's own dt" -- this is the instrument
+		# being corrected to it, not the bar moving. This script's `_process` runs BEFORE the screen's,
+		# so the rectangle I read at sample `i` was published by the screen during frame `i - 1`:
+		# **measured at 1.03 frames of age on average (n=167), not reasoned about.** Pairing that
+		# movement with `_dt[i]` divides it by an interval it was not drawn for, and on a box whose
+		# frames alternate 11 ms and 22 ms that mistake ALONE manufactures alternating 2x and 0.5x
+		# speeds -- which is exactly what the frames outside the bar looked like for two days.
+		#
+		# IT COST NOTHING ON THE RUN THAT FOUND IT, and that is worth saying as loudly: at a dead-steady
+		# 90 fps both pairings read 100.0% (183 of 183, 182 of 182), because when every delta is 11.11 ms
+		# it does not matter which one you pick. The off-by-one is only visible when frame time varies,
+		# which is the case the board plays in and the case the old numbers came from.
+		var dt: float = _dt[i - 1]
+		if dt <= 0.0 or _dt[i] <= 0.0:
 			continue
 		if not _stall_behind(i).is_empty():
 			exposed += 1
@@ -589,7 +602,9 @@ func _report() -> void:
 		if _starved[i] or _dt[i] <= 0.0 or _dt[i - 1] <= 0.0:
 			continue
 		var moved_px := (_drawn[i] - _drawn[i - 1]).length() / tile_px
-		var shifted := moved_px / _dt[i - 1]
+		# THE PAIRING THE VERDICT USED UNTIL 2026-10-05: this frame's delta against a rectangle drawn
+		# in the one before it. Kept beside the verdict, once, the way `_played_at` was.
+		var shifted := moved_px / _dt[i]
 		shift_n += 1
 		if absf(shifted - TRUE_SPEED) <= TRUE_SPEED * TOLERANCE:
 			within_shift += 1
@@ -606,10 +621,46 @@ func _report() -> void:
 				+ " vs the PREVIOUS frame's delta: %.2f ms (n=%d, single-advance frames). The "
 				+ "smaller one is the frame the rectangle was computed in.")
 				% [same_frame / float(pairs) * 1000.0, prev_frame / float(pairs) * 1000.0, pairs])
+	# **AND THE SAME QUESTION ASKED IN A WAY A SUB-MILLISECOND AVERAGE CANNOT DECIDE.** The two numbers
+	# above differed by 0.8 ms on the run that found this, which is not a verdict -- it is two close
+	# readings of a quantity I had already decided the shape of. These two are.
+	#
+	# 1. **THE AGE OF THE RECTANGLE AT THE INSTANT I READ IT.** `_played_at` is the wall clock the
+	#    screen stamped when it last advanced the playout clock, so `now - _played_at` is how old the
+	#    rect is when this script samples it. Near zero means the screen's `_process` ran BEFORE mine in
+	#    the same frame and the movement belongs to this frame's delta. Near a whole frame means it ran
+	#    AFTER, the rect I just read was computed in frame i-1, and `_dt[i]` is the wrong denominator.
+	# 2. **WHICH DELTA THE MOVEMENT ACTUALLY TRACKS**, over the whole run rather than on average: if the
+	#    body moves `speed * d` in a frame of delta `d`, then the movement series correlates with the
+	#    delta series that produced it and not with its neighbour. On a machine whose frame time swings
+	#    11-28 ms there is plenty of variance to tell them apart, and consecutive deltas here are
+	#    ANTI-correlated, so the wrong pairing should read low or negative.
+	var ages: Array[float] = []
+	var moves: Array[float] = []
+	var dt_same: Array[float] = []
+	var dt_prev: Array[float] = []
+	for i in range(from + 2, to + 1):
+		if _starved[i] or _dt[i] <= 0.0 or _dt[i - 1] <= 0.0:
+			continue
+		if _advances[i] - _advances[i - 1] != 1:
+			continue
+		ages.append((_clock[i] - _screen_at[i]) / _dt[i])
+		moves.append((_drawn[i] - _drawn[i - 1]).length() / tile_px)
+		dt_same.append(_dt[i])
+		dt_prev.append(_dt[i - 1])
+	if moves.size() >= 8:
+		print(("  THE RECTANGLE'S AGE WHEN I READ IT: %.2f frames on average (0 = the screen drew "
+				+ "before this script sampled, 1 = a frame earlier), n=%d")
+				% [_mean(ages), moves.size()])
+		print(("  THE MOVEMENT CORRELATES WITH this frame's delta r=%+.3f, with the PREVIOUS frame's "
+				+ "delta r=%+.3f (neighbouring deltas r=%+.3f). The higher one produced it.")
+				% [_pearson(moves, dt_same), _pearson(moves, dt_prev),
+				_pearson(dt_same, dt_prev)])
 	print("  WITHIN THE BAR, ON THE DRAWN RECT: %d of %d moving frames (%.1f%%), %s"
 			% [within_drawn, drawn.size(), share * 100.0, rate])
 	var share_shift := 0.0 if shift_n == 0 else float(within_shift) / float(shift_n)
-	print(("  ... the same rectangles over the PREVIOUS frame's delta: %d of %d (%.1f%%)")
+	print(("  ... the same rectangles over THIS frame's delta, the pairing the verdict used until "
+			+ "2026-10-05 (one frame out; see the age above): %d of %d (%.1f%%)")
 			% [within_shift, shift_n, share_shift * 100.0])
 	var share_played := 0.0 if probe.is_empty() else float(within_played) / float(probe.size())
 	print(("  ... the same frames divided by `_played_at`, the denominator this probe used until "
@@ -747,3 +798,35 @@ func _scaled(values: Array[float], by: float) -> Array[float]:
 	for v in values:
 		out.append(v * by)
 	return out
+
+
+func _mean(values: Array[float]) -> float:
+	if values.is_empty():
+		return 0.0
+	var sum := 0.0
+	for v in values:
+		sum += v
+	return sum / float(values.size())
+
+
+## PEARSON'S r BETWEEN TWO EQUAL-LENGTH SERIES, and 0.0 when either has no variance at all -- which
+## is the honest answer for "which of these two deltas produced the movement" on a machine whose
+## frame time never varies. A steady 32 fps runner cannot answer the pairing question; this Mac can.
+func _pearson(a: Array[float], b: Array[float]) -> float:
+	var n := mini(a.size(), b.size())
+	if n < 3:
+		return 0.0
+	var mean_a := _mean(a)
+	var mean_b := _mean(b)
+	var cov := 0.0
+	var var_a := 0.0
+	var var_b := 0.0
+	for i in range(n):
+		var da := a[i] - mean_a
+		var db := b[i] - mean_b
+		cov += da * db
+		var_a += da * da
+		var_b += db * db
+	if var_a <= 0.0 or var_b <= 0.0:
+		return 0.0
+	return cov / sqrt(var_a * var_b)

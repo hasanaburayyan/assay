@@ -707,15 +707,17 @@ func test_a_walking_body_is_drawn_between_two_tiles_the_sim_produced() -> bool:
 	for _i in range(12):
 		_tick(screen)
 		OS.delay_msec(RELAY_TICK_MS)
-		# **A FRAME'S WORTH OF TIME, STATED, which is what stops this test being a coin flip**
-		# (ASSA-197; Nerite measured 283/1 then 284/0 on the same tree, 2026-10-05). The playout
-		# clock used to advance by wall clock, so each iteration moved it by the 100 ms delay PLUS
-		# whatever the sim step and the rebuild cost on a loaded box -- 130-140 ms against a host
-		# producing 100 ms, which drains the buffer and pins the body on the newest position it
-		# holds. Then whether twelve ticks produced three steps depended on the machine. Now the
-		# frame's delta is an input, so one fed tick is played out by one tick of frame time and the
-		# verdict is the client's rather than the loop's overhead.
-		screen._refresh_world(float(RELAY_TICK_MS) / 1000.0)
+		# **A TICK OF FRAME TIME PER TICK FED, AND IT IS THE CLIENT'S OWN TICK, NOT `RELAY_TICK_MS`**
+		# (ASSA-197; Nerite measured 283/1 then 284/0 on the same tree, and 1 red in 4 runs, 2026-10-05).
+		# The first fix here made the frame's delta an input, which was right and not enough: a fixed
+		# 0.1 s against a tick this box MEASURES at 0.13-0.16 s -- the 100 ms delay plus whatever the
+		# sim step and the rebuild cost under load -- plays out only 0.6 of a tick per tick produced.
+		# The clock then falls behind, the drawn segment lags the sim, and whether twelve ticks produced
+		# three visible steps went back to depending on the machine. `_tick_gap` is the box's own
+		# answer, so one fed tick is played out by exactly one tick of frame time whatever it measured.
+		# Same defect as the warm-up of
+		# `test_a_frame_moves_the_body_by_its_own_delta_and_not_by_the_wall_clock`, same fix.
+		screen._refresh_world(float(screen._tick_gap))
 		var was: Vector2i = screen._was.get(screen._client.player_id, from)
 		var now: Vector2i = screen._seen.get(screen._client.player_id, from)
 		if was != now:
@@ -731,8 +733,18 @@ func test_a_walking_body_is_drawn_between_two_tiles_the_sim_produced() -> bool:
 			return _fail(("drawn at %s, which is outside the segment from last tick's %s to this"
 					+ " tick's %s. A renderer may interpolate a drawn position, never state.")
 					% [at, was, now])
+	# **THREE IS A PREMISE, NOT A BAR, AND I TRIED TO MAKE IT ONE AND COULD NOT.** The twelve span
+	# checks above are this test's claim; this only stops them passing vacuously on a body that never
+	# moved. I raised it to eight on the reasoning that a clock keeping up must cross a segment nearly
+	# every frame -- then measured it: **6 and 7 of 12 on two runs of this box** (`_tick_gap` 0.17 and
+	# 0.19 s). Several segments can be crossed inside a single frame and `_was`/`_seen` only record the
+	# last pair, and the first ticks are spent filling the buffer before the clock may start at all, so
+	# the count is not a reading of the clock's speed and it is still not deterministic. It stays at
+	# three, labelled: a tight bar here would be a number I had reasoned to rather than measured.
 	if steps < 3:
-		return _fail("the player took %d steps in 12 ticks, so nothing was tweening" % steps)
+		return _fail(("the player took %d steps in 12 ticks, so nothing was tweening (clock %.3f, "
+				+ "depth %.2f, measured tick %.3f s)") % [steps, float(screen._play_tick),
+				float(screen._play_depth), float(screen._tick_gap)])
 	screen.queue_free()
 	return true
 
