@@ -1380,6 +1380,109 @@ func test_a_building_on_the_schematic_is_neither_a_disc_nor_a_rect() -> bool:
 	return true
 
 
+## **A SHOT CAN SAY WHETHER A MACHINE WAS STANDING ON A SPECIES LETTER, INCLUDING "NO"** (ASSA-213 box
+## 2: "the case is in a shot: a building placed on a deposit CENTRE, not on its edge -- today's shots
+## cannot report this absent").
+##
+## WHY THE SIM'S QUESTION AND THE PAINTER'S ARE ASKED SEPARATELY: a reviewer with only pixels cannot
+## tell a run where no machine ever stood on a rock from a run where one did and the map failed to mark
+## it. The first is a boring world, the second is ASSA-189. So `machines_on_letters` asks the sim (a
+## footprint holding the tile a letter is drawn on) and `letter_occlusions` asks the painter (a diamond
+## landing on that letter's cap box), and `tools/window_shot.gd` only reports a defect when they
+## disagree.
+##
+## **THE PREMISE IS MEASURED BEFORE EVERY NEGATIVE, because an empty fixture answers "nothing is
+## covered" without looking.** My first premise on this item asked what share of the letter's BOX the
+## diamond covered, got 9.3% and called the case absent; the diamond's own share was 99.3%. Both
+## numbers are in the output now, and this test pins each to its own denominator -- the failure that
+## has cost me three nights is a share divided by the wrong thing.
+##
+## THE 2x2 CORNER IS THE CASE WORTH A TEST: Cove's enumeration found a smelter whose footprint's
+## bottom-right tile is the deposit's centre the worst of four placements (24.9-56.2% of the letter's
+## ink). `Rect2i.has_point` is inclusive of `pos` and exclusive of `pos + footprint`, so an off-by-one
+## either way reports the game's worst placement as not-in-frame, or a machine one tile past the rock
+## as standing on it.
+func test_a_machine_on_a_letter_is_told_apart_from_a_machine_beside_one() -> bool:
+	var cell := 9.0
+	var origin := Vector2(24.0, 96.0)
+	var tile := Vector2i(57, 59)
+	# The letter's own geometry, written out rather than taken from a font: `_glyph_marks` is what
+	# measures a real one (`test_main_screen.gd` holds that end), and a fixture that needed a font
+	# could not state its own box. 15x18 at the tile's corner is the shape of a real 25px capital
+	# on this map, centred the way `_glyph_marks` centres it.
+	var at := origin + Vector2(tile) * cell
+	var letters := [
+		{"symbol": "R", "tile": tile, "box": Rect2(at - Vector2(7.5, 13.0), Vector2(15.0, 18.0))},
+		{"symbol": "M", "tile": Vector2i(20, 20),
+				"box": Rect2(origin + Vector2(180.0, 180.0) - Vector2(7.5, 13.0),
+						Vector2(15.0, 18.0))},
+	]
+	var cases := [
+		{"pos": tile, "foot": Vector2i(1, 1), "kind": "drill", "on": true},
+		{"pos": tile - Vector2i(1, 1), "foot": Vector2i(2, 2), "kind": "smelter", "on": true},
+		{"pos": tile + Vector2i(1, 1), "foot": Vector2i(2, 2), "kind": "smelter", "on": false},
+		{"pos": tile - Vector2i(3, 0), "foot": Vector2i(1, 1), "kind": "drill", "on": false},
+	]
+	for case in cases:
+		var building := {"pos": case["pos"], "footprint": case["foot"], "kind": case["kind"]}
+		var mark: Dictionary = (AssayHud.building_mark(building, cell, origin) as Dictionary)
+		var found: Array = AssayHud.machines_on_letters([building], letters)
+		var want: bool = case["on"]
+		var wanted := 1 if want else 0
+		if found.size() != wanted:
+			return _fail(("a %s %s at %s against a letter on %s: the sim's own question answered with "
+					+ "%d hit(s), wanted %d. `pos` is the footprint's TOP-LEFT and `has_point` is "
+					+ "inclusive of it, exclusive of `pos + footprint`.")
+					% [case["foot"], case["kind"], case["pos"], tile, found.size(), wanted])
+		if want:
+			var hit: Dictionary = found[0]
+			if String(hit["symbol"]) != "R" or (hit["tile"] as Vector2i) != tile:
+				return _fail("a %s at %s was matched to %s on %s, not R on %s"
+						% [case["kind"], case["pos"], hit["symbol"], hit["tile"], tile])
+		# THE PAINTER'S SIDE, AND THE PREMISE FIRST: an on-centre machine whose diamond misses the box
+		# would make every assertion here vacuous, and that is the shape this item's first measurement
+		# got wrong.
+		var laps: Array = AssayHud.letter_occlusions([mark], letters)
+		if want and laps.is_empty():
+			return _fail(("premise: a %s %s at %s is on the letter's own tile and its diamond (span "
+					+ "%s at %s) touches no letter box. The fixture is not the case.")
+					% [case["foot"], case["kind"], case["pos"], mark["span"], mark["at"]])
+		for entry in laps:
+			var lap: Dictionary = entry
+			if int(lap["letter"]) != 0:
+				return _fail("a %s at %s laps letter %d (%s), which is 180px away"
+						% [case["kind"], case["pos"], lap["letter"], lap["symbol"]])
+			# **EACH SHARE AGAINST ITS OWN DENOMINATOR.** `share_of_box` is how much of the letter is
+			# at risk and `share_of_mark` how much of the mark is spent on it; they are different
+			# numbers about different things, and a reader who takes the second for the first concludes
+			# the case is not in the picture.
+			var box: Rect2 = (letters[0] as Dictionary)["box"]
+			var covered := float(lap["covered_px"])
+			if absf(float(lap["share_of_box"]) * box.size.x * box.size.y - covered) > 1e-3:
+				return _fail(("share_of_box %.4f x the box's %.1fpx is not the %.1fpx covered: the "
+						+ "letter's share is being divided by something else")
+						% [lap["share_of_box"], box.size.x * box.size.y, covered])
+			var mark_area := AssayHud.polygon_area(mark["points"] as PackedVector2Array)
+			if absf(float(lap["share_of_mark"]) * mark_area - covered) > 1e-3:
+				return _fail("share_of_mark %.4f x the mark's %.1fpx is not the %.1fpx covered"
+						% [lap["share_of_mark"], mark_area, covered])
+			if covered <= 0.0:
+				return _fail("a lap is reported with %.1fpx covered, which is not a lap" % covered)
+	# AND THE BESIDE CASE IS A POSITION AND NOT AN EMPTY LIST: the 3-tiles-west drill's diamond has to
+	# be genuinely clear of the box, or "no lap" says nothing about the arithmetic.
+	var beside: Dictionary = AssayHud.building_mark({"pos": tile - Vector2i(3, 0),
+			"footprint": Vector2i(1, 1), "kind": "drill"}, cell, origin)
+	var gap := (letters[0] as Dictionary)["box"] as Rect2
+	var span: Vector2 = beside["span"]
+	var mark_box := Rect2((beside["at"] as Vector2) - span * 0.5, span)
+	if mark_box.intersects(gap):
+		return _fail(("premise: the beside-case mark %s overlaps the letter box %s, so this fixture "
+				+ "cannot test a miss") % [mark_box, gap])
+	if not AssayHud.letter_occlusions([beside], letters).is_empty():
+		return _fail("a drill 3 tiles west of the letter is reported as lapping it")
+	return true
+
+
 ## **A ONE-TILE MACHINE IS STILL FINDABLE ON A BIG WORLD, AND IT OCCUPIES A PERSON'S BOX ON PURPOSE**
 ## (Cove's size rule, ASSA-193; the floor is `PLAYER_MARK_PX`'s lesson applied to the other mark).
 ##

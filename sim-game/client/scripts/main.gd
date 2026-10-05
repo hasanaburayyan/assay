@@ -3247,7 +3247,12 @@ func _glyph_marks(deposits: Array, font: Font) -> Array:
 		var symbol := String(deposit.get("symbol", ""))
 		if symbol.is_empty():
 			continue
-		var at := MARGIN + Vector2(deposit.get("center", Vector2i.ZERO) as Vector2i) * _cell
+		# **`center` WITHOUT A DEFAULT** (ASSA-141), unlike `amount` and `symbol` above, where a missing
+		# key means "skip this rock" and costs one letter. A defaulted centre is worse than no letter:
+		# every deposit would stack its glyph on tile (0,0), and `AssayHud.machines_on_letters` would
+		# then report a machine near the origin as standing on all six species at once.
+		var centre: Vector2i = deposit["center"]
+		var at := MARGIN + Vector2(centre) * _cell
 		var radius := maxf(_cell, float(int(deposit.get("radius", 1))) * _cell)
 		var size := AssayHud.glyph_size(radius)
 		if size <= 0:
@@ -3270,5 +3275,11 @@ func _glyph_marks(deposits: Array, font: Font) -> Array:
 			"box": Rect2(baseline - Vector2(0.0, font.get_ascent(size)),
 					Vector2(measured.x, font.get_ascent(size))),
 			"at": at,
+			# **THE TILE, NOT ONLY THE PIXEL** (ASSA-213 box 2). `at` is where the letter is drawn and
+			# cannot be compared with a footprint: a shot has to be able to ask the SIM whether a
+			# machine stands on the tile this letter names, because pixels alone cannot tell "no
+			# machine was on a rock today" from "one was and the map did not mark it".
+			# `AssayHud.machines_on_letters` is the comparison and `tools/window_shot.gd` the caller.
+			"tile": centre,
 		})
 	return marks

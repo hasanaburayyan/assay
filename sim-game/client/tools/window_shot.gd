@@ -125,6 +125,16 @@ var _shots := PackedStringArray()
 ## the arithmetic: a table that derives the geometry again is a table that can disagree with the
 ## picture it is describing, which is the shape of the bug I shipped in `_controls_report`.
 var _schematic_marks: Array = []
+## **WHAT THE SCHEMATIC PAINTED FOR EVERY SPECIES LETTER**, off `main.gd::_glyph_marks` in the same
+## frame and for `_schematic_marks`' reason (ASSA-213). Read ONCE and used by both the marks table and
+## the `letters` leg: two reads of a running world are two worlds, and a leg disagreeing with the JSON
+## beside it about which rock holds a machine is the least useful kind of evidence.
+var _letter_marks: Array = []
+## **THE SIM'S OWN BUILDING LIST AS IT WAS IN THAT FRAME.** The marks above are derived from it in one
+## call, so a second `_sim.buildings()` read at report time is a read of a LATER world: the relay is
+## still ticking while the legs are printed, and a machine finished in between made `_schematic_report`
+## say "3 buildings and 2 marks" about a frame where both were 2. Captured once, compared by everyone.
+var _shot_buildings: Array = []
 ## Fingerprint of every frame already written, to the name it was written under. See `_shoot`.
 var _taken := {}
 ## Shot name -> what its own subjects were doing instead of being on screen. Keyed by name and
@@ -359,7 +369,10 @@ func _process(_delta: float) -> bool:
 			#
 			# READ AT THE MOMENT OF THE SHOT, like the subject check and for the same reason: the
 			# geometry is only true in the frame that was actually written.
-			_schematic_marks = _screen._building_marks(_screen._sim.buildings())
+			_shot_buildings = _screen._sim.buildings()
+			_schematic_marks = _screen._building_marks(_shot_buildings)
+			_letter_marks = _screen._glyph_marks(_screen._sim.deposits(),
+					ThemeDB.fallback_font)
 			_shoot("08-whole-world.png", PackedStringArray())
 			_write_marks_table()
 			_phase = Phase.PRESS_K
@@ -1139,13 +1152,20 @@ func _machine_report() -> void:
 ## whether `draw_colored_polygon` put the pixels down -- `shared/assay/assa187_measure.py` against
 ## these rects is that, and it needs a human to run it on the shot.
 ##
+## **AND THE COUNT COMPARISON BELOW IS VACUOUS BY CONSTRUCTION, WHICH I AM SAYING RATHER THAN FIXING.**
+## `_schematic_marks` is derived from this very list in one call at the shot, so "N buildings and M
+## marks" cannot differ -- it used to differ only when the relay ticked between two reads, which made
+## it a false-alarm generator and not a check (hence `_shot_buildings`). The leg's real content is the
+## map-rect clause under it; what actually holds ASSA-189's defect is
+## `test_main_screen.gd::test_the_schematic_is_handed_every_building_the_sim_reports`.
+##
 ## **IT REPORTS `not run` RATHER THAN `NO` WHEN THE SIM HAS NO BUILDINGS** (ASSA-185's rule). A world
 ## the play loop never got a smelter into cannot answer this question, and a leg that said NO there
 ## would send the next reader into the painter for a reason that is in `button_play.gd`.
 func _schematic_report() -> Dictionary:
 	if _screen == null or _screen._sim == null or not _screen._sim.running():
 		return {"ran": false, "ok": false, "why": "no running sim, so there was no schematic to shoot"}
-	var buildings: Array = _screen._sim.buildings()
+	var buildings: Array = _shot_buildings
 	if buildings.is_empty():
 		return {"ran": false, "ok": false,
 				"why": "the sim holds no building, so this view has nothing to be missing"}
@@ -1192,7 +1212,7 @@ func _schematic_report() -> Dictionary:
 ## The players are the filled rects the diamond has to differ from, in the same frame and the same
 ## greyscale.
 func _write_marks_table() -> void:
-	var buildings: Array = _screen._sim.buildings()
+	var buildings: Array = _shot_buildings
 	var rows := []
 	for i in _schematic_marks.size():
 		var mark: Dictionary = _schematic_marks[i]
@@ -1213,15 +1233,28 @@ func _write_marks_table() -> void:
 	# of this function: a script can then count glyph-ink pixels inside the rectangle the painter used,
 	# instead of hunting a letter in a lump of bright pixels and calling the lump a letter.
 	var letters := []
-	for entry in _screen._glyph_marks(_screen._sim.deposits(), ThemeDB.fallback_font):
+	for entry in _letter_marks:
 		var glyph: Dictionary = entry
 		var box: Rect2 = glyph["box"]
 		var ink: Color = glyph["ink"]
 		var bed: Color = glyph["bed"]
+		var tile: Vector2i = glyph["tile"]
 		letters.append({"symbol": String(glyph["symbol"]), "size": int(glyph["size"]),
 				"x": box.position.x, "y": box.position.y, "w": box.size.x, "h": box.size.y,
 				"ink": [ink.r, ink.g, ink.b], "bed": [bed.r, bed.g, bed.b],
-				"bed_px": float(glyph["bed_px"])})
+				"bed_px": float(glyph["bed_px"]), "tile": [tile.x, tile.y]})
+	# **AND WHETHER THE ASSA-213 CASE IS IN THIS FRAME AT ALL** -- the half of box 2 a picture cannot
+	# carry. `on_letters` is the SIM's answer (a footprint holding the tile a letter names) and
+	# `overlaps` the PAINTER's (a diamond landing on the letter's cap box); a reader of this file can
+	# tell "no machine stood on a rock in this run" from "one did and the map did not mark it", which
+	# is the distinction the `letters` leg is built on and the one two QA shots could not make today.
+	var on_letters := []
+	for entry in AssayHud.machines_on_letters(_shot_buildings, _letter_marks):
+		var hit: Dictionary = entry
+		var tile: Vector2i = hit["tile"]
+		on_letters.append({"kind": String(hit["kind"]), "symbol": String(hit["symbol"]),
+				"tile": [tile.x, tile.y]})
+	var overlaps := AssayHud.letter_occlusions(_schematic_marks, _letter_marks)
 	var table := {
 		"shot": "08-whole-world.png",
 		"cell": _screen._cell,
@@ -1235,6 +1268,7 @@ func _write_marks_table() -> void:
 		"keyline_px": AssayHud.MARK_KEYLINE_PX,
 		"buildings": rows,
 		"players": people,
+		"case": {"on_letters": on_letters, "overlaps": overlaps},
 	}
 	var path := "%s/08-whole-world-marks.json" % _out
 	var file := FileAccess.open(path, FileAccess.WRITE)
@@ -1243,8 +1277,66 @@ func _write_marks_table() -> void:
 		return
 	file.store_string(JSON.stringify(table, "  "))
 	file.close()
-	_shots.append("    marks table   %d building(s), %d player(s) -> %s"
-			% [rows.size(), people.size(), path.get_file()])
+	_shots.append("    marks table   %d building(s), %d player(s), %d letter(s) -> %s"
+			% [rows.size(), people.size(), letters.size(), path.get_file()])
+
+
+## **DOES THIS SHOT CONTAIN THE ASSA-213 CASE: A MACHINE STANDING ON A SPECIES LETTER** (box 2, "today's
+## shots cannot report this absent").
+##
+## WHY THE TOOL NEEDS THIS AT ALL. Two QA shots today were of a probe sheet and this tool said OK
+## (ASSA-195), and on this item both Maren and I wrote "today's shots do not contain the case" off a
+## picture -- one of those sentences was stale within the hour and nothing could contradict it. A
+## reviewer looking at `08-whole-world.png` cannot tell a world where no machine ever stood on a rock
+## from a world where one did and the map failed to mark it, and those two are a boring run and
+## ASSA-189 respectively.
+##
+## **IT ASKS THE SIM AND THE PAINTER SEPARATELY, AND ONLY THE DISAGREEMENT IS A FAILURE.** The sim's
+## answer is `AssayHud.machines_on_letters` -- a footprint holding the tile a letter is drawn on. The
+## painter's is `AssayHud.letter_occlusions` -- a building diamond landing on that letter's cap box.
+## `not run` when the sim says no machine is on a lettered rock, because a world the play loop did not
+## get a drill onto cannot answer this question and a leg that said NO there would send the next reader
+## into `main.gd` for a reason that lives in `button_play.gd` (ASSA-185's rule). `NO` only for the
+## state that is a real defect: the sim has a machine on a letter and no mark of this frame touches it.
+##
+## **IT SAYS NOTHING ABOUT WHETHER THE LETTER SURVIVED.** The letter is painted last now, so an overlap
+## is the state the fix exists for and not an erasure. Readability is a pixel question about the PNG --
+## Maren's box 1, her control, her 1x judgement -- and a leg claiming it from geometry would be the
+## kind of green tick this item is full of.
+func _letters_report() -> Dictionary:
+	if _screen == null or _screen._sim == null or not _screen._sim.running():
+		return {"ran": false, "ok": false, "why": "no running sim, so there was no map to shoot"}
+	if _letter_marks.is_empty():
+		return {"ran": false, "ok": false,
+				"why": "no deposit on this world carries a letter, so no machine can be standing on one"}
+	var buildings: Array = _shot_buildings
+	var on_letters := AssayHud.machines_on_letters(buildings, _letter_marks)
+	var overlaps := AssayHud.letter_occlusions(_schematic_marks, _letter_marks)
+	if on_letters.is_empty():
+		# EDGE PLACEMENTS ARE COUNTED AND NOT PROMOTED. A diamond can lap a letter from a neighbouring
+		# tile; the box asks for the CENTRE case, so that is a sentence in a `not run` line rather
+		# than a yes -- and a count, because "none" and "three of them, just not on the centre" send a
+		# reader to different places.
+		return {"ran": false, "ok": false, "why": ("%d building(s) and %d letter(s), none of them on "
+				+ "the same tile: %d mark(s) lap a letter from a neighbouring tile. The case this "
+				+ "item is about is not in this frame.")
+				% [buildings.size(), _letter_marks.size(), overlaps.size()]}
+	var said := PackedStringArray()
+	for entry in on_letters:
+		var hit: Dictionary = entry
+		var share := 0.0
+		for other in overlaps:
+			var lap: Dictionary = other
+			if int(lap["building"]) == int(hit["building"]) and int(lap["letter"]) == int(hit["letter"]):
+				share = float(lap["share_of_box"])
+		said.append("%s on %s at %s covers %.1f%% of its cap box"
+				% [hit["kind"], hit["symbol"], hit["tile"], share * 100.0])
+		if share <= 0.0:
+			return {"ran": true, "ok": false, "why": ("the sim has a %s standing on %s's tile %s and "
+					+ "no mark in this frame touches that letter's box: the two lists disagree about "
+					+ "the same world, which is ASSA-189's shape.")
+					% [hit["kind"], hit["symbol"], hit["tile"]]}
+	return {"ran": true, "ok": true, "why": "the case is in frame -- %s" % "; ".join(said)}
 
 
 func _report() -> void:
@@ -1265,6 +1357,8 @@ func _report() -> void:
 		["subject", "every shot contains the section it is named for", _subject_report()],
 		["schematic", "every factory the sim holds is marked on the whole-world view",
 				_schematic_report()],
+		["letters", "a machine standing on a species letter is in the frame, or said to be absent",
+				_letters_report()],
 	]
 	print("  legs:")
 	var failures := PackedStringArray()
