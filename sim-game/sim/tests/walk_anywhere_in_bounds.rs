@@ -27,6 +27,10 @@ use sim::{
 };
 use std::collections::BTreeSet;
 
+/// What the sim said about one batch of `MoveTo`s: the tiles it accepted (as
+/// `(x, y)` so they sort), and every refusal with the reason it carried.
+type Verdicts = (BTreeSet<(i32, i32)>, Vec<(TilePos, RejectReason)>);
+
 fn world(seed: u64) -> World {
     World::new(WorldConfig {
         seed,
@@ -54,11 +58,7 @@ fn joined(seed: u64) -> (World, PlayerId) {
 /// Returns `(accepted, rejected)` — accepted being the `to` of every
 /// `MoveStarted`, plus the standing tile, which is accepted *silently*
 /// (`step.rs` sets `target = None` and emits nothing: you are already there).
-fn walk_to_each(
-    w: &mut World,
-    me: PlayerId,
-    targets: &[TilePos],
-) -> (BTreeSet<(i32, i32)>, Vec<(TilePos, RejectReason)>) {
+fn walk_to_each(w: &mut World, me: PlayerId, targets: &[TilePos]) -> Verdicts {
     let standing = w.player(me).unwrap().pos;
     let inputs: Vec<Input> = targets
         .iter()
@@ -78,7 +78,7 @@ fn walk_to_each(
                 command: PlayerCommand::MoveTo { target },
                 reason,
                 ..
-            } => rejected.push((*target, reason.clone())),
+            } => rejected.push((*target, *reason)),
             _ => {}
         }
     }
