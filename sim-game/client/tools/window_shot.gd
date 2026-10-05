@@ -268,6 +268,79 @@ func _initialize() -> void:
 	# stale shot look pinned.
 	print("rules %s, protocol %d, godot %s" % [AssayProtocol.rules_id(),
 			AssayProtocol.protocol_version(), Engine.get_version_info()["string"]])
+	# **AND WHICH ART IT IS ABOUT TO PHOTOGRAPH** (ASSA-195, Maren's P2). The line above pins the
+	# rules; nothing pinned the sheets, and twice in one day a QA shot was of Cove's alpha CONTROL
+	# sheet installed as `player.png` -- both runs clean, both printing `WINDOW SHOT OK`, offered as
+	# evidence on a player-visibility item. A human's memory of a colour is what caught it.
+	_write_art_provenance()
+
+
+## **WHICH ART THIS RUN PHOTOGRAPHED, WRITTEN BESIDE THE PICTURES** (ASSA-195).
+##
+## **IT RECORDS, IT DOES NOT REFUSE, AND THAT IS MAREN'S RULING RATHER THAN MY CAUTION.** A tool that
+## refused a dirty sprite tree would break the one script built to catch this class of lie:
+## `art/shoot_window_alpha.sh` swaps a sheet ON PURPOSE, and the alpha control cannot exist without a
+## dirty tree. A swapped sheet is a legitimate state. The defect was that the picture did not SAY.
+##
+## **THE DIGEST IS OF THE BYTES ON DISK AT THE MOMENT THE WINDOW OPENED**, never of what the repo
+## holds. The same trap cost me a wake-up on the Rust side: a stale `libsim_godot.dylib` reads as a
+## sim defect, and nothing but hashing the artefact itself can see it. `git` is then asked separately
+## what HEAD has, so the two can DIFFER and the record says which sheet.
+##
+## IT GOES IN THE OUT DIR, not to stdout, because a shots dir gets copied into `shared/` on its own
+## and the log does not travel with it. A run whose `git` is missing records `unknown`, which is the
+## honest answer and not a failure: the digests still identify the sheet.
+func _write_art_provenance() -> void:
+	var root_dir := ProjectSettings.globalize_path("res://")
+	var dir := DirAccess.open("res://assets/sprites")
+	var lines := PackedStringArray(["# the art this run photographed (ASSA-195)",
+			"# sheet  sha256-of-the-bytes-on-disk  vs-HEAD",
+			"# recorded, never refused: art/shoot_window_alpha.sh swaps a sheet on purpose."])
+	if dir == null:
+		lines.append("NO SPRITE DIRECTORY: res://assets/sprites could not be opened")
+	else:
+		var names := dir.get_files()
+		names.sort()
+		var differs := PackedStringArray()
+		for name in names:
+			if name.ends_with(".import"):
+				continue
+			var path := "res://assets/sprites/%s" % name
+			# ASKED ONCE AND REMEMBERED: two `git` calls for one sheet could answer differently, and
+			# a record whose headline disagrees with its own table is worse than no record.
+			var verdict := _vs_head(root_dir, name)
+			lines.append("%-16s %s  %s" % [name, FileAccess.get_sha256(path), verdict])
+			if verdict == "DIFFERS":
+				differs.append(name)
+		# THE HEADLINE A READER NEEDS FIRST, because a list of 9 digests buries the one fact that
+		# decides whether a shot is evidence. Nerite's case is this line reading "DIFFERS: player.png".
+		lines.insert(0, "art: %s" % ("every sheet matches HEAD" if differs.is_empty()
+				else "DIFFERS from HEAD: %s" % ", ".join(differs)))
+	var path := "%s/00-art-provenance.txt" % _out
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		print("  art provenance  CANNOT WRITE %s" % path)
+		return
+	file.store_string("\n".join(lines) + "\n")
+	file.close()
+	print("  %s -> %s" % [lines[0], path.get_file()])
+
+
+## What `git` says HEAD holds for one sheet, against the digest of the bytes this run will draw with.
+##
+## `git hash-object` rather than a second sha256: git's blob hash is what `git show HEAD:<path>` can
+## be compared against without materialising the file, and it is the same answer `git status` gives,
+## so a reader can check this record by hand with a command they already know.
+func _vs_head(root_dir: String, name: String) -> String:
+	var out: Array = []
+	var here := "assets/sprites/%s" % name
+	if OS.execute("git", ["-C", root_dir, "hash-object", "--", here], out, true) != 0:
+		return "unknown"
+	var on_disk := String(out[0]).strip_edges()
+	out = []
+	if OS.execute("git", ["-C", root_dir, "rev-parse", "HEAD:./%s" % here], out, true) != 0:
+		return "untracked"
+	return "same" if on_disk == String(out[0]).strip_edges() else "DIFFERS"
 
 
 func _process(_delta: float) -> bool:
