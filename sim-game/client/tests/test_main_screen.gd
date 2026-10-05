@@ -3473,28 +3473,160 @@ func test_exactly_one_control_per_screen_wears_the_accent() -> bool:
 	# AND THE PLAYED SCREEN, which is the one the ruling was filed about: nine buttons at identical
 	# weight. `_joined_screen` plays a real world through the binding, so what is counted here is the
 	# column a player actually gets rather than a hand-built row.
-	var joined := _joined_screen()
-	# **ONE FRAME, BECAUSE A WELCOME ALONE IS A STATE PRODUCTION NEVER SITS IN.** `_joined_screen`
-	# feeds a welcome and stops; `_refresh_join_band` and `_refresh_front_door` run in `_process`,
-	# so without this the join controls still wear the visibility they were BUILT with and the
-	# first run of this test reported `Play solo` accented inside a played world. That was my
-	# harness, not the client -- the same trap `test_play_solo_neither_reads_nor_wipes_a_typed_host`
-	# already carries a note about.
-	joined._process(0.016)
-	var during := _accented(joined)
-	if during.size() > 1:
-		ok = _fail(("a played world shows %d accented controls: %s. A green on every row of a list "
-				+ "is a bullet point, not a rank") % [during.size(), ", ".join(during)])
-	elif during.size() == 1 and during[0] != "Mine":
-		ok = _fail("the played screen's one accented control is `%s`, not `Mine`" % during[0])
-	else:
-		# NOT ASSERTED AS EXACTLY ONE, and this is the honest half. `Mine` is Primary only where the
-		# sim says a hand can break the rock under you (`hand_minable`), so on a world where the
-		# body happens to stand on grass the right answer is ZERO accented controls. Demanding one
-		# here would be demanding the accent on a button that would refuse -- the exact thing
-		# Maren's `check, do not assume` clause forbids.
-		print("    accented in a played world: %d (%s)" % [during.size(), ", ".join(during)])
-	joined.queue_free()
+	#
+	# **TWO WORLDS, OPPOSITE EXPECTATIONS, AND THE SIM SAYS WHICH IS WHICH.** This half used to run
+	# one world and accept any count of 0 or 1, under a comment of mine calling that "the honest
+	# half": `Mine` is Primary only where a hand can break the rock under you, so on a world where
+	# the body stands on grass ZERO really is the right answer, and demanding one would demand an
+	# accent on a button that refuses. The reasoning was right and the conclusion was wrong -- a
+	# test that accepts both answers asserts neither. Nerite measured what it cost: BOTH one-line
+	# mutations of the played-screen accent merged green (345/0).
+	#
+	#     `if minable:` -> `if true:`     the gate Maren asked for, held by nothing
+	#     Mine's `Primary` deleted        the rank this test is named after, held by nothing
+	#
+	# So the expectation is DERIVED, not picked: ask `_can_hand_mine_here()` -- the same call
+	# `_refresh_actions` gates the accent on, so the test cannot drift from the client by consulting
+	# a different authority -- and then assert the exact count that follows from its answer.
+	var arms := {}
+	for seed_text in ["14247", "777042"]:
+		var joined := _joined_screen(seed_text)
+		# **ONE FRAME, BECAUSE A WELCOME ALONE IS A STATE PRODUCTION NEVER SITS IN.**
+		# `_joined_screen` feeds a welcome and stops; `_refresh_join_band` and `_refresh_front_door`
+		# run in `_process`, so without this the join controls still wear the visibility they were
+		# BUILT with and the first run of this test reported `Play solo` accented inside a played
+		# world. That was my harness, not the client -- the same trap
+		# `test_play_solo_neither_reads_nor_wipes_a_typed_host` already carries a note about.
+		joined._process(0.016)
+		var minable: bool = joined._can_hand_mine_here()
+		var during := _accented(joined)
+		arms[minable] = seed_text
+		if minable and during.size() != 1:
+			ok = _fail(("seed %s spawns on a rock a hand can break, so the played screen must show "
+					+ "exactly 1 accented control and shows %d: %s. `Mine` is this screen's one "
+					+ "primary (ASSA-233 ruling 2)") % [seed_text, during.size(), ", ".join(during)])
+		elif minable and during[0] != "Mine":
+			ok = _fail(("seed %s: the played screen's one accented control is `%s`, not `Mine`")
+					% [seed_text, during[0]])
+		elif not minable and during.size() != 0:
+			ok = _fail(("seed %s spawns where no hand can mine, so the played screen must show 0 "
+					+ "accented controls and shows %d: %s. A green button that refuses is worse "
+					+ "than a grey one that refuses (Maren, ASSA-233)")
+					% [seed_text, during.size(), ", ".join(during)])
+		joined.queue_free()
+
+	# **AND BOTH ARMS HAVE TO HAVE HAPPENED, OR THIS TEST IS VACUOUS.** Which seed spawns on a
+	# minable deposit is the sim's doing and not a property of this file: a worldgen change, or
+	# someone editing the seed list, could leave every arm on the same side and the loop above would
+	# go green over exactly the two mutations it exists to catch. This is the control inside the
+	# test -- it fails on the absence of a case rather than on a number I chose.
+	if not arms.has(true) or not arms.has(false):
+		ok = _fail(("the played-screen arms are vacuous: the seeds covered %s. One world must spawn "
+				+ "on a hand-minable deposit and one must not, or deleting Mine's accent passes "
+				+ "this test") % str(arms))
+	return ok
+
+
+## **THE QUIET WEIGHT IS THE QUIETEST OF THREE, AND IT IS A CONTROL** (ASSA-233, Maren's Q1 fix at
+## 17:00Z, which reverses her own 14:25Z one).
+##
+## **NOTHING HAS EVER TESTED THIS AND THAT IS WHY IT WENT ROUND TWICE.** Nerite's note on ASSA-224:
+## "no test in `tests/` read the word `Primary` or `Quiet`, so the one-accent rule and the Quiet
+## furniture on the log and mode toggles are guarded only by a picture". The accent half got its test;
+## this half did not, so I shipped an edge at rest for her first ruling and had nothing to fail when
+## the second ruling took it away again.
+##
+## **THE TWO CUES ARE OPPOSITE AND BOTH ARE ASSERTED.** Her 14:25 call was "a border at rest at lower
+## alpha"; her 17:00 call, off the before/after at 1:1, is *"Not a border at rest -- that makes quiet
+## into default and spends the rank. Alignment is the cue that is left."* So: no edge at rest, AND
+## left-aligned into the body column, AND a `default` button beside it that DOES carry an edge --
+## because "quiet is quieter than default" is the actual property, and a theme where both lost their
+## border would pass a test that only looked at `Quiet`.
+##
+## READ OFF THE REAL CONTROLS, NOT THE GENERATOR (ASSA-152's lesson). `build_theme.gd` refusing to
+## WRITE something is not the window refusing to DRAW it: the resolved stylebox on the button in the
+## tree is what a player sees, so that is what is asked.
+##
+## **AND IT HAS TO BE POKED FIRST, WHICH IS A FACT ABOUT THIS HARNESS AND NOT ABOUT THE CLIENT.**
+## `theme_type_variation` here resolves against the PROJECT theme (`project.godot`
+## `gui/theme/custom`), and a control that gets its theme that way keeps reading the plain `Button`
+## entries until it receives `NOTIFICATION_THEME_CHANGED`. Running `_process` frames does not do it;
+## a freshly built in-tree `Button` wearing `Quiet` reports `font_color` = `INK` (the default
+## weight's). So without the poke below this test would assert the OPPOSITE of what ships.
+##
+## **MEASURED, BECAUSE I WOULD OTHERWISE BE TRUSTING A METHOD NAME.** Real window, 1280x720, seed
+## 14247, `tools/window_shot.gd` `02-play.png`, inside the log toggle's own rect: the fill is
+## (37,40,48) = `SURFACE` with no ring, the brightest glyph pixel is (167,176,190) = `INK_MUTED`
+## exactly, and `INK` appears on 0 pixels of it. The window draws this weight; only the headless
+## read needed telling.
+func test_the_quiet_toggles_are_the_quietest_weight_and_still_read_as_controls() -> bool:
+	var screen := _screen()
+	var ok := true
+	# **BY THE CLIENT'S OWN NAMES FOR THEM, not by label text.** Both toggles re-text themselves with
+	# their state ("show"/"hide"), so a literal here passes or fails on which way the menu happens to
+	# open rather than on the ruling -- which is how the first run of this test failed looking for
+	# `show what I can make (M)` on a screen whose menu starts open.
+	for named in [["_log_toggle", screen._log_toggle], ["_make_toggle", screen._make_toggle]]:
+		var label: String = named[0]
+		var toggle := named[1] as Button
+		if toggle == null:
+			ok = _fail("no `%s` on the screen: the quiet toggles are the two controls Maren's Q1 "
+					% label + "ruling is about")
+			continue
+		toggle.notification(Control.NOTIFICATION_THEME_CHANGED)
+		if toggle.theme_type_variation != &"Quiet":
+			ok = _fail(("`%s` wears `%s`, not `Quiet`. It is furniture beside the section headings "
+					+ "it sits between (ASSA-224)") % [label, toggle.theme_type_variation])
+		# **THE CUE THAT IS LEFT.** Centred, these were the only rows in a column whose every other
+		# row sits at the body x=11, so they read as a caption for the heading above them --
+		# "centred + boxless + above the block it controls is a caption by construction".
+		if toggle.alignment != HORIZONTAL_ALIGNMENT_LEFT:
+			ok = _fail(("`%s` is not left-aligned. With no edge at rest, alignment is the only cue "
+					+ "left that it is a control and not a caption (Maren, ASSA-233)") % label)
+		var rest := toggle.get_theme_stylebox(&"normal") as StyleBoxFlat
+		if rest == null:
+			ok = _fail("`%s` resolves no StyleBoxFlat at rest, so its weight cannot be read" % label)
+			continue
+		# AN EDGE IS A BORDER WIDTH **AND** A COLOUR YOU CAN SEE AGAINST THE FILL. Either one at zero
+		# is no edge, and the version this replaces had full width with 0.45 alpha on `BORDER`.
+		var edge := rest.border_width_left > 0 and rest.border_color.a > 0.0 \
+				and not rest.border_color.is_equal_approx(rest.bg_color)
+		if edge:
+			ok = _fail(("`%s` draws an edge at rest (border %s on fill %s). An outline at rest makes "
+					+ "quiet into default and spends the rank: three weights whose quietest still "
+					+ "has a box is two weights (Maren, ASSA-233 17:00Z)")
+					% [label, rest.border_color, rest.bg_color])
+		# **MAREN'S CLAUSE (b), IN THE ONE FORM THAT IS ACTUALLY A PROPERTY OF THE CLIENT.** She asked
+		# for "ink at or above the brightest body row (5.44), not below it", off rendered glyph boxes
+		# where these toggles read 4.22 and 4.79. The colour is already equal: `_note()` paints every
+		# body row `INK_MUTED` out of this theme and so does `Quiet` -- 6.74:1, the same 24-bit value
+		# on the same surface, confirmed on the real window. Her gap is `SMALL` (11px) against `BODY`
+		# (13px): a smaller glyph spends proportionally more of itself on partly-covered edge pixels,
+		# so one colour measures two numbers.
+		#
+		# So what is guarded here is her INTENT -- a type scale exists to lift what you can act on
+		# above what you merely read, and these two must never end up dimmer than the prose beside
+		# them. It is asked of luminance rather than of a colour name, so moving either token still
+		# has to keep the order.
+		var body_ink := _drawn_color(screen._note("a body row"))
+		var toggle_ink := toggle.get_theme_color(&"font_color", &"Quiet")
+		if AssayHud.relative_luminance(toggle_ink) \
+				< AssayHud.relative_luminance(body_ink) - 0.001:
+			ok = _fail(("`%s` is inked %s, dimmer than the body rows beside it at %s. The two things "
+					+ "you can click in that column must not be its dimmest text (Maren, ASSA-233)")
+					% [label, toggle_ink, body_ink])
+	# **AND `default` MUST STILL HAVE ONE, or "quieter than default" is a claim about nothing.** This
+	# is the control inside the test: it fails if a theme change flattens both weights together,
+	# which would otherwise read as this ruling being satisfied.
+	var plain := Button.new()
+	screen.add_child(plain)
+	plain.notification(Control.NOTIFICATION_THEME_CHANGED)
+	var plain_rest := plain.get_theme_stylebox(&"normal") as StyleBoxFlat
+	if plain_rest == null or plain_rest.border_width_left <= 0 \
+			or plain_rest.border_color.is_equal_approx(plain_rest.bg_color):
+		ok = _fail("a `default` Button draws no edge at rest either, so `Quiet` having none says "
+				+ "nothing about rank: both weights are the same box")
+	screen.queue_free()
 	return ok
 
 
