@@ -74,8 +74,9 @@ func _scan(path: String) -> void:
 		print("%s: cannot be read" % path)
 		return
 	if img.get_width() != WINDOW_W:
-		print("%s: %dx%d, not %dpx wide -- the column's x range would land somewhere else, so this "
-				+ "is not scanned" % [path.get_file(), img.get_width(), img.get_height(), WINDOW_W])
+		print(("%s: %dx%d, not %dpx wide -- the column's x range would land somewhere else, so "
+				+ "this is not scanned") % [path.get_file(), img.get_width(), img.get_height(),
+				WINDOW_W])
 		return
 	var bg := _panel_colour(img)
 	var runs := PackedStringArray()

@@ -2678,8 +2678,8 @@ func test_the_hatch_is_painted_before_the_species_letter() -> bool:
 	# AND THE FILL IS UNDER BOTH: a hatch painted before the disc it marks is simply invisible.
 	var fill_at := source.find("draw_circle(at, radius, AssayHud.mark_ink_of(&\"deposit\", colour))")
 	if fill_at < 0 or fill_at > hatch_at:
-		return _fail("main.gd paints the deposit's fill at %d and the hatch at %d: a hatch under its "
-				+ "own disc marks nothing" % [fill_at, hatch_at])
+		return _fail(("main.gd paints the deposit's fill at %d and the hatch at %d: a hatch under "
+				+ "its own disc marks nothing") % [fill_at, hatch_at])
 	return true
 
 
