@@ -182,13 +182,19 @@ func test_protocol_has_no_hash_builder() -> bool:
 	return true
 
 
-## **THE TWO NUMBERS ASSA-256 CROSSED, ASKED FOR IN GDSCRIPT — WHICH IS THE ONLY PLACE THEY EXIST.**
+## **A READING'S TWO ENDS, ASKED FOR IN GDSCRIPT — WHICH IS THE ONLY PLACE THEY EXIST.**
 ##
-## `make_offers` grew `cost` and `species_sheets` grew `reading_ranges` so Nacre can draw a row as
-## data instead of parsing my sentences. Both are asserted in Rust already, on the `MakeOffer` and
-## `SpeciesFacts` structs — and **that proves nothing about the dictionary**, which is the lesson
-## forty lines above this one: a Variant dict's contents are invisible from Rust, and I have shipped
-## an inverted field that way before. The keys and their types only exist here.
+## `species_sheets` grew `reading_ranges` (ASSA-256) so Nacre can draw a bar instead of parsing my
+## sentences. It is asserted in Rust already, on `SpeciesFacts` — and **that proves nothing about the
+## dictionary**, which is the lesson forty lines above this one: a Variant dict's contents are
+## invisible from Rust, and I have shipped an inverted field that way before. The keys and their
+## types only exist here.
+##
+## **THE OTHER HALF OF ASSA-256 IS NOT HERE, AND THAT IS A CORRECTION.** I wrote a `cost` assertion
+## into this test too, and the mutation that deletes `"cost"` from the dict did not redden it: a
+## fresh world's player holds nothing, so `make_offers` returns an EMPTY array and the whole loop
+## was skipped. It was decoration. `test_buttons.gd::test_every_menu_row_carries_what_one_batch_spends`
+## already guards it where a player has actually mined, and that mutation reddens there by name.
 ##
 ## **A RANGE IS ASSERTED AS A BAND THAT CONTAINS ITS TEXT, never against a literal.** Species are
 ## generated, so a hard-coded 26-50 would be a photograph of worldgen. What must hold is the
@@ -199,7 +205,7 @@ func test_protocol_has_no_hash_builder() -> bool:
 ## **AND THE SECRET STAYS KEPT.** A fresh world has assayed nothing, so every range here must be a
 ## real band and not a point: if `lo == hi` on an unassayed sheet, the exact value has crossed and
 ## the thing the assay is paid for is already in the client's memory.
-func test_the_binding_hands_gdscript_a_batch_cost_and_a_readings_two_ends() -> bool:
+func test_the_binding_hands_gdscript_a_readings_two_ends() -> bool:
 	var host := AssaySimHost.new()
 	if not host.start(AssaySimHost.fresh_welcome_json("14247", "marlow")):
 		return _fail("no world: %s" % host.fail_reason)
@@ -248,18 +254,4 @@ func test_the_binding_hands_gdscript_a_batch_cost_and_a_readings_two_ends() -> b
 			checked += 1
 	if checked < 6:
 		return _fail("only %d readings compared; a sheet has six properties" % checked)
-
-	# --- what one batch spends. A fresh player holds nothing, so there may be no offers at all;
-	# that is a real state and not a failure, so the premise is asserted rather than assumed.
-	var offers: Array = host.make_offers(0)
-	var with_cost := 0
-	for entry in offers:
-		var offer: Dictionary = entry
-		if not offer.has("cost"):
-			return _fail("a make offer has no `cost`: %s" % offer.keys())
-		if int(offer["cost"]) < 1:
-			return _fail("a batch that costs %d is not a batch: %s" % [int(offer["cost"]), offer])
-		with_cost += 1
-	if not offers.is_empty() and with_cost == 0:
-		return _fail("offers exist and none carried a cost")
 	return true
