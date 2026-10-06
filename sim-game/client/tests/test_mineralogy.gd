@@ -32,6 +32,19 @@ func _fail(reason: String) -> bool:
 	return false
 
 
+## **FREE THE BODY ONLY AFTER THE MESSAGE IS BUILT.** `Node.free()` is immediate and GDScript
+## evaluates a format's argument list at the call, so `tab.free()` on the line above a `_fail` that
+## quotes the tab destroys the only useful half of the failure: the statement errors on a freed
+## object, `_fail` is never reached, and the runner reports "returned false and said nothing".
+##
+## **FOUND BY MUTATING THIS FILE'S OWN SUBJECT.** Four assertions here caught their mutation and
+## could not say what they had caught. One call rather than two lines, so the order cannot be got
+## wrong again.
+func _fail_and_free(node: Node, reason: String) -> bool:
+	node.free()
+	return _fail(reason)
+
+
 ## A WORLD AND ITS LOCAL PLAYER, through the host the client really uses.
 ##
 ## `AssaySimHost`, not `AssaySim`: the binding class is abstract from GDScript's side and every
@@ -75,27 +88,22 @@ func test_every_question_is_stacked_and_said_verbatim() -> bool:
 	var tab := AssayMineralogy.new()
 	tab.show_answers(answers)
 	if tab.shown_count() != answers.size():
-		tab.free()
-		return _fail("the sim answered %d questions and the tab shows %d"
+		return _fail_and_free(tab, "the sim answered %d questions and the tab shows %d"
 				% [answers.size(), tab.shown_count()])
 	for index in answers.size():
 		var expected := String((answers[index] as Dictionary).get("headline", ""))
 		if expected == "":
-			tab.free()
-			return _fail("the binding sent an empty headline, which the sim never produces")
+			return _fail_and_free(tab, "the binding sent an empty headline, which the sim never produces")
 		if tab.headline_at(index).text != expected:
-			tab.free()
-			return _fail("answer %d reads `%s` and the sim said `%s`"
+			return _fail_and_free(tab, "answer %d reads `%s` and the sim said `%s`"
 					% [index, tab.headline_at(index).text, expected])
 	# AND THE ANSWERS ARE THE FIRST THING IN THE BODY, which is the ruling: a tab that opens on a
 	# grid makes the player do the collating again. Asked of child order, not of a comment.
 	if tab.get_child(0) != tab.answers_box:
-		tab.free()
-		return _fail("the answers are not the first thing in the body: child 0 is `%s`"
+		return _fail_and_free(tab, "the answers are not the first thing in the body: child 0 is `%s`"
 				% tab.get_child(0).name)
 	if tab.headline_at(0).get_parent() != tab.answers_box:
-		tab.free()
-		return _fail("the first headline is not inside the answers box")
+		return _fail_and_free(tab, "the first headline is not inside the answers box")
 	tab.free()
 	return true
 
@@ -117,13 +125,11 @@ func test_the_body_spends_no_control_on_choosing_a_question() -> bool:
 		var names := []
 		for control in controls:
 			names.append("%s(%s)" % [control.get_class(), control.name])
-		tab.free()
-		return _fail(("the body holds %d controls for %d answers, so something is furniture: %s")
+		return _fail_and_free(tab, ("the body holds %d controls for %d answers, so something is furniture: %s")
 				% [controls.size(), answers.size(), ", ".join(names)])
 	for control in controls:
 		if not (control is Button):
-			tab.free()
-			return _fail("a control in this body is a `%s`" % control.get_class())
+			return _fail_and_free(tab, "a control in this body is a `%s`" % control.get_class())
 	tab.free()
 	return true
 
@@ -149,17 +155,14 @@ func test_every_control_is_above_the_evidence_list() -> bool:
 		tab.evidence.add_child(row)
 	var below := _controls_under(tab.evidence)
 	if not below.is_empty():
-		tab.free()
-		return _fail("%d control(s) sit inside the evidence list, which is below the fold"
+		return _fail_and_free(tab, "%d control(s) sit inside the evidence list, which is below the fold"
 				% below.size())
 	var children := tab.get_children()
 	if children.find(tab.answers_box) > children.find(tab.evidence):
-		tab.free()
-		return _fail("the answers and their controls sit below the evidence list")
+		return _fail_and_free(tab, "the answers and their controls sit below the evidence list")
 	for control in _controls_under(tab):
 		if control.get_parent() != tab.answers_box:
-			tab.free()
-			return _fail("control `%s` is not inside the answers box, so nothing keeps it above "
+			return _fail_and_free(tab, "control `%s` is not inside the answers box, so nothing keeps it above "
 					% control.name + "the list")
 	tab.free()
 	return true
@@ -178,15 +181,12 @@ func test_the_species_rows_sit_under_the_headlines_and_not_in_place_of_them() ->
 		tab.evidence.add_child(row)
 		rows += 1
 	if tab.evidence.get_child_count() != rows:
-		tab.free()
-		return _fail("the evidence box did not take the rows it was given")
+		return _fail_and_free(tab, "the evidence box did not take the rows it was given")
 	# The headlines are NOT among them, and the evidence box is below them in the body.
 	if tab.evidence.get_parent() != tab:
-		tab.free()
-		return _fail("the evidence box is not a child of the body")
+		return _fail_and_free(tab, "the evidence box is not a child of the body")
 	if tab.get_children().find(tab.evidence) < tab.get_children().find(tab.answers_box):
-		tab.free()
-		return _fail("the evidence sits ABOVE the answers it is evidence for")
+		return _fail_and_free(tab, "the evidence sits ABOVE the answers it is evidence for")
 	tab.free()
 	return true
 
@@ -222,19 +222,15 @@ func test_an_unanswered_question_still_says_something_and_offers_no_walk() -> bo
 	tab.show_answers(answers)
 	# THE SIM'S SENTENCE, NOT SILENCE AND NOT A BLANK TAB.
 	if tab.headline_at(1).text != String(unanswered.get("headline", "")):
-		tab.free()
-		return _fail("the tab said `%s` and the sim said `%s`"
+		return _fail_and_free(tab, "the tab said `%s` and the sim said `%s`"
 				% [tab.headline_at(1).text, unanswered.get("headline", "")])
 	if tab.headline_at(1).text == "":
-		tab.free()
-		return _fail("an unanswered question rendered an empty line, which box 5 forbids")
+		return _fail_and_free(tab, "an unanswered question rendered an empty line, which box 5 forbids")
 	# AND NOTHING TO WALK TO, SO NO BUTTON THAT COULD ONLY REFUSE (Maren, ASSA-215).
 	if tab.walk_control_at(1).visible:
-		tab.free()
-		return _fail("nothing answers and `go here` is still on screen")
+		return _fail_and_free(tab, "nothing answers and `go here` is still on screen")
 	if tab.walk_target_at(1) != null:
-		tab.free()
-		return _fail("no answer, but the body kept a destination: %s" % tab.walk_target_at(1))
+		return _fail_and_free(tab, "no answer, but the body kept a destination: %s" % tab.walk_target_at(1))
 	print("    ASSA-254: unanswered rendering driven by seed 1 q1 -- `%s`" % tab.headline_at(1).text)
 	tab.free()
 	return true
@@ -272,24 +268,19 @@ func test_an_answer_underfoot_says_so_and_offers_no_walk() -> bool:
 			tab.show_answers(answers)
 			# THE BODY'S HALF: the sentence is rendered, and the control is absent, not greyed.
 			if tab.headline_at(index).text != String(answer.get("headline", "")):
-				tab.free()
-				return _fail("the underfoot answer reads `%s` and the sim said `%s`"
+				return _fail_and_free(tab, "the underfoot answer reads `%s` and the sim said `%s`"
 						% [tab.headline_at(index).text, answer.get("headline", "")])
 			if not tab.headline_at(index).visible:
-				tab.free()
-				return _fail("the underfoot answer is not on screen at all")
+				return _fail_and_free(tab, "the underfoot answer is not on screen at all")
 			if tab.walk_control_at(index).visible:
-				tab.free()
-				return _fail(("seed %s q%d: the answer is underfoot and `go here` is on screen, "
+				return _fail_and_free(tab, ("seed %s q%d: the answer is underfoot and `go here` is on screen, "
 						+ "which would walk the player to the tile they stand on")
 						% [seed_text, index])
 			if tab.walk_control_at(index).disabled:
-				tab.free()
-				return _fail("the walk control is greyed rather than absent, which Maren ruled "
+				return _fail_and_free(tab, "the walk control is greyed rather than absent, which Maren ruled "
 						+ "against: a dead control that looks live")
 			if tab.walk_target_at(index) != null:
-				tab.free()
-				return _fail("the body kept a destination for an answer underfoot: %s"
+				return _fail_and_free(tab, "the body kept a destination for an answer underfoot: %s"
 						% tab.walk_target_at(index))
 			print("    ASSA-262: underfoot arm driven by seed %s q%d -- `%s`"
 					% [seed_text, index, tab.headline_at(index).text])
@@ -314,11 +305,9 @@ func test_an_answer_elsewhere_offers_the_walk_to_the_sims_tile() -> bool:
 	var tab := AssayMineralogy.new()
 	tab.show_answers(answers)
 	if not tab.walk_control_at(0).visible:
-		tab.free()
-		return _fail("the sim named a walk and `go here` is hidden")
+		return _fail_and_free(tab, "the sim named a walk and `go here` is hidden")
 	if tab.walk_target_at(0) != answer.get("walk_to"):
-		tab.free()
-		return _fail("the body would walk to %s and the sim named %s"
+		return _fail_and_free(tab, "the body would walk to %s and the sim named %s"
 				% [tab.walk_target_at(0), answer.get("walk_to")])
 	tab.free()
 	return true
@@ -337,8 +326,7 @@ func test_the_walk_control_is_the_quiet_weight() -> bool:
 	tab.show_answers(answers)
 	var go_here := tab.walk_control_at(0)
 	if go_here.theme_type_variation != &"Quiet":
-		tab.free()
-		return _fail("`go here` is the `%s` weight, not Quiet" % go_here.theme_type_variation)
+		return _fail_and_free(tab, "`go here` is the `%s` weight, not Quiet" % go_here.theme_type_variation)
 	tab.free()
 	return true
 
@@ -362,11 +350,9 @@ func test_go_here_emits_the_sims_tile_unchanged() -> bool:
 	tab.go_here_pressed.connect(func(tile: Vector2i) -> void: heard.append(tile))
 	tab.walk_control_at(0).pressed.emit()
 	if heard.size() != 1:
-		tab.free()
-		return _fail("pressing `go here` emitted %d tiles, not 1" % heard.size())
+		return _fail_and_free(tab, "pressing `go here` emitted %d tiles, not 1" % heard.size())
 	if heard[0] != answer.get("walk_to"):
-		tab.free()
-		return _fail("`go here` would walk to %s and the sim named %s"
+		return _fail_and_free(tab, "`go here` would walk to %s and the sim named %s"
 				% [heard[0], answer.get("walk_to")])
 	tab.free()
 	return true
@@ -379,14 +365,11 @@ func test_with_no_world_the_tab_says_one_sentence_and_offers_no_walk() -> bool:
 	var tab := AssayMineralogy.new()
 	tab.show_answers([])
 	if tab.shown_count() != 1:
-		tab.free()
-		return _fail("with no world the tab shows %d lines, not 1" % tab.shown_count())
+		return _fail_and_free(tab, "with no world the tab shows %d lines, not 1" % tab.shown_count())
 	if tab.headline_at(0).text != AssayMineralogy.NO_WORLD:
-		tab.free()
-		return _fail("the no-world line reads `%s`" % tab.headline_at(0).text)
+		return _fail_and_free(tab, "the no-world line reads `%s`" % tab.headline_at(0).text)
 	if tab.walk_control_at(0).visible:
-		tab.free()
-		return _fail("there is no world and `go here` is on screen")
+		return _fail_and_free(tab, "there is no world and `go here` is on screen")
 	tab.free()
 	return true
 
@@ -401,15 +384,12 @@ func test_a_row_the_sim_stops_answering_leaves_the_screen() -> bool:
 	var tab := AssayMineralogy.new()
 	tab.show_answers(answers)
 	if tab.shown_count() != answers.size():
-		tab.free()
-		return _fail("the tab shows %d of %d answers" % [tab.shown_count(), answers.size()])
+		return _fail_and_free(tab, "the tab shows %d of %d answers" % [tab.shown_count(), answers.size()])
 	tab.show_answers([])
 	if tab.shown_count() != 1:
-		tab.free()
-		return _fail("after the world ended the tab still shows %d lines" % tab.shown_count())
+		return _fail_and_free(tab, "after the world ended the tab still shows %d lines" % tab.shown_count())
 	if tab.walk_control_at(1).visible or tab.walk_target_at(1) != null:
-		tab.free()
-		return _fail("the second answer's walk survived the world it was about")
+		return _fail_and_free(tab, "the second answer's walk survived the world it was about")
 	tab.free()
 	return true
 
