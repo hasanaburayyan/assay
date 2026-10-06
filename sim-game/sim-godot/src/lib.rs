@@ -377,6 +377,24 @@ impl AssaySim {
     /// EVERY SPECIES AS THE PLAYERS KNOW IT. `assayed` says whether the sheet
     /// is exact; until then each reading is the sim's own 25-wide band as TEXT
     /// ("26-50"), never a number this client narrowed down itself.
+    ///
+    /// **`reading_ranges` IS THE SAME ANSWER FOR A SURFACE THAT DRAWS IT** — a
+    /// `Vector2i` of the band's two ends per property, `(v, v)` once assayed
+    /// (ASSA-256). It exists so a bar is not drawn by parsing `readings`, which
+    /// is a renderer taking a fact out of our wording. The two dictionaries
+    /// have the same keys and come from one sim function, so the bar and the
+    /// text beside it cannot drift apart.
+    ///
+    /// **WHAT STILL DOES NOT CROSS, AND MUST NOT: the exact value of an
+    /// unassayed sheet.** A rough range is the sim's band, so `reading_ranges`
+    /// carries no more than `readings` always did. The number an assay buys
+    /// stays out of this process until someone buys it.
+    ///
+    /// **THE SCALE THESE SIT ON IS NOT HERE YET.** Readings run 1..=100, and a
+    /// bar needs that denominator — but the sim publishes it nowhere a host can
+    /// read (`worldgen::roll` is `rng.range(1, 101)`, `Sheet::band` clamps its
+    /// top at 100), and a host typing `100` would be inventing a rule that
+    /// fails silently the day the roll moves. Own item; do not guess it here.
     #[func]
     pub fn species_sheets(&self) -> Array<VarDictionary> {
         self.species_facts()
@@ -389,12 +407,23 @@ impl AssaySim {
                         acc
                     },
                 );
+                let reading_ranges = species.reading_ranges.iter().fold(
+                    VarDictionary::new(),
+                    |mut acc: VarDictionary, (property, (lo, hi))| {
+                        acc.set(
+                            &gstring(property),
+                            Vector2i::new(i32::from(*lo), i32::from(*hi)),
+                        );
+                        acc
+                    },
+                );
                 let mut row = vdict! {
                     "id" => species.id,
                     "name" => &gstring(&species.name).to_variant(),
                     "symbol" => &gstring(&species.symbol).to_variant(),
                     "assayed" => species.assayed,
                     "readings" => &readings.to_variant(),
+                    "reading_ranges" => &reading_ranges.to_variant(),
                     "hand_minable" => species.hand_minable,
                     "hand_lit_fuel" => species.hand_lit_fuel,
                     // ALWAYS PRESENT AND NEVER EMPTY, which is why it is here
@@ -515,6 +544,14 @@ impl AssaySim {
     /// too. It is a thing to SHOW and must be re-read every refresh; nothing a
     /// button sends is derived from it (ASSA-55: one batch, always).
     ///
+    /// **`cost` IS WHAT ONE BATCH SPENDS, and it is here because the row is a
+    /// CHOICE** (ASSA-256, Systems & UI). It was the one number in `MakeOffer`
+    /// that did not cross, so a surface wanting "spend 2, get 1" as data rather
+    /// than prose had to read it out of `line` — parsing our own sentence, the
+    /// exact failure the paragraph above warns about for `verb`. Like `count`
+    /// it is a thing to SHOW: a batch is always one batch, so nothing a button
+    /// sends is derived from it either.
+    ///
     /// **`makes` IS THE OUTPUT ITEM, AND IT IS HERE BECAUSE THE MENU DRAWS IT**
     /// (Maren's ruling on ASSA-117 box 4). Without it a client that wants to
     /// show what a row produces has only `offer.input`, so every row in a menu
@@ -559,6 +596,7 @@ impl AssaySim {
                     "species" => offer.input.species.0 as i64,
                     "grade" => &gstring(&offer.input.grade.letter().to_string()).to_variant(),
                     "count" => offer.have as i64,
+                    "cost" => offer.cost as i64,
                 };
                 if let Some(makes) = offer.makes {
                     row.set(
@@ -1795,6 +1833,14 @@ pub struct SpeciesFacts {
     /// Property name to reading: the exact value once assayed, the sim's band
     /// ("26-50") until then.
     pub readings: Vec<(String, String)>,
+    /// The same readings as their two ends, for a surface that DRAWS a
+    /// reading instead of printing it (`sim::debug::reading_range`).
+    ///
+    /// Parallel to `readings` and from the same sim call, so the bar and the
+    /// text beside it cannot disagree about one rock. An assayed reading is
+    /// `(v, v)` — a point is a zero-width band, so a host draws one shape and
+    /// needs no `assayed` branch of its own.
+    pub reading_ranges: Vec<(String, (u8, u8))>,
     /// Still a bool and still sent, because two callers ask a yes/no question
     /// and neither of them is wording anything: the scripted session plan
     /// picks a deposit it can actually swing at, and the TILE line gates
@@ -2147,6 +2193,15 @@ impl AssaySim {
                         (
                             property.name().to_string(),
                             sim::debug::reading(species, property),
+                        )
+                    })
+                    .collect(),
+                reading_ranges: Property::ALL
+                    .into_iter()
+                    .map(|property| {
+                        (
+                            property.name().to_string(),
+                            sim::debug::reading_range(species, property),
                         )
                     })
                     .collect(),
@@ -3617,6 +3672,57 @@ mod tests {
         }
         assert_eq!(exact.readings.len(), Property::ALL.len());
         assert_eq!(exact.name, sim.world().species(first).name());
+    }
+
+    /// **THE BAR AND THE TEXT BESIDE IT ARE ONE ANSWER** (ASSA-256).
+    /// `readings` crosses the sentence and `reading_ranges` crosses the two
+    /// numbers a surface draws. A panel whose band disagrees with the string
+    /// under it is worse than either alone: a player cannot tell which of them
+    /// lied, and both came from us.
+    ///
+    /// **CHECKED AS THE TWO PAYLOADS AGAINST EACH OTHER**, the shape
+    /// `hand_minable` is checked in. No expected number is written here, so
+    /// worldgen may move and this still means what it says.
+    ///
+    /// The last assertion is the one a host's drawing code leans on: a band is
+    /// a point EXACTLY when the species is assayed, so one shape draws both
+    /// states and no renderer needs an `assayed` branch to decide which.
+    #[test]
+    fn a_readings_band_and_its_text_cross_as_one_answer() {
+        let mut sim = AssaySim::from_world(fresh());
+        let first = sim.world().species[0].id;
+
+        for assayed in [false, true] {
+            sim.world.species_mut(first).assayed = assayed;
+            let facts = &sim.species_facts()[0];
+            assert_eq!(facts.assayed, assayed);
+            assert_eq!(facts.reading_ranges.len(), Property::ALL.len());
+
+            for (property, reading) in &facts.readings {
+                let found = facts
+                    .reading_ranges
+                    .iter()
+                    .find(|(p, _)| p == property)
+                    .map(|(_, range)| *range);
+                let Some((lo, hi)) = found else {
+                    panic!("{property} crossed a reading and no range to draw it with");
+                };
+                let expected = if assayed {
+                    lo.to_string()
+                } else {
+                    format!("{lo}-{hi}")
+                };
+                assert_eq!(
+                    reading, &expected,
+                    "{property}: the text says {reading} and the band says {lo}-{hi}"
+                );
+                assert_eq!(
+                    assayed,
+                    lo == hi,
+                    "{property}: a zero-width band must mean assayed and nothing else"
+                );
+            }
+        }
     }
 
     /// THE MAP LETTER IS NOT THE NAME'S FIRST CHARACTER, and a client reaching
