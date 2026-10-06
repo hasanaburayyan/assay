@@ -123,7 +123,7 @@ const NORTH_WALK_TICKS := 600
 enum Phase { SETTLE_JOIN, SHOOT_JOIN, PLAY, SETTLE_PACK, SHOOT_PACK, SETTLE_HALT, SHOOT_HALT,
 		SETTLE_PLAY, SHOOT_PLAY,
 		SETTLE_FOLD, MEASURE_CONTROLS, SETTLE_MENUS, SHOOT_MENUS, SCROLL_ROCKS, SETTLE_ROCKS,
-		SHOOT_ROCKS, SCROLL_MAKE, SETTLE_MAKE, ANCHOR_MAKE, SHOOT_MAKE, WALK_NORTH, SETTLE_NORTH_LOG, SHOOT_NORTH_LOG, SETTLE_NORTH_CLEAR,
+		SHOOT_ROCKS, OPEN_MAKE, SCROLL_MAKE, SETTLE_MAKE, ANCHOR_MAKE, SHOOT_MAKE, WALK_NORTH, SETTLE_NORTH_LOG, SHOOT_NORTH_LOG, SETTLE_NORTH_CLEAR,
 		SHOOT_NORTH_CLEAR, WALK_OFF, PRESS_V, SETTLE_SCHEMATIC, SHOOT_SCHEMATIC, PRESS_K,
 		SETTLE_KEY, SHOOT_KEY, DONE }
 ## What `_play_frames` did with its last tick.
@@ -198,6 +198,9 @@ var _controls_after := {}
 ## that reached the Game Director held `bench` and `rocks` and no `make` at all. Stdout is not the
 ## surface either of her boxes asks about, and a report taken a phase early cannot tell you so.
 var _make_frame := {}
+## And the same for `05-rocks.png`, for the same reason and after the same surprise: see
+## `_capture_rocks`.
+var _rocks_frame := {}
 ## How many times the column has been re-anchored on the `make` heading. A scroll is a request the
 ## layout answers on a LATER frame, so one pass can land short; this is capped and reported.
 var _make_scrolls := 0
@@ -458,7 +461,20 @@ func _process(_delta: float) -> bool:
 			# frame. `_rocks_report` guards it instead, and asks for MORE: two whole ROWS in the
 			# frame, which is the least a picture needs to show that two rocks differ.
 			_shoot("05-rocks.png", PackedStringArray())
-			_phase = Phase.SCROLL_MAKE
+			# WHAT IS IN THIS FRAME, READ IN THIS FRAME. See `_capture_rocks`.
+			_capture_rocks()
+			# **THE CRAFTING MENU HAS BEEN FOLDED SINCE `SHOOT_PLAY` AND NOTHING PUT IT BACK.** That
+			# fold is deliberate and must stay -- `03-log.png` and the controls measurement need the
+			# menu out of the way so the only thing moving is the log -- but it is still shut four
+			# phases later, and the first `11-make.png` was a picture of its own closed toggle. An
+			# invisible child gets no space from a container, so `_make`'s rect had collapsed onto
+			# `bench`'s heading and the scroll aimed at it landed a whole section past `make`.
+			_screen._show_make(true)
+			_phase = Phase.OPEN_MAKE
+		Phase.OPEN_MAKE:
+			# THE ROWS NEED A LAYOUT PASS BEFORE ANYTHING MEASURES THEM: `_show_make` only flips
+			# `visible`, and the rects are the folded ones until the column has sorted its children.
+			_settle(Phase.SCROLL_MAKE)
 		Phase.SCROLL_MAKE:
 			_make_scrolls = 0
 			_scroll_to_make()
@@ -1261,14 +1277,13 @@ func _capture_make() -> void:
 		if said.is_empty():
 			continue
 		var rect := row.get_global_rect()
-		rows.append({"said": " ".join(said), "rect": rect, "standing": _standing_in(frame, rect),
+		rows.append({"said": " ".join(said), "rect": rect, "standing": _standing_in(frame, row),
 				"dead_end": " ".join(said).contains("dead end")})
 	_make_frame = {
 		"frame": frame,
 		"heading": "" if anchor == null else String(anchor.text),
 		"heading_rect": Rect2() if anchor == null else anchor.get_global_rect(),
-		"heading_standing": "absent" if anchor == null
-				else _standing_in(frame, anchor.get_global_rect()),
+		"heading_standing": "absent" if anchor == null else _standing_in(frame, anchor),
 		"rows": rows,
 		"scrolls": _make_scrolls,
 		"offset": _make_anchor_offset(),
@@ -1278,7 +1293,15 @@ func _capture_make() -> void:
 ## WHERE A RECT STANDS IN A FRAME, in `_standing`'s words but asked of a rect that was measured in
 ## the frame being written rather than of a live node. The live reading is the right one while the
 ## screen is still the shot; these two shots are the ones where it is not.
-func _standing_in(frame: Rect2, rect: Rect2) -> String:
+func _standing_in(frame: Rect2, control: Control) -> String:
+	# **`hidden` FIRST, AND THAT ORDER IS THIS LEG'S WHOLE WORTH** -- without it the first run of this
+	# leg went GREEN over a frame with five rows in it that nobody could see. A Godot container gives
+	# an invisible child no space, so the rect it keeps is the last one it was laid out at: measuring
+	# the rect alone says "whole in frame" about a row that is not drawn. `_standing` has asked this
+	# question first since ASSA-117 and I wrote its sibling without it.
+	if not control.is_visible_in_tree():
+		return "hidden"
+	var rect := control.get_global_rect()
 	if frame.encloses(rect):
 		return "whole"
 	return "CUT" if frame.intersects(rect) else "OFF SCREEN"
@@ -1316,11 +1339,17 @@ func _scroll_to_rocks() -> void:
 ## cannot be: it is taller than the box. Two is the smallest number that can show the thing a roster
 ## panel exists for -- that two rocks are described differently. A guard of "one" would pass on a
 ## picture that cannot answer any comparison, and a guard of "all six" could never pass at all.
-func _rocks_report() -> Dictionary:
+##
+## **AND IT IS READ AT THE SHOT NOW, NOT AT REPORT TIME, BECAUSE A LATER PHASE MOVED IT** (ASSA-158).
+## This asked the LIVE screen about a frame written six phases earlier, which was correct only while
+## nothing afterwards touched the column -- the exact luck `_controls_after`'s own comment describes,
+## two functions below. Re-opening the crafting menu for `11-make.png` scrolls the roster out of the
+## box, and this leg went red over `05-rocks.png`, a picture with three whole rows in it. The leg was
+## wrong, not the shot, and it would have been just as wrong the day it went green by luck.
+func _capture_rocks() -> void:
 	var rocks: Control = _screen._species
 	var frame := _frame_for(rocks)
-	var whole := 0
-	var rows := 0
+	var rows: Array = []
 	for child in rocks.get_children():
 		var row := child as Control
 		if row == null:
@@ -1328,20 +1357,29 @@ func _rocks_report() -> Dictionary:
 		var titles := row.find_children("SpeciesLine", "Label", true, false)
 		if titles.is_empty():
 			continue
-		rows += 1
 		var said := PackedStringArray()
 		for label in row.find_children("*", "Label", true, false):
 			var text := String((label as Label).text)
 			if text != "":
 				said.append(text)
-		var rect := row.get_global_rect()
-		var standing := "whole"
-		if not frame.encloses(rect):
-			standing = "CUT" if frame.intersects(rect) else "OFF SCREEN"
-		else:
+		rows.append({"said": " ".join(said), "rect": row.get_global_rect(),
+				"standing": _standing_in(frame, row)})
+	_rocks_frame = {"frame": frame, "rows": rows}
+
+
+func _rocks_report() -> Dictionary:
+	if _rocks_frame.is_empty():
+		return _not_asked("no 05-rocks.png frame was captured, so there is nothing to describe")
+	var frame: Rect2 = _rocks_frame["frame"]
+	var captured: Array = _rocks_frame["rows"]
+	var whole := 0
+	var rows := captured.size()
+	for row in captured:
+		var rect: Rect2 = row["rect"]
+		if String(row["standing"]) == "whole":
 			whole += 1
-		print("    row %-5s y %5d..%-5d  %s" % [standing, rect.position.y, rect.end.y,
-				" ".join(said)])
+		print("    row %-5s y %5d..%-5d  %s" % [row["standing"], rect.position.y, rect.end.y,
+				row["said"]])
 	print("  rocks: %d rows, %d whole in the frame y %d..%d" % [rows, whole, frame.position.y,
 			frame.end.y])
 	if rows == 0:
@@ -1380,9 +1418,12 @@ func _make_report() -> Dictionary:
 			_make_frame["offset"], frame.position.y, frame.end.y])
 	var dead_ends := 0
 	var dead_ends_whole := 0
+	var whole := 0
 	for row in rows:
 		var said: String = String(row["said"])
 		var rect: Rect2 = row["rect"]
+		if String(row["standing"]) == "whole":
+			whole += 1
 		if row["dead_end"]:
 			dead_ends += 1
 			if String(row["standing"]) == "whole":
@@ -1394,6 +1435,9 @@ func _make_report() -> Dictionary:
 	if String(_make_frame["heading_standing"]) != "whole":
 		return _refused("the make shot does not start at the `make` heading: it is %s"
 				% _make_frame["heading_standing"])
+	if whole == 0:
+		return _refused("the make shot holds the `make` heading and not one of its %d rows: the "
+				% rows.size() + "first is %s" % rows[0]["standing"])
 	if dead_ends > 0 and dead_ends_whole == 0:
 		return _refused("the make shot holds %d dead-end row(s) and none of them whole" % dead_ends)
 	if dead_ends == 0:
