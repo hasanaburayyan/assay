@@ -573,21 +573,38 @@ func _report() -> void:
 		if h > tallest_h:
 			tallest_h = h
 			tallest = which
-	# THE ARITHMETIC, KEPT BECAUSE A RULING WAS MADE ON IT, AND NO LONGER THE VERDICT. The panel is
-	# built, so the fold is measured against the clip directly (below). These two should agree; if
-	# they ever disagree the measured one is right and this one has a term missing.
-	var always_on := _always_on_max
-	var spent := always_on + _tab_strip_h + float(_separation) * 2.0
-	var budget := _clip_min - spent
+	# **THE ARITHMETIC DISAGREED WITH THE MEASUREMENT AND THE ARITHMETIC WAS WRONG. CORRECTED HERE, AND
+	# THE OLD LINE IS NOT KEPT, BECAUSE IT WAS A WRONG NUMBER PRINTED BESIDE A RIGHT ONE.**
+	#
+	# What it used to print: `budget = clip - (always_on + strip + 2 separations)`, which on the built
+	# panel came out at 184 px -- next to a measured `make` reach of 334 px that the fold check says is
+	# ABOVE THE FOLD on every tick of the run. Both cannot be true, and my own note here said the
+	# measured one is right and this one has a term missing. It did. **The term is not missing, it is
+	# SPURIOUS: `do`, the tab strip and those two separations are OUTSIDE the scroll box, and `_clip_min`
+	# is the scroll box's own rect** (`_measure` intersects the clipping ancestors of `_carrying`). So the
+	# clip has already had them taken out of it, and subtracting them again charged this panel 174 px
+	# twice.
+	#
+	# **WHY IT WAS RIGHT BEFORE AND IS WRONG NOW, which is the whole lesson:** the pre-build column had
+	# ONE scroll box around all six sections, so `you` and `do` were INSIDE the clip and subtracting them
+	# to find what was left for the rest was correct. Wren's ruling pinned `do` outside the box. The
+	# structure changed under the formula and the formula did not notice -- it is exactly the stale
+	# constant this repo's `CLAUDE.md` warns about, in a tool rather than in prose.
+	#
+	# **SO THE BUDGET FOR ONE TAB IS THE CLIP ITSELF.** No subtraction: the box a tab's body is clipped
+	# by is the room a tab's body has.
+	var budget := _clip_min
 	print("")
-	print("  THE BUDGET AS ARITHMETIC (`do` always on, one of four systems in a tab)")
-	print("    always on    %d px  at tick %d -- `do` and its heading, the only pinned section"
-			% [int(round(always_on)), _always_on_tick])
-	print("    + tab strip  %d px (MEASURED off the real strip)  + 2 separations %d px"
-			% [int(round(_tab_strip_h)), _separation * 2])
-	print("    = spent      %d px of the worst clip's %d px" % [int(round(spent)),
-			int(round(_clip_min))])
-	print("    BUDGET FOR ONE TAB   %d px" % int(round(budget)))
+	print("  THE BUDGET FOR ONE TAB IS THE SCROLL BOX ITSELF -- no subtraction, and this line was")
+	print("  WRONG until 2026-10-06: it subtracted `do` + strip + separations from a clip that")
+	print("  already excludes them, charging the panel %d px twice."
+			% int(round(_always_on_max + _tab_strip_h + float(_separation) * 2.0)))
+	print("    outside the box   %d px -- `do` %d at tick %d, strip %d, 2 separations %d (NOT charged"
+			% [int(round(_always_on_max + _tab_strip_h + float(_separation) * 2.0)),
+			int(round(_always_on_max)), _always_on_tick, int(round(_tab_strip_h)), _separation * 2])
+	print("                      to a tab, because the clip below is measured inside the box)")
+	print("    BUDGET FOR ONE TAB   %d px  (the worst clip, tick %d)"
+			% [int(round(budget)), _clip_min_tick])
 	print("    TALLEST TAB  `%s` body at %d px (its heading is the tab button now)"
 			% [tallest, int(round(tallest_h))])
 	var slack := budget - tallest_h
