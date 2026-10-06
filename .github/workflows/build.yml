@@ -206,7 +206,10 @@ jobs:
       # int(), worth half a level per channel on every build), and it must resist a small one-sided
       # tail (fails a bare mean, which is why Maren's call was "trimmed, not bare"). Proved red on
       # the real previous file, not on a mutant: `art/check_plate_statistic.py <dir>` judges any
-      # copy of ui_theme.py, and 62835a2's fails property 1. Stdlib only, 0.6s.
+      # copy of ui_theme.py, and 62835a2's fails property 1. Stdlib only; it encodes three
+      # 120x120 sheets and reads them back through the shipped decoder. No wall-clock figure
+      # here on purpose -- the studio Mac is too loaded this week for an honest one, and the
+      # other comments' times were measured when it was not.
       - name: The pack plate's statistic still has all three properties
         run: python3 art/check_plate_statistic.py
       # A FIRE IS NOT MADE OF THE WALLS (ASSA-137). The check above guards the
