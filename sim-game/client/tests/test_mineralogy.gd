@@ -31,6 +31,20 @@ func _fail(reason: String) -> bool:
 	return false
 
 
+## **FREE THE BODY AFTER THE MESSAGE IS BUILT, NEVER BEFORE** (ASSA-262).
+##
+## Every failure here used to read `tab.free()` and then `return _fail("... %s" % tab.something())`.
+## GDScript frees on the first line, so the second read a dead object, the error aborted the function
+## before `_fail` ran, and the runner reported **"returned false and said nothing"** -- a red test with
+## no finding in it. A mutation of mine surfaced exactly that, which is the only reason I know.
+##
+## Arguments are evaluated before the call, so `reason` is built while `tab` is still alive and the
+## ordering cannot be got wrong at a call site again.
+func _fail_freeing(body: Node, reason: String) -> bool:
+	body.free()
+	return _fail(reason)
+
+
 ## A WORLD AND ITS LOCAL PLAYER, through the host the client really uses.
 ##
 ## `AssaySimHost`, not `AssaySim`: the binding class is abstract from GDScript's side and every
@@ -136,24 +150,19 @@ func test_an_unanswered_question_still_says_something_and_offers_no_walk() -> bo
 	tab.show_answer(answers)
 	# THE SIM'S SENTENCE, NOT SILENCE AND NOT A BLANK TAB.
 	if tab.headline_text(1) != String(unanswered.get("headline", "")):
-		tab.free()
-		return _fail("the tab said `%s` and the sim said `%s`"
+		return _fail_freeing(tab, "the tab said `%s` and the sim said `%s`"
 				% [tab.headline_text(1), unanswered.get("headline", "")])
 	if tab.headline_text(1) == "":
-		tab.free()
-		return _fail("an unanswered question rendered an empty tab, which box 5 forbids")
+		return _fail_freeing(tab, "an unanswered question rendered an empty tab, which box 5 forbids")
 	# AND NOTHING TO WALK TO, SO NO BUTTON THAT COULD ONLY REFUSE (Maren, ASSA-215).
 	if tab.walk_shown(1):
-		tab.free()
-		return _fail("nothing answers and `go here` is still on screen")
+		return _fail_freeing(tab, "nothing answers and `go here` is still on screen")
 	if tab.tile_for(1) != null:
-		tab.free()
-		return _fail("no answer, but the body kept a destination: %s" % tab.tile_for(1))
+		return _fail_freeing(tab, "no answer, but the body kept a destination: %s" % tab.tile_for(1))
 	# NOTHING ANSWERS IS NOT "THE ANSWER IS HERE". Two states hide the button and they are different
 	# news; a body that conflated them would report this one as underfoot (ASSA-263).
 	if tab.underfoot_for(1):
-		tab.free()
-		return _fail("nothing answers, and the body says the answer is under the player's feet")
+		return _fail_freeing(tab, "nothing answers, and the body says the answer is under the player's feet")
 	print("    ASSA-254: unanswered rendering driven by seed 1 q1 -- `%s`" % tab.headline_text(1))
 	tab.free()
 	return true
@@ -186,11 +195,9 @@ func test_an_answered_question_offers_the_walk_to_the_sims_tile() -> bool:
 	var tab := AssayMineralogy.new()
 	tab.show_answer(answers)
 	if not tab.go_here.visible:
-		tab.free()
-		return _fail("the sim named a tile and `go here` is hidden")
+		return _fail_freeing(tab, "the sim named a tile and `go here` is hidden")
 	if tab.target_tile() != answer.get("tile"):
-		tab.free()
-		return _fail("the body would walk to %s and the sim named %s"
+		return _fail_freeing(tab, "the body would walk to %s and the sim named %s"
 				% [tab.target_tile(), answer.get("tile")])
 	tab.free()
 	return true
@@ -236,16 +243,13 @@ func test_an_answer_underfoot_offers_no_walk_and_still_names_the_rock() -> bool:
 	tab.show_answer(answers)
 	# ABSENT, NOT GREYED (Maren, ASSA-241 ruling 5).
 	if tab.walk_shown(1):
-		tab.free()
-		return _fail(("the answer is the tile the player is standing on and `go here` is on screen: "
+		return _fail_freeing(tab, ("the answer is the tile the player is standing on and `go here` is on screen: "
 				+ "a control whose only effect is to walk you where you already are"))
 	# AND ABSENT FOR THE RIGHT REASON, rather than absent because the tile went missing.
 	if not tab.underfoot_for(1):
-		tab.free()
-		return _fail("the body did not read the binding's `underfoot`, so the button is hidden by luck")
+		return _fail_freeing(tab, "the body did not read the binding's `underfoot`, so the button is hidden by luck")
 	if tab.tile_for(1) != here["tile"]:
-		tab.free()
-		return _fail("the answer's tile was withheld as well as the walk: %s, sim said %s"
+		return _fail_freeing(tab, "the answer's tile was withheld as well as the walk: %s, sim said %s"
 				% [tab.tile_for(1), here["tile"]])
 	# PRESSING IT ANYWAY SUBMITS NOTHING, AND IT IS THE SECOND QUESTION'S OWN BUTTON. A `MoveTo` to
 	# your own tile is a command on the wire that does nothing. This also catches the bug a single
@@ -254,8 +258,7 @@ func test_an_answer_underfoot_offers_no_walk_and_still_names_the_rock() -> bool:
 	tab.go_here_pressed.connect(func(tile: Vector2i) -> void: heard.append(tile))
 	tab._pressed(1)
 	if not heard.is_empty():
-		tab.free()
-		return _fail("a press on the hidden button still emitted %s" % heard)
+		return _fail_freeing(tab, "a press on the hidden button still emitted %s" % heard)
 	print("    ASSA-263: 14247 q1 is underfoot at %s -- `%s`" % [here["tile"], tab.headline_text(1)])
 	tab.free()
 	return true
@@ -289,11 +292,9 @@ func test_go_here_emits_the_sims_tile_unchanged() -> bool:
 	tab.go_here_pressed.connect(func(tile: Vector2i) -> void: heard.append(tile))
 	tab.go_here.pressed.emit()
 	if heard.size() != 1:
-		tab.free()
-		return _fail("pressing `go here` emitted %d tiles, not 1" % heard.size())
+		return _fail_freeing(tab, "pressing `go here` emitted %d tiles, not 1" % heard.size())
 	if heard[0] != answer.get("tile"):
-		tab.free()
-		return _fail("`go here` would walk to %s and the sim named %s"
+		return _fail_freeing(tab, "`go here` would walk to %s and the sim named %s"
 				% [heard[0], answer.get("tile")])
 	tab.free()
 	return true
