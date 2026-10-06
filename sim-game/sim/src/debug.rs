@@ -140,11 +140,23 @@ pub fn command_phrase(cmd: &PlayerCommand, world: &World) -> String {
             slot,
             item,
             count,
+            // **MIRRORS `ItemsInserted`'S SHAPE, AND A TEST MADE ME FIND IT.** The
+            // Game Director's ASSA-244 ruling took the possessive off the success
+            // line; this is the REFUSAL of the same command, and it had its own copy
+            // of the old wording. `a_refusal_mirrors_the_success_it_would_have_been`
+            // went red naming both strings side by side, which is exactly the job
+            // that test exists for — a refusal that does not say what the success
+            // would have said leaves a player comparing two sentences about one act.
+            //
+            // The id and not `building_ref` here on purpose: a command phrase is
+            // echoed back to whoever TYPED it, so it is always the typed reader's,
+            // and it takes a `PlayerCommand` which carries no world to look a kind
+            // up in.
         } => format!(
-            "putting {count} {} into building {}'s {} slot",
+            "putting {count} {} into the {} slot of building {}",
             name(item),
-            building.0,
-            slot_name(*slot)
+            slot_name(*slot),
+            building.0
         ),
         PlayerCommand::Take { building } => format!("taking from building {}", building.0),
         PlayerCommand::Pickup { building } => format!("picking up building {}", building.0),
@@ -286,13 +298,29 @@ pub enum Audience {
 /// `None` is ordinary, not a bug to paper over. When there is nothing left to
 /// name, the id is the only true thing we hold, which is exactly the shape
 /// `player_name` already uses for a departed player.
+///
+/// **THE TYPED READER GETS THE KIND AS WELL AS THE HANDLE, AND THAT IS A FIX TO
+/// MY OWN SLICE 2 (ASSA-244).** It returned a bare `building 0`, and routing
+/// `MachinePlaced` through it turned `you planted machine 1` into `you planted
+/// building 1` — the typed reader LOSING the noun to a change meant to give the
+/// pointing reader one. Three reference play-throughs caught it
+/// (`first_pick`, `first_plate`, `three_peers`), and they were right: a sentence
+/// that says only `building 1` names nothing.
+///
+/// `kind + id` is the right budget for a reader who types. They need the handle,
+/// so the id stays; they also need to know what it is, and `smelter 0` costs two
+/// characters more than `building 0` and says strictly more. The full noun
+/// (`Tonore smelter (A)`) is the POINTING reader's form, because they have no
+/// handle to keep short.
 fn building_ref(world: &World, building: BuildingId, audience: Audience) -> String {
-    let id = || format!("building {}", building.0);
+    let bare = || format!("building {}", building.0);
     match audience {
-        Audience::Typed => id(),
+        Audience::Typed => world
+            .building(building)
+            .map_or_else(bare, |b| format!("{} {}", b.kind.name(), building.0)),
         Audience::Pointed => world
             .building(building)
-            .map_or_else(id, |b| format!("the {}", building_name(world, b))),
+            .map_or_else(bare, |b| format!("the {}", building_name(world, b))),
     }
 }
 
@@ -336,14 +364,11 @@ pub fn event_line(
         }
         Event::PlayerJoined { name, .. } => format!("{name} joined"),
         Event::MiningStarted {
-            player,
-            deposit,
-            species,
+            player, species, ..
         } => format!(
-            "{} started mining {} at deposit {}",
+            "{} started mining {}",
             who(player),
-            world.species(*species).name(),
-            deposit.0
+            world.species(*species).name()
         ),
         Event::OreMined {
             player,
@@ -358,30 +383,40 @@ pub fn event_line(
                     .map_or(0, |p| p.inventory.count(*item)),
             );
             format!(
-                "{} mined {amount} {} (carrying {carrying}, {left} left in deposit {})",
+                "{} mined {amount} {} (carrying {carrying}, {left} left in the deposit)",
                 who(player),
-                name(item),
-                deposit.0
+                name(item)
             )
         }
-        Event::MiningStopped {
-            player,
-            deposit,
-            reason,
-        } => {
+        Event::MiningStopped { player, reason, .. } => {
             let why = match reason {
                 StopReason::Stopped => "stopped",
                 StopReason::LeftDeposit => "walked off it",
                 StopReason::Depleted => "mined it out",
                 StopReason::OutOfInputs => "ran out",
             };
-            format!(
-                "{} stopped mining deposit {}: {why}",
-                who(player),
-                deposit.0
-            )
+            // NO ID AND NOTHING IN ITS PLACE, because `Mine` takes no argument:
+            // you mine the deposit you are standing on, so there is only ever
+            // one this sentence could be about.
+            format!("{} stopped mining: {why}", who(player))
         }
-        Event::DepositDepleted { deposit } => format!("deposit {} is now depleted", deposit.0),
+        // **THE ONE DEPOSIT SENTENCE WHERE THE ID WAS THE ONLY IDENTIFIER, so
+        // dropping it alone would have left "a deposit is now depleted".** The
+        // other five name the species already. This one names it from the world
+        // instead — the same move ASSA-136 made for buildings: refer to a thing
+        // by what it IS, not by its index. The tile comes too, because a species
+        // has many deposits and this is a sentence about one of them.
+        Event::DepositDepleted { deposit } => world.deposit(*deposit).map_or_else(
+            || "a deposit is now depleted".to_string(),
+            |d| {
+                format!(
+                    "the {} deposit at ({}, {}) is now depleted",
+                    world.species(d.species).name(),
+                    d.center.x,
+                    d.center.y
+                )
+            },
+        ),
         Event::SpeciesDiscovered { player, species } => format!(
             // The syntax went and the exclamation STAYED: `first_plate.rs`
             // uses this line as a waypoint in the reference play-through, and
@@ -394,30 +429,20 @@ pub fn event_line(
             who(player),
         ),
         Event::AssayStarted {
-            player,
-            deposit,
-            species,
+            player, species, ..
         } => format!(
-            "{} started assaying {} at deposit {} ({} ticks)",
+            "{} started assaying {} ({} ticks)",
             who(player),
             world.species(*species).name(),
-            deposit.0,
             crate::tuning::ASSAY_TICKS
         ),
-        Event::AssayStopped {
-            player,
-            deposit,
-            reason,
-        } => {
+        Event::AssayStopped { player, reason, .. } => {
             let why = match reason {
                 StopReason::LeftDeposit => "walked off it",
                 _ => "stopped",
             };
-            format!(
-                "{} stopped assaying deposit {}: {why}",
-                who(player),
-                deposit.0
-            )
+            // Same as `MiningStopped`: `Assay` takes no argument either.
+            format!("{} stopped assaying: {why}", who(player))
         }
         Event::SpeciesAssayed { player, species } => {
             let sp = world.species(*species);
@@ -540,12 +565,22 @@ pub fn event_line(
             item,
             count,
             left,
+            // **THE NAME ENDS THE CLAUSE INSTEAD OF BEING POSSESSED (Maren,
+            // ASSA-244).** Slice 2 made this read `into the Thusgernase smelter
+            // (C)'s ore slot` — a possessive hung on a parenthetical grade, which I
+            // reported as clumsy and she ruled on: the grade is load-bearing (it is
+            // how you tell two smelters apart) so it is not the thing to cut; the
+            // possessive is. She ruled the shape and left the wording to me.
+            //
+            // AND `ore slot` IS NOT REDUNDANT WITH `ore`, which she nearly ruled and
+            // then did not: ASSA-58 means some species burn, so ore can go into a
+            // FUEL slot, and the slot name is the only thing that says which.
         } => format!(
-            "{} put {count} {} into {}'s {} slot{}",
+            "{} put {count} {} into the {} slot of {}{}",
             who(player),
             name(item),
-            site(building),
             slot_name(*slot),
+            site(building),
             if *left > 0 {
                 format!("; {left} would not fit, still in hand")
             } else {
@@ -665,9 +700,9 @@ pub fn event_line(
             building,
             pos,
         } => format!(
-            "{} planted machine {} at ({}, {})",
+            "{} planted {} at ({}, {})",
             who(player),
-            building.0,
+            site(building),
             pos.x,
             pos.y
         ),
@@ -721,8 +756,8 @@ pub fn event_line(
             held,
             ..
         } => format!(
-            "machine {} mined {amount} {} ({held} waiting inside)",
-            building.0,
+            "{} mined {amount} {} ({held} waiting inside)",
+            site(building),
             name(item)
         ),
         Event::MachineStalled {
@@ -730,11 +765,17 @@ pub fn event_line(
             held,
             capacity,
         } => format!(
-            "machine {} is full at {held} of {capacity} and has stopped: take the ore out, or give it a hopper",
-            building.0
+            "{} is full at {held} of {capacity} and has stopped: take the ore out, or give it a hopper",
+            site(building)
         ),
+        // **THE ORDER IS NOT TOUCHED HERE AND THAT IS DELIBERATE.** The Game
+        // Director ruled the reason comes first on the STOPPED BLOCK
+        // (`halt_lines`, ASSA-94) and in the same breath drew the line this arm
+        // sits on the other side of: *"a refusal is a MOMENT; a stall is a
+        // CONDITION"*. This is the moment — the edge into the stall, said once —
+        // so it keeps a sentence's order. Only the noun and the id change.
         Event::SmelterStalled { building, why } => {
-            format!("smelter {} stopped: {}", building.0, stall_reason(*why))
+            format!("{} stopped: {}", site(building), stall_reason(*why))
         }
         Event::MoveStarted { player, from, to } => format!(
             "{} started walking from ({}, {}) to ({}, {})",

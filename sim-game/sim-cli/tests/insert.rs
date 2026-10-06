@@ -91,7 +91,7 @@ quit
     // pass on some other command's output.
     let put = stdout
         .lines()
-        .find(|l| l.contains("into building 0's ore slot"))
+        .find(|l| l.contains("into the ore slot of smelter 0"))
         .unwrap_or_else(|| panic!("nothing went into the smelter\n{transcript}"));
     assert!(
         put.contains(&format!("put {SMELTER_INPUT_CAP} ")),
@@ -108,9 +108,18 @@ quit
 
     // And the world agrees with the sentence: the slot holds a cap's worth and
     // the player still has the rest.
+    // **`walls`, NOT `"smelter" && "in "` — AND MY OWN WORDING CHANGE IS WHY.**
+    // This selector picked the first line mentioning a smelter and ` in `, which
+    // used to be the buildings-table row. ASSA-244 reworded the insert event to
+    // `into the ore slot of smelter 0`, and `into` contains `in ` — so the
+    // selector started matching the EVENT line and the assertion below measured
+    // the wrong sentence. The failure was in the instrument, not the claim.
+    //
+    // `walls` is on the table row and nowhere else, so it cannot drift onto a
+    // prose line the way a substring of `into` did.
     let inside = stdout
         .lines()
-        .find(|l| l.contains("smelter") && l.contains("in "))
+        .find(|l| l.contains("smelter") && l.contains("walls"))
         .unwrap_or_else(|| panic!("no smelter row\n{transcript}"));
     assert!(
         inside.contains(&format!("in {SMELTER_INPUT_CAP} ")),
