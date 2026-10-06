@@ -1241,13 +1241,48 @@ pub fn deposit_table(world: &World) -> String {
 }
 
 /// One property as a player sees it: exact once assayed, else its band.
+///
+/// THE NUMBERS COME FROM [`reading_range`] AND THE BRANCH STAYS HERE. This
+/// function used to hold both, which was fine while a reading was only ever
+/// text; a surface that draws the same reading as a bar needs the two ends,
+/// and two functions each deciding what a rough sheet shows would eventually
+/// disagree about the same rock on the same screen.
 pub fn reading(species: &MineralSpecies, property: Property) -> String {
+    let (lo, hi) = reading_range(species, property);
+    if species.assayed {
+        lo.to_string()
+    } else {
+        format!("{lo}-{hi}")
+    }
+}
+
+/// The same reading as its two ends, inclusive: `(v, v)` once assayed, else
+/// the band's low and high.
+///
+/// **FOR A SURFACE THAT DRAWS A READING INSTEAD OF PRINTING IT** (ASSA-256,
+/// Systems & UI). A bar needs numbers, and the only numbers crossing to a host
+/// were inside [`reading`]'s string — so a client wanting a bar had to parse
+/// `"26-50"`, which is a renderer deriving a fact from our wording and breaks
+/// the day the format moves.
+///
+/// **AN ASSAYED READING IS A ZERO-WIDTH BAND, which is the point of returning
+/// a pair in both states.** A host draws one shape and needs no `assayed`
+/// branch of its own; the certainty the player paid for shows up as the band
+/// closing, which is what it is.
+///
+/// **IT CARRIES NO MORE THAN [`reading`] ALREADY DID.** "77" is `(77, 77)` and
+/// "26-50" is `(26, 50)`: the same information, in a type nobody has to parse.
+/// That matters because the alternative asked for was the raw value plus
+/// `assayed`, and the exact value of an unassayed sheet is the one thing this
+/// game keeps back — positions are public and have been drawn since tick 0,
+/// the numbers are what an assay buys. Handing a host the number it must not
+/// show is a leak waiting for a careless row.
+pub fn reading_range(species: &MineralSpecies, property: Property) -> (u8, u8) {
     let v = species.sheet.get(property);
     if species.assayed {
-        v.to_string()
+        (v, v)
     } else {
-        let (lo, hi) = Sheet::band(v);
-        format!("{lo}-{hi}")
+        Sheet::band(v)
     }
 }
 
