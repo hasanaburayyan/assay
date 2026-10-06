@@ -51,6 +51,88 @@ fn bands_are_rough_and_cover_the_value() {
     assert_eq!(Sheet::band(100), (76, 100));
 }
 
+/// SPLITTING `reading_range` OUT OF `reading` MUST NOT HAVE MOVED ONE
+/// CHARACTER OF THE TEXT (ASSA-256).
+///
+/// **DERIVED FROM THE PRIMITIVES, NOT FROM `reading_range`.** Asserting that
+/// the string matches the pair the same function just produced is the
+/// expression `reading` runs, and would pass by construction about nothing.
+/// `Sheet::get` and `Sheet::band` are the two calls the old body made, so this
+/// reddens if the pair ever stops being what the sentence is built from — which
+/// is the whole claim a host drawing a bar beside that sentence relies on.
+#[test]
+fn a_readings_text_and_its_two_ends_are_the_same_answer() {
+    let (mut world, me, _) = world_with_players();
+    let species = stand_on(&mut world, me, DepositId(0));
+    assert!(
+        !world.species(species).assayed,
+        "premise: this species has to start rough or the rough half below is vacuous"
+    );
+
+    for property in Property::ALL {
+        let s = world.species(species);
+        let (lo, hi) = Sheet::band(s.sheet.get(property));
+        assert_eq!(debug::reading_range(s, property), (lo, hi));
+        assert_eq!(debug::reading(s, property), format!("{lo}-{hi}"));
+    }
+
+    world.species_mut(species).assayed = true;
+    for property in Property::ALL {
+        let s = world.species(species);
+        let v = s.sheet.get(property);
+        assert_eq!(
+            debug::reading_range(s, property),
+            (v, v),
+            "an assayed reading is a zero-width band, so a host needs no `assayed` branch"
+        );
+        assert_eq!(debug::reading(s, property), v.to_string());
+    }
+}
+
+/// **A ROUGH RANGE MUST NOT IDENTIFY THE NUMBER IT HIDES**, which is the whole
+/// reason `reading_range` crosses the band's ends and not the raw value
+/// (ASSA-256). An assay is what a player pays to learn a sheet; a host handed
+/// the exact number of an unassayed species is holding the thing it must not
+/// draw, and a leak there waits only for a careless row.
+///
+/// **PROVED BY INDISTINGUISHABILITY, NOT BY A WIDTH.** Asserting `hi > lo`
+/// says the interval is wide, not that the value is unrecoverable. Two
+/// different values inside one band crossing as the SAME pair is the actual
+/// claim, and the band's own ends are where the two values come from rather
+/// than numbers I picked.
+#[test]
+fn a_rough_range_cannot_tell_two_values_in_one_band_apart() {
+    let (mut world, me, _) = world_with_players();
+    let species = stand_on(&mut world, me, DepositId(0));
+    let (lo, hi) = Sheet::band(world.species(species).sheet.reactivity);
+    assert!(
+        lo < hi,
+        "premise: a band holding one value would make this vacuous"
+    );
+
+    world.species_mut(species).sheet.reactivity = lo;
+    let at_lowest = debug::reading_range(world.species(species), Property::Reactivity);
+    world.species_mut(species).sheet.reactivity = hi;
+    let at_highest = debug::reading_range(world.species(species), Property::Reactivity);
+    assert_eq!(
+        at_lowest, at_highest,
+        "reactivity {lo} and {hi} are different numbers and a rough sheet may not tell them apart"
+    );
+
+    // THE NON-VACUITY HALF: once assayed the two ARE distinguishable, so the
+    // equality above is the gate doing its job and not `reading_range` being
+    // blind to its input.
+    world.species_mut(species).assayed = true;
+    world.species_mut(species).sheet.reactivity = lo;
+    let exact_low = debug::reading_range(world.species(species), Property::Reactivity);
+    world.species_mut(species).sheet.reactivity = hi;
+    let exact_high = debug::reading_range(world.species(species), Property::Reactivity);
+    assert_ne!(
+        exact_low, exact_high,
+        "an assayed sheet is what the player paid for and must report the number"
+    );
+}
+
 #[test]
 fn a_fresh_species_reads_as_bands_until_assayed() {
     let (mut world, me, _) = world_with_players();

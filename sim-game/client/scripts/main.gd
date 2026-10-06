@@ -1164,10 +1164,18 @@ func _build_ui() -> void:
 	# `you`; `make` keeps the name the loop and the sim's own `make_offers` use, because renaming a
 	# surface in the same slice that moves it makes two changes impossible to judge apart.
 	#
-	# **MINERALOGY IS NOT HERE AND THAT IS THE SCOPE HOLDING** (Rainy: "so long as the scope is kept
-	# in mind"). It is ASSA-254, being built as its own body against this strip's one-entry contract;
-	# a placeholder would be a fifth name earning its space by looking busy, and the entry it would
-	# occupy costs one `add_tab` call to add when the real body lands.
+	# **`mineralogy` IS THIS COLUMN'S `rocks`, RENAMED — NOT A FIFTH TAB** (Maren, 18:45 UTC 10-06,
+	# and Wren folded it into the gate at 18:54). `_species` already lists every species with its
+	# sheet state, readings and tags, which is the index Rainy described; shipping both would ship
+	# two tabs ~90% identical in pixels and give one species fact two places to drift.
+	#
+	# **THE LABEL IS RAINY'S WORD AND THE SECTION IS OURS.** This is the one rename in the slice, and
+	# it is here rather than at the section because `_species` is still what the code calls the list
+	# the sim fills; the tab is what the player reads.
+	#
+	# ASSA-254's body (Limpet's `AssayMineralogy`, merged in #340) plugs in as ONE `add_tab`
+	# argument when its headline is wired — the strip's one-entry contract is what makes that true,
+	# and `test_tab_strip.gd` is what holds me to it.
 	#
 	# NO `PANEL` FLOOR ON ANY BODY, and it was not tidying (ASSA-117 box 4, ASSA-98): a scroll box
 	# hands its child the panel MINUS the scrollbar, so a 320px floor inside a ~308px viewport is
@@ -1177,7 +1185,7 @@ func _build_ui() -> void:
 		["make", [_assembling, _make_toggle, _make] as Array[Control]],
 		["inventory", [_carrying] as Array[Control]],
 		["bench", [_bench, _halt_detail] as Array[Control]],
-		["rocks", [_species] as Array[Control]],
+		["mineralogy", [_species] as Array[Control]],
 	]
 	for part in tabs:
 		var body := VBoxContainer.new()
@@ -2711,12 +2719,25 @@ func _rebuild_make(offers: Array) -> void:
 		verbs.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		said.add_child(verbs)
 		body.add_child(said)
-		# ASSA-84'S CLAUSE, CARRIED AND NOT REWRITTEN (Maren's ruling here: a recipe row is a better
-		# home for it than a button tooltip). Still the sim's own sentence, still empty unless the sim
-		# says so, and still nothing in this client that names a gear.
+		# **A DEAD END IS NOT A COST, AND THIS ROW DREW THEM IN ONE VOICE** (ASSA-158, Maren's
+		# ruling: *"a permanent dead end may not be drawn in the same series as a cost"*). The
+		# clause arrived with the same em dash and the same `_note` ink as the cost line above it --
+		# she measured both at (167,176,190), byte-identical -- so a player scanning five rows read
+		# "this is useless" as more of "what this costs". One of those can become true by playing;
+		# the other never can.
+		#
+		# **THE LABEL IS THE SIM'S, NOT THIS FILE'S.** `sim-cli`'s catalogue has printed
+		# `dead end: nothing uses a gear` since ASSA-122; the window is the surface that never got
+		# it. Typing the words here would be a second copy of the Game Director's wording, which is
+		# how ASSA-43 and ASSA-52 happened -- so it comes through the binding from
+		# `debug::DEAD_END_LABEL`. Still the sim's own sentence, still empty unless the sim says so,
+		# and still nothing in this client that names a gear (ASSA-84's clause, carried).
+		#
+		# The row stays listed and `Make` stays pressable (ASSA-5/7): a player may always try a
+		# doomed design and be told, never refused.
 		var dead_end := String(offer.get("dead_end", ""))
 		if dead_end != "":
-			body.add_child(_note("— %s" % dead_end))
+				body.add_child(_note("%s%s" % [_sim.dead_end_label(), dead_end]))
 		# MAREN'S WALLS CLAUSE (ASSA-125), APPENDED AND NEVER COMPOSED, by the same route and for the
 		# same reason: a smelter's walls are its material's heat tolerance, and what the player may
 		# know of that is a band until they assay. The sim words it; this client would have to decide

@@ -1712,3 +1712,40 @@ func test_a_building_mark_has_a_floor_and_it_is_the_players_own_size() -> bool:
 					+ "size makes a leaning rhombus out of a footprint that is not square.")
 					% [foot, cell, span, want])
 	return true
+
+
+## **THE WINDOW SAYS "dead end" IN THE SIM'S WORDS, AND NEVER IN ITS OWN** (ASSA-158).
+##
+## Maren's ruling is that a permanent dead end may not be drawn in the same series as a cost: one
+## can become true by playing, the other never can. The row used to render `— nothing uses a gear`,
+## which is the cost clause's em dash and `_note`'s ink, both measured byte-identical at
+## (167,176,190).
+##
+## **WHAT THIS GUARDS IS THE HALF A SHOT CANNOT**: that the label is the SIM'S. `sim-cli`'s
+## catalogue has printed it since ASSA-122, so a client with its own copy would be the ASSA-43/52
+## shape — two surfaces free to drift on the Game Director's wording. A source scan is the right
+## instrument because the defect is a literal appearing in a client file, which no rendered frame
+## can tell apart from the correct one.
+##
+## NOT guarded here, and said rather than implied: the drawn INK of the two clauses is still
+## identical, and whether a label alone separates them at 1x is Maren's judgement on a window shot.
+func test_the_dead_end_label_comes_from_the_sim_and_not_from_this_client() -> bool:
+	var main_src := FileAccess.get_file_as_string("res://scripts/main.gd")
+	if main_src == "":
+		return _fail("could not read main.gd, so this scan proves nothing")
+	# The premise: the row still renders a dead end at all.
+	if not main_src.contains("dead_end_label()"):
+		return _fail("main.gd no longer asks the sim for the label")
+	# The defect: the words typed into a client file. Comments are allowed to
+	# discuss them, so only non-comment lines are scanned.
+	for raw in main_src.split("\n"):
+		var line := raw.strip_edges()
+		if line.begins_with("#"):
+			continue
+		if line.to_lower().contains("\"dead end"):
+			return _fail(("main.gd spells the dead-end label itself; it is the sim's word, through "
+					+ "`AssaySim.dead_end_label()` (ASSA-158): %s") % line)
+	# And the em dash it used to share with the cost clause is gone from THIS row.
+	if main_src.contains("_note(\"— %s\" % dead_end)"):
+		return _fail("the dead end is still drawn in the cost clause's em-dash series")
+	return true

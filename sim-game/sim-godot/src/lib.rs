@@ -22,9 +22,11 @@
 use godot::prelude::*;
 use sim::assembly::{Assembly, Built, Mount, PartKind};
 use sim::command::{Event, Input};
+use sim::debug::{proximity_headline, question_asked};
 use sim::hash::fnv64;
 use sim::item::{Item, ItemKind};
 use sim::mineral::{Property, SpeciesId};
+use sim::proximity::Question;
 use sim::types::{PlayerId, TilePos};
 use sim::world::{CHUNK_SIZE, World, WorldConfig};
 use sim_net::{ClientMsg, HASH_EVERY, PROTOCOL_VERSION, TickBundle};
@@ -375,6 +377,24 @@ impl AssaySim {
     /// EVERY SPECIES AS THE PLAYERS KNOW IT. `assayed` says whether the sheet
     /// is exact; until then each reading is the sim's own 25-wide band as TEXT
     /// ("26-50"), never a number this client narrowed down itself.
+    ///
+    /// **`reading_ranges` IS THE SAME ANSWER FOR A SURFACE THAT DRAWS IT** — a
+    /// `Vector2i` of the band's two ends per property, `(v, v)` once assayed
+    /// (ASSA-256). It exists so a bar is not drawn by parsing `readings`, which
+    /// is a renderer taking a fact out of our wording. The two dictionaries
+    /// have the same keys and come from one sim function, so the bar and the
+    /// text beside it cannot drift apart.
+    ///
+    /// **WHAT STILL DOES NOT CROSS, AND MUST NOT: the exact value of an
+    /// unassayed sheet.** A rough range is the sim's band, so `reading_ranges`
+    /// carries no more than `readings` always did. The number an assay buys
+    /// stays out of this process until someone buys it.
+    ///
+    /// **THE SCALE THESE SIT ON IS NOT HERE YET.** Readings run 1..=100, and a
+    /// bar needs that denominator — but the sim publishes it nowhere a host can
+    /// read (`worldgen::roll` is `rng.range(1, 101)`, `Sheet::band` clamps its
+    /// top at 100), and a host typing `100` would be inventing a rule that
+    /// fails silently the day the roll moves. Own item; do not guess it here.
     #[func]
     pub fn species_sheets(&self) -> Array<VarDictionary> {
         self.species_facts()
@@ -387,12 +407,23 @@ impl AssaySim {
                         acc
                     },
                 );
+                let reading_ranges = species.reading_ranges.iter().fold(
+                    VarDictionary::new(),
+                    |mut acc: VarDictionary, (property, (lo, hi))| {
+                        acc.set(
+                            &gstring(property),
+                            Vector2i::new(i32::from(*lo), i32::from(*hi)),
+                        );
+                        acc
+                    },
+                );
                 let mut row = vdict! {
                     "id" => species.id,
                     "name" => &gstring(&species.name).to_variant(),
                     "symbol" => &gstring(&species.symbol).to_variant(),
                     "assayed" => species.assayed,
                     "readings" => &readings.to_variant(),
+                    "reading_ranges" => &reading_ranges.to_variant(),
                     "hand_minable" => species.hand_minable,
                     "hand_lit_fuel" => species.hand_lit_fuel,
                     // ALWAYS PRESENT AND NEVER EMPTY, which is why it is here
@@ -416,6 +447,68 @@ impl AssaySim {
                     row.set("lighting", &gstring(lighting).to_variant());
                 }
                 row
+            })
+            .collect()
+    }
+
+    /// WHAT NEAR THIS PLAYER ANSWERS EACH QUESTION, as the sim's own sentence
+    /// plus the tile that sentence is about (ASSA-254, the client leg of
+    /// ASSA-241).
+    ///
+    /// **THE SENTENCE IS `debug::proximity_headline`, VERBATIM, AND THAT IS THE
+    /// WHOLE POINT.** The Game Director's ruling is that the tab opens on one
+    /// line answering the question and shows the table as evidence under it, so
+    /// what crosses here is the line itself. It already carries the question it
+    /// answers, the species, the grade, the distance and the heading — and both
+    /// empty states, which are different news: `nothing_answers` for a world
+    /// where no patch can ever answer, `too_poor_answer` for one where a
+    /// species would answer from a richer patch. A client that composed any of
+    /// that from parts would eventually disagree with the CLI printing the same
+    /// line.
+    ///
+    /// **`tile` IS THE ONE THING THE SENTENCE CANNOT CARRY, which is why it is
+    /// the only other key.** A distance and a compass word do not get you
+    /// there: a walk across a gap that is neither straight nor diagonal changes
+    /// heading partway, so "15 tiles south-east" is true of the first step and
+    /// false of the destination. `go here` submits `MoveTo { target: tile }`
+    /// with this value and does no arithmetic, which is how ASSA-241's
+    /// no-client-arithmetic box is met.
+    ///
+    /// **AND `distance` AND `heading` ARE DELIBERATELY NOT HERE.** They are in
+    /// the sentence. Sending them a second time would invite a panel to render
+    /// its own "15 tiles south-east" beside the sim's, and two vocabularies for
+    /// one fact are free to disagree — the defect the Game Director's own
+    /// direction doc names elsewhere. If a surface ever needs the number apart
+    /// from the words, it should arrive with the reason written here.
+    ///
+    /// ONE ENTRY PER `Question::ALL`, in the sim's order, because the headline
+    /// is a selector rather than a fuel string: `Burns` is what the tab asks
+    /// today and `HardEnough` exists so the second question costs nothing.
+    /// `asked` is the sim's label for a selector to show; it is also the prefix
+    /// of `headline`, so a body that renders both would say it twice.
+    /// **A THIN WRAPPER OVER `proximity_facts`, AND THAT SPLIT IS NOT STYLE.**
+    /// Godot types cannot be built in a `cargo test` -- `GString::from` aborts
+    /// with "Godot engine not available" -- so a `#[func]` that held the logic
+    /// would be untestable in this crate, which is the one place the sim's
+    /// sentence and what the binding sends can be compared. I wrote it the
+    /// other way round first and two tests died proving it. The facts method
+    /// carries the answer; this carries it across.
+    #[func]
+    pub fn proximity_answers(&self, player: i64) -> Array<VarDictionary> {
+        self.proximity_facts(player_id_of(player))
+            .iter()
+            .map(|facts| {
+                vdict! {
+                    "asked" => &gstring(&facts.asked).to_variant(),
+                    "headline" => &gstring(&facts.headline).to_variant(),
+                    // NIL, NOT (0,0), WHEN NOTHING ANSWERS. A tile of zero is a
+                    // real corner of every world, so a sentinel there would be
+                    // a walkable destination the sim never offered.
+                    "tile" => &match facts.tile {
+                        Some((x, y)) => Vector2i::new(x, y).to_variant(),
+                        None => Variant::nil(),
+                    },
+                }
             })
             .collect()
     }
@@ -450,6 +543,14 @@ impl AssaySim {
     /// `count` is the pack's count AT THIS TICK and is in the row's sentence
     /// too. It is a thing to SHOW and must be re-read every refresh; nothing a
     /// button sends is derived from it (ASSA-55: one batch, always).
+    ///
+    /// **`cost` IS WHAT ONE BATCH SPENDS, and it is here because the row is a
+    /// CHOICE** (ASSA-256, Systems & UI). It was the one number in `MakeOffer`
+    /// that did not cross, so a surface wanting "spend 2, get 1" as data rather
+    /// than prose had to read it out of `line` — parsing our own sentence, the
+    /// exact failure the paragraph above warns about for `verb`. Like `count`
+    /// it is a thing to SHOW: a batch is always one batch, so nothing a button
+    /// sends is derived from it either.
     ///
     /// **`makes` IS THE OUTPUT ITEM, AND IT IS HERE BECAUSE THE MENU DRAWS IT**
     /// (Maren's ruling on ASSA-117 box 4). Without it a client that wants to
@@ -495,22 +596,6 @@ impl AssaySim {
                     "species" => offer.input.species.0 as i64,
                     "grade" => &gstring(&offer.input.grade.letter().to_string()).to_variant(),
                     "count" => offer.have as i64,
-                    // **WHAT ONE BATCH COSTS, AS A NUMBER, BECAUSE A CLIENT MUST NOT READ IT
-                    // OUT OF THE SENTENCE** (ASSA-247, Wren's routing ruling 16:58 UTC
-                    // 2026-10-06; `MakeOffer::cost`, already `pub u32`).
-                    //
-                    // `line` and `count` cross and `cost` did not, so a menu that wanted to
-                    // know whether a row can be pressed at all had exactly two options: parse
-                    // "2 Tonore refined (A), you have 2" for its first integer, or press and
-                    // let the sim refuse. The first is the client deriving a rule from
-                    // wording this crate's own `make_offers` docstring warns against by name;
-                    // the second is a button that looks available and is not, which is the
-                    // defect ASSA-224 settled for the primary.
-                    //
-                    // **IT IS A COST, NOT A VERDICT.** Whether a row is pressable is
-                    // `count >= cost` and that comparison is the host's; nothing here ranks,
-                    // disables or words anything. Spelled beside `count` (= `offer.have`) so
-                    // the pair reads as what it is: what a batch spends, and what you hold.
                     "cost" => offer.cost as i64,
                 };
                 if let Some(makes) = offer.makes {
@@ -995,6 +1080,39 @@ impl AssaySim {
     #[func]
     pub fn species_per_world() -> i64 {
         sim::tuning::SPECIES_PER_WORLD as i64
+    }
+
+    /// The word the sim puts in front of a dead end, so the window labels one
+    /// the way the terminal already does (ASSA-158).
+    ///
+    /// **IT IS EXPOSED RATHER THAN RETYPED BECAUSE THE DEFECT IS A CLIENT
+    /// COMPOSING A VOICE.** The window drew the dead end as `— nothing uses a
+    /// gear`, in the same em dash and the same ink as the cost clause above it,
+    /// so *"what this costs"* and *"this is useless"* arrived in one voice —
+    /// and one of them can become true by playing while the other never can.
+    /// `sim-cli`'s catalogue has had the labelled line since ASSA-122
+    /// (`debug.rs` prints `{DEAD_END_LABEL}{dead_end}`); the window is the
+    /// surface that never got it.
+    ///
+    /// **STATIC, like `species_per_world`:** it is a wording constant, not a
+    /// fact about one world, and a test should not need a `Welcome` to ask for
+    /// it. A client that hard-coded "dead end: " would be a second copy of a
+    /// decision that is the Game Director's, which is the whole shape of
+    /// ASSA-43 and ASSA-52.
+    #[func]
+    pub fn dead_end_label() -> GString {
+        gstring(Self::dead_end_label_text())
+    }
+
+    /// Engine-free half of [`AssaySim::dead_end_label`], so the rule it carries
+    /// can be tested without an engine.
+    ///
+    /// **A `#[test]` CANNOT CALL THE `#[func]`**: `gstring` touches the Godot
+    /// API and godot-ffi panics with "Godot binding accessed before
+    /// initialization". That is the same split `halt_line_texts` exists for,
+    /// and I rediscovered it the hard way by writing the other test first.
+    pub fn dead_end_label_text() -> &'static str {
+        sim::debug::DEAD_END_LABEL
     }
 
     /// Species names in `SpeciesId` order, so a `species` index above can be
@@ -1686,6 +1804,21 @@ pub struct DesignFacts {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// ONE QUESTION'S ANSWER, as the sim gave it (ASSA-254).
+pub struct ProximityFacts {
+    /// `debug::question_asked` -- the sim's label for the question, and also
+    /// the prefix of `headline`.
+    pub asked: String,
+    /// `debug::proximity_headline`, VERBATIM. It already carries the species,
+    /// the grade, the distance, the heading and both empty states.
+    pub headline: String,
+    /// The tile `go here` walks to, or `None` when nothing answers. The one
+    /// fact the sentence cannot carry: a heading is true of the first step and
+    /// false of the destination on a walk that is neither straight nor
+    /// diagonal.
+    pub tile: Option<(i32, i32)>,
+}
+
 pub struct SpeciesFacts {
     pub id: i64,
     pub name: String,
@@ -1700,6 +1833,14 @@ pub struct SpeciesFacts {
     /// Property name to reading: the exact value once assayed, the sim's band
     /// ("26-50") until then.
     pub readings: Vec<(String, String)>,
+    /// The same readings as their two ends, for a surface that DRAWS a
+    /// reading instead of printing it (`sim::debug::reading_range`).
+    ///
+    /// Parallel to `readings` and from the same sim call, so the bar and the
+    /// text beside it cannot disagree about one rock. An assayed reading is
+    /// `(v, v)` — a point is a zero-width band, so a host draws one shape and
+    /// needs no `assayed` branch of its own.
+    pub reading_ranges: Vec<(String, (u8, u8))>,
     /// Still a bool and still sent, because two callers ask a yes/no question
     /// and neither of them is wording anything: the scripted session plan
     /// picks a deposit it can actually swing at, and the TILE line gates
@@ -1995,6 +2136,48 @@ impl AssaySim {
     /// Every species as the players know it. THE BANDS ARE THE SIM'S
     /// (`sim::debug::reading`): a rough sheet is a 25-wide interval and a client
     /// that printed a single number from it would be inventing certainty.
+    /// WHAT NEAR THIS PLAYER ANSWERS EACH QUESTION, one entry per
+    /// `Question::ALL` in the sim's order (ASSA-254, the client leg of
+    /// ASSA-241).
+    ///
+    /// **THE SENTENCE IS THE SIM'S, VERBATIM.** The Game Director's ruling is
+    /// that the tab opens on one line answering the question, with the species
+    /// table as evidence under it, so what crosses is the line itself --
+    /// including both empty states, which are different news:
+    /// `nothing_answers` where no patch can ever answer, `too_poor_answer`
+    /// where a species would answer from a richer patch. A client composing
+    /// any of that from parts would eventually disagree with the CLI printing
+    /// the same line.
+    ///
+    /// **`distance` AND `heading` ARE DELIBERATELY ABSENT.** They are in the
+    /// sentence. Sending them again would invite a panel to render its own
+    /// "15 tiles south-east" beside the sim's, and two vocabularies for one
+    /// fact are free to disagree.
+    ///
+    /// AN UNKNOWN PLAYER GETS AN EMPTY VEC, not a row of apologies:
+    /// `proximity_headline` has its own "no such player" sentence and that
+    /// belongs in a log, not in a mineralogy tab.
+    pub fn proximity_facts(&self, player: Option<PlayerId>) -> Vec<ProximityFacts> {
+        let Some(id) = player else {
+            return Vec::new();
+        };
+        let Some(me) = self.world.player(id) else {
+            return Vec::new();
+        };
+        let from = me.pos;
+        Question::ALL
+            .iter()
+            .map(|&q| ProximityFacts {
+                asked: question_asked(q).to_string(),
+                headline: proximity_headline(&self.world, id, q),
+                tile: self
+                    .world
+                    .nearest_answering(q, from)
+                    .map(|n| (n.tile.x, n.tile.y)),
+            })
+            .collect()
+    }
+
     pub fn species_facts(&self) -> Vec<SpeciesFacts> {
         self.world
             .species
@@ -2010,6 +2193,15 @@ impl AssaySim {
                         (
                             property.name().to_string(),
                             sim::debug::reading(species, property),
+                        )
+                    })
+                    .collect(),
+                reading_ranges: Property::ALL
+                    .into_iter()
+                    .map(|property| {
+                        (
+                            property.name().to_string(),
+                            sim::debug::reading_range(species, property),
                         )
                     })
                     .collect(),
@@ -2140,6 +2332,34 @@ impl AssaySim {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **THE LABEL THIS BINDING HANDS THE WINDOW IS THE SIM'S CONSTANT, NOT A
+    /// COPY OF IT** (ASSA-158).
+    ///
+    /// The whole point of exposing it was that the window had been drawing a
+    /// dead end in the cost's voice, and the fix must not be a second place
+    /// where the Game Director's wording lives. `gstring` round-trips, so this
+    /// also catches the label arriving empty — which would put an unlabelled
+    /// clause back in the same series.
+    #[test]
+    fn the_dead_end_label_is_the_sims_own_word() {
+        // **THE ENGINE-FREE HALF, AND A UNIT TEST HAS NO CHOICE.** Calling the
+        // `#[func]` here panics in godot-ffi — "Godot binding accessed before
+        // initialization" — because `gstring` touches the engine, which is the
+        // same reason `halt_line_texts` exists beside `halt_lines`. I wrote the
+        // `#[func]` version of this test first and it did exactly that.
+        let exposed = AssaySim::dead_end_label_text();
+        assert_eq!(
+            exposed,
+            sim::debug::DEAD_END_LABEL,
+            "the binding is handing the window a different word from the one \
+             `sim-cli`'s catalogue prints"
+        );
+        assert!(
+            !exposed.trim().is_empty(),
+            "an empty label puts the dead end back in the cost's series"
+        );
+    }
 
     /// GDScript gets the rules identity from here, as text, and puts it in
     /// `Hello` (ASSA-40). Sixteen hex digits is also what stops it being
@@ -2411,6 +2631,90 @@ mod tests {
 
     /// A world with one player in it, added the only legal way: a system
     /// command through `step`.
+    /// **THE TAB'S HEADLINE IS `debug::proximity_headline`, BYTE FOR BYTE**
+    /// (ASSA-254 box 1, and the same reason the two `species_table` tests
+    /// above live in this crate: the two surfaces meet HERE). `sim/tests` can
+    /// see the sentence but not what the binding sends; the client suite can
+    /// see what arrives but has no sim to compare it with. A GDScript panel
+    /// that re-worded one clause would be green in both.
+    ///
+    /// **IT ASKS `proximity_facts`, NOT THE `#[func]`, AND NOT BY CHOICE.**
+    /// Godot types abort in a `cargo test` ("Godot engine not available"), so
+    /// the logic lives in the facts method and the `#[func]` only carries it
+    /// across. I wrote it the other way round first and two tests died saying
+    /// exactly that.
+    ///
+    /// **EVERY SEED IS WALKED AND BOTH ANSWER STATES ARE COUNTED**, because a
+    /// test over worlds where nothing was ever absent never ran the empty arm
+    /// -- and the empty arm is the one the Game Director asked for by name
+    /// ("a world where the honest answer is nothing here burns").
+    #[test]
+    fn the_tabs_headline_and_tile_are_the_sims_own_answer() {
+        let (mut answered, mut empty) = (0, 0);
+        for seed in 1..40 {
+            let mut sim = AssaySim::from_world(sim_net::fresh_world(seed));
+            sim.step_with(&[Input::System(sim::SystemCommand::AddPlayer {
+                name: "limpet".to_string(),
+            })]);
+            let id = sim.world().players.first().expect("a player was added").id;
+            let rows = sim.proximity_facts(Some(id));
+            assert_eq!(
+                rows.len(),
+                Question::ALL.len(),
+                "seed {seed}: one row per question, in the sim's order"
+            );
+            let me = sim.world().player(id).expect("the player we added").pos;
+            for (row, &q) in rows.iter().zip(Question::ALL.iter()) {
+                // THE SIM'S SENTENCE, NOT A SENTENCE LIKE IT.
+                assert_eq!(
+                    row.headline,
+                    proximity_headline(sim.world(), id, q),
+                    "seed {seed}: the binding re-worded the headline"
+                );
+                assert!(
+                    row.headline.starts_with(&row.asked),
+                    "seed {seed}: `asked` must be the headline's own prefix, so a body \
+                     rendering both would say it twice"
+                );
+                // AND THE TILE AGREES WITH THE SEARCH ABOUT WHETHER THERE IS ONE.
+                match sim.world().nearest_answering(q, me) {
+                    Some(n) => {
+                        answered += 1;
+                        assert_eq!(
+                            row.tile,
+                            Some((n.tile.x, n.tile.y)),
+                            "seed {seed}: the tile is not the one the sim named"
+                        );
+                    }
+                    None => {
+                        empty += 1;
+                        assert!(
+                            row.tile.is_none(),
+                            "seed {seed}: nothing answers, so there must be no tile rather \
+                             than a corner of the world the sim never offered"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(
+            answered > 0 && empty > 0,
+            "an answer state never came up, so its arm never ran: \
+             answered {answered}, empty {empty}"
+        );
+    }
+
+    /// A PLAYER WHO IS NOT IN THIS WORLD GETS AN EMPTY LIST, not a row of
+    /// apologies. `proximity_headline` has its own "no such player" sentence,
+    /// and handing that to a panel would make a missing player look like a
+    /// mineralogy answer.
+    #[test]
+    fn proximity_facts_refuses_a_player_who_is_not_here() {
+        let (sim, _) = with_a_player("limpet");
+        assert!(sim.proximity_facts(None).is_empty());
+        assert!(sim.proximity_facts(Some(PlayerId(9999))).is_empty());
+    }
+
     fn with_a_player(name: &str) -> (AssaySim, PlayerId) {
         let mut sim = AssaySim::from_world(fresh());
         sim.step_with(&[Input::System(sim::SystemCommand::AddPlayer {
@@ -3368,6 +3672,57 @@ mod tests {
         }
         assert_eq!(exact.readings.len(), Property::ALL.len());
         assert_eq!(exact.name, sim.world().species(first).name());
+    }
+
+    /// **THE BAR AND THE TEXT BESIDE IT ARE ONE ANSWER** (ASSA-256).
+    /// `readings` crosses the sentence and `reading_ranges` crosses the two
+    /// numbers a surface draws. A panel whose band disagrees with the string
+    /// under it is worse than either alone: a player cannot tell which of them
+    /// lied, and both came from us.
+    ///
+    /// **CHECKED AS THE TWO PAYLOADS AGAINST EACH OTHER**, the shape
+    /// `hand_minable` is checked in. No expected number is written here, so
+    /// worldgen may move and this still means what it says.
+    ///
+    /// The last assertion is the one a host's drawing code leans on: a band is
+    /// a point EXACTLY when the species is assayed, so one shape draws both
+    /// states and no renderer needs an `assayed` branch to decide which.
+    #[test]
+    fn a_readings_band_and_its_text_cross_as_one_answer() {
+        let mut sim = AssaySim::from_world(fresh());
+        let first = sim.world().species[0].id;
+
+        for assayed in [false, true] {
+            sim.world.species_mut(first).assayed = assayed;
+            let facts = &sim.species_facts()[0];
+            assert_eq!(facts.assayed, assayed);
+            assert_eq!(facts.reading_ranges.len(), Property::ALL.len());
+
+            for (property, reading) in &facts.readings {
+                let found = facts
+                    .reading_ranges
+                    .iter()
+                    .find(|(p, _)| p == property)
+                    .map(|(_, range)| *range);
+                let Some((lo, hi)) = found else {
+                    panic!("{property} crossed a reading and no range to draw it with");
+                };
+                let expected = if assayed {
+                    lo.to_string()
+                } else {
+                    format!("{lo}-{hi}")
+                };
+                assert_eq!(
+                    reading, &expected,
+                    "{property}: the text says {reading} and the band says {lo}-{hi}"
+                );
+                assert_eq!(
+                    assayed,
+                    lo == hi,
+                    "{property}: a zero-width band must mean assayed and nothing else"
+                );
+            }
+        }
     }
 
     /// THE MAP LETTER IS NOT THE NAME'S FIRST CHARACTER, and a client reaching

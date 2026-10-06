@@ -1721,38 +1721,54 @@ func test_every_make_row_starts_its_sentence_at_the_same_x() -> bool:
 	return ok
 
 
-## **THE BINDING SENDS WHAT A BATCH COSTS** (ASSA-247; Wren's routing ruling 16:58 UTC 2026-10-06:
-## *"one field, a number the sim already owns, plus a test that asks the binding"*).
+## **WHAT ONE BATCH SPENDS IS A NUMBER THE SIM HOLDS** (ASSA-256). `MakeOffer.cost` has always been a
+## `u32` in `sim::debug`; until now it did not cross the binding, so a surface wanting "spend 3, get
+## 1" as data had only the row's sentence to read it out of -- a renderer taking a fact from our
+## wording, which is the failure `make_offers`' own docstring warns about for `verb`.
 ##
-## `sim-godot/src/lib.rs` crossed `line, dead_end, walls, verb, tag, kind, species, grade, count` and
-## not `cost`, so a menu could not tell an affordable row from one you cannot press without parsing
-## the first integer out of "2 Tonore refined (A), you have 1" -- the client deriving a rule from
-## Marlow's wording, which `make_offers`' own docstring warns against by name.
+## **THE PREMISE IS THAT THIS PACK OFFERS TWO DIFFERENT COSTS**, and it is a guard rather than a nicety:
+## with one cost on every row, "cross the constant 1" and "cross the pack count" are both
+## indistinguishable from correct. `smelt` spends 1 ore and `sort` spends 3, so a pack with ore in it
+## has both. Asserting `cost != count` somewhere is the second half: `have` is the same on every row
+## built from one stack, which is exactly the field a tired hand reaches for.
 ##
-## **ASKED OF A REAL WORLD, not of a dictionary this file wrote.** A synthetic offer proves the
-## drawing (the test below) and nothing at all about the crossing: the whole question here is whether
-## the Rust side still puts the key in, so the offers have to come from `AssaySim`.
-##
-## `cost >= 1` rather than `>= 0`: a recipe that spends nothing is not a thing the table can express,
-## so a zero would mean the field arrived empty rather than correct.
-func test_the_binding_sends_what_a_batch_costs() -> bool:
+## NOT ASSERTED: that the sentence contains the number. The line holds several numbers and matching on
+## one of them keys this test to wording that is allowed to move -- I have broken two tests that way
+## this week. The sim test for `cost` is in Rust; this one is about the field crossing at all.
+func test_every_menu_row_carries_what_one_batch_spends() -> bool:
 	var screen := _joined()
 	_tick(screen, 2)
-	var ok := _mine_two_species(screen)
+	var ok := _mine_some_ore(screen)
 	if ok:
 		var offers: Array = screen._sim.make_offers(screen._client.player_id)
 		if offers.is_empty():
-			ok = _fail("premise: a pack with two kinds of rock in it offers no rows at all")
+			ok = _fail("a pack with ore in it produced no offers at all, so nothing here is tested")
+		var costs := {}
+		var differs_from_count := false
 		for entry in offers:
 			var offer: Dictionary = entry
 			if not offer.has("cost"):
-				ok = _fail(("an offer crossed without `cost`, so the menu cannot tell whether a row "
-						+ "can be pressed: %s") % JSON.stringify(offer))
+				ok = _fail(("an offer crossed without `cost`: %s. A chip showing what a batch spends "
+						+ "has to parse the sentence without it.") % [offer.keys()])
 				break
-			if typeof(offer["cost"]) != TYPE_INT or int(offer["cost"]) < 1:
-				ok = _fail("an offer crossed `cost` as %s, which is not a batch size"
-						% JSON.stringify(offer["cost"]))
+			if typeof(offer["cost"]) != TYPE_INT:
+				ok = _fail("`cost` crossed as %s, not an int" % type_string(typeof(offer["cost"])))
 				break
+			var cost := int(offer["cost"])
+			if cost < 1:
+				ok = _fail("`cost` crossed as %d; a batch that spends nothing is not a cost" % cost)
+				break
+			costs[cost] = true
+			if cost != int(offer["count"]):
+				differs_from_count = true
+		if ok and costs.size() < 2:
+			ok = _fail(("every row reports the same cost (%s), so this world cannot tell the real "
+					+ "number from a constant and the assertions above prove nothing")
+					% [costs.keys()])
+		if ok and not differs_from_count:
+			ok = _fail("no row's cost differs from its pack count, so `cost` could be `have` here")
+		if ok:
+			print("    %d make rows, costs %s" % [offers.size(), costs.keys()])
 	screen.queue_free()
 	return ok
 
