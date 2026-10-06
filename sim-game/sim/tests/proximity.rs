@@ -623,6 +623,89 @@ fn discovery_and_the_naming_right_are_both_in_the_output() {
     );
 }
 
+/// **"HARD ENOUGH" NEVER NAMES A ROCK WHOSE ORE GOES NOWHERE**, and this test
+/// exists because my first version did.
+///
+/// I asked only `hand_minable`, which is exactly the filter the Game Director
+/// withdrew on ASSA-52: a part needs refined material, so the gate is rung
+/// zero. `sim-cli/tests/unsmeltable.rs` went red and caught it — on seed 10027
+/// the player spawns on a grade-A patch with the best yield on the map and a
+/// heat tolerance no fire a player can light will reach. It is scenery, and my
+/// headline sent them to mine it.
+///
+/// **THE DEAD-END SPECIES IS FOUND BY ASKING THE SIM, NOT BY NAMING A SEED'S
+/// ROCK.** A sweep looks for any world holding a hand-minable species that rung
+/// zero cannot use, asserts it found one, and then asserts no `HardEnough`
+/// answer anywhere in that world is of that species. `Burns` is deliberately
+/// NOT held to this: you burn ore, you do not smelt it, so a patch that can
+/// never become a part is still honest fuel.
+#[test]
+fn hard_enough_never_points_at_a_rock_that_can_never_become_a_part() {
+    let mut worlds_with_a_dead_end = 0;
+    for seed in 0..120 {
+        let (w, me) = joined(seed);
+        let at = w.player(me).unwrap().pos;
+        let dead: Vec<SpeciesId> = w
+            .species
+            .iter()
+            .filter(|s| ladder::hand_minable(s))
+            .filter(|s| !ladder::usable_from_bare_hands(&w.species, s.id))
+            .map(|s| s.id)
+            .collect();
+        if dead.is_empty() {
+            continue;
+        }
+        worlds_with_a_dead_end += 1;
+        // Not just the nearest answer: every tile a player could ask from, so a
+        // dead end cannot hide behind a luckier patch being closer.
+        for tile in [at, TilePos::new(0, 0), TilePos::new(w.width() - 1, 0)] {
+            if let Some(n) = w.nearest_answering(Question::HardEnough, tile) {
+                let named = w.deposit(n.deposit).unwrap().species;
+                assert!(
+                    !dead.contains(&named),
+                    "seed {seed}: `hard enough` sent the player from {tile:?} to \
+                     {}, whose ore rung zero can never use — the ASSA-52 \
+                     promise, rebuilt",
+                    w.species(named).name()
+                );
+            }
+        }
+    }
+    assert!(
+        worlds_with_a_dead_end >= 20,
+        "only {worlds_with_a_dead_end} of 120 seeds held a hand-minable rock \
+         rung zero cannot use, so this test is barely asking its question; \
+         13.6% of deposits are that (ASSA-52)"
+    );
+}
+
+/// Each question's trailing clause is about the question asked.
+///
+/// **MY FIRST VERSION APPENDED THE FUEL CLAIM TO BOTH**, so a line about making
+/// a part carried a fuel grade and an ignition state. Nothing in it was false,
+/// which is why thirteen green tests did not see it — on a one-line answer the
+/// wrong fact costs what a false one costs, and one look at the real output
+/// found it.
+#[test]
+fn each_headline_carries_the_clause_its_own_question_turns_on() {
+    let (w, me) = joined(14247);
+    let burns = debug::proximity_headline(&w, me, Question::Burns);
+    let hard = debug::proximity_headline(&w, me, Question::HardEnough);
+    assert!(
+        burns.contains("fuel at"),
+        "the fuel question must carry the fuel claim:\n{burns}"
+    );
+    assert!(
+        !hard.contains("fuel at"),
+        "the hardness question must not carry a fuel grade or an ignition \
+         state:\n{hard}"
+    );
+    assert!(
+        hard.contains(Property::Hardness.name()) && burns.contains(Property::Reactivity.name()),
+        "each line names the property it turns on:\n{burns}\n{hard}"
+    );
+}
+
 /// The query is a pure function of the world: same seed, same answers, and
 /// asking changes nothing.
 ///

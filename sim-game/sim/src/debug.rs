@@ -1450,13 +1450,31 @@ pub fn proximity_headline(world: &World, player: PlayerId, q: Question) -> Strin
         q.property().name(),
         reading(s, q.property()),
     );
-    if let Some(grade) = crate::ladder::fuel_grade(s) {
-        let _ = write!(
-            line,
-            " · {}{}",
-            fuel_tag(grade, crate::ladder::hand_minable(s)),
-            lighting_clause(crate::ladder::lighting(&world.species, s.id))
-        );
+    // **THE TRAILING CLAUSE ANSWERS THE QUESTION ASKED, and my first version
+    // did not.** It appended the fuel claim to every headline, so the real
+    // output read `what near me is hard enough: Tonore (A) ... · hardness 26-50
+    // · fuel at C or better, needs a hotter fire to light` — a fuel grade and an
+    // ignition state on a line about making a part. Nothing was false; it was
+    // the wrong fact, which on a one-line answer is the same cost. One picture
+    // of the real output found it after thirteen green tests did not.
+    //
+    // Both clauses are the species table's own words either way (`fuel_tag` +
+    // `lighting_clause`, and `mining_note` for ASSA-135), so the line still
+    // cannot phrase a fact differently from the row it points at.
+    match q {
+        Question::Burns => {
+            if let Some(grade) = crate::ladder::fuel_grade(s) {
+                let _ = write!(
+                    line,
+                    " · {}{}",
+                    fuel_tag(grade, crate::ladder::hand_minable(s)),
+                    lighting_clause(crate::ladder::lighting(&world.species, s.id))
+                );
+            }
+        }
+        Question::HardEnough => {
+            let _ = write!(line, " · {}", mining_note(mining(&world.species, s.id)));
+        }
     }
     line
 }

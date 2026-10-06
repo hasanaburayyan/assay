@@ -194,8 +194,23 @@ impl Question {
                     && ladder::lighting(species, d.species)
                         != ladder::Lighting::NothingBurnsHotEnough
             }
-            Question::HardEnough => required_at_least(Property::Hardness)
-                .is_some_and(|min| s.effective(Property::Hardness, d.grade()) >= min),
+            // **"HARD ENOUGH" MEANS HARD ENOUGH TO BECOME SOMETHING, so the ore
+            // has to go somewhere** — and my first version asked only
+            // `hand_minable`, which is ASSA-52's defect rebuilt on a new
+            // surface. `sim-cli/tests/unsmeltable.rs` caught it: on seed 10027
+            // the player SPAWNS on Meline, grade A, purity 80, the best yield on
+            // the map and hard enough for a gear — with a heat tolerance no fire
+            // a player can light will ever reach. It is scenery. My headline
+            // told them to go and mine it, which is the two hundred wasted ore
+            // that sentence was written to prevent.
+            //
+            // `usable_from_bare_hands` is rung zero and the same authority the
+            // test states its own premise with, so this re-derives nothing.
+            Question::HardEnough => {
+                ladder::usable_from_bare_hands(species, d.species)
+                    && required_at_least(Property::Hardness)
+                        .is_some_and(|min| s.effective(Property::Hardness, d.grade()) >= min)
+            }
         }
     }
 }
