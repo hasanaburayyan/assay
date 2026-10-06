@@ -1108,8 +1108,17 @@ func _reveal_report() -> Dictionary:
 ## section TALLER than the box parks its BOTTOM at the bottom edge and cuts the first row off, and
 ## the first row is as much a part of the roster as any other (I was bitten by exactly this
 ## minimum-scroll behaviour on the log heading, ASSA-117).
+## **IT SCROLLS TO THE TAB'S TOP, NOT TO `_species`, SINCE ASSA-247 WIRED ASSA-254 IN.** The species
+## list used to BE the top of this section, so scrolling to it was scrolling to the section. It is now
+## the evidence UNDER Mineralogy's headline and its `go here` button, and scrolling to the list carried
+## both off the top of the panel: the shot was of the Mineralogy tab with the answer that names it
+## missing, which is the one thing a reader of `05-rocks.png` would have been looking for. Caught by
+## looking at the image rather than at this tool's own report, which called the shot OK.
 func _scroll_to_rocks() -> void:
+	# THE BODY IF THERE IS ONE, falling back to the list so this still works if the tab goes away.
 	var rocks: Control = _screen._species
+	if _screen._mineralogy != null and _screen._mineralogy.is_ancestor_of(rocks):
+		rocks = _screen._mineralogy
 	var box: ScrollContainer = null
 	var node: Node = rocks.get_parent()
 	while node != null:

@@ -92,6 +92,10 @@ var _always_on_tick := 0
 ## HOW FAR THE OPEN TAB'S LOWEST BUTTON REACHED PAST THE CLIP, per tab, worst reading of the run.
 ## This is Wren's rule as a number, and zero everywhere is the only passing answer.
 var _over_fold := {}
+## How far a tab's HIGHEST button was carried above the top of the box that clips it. The other edge
+## of `_over_fold`, and zero is the rule kept on both.
+var _off_top := {}
+var _off_top_tick := {}
 var _over_tick := {}
 ## HOW MANY TICKS EACH TAB WAS THE OPEN ONE. Printed, because "every tick" is not true per tab any
 ## more and a report that implied it would be overstating its own instrument.
@@ -400,6 +404,13 @@ func _button_reach(top_control: Control, controls: Array, frame: Rect2) -> Dicti
 	if top_control != null and top_control.is_visible_in_tree():
 		top = top_control.get_global_rect().position.y
 	var lowest := -INF
+	# **THE HIGHEST BUTTON'S TOP, BECAUSE A SCROLL BOX HAS TWO EDGES AND I WAS ONLY WATCHING ONE.**
+	# `over_fold` asks how far the lowest button fell past the BOTTOM of the clip. A control scrolled
+	# off the TOP of the same box is exactly as unreachable and scored zero -- `maxf(lowest - end.y, 0)`
+	# is literally true and completely wrong about it. Found by looking at a real shot: with the box
+	# scrolled to put the species list at the frame top, Mineralogy's `go here` was off the top of the
+	# panel and this function still called the tab ABOVE THE FOLD.
+	var highest := INF
 	var count := 0
 	for item in controls:
 		var control := item as Control
@@ -415,10 +426,14 @@ func _button_reach(top_control: Control, controls: Array, frame: Rect2) -> Dicti
 			var bottom := button.get_global_rect().end.y
 			if bottom > lowest:
 				lowest = bottom
+			var button_top := button.get_global_rect().position.y
+			if button_top < highest:
+				highest = button_top
 	if count == 0 or top == INF:
-		return {"must_fit": 0.0, "buttons": 0, "over_fold": 0.0}
+		return {"must_fit": 0.0, "buttons": 0, "over_fold": 0.0, "off_top": 0.0}
 	return {"must_fit": maxf(lowest - top, 0.0), "buttons": count,
-			"over_fold": maxf(lowest - frame.end.y, 0.0)}
+			"over_fold": maxf(lowest - frame.end.y, 0.0),
+			"off_top": maxf(frame.position.y - highest, 0.0)}
 
 
 ## Every Control at or under `from`, itself included, so a Button nested in a row is found.
@@ -496,6 +511,13 @@ func _measure() -> void:
 		if over > seen_over:
 			_over_fold[which] = over
 			_over_tick[which] = tick
+		# AND THE SAME HIGH WATER FOR THE TOP EDGE, for the reason in `_button_reach`: a control carried
+		# off the top of the scroll box is as unreachable as one cut off the bottom, and watching one
+		# edge of a two-edged box is the kind of green that checks nothing.
+		var off_top := float(reach["off_top"])
+		if off_top > float(_off_top.get(which, -1.0)):
+			_off_top[which] = off_top
+			_off_top_tick[which] = tick
 		_tabs_measured[which] = int(_tabs_measured.get(which, 0)) + 1
 		# ROW DENSITY AT THE TICK THE SECTION WAS TALLEST, not at its own separate peak. The lever is
 		# "what does this section's worst moment cost per row", so it has to be read off that moment.
@@ -638,31 +660,46 @@ func _report() -> void:
 	print("  WREN'S FOLD RULE, MEASURED ON THE BUILD: no control below the fold, ever")
 	print("    `over fold` is how far a tab's LOWEST button reached past the bottom of the box that")
 	print("    clips it, worst reading of every tick that tab was open. Zero is the rule kept.")
+	print("    `off top` is the SAME QUESTION AT THE OTHER EDGE -- how far its HIGHEST button was")
+	print("    carried above the top of that box. A control scrolled off the top is exactly as")
+	print("    unreachable, and until 2026-10-06 this probe did not look at that edge at all.")
 	var cut := ""
 	var cut_px := 0.0
+	var cut_edge := "past the bottom of"
 	for which in ["make", "inventory", "bench", "mineralogy"]:
 		var reach: Dictionary = _reach.get(which, {"must_fit": 0.0, "buttons": 0, "tick": 0})
 		var must_fit := float(reach["must_fit"])
 		var buttons := int(reach["buttons"])
 		var over := float(_over_fold.get(which, 0.0))
+		var off_top := float(_off_top.get(which, 0.0))
 		var verdict := ""
 		if buttons == 0:
 			verdict = "no buttons -- a list, free to scroll in its own tab"
-		elif over <= 0.0:
-			verdict = "ABOVE THE FOLD"
-		else:
+		elif over > 0.0:
 			verdict = "BELOW THE FOLD by %d px (tick %d)" % [int(round(over)),
 					int(_over_tick.get(which, 0))]
-		print("    %-9s reach %4d px, %2d buttons, over fold %3d px  %s"
-				% [which, int(round(must_fit)), buttons, int(round(over)), verdict])
+		elif off_top > 0.0:
+			verdict = "OFF THE TOP by %d px (tick %d)" % [int(round(off_top)),
+					int(_off_top_tick.get(which, 0))]
+		else:
+			verdict = "REACHABLE"
+		print("    %-9s reach %4d px, %2d buttons, over fold %3d px, off top %3d px  %s"
+				% [which, int(round(must_fit)), buttons, int(round(over)), int(round(off_top)),
+				verdict])
 		if buttons > 0 and over > cut_px:
 			cut_px = over
 			cut = which
+		# OFF THE TOP COUNTS AS UNREACHABLE TOO, and it is named separately in the verdict so the
+		# report says which edge lost it rather than just that something did.
+		if buttons > 0 and off_top > cut_px:
+			cut_px = off_top
+			cut = which
+			cut_edge = "off the top of"
 	print("")
 	if cut != "":
-		print("  VERDICT  A CONTROL IS BELOW THE FOLD. `%s` has a button %d px past the clip at its"
-				% [cut, int(round(cut_px))])
-		print("           worst. That is a cut Make button, which is the defect this item is about,")
+		print("  VERDICT  A CONTROL IS UNREACHABLE. `%s` has a button %d px %s the clip at its"
+				% [cut, int(round(cut_px)), cut_edge])
+		print("           worst. That is a cut control, which is the defect this item is about,")
 		print("           and it is not something a list is allowed to do. Report it, say what gives.")
 	else:
 		var deepest := ""
