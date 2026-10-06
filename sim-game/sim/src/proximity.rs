@@ -218,9 +218,42 @@ impl Question {
         self.tiers()
             .into_iter()
             .flatten()
-            .any(|t| t.keeps_at(species, d, Grade::A))
+            .any(|t| t.keeps_at(species, d, LADDER_TOP))
     }
 }
+
+/// The best grade the refining ladder can reach, and therefore the grade at
+/// which "could this ever answer" is asked.
+///
+/// **IT IS NAMED BECAUSE THE SELECTOR AND THE CONDITION ARE THE SAME QUESTION**
+/// (Game Director, ASSA-257). She ruled the too-poor sentence may point at
+/// sorting *only* when sorting actually reaches an answering grade — otherwise
+/// it is "walk further" relocated: spend ore, end in the same dead end. Asked of
+/// the predicate the search already uses, not a second copy of it.
+///
+/// **AND THAT CONDITION IS ALREADY ENFORCED BY [`Question::could_answer_at_best_grade`],
+/// which is the half of her ruling I would otherwise have built twice.**
+/// `recipe::Sort` raises one grade and [`Grade::better`] is `C -> B -> A ->
+/// None`, so A *is* the ladder's top: "could this patch answer at A" and "can
+/// sorting lift this rock to a grade that answers" are one question.
+///
+/// Three links hold it up, each read rather than assumed:
+/// - `keeps_at` takes the grade as a parameter, and every species-level gate in
+///   it (`is_depleted`, `hand_minable`, `lighting`, `usable_from_bare_hands`) is
+///   grade-independent — so A isolates the grade-dependent half alone.
+/// - That half is monotone: `effective_value` multiplies by
+///   `GRADE_MULTIPLIER_PERCENT` `[60, 80, 100]` for `[C, B, A]`, strictly
+///   ascending, and both deciding properties scale with grade. A is the most
+///   favourable grade, so testing at A tests the ladder's best.
+/// - The named patch cannot already be A: `too_poor_for` is only reached when no
+///   deposit answers at its own grade, so `keeps_at(A)` is true while
+///   `keeps_at(own)` is false — hence `own != A`, hence `Grade::better` is
+///   `Some` and a sort path genuinely exists.
+///
+/// **NO MECHANISM IS NEEDED, which makes her ruling stronger than she knew.**
+/// She ruled "do not gate it on whether the player owns a sorter"; `Sort` is
+/// `Station::Hand`, so there is no sorter to own.
+pub const LADDER_TOP: Grade = Grade::A;
 
 /// One rank of answer to a [`Question`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

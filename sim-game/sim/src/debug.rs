@@ -1501,9 +1501,22 @@ pub fn too_poor_answer(q: Question, species: &str) -> String {
         Question::Burns => "light",
         Question::HardEnough => "be worth a part",
     };
+    // **THE LADDER CLAUSE IS UNCONDITIONAL *HERE* BECAUSE THE CONDITION IS
+    // UPSTREAM** (Game Director, ASSA-257). She ruled the sentence may point at
+    // sorting only when sorting actually reaches an answering grade. It always
+    // does by the time this function is called: `World::too_poor_for` names a
+    // species only when a patch of it satisfies `could_answer_at_best_grade`,
+    // which asks at `proximity::LADDER_TOP` — and that constant IS the top of
+    // `Grade::better`, where `recipe::Sort` tops out. So the guard is the
+    // selector, not a second copy of it, which is the part of her ruling I would
+    // otherwise have written twice.
+    //
+    // **A FACT ABOUT THE ROCK, NOT AN INSTRUCTION**, which she was explicit
+    // about: "sorting lifts a grade, at a loss", never "go and sort it". The
+    // player is told what the world permits and decides for themselves.
     format!(
         "no patch is rich enough. {species} would {want}, but every patch of it in this world \
-         yields too poor a grade."
+         yields too poor a grade; sorting lifts a grade, at a loss."
     )
 }
 
