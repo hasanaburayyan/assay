@@ -175,6 +175,16 @@ def case_resurrection(guard: str, repo: str, r: Results) -> None:
     r.expect("nothing names it: exit 1", code, 1)
     r.expect_in("nothing names it: says PUT BACK AS IT WAS", PUT_BACK, out)
     r.expect_in("nothing names it: names the path", "gen.txt", out)
+    # THE PUSH ARM, AND IT IS HERE BECAUSE I TICKED IT BEFORE IT EXISTED. This
+    # run has no PR body, which is exactly what the push to main looks like, so
+    # the new finding must be impossible rather than merely unlikely: with no
+    # `PR_BODY` the two proses are the same string. That was reasoned on the
+    # item and asserted nowhere, which is a guard nobody has seen fail.
+    r.expect(
+        "a run with no PR body cannot raise the PR-body finding -- this is the push",
+        BODY_ONLY in out,
+        False,
+    )
 
     code_named, out_named = run_guard(guard, repo, base, named_head)
     r.expect("a commit message names it: exit 0", code_named, 0)
