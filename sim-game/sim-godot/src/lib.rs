@@ -999,7 +999,18 @@ impl AssaySim {
     /// ASSA-43 and ASSA-52.
     #[func]
     pub fn dead_end_label() -> GString {
-        gstring(sim::debug::DEAD_END_LABEL)
+        gstring(Self::dead_end_label_text())
+    }
+
+    /// Engine-free half of [`AssaySim::dead_end_label`], so the rule it carries
+    /// can be tested without an engine.
+    ///
+    /// **A `#[test]` CANNOT CALL THE `#[func]`**: `gstring` touches the Godot
+    /// API and godot-ffi panics with "Godot binding accessed before
+    /// initialization". That is the same split `halt_line_texts` exists for,
+    /// and I rediscovered it the hard way by writing the other test first.
+    pub fn dead_end_label_text() -> &'static str {
+        sim::debug::DEAD_END_LABEL
     }
 
     /// Species names in `SpeciesId` order, so a `species` index above can be
@@ -2146,11 +2157,6 @@ impl AssaySim {
 mod tests {
     use super::*;
 
-    /// GDScript gets the rules identity from here, as text, and puts it in
-    /// `Hello` (ASSA-40). Sixteen hex digits is also what stops it being
-    /// mangled: a client whose id arrived through a double would be refused
-    /// by every host, which is the least debuggable failure available.
-    #[test]
     /// **THE LABEL THIS BINDING HANDS THE WINDOW IS THE SIM'S CONSTANT, NOT A
     /// COPY OF IT** (ASSA-158).
     ///
@@ -2161,7 +2167,12 @@ mod tests {
     /// clause back in the same series.
     #[test]
     fn the_dead_end_label_is_the_sims_own_word() {
-        let exposed = AssaySim::dead_end_label().to_string();
+        // **THE ENGINE-FREE HALF, AND A UNIT TEST HAS NO CHOICE.** Calling the
+        // `#[func]` here panics in godot-ffi — "Godot binding accessed before
+        // initialization" — because `gstring` touches the engine, which is the
+        // same reason `halt_line_texts` exists beside `halt_lines`. I wrote the
+        // `#[func]` version of this test first and it did exactly that.
+        let exposed = AssaySim::dead_end_label_text();
         assert_eq!(
             exposed,
             sim::debug::DEAD_END_LABEL,
@@ -2174,6 +2185,11 @@ mod tests {
         );
     }
 
+    /// GDScript gets the rules identity from here, as text, and puts it in
+    /// `Hello` (ASSA-40). Sixteen hex digits is also what stops it being
+    /// mangled: a client whose id arrived through a double would be refused
+    /// by every host, which is the least debuggable failure available.
+    #[test]
     fn the_rules_identity_crosses_as_the_sims_own_hex_text() {
         let id = AssaySim::rules_id_string();
         assert_eq!(id, sim::RULES_ID);
