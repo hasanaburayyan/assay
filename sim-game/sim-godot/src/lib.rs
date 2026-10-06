@@ -980,6 +980,28 @@ impl AssaySim {
         sim::tuning::SPECIES_PER_WORLD as i64
     }
 
+    /// The word the sim puts in front of a dead end, so the window labels one
+    /// the way the terminal already does (ASSA-158).
+    ///
+    /// **IT IS EXPOSED RATHER THAN RETYPED BECAUSE THE DEFECT IS A CLIENT
+    /// COMPOSING A VOICE.** The window drew the dead end as `— nothing uses a
+    /// gear`, in the same em dash and the same ink as the cost clause above it,
+    /// so *"what this costs"* and *"this is useless"* arrived in one voice —
+    /// and one of them can become true by playing while the other never can.
+    /// `sim-cli`'s catalogue has had the labelled line since ASSA-122
+    /// (`debug.rs` prints `{DEAD_END_LABEL}{dead_end}`); the window is the
+    /// surface that never got it.
+    ///
+    /// **STATIC, like `species_per_world`:** it is a wording constant, not a
+    /// fact about one world, and a test should not need a `Welcome` to ask for
+    /// it. A client that hard-coded "dead end: " would be a second copy of a
+    /// decision that is the Game Director's, which is the whole shape of
+    /// ASSA-43 and ASSA-52.
+    #[func]
+    pub fn dead_end_label() -> GString {
+        gstring(sim::debug::DEAD_END_LABEL)
+    }
+
     /// Species names in `SpeciesId` order, so a `species` index above can be
     /// labelled. The sim decides whether that is the generated name or the one
     /// its discoverer chose.
@@ -2129,6 +2151,29 @@ mod tests {
     /// mangled: a client whose id arrived through a double would be refused
     /// by every host, which is the least debuggable failure available.
     #[test]
+    /// **THE LABEL THIS BINDING HANDS THE WINDOW IS THE SIM'S CONSTANT, NOT A
+    /// COPY OF IT** (ASSA-158).
+    ///
+    /// The whole point of exposing it was that the window had been drawing a
+    /// dead end in the cost's voice, and the fix must not be a second place
+    /// where the Game Director's wording lives. `gstring` round-trips, so this
+    /// also catches the label arriving empty — which would put an unlabelled
+    /// clause back in the same series.
+    #[test]
+    fn the_dead_end_label_is_the_sims_own_word() {
+        let exposed = AssaySim::dead_end_label().to_string();
+        assert_eq!(
+            exposed,
+            sim::debug::DEAD_END_LABEL,
+            "the binding is handing the window a different word from the one \
+             `sim-cli`'s catalogue prints"
+        );
+        assert!(
+            !exposed.trim().is_empty(),
+            "an empty label puts the dead end back in the cost's series"
+        );
+    }
+
     fn the_rules_identity_crosses_as_the_sims_own_hex_text() {
         let id = AssaySim::rules_id_string();
         assert_eq!(id, sim::RULES_ID);
