@@ -195,6 +195,23 @@ jobs:
       # Stdlib only, 0.3s.
       - name: The ground still has form above a tile
         run: python3 art/check_ground_form.py
+      # THE PACK PLATE'S DERIVATION, NOT THE PLATE (ASSA-261). `check_pack_icon_plate.py` further
+      # down guards an IDENTITY -- the sheet, the shipped ui_theme.json and the colour the engine
+      # painted agree -- and it is blind to that colour being computed by the wrong statistic. It
+      # passed every day the plate came from a per-channel MEDIAN while 32.5% of the ground sat on
+      # one luminance level and the median sat on that spike, leaving the plate 3.2 levels off the
+      # ground it is defined to BE (ASSA-71). A tolerance on the real sheet would be circular, so
+      # this guards the derivation on SYNTHETIC sheets whose right answer is arithmetic: a majority
+      # spike must not capture it (fails a median), it must round rather than truncate (fails
+      # int(), worth half a level per channel on every build), and it must resist a small one-sided
+      # tail (fails a bare mean, which is why Maren's call was "trimmed, not bare"). Proved red on
+      # the real previous file, not on a mutant: `art/check_plate_statistic.py <dir>` judges any
+      # copy of ui_theme.py, and 62835a2's fails property 1. Stdlib only; it encodes three
+      # 120x120 sheets and reads them back through the shipped decoder. No wall-clock figure
+      # here on purpose -- the studio Mac is too loaded this week for an honest one, and the
+      # other comments' times were measured when it was not.
+      - name: The pack plate's statistic still has all three properties
+        run: python3 art/check_plate_statistic.py
       # A FIRE IS NOT MADE OF THE WALLS (ASSA-137). The check above guards the
       # surfaces the species tint MAY shade; this one guards the rows it may
       # not touch at all. The client tints a world sprite with `modulate`, a
