@@ -28,8 +28,14 @@ extends SceneTree
 ## means the strip did not change what is on screen, which is exactly the defect that made the last
 ## shot set worthless. It fails the run by name.
 ##
+## **AND IT CAN BE ASKED FOR THE WORST MOMENT RATHER THAN THE LAST ONE** (`clip=<px>`). The fold
+## budget is decided by the SMALLEST the tab's scroll box ever gets — the stopped state, where the
+## blocks above the strip grow and a player most needs the controls. Given a ceiling, this plays
+## until the clip first drops under it and shoots every tab THERE, so the pictures are of the moment
+## the design is tightest instead of the moment the play happened to end.
+##
 ## Usage (GUI, never --headless: a headless run has no layout pass and every size reads 0):
-##   godot --path . --script res://tools/maren_tab_shots.gd -- <out_dir> [seed] [ticks]
+##   godot --path . --script res://tools/maren_tab_shots.gd -- <out_dir> [seed] [ticks] [clip=N]
 
 const DEFAULT_SEED := "14247"
 ## The play the panel was budgeted against (Nacre's probe: 516 ticks, worst clip at tick 89).
@@ -62,6 +68,11 @@ var _names := PackedStringArray()
 var _at := 0
 var _taken := {}
 var _lines := PackedStringArray()
+## Shoot at the first tick whose clip is under this, instead of at the end of the play. 0 = off.
+var _clip_ceiling := 0.0
+## The smallest the open tab's scroll box has been, and when.
+var _clip_worst := 1e9
+var _clip_tick := -1
 
 
 func _initialize() -> void:
@@ -69,9 +80,18 @@ func _initialize() -> void:
 	if argv.is_empty():
 		_finish(false, "usage: -- <out_dir> [seed] [ticks]")
 		return
-	_out = String(argv[0])
-	_seed = String(argv[1]) if argv.size() > 1 else DEFAULT_SEED
-	_left = int(argv[2]) if argv.size() > 2 else DEFAULT_TICKS
+	# `clip=N` IS NAMED AND NOT POSITIONAL, `window_shot.gd`'s reason: a fourth slot whose meaning
+	# depends on counting the three in front of it is a number that gets passed wrong.
+	var positional := PackedStringArray()
+	for raw in argv:
+		var arg := String(raw)
+		if arg.begins_with("clip="):
+			_clip_ceiling = float(arg.substr(5))
+		else:
+			positional.append(arg)
+	_out = String(positional[0])
+	_seed = String(positional[1]) if positional.size() > 1 else DEFAULT_SEED
+	_left = int(positional[2]) if positional.size() > 2 else DEFAULT_TICKS
 	if DirAccess.make_dir_recursive_absolute(_out) != OK:
 		_finish(false, "cannot write to %s" % _out)
 		return
@@ -162,6 +182,17 @@ func _play_frames() -> void:
 		if _screen._sim.applied == before:
 			_finish(false, "the sim refused the bundle for tick %d" % at)
 			return
+		# THE CLIP IS READ EVERY TICK, because the number that decides the fold rule is the SMALLEST
+		# this box ever is and that moment lasts a handful of ticks in the middle of a long play.
+		var clip: float = _screen._tabs.scroll_box().size.y
+		if clip > 0.0 and clip < _clip_worst:
+			_clip_worst = clip
+			_clip_tick = _screen._sim.tick()
+		if _clip_ceiling > 0.0 and clip > 0.0 and clip <= _clip_ceiling:
+			print("clip %.0f px at tick %d is under the %.0f px asked for: shooting here"
+					% [clip, _clip_tick, _clip_ceiling])
+			_end_play()
+			return
 
 
 func _end_play() -> void:
@@ -225,17 +256,31 @@ func _button_table(tab_name: String, paint_right: int) -> String:
 	_walk_buttons(_screen._column, found)
 	var out := PackedStringArray()
 	var off := 0
+	# THE OTHER EDGE, AND IT IS THE ONE WREN'S RULE IS ABOUT. Only the buttons inside the scroll box
+	# can fall below it; `Mine` and the strip are pinned above it by construction.
+	var clip: Rect2 = _screen._tabs.scroll_box().get_global_rect()
+	var deepest := 0.0
 	for row in found:
 		var rect: Rect2 = row[1]
 		var verdict := "ok"
 		if rect.position.x > float(paint_right):
-			verdict = "OFF THE SCREEN"
+			verdict = "OFF THE SCREEN RIGHT"
 			off += 1
 		elif rect.end.x > float(paint_right) + 1.0:
 			verdict = "cut at the paint"
 			off += 1
-		out.append("      %-26s x %4.0f..%4.0f  %s" % [row[0], rect.position.x, rect.end.x, verdict])
+		if rect.position.y >= clip.position.y - 1.0:
+			deepest = maxf(deepest, rect.end.y)
+			if rect.end.y > clip.end.y + 1.0:
+				verdict = "%s BELOW THE FOLD by %.0f px" % [verdict, rect.end.y - clip.end.y]
+				off += 1
+		out.append("      %-26s x %4.0f..%4.0f  y %4.0f..%4.0f  %s"
+				% [row[0], rect.position.x, rect.end.x, rect.position.y, rect.end.y, verdict])
 	out.insert(0, "buttons: %d, %d not fully inside the painted column" % [found.size(), off])
+	out.insert(1, "      clip y %.0f..%.0f (%.0f px, worst %.0f at tick %d); deepest button bottom "
+			% [clip.position.y, clip.end.y, clip.size.y, _clip_worst, _clip_tick]
+			+ "%.0f -> %s" % [deepest, "%.0f px to spare" % (clip.end.y - deepest)
+			if deepest <= clip.end.y else "OVER by %.0f px" % (deepest - clip.end.y)])
 	return "\n".join(out)
 
 
