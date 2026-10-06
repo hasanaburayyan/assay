@@ -150,6 +150,22 @@ func deposits() -> Array:
 	return _sim.deposits() if _sim != null else []
 
 
+## WHAT NEAR THIS PLAYER ANSWERS EACH QUESTION: `asked`, `headline`, `tile` (ASSA-254).
+##
+## `headline` is `sim::debug::proximity_headline` VERBATIM and is the Mineralogy tab's first line. It
+## already carries the question, the species, the grade, the distance and the heading, and it is
+## never empty: the sim has a sentence for both no-answer states, which are different news (no patch
+## can ever answer, versus a species that would answer from a richer patch).
+##
+## `tile` is the one fact the sentence cannot carry, and it is `null` rather than `(0,0)` when
+## nothing answers -- a tile of zero is a real corner of every world, so a sentinel there would be a
+## destination the sim never offered. `go here` submits `MoveTo { target: tile }` with it and does no
+## arithmetic. Distance and heading are deliberately NOT separate fields: they are in the sentence,
+## and two vocabularies for one fact are free to disagree.
+func proximity_answers(player: int) -> Array:
+	return _sim.proximity_answers(player) if _sim != null else []
+
+
 ## Species names in id order, so a deposit's `species` index can be labelled.
 func species_names() -> PackedStringArray:
 	return _sim.species_names() if _sim != null else PackedStringArray()
