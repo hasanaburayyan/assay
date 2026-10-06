@@ -244,6 +244,17 @@ func make_offers(player: int) -> Array:
 	return _sim.make_offers(player) if _sim != null else []
 
 
+## THE SIM'S OWN LABEL FOR A DEAD END (ASSA-158), so the window says it the way the terminal's
+## catalogue has since ASSA-122 and this client composes no voice of its own.
+##
+## STATIC on the binding, so it answers before a `Welcome`: it is a wording constant, not a fact
+## about a world. The fallback is the empty string and NOT a typed copy of the label -- a second copy
+## of the Game Director's wording is the ASSA-43/52 shape, and an unlabelled clause is a smaller lie
+## than a label this file invented.
+func dead_end_label() -> String:
+	return String(AssaySim.dead_end_label()) if _sim != null else ""
+
+
 ## Everything on one tile: `in_bounds`, `pos`, `chunk`, `chunks_from_spawn`, `is_spawn`, `deposit`
 ## (null or a dictionary), `building` (null or a dictionary), `players_here`.
 ##
