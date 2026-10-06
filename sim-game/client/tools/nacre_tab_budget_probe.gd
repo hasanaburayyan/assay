@@ -251,6 +251,47 @@ func _column_sections() -> Array:
 	return out
 
 
+## **HOW MUCH OF A SECTION IS WRAP.** Maren's Gap 3 says the column is prose where it should be
+## data, and the tab budget turned that from a style note into the binding constraint. This is the
+## lever, measured per section instead of estimated once for `make`.
+##
+## A section's rows live in the LIST -- the tallest body control that is a container with more than
+## one visible child (`_carrying`, `_make`, `_species` are each a VBox of rows). A themed Button is
+## the yardstick for one line, because it is the shortest thing in this column that a row can be and
+## still carry a control. A row measurably taller than that is a row the 320 px column has wrapped.
+##
+## **WHAT THIS CANNOT TELL ANYONE, so the report does not pretend otherwise:** it measures how tall
+## rows ARE, not how tall they COULD be. "One-line rows would be N px" is arithmetic on a yardstick,
+## not a measurement of a thing that exists, and the report labels it as such.
+func _row_stats(controls: Array) -> Dictionary:
+	var best: Control = null
+	var best_rows := 0
+	for i in range(controls.size()):
+		var control := controls[i] as Control
+		if control == null or i == 0 or not control.is_visible_in_tree():
+			continue
+		var rows := 0
+		for child in control.get_children():
+			var row := child as Control
+			if row != null and row.is_visible_in_tree():
+				rows += 1
+		if rows > best_rows:
+			best_rows = rows
+			best = control
+	if best == null or best_rows == 0:
+		return {"rows": 0, "tallest": 0.0, "total": 0.0}
+	var tallest := 0.0
+	var total := 0.0
+	for child in best.get_children():
+		var row := child as Control
+		if row == null or not row.is_visible_in_tree():
+			continue
+		total += row.size.y
+		if row.size.y > tallest:
+			tallest = row.size.y
+	return {"rows": best_rows, "tallest": tallest, "total": total}
+
+
 ## HOW TALL A SECTION IS AS DRAWN: its visible children's heights plus one separation between each.
 ##
 ## **THE HEADING IS MEASURED SEPARATELY, AND IT IS NOT A DETAIL.** In a tabbed panel the TAB BUTTON
@@ -384,6 +425,13 @@ func _measure() -> void:
 		if not _reach.has(which) or must_fit > float((_reach[which] as Dictionary)["must_fit"]):
 			_reach[which] = {"must_fit": must_fit, "buttons": int(reach["buttons"]),
 					"tick": tick}
+		# ROW DENSITY AT THE TICK THE SECTION WAS TALLEST, not at its own separate peak. The lever is
+		# "what does this section's worst moment cost per row", so it has to be read off that moment.
+		if float(drawn["h"]) >= float((_best[which] as Dictionary)["h"]):
+			var rows := _row_stats(section["controls"])
+			(_best[which] as Dictionary)["rows"] = int(rows["rows"])
+			(_best[which] as Dictionary)["row_tallest"] = float(rows["tallest"])
+			(_best[which] as Dictionary)["row_total"] = float(rows["total"])
 	# **THE ALWAYS-ON BLOCK MEASURED AS ONE THING, ON ONE TICK.** Adding the high water of `you` to the
 	# high water of `do` is an upper bound on a state that may never have existed -- the two peak at
 	# different moments, and a budget built from two maxima that never co-occur is pessimistic by an
@@ -466,6 +514,27 @@ func _report() -> void:
 	# **WREN'S RULE IS THE VERDICT, 19:40 EDT ON ASSA-198.** Not the body: *"a list of forty rocks
 	# scrolling is a list; a cut Make button is a defect"*. So each candidate is judged on how far its
 	# LOWEST BUTTON reaches below its own body top, and a section with no buttons cannot fail.
+	# THE DENSITY LEVER, PER SECTION. Gap 3 is the only thing that moves these numbers without
+	# anyone overruling anyone, so it is worth knowing which sections it actually pays off in.
+	print("")
+	print("  ROW DENSITY -- how much of each section is WRAP (Maren's Gap 3)")
+	print("    a themed Button is %d px: that is one line carrying a control"
+			% int(round(_tab_strip_h)))
+	var one_line := _tab_strip_h + float(_separation)
+	for which in ["you", "make", "bench", "rocks"]:
+		var best: Dictionary = _best[which]
+		var rows := int(best.get("rows", 0))
+		if rows == 0:
+			print("    %-8s no row list found" % which)
+			continue
+		var total := float(best.get("row_total", 0.0))
+		var per := total / float(rows)
+		# ARITHMETIC, NOT A MEASUREMENT, and said so: nobody has built a one-line row yet.
+		var dense := float(rows) * one_line
+		print("    %-8s %2d rows, %5.1f px each (tallest %d) = %d px; at one line each ~%d px"
+				% [which, rows, per, int(round(float(best.get("row_tallest", 0.0)))),
+				int(round(total)), int(round(dense))])
+	print("    (the one-line figures are arithmetic on the yardstick, not a measured build)")
 	print("")
 	print("  WREN'S FOLD RULE: every button above the fold; an unbounded LIST may scroll in its tab")
 	var worst := ""
