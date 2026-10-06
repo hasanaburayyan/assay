@@ -1054,8 +1054,13 @@ fn the_plain_empty_answer_offers_no_ladder() {
              help when nothing in the world answers at any grade: {plain}"
         );
         let too_poor = debug::too_poor_answer(q, "Xite");
+        // LOWERCASED, because this asserts the clause is PRESENT and not how it
+        // is punctuated. It read the haystack as typed until ASSA-265 made the
+        // clause its own sentence, so a capital S reddened a test about whether
+        // the ladder is mentioned at all — a wording decision breaking a
+        // behaviour test. The instruction check below has always done this.
         assert!(
-            too_poor.contains("sorting lifts a grade"),
+            too_poor.to_lowercase().contains("sorting lifts a grade"),
             "the too-poor sentence lost the ladder clause: {too_poor}"
         );
         assert!(
