@@ -44,8 +44,12 @@ reads it. Hash-picked cells would be strictly worse than what we ship: the
 cells are not interchangeable, so a random arrangement would cut every patch
 that crosses a boundary.
 
-THREE LAYERS, AND EACH ONE IS A DIFFERENT SPATIAL FREQUENCY, because that is what
-"ground" is made of and what a flat plane cannot have:
+FOUR LAYERS, AND EACH ONE IS A DIFFERENT SPATIAL FREQUENCY, because that is what
+"ground" is made of and what a flat plane cannot have. **THE FOURTH IS THE ONLY ONE
+BIGGER THAN A TILE** (ASSA-150): the three below are drawn per CELL, so whatever they
+do they do inside 32 px, and the field they add up to was measured as white noise above
+half a tile -- cell means one tile apart correlate -0.10 / +0.06, and the structure
+function is flat from 48 px to 256. Layer 4 is drawn once over the whole field.
 
   1. PATCHES -- 5 very flat discs per cell, radius 0.14-0.30 of a tile, two
      light and three dark. Eight at a wider light step read as CAMOUFLAGE at
@@ -61,6 +65,13 @@ THREE LAYERS, AND EACH ONE IS A DIFFERENT SPATIAL FREQUENCY, because that is wha
   3. SPECKS -- 12 tiny dark points, radius 0.015-0.03. Below the resample they
      do not survive as objects; they survive as dither, which is what stops the
      patches from banding into flat zones of their own.
+  4. MOTTLE -- 8 domes of radius 1.8-3.0 TILES over the whole field, six concentric
+     rings each so the tone arrives over a radius rather than at an edge, light and
+     dark alternating so the field's median cannot drift. This is the layer a player
+     reads as "that stretch of ground is drier", and the only one whose features
+     cross a tile at all. Its amplitude was set by arithmetic before the render:
+     1.5-tile domes cannot move the one-tile correlation at any amplitude a ground
+     may spend, and the ore cost at twice this one is 0.43 of a dE.
 
 THE TONE BUDGET IS STILL FIXED, AND NOW IT IS THE FIELD'S. Every cell
 contributes the same inventory of sizes in the same tones (`scatter` is
@@ -169,6 +180,21 @@ def scatter(n, rmin, rmax, light, span=BLOCK):
     medians 126.8, 126.8, 158.7 and 144.8 -- a player could point at a tile and say
     that one is lighter, which reads as terrain the sim does not have.
 
+    **AND THAT SENTENCE IS A MECHANISM STANDING IN FOR A PROPERTY (ASSA-150, Maren).**
+    The rule this file has enforced is "every cell's median is equal". The thing worth
+    protecting is one step back from it: **GROUND TONE CARRIES NO INFORMATION A PLAYER
+    COULD READ AS MATERIAL OR STATE.** Equal medians is one way to hold that, and it is
+    the way that forbids any feature larger than a cell -- which is how the field ended
+    up white noise above half a tile (cell means one tile apart correlate -0.10 / +0.06;
+    the structure function is flat from 48 px to 256). The MOTTLE below holds the
+    property by a different route: it is achromatic, it is low-amplitude, and nothing in
+    the sim reads ground tone, so a drab wide blotch cannot be mistaken for a deposit --
+    `mottle_pop.py` measures that rather than asserting it (grade C's worst margin moves
+    7.33 -> 6.90 at twice this amplitude, floor 5).
+
+    So the budget below still holds for the three SUB-TILE layers, because that is where
+    a per-cell tone difference would read as a tile; it is not a rule about the field.
+
     THE BUDGET WAS FIXED IN COUNT AND NOT IN AREA, which is only the same thing while
     the radii are close. Widening the patch layer to 0.14-0.30 for box 11 broke it:
     `random.uniform` handed v5 the big end of the range for its three DARK spots, and
@@ -225,6 +251,78 @@ for cell in range(BLOCK * BLOCK):
     wrapped(r, scatter(18, 0.035, 0.075, light=4), squash=0.4)
     # 3. SPECKS: dither under the patches.
     wrapped(r, scatter(12, 0.015, 0.03, light=0), squash=0.5)
+
+# 4. MOTTLE -- THE ONLY LAYER WHOSE FEATURES ARE BIGGER THAN A TILE (ASSA-150).
+#
+# WHAT THE OTHER THREE LAYERS CANNOT DO, measured on the shipped field before this
+# existed (`cove-assa150/field_scale.txt`): cell means at one tile apart correlate
+# -0.097 horizontally and +0.062 vertically -- zero -- and the structure function
+# is FLAT from d 48 to d 256 (13.0 against 13.1 of 255). Every feature the ground
+# has fits inside half a tile, so above that the ground is white noise and there is
+# nothing on it to walk toward. That is not the old "one blob per tile" defect,
+# which #220 killed with the field; it is what the field left behind.
+#
+# PER FIELD, NOT PER CELL, which is the whole point: `scatter` is called inside the
+# cell loop 64 times and each call spends the same budget, so anything drawn there
+# is sub-tile by construction however it is arranged. These eight domes are drawn
+# ONCE over the 8x8 field, at a radius of 1.8-3.0 TILES.
+#
+# THE AMPLITUDE IS SET BY ARITHMETIC, NOT BY EYE (`mottle_model.py`, `mottle_pop.py`):
+#   - a replica on the real field says r(1 tile) reaches ~0.35 at a peak of ~10
+#     levels with a 2.5-tile radius, and that 1.5-tile blobs cannot get there at any
+#     amplitude a ground may spend;
+#   - the cost to ore findability is almost nothing, and NOT for the reason I
+#     assumed: ore is a transparent overlay, so a brighter patch of ground brightens
+#     the tile the ore sits in too. At +-12 levels -- twice what ships here -- grade
+#     C's worst margin moves 7.33 -> 6.90 against a floor of 5, and B and A stay
+#     above 23 against a floor of 10.
+#
+# SIX RINGS, WIDEST AND GENTLEST FIRST, for `softened()`'s reason one scale up: a
+# tone step spent at an edge is an object. Here the step arrives over ~0.4 of a tile
+# per ring, about a pixel and a half of tone at 32 px/tile, which is under the
+# ground's own grain.
+#
+# AND IT HAS TO BE FLATTER THAN ANYTHING ELSE HERE, which the first render taught me
+# the hard way. At `squash=0.02` a 3-tile dome is 0.06 tiles tall -- seven times the
+# patch layer's 0.009 -- so it did not sit UNDER the ground's grain, it BURIED it:
+# `field_scale.py` on that sheet reported the structure function collapsing from 13.0
+# to 3.1 and the per-pixel step from 2.96 to 0.42. The mottle was the only thing left
+# in the picture. A layer that is colour and not relief has to be built that way:
+# `MOTTLE_SQUASH` keeps every dome under 0.002 tiles tall, below the patches' own
+# bottom, so the only thing it changes is tone.
+MOTTLE_BLOBS = 8
+MOTTLE_R = (1.8, 3.0)      # tiles
+MOTTLE_STEP = 0.85         # of the way from `ground` to `ground_lt` / `ground_dk`
+MOTTLE_RINGS = 6
+MOTTLE_SQUASH = 0.0012     # x radius: 0.0036 tiles tall at the widest dome
+MOTTLE_Z = 0.0035          # clear of the ground plane, under the patches' 0.013 tops
+random.seed(150)
+for i in range(MOTTLE_BLOBS):
+    # LIGHT AND DARK ALTERNATE so the field's median cannot drift: `ui_theme.py`
+    # derives the pack-row plate from it on every build.
+    target = "ground_lt" if i % 2 == 0 else "ground_dk"
+    r0 = random.uniform(*MOTTLE_R)
+    cx = random.uniform(-BLOCK / 2.0, BLOCK / 2.0)
+    cy = random.uniform(-BLOCK / 2.0, BLOCK / 2.0)
+    rot = (0, 0, random.random() * math.tau)
+    for k in range(MOTTLE_RINGS):
+        # THE RINGS ARE `softened()`'s SHAPE, NOT A LINEAR RAMP. Shrinking the radius
+        # by a sixth each step put the whole tone in a 0.4-tile centre -- sub-tile,
+        # which is the one thing this layer may not be -- and area-weighted the dome
+        # was spending a tenth of its step over most of itself.
+        # A PLATEAU, NOT A CONE, and the second render is why. A ramp that reaches its
+        # tone only at the centre spends most of its area at a fraction of the step:
+        # measured cell-by-cell against main, the cone profile moved a cell's mean by
+        # +-2.5 against a patch-placement noise of sd 3.04, so the one-tile correlation
+        # could not see it and neither could I at 1x. The tone now holds from the rim
+        # inward and only the outer fifth of the radius is a falloff.
+        radius = r0 * (1.0, 0.95, 0.88, 0.78, 0.62, 0.42)[k]
+        tone = rig.mix_hex(rig.PALETTE["ground"], rig.PALETTE[target],
+                           MOTTLE_STEP * (0.45, 0.62, 0.78, 0.9, 1.0, 1.0)[k])
+        # Under the patches, the grit and the specks: this is the base tone those
+        # three sit on, not a fourth thing on top of them.
+        wrapped(r, [(cx, cy, radius, tone, rot)], squash=MOTTLE_SQUASH,
+                z=MOTTLE_Z + 0.0001 * k)
 
 # ONE RENDER, THEN SIXTEEN... SIXTY-FOUR SLICES, AND THE ORDER OF THOSE TWO MATTERS.
 #

@@ -1,11 +1,11 @@
 {
  "source": "art/ui_theme.py, from client/assets/sprites/ground.png",
  "pack_icon_plate_rgb": [
-  135,
-  154,
-  102
+  128,
+  147,
+  97
  ],
- "pack_icon_plate_hex": "#879A66",
+ "pack_icon_plate_hex": "#809361",
  "pack_icon_plate_source": "per-channel median of the opaque pixels of ground.png",
  "pack_icon_plate_rule": "the pack-row icon's slot plate. One constant colour for every species and every grade: it must never carry information, because a tinted plate is a second colour channel competing with the icon. The client draws it behind the icon's own box and nowhere else yet."
 }
