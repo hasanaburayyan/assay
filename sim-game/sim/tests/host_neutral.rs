@@ -108,6 +108,92 @@ fn the_guard_reads_event_line_and_not_the_tables() {
     );
 }
 
+/// **A `BuildingId` REACHES A READER ONLY THROUGH AN `Audience::Typed` ARM
+/// (ASSA-222, ASSA-244), AND THIS GUARD EXISTS BECAUSE I MISSED FOUR ARMS.**
+///
+/// Slice 2 gave `event_line` an audience so the pointing reader stops being
+/// handed an index with nothing to type it into. I found the arms to change by
+/// grepping for the literal `building {}` — and `MachinePlaced`, `MachineMined`,
+/// `MachineStalled` and `SmelterStalled` spell the same id `machine {}` and
+/// `smelter {}`, so all four kept printing it. **Two of those four are loud**
+/// (`event_needs_attention`), which put a bare id on the always-visible status
+/// line — the one surface ASSA-89 built because the log gets missed.
+///
+/// **AND MY CORPUS TEST COULD NOT SEE IT, WHICH IS THE REAL LESSON.**
+/// `event_audience.rs` decides "does this event carry a building" from a
+/// hand-written `matches!` list, and I wrote that list from the arms I had just
+/// changed — so the test agreed with my blind spot instead of checking it. A
+/// list of today's arms cannot catch tomorrow's.
+///
+/// So the rule is mechanical and about the SOURCE, like the two guards above:
+/// **a body line mentioning `building.0` must mention `Audience::Typed` on the
+/// same line.** One-line locality is the whole trick — no parsing, no arm
+/// tracking, and a new arm that prints the id bare goes red on the line it was
+/// written on.
+///
+/// **AND DEPOSIT IDS ARE NOW IN SCOPE TOO, BY A DIFFERENT RULE.** I filed them
+/// as out of scope while they were an open question: no `PlayerCommand` carries
+/// a `DepositId` (`Mine`/`Assay` act on the tile you stand on), so that id is
+/// dead for *both* readers and an audience parameter is the wrong tool. The Game
+/// Director ruled it ASSA-130's shape and said drop it for everyone, so there is
+/// no typed exemption to allow: **no `deposit.0` may reach a reader at all.**
+/// Five of the six sentences already named the species; `DepositDepleted` did
+/// not, and names it out of the world instead of losing its subject.
+#[test]
+fn a_building_id_reaches_a_reader_only_through_a_typed_arm() {
+    let body = event_line_body();
+    let mut ids = 0;
+    for (n, line) in body.lines().enumerate() {
+        if line.trim_start().starts_with("//") {
+            continue;
+        }
+        assert!(
+            !line.contains("deposit.0"),
+            "event_line prints a DepositId, body line {n}:\n{line}\n\
+             No PlayerCommand carries one, so it is a dead index for EVERY \
+             reader -- ASSA-130's shape, and the Game Director ruled it dropped \
+             for everyone (ASSA-244). Name the species, or the species and the \
+             tile if the sentence would otherwise lose its subject."
+        );
+    }
+    for (n, line) in body.lines().enumerate() {
+        if line.trim_start().starts_with("//") {
+            continue;
+        }
+        if !line.contains("building.0") {
+            continue;
+        }
+        ids += 1;
+        assert!(
+            line.contains("Audience::Typed"),
+            "event_line prints a BuildingId outside a typed arm, body line {n}:\
+             \n{line}\n\
+             A reader who points has nothing to type it into (ASSA-222). Route \
+             it through `building_ref`, which names the building for them and \
+             keeps the handle for a reader who types `take 0`. If this line IS \
+             the typed branch, say so on it."
+        );
+    }
+    // NON-VACUITY: zero is a passing answer here too, so the scan must be shown
+    // capable of finding something. Both legal sites are the drop-or-keep arms
+    // of `BuildingPlaced` and `BuildingRemoved`, where the item is already the
+    // noun, so the id is dropped rather than replaced.
+    assert!(
+        ids >= 2,
+        "found {ids} `building.0` prints in event_line; the two typed arms of \
+         BuildingPlaced and BuildingRemoved should both be there, so this scan \
+         is reading the wrong text or the arms have been reshaped"
+    );
+    // AND THE APPROVED ROUTE IS STILL THE ONE IN USE. Without this, deleting
+    // every `site(...)` call and hard-coding the typed wording would pass
+    // everything above.
+    assert!(
+        body.matches("site(building)").count() >= 4,
+        "event_line no longer routes buildings through `building_ref`; the \
+         guard above only forbids the bare id, it cannot require the noun"
+    );
+}
+
 /// **NO ENTRY THAT PERSISTS NAMES A DESIGN SLOT (ASSA-130).** The same
 /// mechanical shape as the backtick guard above, and for the same reason: the
 /// thing to prevent is the next one.

@@ -180,13 +180,13 @@ fn three_peers_on_one_relay_close_the_demo_loop_once_between_them() {
     party.until(ADA, "reached the smelter", |l| standing_at(l, f));
     party.send(ADA, &format!("insert 0 ore {} {ADA_ORE}", c.ore));
     party.until(CY, "saw the smelter running", |l| {
-        count(l, "building 0 smelted") >= REFINED_NEEDED as usize
+        count(l, "smelter 0 smelted") >= REFINED_NEEDED as usize
     });
 
     // --- cy takes somebody else's refined out of somebody else's smelter.
     party.send(CY, "take 0");
     party.until(CY, "took the refined", |l| {
-        took(l, "building 0") >= REFINED_NEEDED
+        took(l, "smelter 0") >= REFINED_NEEDED
     });
 
     // --- cy builds the pick: one `assemble`, a held frame plus a head.
@@ -237,7 +237,7 @@ fn three_peers_on_one_relay_close_the_demo_loop_once_between_them() {
     party.send(ADA, &format!("goto {} {}", m.x, m.y));
     party.until(ADA, "walked to the drill", |l| standing_at(l, m));
     party.send(ADA, "take 1");
-    party.until(ADA, "emptied the drill", |l| took(l, "building 1") > 0);
+    party.until(ADA, "emptied the drill", |l| took(l, "machine 1") > 0);
     party.send(ADA, "inv");
     party.until(ADA, "listed its inventory", |l| says(l, "Carrying "));
 

@@ -177,6 +177,35 @@ fn a_smelters_life() -> Life {
         )],
         &mut events,
     );
+    // **AND A REAL `SmelterStalled`, BECAUSE A SOURCE SCAN IS NOT A READING.**
+    // `host_neutral.rs` now forbids a bare `building.0` outside a typed arm, and
+    // that is the guard that would have caught the four arms I missed. But a
+    // scan proves the id is gone, not that the sentence reads — so the corpus
+    // takes the stall too, and it is the cheapest way to get one: the fire burns
+    // out, then ore goes into a cold smelter with no fuel left.
+    //
+    // This is the arm that matters most of the four. `SmelterStalled` is LOUD,
+    // so it lands on the always-visible status line — the surface ASSA-89 built
+    // precisely because the log gets missed — and it was carrying `smelter 0`.
+    for _ in 0..600 {
+        step(&mut world, &[], &mut events);
+    }
+    step(
+        &mut world,
+        &[Input::player(
+            me,
+            PlayerCommand::Insert {
+                building: id,
+                slot: Slot::Input,
+                item: ore(WALLS),
+                count: 1,
+            },
+        )],
+        &mut events,
+    );
+    for _ in 0..40 {
+        step(&mut world, &[], &mut events);
+    }
     let live = world.clone();
     assert!(
         live.building(id).is_some(),
@@ -225,10 +254,18 @@ fn the_corpus_contains_every_event_that_carries_a_building() {
             Event::ItemSmelted { .. } => "smelted",
             Event::ItemsTaken { .. } => "taken",
             Event::BuildingRemoved { .. } => "removed",
+            Event::SmelterStalled { .. } => "stalled",
             _ => "other",
         })
         .collect();
-    for want in ["placed", "inserted", "smelted", "taken", "removed"] {
+    // `stalled` IS IN THIS LIST BECAUSE IT WAS NOT, AND THAT IS HOW FOUR ARMS
+    // KEPT A BARE ID THROUGH SLICE 2 (ASSA-244). It is also the one I am least
+    // willing to assert by reasoning: twice on this file I claimed the corpus
+    // held a loud event because of how I thought the smelter worked, and twice
+    // the count was 0.
+    for want in [
+        "placed", "inserted", "smelted", "taken", "removed", "stalled",
+    ] {
         assert!(
             kinds.contains(&want),
             "the corpus has no {want} event, so every test in this file is \
@@ -318,15 +355,20 @@ fn a_sentence_without_a_building_is_byte_identical() {
             .iter()
             .zip(both_ways(&life.live, life.me, &life.events))
     {
-        let carries_building = matches!(
-            event,
-            Event::BuildingPlaced { .. }
-                | Event::ItemsInserted { .. }
-                | Event::ItemSmelted { .. }
-                | Event::ItemsTaken { .. }
-                | Event::BuildingRemoved { .. }
-        );
-        if carries_building {
+        // **READ OFF THE EVENT, NOT OFF A LIST I TYPED — AND THIS IS A FIX, NOT
+        // A TIDY-UP.** This was a `matches!` over five variants, and I wrote
+        // those five from the arms I had just edited. So when it turned out I
+        // had MISSED four arms that print the id (`MachinePlaced`,
+        // `MachineMined`, `MachineStalled`, `SmelterStalled` — they spell it
+        // `machine {}` and `smelter {}`, which my grep never saw), this test
+        // classified all four as "no building in it" and asserted the two
+        // audiences were byte-identical — which they were, because I had never
+        // given those arms an audience. **The test agreed with my blind spot.**
+        //
+        // The derivation cannot: an event carries a building iff its own `Debug`
+        // says so. A variant added tomorrow is classified by its fields rather
+        // than by my memory of them.
+        if format!("{event:?}").contains("building: BuildingId(") {
             continue;
         }
         compared += 1;
@@ -369,10 +411,22 @@ fn the_typed_reader_keeps_the_handle_and_the_pointer_gets_a_noun() {
     let typed = debug::event_line(&life.live, Some(life.me), taken, debug::Audience::Typed);
     let pointed = debug::event_line(&life.live, Some(life.me), taken, debug::Audience::Pointed);
 
+    // **THE HANDLE IS THE ID, NOT THE WORD `building` — and pinning the word was
+    // my mistake (ASSA-244).** This asserted `contains("building 0")`, so when
+    // the typed form became `smelter 0` (kind + handle, which says strictly
+    // more) this went red on a change that improved the thing it guards. What
+    // principle 2 actually needs is that the number they type into `take` is in
+    // the sentence, and that the sentence says what the number refers to.
+    let kind = life
+        .live
+        .building(life.id)
+        .expect("`live` has it")
+        .kind
+        .name();
     assert!(
-        typed.contains(&format!("building {}", life.id.0)),
-        "the typed reader lost the handle they pass to `take`, which is \
-         principle 2 regressing: {typed}"
+        typed.contains(&format!("{kind} {}", life.id.0)),
+        "the typed reader lost the handle they pass to `take`, or stopped saying \
+         what it refers to, which is principle 2 regressing: {typed}"
     );
     assert!(
         pointed.contains(&noun),

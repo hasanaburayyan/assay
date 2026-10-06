@@ -1244,8 +1244,35 @@ static func target_line(tile: Vector2i, chosen: bool, tile_facts: Dictionary) ->
 	var what := "right-click the map to choose a tile"
 	var building: Variant = tile_facts.get("building")
 	if building != null:
-		what = "%s %d" % [String((building as Dictionary).get("kind", "?")),
-				int((building as Dictionary).get("id", -1))]
+		# **THE SIM'S NOUN, NOT `kind` + AN INDEX (Maren, ASSA-136; ASSA-244).**
+		# This read `"%s %d" % [kind, id]` and produced `smelter 0` — on the one
+		# line a player reads before pressing Place, Insert or Take. Ninety lines
+		# below, `tile_lines` carries the ruling it was breaking in so many words:
+		# *"A BUILDING IS NAMED THE WAY EVERY OTHER OBJECT IS: `Tonore smelter
+		# (A)`, not `smelter`"* — so this file held the rule and its violation at
+		# once, and Nerite found the violation at 1x, not a test.
+		#
+		# `name` is `sim::debug::building_name` (`building_fact`), already in this
+		# dictionary. There was nothing to add to the sim and nothing to invent;
+		# the client was composing a second wording while the sim's own sat unused
+		# one key away.
+		#
+		# **AND NO BARE ID (Maren, ASSA-222):** a reader who points has nothing to
+		# type it into. The tile is already in this sentence, which is how you
+		# find the thing.
+		#
+		# A MISSING `name` IS LOUD AND NOT PAPERED OVER. `building_dict` always
+		# sets it, so an empty one means a stale `libsim_godot.dylib` — the same
+		# cause `scene_view`'s contract names when it refuses to draw. Falling
+		# back to `kind` would rebuild this exact defect and look fine; falling
+		# back to `""` would leave a dangling ` · `. So it says what it knows and
+		# complains where a developer will see it.
+		what = String((building as Dictionary).get("name", ""))
+		if what == "":
+			push_error("AssayHud.target_line: a building with no `name` from the "
+					+ "sim. Run `make client-lib` from the repo root; a stale "
+					+ "dylib is the usual cause (ASSA-141, ASSA-244).")
+			what = "a building"
 	elif bool(tile_facts.get("in_bounds", false)):
 		# **`clear ground`, NOT `empty ground`** (Maren's ruling, ASSA-146 comment of 15:07Z). This
 		# line and the sim's `ground_note` are two subjects -- where a BUTTON will act, and what the
@@ -1348,8 +1375,24 @@ static func tile_lines(tile: Dictionary) -> PackedStringArray:
 		var named := String(b.get("name", ""))
 		if named == "":
 			named = String(b.get("kind", "?"))
-		lines.append("%s %d · %s" % [named, int(b.get("id", -1)),
-				String(b.get("status", ""))])
+		# **THE BARE ID IS GONE WHEN THERE IS A NAME, AND KEPT WHEN THERE IS NOT
+		# (ASSA-222, ASSA-244).** This read `"%s %d · %s" % [named, id, status]`
+		# -> `Tonore smelter (A) 0 · stalled: no fuel`. The noun was already right;
+		# the index was not, and a reader who points has no command line to type
+		# it into. The tile this readout is ABOUT is the cursor's own.
+		#
+		# **THE FALLBACK KEEPS THE ID, which a test taught me.** I dropped it
+		# unconditionally first and `a building with no name must still be
+		# addressable` went red. It was right: when `name` is missing the line
+		# falls back to the bare `kind`, and `machine` alone does not say WHICH
+		# machine. This is the same rule `sim::debug::building_ref` documents for
+		# itself -- when there is nothing left to name, the id is the only true
+		# thing we hold -- so the two surfaces now degrade the same way.
+		if String(b.get("name", "")) == "":
+			lines.append("%s %d · %s" % [named, int(b.get("id", -1)),
+					String(b.get("status", ""))])
+		else:
+			lines.append("%s · %s" % [named, String(b.get("status", ""))])
 
 	var here: PackedStringArray = tile.get("players_here", PackedStringArray())
 	if not here.is_empty():
