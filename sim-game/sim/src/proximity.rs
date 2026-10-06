@@ -33,7 +33,7 @@
 //! `debug::reading`.
 
 use crate::ladder;
-use crate::mineral::{MineralSpecies, Property, SpeciesId};
+use crate::mineral::{Grade, MineralSpecies, Property, SpeciesId};
 use crate::ore::OreDeposit;
 use crate::recipe::RECIPES;
 use crate::types::{DepositId, TilePos};
@@ -180,7 +180,73 @@ impl Question {
     ///
     /// Each arm asks `ladder`, which is where these three decisions already
     /// live one-apiece. No comparison is re-spelled here.
+    /// This question's tiers, best first. `None` entries are skipped so every
+    /// question has the same shape whether or not it ranks.
+    ///
+    /// **THE RANK IS A PROPERTY OF THE QUESTION, NOT OF THE SEARCH**, so a
+    /// caller cannot get a worse answer by forgetting to ask for a better one —
+    /// the mistake `nearest_answering` made before ruling 4.
+    pub fn tiers(self) -> [Option<Tier>; 2] {
+        match self {
+            Question::Burns => [Some(Tier::BurnsFromCold), Some(Tier::Burns)],
+            Question::HardEnough => [Some(Tier::HardEnough), None],
+        }
+    }
+
+    /// Whether this deposit answers the question **at any tier**.
+    ///
+    /// This is the question's own predicate and is what a test should ask when
+    /// it means "does this count at all", separately from which tier it lands
+    /// in.
     pub fn answered_by(self, species: &[MineralSpecies], d: &OreDeposit) -> bool {
+        self.tiers()
+            .into_iter()
+            .flatten()
+            .any(|t| t.keeps(species, d))
+    }
+
+    /// Whether this deposit could EVER answer, if its patch were the richest
+    /// grade in the game.
+    ///
+    /// **IT EXISTS TO TELL TWO EMPTY ANSWERS APART** (Game Director, ruling 3):
+    /// "nothing in this world burns" and "this world's patches of it are too
+    /// poor" are different news, and only one of them is about grade. Asking
+    /// the same predicate at `Grade::A` isolates exactly the grade-dependent
+    /// half, because every species-level gate (`hand_minable`, `lighting`,
+    /// `usable_from_bare_hands`) answers the same at every grade.
+    pub fn could_answer_at_best_grade(self, species: &[MineralSpecies], d: &OreDeposit) -> bool {
+        self.tiers()
+            .into_iter()
+            .flatten()
+            .any(|t| t.keeps_at(species, d, Grade::A))
+    }
+}
+
+/// One rank of answer to a [`Question`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Tier {
+    /// Burns at this patch's grade **and a hand spark lights it**.
+    BurnsFromCold,
+    /// Burns at this patch's grade; this world can build a fire hot enough,
+    /// but you cannot start one from cold.
+    Burns,
+    /// Hard enough to be worth a part, at this patch's grade.
+    HardEnough,
+}
+
+impl Tier {
+    /// Whether this deposit is in this tier, judged at the patch's own grade.
+    pub fn keeps(self, species: &[MineralSpecies], d: &OreDeposit) -> bool {
+        self.keeps_at(species, d, d.grade())
+    }
+
+    /// As [`Self::keeps`], at an arbitrary grade.
+    ///
+    /// **THE GRADE IS A PARAMETER SO THE "TOO POOR" ANSWER CANNOT DRIFT FROM
+    /// THE REAL ONE.** Deciding emptiness with a second, hand-written copy of
+    /// these comparisons is how ASSA-43 and ASSA-52 happened; this is the same
+    /// predicate asked a different question.
+    pub fn keeps_at(self, species: &[MineralSpecies], d: &OreDeposit, grade: Grade) -> bool {
         if d.is_depleted() {
             return false;
         }
@@ -189,8 +255,12 @@ impl Question {
             return false;
         }
         match self {
-            Question::Burns => {
-                ladder::burn_temperature_at(s, d.grade()).is_some()
+            Tier::BurnsFromCold => {
+                ladder::burn_temperature_at(s, grade).is_some()
+                    && ladder::lighting(species, d.species) == ladder::Lighting::FromCold
+            }
+            Tier::Burns => {
+                ladder::burn_temperature_at(s, grade).is_some()
                     && ladder::lighting(species, d.species)
                         != ladder::Lighting::NothingBurnsHotEnough
             }
@@ -206,10 +276,10 @@ impl Question {
             //
             // `usable_from_bare_hands` is rung zero and the same authority the
             // test states its own premise with, so this re-derives nothing.
-            Question::HardEnough => {
+            Tier::HardEnough => {
                 ladder::usable_from_bare_hands(species, d.species)
                     && required_at_least(Property::Hardness)
-                        .is_some_and(|min| s.effective(Property::Hardness, d.grade()) >= min)
+                        .is_some_and(|min| s.effective(Property::Hardness, grade) >= min)
             }
         }
     }
@@ -243,9 +313,52 @@ impl World {
         self.nearest(from, |d| d.species == species && !d.is_depleted())
     }
 
-    /// The nearest patch that answers `question`, from `from`.
+    /// The nearest patch that answers `question`, from `from`, **best tier
+    /// first**.
+    ///
+    /// **A NEARER PATCH YOU CANNOT LIGHT IS WORSE THAN A FURTHER ONE YOU CAN**
+    /// (Game Director, ASSA-248 ruling 4). `Burns` has two tiers: a patch that
+    /// lights from cold, else one that needs a hotter fire. Handing a fireless
+    /// player the nearest patch they cannot light sends them back to the table
+    /// this headline exists to replace — `debug.rs` records that we *trained*
+    /// them to scan for "lights from cold" (ASSA-58).
+    ///
+    /// **IT STRICTLY DOMINATES, which is why there was no trade to weigh.** The
+    /// tiers can only disagree in a world that HAS a cold-lightable mineable
+    /// patch; in the 56.3% that can never light anything, tier 1 is empty and
+    /// this returns exactly what one flat search returned. Never worse, decisive
+    /// when it matters, and grade-independent: `HAND_SPARK_TEMPERATURE` is fixed
+    /// and heat tolerance never scales with grade, so ranking does not interact
+    /// with the patch-grade judgement at all.
+    ///
+    /// Distance still decides WITHIN a tier, so this is not "furthest
+    /// lightable" — it is the nearest of the better kind.
     pub fn nearest_answering(&self, question: Question, from: TilePos) -> Option<NearestDeposit> {
-        self.nearest(from, |d| question.answered_by(&self.species, d))
+        question
+            .tiers()
+            .into_iter()
+            .flatten()
+            .find_map(|tier| self.nearest(from, |d| tier.keeps(&self.species, d)))
+    }
+
+    /// When nothing answers `question`, the species whose patches are merely
+    /// **too poor** — or `None` when no species in this world could ever
+    /// answer at any grade.
+    ///
+    /// **IT SEPARATES TWO EMPTY ANSWERS THAT ARE DIFFERENT NEWS** (Game
+    /// Director, ASSA-248 ruling 3): judging at the patch's own grade makes the
+    /// empty sentence fire in worlds where the species table still truthfully
+    /// reads "fuel at B or better", and an answer its own evidence appears to
+    /// contradict reads as a bug. Only one of the two states is about grade.
+    ///
+    /// **AND THE ACTION THE RULING IMPLIED IS NOT AVAILABLE — see the caller.**
+    /// Ties break on deposit order, which is worldgen's chunk order, so two
+    /// peers name the same species.
+    pub fn too_poor_for(&self, question: Question) -> Option<SpeciesId> {
+        self.deposits
+            .iter()
+            .find(|d| question.could_answer_at_best_grade(&self.species, d))
+            .map(|d| d.species)
     }
 
     /// Nearest kept deposit, ties by lowest id.

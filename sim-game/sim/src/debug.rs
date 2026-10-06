@@ -1399,6 +1399,38 @@ pub fn nothing_answers(q: Question) -> &'static str {
     }
 }
 
+/// The other empty answer: a species that **would** answer from a richer patch,
+/// when none of this world's patches of it is rich enough.
+///
+/// **TWO EMPTY STATES, DIFFERENT NEWS (Game Director, ASSA-248 ruling 3).**
+/// Judging at the patch's own grade (ruling 3's other half) makes the empty
+/// sentence fire in worlds where the species table a few lines below still
+/// truthfully reads "fuel at B or better" — and an answer its own evidence
+/// appears to contradict reads as a bug. So the grade case says it is the grade.
+///
+/// **I DID NOT WRITE THE ACTION SHE ASKED FOR, AND THIS IS WHY.** Ruling 3 names
+/// the second state *"the patches near you are too poor — walk further"*. Walking
+/// does not help: [`World::nearest_answering`] scans **every** deposit in the
+/// world, not a radius, so if it came back empty there is no richer patch
+/// anywhere to walk to. Telling a player to walk would end in the same empty
+/// line a thousand tiles later, which is the "ends a search that would have
+/// succeeded" failure of her own ruling pointed the other way.
+///
+/// What is actually available is the refining ladder — `sort` raises a grade at a
+/// loss — so the honest sentence names the rock and the gap and stops. Whether
+/// to point at refining is a design call I have left her; the state is named
+/// either way, which is what the ruling was for.
+pub fn too_poor_answer(q: Question, species: &str) -> String {
+    let want = match q {
+        Question::Burns => "light",
+        Question::HardEnough => "be worth a part",
+    };
+    format!(
+        "no patch is rich enough. {species} would {want}, but every patch of it in this world \
+         yields too poor a grade."
+    )
+}
+
 /// ONE LINE ANSWERING A QUESTION THE PLAYER ASKS THE GROUND, with the species
 /// table as the evidence under it (Game Director's ruling on ASSA-241: *"a tab
 /// opening on a six-row grid makes them do the collating again"*).
@@ -1423,7 +1455,13 @@ pub fn proximity_headline(world: &World, player: PlayerId, q: Question) -> Strin
         return format!("{asked}: no such player");
     };
     let Some(near) = world.nearest_answering(q, me.pos) else {
-        return format!("{asked}: {}", nothing_answers(q));
+        // Two empty states, told apart (ruling 3). `too_poor_for` asks the same
+        // predicate at `Grade::A`, so the two sentences cannot disagree with the
+        // real search about which case this is.
+        return match world.too_poor_for(q) {
+            Some(s) => format!("{asked}: {}", too_poor_answer(q, world.species(s).name())),
+            None => format!("{asked}: {}", nothing_answers(q)),
+        };
     };
     let d = world
         .deposit(near.deposit)
@@ -1502,8 +1540,19 @@ pub fn species_table(world: &World) -> String {
         // they read `help`. The clause goes where the finder is already named,
         // because that is the only place the fact is about.
         //
-        // It says "may name it" and not "may rename it" on a species still
-        // carrying its generated name: nothing has been named yet.
+        // **ONE VERB, AND IT IS "rename" (Game Director, ASSA-248 ruling 1).** I
+        // had a switch here — "may name it" on a species still carrying its
+        // generated name, "may rename it" once `player_name` was set — and the
+        // switch had the two words the right way round for a fact this game does
+        // not have. **Every species carries a generated name from worldgen**, so
+        // there is no state in which "name it" is true: "rename" is accurate in
+        // both, "name" in neither.
+        //
+        // The second reason is the one below, turned on the switch. I refused
+        // "named by {who}" because the right is all the world knows — and a
+        // reader who sees "may name it" beside "found by ada" concludes ada is
+        // about to choose the first name, which is the same invented history one
+        // step earlier. One verb removes the inference.
         //
         // **THE CLAUSE STATES A RIGHT AND NEVER A HISTORY, because the right is
         // all the world knows.** My first version read "named by {who}" once
@@ -1512,18 +1561,16 @@ pub fn species_table(world: &World) -> String {
         // `SpeciesRenamed` event ever carried who typed it. The note would have
         // credited the discoverer for somebody else's name, in the one place
         // this item exists to make authorship visible.
+        //
+        // `(N others may too)` stays: `GrantRename` is a real right and that
+        // phrasing attributes it to nobody.
         if let Some(d) = s.discoverer {
             let who = world
                 .player(d)
                 .map_or(format!("player {}", d.0), |p| p.name.clone());
-            let right = if s.player_name.is_some() {
-                "who may rename it"
-            } else {
-                "who may name it"
-            };
             notes.push(match s.rename_grants.len() {
-                0 => format!("found by {who}, {right}"),
-                n => format!("found by {who}, {right} ({n} others may too)"),
+                0 => format!("found by {who}, who may rename it"),
+                n => format!("found by {who}, who may rename it ({n} others may too)"),
             });
         }
         // THE THREE MINING STATES AND THEIR WORDS BOTH LIVE IN `mining` AND

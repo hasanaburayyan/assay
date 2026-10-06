@@ -595,18 +595,27 @@ fn discovery_and_the_naming_right_are_both_in_the_output() {
         found.contains("found by ada"),
         "the finder is not named:\n{found}"
     );
+    // **ONE VERB IN BOTH STATES (Game Director, ruling 1).** This asserted
+    // `may name it` here and `may rename it` after a player name was set — my
+    // switch, and the ruling is that the switch had the words the right way
+    // round for a fact the game does not have: every species is generated with
+    // a name, so nothing is ever unnamed.
     assert!(
-        found.contains("may name it"),
-        "finding it is what lets you name it, and the row does not say so:\n{found}"
+        found.contains("found by ada, who may rename it"),
+        "finding it is what lets you rename it, and the row does not say so:\n{found}"
     );
 
-    // Once it carries a player's name the right is to RE-name it, and the row
-    // still credits only the finding, because that is all the world knows.
+    // Setting a player name must NOT change the clause: it was the thing the
+    // old switch turned on, so this is the lever that would catch it coming
+    // back. The row still credits only the finding, because that is all the
+    // world knows.
     w.species_mut(species).player_name = Some("Kelvite".into());
     let named = row(&w);
-    assert!(
+    assert_eq!(
         named.contains("found by ada, who may rename it"),
-        "a named species' row:\n{named}"
+        found.contains("found by ada, who may rename it"),
+        "the naming right changed wording when the species gained a player \
+         name; one verb covers both states:\n{found}\n{named}"
     );
     assert!(
         !named.contains("named by"),
@@ -787,4 +796,165 @@ fn the_tile_named_is_the_nearest_tile_of_that_patch_and_is_on_the_map() {
             near.distance
         );
     }
+}
+
+/// **A NEARER PATCH YOU CANNOT LIGHT LOSES TO A FURTHER ONE YOU CAN** (Game
+/// Director, ASSA-248 ruling 4).
+///
+/// **THE DISAGREEING WORLD IS SEARCHED FOR, NOT NAMED.** Pinning a seed where
+/// the tiers differ would make this test a photograph of worldgen; the sweep
+/// looks for any world where tier 1 and a flat search return different
+/// deposits, asserts it found some, and then checks the property in each. The
+/// non-vacuity bar is the point: if ranking stopped changing any answer this
+/// test must fail rather than quietly agree.
+#[test]
+fn burns_prefers_a_patch_that_lights_from_cold_over_a_nearer_one_that_does_not() {
+    let mut worlds_where_it_matters = 0;
+    for seed in 0..160 {
+        let (w, me) = joined(seed);
+        let at = w.player(me).unwrap().pos;
+        let Some(answer) = w.nearest_answering(Question::Burns, at) else {
+            continue;
+        };
+        let chosen = w.deposit(answer.deposit).unwrap();
+        let chosen_lights =
+            ladder::lighting(&w.species, chosen.species) == ladder::Lighting::FromCold;
+
+        // Is there ANY nearer patch that burns but does not light from cold?
+        // That is the patch a flat search would have handed back.
+        let nearer_cold_fire = w.deposits.iter().any(|d| {
+            d.id != chosen.id
+                && Question::Burns.answered_by(&w.species, d)
+                && ladder::lighting(&w.species, d.species) != ladder::Lighting::FromCold
+                && w.nearest_ore_of(d.species, at)
+                    .is_some_and(|n| n.distance < answer.distance)
+        });
+        if !nearer_cold_fire {
+            continue;
+        }
+        worlds_where_it_matters += 1;
+        assert!(
+            chosen_lights,
+            "seed {seed}: a patch that needs a hotter fire sits nearer than the \
+             answer, so ranking had something to do, and it still handed back \
+             {} which does not light from cold",
+            w.species(chosen.species).name()
+        );
+    }
+    assert!(
+        worlds_where_it_matters >= 5,
+        "ranking changed the answer in only {worlds_where_it_matters} of 160 \
+         seeds, so this test is barely asking its question"
+    );
+}
+
+/// **THE TWO EMPTY ANSWERS ARE DIFFERENT NEWS** (ruling 3): "nothing in this
+/// world burns" ends a search, "no patch is rich enough" explains it.
+///
+/// Asserted as a property of the sim rather than of a sentence: when
+/// `nearest_answering` is empty, `too_poor_for` must agree with the real
+/// predicate about which case it is — and the two cases must be exclusive.
+#[test]
+fn an_empty_answer_says_which_kind_of_empty_it_is() {
+    let mut empty = 0;
+    let mut too_poor = 0;
+    for seed in 0..200 {
+        let (w, me) = joined(seed);
+        let at = w.player(me).unwrap().pos;
+        for q in Question::ALL {
+            if w.nearest_answering(q, at).is_some() {
+                // The states are exclusive: an answerable question is never
+                // also "too poor".
+                continue;
+            }
+            empty += 1;
+            match w.too_poor_for(q) {
+                Some(s) => {
+                    too_poor += 1;
+                    // The claim the sentence makes has to be true of the world:
+                    // this species really would answer from a richer patch.
+                    assert!(
+                        w.deposits
+                            .iter()
+                            .any(|d| d.species == s && q.could_answer_at_best_grade(&w.species, d)),
+                        "seed {seed} {q:?}: named {} as merely too poor, and no \
+                         patch of it could answer at any grade",
+                        w.species(s).name()
+                    );
+                }
+                None => {
+                    // The stronger claim: nothing anywhere, at any grade.
+                    assert!(
+                        !w.deposits
+                            .iter()
+                            .any(|d| q.could_answer_at_best_grade(&w.species, d)),
+                        "seed {seed} {q:?}: said nothing in this world answers, \
+                         while a patch would answer at a better grade"
+                    );
+                }
+            }
+        }
+    }
+    assert!(
+        empty >= 10 && too_poor >= 1,
+        "{empty} empty answers and {too_poor} of the too-poor kind over 200 \
+         seeds; this test needs both states to be exercising anything"
+    );
+}
+
+/// **ONE VERB, AND IT IS "rename"** (ruling 1). Every species carries a
+/// generated name from worldgen, so "may name it" is true in no state.
+///
+/// The scan is over the real table for a world where a species has been
+/// discovered, not over a fixture, and it asserts the premise (that the clause
+/// is present at all) before asserting the absence.
+#[test]
+fn the_naming_right_is_one_verb_and_never_implies_who_chose_the_name() {
+    let (mut w, me) = joined(14247);
+    let at = w.player(me).unwrap().pos;
+    let Some(near) = w.nearest_answering(Question::Burns, at) else {
+        panic!("seed 14247 should hold something that burns");
+    };
+    let species = w.deposit(near.deposit).unwrap().species;
+    // Discovery through the real command, so `discoverer` is set the way the
+    // game sets it.
+    //
+    // **THE WALK NEEDS ITS TICKS AND MY FIRST VERSION DID NOT GIVE THEM.**
+    // `walk` submits the `MoveTo` and steps ONE tick; the body then moves a
+    // tile per tick, so I asked for an `Assay` while the player was still
+    // `near.distance` tiles short of the rock. My own premise guard below
+    // caught it — "the assay did not record a discoverer" — rather than the
+    // test passing on a species discovered some other way.
+    walk(&mut w, me, Some(near.tile));
+    for _ in 0..near.distance {
+        step(&mut w, &[], &mut Vec::new());
+    }
+    assert_eq!(
+        w.player(me).unwrap().pos,
+        near.tile,
+        "the walk did not arrive, so the assay below would be asked from the \
+         wrong tile"
+    );
+    step(
+        &mut w,
+        &[Input::player(me, PlayerCommand::Assay)],
+        &mut Vec::new(),
+    );
+    for _ in 0..sim::tuning::ASSAY_TICKS + 2 {
+        step(&mut w, &[], &mut Vec::new());
+    }
+    let table = debug::species_table(&w);
+    assert!(
+        w.species(species).discoverer.is_some(),
+        "the assay did not record a discoverer, so this test proves nothing"
+    );
+    assert!(
+        table.contains("who may rename it"),
+        "the discovery clause is missing its right:\n{table}"
+    );
+    assert!(
+        !table.contains("who may name it"),
+        "`may name it` is true in no state: every species is generated with a \
+         name, so the verb is always `rename`:\n{table}"
+    );
 }
