@@ -481,10 +481,16 @@ func test_the_readout_names_the_species_and_its_grade_in_words() -> bool:
 
 func test_a_depleted_deposit_and_a_building_and_who_is_here_all_show() -> bool:
 	var tile := _tile_with({"depleted": true, "amount": 0})
-	tile["building"] = {"id": 2, "kind": "smelter", "pos": Vector2i(10, 9), "status": "no fuel"}
+	# FIXTURE GIVEN THE `name` THE BINDING ALWAYS SENDS (ASSA-244). It had only
+	# `kind`, so it exercised `tile_lines`' older-host fallback while asserting
+	# `smelter 2` — the bare kind plus an index, which is the pair ASSA-136 and
+	# ASSA-222 forbid. This test is about three facts all appearing, not about
+	# which wording, so it anchors on the sim's noun now.
+	tile["building"] = {"id": 2, "kind": "smelter", "name": "Tonore smelter (A)",
+			"pos": Vector2i(10, 9), "status": "no fuel"}
 	tile["players_here"] = PackedStringArray(["ada", "limpet"])
 	var lines := "\n".join(AssayHud.tile_lines(tile))
-	for wanted in ["DEPLETED", "smelter 2", "no fuel", "ada, limpet"]:
+	for wanted in ["DEPLETED", "Tonore smelter (A)", "no fuel", "ada, limpet"]:
 		if not lines.contains(wanted):
 			return _fail("the readout is missing %s: %s" % [wanted, lines])
 	return true
@@ -499,8 +505,12 @@ func test_a_standing_building_is_named_by_its_material_and_not_by_its_kind() -> 
 	tile["building"] = {"id": 2, "kind": "smelter", "name": "Tonore smelter (A)",
 			"pos": Vector2i(10, 9), "status": "walls 73 · no fuel"}
 	var lines := "\n".join(AssayHud.tile_lines(tile))
-	if not lines.contains("Tonore smelter (A) 2"):
+	# NO LONGER `"... (A) 2"`: the BuildingId left this line on ASSA-244, because a reader who
+	# points has nothing to type it into (Maren, ASSA-222). The id's absence is asserted below.
+	if not lines.contains("Tonore smelter (A)"):
 		return _fail("the building is not named: %s" % lines)
+	if lines.contains("Tonore smelter (A) 2"):
+		return _fail("the BuildingId is still appended to the noun: %s" % lines)
 	if not lines.contains("walls 73"):
 		return _fail("the status went missing with the rename: %s" % lines)
 	# THE OLD SHAPE MUST BE GONE, not merely accompanied: `smelter 2` beside the name would be the
@@ -558,7 +568,8 @@ func test_the_ground_line_never_calls_an_occupied_tile_empty() -> bool:
 					% [i, bare[i], occupied[i]])
 	if String(occupied[1]).contains("empty"):
 		return _fail("the ground line calls an occupied tile empty: %s" % occupied[1])
-	if not String(occupied[2]).contains("Minyte smelter (B) 0"):
+	# The id dropped off this line on ASSA-244; the noun is what makes the premise.
+	if not String(occupied[2]).contains("Minyte smelter (B)"):
 		return _fail("the fixture must still name the building, or this proves nothing: %s"
 				% [occupied])
 
@@ -589,7 +600,7 @@ func test_a_deposit_under_a_building_gains_no_ground_line() -> bool:
 	var joined := "\n".join(lines)
 	if not joined.contains("deposit 4 · kuri · 37 ore left"):
 		return _fail("the deposit line went missing: %s" % joined)
-	if not joined.contains("kuri smelter (B) 0"):
+	if not joined.contains("kuri smelter (B)"):
 		return _fail("the building line went missing: %s" % joined)
 	if joined.contains("no deposit here"):
 		return _fail("a tile WITH a deposit was told it has none: %s" % joined)
@@ -1735,7 +1746,6 @@ func test_the_dead_end_label_comes_from_the_sim_and_not_from_this_client() -> bo
 			return _fail(("main.gd spells the dead-end label itself; it is the sim's word, through "
 					+ "`AssaySim.dead_end_label()` (ASSA-158): %s") % line)
 	# And the em dash it used to share with the cost clause is gone from THIS row.
-	var fused := main_src.contains("_note(\"— %s\" % dead_end)")
-	if fused:
+	if main_src.contains("_note(\"— %s\" % dead_end)"):
 		return _fail("the dead end is still drawn in the cost clause's em-dash series")
 	return true
