@@ -1232,7 +1232,7 @@ func _select_tab(tab_name: String) -> void:
 ## and the picture starts in the middle of a list with nothing in it saying which list. Hers started
 ## at `bench`. The heading is what a reader scrolls TO, so it is what this scrolls to.
 func _scroll_to_make() -> void:
-	var anchor := _make_anchor()
+	var anchor := _make_scroll_top()
 	if anchor == null:
 		print("  make: no heading above the crafting menu, so nothing was scrolled")
 		return
@@ -1242,8 +1242,11 @@ func _scroll_to_make() -> void:
 		return
 	var was := box.scroll_vertical
 	box.scroll_vertical = was + _make_anchor_offset()
-	print("  make: scrolled the column from %d to %d to bring the `%s` heading to the box's top"
-			% [was, box.scroll_vertical, anchor.text])
+	# NAMED BY WHAT IT IS, not by `.text`: with the tabs the thing scrolled to is the tab's BODY, a
+	# container with no text at all, and reading `.text` off it crashes the run.
+	var named: String = (anchor as Label).text if anchor is Label else String(anchor.name)
+	print("  make: scrolled the column from %d to %d to bring `%s` to the box's top"
+			% [was, box.scroll_vertical, named])
 
 
 ## THE HEADING THAT NAMES THE CRAFTING MENU, found by walking BACK from the rows to the nearest
@@ -1251,16 +1254,49 @@ func _scroll_to_make() -> void:
 ## section from one list of `[name, bodies]` pairs, so the heading is the section's structure and the
 ## word is its content: a tool that searched for the text would go quiet the day Maren renames it,
 ## and going quiet is how `11-make.png` came to hold `bench`.
-func _make_anchor() -> Label:
+## **WHAT NAMES THE CRAFTING MENU ON SCREEN — AND SINCE ASSA-247 THAT IS THE TAB BUTTON, NOT A
+## HEADING IN THE BODY.**
+##
+## Maren's requirement is unchanged and is the reason this leg exists: *"`11-make.png` scrolled past
+## `make`"* — a picture that starts in the middle of a list with nothing in it saying which list is
+## not evidence. What changed is which control answers it. The tabbed panel deliberately has NO
+## `Heading` inside a tab body: a tab's own name IS its heading, and a second copy inside would print
+## the word twice and spend a line per section doing it. So the search below finds nothing, and before
+## this fallback the leg read `heading absent` and refused a shot that is in fact correctly framed.
+##
+## **THE TAB BUTTON IS A STRICTLY STRONGER ANSWER, which is why this is a re-point and not a waiver.**
+## A heading scrolls with the body and can leave the frame; the strip sits OUTSIDE the scroll box and
+## is always on screen, and the pressed one tells you which system you are looking at. The leg still
+## fails if that button is hidden or clipped.
+func _make_anchor() -> Control:
 	var body: Control = _screen._make
 	var column := body.get_parent()
-	if column == null:
+	if column != null:
+		for i in range(body.get_index() - 1, -1, -1):
+			var label := column.get_child(i) as Label
+			if label != null and label.theme_type_variation == &"Heading":
+				return label
+	# NO HEADING: the strip names it. The PRESSED button rather than the one whose text matches, so a
+	# shot taken with another tab open cannot pass by finding a button that merely exists.
+	if _screen._tabs == null:
 		return null
-	for i in range(body.get_index() - 1, -1, -1):
-		var label := column.get_child(i) as Label
-		if label != null and label.theme_type_variation == &"Heading":
-			return label
+	for child in _screen._tabs.names_box().get_children():
+		var button := child as Button
+		if button != null and button.button_pressed and button.text == "make":
+			return button
 	return null
+
+
+## WHERE THE SHOT HAS TO START, which is a different question from what names it and was the same
+## control until the tabs arrived. The heading, when a body has one; otherwise the top of the make
+## tab's own body, because the tab button cannot be scrolled to -- it is not inside the box.
+func _make_scroll_top() -> Control:
+	var anchor := _make_anchor()
+	if anchor is Label:
+		return anchor
+	if _screen._tabs == null:
+		return null
+	return _screen._tabs.body_of("make")
 
 
 func _scroll_box_above(control: Control) -> ScrollContainer:
@@ -1277,7 +1313,7 @@ func _scroll_box_above(control: Control) -> ScrollContainer:
 ## and it is asked of the engine in the frame it is asked in, which is the point -- a scroll is a
 ## request answered on a later frame, and `0` here is the layout agreeing rather than me assuming.
 func _make_anchor_offset() -> int:
-	var anchor := _make_anchor()
+	var anchor := _make_scroll_top()
 	if anchor == null:
 		return 0
 	var box := _scroll_box_above(anchor)
@@ -1317,7 +1353,13 @@ func _capture_make() -> void:
 		"frame": frame,
 		"heading": "" if anchor == null else String(anchor.text),
 		"heading_rect": Rect2() if anchor == null else anchor.get_global_rect(),
-		"heading_standing": "absent" if anchor == null else _standing_in(frame, anchor),
+		# **JUDGED AGAINST ITS OWN CLIPPING FRAME, NOT THE LIST'S.** An in-body heading scrolls with the
+		# rows and is rightly measured against the scroll box. The tab button is OUTSIDE that box --
+		# that is the whole reason it is the better answer -- so measuring it against the box called a
+		# permanently-visible control `OFF SCREEN`. `_standing` asks `_frame_for` for the frame that
+		# actually clips the control it is given, which is the right question for both.
+		"heading_standing": "absent" if anchor == null else (
+				_standing_in(frame, anchor) if anchor is Label else _standing(anchor)),
 		"rows": rows,
 		"scrolls": _make_scrolls,
 		"offset": _make_anchor_offset(),
@@ -1475,8 +1517,17 @@ func _make_report() -> Dictionary:
 				"[DEAD END] " if row["dead_end"] else "", said])
 	if rows.is_empty():
 		return _not_asked("the crafting menu had no rows in this frame, so no series could be judged")
-	if String(_make_frame["heading_standing"]) != "whole":
-		return _refused("the make shot does not start at the `make` heading: it is %s"
+	# **TWO VOCABULARIES FOR ONE VERDICT, and they have to both be spelled out here.** `_standing_in`
+	# says `whole` of a rect wholly inside the frame it was handed; `_standing` says `on screen` of the
+	# same situation. The in-body heading goes through the first and the tab button through the second,
+	# so a check that knew only one word called a fully visible control a failure.
+	# PARENTHESISED, because `not X in Y` binds as `(not X) in Y` and silently asks a different
+	# question -- it cost this leg one run reporting a fully visible control as a failure.
+	if not (String(_make_frame["heading_standing"]) in ["whole", "on screen"]):
+		# "what names it" rather than "the heading": since ASSA-247 that is the pressed tab button, and
+		# a message naming a heading would send the next reader looking for a control that the tabbed
+		# panel deliberately does not have.
+		return _refused("the make shot does not hold the control that names the crafting menu: it is %s"
 				% _make_frame["heading_standing"])
 	if whole == 0:
 		return _refused("the make shot holds the `make` heading and not one of its %d rows: the "
