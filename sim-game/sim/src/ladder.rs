@@ -268,18 +268,68 @@ pub fn pair_smelts(material: &MineralSpecies, fuel: &MineralSpecies, grade: Grad
     burn_temperature_at(fuel, grade).unwrap_or(0).min(walls) >= needs
 }
 
+/// **THE SMALLEST THING THAT IS A PLANTED MACHINE AT ALL**: one frame and one
+/// head, both of `id` at `grade`. True when it does not break under its own
+/// weight.
+///
+/// A FRAME READS STRENGTH AND SETS THE WHOLE MASS BUDGET; a head reads
+/// hardness. So this is the one question that asks both of the jobs
+/// [`starter_species`] hands its answer, and asking it is the whole of ASSA-170
+/// step 1 — see that selection's own comment for the price.
+///
+/// **IT ASKS [`Assembly::stats`] AND NOT `stat_range`, WHICH IS NOT A STYLE
+/// CHOICE.** `stat_range` reads a species' *band*, which is 25 wide until
+/// somebody assays it — so a rule built on it would give a different answer
+/// before and after an assay, and worldgen runs before anything is assayed at
+/// all. A rule may not read a presentation state. Maren's probe
+/// (`tests/maren_first_machine_promise.rs`) uses `stat_range` and is right to:
+/// it assays every species first, which makes the band a point, and on a point
+/// the two agree.
+pub fn carries_first_machine(species: &[MineralSpecies], id: SpeciesId, grade: Grade) -> bool {
+    let refined = Item::new(ItemKind::Refined, id, grade);
+    !Assembly::new(
+        Part::of(PartKind::Frame(Mount::Planted), refined),
+        vec![Part::of(PartKind::Head, refined)],
+    )
+    .stats(species)
+    .is_overweight()
+}
+
 /// Rung zero's two guaranteed deposits: a species to mine, smelt and build
 /// with, and a fuel the player can light by hand. May be the same species.
 ///
-/// **THE MATERIAL IS THE HARDEST SPECIES IN RUNG ZERO**, at the judged grade,
-/// ties by lowest id (Game Director's ruling on ASSA-6; ASSA-35). It used to
-/// be `rung0.first()` — roster order, so effectively at random among the
-/// hand-minable species — and over 2000 seeds the pick built from it was
-/// *slower than the bare hands that built it* in 40% of worlds. Hardness is
-/// the only property a head reads, so selecting on anything else here is
-/// selecting on nothing. This alone leaves 23.9%, which is why
-/// [`starter_roster_ok`] also rerolls; see
-/// `docs/design-notes/2026-10-01-hardness-gears-and-alloys.md`.
+/// **WHAT THIS ANSWER IS VALID FOR, BECAUSE IT HAS BEEN WRONG TWICE BY BEING
+/// REUSED FOR A JOB IT WAS NOT SELECTED ON** (`assay-rulings` §5, "one species,
+/// selected on one property, then used for three jobs"). The material is what
+/// you MINE, SMELT and BUILD THE FIRST MACHINE FROM; the fuel is what LIGHTS
+/// BY HAND AND MELTS IT. Neither is a general "best rock": every other species
+/// stays a gamble you have to assay.
+///
+/// **THE MATERIAL IS THE HARDEST SPECIES IN RUNG ZERO THAT CARRIES A FIRST
+/// MACHINE**, at the judged grade, ties by lowest id (Game Director's ruling on
+/// ASSA-6; ASSA-35; ASSA-170). It used to be `rung0.first()` — roster order, so
+/// effectively at random among the hand-minable species — and over 2000 seeds
+/// the pick built from it was *slower than the bare hands that built it* in 40%
+/// of worlds. Hardness is the only property a head reads, so selecting on
+/// anything else was selecting on nothing.
+///
+/// **AND THEN THE FRAME WAS BUILT FROM THAT SAME PICK, AND A FRAME READS
+/// STRENGTH** (ASSA-170, Maren's ruling on ASSA-155: rung zero promises a first
+/// *planted machine*). Measured over the same 2000 worlds at [`JUDGED_AT`]: the
+/// hardest rung-zero species carried frame + head in 75.6%, and in a further
+/// **15.2% another rung-zero species would have** — selection, not scarcity.
+/// [`carries_first_machine`] now leads the key, so that 15.2% is taken and the
+/// hardness rule decides everything else exactly as before. **It rejects no
+/// roster**: where nothing in rung zero carries a machine, every candidate ties
+/// on the leading term and the old answer survives untouched. The remaining
+/// 9.2% is a world that genuinely holds no first planted machine and is
+/// [`starter_roster_ok`]'s question, not this one.
+///
+/// **HARDNESS STAYS THE TIE-BREAK AND IS NOT DEMOTED TO A HINT.** It is what
+/// the first pick's speed reads, and `starter_roster_ok` still refuses a roster
+/// whose first pick is slower than bare hands; selecting a softer carrier over
+/// a harder one would buy a machine that stands by making the tool that builds
+/// it useless. See `docs/design-notes/2026-10-01-hardness-gears-and-alloys.md`.
 ///
 /// **AND THE FUEL IS THE HOTTEST HAND-LIT SPECIES**, at the judged grade, ties
 /// by lowest id (ASSA-139). It used to be `species.iter().find(hand_lit_fuel)`
@@ -302,6 +352,9 @@ pub fn starter_species(species: &[MineralSpecies]) -> Option<(SpeciesId, Species
     let material = *rung0.iter().min_by_key(|id| {
         let s = &species[usize::from(id.0)];
         (
+            // `Reverse(bool)` puts `true` first, so a carrier outranks a
+            // non-carrier and nothing else about the key changes.
+            std::cmp::Reverse(carries_first_machine(species, **id, JUDGED_AT)),
             std::cmp::Reverse(s.effective(Property::Hardness, JUDGED_AT)),
             id.0,
         )
