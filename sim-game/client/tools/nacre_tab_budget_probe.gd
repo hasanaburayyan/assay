@@ -36,7 +36,13 @@ const DEFAULT_SEED := "14247"
 ## frame rate of a window that is not focused -- so the same 519-tick play takes well under a minute
 ## with the window in front and several minutes behind another app. A ceiling tuned to the focused
 ## case turns "nobody clicked on it" into a failed measurement.
-const RUN_CEILING := 900.0
+##
+## **RAISED FROM 900 AFTER 900 WAS NOT ENOUGH**, and the reason is worth keeping: a `_bail` prints
+## `FAIL` and NO NUMBERS, so a run that overruns does not give a partial answer -- it gives nothing,
+## after fifteen minutes. The probe is driven from a terminal, so its window is never the focused one
+## and the throttled path is the ONLY path it ever takes here. Tuning this to the unfocused case is
+## tuning it to reality.
+const RUN_CEILING := 2400.0
 ## Frames between a tick and its reading. Two, not three: the rows change inside `_refresh_*` on the
 ## frame the bundle lands and the container lays out on the next one, so the second frame is already
 ## settled. The third was belt and braces at a 33% cost in wall-clock on the slow path.
@@ -44,6 +50,12 @@ const SETTLE_FRAMES := 2
 ## The play's own length, in ticks. `button_play.gd` finishes well inside this; the cap is here so a
 ## loop that stalls ends the run instead of hanging it.
 const TICK_BUDGET := 1200
+## **HOW OFTEN THE RUN SAYS IT IS ALIVE, AND IT IS NOT DECORATION.** The first attempt at this
+## measurement printed nothing for fifteen minutes and then `FAIL ran past its 900s ceiling in phase
+## 1`, and from that output I could not tell a slow run from a wedged one -- the play's last line was
+## 400 ticks behind the clock. A probe whose only two states are "silent" and "failed" cannot be
+## debugged, and the instrument being mute was my defect, not the machine being slow.
+const PROGRESS_EVERY := 50
 
 enum Phase { PLAY, SETTLE, MEASURE, REPORT, OVER }
 
@@ -62,6 +74,9 @@ var _ticks_measured := 0
 ## section name -> {"h", "body", "head": float, "tick", "n": int, "parts": String}, the tallest
 ## reading of that section seen so far.
 var _best := {}
+## section name -> {"must_fit": float, "buttons": int, "tick": int}: the deepest its lowest button
+## ever reached below its own body top. Wren's fold rule is judged on THIS, not on the body.
+var _reach := {}
 ## **THE SMALLEST THE CLIP EVER GETS, AND THE LAST ONE, BECAUSE THEY ARE NOT THE SAME NUMBER.**
 ## `_running_box` and `_halt_box` sit ABOVE the scroll inside `chrome` and appear and disappear with
 ## the world: a stopped machine grows the halt block and the scroll gets whatever is left. So the
@@ -118,7 +133,15 @@ func _process(_delta: float) -> bool:
 				_phase = Phase.MEASURE
 		Phase.MEASURE:
 			_measure()
-			_phase = Phase.PLAY
+			# **ONLY BACK TO PLAY IF `_measure` DID NOT ASK FOR THE REPORT, AND THIS LINE IS WHY TWO
+			# RUNS DIED WITHOUT A NUMBER.** It used to assign `Phase.PLAY` unconditionally, one line
+			# after `_measure()` had set `Phase.REPORT` on the last pass -- so the ask was overwritten
+			# every time it was made. The run then span: PLAY saw `_play.finished`, `_end_play` set
+			# SETTLE and `_last_pass` again, MEASURE asked for REPORT again, and this line threw it
+			# away again, until the wall-clock ceiling killed it with `FAIL ... in phase 1` and no
+			# measurement at all. The play itself was finishing in 75 seconds the whole time.
+			if _phase == Phase.MEASURE:
+				_phase = Phase.PLAY
 		Phase.REPORT:
 			_report()
 	return _done
@@ -168,6 +191,14 @@ func _play_a_frame() -> void:
 		_bail("the sim refused the bundle for tick %d" % at)
 		return
 	_ticks_measured += 1
+	# ALIVE, WITH THE TWO NUMBERS THAT TELL SLOW FROM STUCK: how far the play has got, and how much
+	# of the ceiling it has spent getting there. Rate is the useful one -- it says whether the run
+	# will finish inside the ceiling long before the ceiling arrives.
+	if _ticks_measured % PROGRESS_EVERY == 0:
+		var spent := RUN_CEILING - (_ceiling - Time.get_unix_time_from_system())
+		print("  ... %d ticks measured, sim at tick %d, %ds of %ds spent (%.1f ticks/s)"
+				% [_ticks_measured, _screen._sim.tick(), int(spent), int(RUN_CEILING),
+				float(_ticks_measured) / maxf(spent, 0.001)])
 	_phase = Phase.SETTLE
 
 
@@ -253,6 +284,62 @@ func _drawn_height(controls: Array) -> Dictionary:
 			"parts": "+".join(parts)}
 
 
+## **WREN'S FOLD RULE, MEASURED** (ASSA-198, 19:40 EDT): *"NO CONTROL IS EVER BELOW THE FOLD. A
+## tab's buttons are reachable at 1280x720 without scrolling. A tab's LIST may scroll inside its own
+## tab if the data is unbounded (rocks, later mineralogy): a list of forty rocks scrolling is a list;
+## a cut Make button is a defect."*
+##
+## **THIS IS THE REFINEMENT THAT CHANGES THE QUESTION, AND IT MAY RESCUE THE DESIGN.** My own
+## deciding number was the tallest tab's whole body against the budget, which charges `rocks` -- six
+## species of read-only prose -- for height it is allowed to scroll. What a tab must actually fit is
+## the distance from the top of its body to the BOTTOM OF ITS LOWEST BUTTON. For `rocks` that is
+## zero, because it has no buttons at all. For `make` it is very nearly the whole list, because every
+## row carries a Make.
+##
+## Buttons are found by walking DESCENDANTS, not children: a make row is an HBox with the label and
+## the Button inside it, so a child-only sweep would find no buttons anywhere in the section and
+## report a comfortable zero for the one section this rule exists to protect.
+##
+## `is_visible_in_tree`, not `visible`: a Make button inside a folded `_make` is `visible` with
+## nothing on screen, and counting it would measure a control no player can reach.
+func _button_reach(controls: Array) -> Dictionary:
+	var top := INF
+	var lowest := -INF
+	var count := 0
+	for i in range(controls.size()):
+		var control := controls[i] as Control
+		if control == null or not control.is_visible_in_tree():
+			continue
+		# INDEX 0 IS THE SECTION'S HEADING and a tab replaces it, so the reach is measured from the
+		# top of the BODY. Including the heading would charge every tab one heading of height that
+		# the tab strip is already paying for.
+		if i > 0 and control.get_global_rect().position.y < top:
+			top = control.get_global_rect().position.y
+		for node in _descendants(control):
+			var button := node as Button
+			if button == null or not button.is_visible_in_tree():
+				continue
+			count += 1
+			var bottom := button.get_global_rect().end.y
+			if bottom > lowest:
+				lowest = bottom
+	if count == 0 or top == INF:
+		return {"must_fit": 0.0, "buttons": 0}
+	return {"must_fit": maxf(lowest - top, 0.0), "buttons": count}
+
+
+## Every Control at or under `from`, itself included, so a Button nested in a row is found.
+func _descendants(from: Control) -> Array:
+	var out: Array = [from]
+	var stack: Array = [from]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		for child in node.get_children():
+			out.append(child)
+			stack.append(child)
+	return out
+
+
 func _measure() -> void:
 	var column := _screen._scroll.get_child(0) as VBoxContainer
 	_separation = column.get_theme_constant(&"separation")
@@ -288,6 +375,15 @@ func _measure() -> void:
 			_best[which] = {"h": height, "body": float(drawn["body"]),
 					"head": float(drawn["head"]), "tick": tick,
 					"parts": String(drawn["parts"]), "n": int(drawn["n"])}
+		# **THE REACH IS ITS OWN HIGH WATER, tracked separately from the body's.** They do not peak
+		# together: `make` grows a row of prose that wraps to two lines without adding a button, so
+		# the tallest body and the deepest button are different ticks. Tracking one and reporting the
+		# other would be the same error as adding two separate maxima together.
+		var reach := _button_reach(section["controls"])
+		var must_fit := float(reach["must_fit"])
+		if not _reach.has(which) or must_fit > float((_reach[which] as Dictionary)["must_fit"]):
+			_reach[which] = {"must_fit": must_fit, "buttons": int(reach["buttons"]),
+					"tick": tick}
 	# **THE ALWAYS-ON BLOCK MEASURED AS ONE THING, ON ONE TICK.** Adding the high water of `you` to the
 	# high water of `do` is an upper bound on a state that may never have existed -- the two peak at
 	# different moments, and a budget built from two maxima that never co-occur is pessimistic by an
@@ -365,21 +461,45 @@ func _report() -> void:
 	print("    TALLEST TAB  `%s` body at %d px (its heading is the tab button now)"
 			% [tallest, int(round(tallest_h))])
 	var slack := budget - tallest_h
-	if slack >= 0.0:
-		print("    VERDICT  FITS with %d px to spare -- tabs remove the scroll" % int(round(slack)))
-	else:
-		print("    VERDICT  OVERFLOWS by %d px -- tabs MOVE the defect, they do not remove it"
-				% int(round(-slack)))
-	# WHAT IT WOULD TAKE, for each candidate, so the next ruling has the whole shape and not just a
-	# pass/fail on one of them.
+	print("    (on the WHOLE BODY that is %s by %d px -- but the body is not the rule)"
+			% ["inside" if slack >= 0.0 else "OVER", int(round(absf(slack)))])
+	# **WREN'S RULE IS THE VERDICT, 19:40 EDT ON ASSA-198.** Not the body: *"a list of forty rocks
+	# scrolling is a list; a cut Make button is a defect"*. So each candidate is judged on how far its
+	# LOWEST BUTTON reaches below its own body top, and a section with no buttons cannot fail.
 	print("")
-	print("  EVERY CANDIDATE'S BODY AGAINST THE SAME BUDGET")
+	print("  WREN'S FOLD RULE: every button above the fold; an unbounded LIST may scroll in its tab")
+	var worst := ""
+	var worst_reach := -1.0
 	for which in ["make", "bench", "rocks", "cursor"]:
-		var h := float((_best[which] as Dictionary)["body"])
-		var over := h - budget
-		print("    %-8s %4d px  %s" % [which, int(round(h)),
-				("fits, %d px spare" % int(round(-over))) if over <= 0.0
-				else ("OVERFLOWS by %d px" % int(round(over)))])
+		var reach: Dictionary = _reach.get(which, {"must_fit": 0.0, "buttons": 0, "tick": 0})
+		var must_fit := float(reach["must_fit"])
+		var buttons := int(reach["buttons"])
+		var verdict := ""
+		if buttons == 0:
+			verdict = "no buttons -- a list, free to scroll in its own tab"
+		elif must_fit <= budget:
+			verdict = "FITS, %d px spare" % int(round(budget - must_fit))
+		else:
+			verdict = "OVERFLOWS by %d px" % int(round(must_fit - budget))
+		print("    %-8s reach %4d px, %2d buttons (tick %-4d)  %s"
+				% [which, int(round(must_fit)), buttons, int(reach["tick"]), verdict])
+		if buttons > 0 and must_fit > worst_reach:
+			worst_reach = must_fit
+			worst = which
+	print("")
+	if worst == "":
+		print("  VERDICT  no tab has a button at all, which cannot be right -- check the probe")
+	elif worst_reach <= budget:
+		print("  VERDICT  TABS WORK. The deepest button of any tab is `%s` at %d px, inside the"
+				% [worst, int(round(worst_reach))])
+		print("           %d px budget with %d px spare. No control is below the fold."
+				% [int(round(budget)), int(round(budget - worst_reach))])
+	else:
+		print("  VERDICT  TABS DO NOT FIX IT AS SPLIT. `%s` needs %d px of reachable button and the"
+				% [worst, int(round(worst_reach))])
+		print("           budget is %d px: %d px short. Wren asked to be told BEFORE building, so"
+				% [int(round(budget)), int(round(worst_reach - budget))])
+		print("           this is that. The tab's LAYOUT changes, not the rule.")
 	# THE VARIANT MAREN HAS NOT RULED ON. `cursor` is derived from the TILE, not from the pack, so it
 	# reads as a hover readout rather than as a system -- a candidate for the always-on block instead
 	# of for a tab. It is the one section my ASSA-198 proposal did not place, so the cost of placing it
@@ -394,6 +514,64 @@ func _report() -> void:
 			% [int(round(budget_with_cursor_on)), tallest, int(round(tallest_h)),
 			"fits" if tallest_h <= budget_with_cursor_on
 			else "OVERFLOWS by %d px" % int(round(tallest_h - budget_with_cursor_on))])
+	# **THE TWO CLIPS, BECAUSE THE VERDICT ABOVE COMMITS THE ERROR I WROTE A DOCSTRING AGAINST.**
+	# `_always_on_max` is careful to use a you+do that CO-OCCURRED rather than adding two separate
+	# maxima -- and then the budget subtracts it from `_clip_min`, which is a different tick (the worst
+	# clip is tick 89, a stopped smelter; the tallest always-on block is tick 500, a full pack). So the
+	# headline budget is still built from two maxima that may never have met. It is the right bound for
+	# a rule that says a button must NEVER be cut, and it is the wrong number for "how much room is
+	# there really". Both are printed so a ruling is made on a pair, not on whichever flatters me.
+	var budget_at_rest := _clip_last - spent
+	print("")
+	print("  THE SAME SPLIT AGAINST THE CLIP AT REST, not the worst clip")
+	print("    budget for one tab   %d px at rest (clip %d) vs %d px at worst (clip %d)"
+			% [int(round(budget_at_rest)), int(round(_clip_last)), int(round(budget)),
+			int(round(_clip_min))])
+	print("    `make` reach %d px %s even at rest"
+			% [int(round(worst_reach)), "fits" if worst_reach <= budget_at_rest
+			else "OVERFLOWS by %d px" % int(round(worst_reach - budget_at_rest))])
+	# **THE VARIANT THE BOARD'S OWN WORDS ASK FOR, AND THE ONE I RECOMMEND IF THE ABOVE FAILS.** Rainy
+	# named the tabs: *"tabs such as Crafting, Inventory, Research"*. INVENTORY IS A TAB IN THE BOARD'S
+	# SHAPE -- and `you` is the inventory. Maren ruled "always-on = what you carry and what you can do
+	# HERE", which puts the pack always-on instead; the two readings differ and the arithmetic is what
+	# decides whether that difference matters. It does: `you` alone is the biggest block up there.
+	var do_only := do_h + _tab_strip_h + float(_separation)
+	var budget_do_only := _clip_min - do_only
+	var budget_do_only_rest := _clip_last - do_only
+	print("")
+	print("  IF `you` BECOMES THE INVENTORY TAB and only `do` stays always on (Rainy named Inventory")
+	print("  as a tab; Maren ruled the pack always-on. This is the cost of the difference.)")
+	print("    always on    %d px (`do` alone) + tab strip %d + 1 separation %d = %d px"
+			% [int(round(do_h)), int(round(_tab_strip_h)), _separation, int(round(do_only))])
+	print("    budget for one tab   %d px at worst, %d px at rest"
+			% [int(round(budget_do_only)), int(round(budget_do_only_rest))])
+	for which in ["make", "bench", "you"]:
+		var r: Dictionary = _reach.get(which, {"must_fit": 0.0, "buttons": 0})
+		var mf := float(r["must_fit"])
+		if int(r["buttons"]) == 0:
+			print("    %-8s no buttons -- free to scroll in its own tab" % which)
+			continue
+		print("    %-8s reach %4d px  %s at worst, %s at rest"
+				% [which, int(round(mf)),
+				"fits" if mf <= budget_do_only else "OVER by %d" % int(round(mf - budget_do_only)),
+				"fits" if mf <= budget_do_only_rest
+				else "OVER by %d" % int(round(mf - budget_do_only_rest))])
+	# WHAT A DENSE ROW WOULD BUY, and it is the other half of the answer: `make` spends 500 px on 8
+	# buttons, which is 62 px a button for a control the theme draws in 28. The gap is prose -- every
+	# offer row repeats the material and wraps to two lines. This is not a proposal to build, it is the
+	# size of the prize, so the ruling knows whether density alone can close the gap.
+	var make_reach := float((_reach["make"] as Dictionary)["must_fit"])
+	var make_buttons := int((_reach["make"] as Dictionary)["buttons"])
+	if make_buttons > 0:
+		var per := make_reach / float(make_buttons)
+		var dense := float(make_buttons) * (_tab_strip_h + float(_separation))
+		print("")
+		print("  WHAT ROW DENSITY WOULD BUY IN `make` (its rows are two-line prose today)")
+		print("    today   %d px for %d buttons = %.1f px a button (a themed Button is %d px)"
+				% [int(round(make_reach)), make_buttons, per, int(round(_tab_strip_h))])
+		print("    one-line rows would be about %d px, which %s the %d px at-rest budget above"
+				% [int(round(dense)), "fits inside" if dense <= budget_do_only_rest else "still overflows",
+				int(round(budget_do_only_rest))])
 	print("")
 	print("TAB BUDGET OK")
 	_finish(0)
