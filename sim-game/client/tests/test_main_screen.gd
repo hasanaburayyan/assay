@@ -1872,6 +1872,17 @@ func test_an_empty_log_says_nothing_has_happened_rather_than_nothing() -> bool:
 ## has stopped, one line each, worst-placed first in placement order"; this block may not sort,
 ## re-word or count them. The total on the heading is the sim's own sentence and not this block's
 ## arithmetic over the rows -- see the test below, which is what holds that apart.
+##
+## **WHAT IS PINNED IS NOW THE CONDITION AND NOT THE LIST** (ASSA-247, Maren's ruling 17:22 UTC
+## 2026-10-06, amending her own ASSA-89/94). `_halt` was the one UNBOUNDED thing in the pinned
+## chrome -- one line per stalled machine, growing with the factory, and 161 px of the worst-case
+## clip. Her words: *"a stall is a condition, not a moment was about never losing the fact -- it
+## never said every stalled machine must sit above the fold forever."* So the count stays pinned and
+## the machines go to the `bench` tab, where machines live.
+##
+## **BOTH HALVES ARE ASSERTED HERE, because either alone is the ruling half-built**: a pinned block
+## that still holds the list did not return the pixels, and a list in the bench tab with nothing
+## pinned loses the fact that something has stopped.
 func test_what_has_stopped_is_pinned_outside_the_scroll_and_reads_verbatim() -> bool:
 	var screen := _screen()
 	var ok := true
@@ -1889,8 +1900,16 @@ func test_what_has_stopped_is_pinned_outside_the_scroll_and_reads_verbatim() -> 
 		])
 		screen._rebuild_halt(planted)
 		var rows: Array = screen._halt_lines.find_children("*", "Label", true, false)
+		var bench: Control = screen._tabs.body_of("bench")
 		if not screen._halt_box.visible:
 			ok = _fail("two buildings have stopped and the block is still hidden")
+		elif not bench.is_ancestor_of(screen._halt_lines):
+			ok = _fail("the stalled machines are not in the `bench` tab, so the one unbounded list in "
+					+ "the pinned chrome still grows with the factory: Maren's 17:22 ruling")
+		elif not screen._halt.find_children("*", "Label", true, false).size() == 1:
+			ok = _fail(("the pinned block holds %d labels; it is the condition and its size, one line, "
+					+ "and the machines are a press away in `bench`")
+					% screen._halt.find_children("*", "Label", true, false).size())
 		elif rows.size() != planted.size():
 			ok = _fail("%d lines went in and %d came out" % [planted.size(), rows.size()])
 		else:
