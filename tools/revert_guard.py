@@ -31,9 +31,10 @@ conflict resolution or a full-tree copy all land the same way here:
      file already had before the base. Seven of my ten files went back to
      their 1e0641d blobs; that is this rule, caught at PR time.
   2. DELETIONS ARE DECLARED. Every path the change deletes must be named in a
-     commit message on the branch (or in the PR body). My #97 deleted three
-     files and said nothing about any of them. A healthy PR deletes files on
-     purpose and can afford one sentence.
+     commit message on the branch. My #97 deleted three files and said nothing
+     about any of them. A healthy PR deletes files on purpose and can afford
+     one sentence. (This rule used to accept the PR body as well; the section
+     after next says why that allowance was withdrawn.)
 
 THE ESCAPE HATCH IS TO SAY WHAT YOU DID. Naming the path in a commit message
 clears either rule -- there is no flag to pass and nothing to configure. Rule
@@ -41,6 +42,27 @@ clears either rule -- there is no flag to pass and nothing to configure. Rule
 byte-identical to an older blob (Limpet hit exactly that re-rendering
 `pack_icons.png`), and the fix is one line in the commit message saying it was
 regenerated.
+
+AND THE DECLARATION HAS TO BE IN A COMMIT MESSAGE, NOT THE PR BODY (ASSA-250).
+Both rules used to read the PR body too, because the workflow hands it over in
+`PR_BODY` -- and the PR body is the one place a declaration cannot reach main.
+GitHub fills it on a `pull_request` event only; the push run that judges the
+squash commit gets an empty string and reads the commit message alone. So the
+hatch was accepted at the one moment it could still be acted on and was
+guaranteed absent at the moment it is enforced: PR green, main red, sixteen
+seconds after the merge, where nobody is looking.
+
+Limpet's #323 and #330 both landed that way inside one afternoon, on the same
+generated theme file, and the second red stood unnamed for three hours. The
+sentence that cleared #330's PR run was not even meant as a declaration -- it
+was a line about a different CI step that happened to contain the basename,
+which `declared()` matches anywhere in the prose.
+
+So a finding that ONLY the PR body clears is now its own finding, raised at PR
+time, where amending a commit message still costs nothing. On a push `PR_BODY`
+is empty, the two proses are the same string, and it can never fire. Neither
+rule above is loosened or tightened; the hatch just moved to the only place a
+squash carries it.
 
 WHAT IT DOES NOT COVER, said here rather than discovered later. A commit that
 takes this script AND its CI step in one stale-tree overwrite still passes,
@@ -66,9 +88,12 @@ import os
 import subprocess
 import sys
 
-# Rule 2 reads these for an intent to delete, in this order, and stops at the
-# first that names the path. The PR body comes from the workflow; locally there
-# is none, which is correct -- what you can say locally is a commit message.
+# Where a PR body arrives from. The workflow sets `PR_BODY`; `REVERT_GUARD_BODY`
+# is for driving this by hand. Locally neither is set, which is correct and is
+# why the local run has always been the honest one: what you can say locally is
+# a commit message, and that is now the only declaration either rule accepts as
+# sufficient (ASSA-250). A path named here and nowhere else is a finding of its
+# own, because this string does not exist on the push run that judges main.
 PR_BODY_ENV = ("PR_BODY", "REVERT_GUARD_BODY")
 
 
@@ -213,6 +238,26 @@ def declared(path: str, prose: str) -> bool:
     return False
 
 
+def body_only(path: str, why: str) -> str:
+    """A finding that exists because the declaration is in the wrong place.
+
+    Not "you did something bad": the change may be entirely deliberate and the
+    sentence entirely true. It is in the PR body, and the run that judges main
+    cannot read the PR body, so the identical tree reddens there instead --
+    after the merge, with the author gone. This is raised while an amend is
+    still free.
+    """
+    return (
+        "DECLARED IN THE PR BODY ONLY: %s\n"
+        "    %s, and the only thing naming it is the PR body. That string reaches\n"
+        "    this run and nothing else: `PR_BODY` is set on a pull_request event and\n"
+        "    empty on the push that judges the squash commit, which reads the commit\n"
+        "    message alone. So this same change goes red on main AFTER it has merged.\n"
+        "    Name the path in a commit message as well -- amend, or one more commit.\n"
+        "    That is the only declaration a squash can carry." % (path, why)
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--base", help="revision to judge against (default: see pick_base)")
@@ -225,7 +270,12 @@ def main() -> int:
     else:
         base, why = pick_base(head)
 
-    prose = git("log", "--format=%B", "%s..%s" % (base, head))
+    # TWO PROSES, AND THE DIFFERENCE BETWEEN THEM IS THE WHOLE OF ASSA-250. Only
+    # the commit messages survive a squash, so only they can clear a finding on
+    # main. `prose` stays the union because a PR-body-only declaration is a
+    # DIFFERENT finding, not an absent one.
+    commit_prose = git("log", "--format=%B", "%s..%s" % (base, head))
+    prose = commit_prose
     for name in PR_BODY_ENV:
         prose += "\n" + os.environ.get(name, "")
 
@@ -238,28 +288,44 @@ def main() -> int:
     findings = []
     for status, path, new_blob in files:
         if status.startswith("D"):
-            if not declared(path, prose):
-                findings.append(
-                    "DELETED AND NOT DECLARED: %s\n"
-                    "    Nothing in this change's commit messages names it. If the deletion is\n"
-                    "    meant, say so in the message. If it is not, your tree is stale: compare\n"
-                    "    `git diff --stat %s...HEAD` against what you actually edited."
-                    % (path, base[:9])
-                )
+            if declared(path, commit_prose):
+                continue
+            if declared(path, prose):
+                findings.append(body_only(path, "This change deletes it"))
+                continue
+            findings.append(
+                "DELETED AND NOT DECLARED: %s\n"
+                "    Nothing in this change's commit messages names it. If the deletion is\n"
+                "    meant, say so in the message. If it is not, your tree is stale: compare\n"
+                "    `git diff --stat %s...HEAD` against what you actually edited."
+                % (path, base[:9])
+            )
             continue
-        if declared(path, prose):
+        if declared(path, commit_prose):
             continue
+        # Reached only for a path no commit message names, which is what the old
+        # single `continue` here was buying: one `rev-list` per undeclared file.
         older = earlier_blobs(base, path)
         where = older.get(new_blob)
-        if where:
+        if not where:
+            continue
+        if declared(path, prose):
             findings.append(
-                "PUT BACK AS IT WAS: %s\n"
-                "    Its new content is byte-identical to the version in %s, which is older\n"
-                "    than the base. If you meant to revert it, name the file in the commit\n"
-                "    message (a regenerated file that comes out identical counts). If you did\n"
-                "    not, this change is carrying a stale tree and is throwing away whatever\n"
-                "    landed in between." % (path, where[:9])
+                body_only(
+                    path,
+                    "Its new content is byte-identical to the version in %s, older "
+                    "than\n    the base" % where[:9],
+                )
             )
+            continue
+        findings.append(
+            "PUT BACK AS IT WAS: %s\n"
+            "    Its new content is byte-identical to the version in %s, which is older\n"
+            "    than the base. If you meant to revert it, name the file in the commit\n"
+            "    message (a regenerated file that comes out identical counts). If you did\n"
+            "    not, this change is carrying a stale tree and is throwing away whatever\n"
+            "    landed in between." % (path, where[:9])
+        )
 
     if findings:
         print("")
