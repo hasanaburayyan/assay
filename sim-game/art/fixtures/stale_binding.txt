@@ -1,0 +1,59 @@
+# RECORDED FAILURE: a STALE sim-godot binding (ASSA-268, 2026-10-06).
+#
+# Captured from a real run of `pack_icon_layout.gd` on Cove's checkout, where
+# client/bin/libsim_godot.dylib was built Oct 5 07:29 and lib.rs gained
+# dead_end_label on Oct 6 13:39 (e4da702, #338). The library was PRESENT and
+# THIRTY HOURS OLD, which is not the same failure as a library that is absent.
+#
+# The real run printed 874,015 lines. Lines repeated more than 50 times are
+# kept once here, in their original order; `check_ask_layout.py` re-expands the
+# trailing block so the SHAPE is faithful too -- the cause at the top, then tens
+# of thousands of identical runtime errors, which is what made blob[-1200:]
+# print the symptom and truncate the cause.
+#
+# Absolute paths are rewritten to <REPO>; nothing else is edited.
+Initialize godot-rust (API v4.6.stable.official, runtime v4.6.1.stable.mono.official, safeguards balanced)
+Godot Engine v4.6.1.stable.mono.official.14d19694e - https://godotengine.org
+
+SCRIPT ERROR: Parse Error: Static function "dead_end_label()" not found in base "GDScriptNativeClass".
+          at: GDScript::reload (res://scripts/sim_host.gd:271)
+SCRIPT ERROR: Compile Error: Failed to compile depended scripts.
+          at: GDScript::reload (<REPO>/art/pack_icon_layout.gd:0)
+ERROR: Failed to load script "<REPO>/art/pack_icon_layout.gd" with error "Compilation failed".
+   at: load (modules/gdscript/gdscript.cpp:2907)
+SCRIPT ERROR: Invalid call. Nonexistent function 'new' in base 'GDScript'.
+          at: @implicit_new (res://scripts/main.gd:36)
+          GDScript backtrace (most recent call first):
+              [0] @implicit_new (res://scripts/main.gd:36)
+              [1] _initialize (<REPO>/art/pack_icon_layout.gd:12)
+SCRIPT ERROR: Invalid assignment of property or key 'position' with value of type 'Vector2' on a base object of type 'Nil'.
+          at: _build_ui (res://scripts/main.gd:707)
+              [0] _build_ui (res://scripts/main.gd:707)
+              [1] _ready (res://scripts/main.gd:666)
+SCRIPT ERROR: Invalid assignment of property or key 'text' with value of type 'String' on a base object of type 'Nil'.
+          at: _render_status (res://scripts/main.gd:2066)
+              [0] _render_status (res://scripts/main.gd:2066)
+              [1] _say (res://scripts/main.gd:2012)
+              [2] _ready (res://scripts/main.gd:675)
+
+SCRIPT ERROR: Invalid call. Nonexistent function 'running' in base 'Nil'.
+          at: _draw (res://scripts/main.gd:3752)
+              [0] _draw (res://scripts/main.gd:3752)
+SCRIPT ERROR: Invalid assignment of property or key 'visible' with value of type 'bool' on a base object of type 'Nil'.
+          at: _refresh_join_band (res://scripts/main.gd:1467)
+              [0] _refresh_join_band (res://scripts/main.gd:1467)
+              [1] _process (res://scripts/main.gd:1534)
+SCRIPT ERROR: Cannot call method 'get_children' on a null value.
+          at: _clear (res://scripts/main.gd:3178)
+              [0] _clear (res://scripts/main.gd:3178)
+              [1] _rebuild_pack (res://scripts/main.gd:2776)
+              [2] _process (<REPO>/art/pack_icon_layout.gd:114)
+SCRIPT ERROR: Invalid call. Nonexistent function 'recipes' in base 'GDScript'.
+          at: _rebuild_pack (res://scripts/main.gd:2780)
+              [0] _rebuild_pack (res://scripts/main.gd:2780)
+              [1] _process (<REPO>/art/pack_icon_layout.gd:114)
+          at: _process (<REPO>/art/pack_icon_layout.gd:125)
+              [0] _process (<REPO>/art/pack_icon_layout.gd:125)
+SCRIPT ERROR: Invalid call. Nonexistent function 'get_children' in base 'Nil'.
+          at: _process (<REPO>/art/pack_icon_layout.gd:130)
+              [0] _process (<REPO>/art/pack_icon_layout.gd:130)
