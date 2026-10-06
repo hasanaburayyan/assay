@@ -212,6 +212,20 @@ jobs:
       # other comments' times were measured when it was not.
       - name: The pack plate's statistic still has all three properties
         run: python3 art/check_plate_statistic.py
+      # WHEN THE ENGINE PROBE FAILS, THE HELPER HAS TO NAME THE CAUSE (ASSA-268). Three checks ask
+      # the engine what it laid out through `ask_layout.ask_the_engine`, and when the probe prints
+      # no LAYOUT_JSON it tries to say why. That explanation is prose and nothing had ever read it.
+      # It was wrong two ways, both found by losing an hour to them: it knew "the binding is
+      # MISSING" but not "the binding is STALE" -- present, but older than the GDScript calling it,
+      # which is the likeliest failure in a working checkout since sim-godot gains methods on main
+      # while a local build sits still -- and it printed blob[-1200:], the TAIL, when a compile
+      # failure announces itself at the top and then repeats a consequence every frame (97,110
+      # times, 874,015 lines, in the recorded case). This reads both off a RECORDING of the real
+      # failing run, `art/fixtures/stale_binding.txt`, not off sentences invented to match: on that
+      # blob every string the old code tested for appears zero times. Proved red on the old logic,
+      # which reports no cause at all and an excerpt with the spin loop in it. Stdlib, no Godot.
+      - name: A failed engine probe still says why
+        run: python3 art/check_ask_layout.py
       # A FIRE IS NOT MADE OF THE WALLS (ASSA-137). The check above guards the
       # surfaces the species tint MAY shade; this one guards the rows it may
       # not touch at all. The client tints a world sprite with `modulate`, a

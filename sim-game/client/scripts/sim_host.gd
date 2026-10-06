@@ -150,18 +150,26 @@ func deposits() -> Array:
 	return _sim.deposits() if _sim != null else []
 
 
-## WHAT NEAR THIS PLAYER ANSWERS EACH QUESTION: `asked`, `headline`, `tile` (ASSA-254).
+## WHAT NEAR THIS PLAYER ANSWERS EACH QUESTION: `asked`, `headline`, `walk_to` (ASSA-254).
 ##
-## `headline` is `sim::debug::proximity_headline` VERBATIM and is the Mineralogy tab's first line. It
+## `headline` is `sim::debug::proximity_headline` VERBATIM and is a Mineralogy answer's own line. It
 ## already carries the question, the species, the grade, the distance and the heading, and it is
 ## never empty: the sim has a sentence for both no-answer states, which are different news (no patch
-## can ever answer, versus a species that would answer from a richer patch).
+## can ever answer, versus a species that would answer from a richer patch). One entry per
+## `Question::ALL`, in the sim's order, and the tab stacks all of them.
 ##
-## `tile` is the one fact the sentence cannot carry, and it is `null` rather than `(0,0)` when
-## nothing answers -- a tile of zero is a real corner of every world, so a sentinel there would be a
-## destination the sim never offered. `go here` submits `MoveTo { target: tile }` with it and does no
-## arithmetic. Distance and heading are deliberately NOT separate fields: they are in the sentence,
-## and two vocabularies for one fact are free to disagree.
+## `walk_to` is the one fact the sentence cannot carry: where a walk control would send you. It is
+## `null` rather than `(0,0)` when there is no walk to offer -- a tile of zero is a real corner of
+## every world, so a sentinel there would be a destination the sim never offered. `go here` submits
+## `MoveTo { target: walk_to }` with it and does no arithmetic. Distance and heading are deliberately
+## NOT separate fields: they are in the sentence, and two vocabularies for one fact are free to
+## disagree.
+##
+## **IT IS `null` FOR TWO DIFFERENT REASONS AND NO SURFACE NEEDS THEM APART** (ASSA-262): nothing
+## answers, or the answer is the ground this player is standing on. This key was `tile` and meant
+## "the tile the answer is about", which made the second case look like a destination -- the tab
+## shipped a button that walked you to your own feet. The sentence tells the two apart in words,
+## which is where a player reads them.
 func proximity_answers(player: int) -> Array:
 	return _sim.proximity_answers(player) if _sim != null else []
 
