@@ -1642,3 +1642,80 @@ func test_the_do_panel_names_a_building_the_sims_way_and_carries_no_id() -> bool
 	if line.contains("%s %d" % [named, id]):
 		return _fail("the do panel still appends the BuildingId after the noun: %s" % line)
 	return true
+
+
+## **EVERY ROW IN `make` STARTS ITS SENTENCE AT THE SAME x, WHETHER OR NOT ITS ITEM HAS ART**
+## (ASSA-240, Maren's ruling: *"reserve it and leave it EMPTY, no placeholder glyph. A ragged left
+## edge on a five-row list costs more than one blank square."*).
+##
+## **MEASURED AT 1x BEFORE THE FIX**, on my own real-window shot of main `03c8966`, seed 14247:
+## `Tonore head`, `handle` and `frame` each carried a 32px icon and began at **x=985**, while
+## `Tonore gear (A)` began at **x=946**. One list, two left edges, **39px apart**. What decides which
+## a row gets is not the game -- it is whether `assets/sprites` ships a sheet for that kind (Marlow)
+## -- so the only vertical line a list of wrapped sentences has broke on the row whose art does not
+## exist, and will not be drawn: Maren ruled on ASSA-84 that nothing consumes a gear.
+##
+## **THE OFFERS ARE BUILT HERE AND THAT COST ME A GREEN TEST FIRST.** My first version played a real
+## world and read the menu it produced. It passed, and **it still passed when I mutated the fix
+## away** -- because every row that fixture can reach (`smelter`, `ore`) has a sprite, so there was no
+## ragged edge to find. A test that cannot see the defect it is named for reads as coverage, which is
+## worse than no test. The one artless kind is `gear`, and reaching it needs the whole smelt-and-
+## refine chain.
+##
+## So this drives `_rebuild_make` -- the REAL row builder, the one `_refresh_make` calls -- with two
+## offers whose shape is the sim's: `kind`/`species`/`grade`/`line`/`verb`, exactly as `offers_for`
+## spells them. **The LAYOUT is what is under test, and the layout's input is an offer list.** The
+## premise that one of the two genuinely lacks art is asserted rather than assumed, so this cannot go
+## quiet again if a `gear` sheet ever ships.
+func test_every_make_row_starts_its_sentence_at_the_same_x() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := true
+	var with_art := {"kind": "ore", "species": 0, "grade": "B", "count": 1, "name": "ore"}
+	var no_art := {"kind": "gear", "species": 0, "grade": "B", "count": 1, "name": "gear"}
+	screen._rebuild_make([
+		{"makes": with_art, "line": "a rock you can carry", "verb": "craft", "tag": 0},
+		{"makes": no_art, "line": "a gear nothing uses", "verb": "make", "tag": 0},
+	])
+	var rows: Array = screen._make.get_children()
+	if rows.size() != 2:
+		screen.queue_free()
+		return _fail("the builder made %d rows from two offers" % rows.size())
+
+	# THE PREMISE, ASSERTED: one row has a sprite and the other has none. A `TextureRect` is what a
+	# drawn icon is; a reserved-empty column is a bare `Control` and draws nothing at all.
+	var drawn := 0
+	for row in rows:
+		if not row.find_children("*", "TextureRect", true, false).is_empty():
+			drawn += 1
+	if drawn != 1:
+		screen.queue_free()
+		return _fail(("%d of 2 rows drew an icon; this test needs exactly one with art and one "
+				+ "without, or it is not asking its question") % drawn)
+
+	# **THE CLAIM IS MEASURED IN CHILDREN, NOT IN PIXELS, AND THAT IS NOT A SHORTCUT.** My second
+	# version summed `position.x` up each row and compared the two. It passed -- and it passed the
+	# mutation too, because **the suite runs inside `SceneTree._initialize`, before any layout pass**,
+	# so every `position` in here is still (0, 0) and both edges read 0.0. I was comparing two zeros
+	# and calling it an alignment check. This file's own `_left_edge_of` carries the same warning and
+	# I walked into it anyway.
+	#
+	# What a container HAS done by now is accept its children, so the observable thing headless is
+	# whether each row OPENS WITH the icon column. A row that skips it starts with its body instead.
+	# **The pixel claim is a window shot's job** -- `shared/assay/nacre-assa240-icons/` at 1x -- and a
+	# headless test that pretends to make it is the blank-frame trap one layer up.
+	for row in rows:
+		var first: Control = null
+		for child in row.get_children():
+			first = child as Control
+			break
+		if first == null:
+			ok = _fail("a make row has no children at all")
+		elif first.custom_minimum_size.x != screen.ICON_BOX_PX.x:
+			var line := row.find_child(screen.MAKE_LINE, true, false) as Label
+			ok = _fail(("a make row opens with a %s %s wide instead of the %.0fpx icon column, so "
+					+ "its sentence starts further left than every other row's: `%s`")
+					% [first.get_class(), first.custom_minimum_size, screen.ICON_BOX_PX.x,
+					"?" if line == null else line.text])
+	screen.queue_free()
+	return ok
