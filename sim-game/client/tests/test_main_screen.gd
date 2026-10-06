@@ -1260,10 +1260,33 @@ func _panel_surface() -> Color:
 ## blind to every heading in the window while staying green. One poke here fixes every caller at
 ## once, and no caller has to remember.
 func _drawn_color(label: Label) -> Color:
-	label.notification(Control.NOTIFICATION_THEME_CHANGED)
+	_poke_theme(label)
 	var c := label.get_theme_color(&"font_color")
 	var m := label.modulate
 	return Color(c.r * m.r, c.g * m.g, c.b * m.b, c.a * m.a)
+
+
+## THE ONE PLACE THIS HARNESS POKES A CONTROL, AND IT IS ONE PLACE SO THAT DELETING IT HAS A LEVER.
+##
+## ASSA-246 shipped the poke inside `_drawn_color` and disclosed that nothing could catch its
+## removal: every `Label` variation's ink coincides with plain `Label`'s, so a colour assertion is
+## blind to it, and the one test that reads a property where the two types DO differ -- `font_size`,
+## `Heading` 15 against `Label` 13 -- poked its own probe by hand. So it proved that poking works,
+## not that the helper does it. Three hand-rolled pokes and a removal that stayed green.
+##
+## Now every read goes through here, and the `font_size` assertion goes through `_drawn_font_size`,
+## so deleting the `notification()` below reddens by name on today's build with nothing retuned.
+func _poke_theme(control: Control) -> Control:
+	control.notification(Control.NOTIFICATION_THEME_CHANGED)
+	return control
+
+
+## The font size a label DRAWS, which is not what a headless read reports until it is poked. Same
+## helper as `_drawn_color`, so the two cannot drift apart, and this is the read that gives the poke
+## a lever: `Heading` declares 15 and plain `Label` 13, so an un-poked `Heading` is off by 2px.
+func _drawn_font_size(label: Label) -> int:
+	_poke_theme(label)
+	return label.get_theme_font_size(&"font_size")
 
 
 ## THE SURFACE ACTUALLY BEHIND A LABEL, ASKED OF THE BUILT TREE (ASSA-152, Maren's amended box 3).
@@ -3680,7 +3703,7 @@ func test_the_quiet_toggles_are_the_quietest_weight_and_still_read_as_controls()
 			ok = _fail("no `%s` on the screen: the quiet toggles are the two controls Maren's Q1 "
 					% label + "ruling is about")
 			continue
-		toggle.notification(Control.NOTIFICATION_THEME_CHANGED)
+		_poke_theme(toggle)
 		if toggle.theme_type_variation != &"Quiet":
 			ok = _fail(("`%s` wears `%s`, not `Quiet`. It is furniture beside the section headings "
 					+ "it sits between (ASSA-224)") % [label, toggle.theme_type_variation])
@@ -3742,7 +3765,7 @@ func test_the_quiet_toggles_are_the_quietest_weight_and_still_read_as_controls()
 	# alpha. That is the one change this test must not be able to sleep through.
 	var plain := Button.new()
 	screen.add_child(plain)
-	plain.notification(Control.NOTIFICATION_THEME_CHANGED)
+	_poke_theme(plain)
 	var plain_rest := plain.get_theme_stylebox(&"normal") as StyleBoxFlat
 	if plain_rest == null:
 		ok = _fail("a `default` Button resolves no StyleBoxFlat at rest, so rank cannot be read")
@@ -4126,16 +4149,23 @@ func test_a_command_that_never_reached_the_wire_still_says_so() -> bool:
 ##
 ## **THEY CAME BACK CORRECT BY COINCIDENCE.** `_style_label` sets plain `Label`'s `font_color` to
 ## `INK`, and `Heading` and `Display` are `INK` too, so reading the base type returned the
-## variation's answer by luck. That is why removing the poke from `_drawn_color` CANNOT be caught by
-## a colour assertion on this build -- there is no Label variation whose ink differs from `Label`'s
-## for a test to catch it with. Saying so is the point of this test rather than a reason to skip it.
+## variation's answer by luck. **No COLOUR assertion on this build can catch the poke being removed**
+## -- there is no Label variation whose ink differs from `Label`'s for a test to catch it with.
+## Saying so is the point of this test rather than a reason to skip it.
+##
+## **BUT A SIZE ASSERTION CAN, AND SINCE ASSA-252 THIS ONE DOES.** When ASSA-246 shipped, part 1
+## below poked its own probe by hand, so it proved that POKING works and said nothing about whether
+## `_drawn_color` does it: deleting the poke with nothing retuned stayed green, and I filed that as
+## prophylactic. The poke now lives in `_poke_theme`, this reads through `_drawn_font_size`, and
+## removing it reddens here by name with no retune and no new colour.
 ##
 ## **SO IT ASSERTS THE TWO THINGS THAT ARE ACTUALLY CHECKABLE.**
 ##
-## 1. **THE MECHANISM IS LIVE**, shown on `font_size`, where `Heading` (15) and `Label` (13) do
-##    differ: an un-poked read reports the base type's size and a poked read reports the variation's.
-##    If that ever stops differing, Godot has changed this behaviour and the poke can be deleted --
-##    the failure message says so, so a future reader gets an instruction and not a puzzle.
+## 1. **THE MECHANISM IS LIVE AND THE HELPER IS WHAT APPLIES IT**, shown on `font_size`, where
+##    `Heading` (15) and `Label` (13) do differ: a raw read reports the base type's size and a read
+##    through the helper reports the variation's. If that ever stops differing, Godot has changed
+##    this behaviour and the poke can be deleted -- the failure message says so, so a future reader
+##    gets an instruction and not a puzzle.
 ## 2. **THE COINCIDENCE IS DECLARED, AND THE GUARD GROWS TEETH THE DAY IT ENDS.** For every Label
 ##    variation, either its ink equals `Label`'s -- recorded here as a known coincidence -- or
 ##    `_drawn_color` must demonstrably return the variation's ink and not the base type's. The second
@@ -4154,9 +4184,12 @@ func test_the_theme_poke_is_load_bearing_and_the_sweeps_coincidence_is_declared(
 	var probe := Label.new()
 	probe.theme_type_variation = &"Heading"
 	screen.add_child(probe)
+	# The un-poked read is deliberately RAW -- it models a caller who does not use the helper. The
+	# poked one goes through `_drawn_font_size`, and therefore through `_poke_theme`, so this
+	# assertion fails if the poke ever leaves the helper. It used to poke `probe` itself, which
+	# proved that poking works and left the helper's own line uncovered (ASSA-252).
 	var unpoked := probe.get_theme_font_size(&"font_size")
-	probe.notification(Control.NOTIFICATION_THEME_CHANGED)
-	var poked := probe.get_theme_font_size(&"font_size")
+	var poked := _drawn_font_size(probe)
 	var declared_heading := theme.get_font_size(&"font_size", &"Heading")
 	var declared_label := theme.get_font_size(&"font_size", &"Label")
 	if poked != declared_heading:

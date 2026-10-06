@@ -958,3 +958,111 @@ fn the_naming_right_is_one_verb_and_never_implies_who_chose_the_name() {
          name, so the verb is always `rename`:\n{table}"
     );
 }
+
+/// **`LADDER_TOP` IS THE LADDER'S TOP, DERIVED AND NOT TYPED** (ASSA-257).
+///
+/// The too-poor sentence points at sorting, and the only thing making that
+/// honest is that the grade the condition is asked at is the best grade sorting
+/// can reach. **So this test does not assert `LADDER_TOP == Grade::A`** — that
+/// would just restate the constant. It walks `Grade::better` from the bottom,
+/// the way `Sort` does, and asserts the walk ends where `LADDER_TOP` is. Add a
+/// rung to the ladder and this reddens instead of the sentence quietly pointing
+/// at a grade nothing can reach.
+#[test]
+fn the_grade_the_condition_asks_at_is_where_the_refining_ladder_tops_out() {
+    assert!(
+        sim::recipe::RecipeId::Sort.recipe().raises_grade,
+        "`Sort` no longer raises a grade, so there is no ladder for the \
+         too-poor sentence to point at"
+    );
+    // Climb from the worst grade exactly as repeated sorting would.
+    let mut top = Grade::C;
+    let mut rungs = 0;
+    while let Some(next) = top.better() {
+        top = next;
+        rungs += 1;
+        assert!(rungs < 16, "Grade::better does not terminate");
+    }
+    assert!(rungs > 0, "nothing can be lifted, so the clause is a lie");
+    assert_eq!(
+        top,
+        sim::proximity::LADDER_TOP,
+        "the ladder tops out at {top:?} and the condition is asked at {:?}; the \
+         sentence would point at a grade sorting cannot reach",
+        sim::proximity::LADDER_TOP
+    );
+}
+
+/// **THE SENTENCE NEVER POINTS AT A LADDER THAT CANNOT ARRIVE** (ASSA-257,
+/// Maren's condition).
+///
+/// For every species `too_poor_for` ever names, over a sweep: some patch of it
+/// answers at the ladder's top, and that patch is **below** the top — so a sort
+/// path genuinely exists. If either half failed, the clause would be "walk
+/// further" relocated: spend ore and end in the same dead end.
+///
+/// Non-vacuity is asserted, because the too-poor state is the rarer of the two
+/// empty answers and a sweep that never reached it would pass by doing nothing.
+#[test]
+fn every_species_the_too_poor_answer_names_can_be_lifted_to_one_that_answers() {
+    let mut named = 0;
+    for seed in 0..200 {
+        let (w, me) = joined(seed);
+        let at = w.player(me).unwrap().pos;
+        for q in Question::ALL {
+            if w.nearest_answering(q, at).is_some() {
+                continue;
+            }
+            let Some(s) = w.too_poor_for(q) else {
+                continue;
+            };
+            named += 1;
+            let liftable = w.deposits.iter().any(|d| {
+                d.species == s
+                    && q.could_answer_at_best_grade(&w.species, d)
+                    && d.grade() != sim::proximity::LADDER_TOP
+            });
+            assert!(
+                liftable,
+                "seed {seed} {q:?}: the sentence names {} as merely too poor, \
+                 so it tells the player sorting lifts a grade - and no patch of \
+                 it both answers at the ladder's top and sits below it",
+                w.species(s).name()
+            );
+        }
+    }
+    assert!(
+        named > 0,
+        "the too-poor answer never fired over 200 seeds, so this test asserted \
+         nothing about the clause it guards"
+    );
+}
+
+/// The OTHER empty answer gets no ladder clause, because no ladder helps there.
+///
+/// `nothing_answers` is the case where no species in the world could answer at
+/// any grade; pointing at sorting would be exactly the lie Maren's condition
+/// exists to prevent. Asserted on the sim's own two sentences rather than on a
+/// rendered line.
+#[test]
+fn the_plain_empty_answer_offers_no_ladder() {
+    for q in Question::ALL {
+        let plain = debug::nothing_answers(q);
+        assert!(
+            !plain.contains("sorting"),
+            "the no-species-at-all sentence offers the ladder, which cannot \
+             help when nothing in the world answers at any grade: {plain}"
+        );
+        let too_poor = debug::too_poor_answer(q, "Xite");
+        assert!(
+            too_poor.contains("sorting lifts a grade"),
+            "the too-poor sentence lost the ladder clause: {too_poor}"
+        );
+        assert!(
+            !too_poor.to_lowercase().contains("go and")
+                && !too_poor.to_lowercase().contains("you should"),
+            "the clause states a fact about the rock, never an instruction \
+             (Maren, ASSA-257): {too_poor}"
+        );
+    }
+}
