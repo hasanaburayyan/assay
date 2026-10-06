@@ -1234,6 +1234,9 @@ func _select_tab(tab_name: String) -> void:
 func _scroll_to_make() -> void:
 	var anchor := _make_anchor()
 	if anchor == null:
+		# NORMAL ON A TABBED SCREEN, not a miss: the tab strip puts its body at the top of its own
+		# scroll box, so selecting `make` has already done what this scroll exists to do. The leg still
+		# checks the name is in frame, by `_make_naming_control()`.
 		print("  make: no heading above the crafting menu, so nothing was scrolled")
 		return
 	var box := _scroll_box_above(anchor)
@@ -1261,6 +1264,53 @@ func _make_anchor() -> Label:
 		if label != null and label.theme_type_variation == &"Heading":
 			return label
 	return null
+
+
+## **WHAT NAMES THE CRAFTING MENU IN THE FRAME, WHICH IS NOT ALWAYS A HEADING ANY MORE.**
+##
+## The `make` leg's bar is that a reader can PLACE the picture: the list's own name is in the shot.
+## Until the tabbed panel (ASSA-247) that name was always an in-column `Heading` above the rows, so
+## the leg asked `_make_anchor()` and the two questions — what do I scroll to, what names the shot —
+## were one accessor by coincidence. **The panel splits them.** It gives each section's name to its
+## tab button and drops the heading, so on a tabbed screen `_make_anchor()` is null and the leg
+## refused a frame that names `make` perfectly well: *"the make shot does not start at the `make`
+## heading: it is absent"*. Measured on Nacre's #336 head merged with main (seed 14247): every other
+## leg green, `WINDOW SHOT INCOMPLETE`, exit 1 — which is gate line 3's pre-send shot failing on a
+## screen with nothing wrong with it.
+##
+## **THE SELECTED TAB IS THE NAME, AND IT IS FOUND BY STATE AND NOT BY WORD.** The pressed button in
+## the strip is the one whose body is on screen, so the control is located structurally — the
+## objection over `_make_anchor` (a tool that greps for "make" goes quiet the day Maren renames the
+## section) still holds. Its text is then CHECKED against the tab this shot was named for, which is
+## the leg's whole question and cannot pass vacuously: a strip that refused the selection leaves
+## another tab pressed, and that is reported rather than photographed under the wrong name.
+func _make_naming_control() -> Control:
+	var heading := _make_anchor()
+	if heading != null:
+		return heading
+	if _screen._tabs == null:
+		return null
+	var names: Control = _screen._tabs.names_box()
+	if names == null:
+		return null
+	for child in names.get_children():
+		var button := child as Button
+		if button != null and button.button_pressed and String(button.text) == "make":
+			return button
+	return null
+
+
+## The anchor's own text, typed rather than read off a `Control` — `Label` and `Button` both carry
+## `text` and neither carries it on `Control`, so a dynamic read here is an unsafe-property warning
+## in a repo that compiles tools warnings-as-errors.
+func _naming_text(control: Control) -> String:
+	var label := control as Label
+	if label != null:
+		return label.text
+	var button := control as Button
+	if button != null:
+		return button.text
+	return ""
 
 
 func _scroll_box_above(control: Control) -> ScrollContainer:
@@ -1296,7 +1346,7 @@ func _make_anchor_offset() -> int:
 ## is exactly what a frame without that row in it already did once.
 func _capture_make() -> void:
 	var make: Control = _screen._make
-	var anchor := _make_anchor()
+	var anchor := _make_naming_control()
 	var frame := _frame_for(make)
 	var rows: Array = []
 	for child in make.get_children():
@@ -1313,11 +1363,17 @@ func _capture_make() -> void:
 		var rect := row.get_global_rect()
 		rows.append({"said": " ".join(said), "rect": rect, "standing": _standing_in(frame, row),
 				"dead_end": " ".join(said).contains("dead end")})
+	# **THE NAME IS JUDGED AGAINST THE RECT THAT CLIPS *IT*, NOT THE ONE THAT CLIPS THE ROWS.** An
+	# in-column heading and its rows share every clipping ancestor, so this was the same rect for as
+	# long as the name lived in the column; a tab button sits ABOVE the scroll box, so measuring it in
+	# the rows' frame reports a perfectly visible name as off screen. `_frame_for` already walks each
+	# control's own clippers, so asking it per control is the fix rather than a special case.
 	_make_frame = {
 		"frame": frame,
-		"heading": "" if anchor == null else String(anchor.text),
+		"heading": "" if anchor == null else _naming_text(anchor),
 		"heading_rect": Rect2() if anchor == null else anchor.get_global_rect(),
-		"heading_standing": "absent" if anchor == null else _standing_in(frame, anchor),
+		"heading_standing": "absent" if anchor == null
+				else _standing_in(_frame_for(anchor), anchor),
 		"rows": rows,
 		"scrolls": _make_scrolls,
 		"offset": _make_anchor_offset(),
@@ -1444,9 +1500,11 @@ func _rocks_report() -> Dictionary:
 ## the Game Director held `bench` and `rocks`, with `make` one section above the top edge. Nothing in
 ## this file could say so, because nothing in this file was looking at the picture.
 ##
-## THE HEADING IS THE BAR, not "some make row is visible". A list of rows with its own name scrolled
-## off is a picture a reader cannot place, and placing it is half of what Maren is judging: that a
-## dead end and a cost sit in ONE series under ONE heading.
+## THE LIST'S OWN NAME IS THE BAR, not "some make row is visible". A list of rows with its own name
+## scrolled off is a picture a reader cannot place, and placing it is half of what Maren is judging:
+## that a dead end and a cost sit in ONE series under ONE name. **Which CONTROL carries that name
+## depends on the screen** — an in-column `Heading` before ASSA-247, the selected tab's own button
+## after it — so the bar is asked of `_make_naming_control()` and not of a heading by assumption.
 ##
 ## AND IT CANNOT PASS VACUOUSLY. A frame with no rows at all is a crafting menu with nothing in it,
 ## which is a fact about the play rather than a failure, so it is `not_asked` and says which.
@@ -1455,7 +1513,7 @@ func _make_report() -> Dictionary:
 		return _not_asked("no 11-make.png frame was captured, so there is nothing to describe")
 	var frame: Rect2 = _make_frame["frame"]
 	var rows: Array = _make_frame["rows"]
-	print("  make: `%s` heading %s at y %d, %d scroll(s), %d px of anchor, frame y %d..%d"
+	print("  make: named by `%s`, %s at y %d, %d scroll(s), %d px of anchor, frame y %d..%d"
 			% [_make_frame["heading"], _make_frame["heading_standing"],
 			(_make_frame["heading_rect"] as Rect2).position.y, _make_frame["scrolls"],
 			_make_frame["offset"], frame.position.y, frame.end.y])
@@ -1476,8 +1534,8 @@ func _make_report() -> Dictionary:
 	if rows.is_empty():
 		return _not_asked("the crafting menu had no rows in this frame, so no series could be judged")
 	if String(_make_frame["heading_standing"]) != "whole":
-		return _refused("the make shot does not start at the `make` heading: it is %s"
-				% _make_frame["heading_standing"])
+		return _refused("the make shot carries no name a reader can place it by: `%s` is %s"
+				% [_make_frame["heading"], _make_frame["heading_standing"]])
 	if whole == 0:
 		return _refused("the make shot holds the `make` heading and not one of its %d rows: the "
 				% rows.size() + "first is %s" % rows[0]["standing"])
