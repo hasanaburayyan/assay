@@ -15,6 +15,7 @@ use crate::item::{Item, ItemKind, ItemStack};
 use crate::ladder::Lighting;
 use crate::mineral::{Grade, MineralSpecies, NameError, Property, Sheet, SpeciesId};
 use crate::ore::OreDeposit;
+use crate::proximity::{Heading, Question};
 use crate::recipe::{RECIPES, Station};
 // `YIELD_BY_GRADE` was here until ASSA-94: this file used it to work out for
 // itself whether a drill's buffer had room. It decides nothing now, so it
@@ -1347,6 +1348,119 @@ pub fn mining_note(m: Mining) -> &'static str {
     }
 }
 
+/// THE EIGHT HEADINGS IN WORDS, and the only wording of them anywhere.
+///
+/// Hyphenated because the compound ones are read aloud off a status line and
+/// "northeast" at a glance is one long word; the table columns elsewhere in
+/// this file hyphenate for the same reason ("hand-minable").
+pub fn heading_name(h: Heading) -> &'static str {
+    match h {
+        Heading::North => "north",
+        Heading::NorthEast => "north-east",
+        Heading::East => "east",
+        Heading::SouthEast => "south-east",
+        Heading::South => "south",
+        Heading::SouthWest => "south-west",
+        Heading::West => "west",
+        Heading::NorthWest => "north-west",
+    }
+}
+
+/// THE QUESTION, IN THE PLAYER'S WORDS — Rainy asked for *"what is nearby
+/// that's viable as fuel"* and this is that sentence's head.
+pub fn question_asked(q: Question) -> &'static str {
+    match q {
+        Question::Burns => "what near me burns",
+        Question::HardEnough => "what near me is hard enough",
+    }
+}
+
+/// WHAT THE HEADLINE SAYS WHEN THE WORLD HAS NO ANSWER, and it must say
+/// something.
+///
+/// **SILENCE WOULD READ AS A BUG, and this is a common state rather than an
+/// edge** (Game Director, ASSA-241): of worlds whose fuel label cannot be lit,
+/// 56.3% can never light it at all (ASSA-58, 5000 worlds). A player who sees
+/// nothing where an answer goes starts looking for the missing feature.
+///
+/// Two plain sentences, not one joined by an em dash. ASSA-158 is the open
+/// defect where a dead end and a cost share one dash-separated series and read
+/// as a single fact; the answer and its reason are different kinds of statement
+/// and get a full stop between them.
+pub fn nothing_answers(q: Question) -> &'static str {
+    match q {
+        Question::Burns => {
+            "nothing in this world does. No patch holds rock you can mine and light."
+        }
+        Question::HardEnough => {
+            "nothing in this world does. No patch holds rock you can mine that is hard enough to be \
+             worth a part."
+        }
+    }
+}
+
+/// ONE LINE ANSWERING A QUESTION THE PLAYER ASKS THE GROUND, with the species
+/// table as the evidence under it (Game Director's ruling on ASSA-241: *"a tab
+/// opening on a six-row grid makes them do the collating again"*).
+///
+/// **THE DECIDING PROPERTY GOES THROUGH [`reading`], which is what keeps a
+/// rough species rough.** The headline never formats a sheet value itself, so
+/// an unassayed species reads "reactivity 51-75" here exactly as it reads in
+/// the table's column, and there is no second place for an exact number to
+/// escape from. The *deposit's* grade is not gated and never was —
+/// `deposit_table` has printed `purity` and `grade` ungated since it existed;
+/// the assay gates the species sheet, not the patch.
+///
+/// **THE CLAUSE AFTER THE DISTANCE IS THE TABLE'S OWN, byte for byte.**
+/// [`fuel_tag`] plus [`lighting_clause`] is what a fuel row says, so a player
+/// who reads this line and then the row it points at cannot find two phrasings
+/// of one fact — the same argument `mining_note` settled for ASSA-135. It is
+/// also why the fuel claim here carries the grade: a conditional claim carries
+/// its condition (ASSA-143).
+pub fn proximity_headline(world: &World, player: PlayerId, q: Question) -> String {
+    let asked = question_asked(q);
+    let Some(me) = world.player(player) else {
+        return format!("{asked}: no such player");
+    };
+    let Some(near) = world.nearest_answering(q, me.pos) else {
+        return format!("{asked}: {}", nothing_answers(q));
+    };
+    let d = world
+        .deposit(near.deposit)
+        .expect("nearest_answering names a deposit of this world");
+    let s = world.species(d.species);
+    // DISTANCE AND HEADING, OR NEITHER. Standing on the thing is the one case
+    // where a heading does not exist (`Heading::of_gap` returns `None`), and
+    // "0 tiles north" would be a direction invented to fill a slot.
+    let whereabouts = match near.heading {
+        None => "right where you are standing".to_string(),
+        Some(h) => format!(
+            "{} tile{} {}",
+            near.distance,
+            if near.distance == 1 { "" } else { "s" },
+            heading_name(h)
+        ),
+    };
+    let mut line = format!(
+        "{asked}: {} ({}) {whereabouts} at ({}, {}) · {} {}",
+        s.name(),
+        d.grade().letter(),
+        near.tile.x,
+        near.tile.y,
+        q.property().name(),
+        reading(s, q.property()),
+    );
+    if let Some(grade) = crate::ladder::fuel_grade(s) {
+        let _ = write!(
+            line,
+            " · {}{}",
+            fuel_tag(grade, crate::ladder::hand_minable(s)),
+            lighting_clause(crate::ladder::lighting(&world.species, s.id))
+        );
+    }
+    line
+}
+
 /// Table of every species with its sheet as the players know it (rough
 /// bands until assayed), plus what the sheet means for the rules that
 /// exist today. Notes use the exact values: the ground knows what it is.
@@ -1361,11 +1475,38 @@ pub fn species_table(world: &World) -> String {
         if !s.assayed {
             notes.push("rough: stand on it and `assay`".to_string());
         }
+        // **"FOUND BY X" NAMED THE FINDER AND NEVER SAID WHAT FINDING IT WON
+        // THEM** (ASSA-248 box 7). Discovery is a real loop — the first player
+        // to mine or assay a species may rename it everywhere, and may grant
+        // that to someone else (`PlayerCommand::Rename`/`GrantRename`,
+        // `MineralSpecies::may_rename`) — and no screen in the game said so, so
+        // the one piece of authorship co-op hands a player was invisible unless
+        // they read `help`. The clause goes where the finder is already named,
+        // because that is the only place the fact is about.
+        //
+        // It says "may name it" and not "may rename it" on a species still
+        // carrying its generated name: nothing has been named yet.
+        //
+        // **THE CLAUSE STATES A RIGHT AND NEVER A HISTORY, because the right is
+        // all the world knows.** My first version read "named by {who}" once
+        // `player_name` was set, and that is a fact `MineralSpecies` does not
+        // hold: a grantee can do the renaming (`GrantRename`), and only the
+        // `SpeciesRenamed` event ever carried who typed it. The note would have
+        // credited the discoverer for somebody else's name, in the one place
+        // this item exists to make authorship visible.
         if let Some(d) = s.discoverer {
             let who = world
                 .player(d)
                 .map_or(format!("player {}", d.0), |p| p.name.clone());
-            notes.push(format!("found by {who}"));
+            let right = if s.player_name.is_some() {
+                "who may rename it"
+            } else {
+                "who may name it"
+            };
+            notes.push(match s.rename_grants.len() {
+                0 => format!("found by {who}, {right}"),
+                n => format!("found by {who}, {right} ({n} others may too)"),
+            });
         }
         // THE THREE MINING STATES AND THEIR WORDS BOTH LIVE IN `mining` AND
         // `mining_note` NOW (ASSA-135). They were an if/else chain here, which
