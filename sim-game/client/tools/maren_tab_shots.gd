@@ -52,12 +52,12 @@ const MIN_WIDTH_FLOOR := 120.0
 const RUN_CEILING := 600.0
 var _ceiling := Time.get_unix_time_from_system() + RUN_CEILING
 
-enum Phase { PLAY, PICK, SETTLE, SHOOT, DONE }
+enum Phase { JOIN, PLAY, PICK, SETTLE, SHOOT, DONE }
 
 var _out := ""
 var _seed := DEFAULT_SEED
 var _left := DEFAULT_TICKS
-var _phase := Phase.PLAY
+var _phase := Phase.JOIN
 var _waited := 0
 var _started := false
 var _done := false
@@ -116,6 +116,21 @@ func _process(_delta: float) -> bool:
 		quit(1)
 		return true
 	match _phase:
+		Phase.JOIN:
+			# **THE FIRST SCREEN, BEFORE ANY WORLD EXISTS, AND IT IS SHOT HERE FOR A REASON.** A
+			# stranger meets this one first, and ASSA-231 is the rule it has to keep: the column is
+			# not on screen at all before a world, so a tab strip of four names over nothing is the
+			# labelled-empty-gap defect with four labels. The test that holds it lives in
+			# `test_main_screen.gd` — which does not load on this head, so the picture is the only
+			# witness tonight.
+			_waited += 1
+			if _waited >= SETTLE_FRAMES:
+				_waited = 0
+				var column: Control = _screen._column
+				_lines.append("join screen: column visible %s, strip visible %s"
+						% [column.visible, _screen._tabs.is_visible_in_tree()])
+				_shoot("join")
+				_phase = Phase.PLAY
 		Phase.PLAY:
 			_play_frames()
 		Phase.PICK:
