@@ -2583,12 +2583,25 @@ func _rebuild_make(offers: Array) -> void:
 		var line := _note(String(offer.get("line", "")))
 		line.name = MAKE_LINE
 		body.add_child(line)
-		# ASSA-84'S CLAUSE, CARRIED AND NOT REWRITTEN (Maren's ruling here: a recipe row is a better
-		# home for it than a button tooltip). Still the sim's own sentence, still empty unless the sim
-		# says so, and still nothing in this client that names a gear.
+			# **A DEAD END IS NOT A COST, AND THIS ROW DREW THEM IN ONE VOICE** (ASSA-158, Maren's
+			# ruling: *"a permanent dead end may not be drawn in the same series as a cost"*). The
+			# clause arrived with the same em dash and the same `_note` ink as the cost line above it --
+			# she measured both at (167,176,190), byte-identical -- so a player scanning five rows read
+			# "this is useless" as more of "what this costs". One of those can become true by playing;
+			# the other never can.
+			#
+			# **THE LABEL IS THE SIM'S, NOT THIS FILE'S.** `sim-cli`'s catalogue has printed
+			# `dead end: nothing uses a gear` since ASSA-122; the window is the surface that never got
+			# it. Typing the words here would be a second copy of the Game Director's wording, which is
+			# how ASSA-43 and ASSA-52 happened -- so it comes through the binding from
+			# `debug::DEAD_END_LABEL`. Still the sim's own sentence, still empty unless the sim says so,
+			# and still nothing in this client that names a gear (ASSA-84's clause, carried).
+			#
+			# The row stays listed and `Make` stays pressable (ASSA-5/7): a player may always try a
+			# doomed design and be told, never refused.
 		var dead_end := String(offer.get("dead_end", ""))
 		if dead_end != "":
-			body.add_child(_note("— %s" % dead_end))
+				body.add_child(_note("%s%s" % [_sim.dead_end_label(), dead_end]))
 		# MAREN'S WALLS CLAUSE (ASSA-125), APPENDED AND NEVER COMPOSED, by the same route and for the
 		# same reason: a smelter's walls are its material's heat tolerance, and what the player may
 		# know of that is a band until they assay. The sim words it; this client would have to decide
