@@ -38,6 +38,10 @@ const PAD := 12
 ## The played screen's panel background, stated and not sampled (ASSA-224).
 const PANEL_BG := Color8(37, 40, 48)
 const SETTLE_FRAMES := 6
+## **NO INSTRUMENT MAY HOLD THE MACHINE FOR EVER** (ASSA-182). This tool waits only for frames to
+## settle, so a run that is not over in half a minute is one where `_initialize` died and `_process`
+## is spinning with nothing to photograph. Several of us run probes on this one Mac.
+const RUN_CEILING := 30.0
 
 const BURNS := 0
 const HARD_ENOUGH := 1
@@ -45,6 +49,9 @@ const HARD_ENOUGH := 1
 var _out := ""
 var _settle := 0
 var _done := false
+## A MEMBER INITIALIZER, not a line at the end of `_initialize`: the clock has to be running before
+## the thing that can fail, or the guard is absent in exactly the case it exists for.
+var _ceiling := Time.get_unix_time_from_system() + RUN_CEILING
 var _tabs: Array = []
 var _notes := PackedStringArray()
 
@@ -108,6 +115,11 @@ func _add(row: HBoxContainer, caption: String, seed_text: String, which: int) ->
 
 func _process(_delta: float) -> bool:
 	if _done:
+		return true
+	if Time.get_unix_time_from_system() > _ceiling:
+		push_error("maren_mineralogy_shot: %ds ceiling reached with no picture written"
+				% int(RUN_CEILING))
+		quit(1)
 		return true
 	_settle += 1
 	if _settle < SETTLE_FRAMES:
