@@ -1514,9 +1514,27 @@ pub fn too_poor_answer(q: Question, species: &str) -> String {
     // **A FACT ABOUT THE ROCK, NOT AN INSTRUCTION**, which she was explicit
     // about: "sorting lifts a grade, at a loss", never "go and sort it". The
     // player is told what the world permits and decides for themselves.
+    //
+    // **A FULL STOP AND NOT A SEMICOLON, AND THE REASON IS HERS AND BETTER THAN
+    // MINE** (Game Director, ASSA-257 punctuation ruling). I flagged her
+    // semicolon for putting a dead end and its way out in one series -- the
+    // shape ASSA-158 ruled against -- and argued it survived because both
+    // clauses are facts and neither is an instruction. She took the full stop
+    // anyway, for a reason my reading did not have: **the two clauses have
+    // OPPOSITE VALENCE.** One closes a door, the other opens one. A semicolon
+    // says *keep reading, same thought*, which is right when a clause
+    // elaborates and misleading when it reverses. The player's takeaway has to
+    // be two separate facts: this rock is too poor, AND there is a lever.
+    //
+    // **AND NO NUMBER IN IT.** The loss is 3 ore to 1 and she ruled that out of
+    // this sentence: the price of sorting is a RECIPE fact and belongs on the
+    // surface that performs it (the species row, or Make), not in a proximity
+    // answer. "Put the number in the sentence and it stops being an answer and
+    // starts being a recipe card." The clause's job is only to stop a player
+    // believing the lift is free.
     format!(
         "no patch is rich enough. {species} would {want}, but every patch of it in this world \
-         yields too poor a grade; sorting lifts a grade, at a loss."
+         yields too poor a grade. Sorting lifts a grade, at a loss."
     )
 }
 
