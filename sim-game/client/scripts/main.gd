@@ -172,10 +172,27 @@ var _log_showing := "\nnothing yet\n"
 ## through `AssaySimHost.halt_lines()` -- and this block is PINNED OUTSIDE THE SCROLL BOX, which is
 ## the only placement that makes "a later line cannot push it off" true structurally rather than by
 ## my remembering it. Empty is empty: no heading, no reassuring line, zero pixels.
+## **AND SINCE ASSA-247 THIS BLOCK IS THE CONDITION ONLY, NOT THE LIST** (Maren's ruling, 17:22 UTC
+## 2026-10-06, amending her own ASSA-89/94). Her words: *"the CONDITION stays always-on; the LIST does
+## not. A stall is a condition, not a moment was about never losing the fact -- it never said every
+## stalled machine must sit above the fold forever."*
+##
+## The reason is that `_halt` was the one UNBOUNDED thing in the pinned chrome: one line per stalled
+## machine, growing with the factory, and it is where 161 px of the worst-case clip came from
+## (measured on ASSA-247: the clip is 477 px at its worst against 638 at rest). So what is pinned
+## here is the sim's own count -- `halt_summary`, "N of M buildings stopped" -- and the machines
+## themselves are in the `bench` tab, where machines live. Nothing a player must not miss is lost:
+## the fact that something has stopped, and how much of the factory it is, cannot be scrolled away.
 var _halt := VBoxContainer.new()
 var _halt_box: PanelContainer = null
-## The stopped lines alone, without the heading. Rebuilt with the block.
+## The stopped lines alone, without the heading. Rebuilt with the block -- and they live in
+## `_halt_detail` now, so that "the lines of this block" is still one container and still the sim's
+## words in the sim's order.
 var _halt_lines: VBoxContainer = null
+## WHERE THE STALLED MACHINES ARE LISTED: the `bench` tab's body, under the designs. Built and
+## emptied by `_rebuild_halt` beside the pinned count, from the same call and the same lines, so the
+## count and the list can never disagree about what has stopped.
+var _halt_detail := VBoxContainer.new()
 var _halt_showing := "\nnothing yet\n"
 ## WHAT IS RUNNING, BESIDE WHAT HAS STOPPED (ASSA-133, Maren's ruling 1; the list is ASSA-95's).
 ## `AssaySimHost.activity_lines()` -> `sim::debug::activity_lines`: mining, assaying and the running
@@ -228,6 +245,11 @@ var _north_room := 0.0
 ## longer held for is scrolling to the log: that whole mechanism is gone with ASSA-147, because the
 ## log is not in this box any more and there is nothing to scroll to.
 var _scroll: ScrollContainer = null
+## **THE TABBED SYSTEMS PANEL** (ASSA-247): the board's own shape, one system at a time. Held so the
+## refreshes can ask which tab is open and so a test can add a fifth entry and assert that doing so
+## moved nothing. `_scroll` is this strip's content box, which is why there is no second scroll box
+## in the column any more.
+var _tabs: AssayTabStrip = null
 ## INITIALISED TO THE WRONG ANSWER ON PURPOSE. `_build_ui` calls `_show_log(false)`, and starting
 ## this at `false` would make "the log is hidden on first open" true before anything ran -- a test
 ## that passes by construction, which is the failure I keep writing down. At `true` the default-state
@@ -325,6 +347,11 @@ const COLUMN_SURFACE := "ColumnSurface"
 ## already declares (ASSA-142). Named so a test can ask what its margins are without counting
 ## children -- the property being tested is where the number came FROM.
 const COLUMN_PAD := "ColumnPad"
+
+## The tabbed systems panel (ASSA-247). Named so a test, a probe and `window_shot.gd` can find the
+## strip without counting children, and because the thing it is named for is the board's own
+## structure: one panel, the systems selectable at the top.
+const TABS := "SystemsTabs"
 
 ## The map glyph's disc in a species row. Big enough for a 12px letter to sit in, which is above the
 ## 10px floor `glyph_size` refuses to draw under.
@@ -1053,41 +1080,58 @@ func _build_ui() -> void:
 	_halt_box.add_child(_halt)
 	chrome.add_child(_halt_box)
 
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	chrome.add_child(scroll)
-	_scroll = scroll
-	var column := VBoxContainer.new()
-	# NO `PANEL` FLOOR ON ANYTHING IN HERE ANY MORE, and it was not tidying (ASSA-117, box 4). A
-	# `ScrollContainer` with a vertical scrollbar hands its child the panel MINUS the scrollbar, and
-	# a 320px floor inside a ~308px viewport is content wider than the box that holds it -- with
-	# `SCROLL_MODE_DISABLED` horizontally, the overflow is simply clipped. That is ASSA-98's bug one
-	# level up: the row was fixed to derive its width and then the column it sits in was still told
-	# a number. `EXPAND_FILL` is the derivation, and the sections below inherit a `VBoxContainer`
-	# child's default FILL, so none of them needs a width of its own either.
-	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	column.add_theme_constant_override("separation", 10)
-	scroll.add_child(column)
-	# **A SECTION MAY NOT SIT ABOVE THE SECTION IT IS DERIVED FROM** (ASSA-133, Maren's ruling 2).
-	# The crafting menu is generated from your pack -- `debug::make_offers` iterates your stacks --
-	# and it grows FASTER than its source: one stack of refined produces five part rows plus a gear.
-	# Maren measured it on the real window: across one craft session `make` grew +198px and pushed
-	# `you` 148px past the BOTTOM of the window, mid-row, during the one minute you are crafting from
-	# the pack it was built out of. A derived list that outgrows its source and sits on top of it will
-	# always be the thing that pushes the source off the bottom.
+	# **WHAT YOU CAN DO HERE, AND IT IS THE ONLY SECTION LEFT ABOVE THE TABS** (ASSA-247; Wren's
+	# ruling 16:35 UTC 2026-10-06, Maren ratifying at 17:22 and withdrawing half of her own 17:05).
 	#
-	# So the order is you -> do -> make -> bench -> rocks -> cursor -> event log, and `make` is built
-	# in the loop below with the others instead of by hand ahead of them. `do` keeps its place above
-	# `make` because it is derived from the TILE, not from the pack, and it is 51px.
+	# THE RULING CAME OUT OF A MEASUREMENT, so the reason is a number rather than a preference:
+	# `you` + `do` always-on is **434 px of a 477 px worst-case clip**, 91%, and no tab of any size
+	# fits behind that. Maren's 17:05 ruling named the pack as always-on because it is the INPUT to
+	# every make decision; what it protected is paid on Make instead -- an unavailable row says what
+	# you lack -- and the pack is a tab, which is the structure Rainy named ("tabs such as Crafting,
+	# Inventory, Research").
 	#
-	# THE RUNNING CRAFT IS NO LONGER HERE AT ALL. It was the head of this menu; it is now a line in
-	# the chrome's running block with mining and assaying (ruling 1, and `_running` above).
+	# `do` STAYS because it is the one section that is neither reference nor a system: it is the
+	# verbs for the tile you are standing on or pointing at, it is 126 px with its heading, and it is
+	# what a player presses. A tab you must open to reach Mine is the clunk restated.
 	#
-	# WHAT THIS DOES NOT FIX, in Maren's words, so a green shot is not read as a solved column: every
-	# menu row wraps to two lines because it repeats the material, and the panel still wants ~1746px
-	# in a 566px clip. The reorder moves the loss to the section that can afford it; it does not
-	# remove it.
+	# NO CARRY SUMMARY LINE ABOVE THE STRIP (Maren, 17:22): the budget clears the worst clip by about
+	# 4 px, which she calls noise and I agree. It earns its place only if a playtest shows that
+	# mining stops feeling like it accumulates.
+	var do_heading := Label.new()
+	do_heading.text = "do"
+	do_heading.theme_type_variation = &"Heading"
+	chrome.add_child(do_heading)
+	chrome.add_child(_actions)
+	# **ONE TABBED SYSTEMS PANEL, ONE SYSTEM AT A TIME** -- the board's own shape, ruled twice. See
+	# `AssayTabStrip` for why it is a visible strip and not a keyboard summon, and for the property
+	# the strip is built to: adding a tab is one entry, not a re-layout.
+	#
+	# `EXPAND_FILL` IS THE WHOLE LAYOUT. The strip takes exactly what the blocks above it leave, on
+	# the frame they change, and nothing in this file writes a height for it -- the same derivation
+	# the old scroll box used, and the reason the stopped block can appear and disappear with the
+	# world without anybody moving a number.
+	_tabs = AssayTabStrip.new()
+	_tabs.name = TABS
+	_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	chrome.add_child(_tabs)
+	# **THE COLUMN'S SCROLL BOX IS THE OPEN TAB'S BOX NOW**, which is what "the column stops
+	# scrolling" means structurally rather than hopefully: there is no box around the whole column to
+	# scroll any more, so no section can be reached only by scrolling PAST another section. What may
+	# still scroll is one tab's own body, which is Wren's rule exactly -- a list of forty rocks
+	# scrolling is a list. `_scroll` keeps its name because every reader of it (the clip report in
+	# `window_shot.gd`, the tests that hold the log and the stopped block outside it) is asking the
+	# same question about the same box.
+	_scroll = _tabs.scroll_box()
+	# **A SECTION MAY NOT SIT ABOVE THE SECTION IT IS DERIVED FROM** (ASSA-133, Maren's ruling 2) --
+	# AND THE TABS RETIRE THAT PROBLEM RATHER THAN SOLVING IT AGAIN. Her measurement was that `make`
+	# grew +198px across one craft session and pushed `you` 148px past the BOTTOM of the window,
+	# because a derived list that outgrows its source and shares a scroll box with it will always be
+	# what pushes the source off. `make` and the pack are now different tabs: neither is ever above
+	# the other, and growth in one cannot move the other by a pixel. The ruling's REASON is kept --
+	# nothing derived shares a box with its source -- which is why the pack did not simply move down.
+	#
+	# THE RUNNING CRAFT IS STILL NOT IN THE MENU (ruling 1): it is a line in the chrome's running
+	# block with mining and assaying, pinned above the tabs.
 	_make_toggle.theme_type_variation = &"Quiet"  # furniture, same as the log toggle (ASSA-224)
 	# AND LEFT, for the same reason: centred under the `make` heading it read as that heading's
 	# caption rather than as a control (ASSA-233).
@@ -1110,28 +1154,56 @@ func _build_ui() -> void:
 	# that says so, and a frozen readout beside it is stale, not wrong. (That sentence was `_detail`'s
 	# until ASSA-237 hid `_detail` from the player; it moved so that this clause stayed true.)
 	_cursor.text = AssayHud.quiet_cursor_line()
-	# EVERY SECTION IN ONE LIST, IN THE ORDER MAREN RULED. `make` used to be built by hand above this
-	# loop because it is the only section with more than one body -- the chosen-parts box, its toggle
-	# and the rows. A section whose ORDER is the whole point of the item should not be the one section
-	# whose position is written somewhere else, so the loop takes a list of bodies and `make` joins it.
-	var sections: Array[Array] = [
-		["you", [_carrying] as Array[Control]],
-		["do", [_actions] as Array[Control]],
+	# **EVERY TAB IN ONE LIST, AND ITS NAME IS ITS HEADING.** The six sections each carried a
+	# `Heading` Label inside one scroll box; a tab's own name is that heading, so a second one inside
+	# the body would print the word twice and spend a line per section doing it. `do` keeps its
+	# heading because it is not in the strip and nothing else names it.
+	#
+	# **THE FOUR NAMES ARE THE BOARD'S, NOT A SHORTLIST OF MINE** (Rainy, 16:53 UTC 10-05: "tabs such
+	# as Crafting, Inventory, Research"). `inventory` is Rainy's word for what this column called
+	# `you`; `make` keeps the name the loop and the sim's own `make_offers` use, because renaming a
+	# surface in the same slice that moves it makes two changes impossible to judge apart.
+	#
+	# **MINERALOGY IS NOT HERE AND THAT IS THE SCOPE HOLDING** (Rainy: "so long as the scope is kept
+	# in mind"). It is ASSA-254, being built as its own body against this strip's one-entry contract;
+	# a placeholder would be a fifth name earning its space by looking busy, and the entry it would
+	# occupy costs one `add_tab` call to add when the real body lands.
+	#
+	# NO `PANEL` FLOOR ON ANY BODY, and it was not tidying (ASSA-117 box 4, ASSA-98): a scroll box
+	# hands its child the panel MINUS the scrollbar, so a 320px floor inside a ~308px viewport is
+	# content wider than the box that holds it, and horizontal scrolling is off. `EXPAND_FILL` is the
+	# derivation and the children inherit a `VBoxContainer`'s FILL, so no body needs a width.
+	var tabs: Array[Array] = [
 		["make", [_assembling, _make_toggle, _make] as Array[Control]],
-		["bench", [_bench] as Array[Control]],
+		["inventory", [_carrying] as Array[Control]],
+		["bench", [_bench, _halt_detail] as Array[Control]],
 		["rocks", [_species] as Array[Control]],
-		["cursor", [_cursor] as Array[Control]],
 	]
-	for part in sections:
-		var heading := Label.new()
-		heading.text = String(part[0])
-		heading.theme_type_variation = &"Heading"
-		column.add_child(heading)
+	for part in tabs:
+		var body := VBoxContainer.new()
+		body.name = "%sBody" % String(part[0]).capitalize()
+		body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		body.add_theme_constant_override("separation", 10)
 		var bodies: Array[Control] = part[1]
-		for body in bodies:
-			if body is Label:
-				(body as Label).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			column.add_child(body)
+		for inner in bodies:
+			if inner is Label:
+				(inner as Label).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			body.add_child(inner)
+		_tabs.add_tab(String(part[0]), body)
+	# **WHICH TAB OPENS ON ENTERING A WORLD: `make`, AND IT IS MINE TO PICK** (Wren, 16:35 UTC). It is
+	# the first `add_tab` call, which is what the strip selects. The reason is the same one that keeps
+	# the crafting menu open on first join (ASSA-186): the board asked for a crafting menu, the loop's
+	# controls are in it, and the pack and the rocks list are reference you go and consult.
+	#
+	# **AND THE CURSOR READOUT IS A FOOTER, WHICH IS THE ONE PLACEMENT NOBODY RULED.** It is in the
+	# scrolled area under whichever tab is open, so it carries no control below the fold and costs the
+	# tab budget nothing. What I do not like about it, said here rather than discovered later: `do`
+	# and this are both derived from the TILE, and ASSA-107's ruling is that a thing belongs with the
+	# activity it is part of -- so splitting them top and bottom is the shape Maren ruled against
+	# there. The alternatives cost real pixels (207px of a ~470px budget always-on) or hide a hover
+	# readout behind a tab, which is a readout that does nothing while you hover. Maren's to rule on
+	# the 1x shot; flagged on the item.
+	_tabs.add_footer(_cursor)
 	# HIDDEN ON FIRST OPEN, and this is the line the whole item is about.
 	_show_log(false)
 	# BOTH CHROME BLOCKS DRAWN ONCE AT BUILD, so the screen a stranger sees before any refresh is the
@@ -1929,11 +2001,33 @@ func _halt_shape(summary: String, lines: PackedStringArray) -> String:
 ## path a test would take (`test_buttons.gd:300` is where the chain was last declined).
 func _rebuild_halt(lines: PackedStringArray, summary := "") -> void:
 	_clear(_halt)
+	_clear(_halt_detail)
 	_halt_lines = null
 	if is_instance_valid(_halt_box):
 		_halt_box.visible = not lines.is_empty()
+	# EMPTY IS EMPTY IN BOTH PLACES, and the bench tab's list is hidden rather than left as a bare
+	# heading: a `bench` tab carrying the word "stopped" over nothing is the labelled-empty-gap defect
+	# ASSA-134 spent a whole item on, and it would be there on every screen where nothing has stalled.
+	_halt_detail.visible = not lines.is_empty()
 	if lines.is_empty():
 		return
+	# **THE MACHINES, IN THE `bench` TAB** (Maren, 17:22 UTC 2026-10-06). Built before the pinned
+	# count, from the same `lines`, so there is no path that draws one and not the other.
+	#
+	# "stopped" IS THIS CLIENT'S HEADING, exactly as "running" is in `_rebuild_running`, and for the
+	# same reason: the lines under it are the sim's words and the one word above them is the column's
+	# own furniture. NOT `summary` again -- that sentence is pinned four inches above this list, and
+	# printing it twice would be two copies of one claim that a later change could let drift apart.
+	var detail_heading := Label.new()
+	detail_heading.text = "stopped"
+	detail_heading.theme_type_variation = &"Heading"
+	_halt_detail.add_child(detail_heading)
+	var detail_rows := VBoxContainer.new()
+	detail_rows.add_theme_constant_override("separation", 2)
+	_halt_lines = detail_rows
+	_halt_detail.add_child(detail_rows)
+	for line in lines:
+		detail_rows.add_child(_note(line))
 	# **THE HEADING IS THE SIM'S COUNT, AND THE COMMENT THAT USED TO BE HERE WAS RIGHT ABOUT THE
 	# DANGER AND WRONG ABOUT THE FIX** (ASSA-94). It read: *"a count would be a second claim about the
 	# world and the sim already makes it (`halted_table`'s 'N of M buildings stopped') -- one this
@@ -1947,18 +2041,14 @@ func _rebuild_halt(lines: PackedStringArray, summary := "") -> void:
 	# THE GAME DIRECTOR'S RULING: the count is the floor and must never truncate; the reasons are the
 	# extra and are bounded by the column's height. So the number lives in the HEADING, which is
 	# pinned, and the reasons below it are what a short column drops.
+	# **AND THE PINNED BLOCK IS THIS ONE LINE.** The count was always the floor Maren ruled must never
+	# truncate; what has changed is that it is now the whole of what is pinned, because the reasons
+	# below it were the unbounded half. One `Heading` Label, the sim's own sentence, and the tab that
+	# holds the machines is one press away and named on screen.
 	var heading := Label.new()
 	heading.text = summary if summary != "" else "stopped"
 	heading.theme_type_variation = &"Heading"
 	_halt.add_child(heading)
-	# THE LINES IN THEIR OWN BOX, so "the lines of this block" is a container and not a filter over
-	# one. See the note on `STACK_LINE` for why they cannot be named instead.
-	var rows := VBoxContainer.new()
-	rows.add_theme_constant_override("separation", 2)
-	_halt_lines = rows
-	_halt.add_child(rows)
-	for line in lines:
-		rows.add_child(_note(line))
 
 
 ## WHAT IS RUNNING, the same shape as `_refresh_halt` and for the same reason (ASSA-133 ruling 1,
@@ -2520,16 +2610,24 @@ func _refresh_make() -> void:
 ## picture that the fast path cannot repair, because the fast path only re-texts the sentence. The
 ## output happens to be a function of the verb, the tag and the input today, so this term adds no
 ## rebuild; it is here so that stops being something a reader has to verify.
+## **AND AFFORDABILITY IS IN THE KEY, AS A BOOLEAN, WHICH THE COUNT DELIBERATELY IS NOT** (ASSA-247).
+## This function's standing rule is that a drawn thing missing from the key is a stale picture the
+## fast path cannot repair -- it only re-texts the sentence -- and since this slice the row draws one
+## more thing: whether its button is pressable. `count` stays out, because a count climbs every
+## mining cycle and would rebuild five rows ten times a second; `count >= cost` flips at most once
+## per threshold, which is exactly when the button must change and no other time.
 func _make_shape(offers: Array) -> String:
 	var shape := PackedStringArray()
 	for entry in offers:
 		var offer: Dictionary = entry
 		var makes: Dictionary = offer.get("makes", {})
-		shape.append("%s/%s/%s/%d/%s/%s/%d/%s" % [String(offer.get("verb", "?")),
+		var cost: int = int(offer.get("cost", -1))
+		var afford := "?" if cost < 0 else ("y" if int(offer.get("count", 0)) >= cost else "n")
+		shape.append("%s/%s/%s/%d/%s/%s/%d/%s/%s" % [String(offer.get("verb", "?")),
 				JSON.stringify(offer.get("tag")), String(offer.get("kind", "?")),
 				int(offer.get("species", -1)), String(offer.get("grade", "?")),
 				String(makes.get("kind", "-")), int(makes.get("species", -1)),
-				String(makes.get("grade", "-"))])
+				String(makes.get("grade", "-")), afford])
 	return "|".join(shape)
 
 
@@ -2580,9 +2678,39 @@ func _rebuild_make(offers: Array) -> void:
 		# `Button.autowrap_mode` exists in 4.6 and does NOT lower `get_combined_minimum_size`, which
 		# I asked the engine rather than assuming (661px for the grade-A row). A row wider than the
 		# panel is clipped, because the column does not scroll sideways: ASSA-98 exactly.
+		# **THE SENTENCE AND ITS ONE CONTROL SHARE A LINE, AND THAT IS THE WHOLE OF GAP 3's DENSITY
+		# HERE** (ASSA-247; Maren's Gap 3 in `assay-ui-direction`: *"the column is prose where it
+		# should be data"*).
+		#
+		# MEASURED, NOT STYLED. `tools/nacre_tab_budget_probe.gd` put a make row at **73 px** with the
+		# verb on its own line below the sentence, and this section needs 500 px of reachable button
+		# against a budget of about 313. The row's floor is the icon box's **48 px** (`ICON_BOX_PX`,
+		# which is arithmetic from the sprite sheets -- see its own comment), so a two-line sentence
+		# beside a 48 px icon is ALREADY PAID FOR: putting the button on the sentence's line takes the
+		# row to `max(48, sentence)` and the wrap costs nothing. 5 rows x 73 becomes 5 rows x 48.
+		#
+		# **SO NO WORD ON THIS ROW CHANGED AND NOTHING IS PARSED OUT OF ONE.** The cheap way to get
+		# the same pixels was to stop drawing `offer.line` and compose a short label out of `makes`
+		# and the species -- which is the client wording a sentence the sim owns, and `make_offers`'
+		# own docstring warns against it by name (a `sort` row moves a grade). The density was
+		# available in the LAYOUT, so the words were never the thing to spend.
+		#
+		# `EXPAND_FILL` on the sentence is what puts the button hard right and gives the text the rest
+		# (ASSA-98's rule: a FILL child of an HBox gets its own minimum, not the room left over).
+		var said := HBoxContainer.new()
+		said.add_theme_constant_override("separation", 6)
 		var line := _note(String(offer.get("line", "")))
 		line.name = MAKE_LINE
-		body.add_child(line)
+		line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		said.add_child(line)
+		# SHRINK_CENTER VERTICALLY so a 28px button beside a two-line sentence stays a 28px button:
+		# an HBox child's default is to fill the row's height, which would stretch the one control on
+		# the row to 38px and make its size a function of how long the sim's sentence happens to be.
+		var verbs := _verb_row([offer], func(descriptor: Dictionary) -> Button:
+				return _make_button(descriptor))
+		verbs.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		said.add_child(verbs)
+		body.add_child(said)
 		# ASSA-84'S CLAUSE, CARRIED AND NOT REWRITTEN (Maren's ruling here: a recipe row is a better
 		# home for it than a button tooltip). Still the sim's own sentence, still empty unless the sim
 		# says so, and still nothing in this client that names a gear.
@@ -2596,8 +2724,6 @@ func _rebuild_make(offers: Array) -> void:
 		var walls := String(offer.get("walls", ""))
 		if walls != "":
 			body.add_child(_note("— %s" % walls))
-		body.add_child(_verb_row([offer], func(descriptor: Dictionary) -> Button:
-				return _make_button(descriptor)))
 		_make.add_child(row)
 
 
@@ -2615,6 +2741,35 @@ func _rebuild_make(offers: Array) -> void:
 func _make_button(offer: Dictionary) -> Button:
 	var what := String(offer.get("line", "?"))
 	var item := AssayActions.item_of_stack(offer)
+	var button := _make_verb_button(offer, what, item)
+	# **A ROW YOU CANNOT AFFORD DOES NOT OFFER A PRESSABLE BUTTON** (ASSA-247; Maren, 17:22 UTC
+	# 2026-10-06: *"when a recipe is unavailable, the line says what you LACK"*, and ASSA-224's rule
+	# for the primary -- a weight that does not follow availability is a lying control).
+	#
+	# **THIS IS WHAT `cost` CROSSED THE BINDING FOR** (Wren's routing ruling, 16:58 UTC). `line` and
+	# `count` crossed and `cost` did not, so the only ways to know whether a press could succeed were
+	# to parse the first integer out of "2 Tonore refined (A), you have 1" or to press and let the sim
+	# refuse. The first is the client deriving a rule from Marlow's wording; the second is the button
+	# that looks available and is not.
+	#
+	# **THE WORDS FOR WHAT YOU LACK ARE ALREADY THE SIM'S AND ARE NOT RE-SAID HERE.** `offer.line`
+	# states the cost and what you hold in one sentence, so the row says what is missing and this
+	# only stops the control claiming otherwise. If Maren wants an explicit shortfall clause it is a
+	# sentence, which makes it `make_offers`' to add and not this file's.
+	#
+	# **ABSENT IS UNKNOWN, NOT AFFORDABLE** (ASSA-141's rule, read without a default): a binding that
+	# stopped sending `cost` leaves every row pressable exactly as it was before this slice rather
+	# than disabling the whole menu on a missing key. `test_sim_binding.gd` is what holds the field
+	# there; this path is the honest behaviour if it ever goes.
+	var cost: int = int(offer.get("cost", -1))
+	if cost >= 0 and int(offer.get("count", 0)) < cost:
+		button.disabled = true
+	return button
+
+
+## THE PRESS ITSELF, split out so the availability rule above reads as one decision over one button
+## rather than three returns each having to remember it.
+func _make_verb_button(offer: Dictionary, what: String, item: Dictionary) -> Button:
 	match String(offer.get("verb", "")):
 		"craft":
 			var recipe: Variant = offer.get("tag")

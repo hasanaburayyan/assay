@@ -495,6 +495,23 @@ impl AssaySim {
                     "species" => offer.input.species.0 as i64,
                     "grade" => &gstring(&offer.input.grade.letter().to_string()).to_variant(),
                     "count" => offer.have as i64,
+                    // **WHAT ONE BATCH COSTS, AS A NUMBER, BECAUSE A CLIENT MUST NOT READ IT
+                    // OUT OF THE SENTENCE** (ASSA-247, Wren's routing ruling 16:58 UTC
+                    // 2026-10-06; `MakeOffer::cost`, already `pub u32`).
+                    //
+                    // `line` and `count` cross and `cost` did not, so a menu that wanted to
+                    // know whether a row can be pressed at all had exactly two options: parse
+                    // "2 Tonore refined (A), you have 2" for its first integer, or press and
+                    // let the sim refuse. The first is the client deriving a rule from
+                    // wording this crate's own `make_offers` docstring warns against by name;
+                    // the second is a button that looks available and is not, which is the
+                    // defect ASSA-224 settled for the primary.
+                    //
+                    // **IT IS A COST, NOT A VERDICT.** Whether a row is pressable is
+                    // `count >= cost` and that comparison is the host's; nothing here ranks,
+                    // disables or words anything. Spelled beside `count` (= `offer.have`) so
+                    // the pair reads as what it is: what a batch spends, and what you hold.
+                    "cost" => offer.cost as i64,
                 };
                 if let Some(makes) = offer.makes {
                     row.set(

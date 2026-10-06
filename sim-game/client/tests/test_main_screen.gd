@@ -749,24 +749,63 @@ func test_the_chrome_blocks_take_no_space_when_they_have_nothing_to_say() -> boo
 ## its place in the order a later edit would have to respect.
 ##
 ## THE LIST IS ONE SHORTER SINCE ASSA-147: `event log` was last and is now a panel over the map, so
-## it is checked by the two tests below instead. The rest of Maren's order is untouched, and this
-## test now also says the log is not back in the column -- "the log left the column" is the fix, and
-## a fix that only lives in a docstring is one somebody re-adds a section to.
-func test_the_column_reads_you_do_make_bench_rocks_cursor() -> bool:
+## it is checked by the two tests below instead.
+##
+## **AND SINCE ASSA-247 THE ORDER IS NOT A COLUMN OF SIX HEADINGS AT ALL**, so this test is rewritten
+## rather than retired. The board's shape (Rainy, via Wren's ruling) is ONE tabbed panel: `do` always
+## on, then `make` / `inventory` / `bench` / `rocks` as tabs, one visible at a time. Maren's ASSA-133
+## ruling 2 -- a section may not sit above the section it is derived from -- is not weakened by that;
+## it is retired, because `make` and the pack are no longer in one box where either can push the
+## other. **What this test holds now is the thing a later edit could quietly undo: that the pack and
+## the make list are NOT siblings in one scrolling column again.**
+func test_the_panel_is_do_always_on_then_four_tabs() -> bool:
 	var screen := _screen()
 	var ok := true
-	var want := ["you", "do", "make", "bench", "rocks", "cursor"]
-	var column: Node = screen._carrying.get_parent()
-	var seen := PackedStringArray()
-	for child in column.get_children():
-		if child is Label and (child as Label).theme_type_variation == &"Heading":
-			seen.append((child as Label).text)
-	if Array(seen) != want:
-		ok = _fail(("the column reads %s; Maren ruled %s. A list derived from your pack may not sit "
-				+ "above it.") % [seen, want])
-	elif column.get_children().has(screen._log):
+	var want := ["make", "inventory", "bench", "rocks"]
+	var seen := Array(screen._tabs.tab_names())
+	if seen != want:
+		ok = _fail(("the tab strip reads %s; the board's structure and Wren's ruling are %s")
+				% [seen, want])
+	elif screen._actions.get_parent() != screen._tabs.get_parent():
+		ok = _fail("`do` is not a sibling of the tab strip, so what you can do HERE is behind a tab: "
+				+ "Wren ruled it the one always-on section")
+	elif _scroll_enclosing(screen._actions) != null:
+		ok = _fail("`do` is inside the scroll box, so the one always-on section can be scrolled away")
+	elif screen._carrying.get_parent() == screen._make.get_parent():
+		ok = _fail("the pack and the make list are siblings in one box again, which is ASSA-133 "
+				+ "ruling 2: a list derived from your pack grows faster than it and pushes it off")
+	elif screen._tabs.get_parent().get_children().has(screen._log):
 		ok = _fail("the event log is back in the HUD column, which is ASSA-147: it is unbounded and "
 				+ "every other section is not, so in one scroll box it wins against the controls")
+	screen.queue_free()
+	return ok
+
+
+## **EVERY TAB'S NAME IS ON SCREEN EVEN WHEN ITS BODY IS NOT** (ASSA-247), which is the whole reason
+## the board's structure is a strip and not a set of keyboard summons -- Maren's reason, kept where
+## the mechanism is: a tab strip is a VISIBLE affordance and a key is an invisible one, and a
+## five-minute player cannot summon what they do not know exists.
+##
+## So: exactly one body visible, and all four names present and pressable.
+func test_one_system_is_visible_and_all_four_names_are() -> bool:
+	var screen := _screen()
+	var ok := true
+	var shown := PackedStringArray()
+	for named in screen._tabs.tab_names():
+		if (screen._tabs.body_of(named) as Control).visible:
+			shown.append(named)
+	var names := PackedStringArray()
+	for child in screen._tabs.names_box().get_children():
+		if child is Button:
+			names.append((child as Button).text)
+	if shown.size() != 1:
+		ok = _fail("%d tab bodies are visible at once; the ruling is one system at a time" % shown.size())
+	elif Array(names) != Array(screen._tabs.tab_names()):
+		ok = _fail("the strip draws %s for tabs %s: a tab a player cannot press is not a tab"
+				% [names, screen._tabs.tab_names()])
+	elif _scroll_enclosing(screen._tabs.names_box()) != null:
+		ok = _fail("the tab names are inside the scroll box, so scrolling a long list can carry away "
+				+ "the way back to the other systems")
 	screen.queue_free()
 	return ok
 
@@ -790,11 +829,16 @@ func test_the_event_log_is_outside_the_box_that_scrolls_the_controls() -> bool:
 	if scroll != null:
 		ok = _fail("the event log is inside the ScrollContainer the controls are in, so revealing "
 				+ "it scrolls them off the top: ASSA-147 exactly")
-	elif _scroll_enclosing(screen._actions) == null:
+	elif _scroll_enclosing(screen._carrying) == null:
 		# THE OTHER HALF, OR THIS PASSES FOR THE WRONG REASON. "The log is not in the scroll box" is
-		# also true of a screen with no scroll box at all, and of one where the controls left instead.
-		ok = _fail("the `do` controls are not in a scroll box any more, so this test is green about "
-				+ "a column that no longer exists rather than about the log leaving it")
+		# also true of a screen with no scroll box at all, and of one where the content left instead.
+		#
+		# **THE WITNESS IS THE PACK AND NO LONGER `do`** (ASSA-247). `do` is pinned always-on now, so
+		# asking whether IT scrolls would fail on the current design while saying nothing about the
+		# log. The pack is a tab body inside the strip's own scroll box, which is the box this test is
+		# about: the one the log must not be in.
+		ok = _fail("the pack is not in a scroll box any more, so this test is green about a column "
+				+ "that no longer exists rather than about the log leaving it")
 	elif _scroll_enclosing(screen._log_box) != null:
 		ok = _fail("the log's panel is inside a scroll box, so its own surface can be scrolled away")
 	screen.queue_free()
@@ -927,12 +971,31 @@ func _lone_note(section: Node) -> String:
 ##
 ## RESTORED AFTERWARDS, because a test that leaves the screen in a state it invented is the next
 ## test's wrong premise.
+## **AND SINCE ASSA-247 IT OPENS THE SECTION'S TAB TOO, for the same reason and with the same
+## restore.** One system is on screen at a time now, so `_on_screen` is false for three of the four
+## tab bodies at any moment -- and these tests are about the WORDS a section says when it is empty,
+## which it says whether or not its tab is the open one. Without this they fail on their own premise,
+## which is honest of them and useless.
+##
+## **WHAT IT DOES NOT PAPER OVER:** that a tab's body is hidden until pressed is asserted as a
+## property of its own by `test_one_system_is_visible_and_all_four_names_are`, and that selecting a
+## tab is what brings its section back is asserted in a world by
+## `test_the_hud_column_is_not_on_the_join_screen_and_comes_back_with_a_world`. This helper is the
+## instrument for the wording tests; it is not where the structure is checked.
 func _lone_note_in_the_column(screen: Node, section: Node) -> String:
 	var column: Panel = screen._column
 	var was: bool = column != null and column.visible
 	if column != null:
 		column.visible = true
+	var open_was: String = screen._tabs.selected() if screen._tabs != null else ""
+	for named in (screen._tabs.tab_names() if screen._tabs != null else PackedStringArray()):
+		var body: Control = screen._tabs.body_of(named)
+		if body != null and (body == section or body.is_ancestor_of(section)):
+			screen._tabs.select(named)
+			break
 	var said := _lone_note(section)
+	if screen._tabs != null and open_was != "":
+		screen._tabs.select(open_was)
 	if column != null:
 		column.visible = was
 	return said
@@ -1051,11 +1114,11 @@ func test_the_empty_sections_say_the_in_world_kind_once_a_world_arrives() -> boo
 				+ "these sections are not empty") % [screen._sim.designs_of(id).size(),
 				screen._sim.make_offers(id).size(), screen._events.size()])
 	var ok := true
-	ok = _reads_in_world(screen._bench, "bench",
+	ok = _reads_in_world(screen, screen._bench, "bench",
 			"nothing built yet — mine, smelt and make parts first") and ok
-	ok = _reads_in_world(screen._make, "crafting menu",
+	ok = _reads_in_world(screen, screen._make, "crafting menu",
 			"nothing you are carrying can be worked by hand — mine some rock first") and ok
-	ok = _reads_in_world(screen._log, "event log", "nothing has happened yet") and ok
+	ok = _reads_in_world(screen, screen._log, "event log", "nothing has happened yet") and ok
 	screen.queue_free()
 	return ok
 
@@ -1123,8 +1186,13 @@ func test_the_schematic_has_the_minability_of_every_disc_it_draws() -> bool:
 
 
 ## ONE SECTION'S IN-WORLD SENTENCE, named in the failure so three sections do not report as one.
-func _reads_in_world(section: Node, named: String, want: String) -> bool:
-	var said := _lone_note(section)
+## **THROUGH `_lone_note_in_the_column` SINCE ASSA-247, so the reading opens the section's own tab.**
+## The bench is a tab body now and `make` is the tab that happens to be open on entering a world, so
+## reading these three with the bare `_lone_note` would compare the bench's sentence against the
+## empty string and call it a wording change. What is under test is the words; which tab is open is
+## asserted where it belongs.
+func _reads_in_world(screen: Node, section: Node, named: String, want: String) -> bool:
+	var said := _lone_note_in_the_column(screen, section)
 	if said == want:
 		return true
 	return _fail(("in a world the %s reads '%s'. Before ASSA-186 it read '%s', and that sentence is "
@@ -2283,25 +2351,38 @@ func test_the_maps_note_is_shown_exactly_when_the_map_is_empty() -> bool:
 func test_the_hud_column_is_not_on_the_join_screen_and_comes_back_with_a_world() -> bool:
 	var screen := _screen()
 	var ok := true
-	var sections := {"you": screen._carrying, "do": screen._actions, "make": screen._make,
-			"bench": screen._bench, "rocks": screen._species, "cursor": screen._cursor,
-			"the log's toggle": screen._log_toggle, "the painted surface": screen._column}
-	for named: String in sections:
-		if _on_screen(sections[named]):
+	# **SPLIT IN TWO SINCE ASSA-247, AND THE JOIN-SCREEN HALF IS UNCHANGED BY THE SPLIT**: nothing in
+	# this column is on screen before a world, tabbed or not. What the tabs change is the OTHER half
+	# -- "comes back with a world" cannot mean "all four systems are visible at once", because one
+	# system at a time is the ruling. So a tab's body comes back when its own name is pressed, which
+	# is a stronger statement than the old sweep made: it says the strip actually reveals the section.
+	var always_on := {"do": screen._actions, "the log's toggle": screen._log_toggle,
+			"the painted surface": screen._column, "the tab strip": screen._tabs.names_box(),
+			"the cursor readout": screen._cursor}
+	var tabbed := {"make": screen._make, "inventory": screen._carrying,
+			"bench": screen._bench, "rocks": screen._species}
+	for named: String in always_on:
+		if _on_screen(always_on[named]):
 			ok = _fail(("%s is on the join screen, where it has nothing to say: Gap 5 is that the "
 					+ "empty column is not shown at all before a world exists") % named)
+	for named: String in tabbed:
+		if _on_screen(tabbed[named]):
+			ok = _fail(("the %s tab's body is on the join screen, where it has nothing to say: Gap 5 "
+					+ "is that the empty column is not shown at all before a world exists") % named)
 	# THE HEADINGS TOO, which are Labels in the column rather than fields on the screen, so they are
 	# found the way the sweeps find them: by the variation that MAKES a heading a heading here.
+	# SEARCHED THROUGH THE WHOLE COLUMN rather than one parent's children, because a heading is inside
+	# a tab body now and a sweep over one level would find only `do` and report six as one.
 	var headings := 0
-	for child in screen._make.get_parent().get_children():
+	for child in screen._column.find_children("*", "Label", true, false):
 		var label := child as Label
 		if label != null and label.theme_type_variation == &"Heading":
 			headings += 1
 			if _on_screen(label):
 				ok = _fail("the `%s` heading is on the join screen with no world under it"
 						% label.text)
-	if headings < 6:
-		ok = _fail("found %d headings in the column, so this sweep could not fail" % headings)
+	if headings < 1:
+		ok = _fail("found no headings in the column, so this sweep could not fail")
 	var welcome := AssaySimHost.fresh_welcome_json("14247", "limpet")
 	screen._client.play_offline()
 	screen._client.feed_offline(welcome)
@@ -2309,9 +2390,14 @@ func test_the_hud_column_is_not_on_the_join_screen_and_comes_back_with_a_world()
 	if not screen._sim.running():
 		ok = _fail("premise: nothing is being simulated, so the in-world half asks nothing")
 	else:
-		for named: String in sections:
-			if not _on_screen(sections[named]):
+		for named: String in always_on:
+			if not _on_screen(always_on[named]):
 				ok = _fail("%s did not come back when the world did" % named)
+		for named: String in tabbed:
+			if not screen._tabs.select(named):
+				ok = _fail("the %s tab cannot be selected in a world" % named)
+			elif not _on_screen(tabbed[named]):
+				ok = _fail("%s did not come back when its own tab was opened in a world" % named)
 	screen.queue_free()
 	return ok
 
