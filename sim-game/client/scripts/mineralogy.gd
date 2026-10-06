@@ -20,6 +20,12 @@
 ## separate fields: they are already in the sentence, and two vocabularies for one fact are free to
 ## disagree.
 ##
+## **THE ONE OTHER FACT IT SENDS IS A BOOL, AND IT IS HERE BECAUSE THIS FILE SHIPPED A DEAD CONTROL
+## WITHOUT IT** (ASSA-263). `tile` is set even when the answer is the tile you are standing on, so
+## `go here` was live under a sentence reading "right where you are standing". `underfoot` is the
+## binding's word for that case. It is a bool and not a heading for the same reason as above: a bool
+## cannot be rendered as prose beside the sim's, it can only gate a control.
+##
 ## **IT IS A BODY, NOT A PANEL** (Wren's routing, Maren's box: the tab lands inside ASSA-198's
 ## tabbed strip, never as a panel of its own). It paints no surface, owns no position and spends no
 ## colour literal: the caller puts it in whatever the strip gives it. So it can be built and tested
@@ -49,14 +55,30 @@ var headline := Label.new()
 ## WHERE THE SPECIES ROWS GO, filled by the caller with the `rocks` panel's own rows.
 var evidence := VBoxContainer.new()
 
-## WALK TO THE ROCK THE SENTENCE IS ABOUT. Hidden when nothing answers, because a button that can
-## only refuse is worse than no button (Maren, ASSA-215): on a world where nothing burns there is no
-## tile to walk to and the sentence says so.
+## WALK TO THE ROCK THE SENTENCE IS ABOUT. Hidden when there is no walk in the answer, because a
+## button that can only refuse is worse than no button (Maren, ASSA-215). Two states hide it and they
+## are different news: nothing answers at all, and **the answer is under your feet** -- on which the
+## sim's own sentence reads "right where you are standing" and a live button would walk you nowhere
+## (ASSA-263; Maren's ruling 5 on ASSA-241: absent, not greyed).
+##
+## **Quiet and sized to its words**, from Maren's amended ruling 5 — and the amendment came from her
+## 344 px shot rather than from taste: with no size flags in a `VBoxContainer` this filled the whole
+## HUD column, making a convenience verb the heaviest element on screen and out-weighing `Mine`, the
+## screen's one primary, by area.
 var go_here := Button.new()
 
 ## The tile the sim named, or `null` when nothing answers. Never a (0,0) sentinel -- that is a real
 ## corner of every world, so it would be a destination the sim never offered.
+##
+## **IT IS KEPT EVEN WHEN THERE IS NOWHERE TO WALK.** `tile` means "the tile this answer is about",
+## not "somewhere to go" — conflating the two is what made the button dead (ASSA-263), and something
+## later will want it to highlight the rock on the map.
 var _tile: Variant = null
+
+## Whether the sim's answer is the tile the player is already standing on. The binding's own
+## `underfoot`, never derived here: this file may not parse the sentence, and `_tile != null` cannot
+## tell "a rock to walk to" from "you are on it".
+var _underfoot := false
 
 signal go_here_pressed(tile: Vector2i)
 
@@ -72,6 +94,10 @@ func _init() -> void:
 	headline.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	add_child(headline)
 	go_here.text = "go here"
+	go_here.theme_type_variation = &"Quiet"
+	# SIZED TO ITS WORDS, LEFT UNDER THE SENTENCE IT ACTS ON. A verb stretched to the panel reads as
+	# the panel's purpose.
+	go_here.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	go_here.pressed.connect(_pressed)
 	add_child(go_here)
 	var air := Control.new()
@@ -97,28 +123,46 @@ func show_answer(answers: Array, which: int = BURNS) -> void:
 	if answers.size() <= which:
 		headline.text = "no world yet — join one and what is near you is answered here"
 		_tile = null
+		_underfoot = false
 		go_here.visible = false
 		return
 	var answer: Dictionary = answers[which]
 	# VERBATIM. No formatting, no capitalisation, no appended full stop: the CLI prints this same
 	# string and a player who read both must not have to work out whether two phrasings mean one
 	# thing (the ASSA-135 rule, one surface at two widths).
-	headline.text = String(answer.get("headline", ""))
+	#
+	# INDEXED, NOT `get(key, default)`: a sim fact that failed to cross should abort this function
+	# loudly, not render a default nobody chose.
+	headline.text = String(answer["headline"])
 	# ABSENT, NOT (0,0). `tile` is nil in the binding whenever nothing answers.
-	var target: Variant = answer.get("tile")
+	var target: Variant = answer["tile"]
 	_tile = target
-	go_here.visible = target != null
+	_underfoot = bool(answer["underfoot"])
+	# **TWO FACTS, TWO REASONS THERE IS NO WALK** (ASSA-263). `target == null` is "nothing answers";
+	# `_underfoot` is "the answer is here, and the sentence above already says so". The second one
+	# ships a live button that walks you to your own feet if it is left out — which it was.
+	go_here.visible = target != null and not _underfoot
 
 
-## The tile `go here` would walk to, for a test that wants to assert the button's payload without
-## pressing it. `null` when nothing answers.
+## The tile the answer is about, for a test that wants to assert the button's payload without
+## pressing it and for whatever highlights the rock on the map later. `null` when nothing answers --
+## but NOT null when the answer is underfoot: the answer is not withheld, only the walk.
 func target_tile() -> Variant:
 	return _tile
 
 
+## Whether the sim said the answer is the tile the player is already on, so there is no walk to
+## offer. Exposed for the test that asserts the button is absent for the right reason rather than
+## absent by luck.
+func answer_is_underfoot() -> bool:
+	return _underfoot
+
+
 func _pressed() -> void:
-	# NO ARITHMETIC, AND NO GUESS AT A DESTINATION. If the sim named no tile the button is not on
-	# screen; this guard is for the frame between a world ending and a refresh.
-	if _tile == null:
+	# NO ARITHMETIC, AND NO GUESS AT A DESTINATION. If there is no walk in the answer the button is
+	# not on screen; this guard is for the frame between a world ending and a refresh. It repeats the
+	# visibility rule rather than trusting it, because a `MoveTo` to the tile you are standing on is
+	# a command on the wire that does nothing.
+	if _tile == null or _underfoot:
 		return
 	go_here_pressed.emit(_tile as Vector2i)
