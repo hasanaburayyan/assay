@@ -466,13 +466,18 @@ impl AssaySim {
     /// that from parts would eventually disagree with the CLI printing the same
     /// line.
     ///
-    /// **`tile` IS THE ONE THING THE SENTENCE CANNOT CARRY, which is why it is
-    /// the only other key.** A distance and a compass word do not get you
-    /// there: a walk across a gap that is neither straight nor diagonal changes
-    /// heading partway, so "15 tiles south-east" is true of the first step and
-    /// false of the destination. `go here` submits `MoveTo { target: tile }`
-    /// with this value and does no arithmetic, which is how ASSA-241's
-    /// no-client-arithmetic box is met.
+    /// **`tile` IS THE ONE THING THE SENTENCE CANNOT CARRY.** A distance and a
+    /// compass word do not get you there: a walk across a gap that is neither
+    /// straight nor diagonal changes heading partway, so "15 tiles south-east"
+    /// is true of the first step and false of the destination. `go here`
+    /// submits `MoveTo { target: tile }` with this value and does no
+    /// arithmetic, which is how ASSA-241's no-client-arithmetic box is met.
+    ///
+    /// **AND `underfoot` IS THE SECOND THING IT CANNOT CARRY, which I learned
+    /// by shipping the first version without it** (ASSA-263). `tile` is `Some`
+    /// when the answer is the player's own tile, so a button gated on `tile`
+    /// alone is live in the one case the sentence reads "right where you are
+    /// standing". The walk exists when `tile` is set AND `underfoot` is false.
     ///
     /// **AND `distance` AND `heading` ARE DELIBERATELY NOT HERE.** They are in
     /// the sentence. Sending them a second time would invite a panel to render
@@ -508,6 +513,10 @@ impl AssaySim {
                         Some((x, y)) => Vector2i::new(x, y).to_variant(),
                         None => Variant::nil(),
                     },
+                    // A BOOL, NOT A NIL TILE. `underfoot` answers a different
+                    // question from `tile` and answers it in every state, so a
+                    // host reads two facts and never infers one from the other.
+                    "underfoot" => &facts.underfoot.to_variant(),
                 }
             })
             .collect()
@@ -1812,11 +1821,40 @@ pub struct ProximityFacts {
     /// `debug::proximity_headline`, VERBATIM. It already carries the species,
     /// the grade, the distance, the heading and both empty states.
     pub headline: String,
-    /// The tile `go here` walks to, or `None` when nothing answers. The one
+    /// The tile the answer is ABOUT, or `None` when nothing answers. The one
     /// fact the sentence cannot carry: a heading is true of the first step and
     /// false of the destination on a walk that is neither straight nor
     /// diagonal.
+    ///
+    /// **IT IS NOT "SOMEWHERE TO WALK TO", AND THAT DISTINCTION COST A DEAD
+    /// BUTTON** (ASSA-263). It is the tile of the rock, which a map highlight
+    /// will want later; whether there is a walk in it is [`Self::underfoot`].
     pub tile: Option<(i32, i32)>,
+    /// Whether the answer is the tile the player is **already standing on**, in
+    /// which case there is no walk to offer (ASSA-263).
+    ///
+    /// **WITHOUT THIS THE TAB SHIPPED A CONTROL THAT COULD ONLY WALK YOU WHERE
+    /// YOU ALREADY WERE.** `debug::proximity_headline` says "right where you
+    /// are standing" on `near.heading == None`, and `tile` is `Some` in exactly
+    /// that case -- it is the tile under the player's feet. A client gating a
+    /// button on `tile != null` therefore cannot tell "there is a rock to walk
+    /// to" from "you are on it", and `mineralogy.gd` is forbidden to parse the
+    /// sentence to find out. The Game Director photographed the result at
+    /// 344 px on seed 14247 (ASSA-241, ruling 5: absent, not greyed).
+    ///
+    /// **A BOOL AND NOT `heading` OR `distance`, which ASSA-254 kept out on
+    /// purpose.** Those two are already *in the sentence*, and sending them
+    /// again invites a panel to render its own "15 tiles south-east" beside the
+    /// sim's -- two vocabularies for one fact are free to disagree. A bool
+    /// cannot be rendered as prose. It can only gate a control, which is the
+    /// one thing the surface needed and the only reason it crosses.
+    ///
+    /// **FALSE WHEN NOTHING ANSWERS**, because nothing is underfoot then
+    /// either. The two empty-ish states are different news and a host wants
+    /// both: `tile == None` is "no answer at all", `underfoot` is "the answer
+    /// is here". A control that offers a walk needs `tile.is_some() &&
+    /// !underfoot`.
+    pub underfoot: bool,
 }
 
 pub struct SpeciesFacts {
@@ -2167,13 +2205,25 @@ impl AssaySim {
         let from = me.pos;
         Question::ALL
             .iter()
-            .map(|&q| ProximityFacts {
-                asked: question_asked(q).to_string(),
-                headline: proximity_headline(&self.world, id, q),
-                tile: self
-                    .world
-                    .nearest_answering(q, from)
-                    .map(|n| (n.tile.x, n.tile.y)),
+            .map(|&q| {
+                // ONE SEARCH, READ TWICE. `tile` and `underfoot` are two facts
+                // about the SAME answer, and asking the sim twice would let a
+                // future non-deterministic search hand a host a tile from one
+                // call and a walk from another.
+                let near = self.world.nearest_answering(q, from);
+                ProximityFacts {
+                    asked: question_asked(q).to_string(),
+                    headline: proximity_headline(&self.world, id, q),
+                    tile: near.map(|n| (n.tile.x, n.tile.y)),
+                    // **THE SAME FIELD THE SENTENCE MATCHES ON, NOT A SECOND
+                    // COPY OF ITS TEST.** `proximity_headline` branches on
+                    // `near.heading` being `None`; this reads that `Option`.
+                    // Naming a predicate for it in `proximity.rs` would have
+                    // moved `RULES_ID` (`rules_walk::NOT_RULES` is only
+                    // `debug.rs`) and made `check_join` refuse every older peer
+                    // -- for a readout that changes no rule.
+                    underfoot: near.is_some_and(|n| n.heading.is_none()),
+                }
             })
             .collect()
     }
@@ -2648,9 +2698,20 @@ mod tests {
     /// test over worlds where nothing was ever absent never ran the empty arm
     /// -- and the empty arm is the one the Game Director asked for by name
     /// ("a world where the honest answer is nothing here burns").
+    ///
+    /// **AND `underfoot` IS PAIRED WITH THE SENTENCE RATHER THAN WITH THE FIELD
+    /// IT CAME FROM** (ASSA-263). `row.underfoot == near.heading.is_none()`
+    /// would be a tautology -- it is how the binding computes it. The claim
+    /// worth asserting is that it agrees with the words the player reads, so
+    /// the one place the two can be compared compares them: the literal below
+    /// is quoted from `debug.rs` on purpose, and a reworded sentence SHOULD
+    /// redden this test.
     #[test]
     fn the_tabs_headline_and_tile_are_the_sims_own_answer() {
-        let (mut answered, mut empty) = (0, 0);
+        /// `debug::proximity_headline`'s words for the no-walk case, quoted
+        /// deliberately: this test exists to catch the two drifting apart.
+        const STANDING_ON_IT: &str = "right where you are standing";
+        let (mut answered, mut empty, mut standing) = (0, 0, 0);
         for seed in 1..40 {
             let mut sim = AssaySim::from_world(sim_net::fresh_world(seed));
             sim.step_with(&[Input::System(sim::SystemCommand::AddPlayer {
@@ -2685,6 +2746,28 @@ mod tests {
                             Some((n.tile.x, n.tile.y)),
                             "seed {seed}: the tile is not the one the sim named"
                         );
+                        // AND WHETHER THERE IS A WALK IN IT AGREES WITH THE
+                        // SENTENCE THE PLAYER READS.
+                        assert_eq!(
+                            row.underfoot,
+                            row.headline.contains(STANDING_ON_IT),
+                            "seed {seed}: `underfoot` is {} and the sim's sentence says \
+                             otherwise -- `{}`",
+                            row.underfoot,
+                            row.headline
+                        );
+                        if row.underfoot {
+                            standing += 1;
+                            // **THIS IS WHAT MADE THE CONTROL DEAD**: the tile
+                            // the answer is about is the tile the player is on,
+                            // so `go here` would walk them nowhere.
+                            assert_eq!(
+                                row.tile,
+                                Some((me.x, me.y)),
+                                "seed {seed}: the answer is underfoot but names a tile that is \
+                                 not the player's own"
+                            );
+                        }
                     }
                     None => {
                         empty += 1;
@@ -2693,14 +2776,18 @@ mod tests {
                             "seed {seed}: nothing answers, so there must be no tile rather \
                              than a corner of the world the sim never offered"
                         );
+                        assert!(
+                            !row.underfoot,
+                            "seed {seed}: nothing answers, so nothing is underfoot either"
+                        );
                     }
                 }
             }
         }
         assert!(
-            answered > 0 && empty > 0,
+            answered > 0 && empty > 0 && standing > 0,
             "an answer state never came up, so its arm never ran: \
-             answered {answered}, empty {empty}"
+             answered {answered}, empty {empty}, underfoot {standing}"
         );
     }
 

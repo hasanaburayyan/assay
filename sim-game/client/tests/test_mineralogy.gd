@@ -146,6 +146,11 @@ func test_an_unanswered_question_still_says_something_and_offers_no_walk() -> bo
 	if tab.target_tile() != null:
 		tab.free()
 		return _fail("no answer, but the body kept a destination: %s" % tab.target_tile())
+	# NOTHING ANSWERS IS NOT "THE ANSWER IS HERE". Two states hide the button and they are different
+	# news; a body that conflated them would report this one as underfoot (ASSA-263).
+	if tab.answer_is_underfoot():
+		tab.free()
+		return _fail("nothing answers, and the body says the answer is under the player's feet")
 	print("    ASSA-254: unanswered rendering driven by seed 1 q1 -- `%s`" % tab.headline.text)
 	tab.free()
 	return true
@@ -169,6 +174,12 @@ func test_an_answered_question_offers_the_walk_to_the_sims_tile() -> bool:
 	if answer.get("tile") == null:
 		return _fail(("seed 14247 has nothing that burns, which contradicts 399 of 399 worlds "
 				+ "answering `Burns`. Re-measure before trusting this suite"))
+	# AND THE WALK IS A REAL ONE, ASSERTED RATHER THAN ASSUMED (ASSA-263). If this seed's burnable
+	# rock ever lands under the player's own feet, the button is correctly absent and this test would
+	# otherwise fail as though the gate were broken.
+	if bool(answer["underfoot"]):
+		return _fail(("seed 14247's burnable rock is now under the player's feet, so `go here` is "
+				+ "correctly absent and this test is the wrong one. Pick a seed with a real walk"))
 	var tab := AssayMineralogy.new()
 	tab.show_answer(answers)
 	if not tab.go_here.visible:
@@ -178,6 +189,69 @@ func test_an_answered_question_offers_the_walk_to_the_sims_tile() -> bool:
 		tab.free()
 		return _fail("the body would walk to %s and the sim named %s"
 				% [tab.target_tile(), answer.get("tile")])
+	tab.free()
+	return true
+
+
+## **THE ANSWER UNDER YOUR OWN FEET OFFERS NO WALK, AND STILL NAMES THE ROCK** (ASSA-263).
+##
+## The third state, and the one that shipped broken: `tile` is `Some` when the nearest answering
+## patch is the tile the player is standing on -- the sim's sentence reads *"right where you are
+## standing"* -- so a button gated on `tile != null` alone was live, offering to walk the player to
+## their own feet. Maren photographed it at 344 px on this exact seed and question before anyone
+## argued about it.
+##
+## **THE PREMISE IS ASSERTED, NOT ASSUMED.** A test that reached for this state and found an ordinary
+## answer would pass by never meeting the case, which is how a green test of mine turned out to be
+## decoration earlier today. So this fails loudly, with what to re-measure, rather than skipping.
+##
+## And `target_tile()` is still the sim's tile: the answer is not withheld, only the walk. Something
+## later will want it to highlight the rock on the map, which is why `tile` was not overloaded to
+## mean "somewhere to go" (Maren's one design constraint on this fix).
+func test_an_answer_underfoot_offers_no_walk_and_still_names_the_rock() -> bool:
+	var made := _world("14247")
+	if made.is_empty():
+		return _fail("could not stand seed 14247 up through the binding")
+	var sim: AssaySimHost = made[0]
+	var players: Array = made[1]
+	if players.is_empty():
+		return _fail("the welcome carried no player")
+	var me: int = int((players[0] as Dictionary).get("id", -1))
+	var answers := sim.proximity_answers(me)
+	if answers.size() < 2:
+		return _fail("seed 14247 answered %d questions, so the second one cannot be asked"
+				% answers.size())
+	var here: Dictionary = answers[1]
+	if here["tile"] == null:
+		return _fail(("seed 14247's hard-enough question is unanswered now, so there is no "
+				+ "underfoot answer to render. Re-measure and pick a seed"))
+	if not bool(here["underfoot"]):
+		return _fail(("seed 14247's hard-enough answer is no longer underfoot (it was Tonore (A) "
+				+ "at (56, 40), the spawn tile). Re-measure: this arm is now vacuous"))
+	var tab := AssayMineralogy.new()
+	tab.show_answer(answers, 1)
+	# ABSENT, NOT GREYED (Maren, ASSA-241 ruling 5).
+	if tab.go_here.visible:
+		tab.free()
+		return _fail(("the answer is the tile the player is standing on and `go here` is on screen: "
+				+ "a control whose only effect is to walk you where you already are"))
+	# AND ABSENT FOR THE RIGHT REASON, rather than absent because the tile went missing.
+	if not tab.answer_is_underfoot():
+		tab.free()
+		return _fail("the body did not read the binding's `underfoot`, so the button is hidden by luck")
+	if tab.target_tile() != here["tile"]:
+		tab.free()
+		return _fail("the answer's tile was withheld as well as the walk: %s, sim said %s"
+				% [tab.target_tile(), here["tile"]])
+	# PRESSING IT ANYWAY SUBMITS NOTHING. A `MoveTo` to your own tile is a command on the wire that
+	# does nothing, and the guard is for the frame between a world ending and a refresh.
+	var heard: Array = []
+	tab.go_here_pressed.connect(func(tile: Vector2i) -> void: heard.append(tile))
+	tab.go_here.pressed.emit()
+	if not heard.is_empty():
+		tab.free()
+		return _fail("a press on the hidden button still emitted %s" % heard)
+	print("    ASSA-263: 14247 q1 is underfoot at %s -- `%s`" % [here["tile"], tab.headline.text])
 	tab.free()
 	return true
 
@@ -217,6 +291,32 @@ func test_go_here_emits_the_sims_tile_unchanged() -> bool:
 		return _fail("`go here` would walk to %s and the sim named %s"
 				% [heard[0], answer.get("tile")])
 	tab.free()
+	return true
+
+
+## **`go here` IS A VERB, NOT THE PANEL'S PURPOSE** (Maren's ruling 5 on ASSA-241, amended from her
+## own 344 px shot: Quiet, shrink-to-fit, left-aligned).
+##
+## **ASKED OF THE VARIATION AND THE FLAGS, NEVER OF A COLOUR.** A `Quiet` button built off the scene
+## tree reports the default `font_color`, because a theme type variation does not resolve until the
+## node is inside a tree that carries the theme -- a lesson already written into
+## `test_main_screen.gd`. The line in the source is the claim; its resolved colour is the theme's.
+##
+## The failure this catches is the one the picture caught: with no size flags in a `VBoxContainer`
+## the button filled the whole HUD column, so a convenience verb became the heaviest element on
+## screen and out-weighed `Mine`, which is meant to be the screen's one primary.
+func test_go_here_is_quiet_and_sized_to_its_words() -> bool:
+	var tab := AssayMineralogy.new()
+	var variation := tab.go_here.theme_type_variation
+	var flags := tab.go_here.size_flags_horizontal
+	tab.free()
+	if variation != &"Quiet":
+		return _fail("`go here` wears `%s`: a convenience verb is Quiet, never the screen's accent"
+				% variation)
+	if flags != Control.SIZE_SHRINK_BEGIN:
+		return _fail(("`go here` has size flags %d, not SIZE_SHRINK_BEGIN (%d): in a VBoxContainer "
+				+ "it fills the column and reads as the panel's purpose")
+				% [flags, Control.SIZE_SHRINK_BEGIN])
 	return true
 
 
