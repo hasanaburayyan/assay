@@ -47,6 +47,14 @@ extends SceneTree
 ##                    the rows sit below the fold of a 720px window (ASSA-158). What it holds is
 ##                    reported off the labels IN THAT FRAME by the `make` leg, which is the half the
 ##                    first version of this shot did not have.
+##  - `12-whole-world-walking.png` **THE WALK STROKE, WHICH NO SHOT WE COULD TAKE CONTAINED**
+##                    (ASSA-266, for ASSA-206's last open box). The map key advertises a line from a
+##                    body to where the sim is walking it, and Nacre -- asked to name nine marks off
+##                    the screen alone -- could not find the fourth, because the picture held no
+##                    example of it. A third moment the tool NOTICES rather than a tick anyone picked:
+##                    the walk below already happens on every run and was thrown away. Absent when the
+##                    play planted nothing to walk away from, which `_report` says in words either
+##                    way.
 ##
 ## **AND THIS LIST WENT STALE AGAIN, BY MY OWN HAND, THE DAY AFTER ITS PARENTHESIS WAS WRITTEN:** 09
 ## and 11 were both missing from it. I added `11-make.png` in the morning and did not come back here.
@@ -124,7 +132,7 @@ enum Phase { SETTLE_JOIN, SHOOT_JOIN, PLAY, SETTLE_PACK, SHOOT_PACK, SETTLE_HALT
 		SETTLE_PLAY, SHOOT_PLAY,
 		SETTLE_FOLD, MEASURE_CONTROLS, SETTLE_MENUS, SHOOT_MENUS, SCROLL_ROCKS, SETTLE_ROCKS,
 		SHOOT_ROCKS, OPEN_MAKE, SCROLL_MAKE, SETTLE_MAKE, ANCHOR_MAKE, SHOOT_MAKE, WALK_NORTH, SETTLE_NORTH_LOG, SHOOT_NORTH_LOG, SETTLE_NORTH_CLEAR,
-		SHOOT_NORTH_CLEAR, WALK_OFF, PRESS_V, SETTLE_SCHEMATIC, SHOOT_SCHEMATIC, PRESS_K,
+		SHOOT_NORTH_CLEAR, WALK_OFF, SETTLE_WALK, SHOOT_WALK, PRESS_V, SETTLE_SCHEMATIC, SHOOT_SCHEMATIC, PRESS_K,
 		SETTLE_KEY, SHOOT_KEY, DONE }
 ## What `_play_frames` did with its last tick.
 enum Ticked { AGAIN, OVER, DEAD }
@@ -224,8 +232,26 @@ var _walk_held := 0
 ## rather than tick for ever.
 const WALK_OFF_TILES := 10
 const WALK_OFF_CEILING := 200
+## How far along the walk stroke `_stroke_ink` starts looking, how far either side it probes for the
+## background, how often it samples, and the per-channel step at which it calls a sample drawn.
+## `BODY_CLEAR_PX` clears the player mark (16px) and its ring (1.6x), which sit on the stroke's first
+## end; 2 is the smallest step that is not rounding noise, and the bar is "drawn at all" on purpose.
+const BODY_CLEAR_PX := 14.0
+const STROKE_PROBE_PX := 4.0
+const STROKE_STEP_PX := 4.0
+const STROKE_MIN_STEP := 2.0
 var _walk_off_sent := false
 var _walk_off_ticks := 0
+## Where the walk-off started, so the run can say how far it had got when it was photographed.
+var _walk_off_from := Vector2i.ZERO
+## **THE WALK AS THE PAINTER SAW IT IN THE FRAME `12-whole-world-walking.png` WAS WRITTEN FROM**
+## (ASSA-266). Read at the shot, off `_screen._players()` -- the list `main.gd::_draw` iterates --
+## and never off the sim's command queue or off my own idea of "walking": the stroke is drawn if and
+## only if that dict carries a non-null `target`, so that field IS the subject. I have filed a
+## measurement taken off the INPUT to a broken step before, and the rule out of it is to measure the
+## thing that is drawn.
+var _walk_frame := {}
+var _walk_shot_done := false
 ## Where `_walk_off` is taking them, held so the ceiling's failure can name it.
 var _walk_off_target := Vector2i.ZERO
 
@@ -510,6 +536,25 @@ func _process(_delta: float) -> bool:
 			_phase = Phase.WALK_NORTH if _north_row >= 0 else Phase.WALK_OFF
 		Phase.WALK_OFF:
 			_walk_off()
+		Phase.SETTLE_WALK:
+			# NO TICK RUNS IN HERE, which is what makes this frame reachable at all: the sim only
+			# advances when `_walk_off` calls `_tick_plain`, so the body stands still while the view
+			# toggle lays out and the stroke cannot evaporate under the settle.
+			_settle(Phase.SHOOT_WALK)
+		Phase.SHOOT_WALK:
+			# READ IN THE FRAME BEING WRITTEN, not in the frame that decided to write it.
+			_walk_frame = _walk_now()
+			_shoot("12-whole-world-walking.png", PackedStringArray())
+			# AND THE SAME QUESTION ASKED OF THE PIXELS, because ASSA-206 box 4 did not fail on a
+			# field being null -- it failed on a person not finding a mark. See `_stroke_ink`.
+			if bool(_walk_frame["walking"]):
+				_walk_frame["ink"] = _stroke_ink(_walk_frame["pos"], _walk_frame["target"])
+			_walk_shot_done = true
+			# **BACK TO THE CLOSE-UP, SO TODAY'S SHOTS ARE UNCHANGED.** `08`/`09` are taken after a
+			# real (V) press from the close-up at `PRESS_V`, and a press that toggles nothing is not
+			# the state a player reaches. The walk then finishes into them exactly as before.
+			_screen._show_close_up(true)
+			_phase = Phase.WALK_OFF
 		Phase.PRESS_V:
 			# **LAST, AND AFTER A WALK, AND THE REASON IS A MEASUREMENT.** The play loop plants its
 			# machine on the tile you STAND on, so the first version of this shot had the one player
@@ -547,6 +592,13 @@ func _process(_delta: float) -> bool:
 			_letter_marks = _screen._glyph_marks(_shot_deposits, ThemeDB.fallback_font,
 					_schematic_marks)
 			_shoot("08-whole-world.png", PackedStringArray())
+			# **THE CONTROL FOR THE WALK STROKE, AND IT COSTS NOTHING TO TAKE** (ASSA-266). This is
+			# the same view and the same tiles as `12-whole-world-walking.png` with the walk FINISHED,
+			# so the pixels under that segment differ by one thing: the line. Without it the stroke's
+			# number is a reading of a textured map against itself, and a measurement with no control
+			# is how I have twice reported an instrument's own behaviour as a finding.
+			if _walk_shot_done and bool(_walk_frame.get("walking", false)):
+				_walk_frame["control"] = _stroke_ink(_walk_frame["pos"], _walk_frame["target"])
 			_write_marks_table()
 			_phase = Phase.PRESS_K
 		Phase.PRESS_K:
@@ -757,6 +809,7 @@ func _walk_off() -> void:
 		if absi(want.x - here.x) < WALK_OFF_TILES:
 			want = Vector2i(clampi(here.x - WALK_OFF_TILES, 0, size.x - 1), here.y)
 		_walk_off_target = want
+		_walk_off_from = here
 		print("  walking from %s to %s, off the base, for the whole-world shot" % [here, want])
 		_tick_plain([{"Player": {"player": id,
 				"command": AssayActions.move_to(_walk_off_target)}}])
@@ -770,8 +823,122 @@ func _walk_off() -> void:
 	if here == _walk_off_target:
 		_phase = Phase.PRESS_V
 		return
+	# **THE ONE STATE THIS TOOL WALKED THROUGH EVERY RUN AND THREW AWAY** (ASSA-266). ASSA-206 box 4
+	# failed because the map key advertises a walk stroke and no shot we could take contained one:
+	# Nacre, asked to name nine marks off the screen alone, could not learn a word from a picture
+	# holding no example of it. The walk below is real and already happening, so the frame costs one
+	# view toggle and two settles -- and it is shot on a STATE, never on a tick number, which is the
+	# difference between this and hand-staging the frame Maren said not to hand-stage.
+	if not _walk_shot_done:
+		var walk := _walk_now()
+		if bool(walk["walking"]) and int(walk["walked"]) >= 1:
+			# ONE TILE WALKED, NOT ZERO: at the tick the command lands the body is still on the tile
+			# it started from, so the stroke is a point and the picture would answer nothing.
+			print("  walking shot: %s -> %s, %d walked, %d left"
+					% [walk["pos"], walk["target"], walk["walked"], walk["left"]])
+			_screen._show_close_up(false)
+			_phase = Phase.SETTLE_WALK
+			return
 	if not _tick_plain([]):
 		return
+
+
+## **WHAT THE PAINTER WOULD DRAW FOR ME RIGHT NOW**: `walking` is `target != null`, which is the exact
+## condition `main.gd::_draw` gates the stroke on, read off the same list it iterates.
+##
+## `left` is CHEBYSHEV, because that is the sim's own walk: `move_players` steps one tile including
+## diagonals, so the number of ticks left is `max(|dx|, |dy|)` and a straight-line distance here would
+## be a second opinion about a rule the sim already owns.
+func _walk_now() -> Dictionary:
+	var id: int = _screen._client.player_id
+	for entry in _screen._players():
+		var player: Dictionary = entry
+		if int(player.get("id", -1)) != id:
+			continue
+		var pos: Vector2i = player.get("pos", Vector2i.ZERO)
+		var target: Variant = player.get("target")
+		var walked := maxi(absi(pos.x - _walk_off_from.x), absi(pos.y - _walk_off_from.y))
+		if target == null:
+			return {"walking": false, "pos": pos, "target": pos, "walked": walked, "left": 0,
+					"why": "the player dict carries no `target`, so no stroke is drawn"}
+		var to: Vector2i = target
+		return {"walking": true, "pos": pos, "target": to, "walked": walked,
+				"left": maxi(absi(to.x - pos.x), absi(to.y - pos.y)), "why": ""}
+	return {"walking": false, "pos": Vector2i(-1, -1), "target": Vector2i(-1, -1), "walked": 0,
+			"left": 0, "why": "no player with this client's id is on the screen at all"}
+
+
+## **IS THE STROKE IN THE PIXELS, AND BY HOW MUCH** -- asked of the frame that was just written, not
+## of the node that drew it (ASSA-266).
+##
+## WHY A SECOND READING AT ALL. The `target` field being non-null proves the painter was ASKED to draw
+## a line. ASSA-206 box 4 did not fail on a field: it failed on Nacre not FINDING the mark, and
+## "advertised in the key, absent from the screen" is a defect no node can report on itself. This is
+## the same lesson as the log section that sat 604px below the fold while `_log.visible` said true.
+##
+## HOW IT LOOKS WITHOUT RE-DRAWING IT. The endpoints come from the painter's own `point_of_tile`, so
+## this does not reconstruct the geometry -- it only decides WHERE to look. At each step along the
+## segment it compares the line's own pixel with the pixels 4px either side of it, and takes the
+## SMALLER of the two gaps: a stroke has to differ from what is on BOTH sides of it, or a gradient
+## under it would read as a line. The perpendicular +-1 search is for rounding, not for hope: a 1px
+## line whose centre falls on a pixel boundary lands beside the sample, and missing it would be this
+## tool reporting a drawing defect that is its own arithmetic.
+##
+## THE BAR IS "DRAWN AT ALL", NOT "STRONG ENOUGH". Whether 0.35 alpha is findable is the Game
+## Director's call on a picture; the number is printed so she can make it.
+func _stroke_ink(from_tile: Vector2i, to_tile: Vector2i) -> Dictionary:
+	var image := root.get_texture().get_image()
+	var blank := {"samples": 0, "lit": 0, "weakest": 0.0, "strongest": 0.0}
+	if image == null:
+		return blank
+	var a: Vector2 = _screen.point_of_tile(from_tile)
+	var b: Vector2 = _screen.point_of_tile(to_tile)
+	var span := (b - a).length()
+	if span <= BODY_CLEAR_PX * 2.0 + 2.0:
+		return blank
+	var step := (b - a) / span
+	var side := Vector2(-step.y, step.x)
+	var bounds := Rect2(Vector2.ZERO, Vector2(image.get_width() - 1, image.get_height() - 1))
+	var samples := 0
+	var lit := 0
+	var weakest := 255.0
+	var strongest := 0.0
+	var at := BODY_CLEAR_PX
+	while at <= span - BODY_CLEAR_PX:
+		var on := a + step * at
+		var best := 0.0
+		var seen := false
+		# TYPED, because an untyped literal array hands `nudge` over as a Variant and every `var :=`
+		# below it loses its type -- the same refusal that has caught me before.
+		var nudges: Array[float] = [-1.0, 0.0, 1.0]
+		for nudge in nudges:
+			var p := on + side * nudge
+			var left := p + side * STROKE_PROBE_PX
+			var right := p - side * STROKE_PROBE_PX
+			if not (bounds.has_point(p) and bounds.has_point(left) and bounds.has_point(right)):
+				continue
+			seen = true
+			best = maxf(best, minf(_ink_gap(image, p, left), _ink_gap(image, p, right)))
+		if not seen:
+			at += STROKE_STEP_PX
+			continue
+		samples += 1
+		if best >= STROKE_MIN_STEP:
+			lit += 1
+		weakest = minf(weakest, best)
+		strongest = maxf(strongest, best)
+		at += STROKE_STEP_PX
+	if samples == 0:
+		return blank
+	return {"samples": samples, "lit": lit, "weakest": weakest, "strongest": strongest}
+
+
+## The largest per-channel distance between two pixels, in 0..255. Per channel and not a luminance,
+## because a mark can differ from its background in hue at the same brightness and still be seen.
+func _ink_gap(image: Image, here: Vector2, there: Vector2) -> float:
+	var one := image.get_pixelv(Vector2i(here.round()))
+	var two := image.get_pixelv(Vector2i(there.round()))
+	return 255.0 * maxf(maxf(absf(one.r - two.r), absf(one.g - two.g)), absf(one.b - two.b))
 
 
 func _my_tile(id: int) -> Vector2i:
@@ -1445,6 +1612,61 @@ func _make_report() -> Dictionary:
 	return _passed()
 
 
+## **DOES A FRAME EXIST WITH A WALK STROKE ACTUALLY IN IT** (ASSA-266, for ASSA-206's last box).
+##
+## THE SUBJECT IS A FIELD, NOT A SECTION, so `_shoot`'s subject check cannot ask it: the stroke is a
+## line on the map, and every name that check knows is a HUD section. This asks `main.gd::_draw`'s own
+## gate -- the player dict's `target` -- in the frame that was written, and says MISSING by name when
+## it is absent rather than letting a picture of a standing body pass as a picture of a walk.
+##
+## **ABSENT IS NOT ALWAYS A FAILURE.** `_walk_off` does not walk at all when the play planted nothing
+## (there is nothing to stand on top of and nothing to walk away from), so a run that never reached
+## the walk is `not_asked` -- the same reading `10-stopped.png` gets on a seed that never stalls, and
+## for the same reason: a missing file cannot tell "it did not happen" from "it happened and the shot
+## did not fire", so the run says which in words either way.
+func _walk_report() -> Dictionary:
+	if not _walk_shot_done:
+		if not _walk_off_sent:
+			return _not_asked("this play walked nowhere, so no frame could hold a walk stroke")
+		return _refused("the walk ran from %s to %s and no walking frame was ever shot"
+				% [_walk_off_from, _walk_off_target])
+	var pos: Vector2i = _walk_frame["pos"]
+	var to: Vector2i = _walk_frame["target"]
+	print("  walking: %s -> %s, %d tile(s) walked, %d left, stroke %s" % [pos, to,
+			_walk_frame["walked"], _walk_frame["left"],
+			"drawn" if _walk_frame["walking"] else "MISSING"])
+	if not bool(_walk_frame["walking"]):
+		return _refused("12-whole-world-walking.png was written with no stroke in it: %s"
+				% _walk_frame["why"])
+	if int(_walk_frame["left"]) <= 0:
+		return _refused("the body had arrived in the frame written, so the stroke is a point")
+	var ink: Dictionary = _walk_frame.get("ink", {"samples": 0, "lit": 0, "weakest": 0.0,
+			"strongest": 0.0})
+	print("  walking: %d of %d sample points along it differ from the pixels beside them, by %.1f "
+			% [ink["lit"], ink["samples"], ink["weakest"]]
+			+ "at the weakest and %.1f at the strongest (per channel, 0..255)" % ink["strongest"])
+	if int(ink["samples"]) == 0:
+		return _refused("the stroke's own pixels could not be sampled, so the frame is unmeasured")
+	if int(ink["lit"]) == 0:
+		return _refused(("the player dict carries a target and %d sample points along the stroke are "
+				+ "the same colour as the map beside them: it is advertised and not drawn")
+				% ink["samples"])
+	# THE CONTROL, WHICH IS THE HALF THAT MAKES THE NUMBER ABOVE MEAN ANYTHING. Same view, same
+	# tiles, walk finished: the only difference is the line. If the empty segment scores as well as
+	# the drawn one, this leg is reading the map's own texture and its green is worthless.
+	var control: Variant = _walk_frame.get("control")
+	if control == null:
+		return _refused("no control reading was taken after the walk, so the stroke's number has "
+				+ "nothing to be a number against")
+	var after: Dictionary = control
+	print("  walking: the control -- same tiles, same view, walk finished -- lit %d of %d, "
+			% [after["lit"], after["samples"]] + "strongest %.1f" % after["strongest"])
+	if int(after["lit"]) >= int(ink["lit"]):
+		return _refused(("the empty segment scores %d of %d against the stroke's %d: this leg is "
+				+ "reading the map, not the mark") % [after["lit"], after["samples"], ink["lit"]])
+	return _passed()
+
+
 func _controls_report() -> Dictionary:
 	var after := _controls_after
 	print("  controls: %d before the log opened, %d after" % [_controls_before.size(), after.size()])
@@ -1824,6 +2046,8 @@ func _report() -> void:
 		["roster", "two rocks can be compared in one shot", _rocks_report()],
 		["make", "the crafting menu's shot starts at its own heading and holds its dead-end row",
 				_make_report()],
+		["walking", "the walk stroke the map key advertises has a frame with one in it",
+				_walk_report()],
 		["subject", "every shot contains the section it is named for", _subject_report()],
 		["schematic", "every factory the sim holds is marked on the whole-world view",
 				_schematic_report()],
