@@ -1433,9 +1433,12 @@ func test_a_press_the_sim_would_refuse_is_refused_at_the_press_not_at_assemble()
 				ok = _fail("the screen says `%s`; the sim's own sentence is `%s`" % [said, refusal])
 			# THE COLOUR IS HALF THE DEFECT. A refusal drawn in the colour that means "you are in" is a
 			# confirmation, whatever the words say.
-			elif screen._status.modulate != AssayHud.status_color(AssayHud.Say.FAILED):
+			# THE DRAWN COLOUR, NOT `modulate` ALONE (ASSA-251). The status line STATES its colour
+				# with a `font_color` override now; reading one factor of the product is what let a
+				# 3.983:1 sentence pass every sweep in this repo.
+			elif _drawn_status(screen) != AssayHud.status_color(AssayHud.Say.FAILED):
 				ok = _fail("the refusal is drawn in %s, not the failed colour"
-						% screen._status.modulate)
+						% _drawn_status(screen))
 			# AND NOTHING LANDED: the old code appended first and the menu drew it.
 			elif not screen._building.is_empty():
 				ok = _fail("the refused press still went into the assembly: %s" % [screen._building])
@@ -1853,3 +1856,12 @@ func test_a_make_rows_verb_sits_on_the_sentences_own_line() -> bool:
 				+ "right and the row's width is whatever the sim's sentence happens to be")
 	screen.queue_free()
 	return ok
+
+
+## THE COLOUR THE STATUS LINE IS ACTUALLY DRAWN IN (ASSA-251). `font_color` TIMES `modulate`: the
+## defect this guards was `modulate = status_color(...)` multiplying the theme's INK, so a test that
+## read either factor alone would have passed over it.
+func _drawn_status(screen) -> Color:
+	var c: Color = screen._status.get_theme_color(&"font_color")
+	var m: Color = screen._status.modulate
+	return Color(c.r * m.r, c.g * m.g, c.b * m.b, c.a * m.a)

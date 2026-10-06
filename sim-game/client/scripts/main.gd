@@ -878,9 +878,18 @@ func _build_ui() -> void:
 	# stranger should press is a small outlined button in the top-left corner"). Until now every
 	# button in the game was one grey box at 11 px, so the screen had no way to say this.
 	#
-	# IT IS THE ONLY `Primary` IN THE CLIENT, and deliberately: a second one would make it a colour
-	# rather than a rank. WHICH IN-WORLD VERB EARNS THIS IS MAREN'S RULING AND NOT MINE -- picking
-	# between Mine, Assay and Make from a theme file would be tuning the game's emphasis by hand.
+	# **ONE `Primary` PER SCREEN, WHICH IS NOT THE SAME CLAIM THIS COMMENT USED TO MAKE** (ASSA-251,
+	# Maren). It said "IT IS THE ONLY `Primary` IN THE CLIENT", and that stopped being true the
+	# moment `Mine` earned the rank on ASSA-233 — a stale invariant in a comment is how someone
+	# rebuilds the defect, and this one sat two lines above the code it was wrong about.
+	#
+	# The rule is per SCREEN: `Play solo` here, `Mine` on the played screen, and never both at once.
+	# The dropped screen is exactly where that went wrong — `Mine` is accented off the sim's rock bit
+	# and `Play solo` off the stage, so a dead session showed two greens with the useless one looking
+	# the most alive. `_refresh_actions` now gates `Mine` on there being a session at all.
+	#
+	# WHICH IN-WORLD VERB EARNS IT IS MAREN'S RULING AND NOT MINE -- picking between Mine, Assay and
+	# Make from a theme file would be tuning the game's emphasis by hand.
 	_solo_button.theme_type_variation = &"Primary"
 	_solo_button.focus_mode = Control.FOCUS_ALL
 	_solo_button.pressed.connect(_on_play_solo)
@@ -1773,7 +1782,33 @@ func _join_address(address: String) -> void:
 ## better than before, where a refused walk and an accepted one looked identical for a quarter second.
 func _on_refused(reason: String) -> void:
 	_say("refused: %s" % reason, AssayHud.Say.FAILED)
+	_session_ended()
+
+
+## **EVERY WAY A SESSION ENDS GOES THROUGH HERE, AND THERE ARE TWO OF THEM** (ASSA-251).
+##
+## `net_client` has two exits and they are different signals: `Refused` sets `Stage.DEAD` and emits
+## `refused` (the host said no), while `_fail` sets `Stage.DEAD` and emits `link_failed` (the host
+## went away -- a closed socket, or the silence timeout). I put the action-row rebuild on
+## `link_failed` first and my own test still failed, because the test drops the link the way the
+## existing suite does: with a `Refused` frame, down the OTHER path.
+##
+## **SO IT IS ONE FUNCTION RATHER THAN A LINE IN TWO HANDLERS.** A third exit added later gets this
+## by calling it, instead of being the route that quietly keeps a green button. That is the same
+## mistake as ASSA-219 and ASSA-225 -- a correct fix sitting where the event does not pass -- and it
+## is the third time this week, so the structure changes rather than the line being copied.
+##
+## WHAT THE REBUILD IS FOR: `_refresh_actions` gates `Mine`'s accent on there being a session, and it
+## otherwise runs only from `_refresh`, which runs on tick bundles. A dropped link is exactly the
+## state where no bundle will ever arrive again, so without this the button keeps the green it had on
+## the last tick before the host went away.
+##
+## NOT A DESYNC, deliberately: `desynced` leaves the stage at JOINED (see the signal wiring above), so
+## `Mine` stays accented there. Whether a desync should also grey it is a question about what a
+## desync IS, and it is not this item's to answer.
+func _session_ended() -> void:
 	_forget_click()
+	_refresh_actions()
 
 
 ## A DEAD LINK ABANDONS THE CLICK TOO, and this one is mine rather than Maren's (ASSA-215). The walk
@@ -1791,7 +1826,9 @@ func _on_link_failed(reason: String) -> void:
 	# every case except Play solo.
 	var said := "" if _solo == null else _solo.last_words_if_it_died()
 	_say(reason if said == "" else "%s It said: %s" % [reason, said], AssayHud.Say.FAILED)
-	_forget_click()
+	# THE OTHER EXIT (ASSA-251). See `_session_ended`: the action row has to be rebuilt when a
+	# session dies, and this is one of the two routes that can kill one.
+	_session_ended()
 
 
 ## THE CLICK ECHO GOES, THROUGH THE SAME FUNCTION THE REFRESH USES. Two callers, one derivation --
@@ -2203,12 +2240,41 @@ func _render_status() -> void:
 		# uses for failures: nothing has failed yet, and a red line that takes itself back down would
 		# be the client crying off. Not a new colour -- the one state surface's palette is
 		# `AssayHud.status_color` and ASSA-116 is what happens when something invents its own.
-		_status.modulate = AssayHud.status_color(AssayHud.Say.CONNECTING)
+		_say_in(AssayHud.Say.CONNECTING)
 		_place_says_toast()
 		return
 	_status.text = _base_line
-	_status.modulate = AssayHud.status_color(_base_level)
+	_say_in(_base_level)
 	_place_says_toast()
+
+
+## **STATE THE COLOUR, NEVER MULTIPLY THE INK** (ASSA-251, Maren's ruling being applied for the third
+## time in this file).
+##
+## `_status.modulate = status_color(level)` is what this was, and `modulate` MULTIPLIES the theme's
+## ink rather than replacing it, so the sentence was drawn in `status_color` TIMES `INK` and the
+## colour on screen was nobody's decision. `_note` (ASSA-117) and the bench verdict both already
+## carry this fix citing her; the status line is the one that never got it.
+##
+## **MEASURED, AND ONLY ONE OF THE FOUR STATES WAS BELOW THE FLOOR, WHICH IS WHY IT SURVIVED**
+## (against the toast's panel, `SURFACE`):
+##
+##     level        declared   as drawn by modulate
+##     CONNECTING      8.70         7.17
+##     FAILED          4.79         3.98   <- the only one under 4.5
+##     JOINED          6.73         5.64
+##     IDLE            9.63         7.99
+##
+## So the defect was invisible in three states and bit exactly the one whose job is to say the game
+## stopped — below even the 4.091 the board called "hard on the eyes". Maren found it on the first
+## picture anyone ever took of a dropped relay.
+##
+## **AND `modulate` IS PUT BACK TO WHITE RATHER THAN LEFT ALONE.** A stale multiplier from an older
+## build of this function would silently scale whatever this override states, which is the same
+## defect wearing a different line.
+func _say_in(level: int) -> void:
+	_status.modulate = Color.WHITE
+	_status.add_theme_color_override(&"font_color", AssayHud.status_color(level))
 
 
 ## **THE TOAST IS DRAWN ONLY WHILE IT HAS SOMETHING TO SAY, AND IT IS PLACED FROM ITS OWN SIZE**
@@ -3142,7 +3208,18 @@ func _refresh_actions() -> void:
 	# deposit without touching the cursor changes none of the old terms, so the button would have
 	# kept an accent that no longer meant anything until something else happened to move.
 	var minable := _can_hand_mine_here()
-	var signature := "%s/%s/%d/%s/%s" % [target, _targeted, at, _building, minable]
+	# **AND WHETHER THERE IS ANYWHERE TO SEND A COMMAND, WHICH IS A DIFFERENT QUESTION FROM THE ROCK**
+	# (ASSA-251, Maren). `minable` is the sim's bit about the deposit under you; it knows nothing
+	# about whether a relay is listening. On the dropped screen both were true, so `Mine` was green
+	# while pressing it could only reach `_act` -> `submit` fails -> "not submitted; join a world
+	# first". A green button that refuses is worse than a grey one that refuses (her ASSA-215/233
+	# clause), and it put TWO greens on screen with the live-looking one being the dead one.
+	#
+	# IT IS IN THE SIGNATURE FOR THE SAME REASON `minable` IS: this row only rebuilds when the
+	# signature changes, and a dropped link moves none of the other terms, so the button would keep
+	# an accent that no longer means anything until something else happened to move.
+	var live := _client.stage == AssayNetClient.Stage.JOINED
+	var signature := "%s/%s/%d/%s/%s/%s" % [target, _targeted, at, _building, minable, live]
 	if signature == _actions_showing:
 		return
 	_actions_showing = signature
@@ -3170,7 +3247,7 @@ func _refresh_actions() -> void:
 	# so this screen does not know the hardness it would need. One bit, from the one authority.
 	var mine_button := _button("Mine", func() -> void: _act("Mine", AssayActions.mine()),
 			"hand-mine the deposit under you. Keeps swinging until you Stop.")
-	if minable:
+	if minable and live:
 		mine_button.theme_type_variation = &"Primary"
 	here.add_child(mine_button)
 	here.add_child(_button("Stop", func() -> void: _act("Stop", AssayActions.stop()),

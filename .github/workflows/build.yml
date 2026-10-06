@@ -183,6 +183,18 @@ jobs:
       # repeat that). Stdlib only, 0.1s.
       - name: Grade-A ore still reads as clumps
         run: python3 art/check_clumped.py
+      # THE GROUND HAS FORM ABOVE A TILE, AND NOTHING ELSE CAN SEE IT (ASSA-150). `ground.py`'s
+      # first three layers are drawn inside the per-cell loop, so they cannot make a feature
+      # bigger than 32 px however they are arranged; the fourth, the mottle, is drawn once over
+      # the whole field and is the only one that can. It changes no palette entry, no tone
+      # budget, no coverage and no row, so every other art check stays green if someone sets
+      # `MOTTLE_BLOBS = 0`. This measures what "bigger than a tile" means: whether two cells
+      # side by side know anything about each other. Proved red before it was trusted green --
+      # the pre-mottle ground fails both axes (-0.097 / +0.062 against a floor of 0.20), and
+      # `art/check_ground_form.py <sheet.png>` judges any sheet so anyone can repeat it.
+      # Stdlib only, 0.3s.
+      - name: The ground still has form above a tile
+        run: python3 art/check_ground_form.py
       # A FIRE IS NOT MADE OF THE WALLS (ASSA-137). The check above guards the
       # surfaces the species tint MAY shade; this one guards the rows it may
       # not touch at all. The client tints a world sprite with `modulate`, a

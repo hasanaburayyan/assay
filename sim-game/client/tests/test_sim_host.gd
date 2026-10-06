@@ -180,3 +180,78 @@ func test_protocol_has_no_hash_builder() -> bool:
 		return _fail(("AssayProtocol.hash_report is back. A ClientMsg::Hash carries a u64 and "
 				+ "GDScript cannot spell one: the message has to come from AssaySim."))
 	return true
+
+
+## **A READING'S TWO ENDS, ASKED FOR IN GDSCRIPT — WHICH IS THE ONLY PLACE THEY EXIST.**
+##
+## `species_sheets` grew `reading_ranges` (ASSA-256) so Nacre can draw a bar instead of parsing my
+## sentences. It is asserted in Rust already, on `SpeciesFacts` — and **that proves nothing about the
+## dictionary**, which is the lesson forty lines above this one: a Variant dict's contents are
+## invisible from Rust, and I have shipped an inverted field that way before. The keys and their
+## types only exist here.
+##
+## **THE OTHER HALF OF ASSA-256 IS NOT HERE, AND THAT IS A CORRECTION.** I wrote a `cost` assertion
+## into this test too, and the mutation that deletes `"cost"` from the dict did not redden it: a
+## fresh world's player holds nothing, so `make_offers` returns an EMPTY array and the whole loop
+## was skipped. It was decoration. `test_buttons.gd::test_every_menu_row_carries_what_one_batch_spends`
+## already guards it where a player has actually mined, and that mutation reddens there by name.
+##
+## **A RANGE IS ASSERTED AS A BAND THAT CONTAINS ITS TEXT, never against a literal.** Species are
+## generated, so a hard-coded 26-50 would be a photograph of worldgen. What must hold is the
+## relation: `lo <= hi`, both inside the scale, and the existing `readings` string spelling exactly
+## those two ends — because the whole point of one function deciding both is that the bar and the
+## text beside it cannot drift apart.
+##
+## **AND THE SECRET STAYS KEPT.** A fresh world has assayed nothing, so every range here must be a
+## real band and not a point: if `lo == hi` on an unassayed sheet, the exact value has crossed and
+## the thing the assay is paid for is already in the client's memory.
+func test_the_binding_hands_gdscript_a_readings_two_ends() -> bool:
+	var host := AssaySimHost.new()
+	if not host.start(AssaySimHost.fresh_welcome_json("14247", "marlow")):
+		return _fail("no world: %s" % host.fail_reason)
+
+	# --- a reading's two ends, on a world that has assayed nothing.
+	var sheets: Array = host.species_sheets()
+	if sheets.is_empty():
+		return _fail("no species sheets, so this proves nothing")
+	var checked := 0
+	for entry in sheets:
+		var species: Dictionary = entry
+		if not species.has("reading_ranges"):
+			return _fail("a species sheet has no `reading_ranges`: %s" % species.keys())
+		if not species.has("readings"):
+			return _fail("a species sheet has no `readings`: %s" % species.keys())
+		var ranges: Dictionary = species["reading_ranges"]
+		var readings: Dictionary = species["readings"]
+		if ranges.is_empty():
+			return _fail("`reading_ranges` is empty for %s" % species)
+		for property in ranges.keys():
+			# **A `Vector2i`, NOT AN ARRAY, AND I LEARNED THAT FROM THIS TEST ABORTING.**
+			# The binding crosses each pair as `Vector2i::new(lo, hi)`. My first
+			# version declared `var pair: Array`, and a typed assignment that does
+			# not match ABORTS the function in GDScript -- so the test returned
+			# null and the runner reported "returned false and said nothing",
+			# which is the shape that hides a real failure behind a silent one.
+			var pair: Vector2i = ranges[property]
+			var lo := pair.x
+			var hi := pair.y
+			if lo > hi:
+				return _fail("%s reads %d-%d, which is backwards" % [property, lo, hi])
+			if lo < 1 or hi > 100:
+				return _fail("%s reads %d-%d, outside the scale a sheet is rolled on"
+						% [property, lo, hi])
+			# NOTHING IS ASSAYED IN A FRESH WORLD, so a point here means the exact value crossed.
+			if lo == hi:
+				return _fail(("%s crossed as a point (%d) on an unassayed sheet: that is the exact "
+						+ "value, which the band exists to withhold") % [property, lo])
+			# THE TEXT AND THE NUMBERS ARE ONE DECISION (ASSA-256), so the string must spell these
+			# two ends and no others.
+			if not readings.has(property):
+				return _fail("`readings` has no %s to compare the range against" % property)
+			if String(readings[property]) != "%d-%d" % [lo, hi]:
+				return _fail(("%s: the sentence says `%s` and the numbers say %d-%d; one function "
+						+ "is supposed to decide both") % [property, readings[property], lo, hi])
+			checked += 1
+	if checked < 6:
+		return _fail("only %d readings compared; a sheet has six properties" % checked)
+	return true

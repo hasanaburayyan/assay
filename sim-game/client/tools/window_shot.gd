@@ -111,7 +111,7 @@ const NORTH_WALK_TICKS := 600
 enum Phase { SETTLE_JOIN, SHOOT_JOIN, PLAY, SETTLE_PACK, SHOOT_PACK, SETTLE_HALT, SHOOT_HALT,
 		SETTLE_PLAY, SHOOT_PLAY,
 		SETTLE_FOLD, MEASURE_CONTROLS, SETTLE_MENUS, SHOOT_MENUS, SCROLL_ROCKS, SETTLE_ROCKS,
-		SHOOT_ROCKS, WALK_NORTH, SETTLE_NORTH_LOG, SHOOT_NORTH_LOG, SETTLE_NORTH_CLEAR,
+		SHOOT_ROCKS, SCROLL_MAKE, SETTLE_MAKE, SHOOT_MAKE, WALK_NORTH, SETTLE_NORTH_LOG, SHOOT_NORTH_LOG, SETTLE_NORTH_CLEAR,
 		SHOOT_NORTH_CLEAR, WALK_OFF, PRESS_V, SETTLE_SCHEMATIC, SHOOT_SCHEMATIC, PRESS_K,
 		SETTLE_KEY, SHOOT_KEY, DONE }
 ## What `_play_frames` did with its last tick.
@@ -437,6 +437,18 @@ func _process(_delta: float) -> bool:
 			# frame. `_rocks_report` guards it instead, and asks for MORE: two whole ROWS in the
 			# frame, which is the least a picture needs to show that two rocks differ.
 			_shoot("05-rocks.png", PackedStringArray())
+			_phase = Phase.SCROLL_MAKE
+		Phase.SCROLL_MAKE:
+			_scroll_to_make()
+			_phase = Phase.SETTLE_MAKE
+		Phase.SETTLE_MAKE:
+			_settle(Phase.SHOOT_MAKE)
+		Phase.SHOOT_MAKE:
+			# NO SUBJECT CHECK, for `05-rocks.png`'s reason: the make list is taller than the box
+			# (Nacre measured 62.5px a button against a 28px Button), so `_standing` could only ever
+			# call it CLIPPED and the box could not go green. What this shot is FOR is the wording,
+			# which `_scroll_to_make` prints off the labels.
+			_shoot("11-make.png", PackedStringArray())
 			_phase = Phase.WALK_NORTH if _north_row >= 0 else Phase.WALK_OFF
 		Phase.WALK_OFF:
 			_walk_off()
@@ -1108,6 +1120,59 @@ func _reveal_report() -> Dictionary:
 ## section TALLER than the box parks its BOTTOM at the bottom edge and cuts the first row off, and
 ## the first row is as much a part of the roster as any other (I was bitten by exactly this
 ## minimum-scroll behaviour on the log heading, ASSA-117).
+## **THE MAKE LIST, SCROLLED INTO FRAME, AND A REPORT TAUGHT ME WHY IT HAD TO BE** (ASSA-158).
+##
+## Maren judges at 1x whether a dead end reads as a different KIND of fact from a cost, and the row
+## carrying one is the gear row. Running this tool on seed 14247 first, every one of the five `Make`
+## buttons came back **hidden, y 487..807 in a 720px window**: the rows are rendered and below the
+## fold, so `04-pack.png` cannot show the clause however full the pack gets. A condition leg like
+## `10-stopped.png`'s would not have helped either -- that one exists because a STATE is transient,
+## and this row is not transient, it is off-screen.
+##
+## So this scrolls, exactly as the roster shot does and for the same reason: a player scrolls to read
+## a column taller than its box, and so does a picture of it. It is NOT a claim that the list fits --
+## Nacre's density slice is the item that makes it fit.
+func _scroll_to_make() -> void:
+	var make: Control = _screen._make
+	var box: ScrollContainer = null
+	var node: Node = make.get_parent()
+	while node != null:
+		if node is ScrollContainer:
+			box = node as ScrollContainer
+			break
+		node = node.get_parent()
+	if box == null:
+		print("  make: no scroll box above the crafting menu, so nothing was scrolled")
+		return
+	var was := box.scroll_vertical
+	box.scroll_vertical = was + int(make.get_global_rect().position.y
+			- box.get_global_rect().position.y)
+	print("  make: scrolled the column from %d to %d to bring the crafting menu to the box's top"
+			% [was, box.scroll_vertical])
+	# WHAT EACH ROW SAYS, off the LABELS and never off the binding -- the only reading that can
+	# contradict it (ASSA-135's mistake was two surfaces agreeing because both read one wrong
+	# source). A dead-end row is NAMED in the output, so a reader can tell whether the shot holds
+	# the case Maren is judging without opening the PNG.
+	var dead_ends := 0
+	for child in make.get_children():
+		var row := child as Control
+		if row == null:
+			continue
+		var said := PackedStringArray()
+		for label in row.find_children("*", "Label", true, false):
+			var text := String((label as Label).text)
+			if text != "":
+				said.append(text)
+		if said.is_empty():
+			continue
+		var joined := " ".join(said)
+		var marked := "  [DEAD END]" if joined.contains("dead end") else ""
+		if marked != "":
+			dead_ends += 1
+		print("    make row%s  %s" % [marked, joined])
+	print("  make: %d row(s) carry a dead end in this frame" % dead_ends)
+
+
 ## **IT SCROLLS TO THE TAB'S TOP, NOT TO `_species`, SINCE ASSA-247 WIRED ASSA-254 IN.** The species
 ## list used to BE the top of this section, so scrolling to it was scrolling to the section. It is now
 ## the evidence UNDER Mineralogy's headline and its `go here` button, and scrolling to the list carried
