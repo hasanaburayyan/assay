@@ -133,7 +133,22 @@ func add_tab(tab_name: String, body: Control, placeholder := false) -> Button:
 ##
 ## Always visible, deliberately: `select` hides bodies, and a footer that disappeared with a tab
 ## would be a readout that comes and goes with a choice that has nothing to do with it.
+## **IT WRAPS, AND LEAVING THAT OUT PUSHED THE WHOLE COLUMN OFF THE SCREEN** (found 2026-10-06 by
+## measuring a 1x shot, not by reading this file). A `Label` that does not wrap has a minimum width
+## of its longest line -- the cursor readout measured **434 px** against a 320 px panel. A
+## `ScrollContainer` with horizontal scrolling DISABLED adds its content's minimum width to its own,
+## and a container sizes its child to `max(available, minimum)`, so that one Label pushed the scroll
+## box to 438 px and every ancestor with it. The damage was not in the tab at all: `_log_toggle` sits
+## in the chrome above this strip and was dragged out to the same width, so the column's ink ran to
+## the window's last pixel on 77 rows.
+##
+## A tab's BODY got this in `main.gd`'s build loop and the footer did not, because the footer does not
+## go through `add_tab`. Set here rather than at the caller so the strip's one footer slot cannot be
+## given an unwrapped Label by a later caller who did not read this comment.
 func add_footer(body: Control) -> void:
+	var label := body as Label
+	if label != null:
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_bodies_box.add_child(body)
 
 

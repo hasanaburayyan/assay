@@ -379,7 +379,12 @@ func _process(_delta: float) -> bool:
 		Phase.SHOOT_PACK:
 			# THE SUBJECTS ARE THE TWO PANELS THE ROWS ARE IN, which is the whole point of the shot:
 			# a fullest-pack picture whose pack is below the fold is worth nothing to ASSA-117.
-			_shoot("04-pack.png", PackedStringArray(["you", "crafting menu"]), false)
+			# **ONE SUBJECT, NOT TWO, SINCE THE PANEL BECAME TABS** (ASSA-247). This asked for `you`
+			# AND `crafting menu` in one frame, which was right while both were sections of one column
+			# and is now impossible by ruling: one system is on screen at a time. The pack keeps the
+			# shot's name; the crafting menu has `11-make.png` of its own (ASSA-158).
+			_select_tab("inventory")
+			_shoot("04-pack.png", PackedStringArray(["you"]), false)
 			_phase = Phase.PLAY
 		Phase.SETTLE_HALT:
 			_settle(Phase.SHOOT_HALT)
@@ -426,6 +431,7 @@ func _process(_delta: float) -> bool:
 			# does not clip the rocks -- but a picture of the roster with a log panel across the
 			# middle of it is a picture of two things, and the one being judged is the rows.
 			_screen._show_log(false)
+			_select_tab("mineralogy")
 			_scroll_to_rocks()
 			_phase = Phase.SETTLE_ROCKS
 		Phase.SETTLE_ROCKS:
@@ -439,6 +445,7 @@ func _process(_delta: float) -> bool:
 			_shoot("05-rocks.png", PackedStringArray())
 			_phase = Phase.SCROLL_MAKE
 		Phase.SCROLL_MAKE:
+			_select_tab("make")
 			_scroll_to_make()
 			_phase = Phase.SETTLE_MAKE
 		Phase.SETTLE_MAKE:
@@ -955,7 +962,13 @@ func _frame_for(control: Control) -> Rect2:
 ## verdicts in this file already depend on. The docstring used to claim this answered "a person can
 ## see it"; it answers "is this node's rect inside the rect it could be seen in".
 func _standing(control: Control) -> String:
-	if not control.visible:
+	# **`is_visible_in_tree`, NOT `visible`, SINCE ASSA-247 PUT THE SECTIONS IN TABS** -- and this one
+	# word is why the subject leg printed `yes` over a frame that did not contain its subject. `select`
+	# hides a tab's BODY; the section inside it keeps `visible == true` and answered honestly about a
+	# flag nobody had changed. So `04-pack.png` photographed whichever tab happened to be open and this
+	# tool called it OK. A check that cannot fail is worse than no check. The real tree is available
+	# here because this runs in a real window, which is the thing the headless suite may not assume.
+	if not control.is_visible_in_tree():
 		return "hidden"
 	var frame := _frame_for(control)
 	var rect := control.get_global_rect()
@@ -1132,6 +1145,27 @@ func _reveal_report() -> Dictionary:
 ## So this scrolls, exactly as the roster shot does and for the same reason: a player scrolls to read
 ## a column taller than its box, and so does a picture of it. It is NOT a claim that the list fits --
 ## Nacre's density slice is the item that makes it fit.
+## **OPEN THE TAB A SHOT IS NAMED FOR, BECAUSE THE PANEL SHOWS ONE SYSTEM AT A TIME** (ASSA-247).
+##
+## Before the tabs, every section was in one column and a shot got them all whether it asked or not.
+## With the strip, a shot that does not choose photographs whichever tab the client opened on -- which
+## is how `04-pack.png`, `02-play.png` and `05-rocks.png` all came back as pictures of Mineralogy, each
+## under a name that promised something else, with this tool printing `WINDOW SHOT OK` over all three.
+##
+## REFUSALS ARE LOUD AND DO NOT STOP THE RUN: a mistyped or retired tab name should cost the set one
+## honest shot and a line saying so, not a crash that loses the other ten. The shot's own subject check
+## is what then fails, which is the right place for the verdict.
+func _select_tab(tab_name: String) -> void:
+	if _screen._tabs == null:
+		print("  tabs: no strip on this screen, so nothing was selected")
+		return
+	if not _screen._tabs.select(tab_name):
+		print("  tabs: REFUSED to select `%s`; the shot below is of `%s`"
+				% [tab_name, _screen._tabs.selected()])
+		return
+	print("  tabs: opened `%s` for the shot that is named for it" % tab_name)
+
+
 func _scroll_to_make() -> void:
 	var make: Control = _screen._make
 	var box: ScrollContainer = null

@@ -4430,6 +4430,7 @@ func test_the_mineralogy_headline_is_rewritten_on_every_refresh_not_behind_the_s
 		ok = _fail(("a refresh left the headline reading `%s`: the answer is cached behind the species "
 				+ "sheets, so it would freeze as soon as the player walked") % screen._mineralogy.headline.text)
 	screen.queue_free()
+	return ok
 
 
 ## **THE STATUS PALETTE IS REACHABLE BY A TEST AT ALL, WHICH IT WAS NOT** (ASSA-251 box 4, Maren).
@@ -4548,4 +4549,74 @@ func test_a_dropped_screen_has_one_primary_and_it_is_the_way_back_in() -> bool:
 	if after.has("Mine"):
 		ok = _fail("`Mine` is still green with the link dead, where pressing it can only refuse")
 	joined.queue_free()
+	return ok
+
+
+## **NOTHING ANYWHERE IN THE COLUMN MAY ASK FOR MORE WIDTH THAN THE COLUMN HAS** (ASSA-247), which
+## is the test that would have caught the defect a 1x shot caught instead.
+##
+## **WHAT HAPPENED, because the shape of the hole is the point.** The cursor readout is a `Label` and
+## it was added through `AssayTabStrip.add_footer`, which is not `add_tab`, so it missed the autowrap
+## every tab body gets in `_build_ui`. An unwrapped Label's minimum width is its longest line --
+## **434 px against a 320 px panel**. A container sizes its child to `max(available, minimum)` and a
+## `ScrollContainer` with horizontal scrolling DISABLED folds its content's minimum into its own, so
+## that one Label pushed the scroll box to 438 px and dragged every ancestor out with it. On the shot
+## the column's ink ran to the window's last pixel on **77 rows**, and `_log_toggle` -- which is in the
+## chrome and not in any tab -- was pulled out too.
+##
+## **THE EXISTING WIDTH TEST COULD NOT SEE IT AND STILL CANNOT**, which is why this is a second one
+## rather than an edit: `test_no_row_asks_for_more_width_than_the_panel_that_clips_it` walks the direct
+## children of four named sections. The offender was a child of the strip's bodies box, in no section
+## at all, and the containers that carried the damage are not rows. So this sweeps EVERY `Control`
+## under the painted surface, containers included, and names the deepest one -- an ancestor is only
+## reporting what a child demanded.
+##
+## Minimum width is content-derived and needs no layout pass, which is the one geometry question this
+## headless suite may honestly ask (every `position` and `size` here reads 0.0).
+func test_nothing_in_the_column_asks_for_more_width_than_the_panel() -> bool:
+	var screen := _joined_screen("14247")
+	screen._refresh()
+	var ok := true
+	if not screen._sim.running():
+		screen.queue_free()
+		return _fail("premise: no world, so the tab bodies hold empty notes and cannot ask for width")
+	# WITH A PACK IN IT, because an empty section cannot overflow and the demo's richest row is the
+	# one that historically did (ASSA-98's 358 px pack row).
+	screen._rebuild_pack([
+		{"kind": "refined", "species": 4, "grade": "B", "count": 6, "name": "Minyte refined (B)"},
+		{"kind": "ore", "species": 4, "grade": "B", "count": 22, "name": "Minyte ore (B)"},
+	])
+	var worst: Control = null
+	var worst_w := 0.0
+	var worst_path := ""
+	var checked := 0
+	var stack: Array = [[screen._column, "", 0]]
+	var deepest := -1
+	while not stack.is_empty():
+		var entry: Array = stack.pop_back()
+		var node: Node = entry[0]
+		var path: String = entry[1]
+		var depth: int = entry[2]
+		var control := node as Control
+		if control != null:
+			checked += 1
+			var want := control.get_combined_minimum_size().x
+			# THE DEEPEST OFFENDER WINS, not the widest: the widest is usually the outermost container
+			# passing the demand upward, and fixing that one would only hide the child that made it.
+			if want > AssayHud.PANEL and depth > deepest:
+				deepest = depth
+				worst = control
+				worst_w = want
+				worst_path = path
+		for child in node.get_children():
+			stack.append([child, "%s/%s" % [path, child.name], depth + 1])
+	if checked < 10:
+		ok = _fail("only %d controls were measured under the column, so this sweep proves nothing"
+				% checked)
+	elif worst != null:
+		ok = _fail(("`%s` (%s) asks for %.0f px inside a %.0f px panel that clips and does not scroll "
+				+ "sideways, so its right-hand end is off the window: %s")
+				% [worst_path, worst.get_class(), worst_w, AssayHud.PANEL,
+				(worst as Label).text if worst is Label else "not a Label"])
+	screen.queue_free()
 	return ok
