@@ -73,11 +73,16 @@ func _initialize() -> void:
 	row.position = Vector2(PAD, PAD)
 	row.add_theme_constant_override("separation", GAP)
 	root.add_child(row)
-	# THE THREE STATES, in the order a reader meets them: the question Rainy asked, the case my
-	# ruling is about, and the honest nothing.
-	_add(row, "14247 · burns", "14247", BURNS)
-	_add(row, "14247 · hard enough", "14247", HARD_ENOUGH)
-	_add(row, "seed 1 · nothing qualifies", "1", HARD_ENOUGH)
+	# **TWO COLUMNS NOW CARRY MAREN'S THREE STATES, because the body stacks both questions**
+	# (ASSA-262: her ruling 3, no selector). It used to take three columns because each rendered ONE
+	# selected question; a column is now a WORLD and shows both answers the way a player meets them.
+	#
+	# 14247 gives her first two states in one picture -- the question Rainy asked, and the underfoot
+	# case her ruling 5 is about. Seed 1 gives the honest nothing, which lives on `hard enough`
+	# because `Burns` is unanswered in 0 of 399 worlds (worldgen guarantees a hand-lit fuel beside
+	# spawn), so there is no seed that shows an empty fuel headline.
+	_add(row, "14247 · both questions", "14247")
+	_add(row, "seed 1 · nothing qualifies", "1")
 
 
 ## One column: a caption, then the real body at the real width.
@@ -85,7 +90,7 @@ func _initialize() -> void:
 ## The caption is `Quiet` and sits ABOVE the body rather than across it, for the same reason Cove's
 ## window pair draws its labels into a band: a caption over the thing being judged changes the thing
 ## being judged.
-func _add(row: HBoxContainer, caption: String, seed_text: String, which: int) -> void:
+func _add(row: HBoxContainer, caption: String, seed_text: String) -> void:
 	var col := VBoxContainer.new()
 	col.custom_minimum_size = Vector2(COLUMN, 0)
 	col.add_theme_constant_override("separation", 8)
@@ -109,8 +114,8 @@ func _add(row: HBoxContainer, caption: String, seed_text: String, which: int) ->
 		return
 	var me := int((players[0] as Dictionary).get("id", -1))
 	var answers := host.proximity_answers(me)
-	tab.show_answer(answers, which)
-	_tabs.append({"caption": caption, "tab": tab, "answers": answers, "which": which})
+	tab.show_answer(answers)
+	_tabs.append({"caption": caption, "tab": tab, "answers": answers})
 
 
 func _process(_delta: float) -> bool:
@@ -142,20 +147,24 @@ func _report() -> void:
 		print("NOTE: %s" % note)
 	for entry in _tabs:
 		var tab: AssayMineralogy = entry["tab"]
-		var answer: Dictionary = (entry["answers"] as Array)[entry["which"]]
-		var text := String(answer.get("headline", ""))
-		var tile: Variant = answer.get("tile")
+		var answers: Array = entry["answers"]
 		print("")
 		print("--- %s ---" % entry["caption"])
-		print("  headline (%d chars): %s" % [text.length(), text])
-		print("  tile from the binding: %s" % ("nil" if tile == null else str(tile)))
+		# EVERY QUESTION THE BODY DREW, in the sim's order, because both are on screen now.
+		for q in tab.question_count():
+			var answer: Dictionary = answers[q] if q < answers.size() else {}
+			var text := tab.headline_text(q)
+			var tile: Variant = answer.get("tile")
+			print("  [q%d] headline (%d chars): %s" % [q, text.length(), text])
+			print("       tile from the binding: %s   underfoot: %s"
+					% ["nil" if tile == null else str(tile), str(tab.underfoot_for(q))])
+			print("       go here VISIBLE: %s   (ruling 5: absent when there is no walk)"
+					% str(tab.walk_shown(q)))
+		print("  go here variation: `%s`   (ruling 5 asks for `Quiet`)"
+				% str(tab.go_here.theme_type_variation))
 		print("  headline drawn: %d x %d px, %d line(s) at %d px wide"
 				% [tab.headline.size.x, tab.headline.size.y,
 						tab.headline.get_line_count(), COLUMN])
-		print("  go here VISIBLE: %s   (ruling 5: absent when the answer has no heading)"
-				% str(tab.go_here.visible))
-		print("  go here variation: `%s`   (ruling 5 asks for `Quiet`)"
-				% str(tab.go_here.theme_type_variation))
 		print("  answer block height, before any evidence row: %d px" % tab.size.y)
 	print("")
 	print("MINERALOGY SHOT OK")
