@@ -753,7 +753,7 @@ func test_the_chrome_blocks_take_no_space_when_they_have_nothing_to_say() -> boo
 ##
 ## **AND SINCE ASSA-247 THE ORDER IS NOT A COLUMN OF SIX HEADINGS AT ALL**, so this test is rewritten
 ## rather than retired. The board's shape (Rainy, via Wren's ruling) is ONE tabbed panel: `do` always
-## on, then `make` / `inventory` / `bench` / `rocks` as tabs, one visible at a time. Maren's ASSA-133
+## on, then `make` / `inventory` / `bench` / `mineralogy` as tabs, one visible at a time. Maren's ASSA-133
 ## ruling 2 -- a section may not sit above the section it is derived from -- is not weakened by that;
 ## it is retired, because `make` and the pack are no longer in one box where either can push the
 ## other. **What this test holds now is the thing a later edit could quietly undo: that the pack and
@@ -761,7 +761,10 @@ func test_the_chrome_blocks_take_no_space_when_they_have_nothing_to_say() -> boo
 func test_the_panel_is_do_always_on_then_four_tabs() -> bool:
 	var screen := _screen()
 	var ok := true
-	var want := ["make", "inventory", "bench", "rocks"]
+	# **`mineralogy`, NOT `rocks`** (Maren, ASSA-241): the fourth tab is this column's `rocks` section
+	# wearing Rainy's word for it, not a fifth tab beside it. The variable it renders is still
+	# `_species`, which is why only the NAME moved here.
+	var want := ["make", "inventory", "bench", "mineralogy"]
 	var seen := Array(screen._tabs.tab_names())
 	if seen != want:
 		ok = _fail(("the tab strip reads %s; the board's structure and Wren's ruling are %s")
@@ -2379,7 +2382,7 @@ func test_the_hud_column_is_not_on_the_join_screen_and_comes_back_with_a_world()
 			"the painted surface": screen._column, "the tab strip": screen._tabs.names_box(),
 			"the cursor readout": screen._cursor}
 	var tabbed := {"make": screen._make, "inventory": screen._carrying,
-			"bench": screen._bench, "rocks": screen._species}
+			"bench": screen._bench, "mineralogy": screen._species}
 	for named: String in always_on:
 		if _on_screen(always_on[named]):
 			ok = _fail(("%s is on the join screen, where it has nothing to say: Gap 5 is that the "
@@ -4298,5 +4301,100 @@ func test_the_theme_poke_is_load_bearing_and_the_sweeps_coincidence_is_declared(
 		tell.queue_free()
 	print("    ASSA-246: Label variations whose ink coincides with `Label`'s, so the sweeps cannot "
 			+ "prove the poke: %s" % [", ".join(coincident) if coincident.size() > 0 else "none"])
+	screen.queue_free()
+	return ok
+
+
+## **THE MINERALOGY TAB IS THE SIM'S ANSWER WITH THE ROCKS LIST AS ITS EVIDENCE** (ASSA-241's ruling,
+## wiring Limpet's ASSA-254 body into ASSA-247's strip).
+##
+## `test_mineralogy.gd` owns the body in isolation and cannot see this: every one of its tests builds
+## `AssayMineralogy.new()` directly, so a `main.gd` that never put the body in the strip, or that left
+## `_species` hanging beside it as a fifth section, passes all six of them. What this asks is the
+## COMPOSITION -- that the one object in the tab is his body and the list is INSIDE his evidence box.
+##
+## **AND THE CONTROL ORDER, WHICH IS MAREN'S RULING AND WREN'S FOLD RULE IN ONE ASSERTION**: `go here`
+## is the tab's only control and the evidence list is unbounded (my own measurement: ~651 px of rows
+## against a 313 px worst-case budget), so a control UNDER it is below the fold by construction. Asked
+## as child order and not as a `position`, because this suite has no layout pass and every rect in it
+## reads 0.0 -- the geometry belongs to `tools/nacre_tab_budget_probe.gd`.
+func test_the_mineralogy_tab_is_the_answer_with_the_rocks_list_as_its_evidence() -> bool:
+	var screen := _screen()
+	var ok := true
+	var body: Control = screen._tabs.body_of("mineralogy")
+	if body == null:
+		screen.queue_free()
+		return _fail("there is no `mineralogy` tab, so Rainy's index has nowhere to open")
+	# THE BODY HOLDS HIS OBJECT, found by type rather than by index: the strip wraps every entry in a
+	# `VBoxContainer`, so this walks down to the thing that matters instead of guessing the depth.
+	var found: Array = body.find_children("*", "AssayMineralogy", true, false)
+	if found.size() != 1:
+		ok = _fail(("the mineralogy tab holds %d `AssayMineralogy` bodies, want exactly 1: ASSA-254's "
+				+ "body is the tab, not a decoration beside it") % found.size())
+	elif found[0] != screen._mineralogy:
+		ok = _fail("the tab holds a DIFFERENT AssayMineralogy than the screen refreshes, so the one on "
+				+ "screen would never be updated")
+	elif not screen._mineralogy.evidence.is_ancestor_of(screen._species):
+		ok = _fail(("the rocks list is not inside the answer's evidence box (its parent is `%s`): "
+				+ "Mineralogy IS this column's `rocks` with the headline on top, not a tab beside it")
+				% screen._species.get_parent())
+	else:
+		# CONTROLS ABOVE THE LIST. Both are children of his body, so this is one index comparison.
+		var kids: Array = screen._mineralogy.get_children()
+		if kids.find(screen._mineralogy.go_here) > kids.find(screen._mineralogy.evidence):
+			ok = _fail("`go here` sits below the evidence list, which is unbounded: Wren's rule is that "
+					+ "no control is ever below the fold, and a list may scroll only because it has none")
+		if kids.find(screen._mineralogy.headline) != 0:
+			ok = _fail("the headline is not the first thing in the tab: child 0 is `%s`"
+					% kids[0].name)
+	screen.queue_free()
+	return ok
+
+
+## **THE HEADLINE IS REWRITTEN ON EVERY REFRESH, NOT CACHED BEHIND THE SPECIES SHEETS** (ASSA-254
+## wired into ASSA-247), and this is the test for the mistake I was one line away from making.
+##
+## `_refresh_species` returns early unless the species SHEETS changed, which is right for the rows: a
+## sheet moves about twice a session. The headline is not like the rows -- it carries a distance and a
+## heading from where the player is STANDING, so calling `show_answer` inside that guard would freeze
+## the sentence the moment the player started walking toward the rock it named, and every test that
+## only reads it once after a join would still pass.
+##
+## **SO THE SHEETS ARE HELD STILL AND THE LABEL IS POISONED.** A refresh that routes through the
+## species cache cannot repair it; one that asks the binding every time can. That is the mutation this
+## catches, asserted without needing the player to walk a tile.
+##
+## It also pins the half `test_mineralogy.gd` cannot reach: that the text on the REAL screen is the
+## binding's own `headline`, with `main.gd` adding nothing to it.
+func test_the_mineralogy_headline_is_rewritten_on_every_refresh_not_behind_the_species_cache() -> bool:
+	var screen := _joined_screen("14247")
+	screen._refresh()
+	var ok := true
+	var id: int = screen._client.player_id
+	if not screen._sim.running() or id < 0:
+		screen.queue_free()
+		return _fail("premise: nothing is being simulated, so there is no answer to render")
+	var answers: Array = screen._sim.proximity_answers(id)
+	if answers.is_empty():
+		screen.queue_free()
+		return _fail("premise: the binding answered nothing for a player who is in the world")
+	var expected := String((answers[0] as Dictionary).get("headline", ""))
+	if expected == "":
+		screen.queue_free()
+		return _fail("premise: the binding sent an empty headline, which the sim never produces")
+	if screen._mineralogy.headline.text != expected:
+		ok = _fail("the tab reads `%s` and the binding says `%s`"
+				% [screen._mineralogy.headline.text, expected])
+	# NOW HOLD THE SHEETS STILL AND BREAK THE LABEL. `_species_showing` is the species cache's own
+	# signature; leaving it untouched is what makes this a test of the OTHER path.
+	var cached_before: String = screen._species_showing
+	screen._mineralogy.headline.text = "a sentence no sim ever produced"
+	screen._refresh()
+	if screen._species_showing != cached_before:
+		ok = _fail("the species cache changed during the refresh, so this test did not hold the sheets "
+				+ "still and proves nothing about the headline's own path")
+	elif screen._mineralogy.headline.text != expected:
+		ok = _fail(("a refresh left the headline reading `%s`: the answer is cached behind the species "
+				+ "sheets, so it would freeze as soon as the player walked") % screen._mineralogy.headline.text)
 	screen.queue_free()
 	return ok

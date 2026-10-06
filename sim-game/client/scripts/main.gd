@@ -293,6 +293,11 @@ var _bench := VBoxContainer.new()
 ## terminal's reference surfaces; this is the one that turns the map into a search tool.
 var _species := VBoxContainer.new()
 var _species_showing := UNBUILT
+## THE MINERALOGY TAB'S BODY: Limpet's `AssayMineralogy` (ASSA-254), which is the sim's answer plus
+## `go here` with `_species` underneath as the evidence for it. Built by that file, composed here --
+## the strip's one-entry contract is what let his leg land and be gated green before this strip
+## existed, and this variable is the whole of the cost of plugging it in.
+var _mineralogy := AssayMineralogy.new()
 ## What each section was last built from, so ten refreshes a second do not rebuild nodes that have
 ## not changed. The sim's own values are the signature: if they are identical, so is the panel. This
 ## matters more now than it did -- rebuilding a row ten times a second would destroy a button under
@@ -1173,9 +1178,14 @@ func _build_ui() -> void:
 	# it is here rather than at the section because `_species` is still what the code calls the list
 	# the sim fills; the tab is what the player reads.
 	#
-	# ASSA-254's body (Limpet's `AssayMineralogy`, merged in #340) plugs in as ONE `add_tab`
-	# argument when its headline is wired — the strip's one-entry contract is what makes that true,
-	# and `test_tab_strip.gd` is what holds me to it.
+	# ASSA-254's body (Limpet's `AssayMineralogy`, merged in #340) IS WIRED, and it cost the one
+	# `add_tab` argument this comment promised: `_species` moves inside his `evidence` box and the
+	# tab's entry names his body instead of the bare list. Nothing in the strip changed to take it,
+	# which is the one-entry contract being true rather than claimed.
+	#
+	# **AND IT IS WHY THE CONTROL ORDER IS RIGHT WITHOUT ME ARRANGING IT** (Maren, ASSA-241): his body
+	# is headline, then `go here`, then the evidence. So the tab's only control is ABOVE its unbounded
+	# list, which is Wren's fold rule, and the list is the thing free to scroll.
 	#
 	# NO `PANEL` FLOOR ON ANY BODY, and it was not tidying (ASSA-117 box 4, ASSA-98): a scroll box
 	# hands its child the panel MINUS the scrollbar, so a 320px floor inside a ~308px viewport is
@@ -1185,8 +1195,17 @@ func _build_ui() -> void:
 		["make", [_assembling, _make_toggle, _make] as Array[Control]],
 		["inventory", [_carrying] as Array[Control]],
 		["bench", [_bench, _halt_detail] as Array[Control]],
-		["mineralogy", [_species] as Array[Control]],
+		["mineralogy", [_mineralogy] as Array[Control]],
 	]
+	# THE ROCKS LIST BECOMES THE ANSWER'S EVIDENCE, which is Maren's ruling in one line: Mineralogy is
+	# this column's `rocks` with the sim's headline on top, not a fifth tab beside it. `_species` keeps
+	# its name and its `_refresh_species` because it is still the same list the sim fills; what changed
+	# is what it hangs under. Limpet's file documents `evidence` as the caller's to fill, and this is
+	# the caller.
+	_mineralogy.evidence.add_child(_species)
+	# WALKING THERE IS THIS FILE'S JOB, NOT HIS. His body emits the tile the sim named and does no
+	# arithmetic on it; submitting a command needs `_client`, which a tab body must never hold.
+	_mineralogy.go_here_pressed.connect(_on_go_here_pressed)
 	for part in tabs:
 		var body := VBoxContainer.new()
 		body.name = "%sBody" % String(part[0]).capitalize()
@@ -1198,10 +1217,35 @@ func _build_ui() -> void:
 				(inner as Label).autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			body.add_child(inner)
 		_tabs.add_tab(String(part[0]), body)
-	# **WHICH TAB OPENS ON ENTERING A WORLD: `make`, AND IT IS MINE TO PICK** (Wren, 16:35 UTC). It is
-	# the first `add_tab` call, which is what the strip selects. The reason is the same one that keeps
-	# the crafting menu open on first join (ASSA-186): the board asked for a crafting menu, the loop's
-	# controls are in it, and the pack and the rocks list are reference you go and consult.
+	# **WHICH TAB OPENS ON ENTERING A WORLD: `mineralogy`, AND I CHANGED MY MIND** (mine to pick, Wren
+	# 16:35 and again 18:54; Maren argued this and Wren said he shared it). I had `make`, on the ASSA-186
+	# reasoning that the board asked for a crafting menu and the loop's controls are in it.
+	#
+	# **MAREN'S ARGUMENT IS BETTER AND IT IS ABOUT THE FIRST SCREEN, NOT ABOUT RANK: you enter a world
+	# carrying nothing, so `make` opens on a refusal** -- "nothing you are carrying can be worked by
+	# hand" -- while Mineralogy opens on a direction to walk. A first screen that states what you cannot
+	# do teaches less than one that names a rock and offers `go here`.
+	#
+	# **THE CONDITION WREN PUT ON IT IS MET, WHICH IS WHY THIS IS NOW SAFE TO DO**: "if the answer is not
+	# on screen by the bound, Make". ASSA-254's body is wired above, so the answer IS on screen, and the
+	# sim has a sentence for every world including the ones where nothing answers -- so this tab can
+	# never open on a blank.
+	#
+	# SELECTED BY NAME RATHER THAN BY REORDERING THE LIST: the strip's ENTRY ORDER is Wren's ruled entry
+	# list (Make / Inventory / Bench / Mineralogy) and opening on the fourth is not a reason to shuffle
+	# the names a player reads left to right.
+	#
+	# **AND IT PUTS TWO READINGS ON ASSA-88's RULING, SO I SAY WHICH ONE I KEPT** rather than let a green
+	# test stand in for an answer. "The crafting menu is OPEN on first join" was made when the menu was a
+	# section in a column, and it meant NOT FOLDED -- the opposite call to the event log's, because a menu
+	# nobody finds is the clunk restated. Under one tabbed panel that sentence can also mean SELECTED, and
+	# those two came apart the moment the board's shape arrived.
+	#
+	# **THE MENU IS STILL UNFOLDED** (`_show_make(true)` below is untouched), so the rule as it was made
+	# still holds: open the Make tab and the rows are there, with no second press. What it no longer means
+	# is "the first body you see", and it cannot: one system at a time is the ruling above it, so exactly
+	# one tab has to lose this and Maren and Wren both picked which. Flagged on ASSA-247, not buried here.
+	_tabs.select("mineralogy")
 	#
 	# **AND THE CURSOR READOUT IS A FOOTER, WHICH IS THE ONE PLACEMENT NOBODY RULED.** It is in the
 	# scrolled area under whichever tab is open, so it carries no control below the fold and costs the
@@ -1241,6 +1285,7 @@ func _build_ui() -> void:
 	_refresh_actions()
 	_refresh_bench()
 	_refresh_species()
+	_refresh_mineralogy()
 
 
 ## THE EVENT LOG'S OWN SURFACE, OVER THE MAP (ASSA-147, Maren's ruling: "the event log leaves the
@@ -2352,6 +2397,7 @@ func _refresh() -> void:
 	_refresh_actions()
 	_refresh_bench()
 	_refresh_species()
+	_refresh_mineralogy()
 
 
 ## THE PART MENU: every design you hold, verdict first, with the one verb that design affords.
@@ -2391,11 +2437,55 @@ func _refresh_species() -> void:
 		return
 	_species_showing = signature
 	_clear(_species)
+	# **NO EMPTY NOTE HERE ANY MORE, AND DELETING ONE IS NORMALLY THE MISTAKE I MADE ON ASSA-237** --
+	# so the reason, not the tidy. `_note`'s rule (ASSA-134) is that a HEADING may never sit over
+	# nothing; the heading of this list used to be the `rocks` section's own. It is now the Mineralogy
+	# tab's headline, and `show_answer([])` writes "no world yet — join one and what is near you is
+	# answered here" into it on exactly the path this note covered. Keeping both put two sentences of
+	# the same news six pixels apart on the first screen a stranger sees. The rule is honoured by the
+	# surface that still has a heading, which is the body above this box, not by a second copy.
 	if sheets.is_empty():
-		_species.add_child(_note("no world yet — join one and its rocks are listed here"))
 		return
 	for entry in sheets:
 		_species.add_child(_species_row(entry as Dictionary))
+
+
+## **THE SIM'S ANSWER TO RAINY'S QUESTION, TEN TIMES A SECOND** (ASSA-254 wired into ASSA-247).
+##
+## NOT BEHIND `_refresh_species`' SIGNATURE, and that is the whole reason this is its own function.
+## That signature is the species SHEETS, which move about twice a session; this headline carries a
+## distance and a heading from where the player is STANDING, so gated on sheets it would freeze the
+## moment you started walking towards the rock it named. It is the one surface in this column whose
+## content changes because you moved and nothing else did.
+##
+## AND IT IS CHEAP AT THIS RATE: `_refresh` runs per tick bundle, not per frame (ten a second at the
+## relay's clock), and the binding call beside it already asks for sheets, offers, designs and the
+## inventory. `Label.set_text` returns early on an identical string, so a standing player costs no
+## layout pass at all.
+##
+## `_client.player_id` IS -1 UNTIL A WELCOME LANDS, and the binding answers `[]` for a player who is
+## not in the world, which `show_answer` renders as its no-world sentence. So the not-joined screen is
+## the empty arm of the same path rather than a branch here.
+func _refresh_mineralogy() -> void:
+	var answers := _sim.proximity_answers(_client.player_id) if _client != null else []
+	_mineralogy.show_answer(answers)
+
+
+## WALK TO THE ROCK THE MINERALOGY TAB NAMED.
+##
+## THE TILE IS THE SIM'S AND THIS DOES NO ARITHMETIC ON IT -- not even a step to stand beside the
+## patch rather than on it, which is the helpfulness ASSA-254 forbids: the sim chose the tile and a
+## client that adjusts it is redoing a decision that has already been made.
+##
+## THE SAME COMMAND A LEFT CLICK ON THE MAP SENDS, through the same `AssayActions.move_to`, so the
+## sim's legality check is the only thing that decides whether the walk happens. The echo is written
+## here for the reason ASSA-215 measured on that click: everything else about this walk takes a
+## quarter of a second, and the press needs an answer in the frame it happened in.
+func _on_go_here_pressed(tile: Vector2i) -> void:
+	if _client == null:
+		return
+	if _client.submit(AssayActions.move_to(tile)):
+		_say("walking to %d, %d" % [tile.x, tile.y], AssayHud.Say.JOINED)
 
 
 ## ONE SPECIES, WEARING THE MARK THE MAP DRAWS ON IT.

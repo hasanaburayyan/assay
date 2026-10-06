@@ -544,15 +544,15 @@ func _report() -> void:
 			% int(round(_tab_strip_h)))
 	print("")
 	print("  SECTION AT ITS HIGH WATER (tallest reading of the ticks that section was open)")
-	var every := ["do", "make", "inventory", "bench", "rocks", "cursor"]
+	var every := ["do", "make", "inventory", "bench", "mineralogy", "cursor"]
 	var missing := PackedStringArray()
 	for which in every:
 		if not _best.has(which):
-			print("  %-8s NOT FOUND IN THE COLUMN" % which)
+			print("  %-10s NOT FOUND IN THE COLUMN" % which)
 			missing.append(which)
 			continue
 		var best: Dictionary = _best[which]
-		print("  %-8s %4d px  (body %4d, heading %2d)  at tick %-4d  (%d children: %s)"
+		print("  %-10s %4d px  (body %4d, heading %2d)  at tick %-4d  (%d children: %s)"
 				% [which, int(round(float(best["h"]))), int(round(float(best["body"]))),
 				int(round(float(best["head"]))), int(best["tick"]), int(best["n"]),
 				String(best["parts"])])
@@ -562,13 +562,13 @@ func _report() -> void:
 	print("")
 	print("  TICKS EACH TAB WAS OPEN (round-robin, one tab a tick, every reading laid out)")
 	var counted := PackedStringArray()
-	for which in ["make", "inventory", "bench", "rocks"]:
+	for which in ["make", "inventory", "bench", "mineralogy"]:
 		counted.append("%s %d" % [which, int(_tabs_measured.get(which, 0))])
 	print("    %s" % "  ".join(counted))
 	# THE TALLEST TAB IS COMPARED ON ITS `body`, because the tab strip has already said its name.
 	var tallest := ""
 	var tallest_h := -1.0
-	for which in ["make", "inventory", "bench", "rocks"]:
+	for which in ["make", "inventory", "bench", "mineralogy"]:
 		var h := float((_best[which] as Dictionary)["body"])
 		if h > tallest_h:
 			tallest_h = h
@@ -603,17 +603,17 @@ func _report() -> void:
 	print("    a themed Button is %d px: that is one line carrying a control"
 			% int(round(_tab_strip_h)))
 	var one_line := _tab_strip_h + float(_separation)
-	for which in ["inventory", "make", "bench", "rocks"]:
+	for which in ["inventory", "make", "bench", "mineralogy"]:
 		var best: Dictionary = _best[which]
 		var rows := int(best.get("rows", 0))
 		if rows == 0:
-			print("    %-8s no row list found" % which)
+			print("    %-10s no row list found" % which)
 			continue
 		var total := float(best.get("row_total", 0.0))
 		var per := total / float(rows)
 		# ARITHMETIC, NOT A MEASUREMENT, and said so: nobody has built a one-line row yet.
 		var dense := float(rows) * one_line
-		print("    %-8s %2d rows, %5.1f px each (tallest %d) = %d px; at one line each ~%d px"
+		print("    %-10s %2d rows, %5.1f px each (tallest %d) = %d px; at one line each ~%d px"
 				% [which, rows, per, int(round(float(best.get("row_tallest", 0.0)))),
 				int(round(total)), int(round(dense))])
 	print("    (the one-line figures are arithmetic on the yardstick, not a measured build)")
@@ -623,7 +623,7 @@ func _report() -> void:
 	print("    clips it, worst reading of every tick that tab was open. Zero is the rule kept.")
 	var cut := ""
 	var cut_px := 0.0
-	for which in ["make", "inventory", "bench", "rocks"]:
+	for which in ["make", "inventory", "bench", "mineralogy"]:
 		var reach: Dictionary = _reach.get(which, {"must_fit": 0.0, "buttons": 0, "tick": 0})
 		var must_fit := float(reach["must_fit"])
 		var buttons := int(reach["buttons"])
@@ -650,7 +650,7 @@ func _report() -> void:
 	else:
 		var deepest := ""
 		var deepest_px := -1.0
-		for which in ["make", "inventory", "bench", "rocks"]:
+		for which in ["make", "inventory", "bench", "mineralogy"]:
 			var reach: Dictionary = _reach.get(which, {"must_fit": 0.0, "buttons": 0})
 			if int(reach["buttons"]) > 0 and float(reach["must_fit"]) > deepest_px:
 				deepest_px = float(reach["must_fit"])

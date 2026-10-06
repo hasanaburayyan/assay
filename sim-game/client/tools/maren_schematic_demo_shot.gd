@@ -494,7 +494,7 @@ func _shoot(name: String, subjects: PackedStringArray, guard_repeat := true) -> 
 ## honest about a panel that may not be up.
 func _sections() -> Array:
 	return [["crafting menu", _screen._make], ["you", _screen._carrying], ["do", _screen._actions],
-			["bench", _screen._bench], ["rocks", _screen._species], ["cursor", _screen._cursor],
+			["bench", _screen._bench], ["mineralogy", _screen._species], ["cursor", _screen._cursor],
 			["event log", _screen._log_box]]
 
 
