@@ -190,7 +190,11 @@ func _press_row(state: String, stack: Dictionary, first: Dictionary) -> bool:
 	button.pressed.emit()
 	var landed: bool = _screen._building.size() > before
 	var said: String = _screen._status.text
-	var colour: Color = _screen._status.modulate
+	# THE DRAWN COLOUR (ASSA-251): the status line states its ink with a `font_color` override, so
+	# `modulate` alone now reports white and this table would have printed a colour nobody uses.
+	var stated: Color = _screen._status.get_theme_color(&"font_color")
+	var mult: Color = _screen._status.modulate
+	var colour := Color(stated.r * mult.r, stated.g * mult.g, stated.b * mult.b, stated.a * mult.a)
 	if refusal == "":
 		if not landed:
 			_fail("the sim would accept %s with %s, and the press did not land: %s"
