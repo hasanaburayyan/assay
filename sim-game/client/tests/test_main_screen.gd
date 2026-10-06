@@ -239,7 +239,7 @@ func test_clicking_join_says_connecting_before_anything_can_block() -> bool:
 	screen._host.text = "127.0.0.1:1"
 	screen._on_join()
 	var said: String = screen._status.text
-	var colour: Color = screen._status.modulate
+	var colour: Color = _drawn_color(screen._status)
 	screen.queue_free()
 	if not said.to_lower().contains("connecting"):
 		return _fail("clicking Join left the status line saying %s" % said)
@@ -252,10 +252,10 @@ func test_clicking_join_says_connecting_before_anything_can_block() -> bool:
 ## colour is the only thing that can tell an instruction from a failure.
 func test_a_failure_does_not_look_like_the_instruction_it_replaces() -> bool:
 	var screen := _screen()
-	var idle: Color = screen._status.modulate
+	var idle: Color = _drawn_color(screen._status)
 	var instruction: String = screen._status.text
 	screen._client.link_failed.emit("could not reach 127.0.0.1:1")
-	var failed: Color = screen._status.modulate
+	var failed: Color = _drawn_color(screen._status)
 	var said: String = screen._status.text
 	screen.queue_free()
 	if instruction == said:
@@ -394,7 +394,7 @@ func test_a_desync_is_reported_as_a_failure() -> bool:
 	var screen := _screen()
 	screen._client.desynced.emit(140)
 	var said: String = screen._status.text
-	var colour: Color = screen._status.modulate
+	var colour: Color = _drawn_color(screen._status)
 	screen.queue_free()
 	if not said.contains("140"):
 		return _fail("a desync at tick 140 was reported as %s" % said)
@@ -2633,7 +2633,7 @@ func test_a_quiet_host_covers_the_status_line_and_gives_back_what_it_covered() -
 		return _fail("the fixture never joined (stage %d), so there is no status line to cover"
 				% screen._client.stage)
 	var joined_said: String = screen._status.text
-	var joined_colour: Color = screen._status.modulate
+	var joined_colour: Color = _drawn_color(screen._status)
 	var ok := true
 	if joined_said.strip_edges() == "":
 		ok = _fail("the joined screen says nothing, so this test cannot tell a cover from a blank")
@@ -2642,9 +2642,9 @@ func test_a_quiet_host_covers_the_status_line_and_gives_back_what_it_covered() -
 	if ok and warned != AssayHud.quiet_host_line(3):
 		ok = _fail(("a host quiet for 3s left the status line saying \"%s\". The window looks exactly "
 				+ "like a running game, which is the whole defect.") % warned)
-	elif ok and screen._status.modulate != AssayHud.status_color(AssayHud.Say.CONNECTING):
+	elif ok and _drawn_color(screen._status) != AssayHud.status_color(AssayHud.Say.CONNECTING):
 		ok = _fail("the warning is coloured %s, not the colour this line uses for a transient state"
-				% screen._status.modulate)
+				% _drawn_color(screen._status))
 	# THE NUMBER GOING UP IS THE PART A PLAYER READS. A line that froze at the first count would say
 	# the same thing at 3s and at 9s, which is "something happened once" rather than "it is ongoing".
 	screen._client.link_quiet.emit(7)
@@ -2676,9 +2676,9 @@ func test_a_quiet_host_covers_the_status_line_and_gives_back_what_it_covered() -
 	elif ok and not back.contains("the relay said no"):
 		ok = _fail(("the line came back as \"%s\" and not as the sentence that arrived under the "
 				+ "warning. The label is being restored from a copy rather than derived.") % back)
-	elif ok and screen._status.modulate == AssayHud.status_color(AssayHud.Say.CONNECTING) \
+	elif ok and _drawn_color(screen._status) == AssayHud.status_color(AssayHud.Say.CONNECTING) \
 			and joined_colour != AssayHud.status_color(AssayHud.Say.CONNECTING):
-		ok = _fail("the warning's colour outlived its sentence: %s" % screen._status.modulate)
+		ok = _fail("the warning's colour outlived its sentence: %s" % _drawn_color(screen._status))
 	screen.queue_free()
 	return ok
 
@@ -4194,4 +4194,123 @@ func test_the_theme_poke_is_load_bearing_and_the_sweeps_coincidence_is_declared(
 	print("    ASSA-246: Label variations whose ink coincides with `Label`'s, so the sweeps cannot "
 			+ "prove the poke: %s" % [", ".join(coincident) if coincident.size() > 0 else "none"])
 	screen.queue_free()
+	return ok
+
+
+## **THE STATUS PALETTE IS REACHABLE BY A TEST AT ALL, WHICH IT WAS NOT** (ASSA-251 box 4, Maren).
+##
+## `AssayHud.status_color` returns four raw `Color` literals in `hud.gd`, OUTSIDE the theme's named
+## set. `tools/build_theme.gd` refuses to WRITE a theme whose own inks miss 4.5:1 — and these never
+## went through it, so a 3.983:1 sentence shipped past a repo that has a guard for exactly this.
+## Maren's words on why no sweep caught it: *"a contrast test could only ever check one of them."*
+##
+## THIS IS THE DECLARED HALF, asked of every state rather than the one that was broken. Measured
+## against the toast's own panel. Three of the four were always above the floor, which is the reason
+## the defect survived: it bit only `FAILED`, the one state whose job is to say the game stopped.
+func test_every_status_colour_clears_the_floor_on_the_panel_it_is_drawn_on() -> bool:
+	var ok := true
+	var panel := _panel_surface()
+	var worst := 99.0
+	var worst_named := ""
+	# EVERY VALUE OF THE ENUM, from the enum, so a fifth state added without a colour fails here.
+	for entry in AssayHud.Say.values():
+		var level: int = entry
+		var ink: Color = AssayHud.status_color(level)
+		var ratio := AssayHud.contrast_ratio(ink, panel)
+		if ratio < worst:
+			worst = ratio
+			worst_named = "level %d %s" % [level, ink]
+		if ratio < 4.5:
+			ok = _fail(("status_color(%d) is %s, which is %.3f:1 on the panel it is drawn on and "
+					+ "under the 4.5 floor build_theme.gd enforces on every other ink")
+					% [level, ink, ratio])
+	print("    ASSA-251: the dimmest declared status colour is %s at %.3f:1" % [worst_named, worst])
+	return ok
+
+
+## **A SWEEP FINALLY VISITS THE DROPPED SCREEN, AND READS WHAT IS DRAWN** (ASSA-251 boxes 2, 3, 7).
+##
+## **NO SWEEP HAS EVER BEEN TO THIS STATE**, which is the actual hole — the colour was the symptom.
+## The dropped screen is the one screen whose entire job is to tell you the game stopped, and it was
+## neither shot nor swept until Nacre photographed it for ASSA-245 and Maren measured the picture.
+##
+## **IT READS THE DRAWN COLOUR, NOT THE CONSTANT BEHIND IT.** `_drawn_color` multiplies `font_color`
+## by `modulate`, which is the whole point: the defect was `modulate = status_color(...)` multiplying
+## the theme's `INK`, so a test that read `status_color` alone — or `font_color` alone — would have
+## passed over it. Maren's control is why the cause was never in doubt: on the same shot headings
+## reached `INK` and body rows `INK_MUTED` with shortfall 0.000, so glyph rendering was not it.
+##
+## AND THE SURFACE IS THE ONE REALLY BEHIND THE LABEL (`_surface_behind`, ASSA-152's lesson), not the
+## theme's declaration of a panel: the toast is a `PanelContainer` over the world, so a reading taken
+## against the wrong backdrop would be a number about nothing.
+func test_the_dropped_screens_failure_sentence_is_drawn_above_the_floor() -> bool:
+	var joined := _joined_screen()
+	joined._process(0.016)
+	# THE DROP, THROUGH THE REAL LINK: a `Refused` frame is what kills it, the same route
+	# `test_the_join_band...` uses rather than a stage poked by hand.
+	joined._client.feed_offline('{"Refused":{"reason":"the relay went away"}}')
+	if joined._client.stage != AssayNetClient.Stage.DEAD:
+		joined.queue_free()
+		return _fail("the Refused frame did not kill the link, so the dropped screen was never built")
+	joined._process(0.016)
+	var ok := true
+	if joined._status.text == "":
+		ok = _fail("the dropped screen says nothing, so there is no sentence to measure")
+	var drawn := _drawn_color(joined._status)
+	var behind: Variant = _surface_behind(joined._status)
+	if behind == null:
+		ok = _fail("nothing behind the status label resolves a panel, so the reading has no backdrop")
+	else:
+		var ratio := AssayHud.contrast_ratio(drawn, behind as Color)
+		if ratio < 4.5:
+			ok = _fail(("the dropped screen's sentence is DRAWN at %s, %.3f:1 on %s. Maren measured "
+					+ "3.983:1 here, below even the 4.091 the board called hard on the eyes "
+					+ "(ASSA-251)") % [drawn, ratio, behind])
+		else:
+			print("    ASSA-251: dropped sentence drawn %s at %.3f:1 on %s" % [drawn, ratio, behind])
+	# AND THE MULTIPLIER IS GONE, not merely overridden. A `modulate` left behind would scale whatever
+	# the override states, which is the same defect wearing a different line.
+	if not joined._status.modulate.is_equal_approx(Color.WHITE):
+		ok = _fail(("the status label still carries modulate %s: it multiplies the colour this line "
+				+ "states, so the colour on screen is nobody's decision") % joined._status.modulate)
+	joined.queue_free()
+	return ok
+
+
+## **WITH NO SESSION THE ONE GREEN THING IS THE WAY BACK IN** (ASSA-251 box 5, Maren).
+##
+## Nacre's shot had `Mine` green AND `Play solo` green at the same moment. `minable` is the sim's bit
+## about the ROCK and knows nothing about whether a relay is listening, so with the link dead
+## pressing `Mine` reaches `_act` -> `submit` fails -> *"not submitted; join a world first"*. That is
+## the clause ASSA-233 turns on: **a green button that refuses is worse than a grey one that
+## refuses** — and here the live-looking green was the dead one.
+##
+## ASSERTED ON THE REAL TREE AND BY NAME, not as a count: "exactly one" with no name would stay green
+## if the accent moved to the wrong control, and the whole ruling is about WHICH one it is.
+func test_a_dropped_screen_has_one_primary_and_it_is_the_way_back_in() -> bool:
+	var joined := _joined_screen("14247")
+	joined._process(0.016)
+	var ok := true
+	# THE CONTROL FIRST: on 14247 the body spawns on a minable deposit, so `Mine` IS accented while
+	# the session is live. Without this the test below could pass on a world where it never was.
+	var live := _accented(joined)
+	if not live.has("Mine"):
+		joined.queue_free()
+		return _fail(("seed 14247 does not accent `Mine` while joined (%s), so the dropped arm "
+				+ "cannot show that the drop is what removed it") % [", ".join(live)])
+	joined._client.feed_offline('{"Refused":{"reason":"the relay went away"}}')
+	if joined._client.stage != AssayNetClient.Stage.DEAD:
+		joined.queue_free()
+		return _fail("the Refused frame did not kill the link")
+	joined._process(0.016)
+	var after := _accented(joined)
+	if after.size() != 1:
+		ok = _fail(("a dropped screen shows %d accented controls: %s. One green thing to press, and "
+				+ "with no session it is the way back in") % [after.size(), ", ".join(after)])
+	elif after[0] != "Play solo":
+		ok = _fail(("the dropped screen's one accented control is `%s`, not the way back in")
+				% after[0])
+	if after.has("Mine"):
+		ok = _fail("`Mine` is still green with the link dead, where pressing it can only refuse")
+	joined.queue_free()
 	return ok
