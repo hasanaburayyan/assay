@@ -74,7 +74,8 @@ stacks matches; `inv` shows the exact name for each stack.
 Look
   map                         draw the map (P marks players)
   players                     everyone in this world
-  species                     this world's minerals and their property sheets
+  species / minerals          what near you burns and what is hard enough,
+                              then this world's minerals and their sheets
   deposits                    list every deposit
   recipes                     what can be made, from what, then what you
                               could make by hand out of your own pack
@@ -510,7 +511,30 @@ impl Host {
                 s.me()?;
                 out!("{}", debug::make_offer_table(&s.world, s.me));
             }
-            "species" | "minerals" => out!("{}", debug::species_table(&s.world)),
+            // **THE QUESTION FIRST, THE TABLE AS ITS EVIDENCE** (ASSA-248;
+            // Game Director's ruling on ASSA-241). `minerals` is EXTENDED and
+            // not forked (Wren): one command, so the headless client and the
+            // Mineralogy tab cannot drift into answering differently.
+            //
+            // Every question is printed, not just fuel. The selector exists so
+            // the second one is free, and a player at a terminal has no tab
+            // strip to click — withholding "what is hard enough" behind an
+            // argument they would have to guess is the "only works with
+            // graphics" failure wearing a different hat.
+            //
+            // It needs a player because proximity is measured from where you
+            // are standing, so `me()` is asked before the headlines and the
+            // table still prints for a spectator.
+            "species" | "minerals" => {
+                if let Ok(me) = s.me() {
+                    let at = me.pos;
+                    for q in sim::Question::ALL {
+                        out!("{}", debug::proximity_headline(&s.world, s.me, q));
+                    }
+                    out!("  (asked from where you stand, ({}, {}))", at.x, at.y);
+                }
+                out!("{}", debug::species_table(&s.world));
+            }
             "buildings" => out!("{}", debug::building_table(&s.world)),
             // The headless half of ASSA-94: `buildings` answers "what have I
             // got", this answers "what do I have to go and fix", which is a

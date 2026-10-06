@@ -117,9 +117,23 @@ quit
 
     // `deposits`: the listing, where a player compares rocks. Every row of the
     // dead species says so and no row of the usable one does.
+    //
+    // **THE SELECTOR IS KEYED ON THE TABLE'S SHAPE, NOT ON ITS WORDING, and it
+    // had to be** (Marlow, ASSA-248). It was `contains(name) && contains('(')`,
+    // which picked up any line naming the rock and carrying a bracket — and
+    // `minerals` grew a headline that does exactly that ("... Meline (A) ...
+    // at (56, 40)"), so the assertion below started judging a sentence that is
+    // not a listing row at all. A listing row begins with the deposit id, which
+    // is the one thing about it that cannot drift when somebody rewords a
+    // column; a wording-based exclusion would just move the trap.
+    let is_listing_row = |l: &str| {
+        l.split_whitespace()
+            .next()
+            .is_some_and(|first| first.parse::<u32>().is_ok())
+    };
     let rows: Vec<&str> = stdout
         .lines()
-        .filter(|l| l.contains(dead.name()) && l.contains('('))
+        .filter(|l| l.contains(dead.name()) && l.contains('(') && is_listing_row(l))
         .collect();
     assert!(!rows.is_empty(), "no listing rows\n{transcript}");
     for row in &rows {
