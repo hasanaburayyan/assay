@@ -130,28 +130,31 @@ func test_an_unanswered_question_still_says_something_and_offers_no_walk() -> bo
 		return _fail(("seed 1's second question is answered now, so this arm is vacuous. It was "
 				+ "empty across 64 of 399 worlds when measured; re-measure and pick a seed"))
 	var tab := AssayMineralogy.new()
-	tab.show_answer(answers, 1)
+	# **NO SELECTOR ANY MORE** (ASSA-262): every question is rendered, so this arm reads the SECOND
+	# block rather than asking the body to show one. That is strictly better evidence -- it reads what
+	# ships instead of a path only a test takes.
+	tab.show_answer(answers)
 	# THE SIM'S SENTENCE, NOT SILENCE AND NOT A BLANK TAB.
-	if tab.headline.text != String(unanswered.get("headline", "")):
+	if tab.headline_text(1) != String(unanswered.get("headline", "")):
 		tab.free()
 		return _fail("the tab said `%s` and the sim said `%s`"
-				% [tab.headline.text, unanswered.get("headline", "")])
-	if tab.headline.text == "":
+				% [tab.headline_text(1), unanswered.get("headline", "")])
+	if tab.headline_text(1) == "":
 		tab.free()
 		return _fail("an unanswered question rendered an empty tab, which box 5 forbids")
 	# AND NOTHING TO WALK TO, SO NO BUTTON THAT COULD ONLY REFUSE (Maren, ASSA-215).
-	if tab.go_here.visible:
+	if tab.walk_shown(1):
 		tab.free()
 		return _fail("nothing answers and `go here` is still on screen")
-	if tab.target_tile() != null:
+	if tab.tile_for(1) != null:
 		tab.free()
-		return _fail("no answer, but the body kept a destination: %s" % tab.target_tile())
+		return _fail("no answer, but the body kept a destination: %s" % tab.tile_for(1))
 	# NOTHING ANSWERS IS NOT "THE ANSWER IS HERE". Two states hide the button and they are different
 	# news; a body that conflated them would report this one as underfoot (ASSA-263).
-	if tab.answer_is_underfoot():
+	if tab.underfoot_for(1):
 		tab.free()
 		return _fail("nothing answers, and the body says the answer is under the player's feet")
-	print("    ASSA-254: unanswered rendering driven by seed 1 q1 -- `%s`" % tab.headline.text)
+	print("    ASSA-254: unanswered rendering driven by seed 1 q1 -- `%s`" % tab.headline_text(1))
 	tab.free()
 	return true
 
@@ -229,29 +232,31 @@ func test_an_answer_underfoot_offers_no_walk_and_still_names_the_rock() -> bool:
 		return _fail(("seed 14247's hard-enough answer is no longer underfoot (it was Tonore (A) "
 				+ "at (56, 40), the spawn tile). Re-measure: this arm is now vacuous"))
 	var tab := AssayMineralogy.new()
-	tab.show_answer(answers, 1)
+	# BOTH QUESTIONS RENDERED (ASSA-262); this arm reads the second block, not a selected view.
+	tab.show_answer(answers)
 	# ABSENT, NOT GREYED (Maren, ASSA-241 ruling 5).
-	if tab.go_here.visible:
+	if tab.walk_shown(1):
 		tab.free()
 		return _fail(("the answer is the tile the player is standing on and `go here` is on screen: "
 				+ "a control whose only effect is to walk you where you already are"))
 	# AND ABSENT FOR THE RIGHT REASON, rather than absent because the tile went missing.
-	if not tab.answer_is_underfoot():
+	if not tab.underfoot_for(1):
 		tab.free()
 		return _fail("the body did not read the binding's `underfoot`, so the button is hidden by luck")
-	if tab.target_tile() != here["tile"]:
+	if tab.tile_for(1) != here["tile"]:
 		tab.free()
 		return _fail("the answer's tile was withheld as well as the walk: %s, sim said %s"
-				% [tab.target_tile(), here["tile"]])
-	# PRESSING IT ANYWAY SUBMITS NOTHING. A `MoveTo` to your own tile is a command on the wire that
-	# does nothing, and the guard is for the frame between a world ending and a refresh.
+				% [tab.tile_for(1), here["tile"]])
+	# PRESSING IT ANYWAY SUBMITS NOTHING, AND IT IS THE SECOND QUESTION'S OWN BUTTON. A `MoveTo` to
+	# your own tile is a command on the wire that does nothing. This also catches the bug a single
+	# shared tile would have shipped: question 2's verb walking you to question 1's rock.
 	var heard: Array = []
 	tab.go_here_pressed.connect(func(tile: Vector2i) -> void: heard.append(tile))
-	tab.go_here.pressed.emit()
+	tab._pressed(1)
 	if not heard.is_empty():
 		tab.free()
 		return _fail("a press on the hidden button still emitted %s" % heard)
-	print("    ASSA-263: 14247 q1 is underfoot at %s -- `%s`" % [here["tile"], tab.headline.text])
+	print("    ASSA-263: 14247 q1 is underfoot at %s -- `%s`" % [here["tile"], tab.headline_text(1)])
 	tab.free()
 	return true
 
@@ -341,3 +346,101 @@ func test_the_tab_body_owns_no_colour_and_no_position() -> bool:
 			return _fail(("the tab body contains `%s`: a tab body owns neither its colour nor its "
 					+ "place, the strip does (ASSA-247)") % forbidden)
 	return true
+
+
+## **BOTH QUESTIONS ARE RENDERED, STACKED, IN THE SIM'S ORDER, WITH NO SELECTOR** (ASSA-262, Maren's
+## ruling 3 on ASSA-241).
+##
+## The body used to take a `which` argument and show one answer. **A parameter that picks IS the
+## selector she ruled against**, and the docstring defended it by misquoting her twice -- calling the
+## second question "a design call nobody has made" when she had made it, and citing a ruling about
+## `asked` living in the sim's SENTENCE as if it were about this UI.
+##
+## **ASSERTED AGAINST THE SIM'S OWN ARRAY, not against the number 2.** `Question::ALL` is the sim's
+## to grow; a test that hardcoded two would pass the day a third question arrived and nothing drew it.
+func test_both_questions_are_stacked_in_the_sims_order_with_no_selector() -> bool:
+	var made := _world("14247")
+	if made.is_empty():
+		return _fail("could not stand seed 14247 up through the binding")
+	var sim: AssaySimHost = made[0]
+	var players: Array = made[1]
+	if players.is_empty():
+		return _fail("the welcome carried no player")
+	var me: int = int((players[0] as Dictionary).get("id", -1))
+	var answers := sim.proximity_answers(me)
+	if answers.size() < 2:
+		return _fail(("the sim answered %d questions, so `stacked` cannot be distinguished from "
+				+ "`one`. Re-measure: Question::ALL has shrunk") % answers.size())
+	var tab := AssayMineralogy.new()
+	tab.show_answer(answers)
+	var ok := true
+	# ONE BLOCK PER ANSWER, no more and no fewer.
+	if tab.question_count() != answers.size():
+		ok = _fail("the sim answered %d questions and the body built %d blocks"
+				% [answers.size(), tab.question_count()])
+	# EVERY SENTENCE RENDERED, AND IN THE SIM'S ORDER. Compared by index, so a body that drew both
+	# but swapped them fails here.
+	for i in answers.size():
+		var want := String((answers[i] as Dictionary)["headline"])
+		if tab.headline_text(i) != want:
+			ok = _fail("block %d says `%s` and the sim's answer %d is `%s`"
+					% [i, tab.headline_text(i), i, want])
+	# AND EVERY CONTROL IS STILL ABOVE THE EVIDENCE LIST (Maren's ruling 5). Asked of the real tree:
+	# the evidence box must be the LAST child, so no question's verb can end up under the rocks.
+	var kids := tab.get_children()
+	if kids[kids.size() - 1] != tab.evidence:
+		ok = _fail(("the evidence list is not the last child, so a control sits below it: last is "
+				+ "`%s`") % kids[kids.size() - 1])
+	tab.free()
+	return ok
+
+
+## **A SECOND QUESTION'S VERB WALKS TO ITS OWN ROCK, NOT THE FIRST'S** (ASSA-262).
+##
+## This is the bug a single shared `_tile` would have shipped the moment the body stopped asking one
+## question: two buttons, one destination. The tile is bound per block at build time, so the only way
+## to get this wrong is to go back to one field -- and then this test says so by name.
+##
+## It needs a world where BOTH questions have a walk, which is not every world, so the arms it cannot
+## reach are reported rather than silently skipped.
+func test_each_questions_walk_carries_that_questions_own_tile() -> bool:
+	for seed in ["777042", "2191", "19", "23", "31", "44", "57", "61", "73", "97"]:
+		var made := _world(seed)
+		if made.is_empty():
+			continue
+		var sim: AssaySimHost = made[0]
+		var players: Array = made[1]
+		if players.is_empty():
+			continue
+		var me: int = int((players[0] as Dictionary).get("id", -1))
+		var answers := sim.proximity_answers(me)
+		if answers.size() < 2:
+			continue
+		var a: Dictionary = answers[0]
+		var b: Dictionary = answers[1]
+		# BOTH WALKABLE AND TO DIFFERENT TILES, or this proves nothing.
+		if a["tile"] == null or b["tile"] == null:
+			continue
+		if bool(a["underfoot"]) or bool(b["underfoot"]):
+			continue
+		if a["tile"] == b["tile"]:
+			continue
+		var tab := AssayMineralogy.new()
+		tab.show_answer(answers)
+		var heard: Array = []
+		tab.go_here_pressed.connect(func(tile: Vector2i) -> void: heard.append(tile))
+		tab._pressed(1)
+		var ok := true
+		if heard.size() != 1:
+			ok = _fail("seed %s: the second question's verb emitted %d tiles" % [seed, heard.size()])
+		elif heard[0] != b["tile"]:
+			ok = _fail(("seed %s: the second question's verb would walk to %s, which is the FIRST "
+					+ "question's rock. The sim named %s for this one")
+					% [seed, heard[0], b["tile"]])
+		if ok:
+			print("    ASSA-262: seed %s q0 -> %s, q1 -> %s, each verb its own"
+					% [seed, a["tile"], b["tile"]])
+		tab.free()
+		return ok
+	return _fail(("no seed in the list gave both questions a distinct walkable answer, so this arm "
+			+ "never ran. Widen the list rather than trusting it"))

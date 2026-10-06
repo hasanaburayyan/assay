@@ -38,10 +38,28 @@
 class_name AssayMineralogy
 extends VBoxContainer
 
-## The question this body asks. `AssaySim.proximity_answers` returns one answer per
-## `sim::proximity::Question` in the sim's own order, and `Burns` is first -- it is the question
-## Rainy asked ("what is nearby that's viable as fuel"). `HardEnough` exists in the sim so that the
-## second question costs nothing; asking it is a design call nobody has made, so this body asks one.
+## **BOTH QUESTIONS, STACKED, IN THE SIM'S OWN ORDER — AND THIS BODY USED TO ASK ONE** (ASSA-262,
+## Maren's ruling 3 on ASSA-241).
+##
+## **THE COMMENT THAT STOOD HERE MISQUOTED HER TWICE AND IS WHY THE DEFECT LOOKED LIKE A DECISION.**
+## It said *"Maren's ruling is that the headline is a selector rather than a fuel string"* — that was
+## about `asked` living in the SIM's sentence, never about this UI — and it called the second question
+## *"a design call nobody has made"* when she had made it at 18:45 UTC. A stale ruling in a docstring
+## is how a defect gets rebuilt by the next reader in good faith, so it is corrected in the same
+## change as the code rather than left for someone to trust.
+##
+## **THERE IS NO SELECTOR.** `AssaySim.proximity_answers` returns one answer per
+## `sim::proximity::Question`, and every one of them is rendered, in the order the sim gave them.
+## `Burns` is first because the sim puts it first — it is the question Rainy asked ("what is nearby
+## that's viable as fuel"). Nothing here picks.
+##
+## **AND MAREN'S WORLDGEN FINDING, written where the next builder reads it rather than in an item
+## nobody opens:** `Burns` is unanswered in **0 of 399 worlds**, because worldgen always puts the
+## starter material and a hand-lit fuel in the two chunks beside spawn and rerolls the roster until
+## the starter ladder holds. **So a new player is never told "nothing here burns", and this tab must
+## not be built around an empty fuel headline it will never reach.** The empty state is real and
+## belongs to the other question: `HardEnough` is unanswered in 64 of those 399. Do not go seed-
+## hunting for an empty `Burns` — there is no 400th seed.
 const BURNS := 0
 
 ## The air between the answer and its evidence. The headline is a sentence and the rows are a table;
@@ -80,6 +98,25 @@ var _tile: Variant = null
 ## tell "a rock to walk to" from "you are on it".
 var _underfoot := false
 
+## **EVERY QUESTION'S BLOCK, THE FIRST ONE BEING `headline` AND `go_here` THEMSELVES** (ASSA-262).
+##
+## One entry per answer the sim sends: `{headline: Label, walk: Button, tile: Variant,
+## underfoot: bool}`. Question 0 reuses the nodes above rather than getting a copy, because the strip
+## and the suite both wire to `headline` / `go_here` / `target_tile()` and Wren's routing is that this
+## body's public surface does not move while Nacre's `add_tab` is in flight.
+##
+## **BUILT ONCE PER COUNT, NOT PER REFRESH.** `show_answer` runs from Nacre's `_refresh_mineralogy`
+## every tick, and rebuilding nodes there would destroy a button under the pointer — the defect this
+## file's own neighbours name twice. So blocks are added only when the sim's question count changes,
+## which in practice is once.
+var _blocks: Array[Dictionary] = []
+
+## Where blocks after the first live, so every control still sits ABOVE the evidence list (Maren's
+## ruling 5). A container rather than loose children: `air` and `evidence` are already added, and
+## inserting between siblings by index is the kind of arithmetic that goes wrong when someone adds a
+## row later.
+var _more := VBoxContainer.new()
+
 signal go_here_pressed(tile: Vector2i)
 
 
@@ -98,8 +135,13 @@ func _init() -> void:
 	# SIZED TO ITS WORDS, LEFT UNDER THE SENTENCE IT ACTS ON. A verb stretched to the panel reads as
 	# the panel's purpose.
 	go_here.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	go_here.pressed.connect(_pressed)
+	go_here.pressed.connect(_pressed.bind(0))
 	add_child(go_here)
+	# EVERY LATER QUESTION GOES HERE, above the air and the evidence.
+	_more.add_theme_constant_override("separation", 4)
+	_more.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	add_child(_more)
+	_blocks.append({"headline": headline, "walk": go_here, "tile": null, "underfoot": false})
 	var air := Control.new()
 	air.custom_minimum_size = Vector2(0.0, EVIDENCE_AIR)
 	add_child(air)
@@ -113,35 +155,72 @@ func _init() -> void:
 ## `answers` is `AssaySim.proximity_answers` straight through. An empty array is the no-world and
 ## no-such-player case, and it gets the one sentence this file owns -- the sim's own "no such player"
 ## line is about a missing player and would read as a mineralogy answer in this slot.
-## `which` IS THE QUESTION SELECTOR, NOT A TEST HOOK. `Question::ALL` exists in the sim so that the
-## second question costs nothing, and Maren's ruling is that the headline is a selector rather than a
-## fuel string. The tab asks `BURNS` today because that is the question Rainy asked. It is also the
-## only way to render the EMPTY answer against real sim data: measured over 399 worlds, `Burns` is
-## never unanswered -- worldgen guarantees a hand-lit fuel beside spawn -- while `HardEnough` is
-## unanswered in 64 of them. See the note on ASSA-254.
-func show_answer(answers: Array, which: int = BURNS) -> void:
-	if answers.size() <= which:
+## **EVERY QUESTION THE SIM ANSWERED, STACKED, NO SELECTOR** (ASSA-262, Maren's ruling 3). This took a
+## `which` argument and rendered one; the argument is gone, because a parameter that picks IS the
+## selector she ruled against.
+func show_answer(answers: Array) -> void:
+	if answers.is_empty():
+		# NO WORLD. One sentence in the first block and the rest stood down -- the sim's own "no such
+		# player" line is about a missing player and would read as a mineralogy answer in this slot.
 		headline.text = "no world yet — join one and what is near you is answered here"
 		_tile = null
 		_underfoot = false
 		go_here.visible = false
+		for i in range(1, _blocks.size()):
+			(_blocks[i]["headline"] as Label).text = ""
+			(_blocks[i]["walk"] as Button).visible = false
 		return
-	var answer: Dictionary = answers[which]
-	# VERBATIM. No formatting, no capitalisation, no appended full stop: the CLI prints this same
-	# string and a player who read both must not have to work out whether two phrasings mean one
-	# thing (the ASSA-135 rule, one surface at two widths).
-	#
-	# INDEXED, NOT `get(key, default)`: a sim fact that failed to cross should abort this function
-	# loudly, not render a default nobody chose.
-	headline.text = String(answer["headline"])
-	# ABSENT, NOT (0,0). `tile` is nil in the binding whenever nothing answers.
-	var target: Variant = answer["tile"]
-	_tile = target
-	_underfoot = bool(answer["underfoot"])
-	# **TWO FACTS, TWO REASONS THERE IS NO WALK** (ASSA-263). `target == null` is "nothing answers";
-	# `_underfoot` is "the answer is here, and the sentence above already says so". The second one
-	# ships a live button that walks you to your own feet if it is left out — which it was.
-	go_here.visible = target != null and not _underfoot
+	_fit_blocks(answers.size())
+	for i in answers.size():
+		var answer: Dictionary = answers[i]
+		var block: Dictionary = _blocks[i]
+		# VERBATIM. No formatting, no capitalisation, no appended full stop: the CLI prints this same
+		# string and a player who read both must not have to work out whether two phrasings mean one
+		# thing (the ASSA-135 rule, one surface at two widths).
+		#
+		# INDEXED, NOT `get(key, default)`: a sim fact that failed to cross should abort this function
+		# loudly, not render a default nobody chose.
+		(block["headline"] as Label).text = String(answer["headline"])
+		# ABSENT, NOT (0,0). `tile` is nil in the binding whenever nothing answers.
+		var target: Variant = answer["tile"]
+		var underfoot := bool(answer["underfoot"])
+		block["tile"] = target
+		block["underfoot"] = underfoot
+		# **TWO FACTS, TWO REASONS THERE IS NO WALK** (ASSA-263). `target == null` is "nothing
+		# answers"; `underfoot` is "the answer is here, and the sentence above already says so". The
+		# second one ships a live button that walks you to your own feet if it is left out — which it
+		# was.
+		(block["walk"] as Button).visible = target != null and not underfoot
+		if i == BURNS:
+			# THE FIRST QUESTION'S FACTS STAY ON THE OLD FIELDS, because `target_tile()` and
+			# `answer_is_underfoot()` are the surface the strip and the suite already read.
+			_tile = target
+			_underfoot = underfoot
+
+
+## ONE BLOCK PER QUESTION, ADDED ONLY WHEN THE COUNT GROWS.
+##
+## The count is the sim's (`Question::ALL`), so this runs once in practice. It is a function rather
+## than a loop in `show_answer` because the thing that must never happen -- rebuilding a button under
+## the player's pointer every tick -- is easier to see guarded in one place.
+##
+## A LATER QUESTION'S CONTROLS LOOK EXACTLY LIKE THE FIRST'S: same `Heading` headline, same `Quiet`
+## verb sized to its words. Nothing distinguishes question 2 but the sim's own sentence, which already
+## names which question it answers ("what near me is hard enough: ...").
+func _fit_blocks(want: int) -> void:
+	while _blocks.size() < want:
+		var head := Label.new()
+		head.theme_type_variation = &"Heading"
+		head.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		head.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_more.add_child(head)
+		var walk := Button.new()
+		walk.text = go_here.text
+		walk.theme_type_variation = &"Quiet"
+		walk.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		walk.pressed.connect(_pressed.bind(_blocks.size()))
+		_more.add_child(walk)
+		_blocks.append({"headline": head, "walk": walk, "tile": null, "underfoot": false})
 
 
 ## The tile the answer is about, for a test that wants to assert the button's payload without
@@ -158,11 +237,41 @@ func answer_is_underfoot() -> bool:
 	return _underfoot
 
 
-func _pressed() -> void:
+## HOW MANY QUESTIONS THIS BODY IS CURRENTLY SHOWING, for a test that asserts BOTH are rendered
+## rather than trusting that the loop ran.
+func question_count() -> int:
+	return _blocks.size()
+
+
+## ONE QUESTION'S RENDERED SENTENCE, its walk visibility, its tile and its underfoot bit. Read off the
+## real controls so a test cannot pass against a field the screen does not use.
+func headline_text(which: int) -> String:
+	return "" if which >= _blocks.size() else (_blocks[which]["headline"] as Label).text
+
+
+func walk_shown(which: int) -> bool:
+	return false if which >= _blocks.size() else (_blocks[which]["walk"] as Button).visible
+
+
+func tile_for(which: int) -> Variant:
+	return null if which >= _blocks.size() else _blocks[which]["tile"]
+
+
+func underfoot_for(which: int) -> bool:
+	return false if which >= _blocks.size() else bool(_blocks[which]["underfoot"])
+
+
+## **THE BUTTON THAT WAS PRESSED CARRIES ITS OWN QUESTION'S TILE** (ASSA-262). Bound at build time, so
+## a second question's verb cannot walk you to the first question's rock -- which is the bug a single
+## shared `_tile` would have shipped the moment the body stopped asking one question.
+func _pressed(which: int) -> void:
 	# NO ARITHMETIC, AND NO GUESS AT A DESTINATION. If there is no walk in the answer the button is
 	# not on screen; this guard is for the frame between a world ending and a refresh. It repeats the
 	# visibility rule rather than trusting it, because a `MoveTo` to the tile you are standing on is
 	# a command on the wire that does nothing.
-	if _tile == null or _underfoot:
+	if which >= _blocks.size():
 		return
-	go_here_pressed.emit(_tile as Vector2i)
+	var target: Variant = _blocks[which]["tile"]
+	if target == null or bool(_blocks[which]["underfoot"]):
+		return
+	go_here_pressed.emit(target as Vector2i)
