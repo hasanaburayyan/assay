@@ -1,20 +1,19 @@
 extends RefCounted
 ## **THE MINERALOGY TAB SAYS WHAT THE SIM SAID AND NOTHING ELSE** (ASSA-254, the client leg of
-## ASSA-241; its three gaps against Maren's rulings are ASSA-262).
+## ASSA-241).
 ##
-## **DRIVEN BY A REAL SIM, NOT BY A DICTIONARY I TYPED.** A test that hands `show_answers` a literal
+## **DRIVEN BY A REAL SIM, NOT BY A DICTIONARY I TYPED.** A test that hands `show_answer` a literal
 ## `{"headline": "..."}` proves the Label is wired and nothing about the feature: the whole claim of
-## this item is that the lines on screen are `debug::proximity_headline` with no client in between,
-## so the fixture has to be the binding's real output on a real world. `AssaySimHost
-## .fresh_welcome_json` is how every other suite here stands a world up.
+## this item is that the line on screen is `debug::proximity_headline` with no client in between, so
+## the fixture has to be the binding's real output on a real world. `AssaySimHost.fresh_welcome_json`
+## is how every other suite here stands a world up.
 ##
-## WHAT IS NOT TESTED HERE AND WHERE IT LIVES: that a headline is byte-identical to the sim's
-## sentence, and that `walk_to` is absent for both of its reasons, are asserted in
-## `sim-godot/src/lib.rs` (`the_tabs_headline_and_walk_are_the_sims_own_answer`), because that is
-## the one crate where the sim's string and what the binding sends can both be reached. This file
-## owns the half that is the client's: that the body renders every sentence verbatim, stacks them,
-## puts the evidence under them, keeps every control above that evidence, and never invents a
-## destination.
+## WHAT IS NOT TESTED HERE AND WHERE IT LIVES: that the headline is byte-identical to the sim's
+## sentence is asserted in `sim-godot/src/lib.rs`
+## (`the_tabs_headline_and_tile_are_the_sims_own_answer`), because that is the one crate where the
+## sim's string and what the binding sends can both be reached. This file owns the half that is the
+## client's: that the body renders the sentence verbatim, puts the evidence under it, and never
+## invents a destination.
 
 var runner = null
 
@@ -32,19 +31,6 @@ func _fail(reason: String) -> bool:
 	return false
 
 
-## **FREE THE BODY ONLY AFTER THE MESSAGE IS BUILT.** `Node.free()` is immediate and GDScript
-## evaluates a format's argument list at the call, so `tab.free()` on the line above a `_fail` that
-## quotes the tab destroys the only useful half of the failure: the statement errors on a freed
-## object, `_fail` is never reached, and the runner reports "returned false and said nothing".
-##
-## **FOUND BY MUTATING THIS FILE'S OWN SUBJECT.** Four assertions here caught their mutation and
-## could not say what they had caught. One call rather than two lines, so the order cannot be got
-## wrong again.
-func _fail_and_free(node: Node, reason: String) -> bool:
-	node.free()
-	return _fail(reason)
-
-
 ## A WORLD AND ITS LOCAL PLAYER, through the host the client really uses.
 ##
 ## `AssaySimHost`, not `AssaySim`: the binding class is abstract from GDScript's side and every
@@ -57,122 +43,45 @@ func _world(seed_text: String) -> Array:
 	return [host, host.players()]
 
 
-## Every answer the sim gives the local player of `seed_text`, or an empty array if the world or the
-## player could not be stood up.
-func _answers(seed_text: String) -> Array:
-	var made := _world(seed_text)
+## **THE FIRST LINE IS THE SIM'S SENTENCE, CHARACTER FOR CHARACTER.**
+##
+## Not "contains", not "starts with": the body may not append a full stop, capitalise a species name
+## or wrap the clause in prose of its own. The CLI prints this same string, and a player who read
+## both must not have to work out whether two phrasings mean one thing (the ASSA-135 rule).
+func test_the_headline_is_the_sims_sentence_verbatim() -> bool:
+	var made := _world("14247")
 	if made.is_empty():
-		return []
+		return _fail("could not stand a world up through the binding")
 	var sim: AssaySimHost = made[0]
 	var players: Array = made[1]
 	if players.is_empty():
-		return []
-	return sim.proximity_answers(int((players[0] as Dictionary).get("id", -1)))
-
-
-## **EVERY LINE IS THE SIM'S SENTENCE, CHARACTER FOR CHARACTER, AND BOTH QUESTIONS ARE ON SCREEN.**
-##
-## Not "contains", not "starts with": the body may not append a full stop, capitalise a species name
-## or wrap a clause in prose of its own. The CLI prints these same strings, and a player who read
-## both must not have to work out whether two phrasings mean one thing (the ASSA-135 rule).
-##
-## **THE STACKING IS THE OTHER HALF, AND IT IS ASSA-262's GAP 3** (Maren's ruling 3): the sim prints
-## every `Question::ALL` entry and so does this body. It rendered exactly one until ASSA-262, so a
-## test that only read line one was green over half the answer being missing.
-func test_every_question_is_stacked_and_said_verbatim() -> bool:
-	var answers := _answers("14247")
-	if answers.size() < 2:
-		return _fail(("seed 14247 answered %d questions; `Question::ALL` has had two since "
-				+ "ASSA-248, so the stacking this test exists for cannot be reached")
-				% answers.size())
-	var tab := AssayMineralogy.new()
-	tab.show_answers(answers)
-	if tab.shown_count() != answers.size():
-		return _fail_and_free(tab, "the sim answered %d questions and the tab shows %d"
-				% [answers.size(), tab.shown_count()])
-	for index in answers.size():
-		var expected := String((answers[index] as Dictionary).get("headline", ""))
-		if expected == "":
-			return _fail_and_free(tab, "the binding sent an empty headline, which the sim never produces")
-		if tab.headline_at(index).text != expected:
-			return _fail_and_free(tab, "answer %d reads `%s` and the sim said `%s`"
-					% [index, tab.headline_at(index).text, expected])
-	# AND THE ANSWERS ARE THE FIRST THING IN THE BODY, which is the ruling: a tab that opens on a
-	# grid makes the player do the collating again. Asked of child order, not of a comment.
-	if tab.get_child(0) != tab.answers_box:
-		return _fail_and_free(tab, "the answers are not the first thing in the body: child 0 is `%s`"
-				% tab.get_child(0).name)
-	if tab.headline_at(0).get_parent() != tab.answers_box:
-		return _fail_and_free(tab, "the first headline is not inside the answers box")
-	tab.free()
-	return true
-
-
-## **NO SELECTOR** (Maren's ruling 3: *"with exactly two, a selector hides half the answer behind a
-## click and spends two controls on furniture"*).
-##
-## Asked as a count of the body's own controls: one walk control per answer and nothing else. A
-## dropdown, a tab bar or a pair of question buttons would all fail here, and all three are the
-## shape this body had an argument for before the ruling landed.
-func test_the_body_spends_no_control_on_choosing_a_question() -> bool:
-	var answers := _answers("14247")
-	if answers.size() < 2:
-		return _fail("seed 14247 answered %d questions" % answers.size())
-	var tab := AssayMineralogy.new()
-	tab.show_answers(answers)
-	var controls := _controls_under(tab)
-	if controls.size() != answers.size():
-		var names := []
-		for control in controls:
-			names.append("%s(%s)" % [control.get_class(), control.name])
-		return _fail_and_free(tab, ("the body holds %d controls for %d answers, so something is furniture: %s")
-				% [controls.size(), answers.size(), ", ".join(names)])
-	for control in controls:
-		if not (control is Button):
-			return _fail_and_free(tab, "a control in this body is a `%s`" % control.get_class())
-	tab.free()
-	return true
-
-
-## **EVERY CONTROL SITS ABOVE THE EVIDENCE LIST** (Maren's ruling 5, and the reason is a measurement
-## of Nacre's: the list is ~651px against a 313px worst-case tab budget, so a control under it is
-## below the fold and fails Wren's rule outright).
-##
-## Asked of the tree rather than of pixels, because this body owns no position and a layout pass
-## would report zeros here: no control is a descendant of the evidence box, and the box that holds
-## them all comes before it among the body's children.
-func test_every_control_is_above_the_evidence_list() -> bool:
-	var answers := _answers("14247")
+		return _fail("the welcome carried no player, so there is nobody to answer for")
+	var me: int = int((players[0] as Dictionary).get("id", -1))
+	var answers := sim.proximity_answers(me)
 	if answers.is_empty():
 		return _fail("the binding answered nothing for a player who is in the world")
 	var tab := AssayMineralogy.new()
-	tab.show_answers(answers)
-	# The evidence box gets rows, as the real caller gives it: a control hiding among them is the
-	# failure this test is for.
-	for i in 3:
-		var row := Label.new()
-		row.text = "a species row"
-		tab.evidence.add_child(row)
-	var below := _controls_under(tab.evidence)
-	if not below.is_empty():
-		return _fail_and_free(tab, "%d control(s) sit inside the evidence list, which is below the fold"
-				% below.size())
-	var children := tab.get_children()
-	if children.find(tab.answers_box) > children.find(tab.evidence):
-		return _fail_and_free(tab, "the answers and their controls sit below the evidence list")
-	for control in _controls_under(tab):
-		if control.get_parent() != tab.answers_box:
-			return _fail_and_free(tab, "control `%s` is not inside the answers box, so nothing keeps it above "
-					% control.name + "the list")
+	tab.show_answer(answers)
+	var expected := String((answers[0] as Dictionary).get("headline", ""))
+	if expected == "":
+		return _fail("the binding sent an empty headline, which the sim never produces")
+	if tab.headline.text != expected:
+		return _fail(("the tab's first line is `%s` and the sim said `%s`")
+				% [tab.headline.text, expected])
+	# AND IT IS THE FIRST THING IN THE BODY, which is the ruling: a tab that opens on a grid makes
+	# the player do the collating again. Asked of child order, not of a comment.
+	if tab.get_child(0) != tab.headline:
+		return _fail("the headline is not the first child: child 0 is `%s`"
+				% tab.get_child(0).name)
 	tab.free()
 	return true
 
 
-## **THE EVIDENCE GOES UNDER THE ANSWERS, AND AN ANSWER IS NOT IN THE EVIDENCE BOX.**
+## **THE EVIDENCE GOES UNDER THE ANSWER, AND THE ANSWER IS NOT IN THE EVIDENCE BOX.**
 ##
 ## The failure this catches is a body that grows a second copy of the species rows, or one that puts
-## a headline inside the scrolling list where it would scroll away from the question it answers.
-func test_the_species_rows_sit_under_the_headlines_and_not_in_place_of_them() -> bool:
+## the headline inside the scrolling list where it would scroll away from the question it answers.
+func test_the_species_rows_sit_under_the_headline_and_not_in_place_of_it() -> bool:
 	var tab := AssayMineralogy.new()
 	var rows := 0
 	for i in 3:
@@ -181,12 +90,12 @@ func test_the_species_rows_sit_under_the_headlines_and_not_in_place_of_them() ->
 		tab.evidence.add_child(row)
 		rows += 1
 	if tab.evidence.get_child_count() != rows:
-		return _fail_and_free(tab, "the evidence box did not take the rows it was given")
-	# The headlines are NOT among them, and the evidence box is below them in the body.
+		return _fail("the evidence box did not take the rows it was given")
+	# The headline is NOT one of them, and the evidence box is below it in the body.
 	if tab.evidence.get_parent() != tab:
-		return _fail_and_free(tab, "the evidence box is not a child of the body")
-	if tab.get_children().find(tab.evidence) < tab.get_children().find(tab.answers_box):
-		return _fail_and_free(tab, "the evidence sits ABOVE the answers it is evidence for")
+		return _fail("the evidence box is not a child of the body")
+	if tab.get_children().find(tab.evidence) < tab.get_children().find(tab.headline):
+		return _fail("the evidence sits ABOVE the answer it is evidence for")
 	tab.free()
 	return true
 
@@ -196,201 +105,218 @@ func test_the_species_rows_sit_under_the_headlines_and_not_in_place_of_them() ->
 ## **AND IT IS DRIVEN BY A REAL UNANSWERED WORLD, WHICH TOOK MEASURING TO FIND.** My first version
 ## walked ten seeds expecting one of them to have nothing that burns. All ten answered, and so did
 ## every one of 399: **`Burns` is never unanswered, because worldgen guarantees a hand-lit fuel in
-## the two chunks beside spawn** and rerolls the roster until the starter ladder holds. `HardEnough`
-## is unanswered in 64 of those 399, and both of the sim's two empty sentences occur there --
-## "nothing in this world does" (seeds 1, 2) and "no patch is rich enough" (seeds 9, 11). So the
-## empty RENDERING is exercised through the sim's own words on a seed known to produce them, rather
-## than through a dictionary I typed.
-##
-## **WHAT THAT MEASUREMENT MEANS FOR WHOEVER BUILDS HERE NEXT, in Maren's words:** a new player is
-## never told "nothing here burns", because the starter ladder is an onboarding guarantee. So this
-## tab must not be built around an empty fuel headline it will never reach; the empty state is real
-## and belongs to the other question.
+## the two chunks beside spawn.** `HardEnough` is unanswered in 64 of those 399, and both of the
+## sim's two empty sentences occur there -- "nothing in this world does" (seeds 1, 2) and "no patch
+## is rich enough" (seeds 9, 11). So the empty RENDERING is exercised through the sim's own words on
+## a seed known to produce them, rather than through a dictionary I typed.
 ##
 ## The body does not branch on which question it was handed, which is why this covers box 5: the
-## empty path through `show_answers` is one path.
+## empty path through `show_answer` is one path.
 func test_an_unanswered_question_still_says_something_and_offers_no_walk() -> bool:
-	var answers := _answers("1")
+	var made := _world("1")
+	if made.is_empty():
+		return _fail("could not stand seed 1 up through the binding")
+	var sim: AssaySimHost = made[0]
+	var players: Array = made[1]
+	if players.is_empty():
+		return _fail("the welcome carried no player")
+	var me: int = int((players[0] as Dictionary).get("id", -1))
+	var answers := sim.proximity_answers(me)
 	if answers.size() < 2:
 		return _fail("seed 1 answered %d questions, so the unanswered arm cannot be reached"
 				% answers.size())
 	var unanswered: Dictionary = answers[1]
-	if unanswered.get("walk_to") != null:
+	if unanswered.get("tile") != null:
 		return _fail(("seed 1's second question is answered now, so this arm is vacuous. It was "
 				+ "empty across 64 of 399 worlds when measured; re-measure and pick a seed"))
 	var tab := AssayMineralogy.new()
-	tab.show_answers(answers)
+	tab.show_answer(answers, 1)
 	# THE SIM'S SENTENCE, NOT SILENCE AND NOT A BLANK TAB.
-	if tab.headline_at(1).text != String(unanswered.get("headline", "")):
-		return _fail_and_free(tab, "the tab said `%s` and the sim said `%s`"
-				% [tab.headline_at(1).text, unanswered.get("headline", "")])
-	if tab.headline_at(1).text == "":
-		return _fail_and_free(tab, "an unanswered question rendered an empty line, which box 5 forbids")
+	if tab.headline.text != String(unanswered.get("headline", "")):
+		tab.free()
+		return _fail("the tab said `%s` and the sim said `%s`"
+				% [tab.headline.text, unanswered.get("headline", "")])
+	if tab.headline.text == "":
+		tab.free()
+		return _fail("an unanswered question rendered an empty tab, which box 5 forbids")
 	# AND NOTHING TO WALK TO, SO NO BUTTON THAT COULD ONLY REFUSE (Maren, ASSA-215).
-	if tab.walk_control_at(1).visible:
-		return _fail_and_free(tab, "nothing answers and `go here` is still on screen")
-	if tab.walk_target_at(1) != null:
-		return _fail_and_free(tab, "no answer, but the body kept a destination: %s" % tab.walk_target_at(1))
-	print("    ASSA-254: unanswered rendering driven by seed 1 q1 -- `%s`" % tab.headline_at(1).text)
+	if tab.go_here.visible:
+		tab.free()
+		return _fail("nothing answers and `go here` is still on screen")
+	if tab.target_tile() != null:
+		tab.free()
+		return _fail("no answer, but the body kept a destination: %s" % tab.target_tile())
+	# NOTHING ANSWERS IS NOT "THE ANSWER IS HERE". Two states hide the button and they are different
+	# news; a body that conflated them would report this one as underfoot (ASSA-263).
+	if tab.answer_is_underfoot():
+		tab.free()
+		return _fail("nothing answers, and the body says the answer is under the player's feet")
+	print("    ASSA-254: unanswered rendering driven by seed 1 q1 -- `%s`" % tab.headline.text)
 	tab.free()
 	return true
 
 
-## **AN ANSWER UNDERFOOT SAYS SO AND OFFERS NO WALK EITHER -- ASSA-262's GAP 1.**
-##
-## This is the state that shipped broken, and it is not the empty state: the sim's search DOES name
-## a tile, and it is the one the player is standing on (`NearestDeposit.heading == None`, which
-## `proximity_headline` renders as *"right where you are standing"*). The merged body gated its
-## button on that tile being present, so on seed 14247's hard-enough answer the player got a button
-## that walked them to their own feet -- the dead control that looks live, which ASSA-247 box 6
-## forbids. Maren found it by reading the file against her ruling; nothing here could, because the
-## suite had two arms where the feature has three.
-##
-## **THE SEED IS FOUND BY THE SIM'S OWN WORDS, NOT ASSUMED.** A test may read the sentence -- the
-## BODY may not -- so the fixture is the first answer in a scanned range whose sentence says the
-## player has arrived. If none does, this fails loudly rather than passing over an arm that never
-## ran.
-func test_an_answer_underfoot_says_so_and_offers_no_walk() -> bool:
-	const ARRIVED := "right where you are standing"
-	var scanned := ["14247", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
-	for seed_text in scanned:
-		var answers := _answers(seed_text)
-		for index in answers.size():
-			var answer: Dictionary = answers[index]
-			if not String(answer.get("headline", "")).contains(ARRIVED):
-				continue
-			# THE BINDING'S HALF: the sim named a tile and still offers no walk.
-			if answer.get("walk_to") != null:
-				return _fail(("seed %s q%d says the player has arrived and the binding still sent "
-						+ "a walk to %s: ASSA-262's gap is back in `proximity_facts`")
-						% [seed_text, index, answer.get("walk_to")])
-			var tab := AssayMineralogy.new()
-			tab.show_answers(answers)
-			# THE BODY'S HALF: the sentence is rendered, and the control is absent, not greyed.
-			if tab.headline_at(index).text != String(answer.get("headline", "")):
-				return _fail_and_free(tab, "the underfoot answer reads `%s` and the sim said `%s`"
-						% [tab.headline_at(index).text, answer.get("headline", "")])
-			if not tab.headline_at(index).visible:
-				return _fail_and_free(tab, "the underfoot answer is not on screen at all")
-			if tab.walk_control_at(index).visible:
-				return _fail_and_free(tab, ("seed %s q%d: the answer is underfoot and `go here` is on screen, "
-						+ "which would walk the player to the tile they stand on")
-						% [seed_text, index])
-			if tab.walk_control_at(index).disabled:
-				return _fail_and_free(tab, "the walk control is greyed rather than absent, which Maren ruled "
-						+ "against: a dead control that looks live")
-			if tab.walk_target_at(index) != null:
-				return _fail_and_free(tab, "the body kept a destination for an answer underfoot: %s"
-						% tab.walk_target_at(index))
-			print("    ASSA-262: underfoot arm driven by seed %s q%d -- `%s`"
-					% [seed_text, index, tab.headline_at(index).text])
-			tab.free()
-			return true
-	return _fail(("no answer across %d seeds says `%s`, so the arm ASSA-262 exists for never ran. "
-			+ "Spawning on an answering patch was measurable on seed 14247 when this was written; "
-			+ "re-measure and widen the scan rather than deleting this test")
-			% [scanned.size(), ARRIVED])
-
-
-## **AND AN ANSWER SOMEWHERE ELSE OFFERS THE WALK**, which is the third arm of the same branch.
-## Without this, hiding `go here` unconditionally would pass both tests above.
-func test_an_answer_elsewhere_offers_the_walk_to_the_sims_tile() -> bool:
-	var answers := _answers("14247")
+## **AND AN ANSWERED WORLD OFFERS THE WALK**, which is the other half of the same branch. Without
+## this, hiding `go here` unconditionally would pass the test above.
+func test_an_answered_question_offers_the_walk_to_the_sims_tile() -> bool:
+	var made := _world("14247")
+	if made.is_empty():
+		return _fail("could not stand seed 14247 up through the binding")
+	var sim: AssaySimHost = made[0]
+	var players: Array = made[1]
+	if players.is_empty():
+		return _fail("the welcome carried no player")
+	var me: int = int((players[0] as Dictionary).get("id", -1))
+	var answers := sim.proximity_answers(me)
 	if answers.is_empty():
 		return _fail("the binding answered nothing")
 	var answer: Dictionary = answers[0]
-	if answer.get("walk_to") == null:
-		return _fail(("seed 14247's fuel answer offers no walk, which contradicts 399 of 399 "
-				+ "worlds answering `Burns`. Re-measure before trusting this suite"))
+	if answer.get("tile") == null:
+		return _fail(("seed 14247 has nothing that burns, which contradicts 399 of 399 worlds "
+				+ "answering `Burns`. Re-measure before trusting this suite"))
+	# AND THE WALK IS A REAL ONE, ASSERTED RATHER THAN ASSUMED (ASSA-263). If this seed's burnable
+	# rock ever lands under the player's own feet, the button is correctly absent and this test would
+	# otherwise fail as though the gate were broken.
+	if bool(answer["underfoot"]):
+		return _fail(("seed 14247's burnable rock is now under the player's feet, so `go here` is "
+				+ "correctly absent and this test is the wrong one. Pick a seed with a real walk"))
 	var tab := AssayMineralogy.new()
-	tab.show_answers(answers)
-	if not tab.walk_control_at(0).visible:
-		return _fail_and_free(tab, "the sim named a walk and `go here` is hidden")
-	if tab.walk_target_at(0) != answer.get("walk_to"):
-		return _fail_and_free(tab, "the body would walk to %s and the sim named %s"
-				% [tab.walk_target_at(0), answer.get("walk_to")])
+	tab.show_answer(answers)
+	if not tab.go_here.visible:
+		tab.free()
+		return _fail("the sim named a tile and `go here` is hidden")
+	if tab.target_tile() != answer.get("tile"):
+		tab.free()
+		return _fail("the body would walk to %s and the sim named %s"
+				% [tab.target_tile(), answer.get("tile")])
 	tab.free()
 	return true
 
 
-## **THE WALK CONTROL IS QUIET** (ASSA-262's gap 2; Maren's ruling 5, `theme/assay.tres:383-393`).
+## **THE ANSWER UNDER YOUR OWN FEET OFFERS NO WALK, AND STILL NAMES THE ROCK** (ASSA-263).
 ##
-## It was the default Button, which satisfies *never ACCENT* and not *Quiet*: at 13px INK it was the
-## second-loudest control in the HUD column after `Mine`, in a body whose job is to be read. Asked
-## of the control, because the comment claiming it was quiet is what shipped.
-func test_the_walk_control_is_the_quiet_weight() -> bool:
-	var answers := _answers("14247")
-	if answers.is_empty():
-		return _fail("the binding answered nothing")
+## The third state, and the one that shipped broken: `tile` is `Some` when the nearest answering
+## patch is the tile the player is standing on -- the sim's sentence reads *"right where you are
+## standing"* -- so a button gated on `tile != null` alone was live, offering to walk the player to
+## their own feet. Maren photographed it at 344 px on this exact seed and question before anyone
+## argued about it.
+##
+## **THE PREMISE IS ASSERTED, NOT ASSUMED.** A test that reached for this state and found an ordinary
+## answer would pass by never meeting the case, which is how a green test of mine turned out to be
+## decoration earlier today. So this fails loudly, with what to re-measure, rather than skipping.
+##
+## And `target_tile()` is still the sim's tile: the answer is not withheld, only the walk. Something
+## later will want it to highlight the rock on the map, which is why `tile` was not overloaded to
+## mean "somewhere to go" (Maren's one design constraint on this fix).
+func test_an_answer_underfoot_offers_no_walk_and_still_names_the_rock() -> bool:
+	var made := _world("14247")
+	if made.is_empty():
+		return _fail("could not stand seed 14247 up through the binding")
+	var sim: AssaySimHost = made[0]
+	var players: Array = made[1]
+	if players.is_empty():
+		return _fail("the welcome carried no player")
+	var me: int = int((players[0] as Dictionary).get("id", -1))
+	var answers := sim.proximity_answers(me)
+	if answers.size() < 2:
+		return _fail("seed 14247 answered %d questions, so the second one cannot be asked"
+				% answers.size())
+	var here: Dictionary = answers[1]
+	if here["tile"] == null:
+		return _fail(("seed 14247's hard-enough question is unanswered now, so there is no "
+				+ "underfoot answer to render. Re-measure and pick a seed"))
+	if not bool(here["underfoot"]):
+		return _fail(("seed 14247's hard-enough answer is no longer underfoot (it was Tonore (A) "
+				+ "at (56, 40), the spawn tile). Re-measure: this arm is now vacuous"))
 	var tab := AssayMineralogy.new()
-	tab.show_answers(answers)
-	var go_here := tab.walk_control_at(0)
-	if go_here.theme_type_variation != &"Quiet":
-		return _fail_and_free(tab, "`go here` is the `%s` weight, not Quiet" % go_here.theme_type_variation)
+	tab.show_answer(answers, 1)
+	# ABSENT, NOT GREYED (Maren, ASSA-241 ruling 5).
+	if tab.go_here.visible:
+		tab.free()
+		return _fail(("the answer is the tile the player is standing on and `go here` is on screen: "
+				+ "a control whose only effect is to walk you where you already are"))
+	# AND ABSENT FOR THE RIGHT REASON, rather than absent because the tile went missing.
+	if not tab.answer_is_underfoot():
+		tab.free()
+		return _fail("the body did not read the binding's `underfoot`, so the button is hidden by luck")
+	if tab.target_tile() != here["tile"]:
+		tab.free()
+		return _fail("the answer's tile was withheld as well as the walk: %s, sim said %s"
+				% [tab.target_tile(), here["tile"]])
+	# PRESSING IT ANYWAY SUBMITS NOTHING. A `MoveTo` to your own tile is a command on the wire that
+	# does nothing, and the guard is for the frame between a world ending and a refresh.
+	var heard: Array = []
+	tab.go_here_pressed.connect(func(tile: Vector2i) -> void: heard.append(tile))
+	tab.go_here.pressed.emit()
+	if not heard.is_empty():
+		tab.free()
+		return _fail("a press on the hidden button still emitted %s" % heard)
+	print("    ASSA-263: 14247 q1 is underfoot at %s -- `%s`" % [here["tile"], tab.headline.text])
 	tab.free()
 	return true
 
 
 ## **`go here` CARRIES THE SIM'S TILE AND NOTHING COMPUTED FROM IT** (box 3, box 8).
 ##
-## The signal's payload is asserted against the binding's own `walk_to`, so a body that offset it by
-## a tile to "stand beside the rock" would fail here. That offset is exactly the kind of helpfulness
+## The signal's payload is asserted against the binding's own `tile`, so a body that offset it by a
+## tile to "stand beside the rock" would fail here. That offset is exactly the kind of helpfulness
 ## this item forbids: the sim chose the tile of the deposit nearest the player, and a client that
 ## adjusts it is doing arithmetic the sim already did.
 func test_go_here_emits_the_sims_tile_unchanged() -> bool:
-	var answers := _answers("14247")
+	var made := _world("14247")
+	if made.is_empty():
+		return _fail("could not stand a world up through the binding")
+	var sim: AssaySimHost = made[0]
+	var players: Array = made[1]
+	if players.is_empty():
+		return _fail("the welcome carried no player")
+	var me: int = int((players[0] as Dictionary).get("id", -1))
+	var answers := sim.proximity_answers(me)
 	if answers.is_empty():
 		return _fail("the binding answered nothing")
 	var answer: Dictionary = answers[0]
-	if answer.get("walk_to") == null:
-		return _fail("seed 14247's fuel answer offers no walk, so this arm is vacuous")
+	if answer.get("tile") == null:
+		print("    ASSA-254: seed 14247 has no burnable rock, so this arm is vacuous here")
+		return true
 	var tab := AssayMineralogy.new()
-	tab.show_answers(answers)
+	tab.show_answer(answers)
 	var heard: Array = []
 	tab.go_here_pressed.connect(func(tile: Vector2i) -> void: heard.append(tile))
-	tab.walk_control_at(0).pressed.emit()
+	tab.go_here.pressed.emit()
 	if heard.size() != 1:
-		return _fail_and_free(tab, "pressing `go here` emitted %d tiles, not 1" % heard.size())
-	if heard[0] != answer.get("walk_to"):
-		return _fail_and_free(tab, "`go here` would walk to %s and the sim named %s"
-				% [heard[0], answer.get("walk_to")])
+		tab.free()
+		return _fail("pressing `go here` emitted %d tiles, not 1" % heard.size())
+	if heard[0] != answer.get("tile"):
+		tab.free()
+		return _fail("`go here` would walk to %s and the sim named %s"
+				% [heard[0], answer.get("tile")])
 	tab.free()
 	return true
 
 
-## **A BODY WITH NO WORLD BEHIND IT SAYS ONE SENTENCE AND OFFERS NO WALK.** `proximity_answers`
-## returns an empty array for no world and for a player who is not in one, and the sim's own "no
-## such player" line is about a missing player and would read as a mineralogy answer in this slot.
-func test_with_no_world_the_tab_says_one_sentence_and_offers_no_walk() -> bool:
+## **`go here` IS A VERB, NOT THE PANEL'S PURPOSE** (Maren's ruling 5 on ASSA-241, amended from her
+## own 344 px shot: Quiet, shrink-to-fit, left-aligned).
+##
+## **ASKED OF THE VARIATION AND THE FLAGS, NEVER OF A COLOUR.** A `Quiet` button built off the scene
+## tree reports the default `font_color`, because a theme type variation does not resolve until the
+## node is inside a tree that carries the theme -- a lesson already written into
+## `test_main_screen.gd`. The line in the source is the claim; its resolved colour is the theme's.
+##
+## The failure this catches is the one the picture caught: with no size flags in a `VBoxContainer`
+## the button filled the whole HUD column, so a convenience verb became the heaviest element on
+## screen and out-weighed `Mine`, which is meant to be the screen's one primary.
+func test_go_here_is_quiet_and_sized_to_its_words() -> bool:
 	var tab := AssayMineralogy.new()
-	tab.show_answers([])
-	if tab.shown_count() != 1:
-		return _fail_and_free(tab, "with no world the tab shows %d lines, not 1" % tab.shown_count())
-	if tab.headline_at(0).text != AssayMineralogy.NO_WORLD:
-		return _fail_and_free(tab, "the no-world line reads `%s`" % tab.headline_at(0).text)
-	if tab.walk_control_at(0).visible:
-		return _fail_and_free(tab, "there is no world and `go here` is on screen")
+	var variation := tab.go_here.theme_type_variation
+	var flags := tab.go_here.size_flags_horizontal
 	tab.free()
-	return true
-
-
-## **AN ANSWER THE SIM STOPS GIVING LEAVES THE SCREEN, AND SO DOES ITS GAP.** Rows are reused across
-## refreshes, so the failure this catches is a second answer left on screen after the world ends --
-## a sentence about a world that is gone, under a live button.
-func test_a_row_the_sim_stops_answering_leaves_the_screen() -> bool:
-	var answers := _answers("14247")
-	if answers.size() < 2:
-		return _fail("seed 14247 answered %d questions" % answers.size())
-	var tab := AssayMineralogy.new()
-	tab.show_answers(answers)
-	if tab.shown_count() != answers.size():
-		return _fail_and_free(tab, "the tab shows %d of %d answers" % [tab.shown_count(), answers.size()])
-	tab.show_answers([])
-	if tab.shown_count() != 1:
-		return _fail_and_free(tab, "after the world ended the tab still shows %d lines" % tab.shown_count())
-	if tab.walk_control_at(1).visible or tab.walk_target_at(1) != null:
-		return _fail_and_free(tab, "the second answer's walk survived the world it was about")
-	tab.free()
+	if variation != &"Quiet":
+		return _fail("`go here` wears `%s`: a convenience verb is Quiet, never the screen's accent"
+				% variation)
+	if flags != Control.SIZE_SHRINK_BEGIN:
+		return _fail(("`go here` has size flags %d, not SIZE_SHRINK_BEGIN (%d): in a VBoxContainer "
+				+ "it fills the column and reads as the panel's purpose")
+				% [flags, Control.SIZE_SHRINK_BEGIN])
 	return true
 
 
@@ -415,14 +341,3 @@ func test_the_tab_body_owns_no_colour_and_no_position() -> bool:
 			return _fail(("the tab body contains `%s`: a tab body owns neither its colour nor its "
 					+ "place, the strip does (ASSA-247)") % forbidden)
 	return true
-
-
-## Every `Control` under `node` that a player can operate -- buttons, dropdowns, tab bars, sliders.
-## Labels and spacers are not controls in this sense: the ruling is about things you click.
-func _controls_under(node: Node) -> Array:
-	var found: Array = []
-	for child in node.get_children():
-		if child is BaseButton or child is OptionButton or child is TabBar or child is Range:
-			found.append(child)
-		found.append_array(_controls_under(child))
-	return found
