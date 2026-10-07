@@ -725,6 +725,21 @@ func _report() -> void:
 	print("    `off top` is the SAME QUESTION AT THE OTHER EDGE -- how far its HIGHEST button was")
 	print("    carried above the top of that box. A control scrolled off the top is exactly as")
 	print("    unreachable, and until 2026-10-06 this probe did not look at that edge at all.")
+	# **AND IT CANNOT FAIL IN THIS RUN, WHICH IS A WORSE STATE THAN NOT HAVING IT.** Found by looking
+	# at `05-rocks.png` on 7447cbe and noticing Mineralogy's two `go here` buttons were not in a frame
+	# this probe had just called REACHABLE. They were above it, because that shot scrolls and this
+	# probe never does: `AssayTabStrip.select` sets `scroll_vertical = 0` and the round-robin selects
+	# a tab every tick, so every reading below is taken at the top of the box. The defect that made
+	# me add this edge was real and was found in a SCROLLED state, so the number is not meaningless
+	# -- it is simply not being asked. Said in the output rather than left for the next reader to
+	# infer from a column of zeroes. Fixing it means measuring each tab a second time with the scroll
+	# clamped to its maximum, which is a change to the phase machine and not a thing to slip in hours
+	# before a gate.
+	print("    **`off top` IS STRUCTURALLY ZERO IN THIS RUN AND IS NOT EVIDENCE.** `select` resets")
+	print("    the scroll and this probe selects a tab every tick, so every reading is taken at the")
+	print("    top of the box and nothing can ever be above it. The edge is real -- it was found in")
+	print("    a scrolled state -- but this run does not ask it. Owed: a second reading per tab with")
+	print("    the scroll clamped to its maximum.")
 	# **BOX 2 IS READ AS EITHER AXIS** (Maren, 19:50). Both columns above are vertical, and a column
 	# laid out wider than the window falls off a third edge that every instrument we owned was blind
 	# to. The reference is the PAINTED panel and not the clip rect, for the reason in `_button_reach`:
