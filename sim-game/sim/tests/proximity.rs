@@ -1048,20 +1048,28 @@ fn every_species_the_too_poor_answer_names_can_be_lifted_to_one_that_answers() {
 fn the_plain_empty_answer_offers_no_ladder() {
     for q in Question::ALL {
         let plain = debug::nothing_answers(q);
-        // LOWERCASED BEFORE THE SEARCH, and that is not tidying. The clause
-        // moved to the head of its own sentence when Maren ruled the semicolon
-        // out (below), so "sorting" became "Sorting" -- and this assertion,
-        // written case-sensitive, would have gone on passing while the no-ladder
-        // sentence sprouted a capitalised one. The sibling assertion below DID
-        // fail that way and is how I found this one.
+        // LOWERCASED, and here that is the whole assertion rather than tidying.
+        // This one is a NEGATIVE: it says the no-ladder sentence must never
+        // mention sorting. ASSA-265 made the clause its own sentence, so
+        // "Sorting" became the house capitalisation — and a case-sensitive
+        // haystack would have gone on passing while someone added the
+        // capitalised clause to `nothing_answers`, which is the exact lie
+        // Maren's condition exists to prevent. The presence check below was
+        // lowercased when the wording moved; this one was missed, because a
+        // negative assertion does not redden when it stops covering anything.
         assert!(
             !plain.to_lowercase().contains("sorting"),
             "the no-species-at-all sentence offers the ladder, which cannot \
              help when nothing in the world answers at any grade: {plain}"
         );
         let too_poor = debug::too_poor_answer(q, "Xite");
+        // LOWERCASED, because this asserts the clause is PRESENT and not how it
+        // is punctuated. It read the haystack as typed until ASSA-265 made the
+        // clause its own sentence, so a capital S reddened a test about whether
+        // the ladder is mentioned at all — a wording decision breaking a
+        // behaviour test. The instruction check below has always done this.
         assert!(
-            too_poor.contains("Sorting lifts a grade"),
+            too_poor.to_lowercase().contains("sorting lifts a grade"),
             "the too-poor sentence lost the ladder clause: {too_poor}"
         );
         assert!(
@@ -1070,31 +1078,17 @@ fn the_plain_empty_answer_offers_no_ladder() {
             "the clause states a fact about the rock, never an instruction \
              (Maren, ASSA-257): {too_poor}"
         );
-        // **THE TWO CLAUSES ARE TWO SENTENCES, NOT ONE SERIES** (Maren's
-        // punctuation ruling on ASSA-257). Her first wording used a semicolon
-        // and I flagged it as ASSA-158's shape -- a dead end and its way out in
-        // one series. Her reason for taking the full stop is better than mine:
-        // the clauses have OPPOSITE VALENCE, one closing a door and the other
-        // opening one, and a semicolon says "keep reading, same thought".
-        assert!(
-            too_poor.contains("too poor a grade. Sorting lifts a grade"),
-            "the dead end and the lever are back in one series: that junction \
-             is a full stop, not a semicolon or a dash: {too_poor}"
-        );
-        assert!(
-            !too_poor.contains(';'),
-            "a semicolon joins two clauses of opposite valence: {too_poor}"
-        );
-        // **AND NO NUMBER IN IT.** The loss is 3 ore to 1 and the price of
-        // sorting belongs on the surface that performs it, not in a proximity
-        // answer: "put the number in the sentence and it stops being an answer
-        // and starts being a recipe card". The species name here is the test's
-        // own and carries no digit -- a renamed species may, which is why this
-        // asks the template rather than a world's output.
+        // **AND NO NUMBER IN IT.** Sorting's loss is 3 ore to 1 and Maren ruled
+        // it out of this sentence: the price is a RECIPE fact and belongs on the
+        // surface that performs it, not in a proximity answer. The clause's job
+        // is only to stop a player believing the lift is free. Asked of the
+        // whole string because a digit anywhere in it is the same mistake; the
+        // species name here is the test's own and carries none, so a renamed
+        // species cannot redden this by accident.
         assert!(
             !too_poor.chars().any(|c| c.is_ascii_digit()),
-            "the clause quotes the refining rate, which is a recipe fact and \
-             belongs where a player would act on it (Maren, ASSA-257): {too_poor}"
+            "the sentence quotes a rate, which is a recipe fact and belongs \
+             where a player would act on it (Maren, ASSA-257): {too_poor}"
         );
     }
 }

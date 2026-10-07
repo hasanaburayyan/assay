@@ -2,8 +2,8 @@
 //! and abundant rung zero next to spawn.
 
 use sim::ladder::{
-    JUDGED_AT, burn_temperature_at, hand_lit_fuel, hand_minable, pair_smelts, rungs,
-    starter_pick_speed, starter_species,
+    JUDGED_AT, burn_temperature_at, carries_first_machine, hand_lit_fuel, hand_minable,
+    pair_smelts, rungs, starter_pick_speed, starter_species,
 };
 use sim::mineral::Property;
 use sim::tuning::{
@@ -511,5 +511,92 @@ fn a_tie_for_hottest_fuel_breaks_by_lowest_species_id() {
         fuel, w.species[1].id,
         "the hottest fuel must win and a tie must break by lowest id, not by \
          whichever `max_by_key` saw last"
+    );
+}
+
+/// **THE HARDEST RUNG-ZERO SPECIES THAT CARRIES A FIRST PLANTED MACHINE**, not
+/// simply the hardest (ASSA-170, out of Maren's ASSA-155 ruling).
+///
+/// A frame reads STRENGTH and sets the whole mass budget; a head reads
+/// hardness. Picking on hardness alone and then building the frame out of the
+/// answer is `assay-rulings` §5's "one species, selected on one property, then
+/// used for three jobs" — and over 2000 worlds it cost a first machine in
+/// 15.2% of them where ANOTHER rung-zero species would have carried one.
+///
+/// Built by hand for the same reason as the test above: the hardest species is
+/// heavy and weak, a softer one is light and strong, so "hardest" and "hardest
+/// that stands" are different answers and the old rule fails this.
+#[test]
+fn the_starter_material_is_the_hardest_rung_zero_species_that_carries_a_machine() {
+    let mut w = world(1);
+    let sheet = |density, strength, hardness| sim::Sheet {
+        density,
+        strength,
+        hardness,
+        heat_tolerance: 25, // hand-lit, so a starter pair exists at all
+        reactivity: 60,
+        conductivity: 50,
+    };
+    for s in &mut w.species {
+        s.sheet = sheet(50, 50, 100); // unminable unless set below
+    }
+    w.species[0].sheet = sheet(100, 1, 40); // hardest, and far too heavy for its own frame
+    w.species[1].sheet = sheet(1, 100, 25); // softer, and carries easily
+    let rung0 = rungs(&w.species).into_iter().next().expect("a rung zero");
+    assert_eq!(rung0.len(), 2, "both must be in rung zero: {rung0:?}");
+
+    // THE PREMISE, ASSERTED RATHER THAN ASSUMED. Without this the test passes
+    // whenever the two species happen to agree, which is most of the seed
+    // space — the shape of a green test that is decoration.
+    assert!(
+        !carries_first_machine(&w.species, w.species[0].id, JUDGED_AT),
+        "the hardest species must NOT carry a machine or there is nothing to choose between"
+    );
+    assert!(
+        carries_first_machine(&w.species, w.species[1].id, JUDGED_AT),
+        "the softer species must carry one or this roster has no right answer"
+    );
+
+    let (material, _) = starter_species(&w.species).expect("a starter");
+    assert_eq!(
+        material, w.species[1].id,
+        "the starter must be the hardest species that CARRIES a first machine, not the \
+         hardest species"
+    );
+}
+
+/// And where nothing in rung zero carries a machine, **the old answer survives
+/// untouched**: every candidate ties on the leading term, so the key reduces to
+/// hardness exactly as before. This is why ASSA-170 step 1 rejects no roster —
+/// it changes the pick only where a better pick exists.
+#[test]
+fn where_no_rung_zero_species_carries_a_machine_the_hardest_still_wins() {
+    let mut w = world(1);
+    let sheet = |hardness| sim::Sheet {
+        density: 100, // heavy and weak: nothing here carries its own frame
+        strength: 1,
+        hardness,
+        heat_tolerance: 25,
+        reactivity: 60,
+        conductivity: 50,
+    };
+    for s in &mut w.species {
+        s.sheet = sheet(100);
+    }
+    w.species[0].sheet = sheet(10);
+    w.species[1].sheet = sheet(40);
+    w.species[2].sheet = sheet(25);
+    let rung0 = rungs(&w.species).into_iter().next().expect("a rung zero");
+    assert!(
+        rung0
+            .iter()
+            .all(|id| !carries_first_machine(&w.species, *id, JUDGED_AT)),
+        "the premise is that NOTHING in rung zero carries a machine"
+    );
+
+    let (material, _) = starter_species(&w.species).expect("a starter");
+    assert_eq!(
+        material, w.species[1].id,
+        "with no carrier to prefer, the hardest must still win"
     );
 }

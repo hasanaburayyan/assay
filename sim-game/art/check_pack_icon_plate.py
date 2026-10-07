@@ -4,17 +4,23 @@
     art/check_pack_icon_plate.py
 
 WHAT THE RULING ACTUALLY SAYS, because that is what has to be guarded. The plate is
-not "a colour that tested well": it is the ground's own median, so that a stack in the
+not "a colour that tested well": it is THE GROUND'S OWN COLOUR, so that a stack in the
 pack row and a rock on the map are THE SAME OBJECT, and the player's task at a pack row
 is connecting a stack to a rock they walked over. The contrast numbers follow from that
 claim; they are not the claim. A hex that merely happens to equal today's ground would
 satisfy every ratio and still be wrong the morning the ground is re-rendered.
 
+WHICH STATISTIC MAKES THAT TRUE IS NOT THIS FILE'S BUSINESS, and this file used to say
+"median" in four places anyway. It was a 10% trimmed mean by ASSA-261 and could be
+something else again; nothing here may hold an opinion, because the moment it does there
+are two definitions of "the ground's colour" that can disagree. So the statistic is
+named exactly once, by `ui_theme.PLATE_SOURCE`, and printed from there.
+
 So the thing to check is an IDENTITY BETWEEN THREE SOURCES that are written, built and
 drawn by different things and can each go stale on their own:
 
-  1. THE SHEET      `client/assets/sprites/ground.png`, median of its opaque pixels --
-                    recomputed here, now, from the file that actually ships.
+  1. THE SHEET      `client/assets/sprites/ground.png` put through `ui_theme.plate_rgb`
+                    -- recomputed here, now, from the file that actually ships.
   2. THE PIPELINE   `client/assets/sprites/ui_theme.json`, what the last build wrote.
   3. THE ENGINE     the `StyleBoxFlat` the client really painted behind the icon, read
                     out of the live scene by `art/pack_icon_layout.gd`.
@@ -31,9 +37,9 @@ WHY NOT JUST ASSERT THE HEX. Writing `#88986C` in here would make this check a c
 the thing it checks: it would pass forever, including the day the ground changes, which
 is the one day it needs to fail. Nothing in this file names a colour.
 
-THE DERIVATION IS NOT REIMPLEMENTED EITHER. The median comes from `art/ui_theme.py`, the
-same function `build.py` calls, so this cannot drift into being a second opinion about
-what "the ground's colour" means. That is why `ui_theme.py` is stdlib-only: CI runs these
+THE DERIVATION IS NOT REIMPLEMENTED EITHER. It comes from `art/ui_theme.py`, the same
+function `build.py` calls, so this cannot drift into being a second opinion about what
+"the ground's colour" means. That is why `ui_theme.py` is stdlib-only: CI runs these
 checks on plain `python3` with no pip, so the build and the check share one decoder
 instead of a Pillow one and a hand-rolled one that can disagree.
 
@@ -169,10 +175,11 @@ def main():
     # 1 vs 2: has the shipped colour stopped being the ground's?
     if from_sheet != from_pipeline:
         bad.append(
-            "%s ships %s but ground.png's median is %s today. The plate has stopped\n"
+            "%s ships %s but the ground is %s today (%s). The plate has stopped\n"
             "      being the ground's own colour -- re-run `art/build.py` if the ground\n"
             "      was re-rendered on purpose."
-            % (os.path.relpath(THEME, ROOT), hexs(from_pipeline), hexs(from_sheet)))
+            % (os.path.relpath(THEME, ROOT), hexs(from_pipeline), hexs(from_sheet),
+               ui_theme.PLATE_SOURCE))
 
     # The plate is the icon's own slot, not some other rectangle.
     boxes = {tuple(r["icon"]["plate_rect"]) for r in art if r["icon"].get("plate_rect")}
@@ -189,7 +196,7 @@ def main():
 
     # ANTI-VACUITY. "One colour across the pack" is free if there is only one row to be
     # consistent across, and the 1-vs-2 identity is free if the sheet is a flat colour --
-    # a median is trivially itself then, and would stay correct through any re-render.
+    # any statistic of one value is that value, and would stay correct through a re-render.
     if len(art) < 2:
         raise CannotCheck(
             "only one row had art, so 'the plate is constant across the pack' had\n"

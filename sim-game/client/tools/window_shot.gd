@@ -35,11 +35,31 @@ extends SceneTree
 ##                    without one check in this file being able to see it -- they are all about the
 ##                    HUD column, and to them the map is pixels. Written with
 ##                    `08-whole-world-marks.json`, the geometry the frame was painted from.
+##  - `09-whole-world-key.png` the same frame with the map key up (ASSA-206). The pair is the point:
+##                    the panel's cost in covered tiles and its payoff are measurable against each
+##                    other rather than described.
 ##  - `10-stopped.png` **THE FACTORY HALTED, AND ONLY THIS LOOP'S WORST MOMENT OF IT** (ASSA-94).
 ##                    Like 04, a moment the tool NOTICES rather than a state anyone asks for, and for
 ##                    a sharper reason: the demo loop RESOLVES every stall it causes, so the condition
 ##                    exists for a few ticks in the middle of the play and no tick anyone picked lands
 ##                    on it. Absent when nothing stalled, which `_report` says in words either way.
+##  - `11-make.png`   the crafting menu, scrolled so its OWN HEADING is at the top of the box, because
+##                    the rows sit below the fold of a 720px window (ASSA-158). What it holds is
+##                    reported off the labels IN THAT FRAME by the `make` leg, which is the half the
+##                    first version of this shot did not have.
+##  - `12-whole-world-walking.png` **THE WALK STROKE, WHICH NO SHOT WE COULD TAKE CONTAINED**
+##                    (ASSA-266, for ASSA-206's last open box). The map key advertises a line from a
+##                    body to where the sim is walking it, and Nacre -- asked to name nine marks off
+##                    the screen alone -- could not find the fourth, because the picture held no
+##                    example of it. A third moment the tool NOTICES rather than a tick anyone picked:
+##                    the walk below already happens on every run and was thrown away. Absent when the
+##                    play planted nothing to walk away from, which `_report` says in words either
+##                    way.
+##
+## **AND THIS LIST WENT STALE AGAIN, BY MY OWN HAND, THE DAY AFTER ITS PARENTHESIS WAS WRITTEN:** 09
+## and 11 were both missing from it. I added `11-make.png` in the morning and did not come back here.
+## Nothing counts these entries against the `_shoot` calls below, so this is still a list kept by
+## hand and it will go stale again the next time somebody is in a hurry.
 ##
 ## THE LOG SHOT IS NOT OPTIONAL AND IT IS WHY `_shoot` REFUSES A REPEAT. The board's complaint is
 ## "logs are hard on the eyes", and the played session ENDS with the log hidden and the menu open --
@@ -111,8 +131,8 @@ const NORTH_WALK_TICKS := 600
 enum Phase { SETTLE_JOIN, SHOOT_JOIN, PLAY, SETTLE_PACK, SHOOT_PACK, SETTLE_HALT, SHOOT_HALT,
 		SETTLE_PLAY, SHOOT_PLAY,
 		SETTLE_FOLD, MEASURE_CONTROLS, SETTLE_MENUS, SHOOT_MENUS, SCROLL_ROCKS, SETTLE_ROCKS,
-		SHOOT_ROCKS, SCROLL_MAKE, SETTLE_MAKE, SHOOT_MAKE, WALK_NORTH, SETTLE_NORTH_LOG, SHOOT_NORTH_LOG, SETTLE_NORTH_CLEAR,
-		SHOOT_NORTH_CLEAR, WALK_OFF, PRESS_V, SETTLE_SCHEMATIC, SHOOT_SCHEMATIC, PRESS_K,
+		SHOOT_ROCKS, OPEN_MAKE, SCROLL_MAKE, SETTLE_MAKE, ANCHOR_MAKE, SHOOT_MAKE, WALK_NORTH, SETTLE_NORTH_LOG, SHOOT_NORTH_LOG, SETTLE_NORTH_CLEAR,
+		SHOOT_NORTH_CLEAR, WALK_OFF, SETTLE_WALK, SHOOT_WALK, PRESS_V, SETTLE_SCHEMATIC, SHOOT_SCHEMATIC, PRESS_K,
 		SETTLE_KEY, SHOOT_KEY, DONE }
 ## What `_play_frames` did with its last tick.
 enum Ticked { AGAIN, OVER, DEAD }
@@ -180,6 +200,18 @@ var _controls_before := {}
 ## phase away from a confident false report, which is the same shape as measuring a log section
 ## against the window when a scroll box 100px smaller is what clips it (ASSA-117).
 var _controls_after := {}
+## **WHERE THE CRAFTING MENU'S OWN HEADING AND ROWS STOOD IN THE FRAME `11-make.png` WAS WRITTEN
+## FROM** (ASSA-158). Captured at the shot for `_controls_after`'s reason, and this one cost the item
+## a day: the first version of this shot reported its rows off stdout at SCROLL time and the picture
+## that reached the Game Director held `bench` and `rocks` and no `make` at all. Stdout is not the
+## surface either of her boxes asks about, and a report taken a phase early cannot tell you so.
+var _make_frame := {}
+## And the same for `05-rocks.png`, for the same reason and after the same surprise: see
+## `_capture_rocks`.
+var _rocks_frame := {}
+## How many times the column has been re-anchored on the `make` heading. A scroll is a request the
+## layout answers on a LATER frame, so one pass can land short; this is capped and reported.
+var _make_scrolls := 0
 var _done := false
 ## WHICH ROW THE NORTH-EDGE PAIR IS SHOT FROM, or -1 for "do not shoot it" (ASSA-184). Off by
 ## default: this walks the body 30-odd tiles away from everything the other five shots are about.
@@ -200,8 +232,26 @@ var _walk_held := 0
 ## rather than tick for ever.
 const WALK_OFF_TILES := 10
 const WALK_OFF_CEILING := 200
+## How far along the walk stroke `_stroke_ink` starts looking, how far either side it probes for the
+## background, how often it samples, and the per-channel step at which it calls a sample drawn.
+## `BODY_CLEAR_PX` clears the player mark (16px) and its ring (1.6x), which sit on the stroke's first
+## end; 2 is the smallest step that is not rounding noise, and the bar is "drawn at all" on purpose.
+const BODY_CLEAR_PX := 14.0
+const STROKE_PROBE_PX := 4.0
+const STROKE_STEP_PX := 4.0
+const STROKE_MIN_STEP := 2.0
 var _walk_off_sent := false
 var _walk_off_ticks := 0
+## Where the walk-off started, so the run can say how far it had got when it was photographed.
+var _walk_off_from := Vector2i.ZERO
+## **THE WALK AS THE PAINTER SAW IT IN THE FRAME `12-whole-world-walking.png` WAS WRITTEN FROM**
+## (ASSA-266). Read at the shot, off `_screen._players()` -- the list `main.gd::_draw` iterates --
+## and never off the sim's command queue or off my own idea of "walking": the stroke is drawn if and
+## only if that dict carries a non-null `target`, so that field IS the subject. I have filed a
+## measurement taken off the INPUT to a broken step before, and the rule out of it is to measure the
+## thing that is drawn.
+var _walk_frame := {}
+var _walk_shot_done := false
 ## Where `_walk_off` is taking them, held so the ceiling's failure can name it.
 var _walk_off_target := Vector2i.ZERO
 
@@ -437,13 +487,47 @@ func _process(_delta: float) -> bool:
 			# frame. `_rocks_report` guards it instead, and asks for MORE: two whole ROWS in the
 			# frame, which is the least a picture needs to show that two rocks differ.
 			_shoot("05-rocks.png", PackedStringArray())
-			_phase = Phase.SCROLL_MAKE
+			# WHAT IS IN THIS FRAME, READ IN THIS FRAME. See `_capture_rocks`.
+			_capture_rocks()
+			# **THE CRAFTING MENU HAS BEEN FOLDED SINCE `SHOOT_PLAY` AND NOTHING PUT IT BACK.** That
+			# fold is deliberate and must stay -- `03-log.png` and the controls measurement need the
+			# menu out of the way so the only thing moving is the log -- but it is still shut four
+			# phases later, and the first `11-make.png` was a picture of its own closed toggle. An
+			# invisible child gets no space from a container, so `_make`'s rect had collapsed onto
+			# `bench`'s heading and the scroll aimed at it landed a whole section past `make`.
+			_screen._show_make(true)
+			_phase = Phase.OPEN_MAKE
+		Phase.OPEN_MAKE:
+			# THE ROWS NEED A LAYOUT PASS BEFORE ANYTHING MEASURES THEM: `_show_make` only flips
+			# `visible`, and the rects are the folded ones until the column has sorted its children.
+			_settle(Phase.SCROLL_MAKE)
 		Phase.SCROLL_MAKE:
+			_make_scrolls = 0
 			_scroll_to_make()
 			_phase = Phase.SETTLE_MAKE
 		Phase.SETTLE_MAKE:
-			_settle(Phase.SHOOT_MAKE)
+			_settle(Phase.ANCHOR_MAKE)
+		Phase.ANCHOR_MAKE:
+			# **ASK AGAIN ONCE THE LAYOUT HAS ANSWERED, BECAUSE ONE PASS CAN LAND SHORT.** Setting
+			# `scroll_vertical` is a request: the children's rects are only correct on a later frame,
+			# and anything that rebuilds the menu in between (a tick that changes what you can make
+			# changes how tall `make` is) moves the anchor under the scroll that was aiming at it.
+			# A player in that situation scrolls again, and so does a picture of one -- which is also
+			# the only version of this that can be WRONG OUT LOUD rather than quietly: if the offset
+			# will not close, the run says by how much instead of shooting whatever is there.
+			var off := _make_anchor_offset()
+			if off == 0 or _make_scrolls >= 3:
+				if off != 0:
+					print("  make: the anchor would not close -- still %d px out after %d scrolls"
+							% [off, _make_scrolls])
+				_phase = Phase.SHOOT_MAKE
+			else:
+				_make_scrolls += 1
+				_scroll_to_make()
+				_phase = Phase.SETTLE_MAKE
 		Phase.SHOOT_MAKE:
+			# WHAT IS IN THIS FRAME, READ IN THIS FRAME. See `_make_frame`.
+			_capture_make()
 			# NO SUBJECT CHECK, for `05-rocks.png`'s reason: the make list is taller than the box
 			# (Nacre measured 62.5px a button against a 28px Button), so `_standing` could only ever
 			# call it CLIPPED and the box could not go green. What this shot is FOR is the wording,
@@ -452,6 +536,25 @@ func _process(_delta: float) -> bool:
 			_phase = Phase.WALK_NORTH if _north_row >= 0 else Phase.WALK_OFF
 		Phase.WALK_OFF:
 			_walk_off()
+		Phase.SETTLE_WALK:
+			# NO TICK RUNS IN HERE, which is what makes this frame reachable at all: the sim only
+			# advances when `_walk_off` calls `_tick_plain`, so the body stands still while the view
+			# toggle lays out and the stroke cannot evaporate under the settle.
+			_settle(Phase.SHOOT_WALK)
+		Phase.SHOOT_WALK:
+			# READ IN THE FRAME BEING WRITTEN, not in the frame that decided to write it.
+			_walk_frame = _walk_now()
+			_shoot("12-whole-world-walking.png", PackedStringArray())
+			# AND THE SAME QUESTION ASKED OF THE PIXELS, because ASSA-206 box 4 did not fail on a
+			# field being null -- it failed on a person not finding a mark. See `_stroke_ink`.
+			if bool(_walk_frame["walking"]):
+				_walk_frame["ink"] = _stroke_ink(_walk_frame["pos"], _walk_frame["target"])
+			_walk_shot_done = true
+			# **BACK TO THE CLOSE-UP, SO TODAY'S SHOTS ARE UNCHANGED.** `08`/`09` are taken after a
+			# real (V) press from the close-up at `PRESS_V`, and a press that toggles nothing is not
+			# the state a player reaches. The walk then finishes into them exactly as before.
+			_screen._show_close_up(true)
+			_phase = Phase.WALK_OFF
 		Phase.PRESS_V:
 			# **LAST, AND AFTER A WALK, AND THE REASON IS A MEASUREMENT.** The play loop plants its
 			# machine on the tile you STAND on, so the first version of this shot had the one player
@@ -489,6 +592,13 @@ func _process(_delta: float) -> bool:
 			_letter_marks = _screen._glyph_marks(_shot_deposits, ThemeDB.fallback_font,
 					_schematic_marks)
 			_shoot("08-whole-world.png", PackedStringArray())
+			# **THE CONTROL FOR THE WALK STROKE, AND IT COSTS NOTHING TO TAKE** (ASSA-266). This is
+			# the same view and the same tiles as `12-whole-world-walking.png` with the walk FINISHED,
+			# so the pixels under that segment differ by one thing: the line. Without it the stroke's
+			# number is a reading of a textured map against itself, and a measurement with no control
+			# is how I have twice reported an instrument's own behaviour as a finding.
+			if _walk_shot_done and bool(_walk_frame.get("walking", false)):
+				_walk_frame["control"] = _stroke_ink(_walk_frame["pos"], _walk_frame["target"])
 			_write_marks_table()
 			_phase = Phase.PRESS_K
 		Phase.PRESS_K:
@@ -699,6 +809,7 @@ func _walk_off() -> void:
 		if absi(want.x - here.x) < WALK_OFF_TILES:
 			want = Vector2i(clampi(here.x - WALK_OFF_TILES, 0, size.x - 1), here.y)
 		_walk_off_target = want
+		_walk_off_from = here
 		print("  walking from %s to %s, off the base, for the whole-world shot" % [here, want])
 		_tick_plain([{"Player": {"player": id,
 				"command": AssayActions.move_to(_walk_off_target)}}])
@@ -712,8 +823,122 @@ func _walk_off() -> void:
 	if here == _walk_off_target:
 		_phase = Phase.PRESS_V
 		return
+	# **THE ONE STATE THIS TOOL WALKED THROUGH EVERY RUN AND THREW AWAY** (ASSA-266). ASSA-206 box 4
+	# failed because the map key advertises a walk stroke and no shot we could take contained one:
+	# Nacre, asked to name nine marks off the screen alone, could not learn a word from a picture
+	# holding no example of it. The walk below is real and already happening, so the frame costs one
+	# view toggle and two settles -- and it is shot on a STATE, never on a tick number, which is the
+	# difference between this and hand-staging the frame Maren said not to hand-stage.
+	if not _walk_shot_done:
+		var walk := _walk_now()
+		if bool(walk["walking"]) and int(walk["walked"]) >= 1:
+			# ONE TILE WALKED, NOT ZERO: at the tick the command lands the body is still on the tile
+			# it started from, so the stroke is a point and the picture would answer nothing.
+			print("  walking shot: %s -> %s, %d walked, %d left"
+					% [walk["pos"], walk["target"], walk["walked"], walk["left"]])
+			_screen._show_close_up(false)
+			_phase = Phase.SETTLE_WALK
+			return
 	if not _tick_plain([]):
 		return
+
+
+## **WHAT THE PAINTER WOULD DRAW FOR ME RIGHT NOW**: `walking` is `target != null`, which is the exact
+## condition `main.gd::_draw` gates the stroke on, read off the same list it iterates.
+##
+## `left` is CHEBYSHEV, because that is the sim's own walk: `move_players` steps one tile including
+## diagonals, so the number of ticks left is `max(|dx|, |dy|)` and a straight-line distance here would
+## be a second opinion about a rule the sim already owns.
+func _walk_now() -> Dictionary:
+	var id: int = _screen._client.player_id
+	for entry in _screen._players():
+		var player: Dictionary = entry
+		if int(player.get("id", -1)) != id:
+			continue
+		var pos: Vector2i = player.get("pos", Vector2i.ZERO)
+		var target: Variant = player.get("target")
+		var walked := maxi(absi(pos.x - _walk_off_from.x), absi(pos.y - _walk_off_from.y))
+		if target == null:
+			return {"walking": false, "pos": pos, "target": pos, "walked": walked, "left": 0,
+					"why": "the player dict carries no `target`, so no stroke is drawn"}
+		var to: Vector2i = target
+		return {"walking": true, "pos": pos, "target": to, "walked": walked,
+				"left": maxi(absi(to.x - pos.x), absi(to.y - pos.y)), "why": ""}
+	return {"walking": false, "pos": Vector2i(-1, -1), "target": Vector2i(-1, -1), "walked": 0,
+			"left": 0, "why": "no player with this client's id is on the screen at all"}
+
+
+## **IS THE STROKE IN THE PIXELS, AND BY HOW MUCH** -- asked of the frame that was just written, not
+## of the node that drew it (ASSA-266).
+##
+## WHY A SECOND READING AT ALL. The `target` field being non-null proves the painter was ASKED to draw
+## a line. ASSA-206 box 4 did not fail on a field: it failed on Nacre not FINDING the mark, and
+## "advertised in the key, absent from the screen" is a defect no node can report on itself. This is
+## the same lesson as the log section that sat 604px below the fold while `_log.visible` said true.
+##
+## HOW IT LOOKS WITHOUT RE-DRAWING IT. The endpoints come from the painter's own `point_of_tile`, so
+## this does not reconstruct the geometry -- it only decides WHERE to look. At each step along the
+## segment it compares the line's own pixel with the pixels 4px either side of it, and takes the
+## SMALLER of the two gaps: a stroke has to differ from what is on BOTH sides of it, or a gradient
+## under it would read as a line. The perpendicular +-1 search is for rounding, not for hope: a 1px
+## line whose centre falls on a pixel boundary lands beside the sample, and missing it would be this
+## tool reporting a drawing defect that is its own arithmetic.
+##
+## THE BAR IS "DRAWN AT ALL", NOT "STRONG ENOUGH". Whether 0.35 alpha is findable is the Game
+## Director's call on a picture; the number is printed so she can make it.
+func _stroke_ink(from_tile: Vector2i, to_tile: Vector2i) -> Dictionary:
+	var image := root.get_texture().get_image()
+	var blank := {"samples": 0, "lit": 0, "weakest": 0.0, "strongest": 0.0}
+	if image == null:
+		return blank
+	var a: Vector2 = _screen.point_of_tile(from_tile)
+	var b: Vector2 = _screen.point_of_tile(to_tile)
+	var span := (b - a).length()
+	if span <= BODY_CLEAR_PX * 2.0 + 2.0:
+		return blank
+	var step := (b - a) / span
+	var side := Vector2(-step.y, step.x)
+	var bounds := Rect2(Vector2.ZERO, Vector2(image.get_width() - 1, image.get_height() - 1))
+	var samples := 0
+	var lit := 0
+	var weakest := 255.0
+	var strongest := 0.0
+	var at := BODY_CLEAR_PX
+	while at <= span - BODY_CLEAR_PX:
+		var on := a + step * at
+		var best := 0.0
+		var seen := false
+		# TYPED, because an untyped literal array hands `nudge` over as a Variant and every `var :=`
+		# below it loses its type -- the same refusal that has caught me before.
+		var nudges: Array[float] = [-1.0, 0.0, 1.0]
+		for nudge in nudges:
+			var p := on + side * nudge
+			var left := p + side * STROKE_PROBE_PX
+			var right := p - side * STROKE_PROBE_PX
+			if not (bounds.has_point(p) and bounds.has_point(left) and bounds.has_point(right)):
+				continue
+			seen = true
+			best = maxf(best, minf(_ink_gap(image, p, left), _ink_gap(image, p, right)))
+		if not seen:
+			at += STROKE_STEP_PX
+			continue
+		samples += 1
+		if best >= STROKE_MIN_STEP:
+			lit += 1
+		weakest = minf(weakest, best)
+		strongest = maxf(strongest, best)
+		at += STROKE_STEP_PX
+	if samples == 0:
+		return blank
+	return {"samples": samples, "lit": lit, "weakest": weakest, "strongest": strongest}
+
+
+## The largest per-channel distance between two pixels, in 0..255. Per channel and not a luminance,
+## because a mark can differ from its background in hue at the same brightness and still be seen.
+func _ink_gap(image: Image, here: Vector2, there: Vector2) -> float:
+	var one := image.get_pixelv(Vector2i(here.round()))
+	var two := image.get_pixelv(Vector2i(there.round()))
+	return 255.0 * maxf(maxf(absf(one.r - two.r), absf(one.g - two.g)), absf(one.b - two.b))
 
 
 func _my_tile(id: int) -> Vector2i:
@@ -1132,28 +1357,81 @@ func _reveal_report() -> Dictionary:
 ## So this scrolls, exactly as the roster shot does and for the same reason: a player scrolls to read
 ## a column taller than its box, and so does a picture of it. It is NOT a claim that the list fits --
 ## Nacre's density slice is the item that makes it fit.
+##
+## **IT ANCHORS ON THE `make` HEADING AND NOT ON `_make`, AND THE FIRST VERSION DID NOT** (Maren,
+## 2026-10-06: "I cannot tick boxes 2 and 3: `11-make.png` scrolled past `make`"). `_make` is the ROWS
+## container; the section is `heading -> _assembling -> _make_toggle -> _make`, so parking the rows at
+## the box's top pushes the section's own name, the chosen-parts line and its toggle above the frame,
+## and the picture starts in the middle of a list with nothing in it saying which list. Hers started
+## at `bench`. The heading is what a reader scrolls TO, so it is what this scrolls to.
 func _scroll_to_make() -> void:
-	var make: Control = _screen._make
-	var box: ScrollContainer = null
-	var node: Node = make.get_parent()
-	while node != null:
-		if node is ScrollContainer:
-			box = node as ScrollContainer
-			break
-		node = node.get_parent()
+	var anchor := _make_anchor()
+	if anchor == null:
+		print("  make: no heading above the crafting menu, so nothing was scrolled")
+		return
+	var box := _scroll_box_above(anchor)
 	if box == null:
 		print("  make: no scroll box above the crafting menu, so nothing was scrolled")
 		return
 	var was := box.scroll_vertical
-	box.scroll_vertical = was + int(make.get_global_rect().position.y
-			- box.get_global_rect().position.y)
-	print("  make: scrolled the column from %d to %d to bring the crafting menu to the box's top"
-			% [was, box.scroll_vertical])
-	# WHAT EACH ROW SAYS, off the LABELS and never off the binding -- the only reading that can
-	# contradict it (ASSA-135's mistake was two surfaces agreeing because both read one wrong
-	# source). A dead-end row is NAMED in the output, so a reader can tell whether the shot holds
-	# the case Maren is judging without opening the PNG.
-	var dead_ends := 0
+	box.scroll_vertical = was + _make_anchor_offset()
+	print("  make: scrolled the column from %d to %d to bring the `%s` heading to the box's top"
+			% [was, box.scroll_vertical, anchor.text])
+
+
+## THE HEADING THAT NAMES THE CRAFTING MENU, found by walking BACK from the rows to the nearest
+## `Heading` in the same column rather than by matching the word "make". `main.gd` builds every
+## section from one list of `[name, bodies]` pairs, so the heading is the section's structure and the
+## word is its content: a tool that searched for the text would go quiet the day Maren renames it,
+## and going quiet is how `11-make.png` came to hold `bench`.
+func _make_anchor() -> Label:
+	var body: Control = _screen._make
+	var column := body.get_parent()
+	if column == null:
+		return null
+	for i in range(body.get_index() - 1, -1, -1):
+		var label := column.get_child(i) as Label
+		if label != null and label.theme_type_variation == &"Heading":
+			return label
+	return null
+
+
+func _scroll_box_above(control: Control) -> ScrollContainer:
+	var node: Node = control.get_parent()
+	while node != null:
+		if node is ScrollContainer:
+			return node as ScrollContainer
+		node = node.get_parent()
+	return null
+
+
+## HOW FAR THE COLUMN STILL HAS TO TRAVEL to put the `make` heading at the top of its box: positive
+## means the heading is below the top and the box must scroll down. Zero is the shot's precondition,
+## and it is asked of the engine in the frame it is asked in, which is the point -- a scroll is a
+## request answered on a later frame, and `0` here is the layout agreeing rather than me assuming.
+func _make_anchor_offset() -> int:
+	var anchor := _make_anchor()
+	if anchor == null:
+		return 0
+	var box := _scroll_box_above(anchor)
+	if box == null:
+		return 0
+	return int(anchor.get_global_rect().position.y - box.get_global_rect().position.y)
+
+
+## **WHAT THE CRAFTING MENU LOOKS LIKE IN THE FRAME BEING WRITTEN** -- the heading, every row, and
+## where each one stands against the rect the scroll box actually shows (ASSA-158).
+##
+## THE TEXT IS READ OFF THE LABELS and never off the binding, which is the only reading that can
+## contradict the binding (ASSA-135's mistake was two surfaces agreeing because both composed from
+## one wrong source). A dead-end row is NAMED, so a reader can tell what the shot holds without
+## opening the PNG -- but the STANDING is what this exists for now, because naming a row off stdout
+## is exactly what a frame without that row in it already did once.
+func _capture_make() -> void:
+	var make: Control = _screen._make
+	var anchor := _make_anchor()
+	var frame := _frame_for(make)
+	var rows: Array = []
 	for child in make.get_children():
 		var row := child as Control
 		if row == null:
@@ -1165,12 +1443,35 @@ func _scroll_to_make() -> void:
 				said.append(text)
 		if said.is_empty():
 			continue
-		var joined := " ".join(said)
-		var marked := "  [DEAD END]" if joined.contains("dead end") else ""
-		if marked != "":
-			dead_ends += 1
-		print("    make row%s  %s" % [marked, joined])
-	print("  make: %d row(s) carry a dead end in this frame" % dead_ends)
+		var rect := row.get_global_rect()
+		rows.append({"said": " ".join(said), "rect": rect, "standing": _standing_in(frame, row),
+				"dead_end": " ".join(said).contains("dead end")})
+	_make_frame = {
+		"frame": frame,
+		"heading": "" if anchor == null else String(anchor.text),
+		"heading_rect": Rect2() if anchor == null else anchor.get_global_rect(),
+		"heading_standing": "absent" if anchor == null else _standing_in(frame, anchor),
+		"rows": rows,
+		"scrolls": _make_scrolls,
+		"offset": _make_anchor_offset(),
+	}
+
+
+## WHERE A RECT STANDS IN A FRAME, in `_standing`'s words but asked of a rect that was measured in
+## the frame being written rather than of a live node. The live reading is the right one while the
+## screen is still the shot; these two shots are the ones where it is not.
+func _standing_in(frame: Rect2, control: Control) -> String:
+	# **`hidden` FIRST, AND THAT ORDER IS THIS LEG'S WHOLE WORTH** -- without it the first run of this
+	# leg went GREEN over a frame with five rows in it that nobody could see. A Godot container gives
+	# an invisible child no space, so the rect it keeps is the last one it was laid out at: measuring
+	# the rect alone says "whole in frame" about a row that is not drawn. `_standing` has asked this
+	# question first since ASSA-117 and I wrote its sibling without it.
+	if not control.is_visible_in_tree():
+		return "hidden"
+	var rect := control.get_global_rect()
+	if frame.encloses(rect):
+		return "whole"
+	return "CUT" if frame.intersects(rect) else "OFF SCREEN"
 
 
 func _scroll_to_rocks() -> void:
@@ -1205,11 +1506,17 @@ func _scroll_to_rocks() -> void:
 ## cannot be: it is taller than the box. Two is the smallest number that can show the thing a roster
 ## panel exists for -- that two rocks are described differently. A guard of "one" would pass on a
 ## picture that cannot answer any comparison, and a guard of "all six" could never pass at all.
-func _rocks_report() -> Dictionary:
+##
+## **AND IT IS READ AT THE SHOT NOW, NOT AT REPORT TIME, BECAUSE A LATER PHASE MOVED IT** (ASSA-158).
+## This asked the LIVE screen about a frame written six phases earlier, which was correct only while
+## nothing afterwards touched the column -- the exact luck `_controls_after`'s own comment describes,
+## two functions below. Re-opening the crafting menu for `11-make.png` scrolls the roster out of the
+## box, and this leg went red over `05-rocks.png`, a picture with three whole rows in it. The leg was
+## wrong, not the shot, and it would have been just as wrong the day it went green by luck.
+func _capture_rocks() -> void:
 	var rocks: Control = _screen._species
 	var frame := _frame_for(rocks)
-	var whole := 0
-	var rows := 0
+	var rows: Array = []
 	for child in rocks.get_children():
 		var row := child as Control
 		if row == null:
@@ -1217,20 +1524,29 @@ func _rocks_report() -> Dictionary:
 		var titles := row.find_children("SpeciesLine", "Label", true, false)
 		if titles.is_empty():
 			continue
-		rows += 1
 		var said := PackedStringArray()
 		for label in row.find_children("*", "Label", true, false):
 			var text := String((label as Label).text)
 			if text != "":
 				said.append(text)
-		var rect := row.get_global_rect()
-		var standing := "whole"
-		if not frame.encloses(rect):
-			standing = "CUT" if frame.intersects(rect) else "OFF SCREEN"
-		else:
+		rows.append({"said": " ".join(said), "rect": row.get_global_rect(),
+				"standing": _standing_in(frame, row)})
+	_rocks_frame = {"frame": frame, "rows": rows}
+
+
+func _rocks_report() -> Dictionary:
+	if _rocks_frame.is_empty():
+		return _not_asked("no 05-rocks.png frame was captured, so there is nothing to describe")
+	var frame: Rect2 = _rocks_frame["frame"]
+	var captured: Array = _rocks_frame["rows"]
+	var whole := 0
+	var rows := captured.size()
+	for row in captured:
+		var rect: Rect2 = row["rect"]
+		if String(row["standing"]) == "whole":
 			whole += 1
-		print("    row %-5s y %5d..%-5d  %s" % [standing, rect.position.y, rect.end.y,
-				" ".join(said)])
+		print("    row %-5s y %5d..%-5d  %s" % [row["standing"], rect.position.y, rect.end.y,
+				row["said"]])
 	print("  rocks: %d rows, %d whole in the frame y %d..%d" % [rows, whole, frame.position.y,
 			frame.end.y])
 	if rows == 0:
@@ -1241,6 +1557,113 @@ func _rocks_report() -> Dictionary:
 	if whole < 2:
 		return _refused(("the roster shot shows %d whole rows of %d, so no two rocks in it can be "
 				+ "compared") % [whole, rows])
+	return _passed()
+
+
+## **DID `11-make.png` START AT THE `make` HEADING, AND DOES IT HOLD THE ROW THE ITEM IS ABOUT**
+## (ASSA-158 boxes 2 and 3).
+##
+## THIS LEG EXISTS BECAUSE THE SHOT WITHOUT IT WAS HONEST AND USELESS. It scrolled, it named its rows
+## off the labels, it reported a dead end, every other leg went green -- and the frame that reached
+## the Game Director held `bench` and `rocks`, with `make` one section above the top edge. Nothing in
+## this file could say so, because nothing in this file was looking at the picture.
+##
+## THE HEADING IS THE BAR, not "some make row is visible". A list of rows with its own name scrolled
+## off is a picture a reader cannot place, and placing it is half of what Maren is judging: that a
+## dead end and a cost sit in ONE series under ONE heading.
+##
+## AND IT CANNOT PASS VACUOUSLY. A frame with no rows at all is a crafting menu with nothing in it,
+## which is a fact about the play rather than a failure, so it is `not_asked` and says which.
+func _make_report() -> Dictionary:
+	if _make_frame.is_empty():
+		return _not_asked("no 11-make.png frame was captured, so there is nothing to describe")
+	var frame: Rect2 = _make_frame["frame"]
+	var rows: Array = _make_frame["rows"]
+	print("  make: `%s` heading %s at y %d, %d scroll(s), %d px of anchor, frame y %d..%d"
+			% [_make_frame["heading"], _make_frame["heading_standing"],
+			(_make_frame["heading_rect"] as Rect2).position.y, _make_frame["scrolls"],
+			_make_frame["offset"], frame.position.y, frame.end.y])
+	var dead_ends := 0
+	var dead_ends_whole := 0
+	var whole := 0
+	for row in rows:
+		var said: String = String(row["said"])
+		var rect: Rect2 = row["rect"]
+		if String(row["standing"]) == "whole":
+			whole += 1
+		if row["dead_end"]:
+			dead_ends += 1
+			if String(row["standing"]) == "whole":
+				dead_ends_whole += 1
+		print("    row %-9s y %5d..%-5d  %s%s" % [row["standing"], rect.position.y, rect.end.y,
+				"[DEAD END] " if row["dead_end"] else "", said])
+	if rows.is_empty():
+		return _not_asked("the crafting menu had no rows in this frame, so no series could be judged")
+	if String(_make_frame["heading_standing"]) != "whole":
+		return _refused("the make shot does not start at the `make` heading: it is %s"
+				% _make_frame["heading_standing"])
+	if whole == 0:
+		return _refused("the make shot holds the `make` heading and not one of its %d rows: the "
+				% rows.size() + "first is %s" % rows[0]["standing"])
+	if dead_ends > 0 and dead_ends_whole == 0:
+		return _refused("the make shot holds %d dead-end row(s) and none of them whole" % dead_ends)
+	if dead_ends == 0:
+		return _not_asked("nothing this play can make is a dead end, so no frame could hold one")
+	return _passed()
+
+
+## **DOES A FRAME EXIST WITH A WALK STROKE ACTUALLY IN IT** (ASSA-266, for ASSA-206's last box).
+##
+## THE SUBJECT IS A FIELD, NOT A SECTION, so `_shoot`'s subject check cannot ask it: the stroke is a
+## line on the map, and every name that check knows is a HUD section. This asks `main.gd::_draw`'s own
+## gate -- the player dict's `target` -- in the frame that was written, and says MISSING by name when
+## it is absent rather than letting a picture of a standing body pass as a picture of a walk.
+##
+## **ABSENT IS NOT ALWAYS A FAILURE.** `_walk_off` does not walk at all when the play planted nothing
+## (there is nothing to stand on top of and nothing to walk away from), so a run that never reached
+## the walk is `not_asked` -- the same reading `10-stopped.png` gets on a seed that never stalls, and
+## for the same reason: a missing file cannot tell "it did not happen" from "it happened and the shot
+## did not fire", so the run says which in words either way.
+func _walk_report() -> Dictionary:
+	if not _walk_shot_done:
+		if not _walk_off_sent:
+			return _not_asked("this play walked nowhere, so no frame could hold a walk stroke")
+		return _refused("the walk ran from %s to %s and no walking frame was ever shot"
+				% [_walk_off_from, _walk_off_target])
+	var pos: Vector2i = _walk_frame["pos"]
+	var to: Vector2i = _walk_frame["target"]
+	print("  walking: %s -> %s, %d tile(s) walked, %d left, stroke %s" % [pos, to,
+			_walk_frame["walked"], _walk_frame["left"],
+			"drawn" if _walk_frame["walking"] else "MISSING"])
+	if not bool(_walk_frame["walking"]):
+		return _refused("12-whole-world-walking.png was written with no stroke in it: %s"
+				% _walk_frame["why"])
+	if int(_walk_frame["left"]) <= 0:
+		return _refused("the body had arrived in the frame written, so the stroke is a point")
+	var ink: Dictionary = _walk_frame.get("ink", {"samples": 0, "lit": 0, "weakest": 0.0,
+			"strongest": 0.0})
+	print("  walking: %d of %d sample points along it differ from the pixels beside them, by %.1f "
+			% [ink["lit"], ink["samples"], ink["weakest"]]
+			+ "at the weakest and %.1f at the strongest (per channel, 0..255)" % ink["strongest"])
+	if int(ink["samples"]) == 0:
+		return _refused("the stroke's own pixels could not be sampled, so the frame is unmeasured")
+	if int(ink["lit"]) == 0:
+		return _refused(("the player dict carries a target and %d sample points along the stroke are "
+				+ "the same colour as the map beside them: it is advertised and not drawn")
+				% ink["samples"])
+	# THE CONTROL, WHICH IS THE HALF THAT MAKES THE NUMBER ABOVE MEAN ANYTHING. Same view, same
+	# tiles, walk finished: the only difference is the line. If the empty segment scores as well as
+	# the drawn one, this leg is reading the map's own texture and its green is worthless.
+	var control: Variant = _walk_frame.get("control")
+	if control == null:
+		return _refused("no control reading was taken after the walk, so the stroke's number has "
+				+ "nothing to be a number against")
+	var after: Dictionary = control
+	print("  walking: the control -- same tiles, same view, walk finished -- lit %d of %d, "
+			% [after["lit"], after["samples"]] + "strongest %.1f" % after["strongest"])
+	if int(after["lit"]) >= int(ink["lit"]):
+		return _refused(("the empty segment scores %d of %d against the stroke's %d: this leg is "
+				+ "reading the map, not the mark") % [after["lit"], after["samples"], ink["lit"]])
 	return _passed()
 
 
@@ -1621,6 +2044,10 @@ func _report() -> void:
 		["reveal", "the press put the log's heading where it said it would", _reveal_report()],
 		["controls", "opening the log moved no control off the screen", _controls_report()],
 		["roster", "two rocks can be compared in one shot", _rocks_report()],
+		["make", "the crafting menu's shot starts at its own heading and holds its dead-end row",
+				_make_report()],
+		["walking", "the walk stroke the map key advertises has a frame with one in it",
+				_walk_report()],
 		["subject", "every shot contains the section it is named for", _subject_report()],
 		["schematic", "every factory the sim holds is marked on the whole-world view",
 				_schematic_report()],
