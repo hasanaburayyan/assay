@@ -420,6 +420,23 @@ pub fn starter_pick_speed(species: &[MineralSpecies], material: SpeciesId) -> u3
 /// bought, and the surface fix for a player who walks to a poorer deposit is
 /// ASSA-143 (the window naming the grade) rather than deleting those worlds.
 ///
+/// 5. **The starter carries a first planted machine** — [`carries_first_machine`]
+///    at [`JUDGED_AT`] (ASSA-170 step 2, out of Maren's ASSA-155 ruling: *rung
+///    zero promises a first planted machine*, not only "you can mine this and
+///    smelt it"). Step 1 made the material the hardest rung-zero species that
+///    carries one, so this clause fires only where **no** rung-zero species
+///    does: 9.6% of the rosters that pass everything above. It is written
+///    against the MATERIAL rather than against "some rung-zero species" on
+///    purpose — the promise is about the rock the game points you at, so it
+///    stays the right requirement even if the selection above changes again.
+///
+///    **WHAT IT DELETES, because a rejection rate is half an answer.** Rejected
+///    against kept worlds: rung-zero species count 1.32 vs 2.25, best rung-zero
+///    strength 16.0 vs 56.7, starter hardness 22.5 vs 23.7 — the hardness is
+///    the same, so this is not a flavour of world being filtered out. It is the
+///    degenerate case where rung zero is one rock of strength ~16, and the
+///    first thing the game asks of you cannot be done in it.
+///
 /// Together these accept 70.9% of rosters that already pass (1), measured
 /// over 2000 seeds, and the guarantee is the **starter species only**: every
 /// other species stays a gamble you have to assay to read.
@@ -435,4 +452,5 @@ pub fn starter_roster_ok(species: &[MineralSpecies]) -> bool {
             &species[usize::from(fuel.0)],
             JUDGED_AT,
         )
+        && carries_first_machine(species, material, JUDGED_AT)
 }
