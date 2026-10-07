@@ -740,7 +740,7 @@ func _report() -> void:
 	print("    exactly as fast as the overflow and the check could never fail.")
 	var cut := ""
 	var cut_px := 0.0
-	var cut_edge := "past the bottom of"
+	var cut_edge := "past the bottom of the box that clips it"
 	var cut_who := ""
 	for which in ["make", "inventory", "bench", "mineralogy"]:
 		var reach: Dictionary = _reach.get(which, {"must_fit": 0.0, "buttons": 0, "tick": 0})
@@ -774,18 +774,18 @@ func _report() -> void:
 		if buttons > 0 and off_top > cut_px:
 			cut_px = off_top
 			cut = which
-			cut_edge = "off the top of"
+			cut_edge = "off the top of the box that clips it"
 		# AND SO DOES OFF THE SIDE, which is the edge that actually had a defect on it today: a
 		# button 614 px to the right of the window is not reachable by any amount of scrolling,
 		# because the one box that scrolls has horizontal scrolling DISABLED by design.
 		if buttons > 0 and off_side > cut_px:
 			cut_px = off_side
 			cut = which
-			cut_edge = "outside the painted column of"
+			cut_edge = "outside the painted column"
 			cut_who = String(_off_side_who.get(which, ""))
 	print("")
 	if cut != "":
-		print("  VERDICT  A CONTROL IS UNREACHABLE. `%s` has a button %d px %s the clip at its"
+		print("  VERDICT  A CONTROL IS UNREACHABLE. `%s` has a button %d px %s at its"
 				% [cut, int(round(cut_px)), cut_edge])
 		print("           worst. That is a cut control, which is the defect this item is about,")
 		print("           and it is not something a list is allowed to do. Report it, say what gives.")
@@ -835,6 +835,19 @@ func _report() -> void:
 	print("    tick a machine stalls. Maren's 17:22 ruling moved the stalled MACHINES into `bench`,")
 	print("    so what is left pinned is the sim's one-line count.")
 	print("")
+	# **THIS LINE WAS UNCONDITIONAL AND EXIT 0 WAS TOO, OVER THIS TOOL'S OWN RED VERDICT.** Found by
+	# mutation-testing the `off side` check added today: I took the footer's autowrap back out, the
+	# probe correctly reported a control 688 px outside the painted column, and then printed
+	# `TAB BUDGET OK` and exited 0 underneath it. **`TAB BUDGET OK` is the line I grep as my gate** —
+	# it is in my own notes as the gate line — so every run of this probe since it was written has
+	# been capable of passing a cut control. `window_shot.gd` learned exactly this on ASSA-149 ("the
+	# green line carries the cuts") and this tool never got the lesson.
+	#
+	# The verdict and the last line are now one decision, and the exit code is that decision.
+	if cut != "":
+		print("TAB BUDGET FAIL  `%s` has a control %d px %s" % [cut, int(round(cut_px)), cut_edge])
+		_finish(1)
+		return
 	print("TAB BUDGET OK")
 	_finish(0)
 
