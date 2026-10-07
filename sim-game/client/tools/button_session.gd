@@ -64,11 +64,32 @@ var _hashes: PackedStringArray = PackedStringArray()
 const RUN_CEILING := 300.0
 var _ceiling := Time.get_unix_time_from_system() + RUN_CEILING
 
+## **WHERE TO WRITE THE BENCH, WHEN SOMEBODY ASKS FOR IT** (`designs=<path>`, ASSA-173). Empty by
+## default, and when it is empty **not one byte of this tool's output changes** -- `BUTTON SESSION OK`
+## is a gate grep and this is not the night to move it.
+##
+## WHY IT IS HERE AND NOT A NEW TOOL. `art/design_rows.png` is drawn from `design_row_layout.gd`,
+## which is fed by `art/bench_read.gd` -- which JOINS A LIVE RELAY WITH DESIGNS IN IT. There is no
+## such relay: the standing bench on 7803 refuses every current client (ASSA-178), so the sheet is a
+## picture of a world that exists nowhere and `check_review_layout.py` has to carry it as the one
+## sheet that cannot declare itself. This loop already builds a world with designs in it, offline,
+## headless and deterministically, and already reads `designs_of` eight lines below. The dump is the
+## same shape `bench_read.gd` prints, so the layout half downstream is untouched.
+var _designs_path := ""
+
 
 func _initialize() -> void:
-	var argv := OS.get_cmdline_user_args()
+	# `designs=` IS PULLED OUT BEFORE THE POSITIONALS, so it can be passed in either mode without
+	# becoming a fifth positional that the host form would have to count past.
+	var argv := PackedStringArray()
+	for raw in OS.get_cmdline_user_args():
+		var arg := String(raw)
+		if arg.begins_with("designs="):
+			_designs_path = arg.substr("designs=".length())
+		else:
+			argv.append(arg)
 	if argv.is_empty():
-		print("FAIL  usage: -- offline [seed] [rank] [job] | host[:port] name [rank] [job]")
+		print("FAIL  usage: -- offline [seed] [rank] [job] | host[:port] name [rank] [job] [designs=P]")
 		quit(1)
 		return
 	_offline = String(argv[0]) == "offline"
@@ -208,6 +229,31 @@ func _find(node: Node, label: String) -> Button:
 
 ## THE REPORT, and what it is allowed to claim. Every line is read out of the stepped world or out of
 ## the list of buttons actually pressed; the only verdict about a design is the sim's own word.
+## **THE BENCH AS A FILE, in exactly the shape `art/bench_read.gd` prints** (ASSA-173) -- `designs`,
+## `tick`, `hash`, `seed` -- so `art/design_row_layout.gd` reads it without knowing which of the two
+## made it. The point is not the file: it is that the world behind it is one a SEED reproduces rather
+## than one relay that happened to be standing, so the sheet downstream can be re-asked.
+##
+## **A FAILED WRITE FAILS THE RUN.** A tool asked for a file and silently not writing one is the shape
+## I keep catching in my own instruments: the caller greps `BUTTON SESSION OK`, sees green, and draws
+## a sheet from whatever stale file was already at that path.
+func _write_designs(designs: Array) -> bool:
+	var file := FileAccess.open(_designs_path, FileAccess.WRITE)
+	if file == null:
+		_finish(false, "could not write the bench to %s (error %d)"
+				% [_designs_path, FileAccess.get_open_error()])
+		return false
+	file.store_string(JSON.stringify({
+		"designs": designs,
+		"tick": _screen._sim.tick(),
+		"hash": _screen._sim.hash_hex(),
+		"seed": _screen._sim.seed_hex() if _screen._sim.has_method("seed_hex") else "",
+	}))
+	file.close()
+	print("  wrote %d design(s) to %s" % [designs.size(), _designs_path])
+	return true
+
+
 func _report() -> void:
 	if _play.failed != "":
 		_finish(false, _play.failed)
@@ -233,7 +279,11 @@ func _report() -> void:
 	# READ, NEVER DERIVED. `verdict` is the sim's word; this prints it beside the numbers rather than
 	# comparing them here -- two renderers forming that opinion is the one disagreement the binding
 	# is specifically forbidden to have (`designs_of`, ADR 0003 A8).
-	for entry in _screen._sim.designs_of(_screen._client.player_id):
+	# TYPED, NOT INFERRED: `_screen` is an untyped Node, so the binding's return has no static type
+	# here and `:=` is a parse error. `check_every_script.sh` is the only thing that sees it -- the
+	# suite never loads `tools/`, and Godot exits 0 on a parse error.
+	var designs: Array = _screen._sim.designs_of(_screen._client.player_id)
+	for entry in designs:
 		var design: Dictionary = entry
 		print("  bench: [%s] %s · mass %s-%s of budget %s-%s"
 				% [String(design.get("verdict", "?")),
@@ -241,6 +291,8 @@ func _report() -> void:
 							design.get("mount", "?")),
 					design.get("mass_low", "?"), design.get("mass_high", "?"),
 					design.get("budget_low", "?"), design.get("budget_high", "?")])
+	if _designs_path != "" and not _write_designs(designs):
+		return
 	print("  %s" % _play.outcome)
 	print("  final: tick %d, hash %s, %d bundles applied"
 			% [_screen._sim.tick(), _screen._sim.hash_hex(), _screen._sim.applied])
