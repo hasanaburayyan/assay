@@ -1345,7 +1345,13 @@ func _strip_rank_report() -> Dictionary:
 				% [int(found["n"]), int(found["x0"]), int(found["x1"]),
 				String(_strip_rank["open"]), String(_strip_rank["primary_name"]),
 				int(control["n"])])
-	return _passed()
+	# **THE GREEN LINE CARRIES THE TWO NUMBERS**, for the reason `_finish` already carries the cuts
+	# (ASSA-149): a reader who sees `rank yes` must not have to re-run the tool to learn what was
+	# counted, and the zero only means something beside the control's number.
+	return {"ok": true, "ran": true,
+			"why": "0 accent px in the strip with `%s` open, %d on the one `Primary` %s"
+			% [String(_strip_rank["open"]), int(control["n"]),
+			String(_strip_rank["primary_name"])]}
 
 
 ##
