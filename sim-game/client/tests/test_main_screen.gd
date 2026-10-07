@@ -3096,7 +3096,10 @@ func test_both_player_marks_carry_the_maps_own_keyline() -> bool:
 		# diagonal's growth on a diamond, so the PERPENDICULAR rim is that over sqrt(2); on the
 		# cross every edge is axis-aligned and the gap is the rim. Writing the diamond's number as
 		# if it were the rim is the `span + 4` mistake ASSA-193 caught, one shape along.
-		var vertex_gap := points[0].distance_to(rim[0])
+		# (The gap is read on the Y axis, not as a distance between the two first vertices: on the
+		# cross that vertex is a CORNER of the top arm and moves diagonally, so a distance there
+		# reports 2.83 for a 2px rim. The edge it sits on moves by exactly the rim.)
+		var vertex_gap := absf(points[0].y - rim[0].y)
 		var gap := vertex_gap / sqrt(2.0) if mine else vertex_gap
 		if absf(gap - AssayHud.MARK_KEYLINE_PX) > 0.01:
 			return _fail(("a %s body's rim is %.2fpx thick where it should be %.2f")
