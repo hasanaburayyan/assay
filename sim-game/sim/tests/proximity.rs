@@ -1048,8 +1048,17 @@ fn every_species_the_too_poor_answer_names_can_be_lifted_to_one_that_answers() {
 fn the_plain_empty_answer_offers_no_ladder() {
     for q in Question::ALL {
         let plain = debug::nothing_answers(q);
+        // LOWERCASED, and here that is the whole assertion rather than tidying.
+        // This one is a NEGATIVE: it says the no-ladder sentence must never
+        // mention sorting. ASSA-265 made the clause its own sentence, so
+        // "Sorting" became the house capitalisation — and a case-sensitive
+        // haystack would have gone on passing while someone added the
+        // capitalised clause to `nothing_answers`, which is the exact lie
+        // Maren's condition exists to prevent. The presence check below was
+        // lowercased when the wording moved; this one was missed, because a
+        // negative assertion does not redden when it stops covering anything.
         assert!(
-            !plain.contains("sorting"),
+            !plain.to_lowercase().contains("sorting"),
             "the no-species-at-all sentence offers the ladder, which cannot \
              help when nothing in the world answers at any grade: {plain}"
         );
@@ -1068,6 +1077,18 @@ fn the_plain_empty_answer_offers_no_ladder() {
                 && !too_poor.to_lowercase().contains("you should"),
             "the clause states a fact about the rock, never an instruction \
              (Maren, ASSA-257): {too_poor}"
+        );
+        // **AND NO NUMBER IN IT.** Sorting's loss is 3 ore to 1 and Maren ruled
+        // it out of this sentence: the price is a RECIPE fact and belongs on the
+        // surface that performs it, not in a proximity answer. The clause's job
+        // is only to stop a player believing the lift is free. Asked of the
+        // whole string because a digit anywhere in it is the same mistake; the
+        // species name here is the test's own and carries none, so a renamed
+        // species cannot redden this by accident.
+        assert!(
+            !too_poor.chars().any(|c| c.is_ascii_digit()),
+            "the sentence quotes a rate, which is a recipe fact and belongs \
+             where a player would act on it (Maren, ASSA-257): {too_poor}"
         );
     }
 }
