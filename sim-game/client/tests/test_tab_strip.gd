@@ -12,6 +12,8 @@ extends RefCounted
 ##  - adding a tab is ONE entry and disturbs nothing already there (Rainy, via Wren)
 ##  - exactly one body is on screen at a time (Maren: "one system at a time")
 ##  - the strip is furniture: no ACCENT on any tab (Maren: ACCENT means "press this next")
+##  - and the OPEN tab is marked by RANK, asked of the colour a Button resolves rather than of the
+##    variation it names — the clause above passed for two days while the strip drew accent green
 ##  - a placeholder is visibly not-yet and cannot show fake content (Wren)
 ##  - no refusal is silent (repo `CLAUDE.md`)
 
@@ -96,20 +98,112 @@ func test_adding_a_tab_disturbs_nothing_already_there() -> bool:
 
 ## A TAB STRIP IS FURNITURE (Maren). ACCENT means "press this next" and nothing else, and a row of
 ## six accents would mean it nowhere. The screen's one primary is a verb like `Mine`, never a tab.
+##
+## **THIS TEST PASSED WHILE THE STRIP DREW THE ACCENT, AND THE LESSON IS THE QUESTION IT ASKED.** It
+## asked for the VARIATION NAME. Maren then counted 172 accent-family pixels on a real 1x shot,
+## exactly where `mineralogy` is drawn, core `(128,229,140)` — byte-identical to `Mine`'s. The green
+## was honest: `Quiet` is the right variation and `Quiet` declares `font_pressed_color = ACCENT`
+## itself, for lone toggles where pressed is occasional. A four-tab strip is the first group here
+## where one member is always pressed. **The name of a variation is not the colour it draws**, which
+## is the fourth defect this week where the declared property passed and the drawn one differed.
+##
+## So the clause below is kept — furniture is still a property worth holding — and the colour moved
+## to its own test, which asks the RESOLVED value a Button will draw.
 func test_no_tab_wears_the_accent() -> bool:
 	var strip := _strip_of(["make", "bench", "rocks"])
 	for n in strip.tab_names():
-		var button: Button = null
-		for child in strip.get_child(0).get_children():
-			var b := child as Button
-			if b != null and b.text == String(n):
-				button = b
+		var button := _button_for(strip, String(n))
 		if button == null:
 			return _fail("tab '%s' has no button in the strip" % n)
 		if button.theme_type_variation != &"Quiet":
 			return _fail("tab '%s' is themed '%s', want Quiet: a tab is furniture, not the primary"
 					% [n, button.theme_type_variation])
 	return true
+
+
+func _button_for(strip: AssayTabStrip, tab_name: String) -> Button:
+	for child in strip.names_box().get_children():
+		var b := child as Button
+		if b != null and b.text == tab_name:
+			return b
+	return null
+
+
+## **A SELECTED TAB IS A STATE, NOT A VERB** (Maren, 2026-10-06 18:34), asked of the colour a Button
+## RESOLVES rather than of the variation it names — which is the whole reason this is a second test
+## and not another clause in the one above.
+##
+## Three things, and the third is what stops this from being a check that cannot fail.
+##
+## 1. **THE OPEN TAB DOES NOT DRAW THE ACCENT.** `ACCENT` is read as the colour this theme FILLS its
+##    one primary with, never typed: a literal here would pass the day somebody retuned the token.
+## 2. **IT DRAWS THE ORDINARY INK, AND THE RANK IS REAL.** Selection is marked by `INK` over the
+##    other tabs' `INK_MUTED`, so the test asks for the luminance ORDER as well as the two values —
+##    equal colours would satisfy "not the accent" and mark nothing at all.
+## 3. **THE COINCIDENCE IS DECLARED** (the pattern `test_main_screen.gd` uses for the theme poke).
+##    Today `Quiet` declares `font_pressed_color = ACCENT`, so the override is load-bearing and that
+##    is asserted. **ASSA-267 takes the literal out of the theme**, and on the day it lands this
+##    clause flips to the other branch by itself instead of going red for a fix: either the variation
+##    still declares the accent (so the override must differ from it) or it no longer does (so there
+##    is nothing left to override and the strip may inherit). A test that has to be edited by the
+##    person fixing the thing it guards gets edited into agreement.
+func test_the_open_tab_is_marked_by_rank_and_not_by_the_accent() -> bool:
+	var theme: Theme = load("res://theme/assay.tres")
+	if theme == null:
+		return _fail("no theme/assay.tres to read declared values from")
+	var primary := theme.get_stylebox(&"normal", &"Primary") as StyleBoxFlat
+	if primary == null:
+		return _fail("the theme declares no flat `normal` box for `Primary`, so this test cannot "
+				+ "name the accent without typing a literal, which is what it refuses to do")
+	var accent := primary.bg_color
+	var ink := theme.get_color(&"font_color", &"Button")
+	var muted := theme.get_color(&"font_color", &"Quiet")
+	var strip := _strip_of(["make", "inventory", "bench", "mineralogy"])
+	var ok := true
+	for n in strip.tab_names():
+		var button := _button_for(strip, String(n))
+		if button == null:
+			return _fail("tab '%s' has no button in the strip" % n)
+		# **THE READ WITH NO TYPE ARGUMENT, WHICH IS THE ONE THE ENGINE ITSELF MAKES WHEN IT DRAWS.**
+		# An override is consulted FIRST on this path and bypasses the type chain entirely, so this
+		# is an honest read of the colour the label will take even in a harness with no layout pass.
+		#
+		# **AND IT HAS TO BE THIS ONE, NOT A READ WITH A TYPE.** Godot compares the `theme_type`
+		# argument against the node's own CLASS before building the type list, so
+		# `get_theme_color(&"font_color", &"Button")` on a `Quiet` Button resolves the VARIATION and
+		# returns `INK_MUTED`. That is the bug this test caught in my first fix: the strip marked its
+		# open tab in the same colour as its closed ones, and "no accent" was perfectly true of it.
+		for state in [&"font_pressed_color", &"font_hover_pressed_color"]:
+			var drawn: Color = button.get_theme_color(state)
+			if drawn.is_equal_approx(accent):
+				ok = _fail(("the open tab '%s' draws %s for `%s`, the colour `Primary` is filled "
+						+ "with. ACCENT means `press this next` and a tab already open cannot mean "
+						+ "that (Maren, ASSA-247)") % [n, drawn, state])
+			if not drawn.is_equal_approx(ink):
+				ok = _fail(("the open tab '%s' draws %s for `%s`, want the theme's ordinary button "
+						+ "ink %s: selection is marked by RANK, and a third colour is a token "
+						+ "nobody chose") % [n, drawn, state, ink])
+		# A CLOSED TAB IS THE VARIATION'S BUSINESS AND NOT THIS CLASS'S. Restating `INK_MUTED` here
+		# would be a second place to retune the strip, and `Quiet` is already the place.
+		if button.has_theme_color_override(&"font_color"):
+			ok = _fail(("tab '%s' overrides its resting ink. A closed tab keeps `Quiet`'s %s; this "
+					+ "class states the SELECTED colour only, because that is the only one the "
+					+ "variation gets wrong") % [n, muted])
+	# THE RANK ITSELF. Two tabs inked the same colour would pass every clause above and tell a player
+	# nothing about where they are.
+	var separation := AssayHud.relative_luminance(ink) - AssayHud.relative_luminance(muted)
+	if separation <= 0.0:
+		ok = _fail(("the open tab's ink %s is not brighter than a closed tab's %s, so selection is "
+				+ "marked by nothing a player can see") % [ink, muted])
+	# CLAUSE 3: the declared coincidence, which is ASSA-267's to end.
+	var declared := theme.get_color(&"font_pressed_color", &"Quiet")
+	if declared.is_equal_approx(accent):
+		var probe := _button_for(strip, "make")
+		if probe.get_theme_color(&"font_pressed_color").is_equal_approx(declared):
+			ok = _fail(("`Quiet` still declares the accent for its pressed state and the strip is "
+					+ "not overriding it: a tab inherits %s. If ASSA-267 has landed, the theme is "
+					+ "what changed and this clause goes quiet on its own.") % declared)
+	return ok
 
 
 ## **A PLACEHOLDER IS VISIBLY NOT-YET AND CANNOT BE PRESSED INTO SHOWING NOTHING** (Wren: "no fake

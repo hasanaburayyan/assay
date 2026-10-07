@@ -424,6 +424,10 @@ func _process(_delta: float) -> bool:
 			_settle(Phase.SHOOT_PLAY)
 		Phase.SHOOT_PLAY:
 			_shoot("02-play.png", PackedStringArray())
+			# THE ACCENT COUNT IS TAKEN HERE, IN THIS FRAME, for `_shoot`'s own reason: the geometry
+			# and the pixels are only true together at the moment of the shot. See
+			# `_strip_rank_report` -- this is the frame Maren read 172 accent pixels off by hand.
+			_measure_strip_rank()
 			# THE OTHER STATE, and it has to be the OPPOSITE of whatever the loop left behind.
 			# `AssayButtonPlay` folds the log away and opens the menu as it plays, so asking for
 			# that state again photographs the same screen twice.
@@ -1224,6 +1228,126 @@ func _select_tab(tab_name: String) -> void:
 	print("  tabs: opened `%s` for the shot that is named for it" % tab_name)
 
 
+## **A PIXEL IS ACCENT-FAMILY WHEN ITS GREEN BEATS BOTH ITS OTHER CHANNELS**, counted inside one
+## rect, with the x range of what was found so a reader knows WHICH control it sat on.
+##
+## WHY THAT TEST AND NOT A COLOUR MATCH. Anti-aliased text is never the declared colour: every glyph
+## edge is a blend of the ink and the surface behind it, so `== ACCENT` would count the handful of
+## interior pixels of a bold glyph and miss a whole thin word. The blend LINE is what to test, and on
+## this theme the four colours that can appear in the HUD column separate cleanly on green dominance
+## (`g - max(r, b)`, 8-bit):
+##
+##     ACCENT    (128,229,140)   +89      <- the only positive one
+##     SURFACE    (37, 40, 48)    -8
+##     INK       (229,233,241)    -8
+##     INK_MUTED (167,176,190)   -14
+##
+## A blend of `SURFACE` and `ACCENT` crosses zero at 8% accent and the margin below at 17%, so any
+## pixel with a sixth of accent in it is caught and nothing else in the palette can be. **The margin
+## is what makes this a measurement rather than a rounding artefact**: at `>= 1` a JPEG-ish rounding
+## on a grey pixel would read as green.
+const ACCENT_MARGIN := 8
+
+
+func _accent_pixels(image: Image, rect: Rect2) -> Dictionary:
+	var count := 0
+	var x0 := 1 << 30
+	var x1 := -1
+	var left := maxi(0, int(floor(rect.position.x)))
+	var right := mini(image.get_width(), int(ceil(rect.end.x)))
+	var top := maxi(0, int(floor(rect.position.y)))
+	var bottom := mini(image.get_height(), int(ceil(rect.end.y)))
+	for y in range(top, bottom):
+		for x in range(left, right):
+			var c := image.get_pixel(x, y)
+			var green := int(round(c.g * 255.0))
+			var other := maxi(int(round(c.r * 255.0)), int(round(c.b * 255.0)))
+			if green - other >= ACCENT_MARGIN:
+				count += 1
+				x0 = mini(x0, x)
+				x1 = maxi(x1, x)
+	return {"n": count, "x0": (x0 if count > 0 else -1), "x1": x1,
+			"rect": "x %d..%d y %d..%d" % [left, right, top, bottom]}
+
+
+## THE PRIMARY ON THIS FRAME, by the variation it names rather than by its text: `Mine` is only
+## `Primary` where a hand can break the rock under you (ASSA-251), so naming the button would make
+## this control depend on where the play happened to be standing.
+func _primary_now() -> Button:
+	var stack: Array = [_screen._actions]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		var button := node as Button
+		if button != null and button.theme_type_variation == &"Primary" \
+				and button.is_visible_in_tree():
+			return button
+		for child in node.get_children():
+			stack.append(child)
+	return null
+
+
+## **TWO ACCENTS ON ONE SCREEN, READ OFF THE FRAME** — the measurement Maren took by hand on
+## 2026-10-06 and the one no test of mine could take.
+##
+## My `test_no_tab_wears_the_accent` asked for the variation NAME, got `Quiet`, and passed while the
+## strip drew 172 accent-family pixels at x 1143..1201, core `(128,229,140)`, byte-identical to
+## `Mine`'s. `Quiet` declares `font_pressed_color = ACCENT` itself — authored for LONE toggles, where
+## pressed is occasional — and a four-tab strip is the first control group in this client where
+## exactly one member is ALWAYS pressed. **The declared property was correct and the drawn pixel was
+## not, which is the fourth defect this week of exactly that shape.**
+##
+## ONE FRAME IS ENOUGH AND THAT IS A PROPERTY, NOT A SHORTCUT: the strip is pinned outside the scroll
+## box and exactly one of its buttons is pressed in every frame the column is up, so if the override
+## is ever lost, whichever tab is open draws accent in any shot. Maren's four-tab sweep found the
+## same single colour four times.
+##
+## **THE CONTROL IS WHAT STOPS THIS FROM BEING A CHECK THAT CANNOT FAIL.** "No accent pixel in the
+## strip" is also what a broken detector says, and what a screen with no accent anywhere says. So the
+## same counter is run over the frame's `Primary`, which must be FULL of accent — and if there is no
+## Primary on this frame the leg reports NOT RUN rather than green, because without the control the
+## zero means nothing.
+var _strip_rank := {}
+
+
+func _measure_strip_rank() -> void:
+	if _screen._tabs == null:
+		return
+	var image := root.get_texture().get_image()
+	if image == null:
+		return
+	var strip := _screen._tabs.names_box() as Control
+	var primary := _primary_now()
+	_strip_rank = {
+		"strip": _accent_pixels(image, strip.get_global_rect()),
+		"primary": (_accent_pixels(image, primary.get_global_rect()) if primary != null else {}),
+		"primary_name": (primary.text if primary != null else ""),
+		"open": _screen._tabs.selected(),
+	}
+
+
+func _strip_rank_report() -> Dictionary:
+	if _strip_rank.is_empty():
+		return _not_asked("no tab strip on this screen, or no frame to read it from")
+	var control: Dictionary = _strip_rank["primary"]
+	if control.is_empty():
+		return _not_asked("no `Primary` control was on screen in the played frame, so a count of "
+				+ "zero accent pixels in the strip cannot be told apart from a counter that is "
+				+ "measuring nothing")
+	if int(control["n"]) == 0:
+		return _refused(("the control failed: `%s` is the screen's `Primary` and %s holds no "
+				+ "accent-family pixel at all. The detector, not the strip, is what this run "
+				+ "measured.") % [String(_strip_rank["primary_name"]), String(control["rect"])])
+	var found: Dictionary = _strip_rank["strip"]
+	if int(found["n"]) > 0:
+		return _refused(("the tab strip draws %d accent-family pixels at x %d..%d with `%s` open. "
+				+ "ACCENT means `press this next` and a tab already open cannot mean that; "
+				+ "selection is marked by RANK (Maren, ASSA-247). The one Primary `%s` has %d.")
+				% [int(found["n"]), int(found["x0"]), int(found["x1"]),
+				String(_strip_rank["open"]), String(_strip_rank["primary_name"]),
+				int(control["n"])])
+	return _passed()
+
+
 ##
 ## **IT ANCHORS ON THE `make` HEADING AND NOT ON `_make`, AND THE FIRST VERSION DID NOT** (Maren,
 ## 2026-10-06: "I cannot tick boxes 2 and 3: `11-make.png` scrolled past `make`"). `_make` is the ROWS
@@ -1923,6 +2047,8 @@ func _report() -> void:
 				_schematic_report()],
 		["letters", "a machine standing on a species letter is in the frame, or said to be absent",
 				_letters_report()],
+		["rank", "the open tab is marked by rank, with the screen's one accent on its one primary",
+				_strip_rank_report()],
 	]
 	print("  legs:")
 	var failures := PackedStringArray()

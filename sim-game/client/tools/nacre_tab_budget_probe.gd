@@ -97,6 +97,18 @@ var _over_fold := {}
 var _off_top := {}
 var _off_top_tick := {}
 var _over_tick := {}
+## **THE OTHER AXIS** (Maren's ruling, box 2 is read as EITHER edge). How far a tab's worst Button
+## was drawn outside the PAINTED column left or right, the worst reading of the run, with the name
+## and the x range of the control that did it. Zero everywhere is the only passing answer, same as
+## `_over_fold` -- and until 2026-10-06 nothing we owned asked it, while five `Make` buttons sat
+## 614 px off the right of the window.
+var _off_side := {}
+var _off_side_tick := {}
+var _off_side_who := {}
+## THE PAINTED COLUMN'S OWN WIDTH, printed so the verdicts above can be checked by arithmetic. It is
+## `AssayHud.PANEL` and it is read, never assumed: the whole point of the reference is that it is a
+## `Panel` and not a `Container`, so if it ever became one this number would move and say so.
+var _paint_w := 0.0
 ## HOW MANY TICKS EACH TAB WAS THE OPEN ONE. Printed, because "every tick" is not true per tab any
 ## more and a report that implied it would be overstating its own instrument.
 var _tabs_measured := {}
@@ -399,7 +411,25 @@ func _drawn_height(controls: Array, has_heading := true) -> Dictionary:
 ##
 ## `top_control` rather than an index: a tab's body has no heading to skip, and `reach` is still
 ## reported because it is the number the old run was judged on.
-func _button_reach(top_control: Control, controls: Array, frame: Rect2) -> Dictionary:
+##
+## **AND THE FOLD HAS A THIRD EDGE, WHICH THIS PROBE SAID NOTHING ABOUT WHILE IT WAS BROKEN**
+## (Maren's ruling, 2026-10-06 19:50: *"box 2 is read as EITHER axis"*). On the build before
+## `252fdb6` every one of the make tab's five `Make` buttons was drawn at **x 1894..1944** — 614 px
+## past the right edge of a 1280 px window, the crafting menu the board asked for by name with not
+## one pressable control in it — and this function reported `over_fold 0` and was telling the truth.
+## A column laid out wider than the window falls off a second edge, and every instrument we owned
+## watched the vertical one. **She found it by pressing a control nobody had pressed; no number we
+## had could have.**
+##
+## **`paint` IS A SEPARATE ARGUMENT FROM `frame` AND THAT IS THE ENTIRE CARE IN THIS CHANGE.** The
+## obvious build is to reuse `frame` — it is a Rect2, it already bounds x. It would be a check that
+## cannot fail: `frame` is the intersection of the clipping ancestors, and the defect is those very
+## ancestors being CLAMPED UP to a 998 px child, so the frame grows exactly as much as the overflow
+## and the arithmetic reads zero forever. The reference has to be something the defect cannot move:
+## `main.gd`'s `COLUMN_SURFACE` is a plain `Panel`, not a `Container`, so it keeps the 320 px it was
+## given no matter what its neighbours demand. That is the rect Maren's ruling names, and it is the
+## one honest answer available in-process.
+func _button_reach(top_control: Control, controls: Array, frame: Rect2, paint: Rect2) -> Dictionary:
 	var top := INF
 	if top_control != null and top_control.is_visible_in_tree():
 		top = top_control.get_global_rect().position.y
@@ -412,6 +442,12 @@ func _button_reach(top_control: Control, controls: Array, frame: Rect2) -> Dicti
 	# panel and this function still called the tab ABOVE THE FOLD.
 	var highest := INF
 	var count := 0
+	# THE HORIZONTAL HIGH WATER, AND THE NAME OF THE CONTROL THAT SET IT. A count of pixels says a
+	# tab is broken; the name says which control to press, which is what cost Maren a shot and me a
+	# wake-up to find out by hand.
+	var off_right := 0.0
+	var off_left := 0.0
+	var worst := ""
 	for item in controls:
 		var control := item as Control
 		if control == null or not control.is_visible_in_tree():
@@ -423,17 +459,29 @@ func _button_reach(top_control: Control, controls: Array, frame: Rect2) -> Dicti
 			if button == null or not button.is_visible_in_tree():
 				continue
 			count += 1
-			var bottom := button.get_global_rect().end.y
-			if bottom > lowest:
-				lowest = bottom
-			var button_top := button.get_global_rect().position.y
-			if button_top < highest:
-				highest = button_top
+			var rect := button.get_global_rect()
+			if rect.end.y > lowest:
+				lowest = rect.end.y
+			if rect.position.y < highest:
+				highest = rect.position.y
+			# THE WHOLE RECT, NOT ITS ORIGIN: a Button that starts inside the paint and ends outside
+			# it is a control with its label cut, which is the `go here` slab Maren photographed --
+			# a full-width rounded rectangle with no text in it, because a Button centres its label
+			# and the centre was 120 px past the window.
+			var out_right := maxf(rect.end.x - paint.end.x, 0.0)
+			var out_left := maxf(paint.position.x - rect.position.x, 0.0)
+			if maxf(out_right, out_left) > maxf(off_right, off_left):
+				worst = "%s `%s` x %d..%d" % [button.name, button.text,
+						int(rect.position.x), int(rect.end.x)]
+			off_right = maxf(off_right, out_right)
+			off_left = maxf(off_left, out_left)
 	if count == 0 or top == INF:
-		return {"must_fit": 0.0, "buttons": 0, "over_fold": 0.0, "off_top": 0.0}
+		return {"must_fit": 0.0, "buttons": 0, "over_fold": 0.0, "off_top": 0.0,
+				"off_right": 0.0, "off_left": 0.0, "worst": ""}
 	return {"must_fit": maxf(lowest - top, 0.0), "buttons": count,
 			"over_fold": maxf(lowest - frame.end.y, 0.0),
-			"off_top": maxf(frame.position.y - highest, 0.0)}
+			"off_top": maxf(frame.position.y - highest, 0.0),
+			"off_right": off_right, "off_left": off_left, "worst": worst}
 
 
 ## Every Control at or under `from`, itself included, so a Button nested in a row is found.
@@ -471,6 +519,11 @@ func _measure() -> void:
 	if _clip_last < _clip_min:
 		_clip_min = _clip_last
 		_clip_min_tick = _screen._sim.tick()
+	# **THE RECT THE DEFECT CANNOT MOVE** -- see `_button_reach`. `COLUMN_SURFACE` is a plain `Panel`,
+	# so it keeps its 320 px however wide its neighbours are clamped, which is the only reason this
+	# can be asked honestly from inside the process that is laying the column out wrong.
+	var paint := (_screen._column as Control).get_global_rect()
+	_paint_w = paint.size.x
 	# A TAB STRIP'S OWN HEIGHT, MEASURED OFF A THEMED BUTTON THAT IS ALREADY ON SCREEN rather than
 	# guessed. `_log_toggle` is a `Quiet` Button in this very column, so its height is what the theme
 	# makes a one-row strip of buttons -- the same mistake `LOG_TOGGLE_H` was (ASSA-239: "a fifth
@@ -498,7 +551,7 @@ func _measure() -> void:
 		# together: `make` grows a row of prose that wraps to two lines without adding a button, so
 		# the tallest body and the deepest button are different ticks. Tracking one and reporting the
 		# other would be the same error as adding two separate maxima together.
-		var reach := _button_reach(section["top"] as Control, section["controls"], frame)
+		var reach := _button_reach(section["top"] as Control, section["controls"], frame, paint)
 		var must_fit := float(reach["must_fit"])
 		if not _reach.has(which) or must_fit > float((_reach[which] as Dictionary)["must_fit"]):
 			_reach[which] = {"must_fit": must_fit, "buttons": int(reach["buttons"]),
@@ -518,6 +571,15 @@ func _measure() -> void:
 		if off_top > float(_off_top.get(which, -1.0)):
 			_off_top[which] = off_top
 			_off_top_tick[which] = tick
+		# **AND THE THIRD AND FOURTH EDGES, ON MAREN'S RULING THAT BOX 2 IS EITHER AXIS.** Its own
+		# high water for the same reason as the other two: the widest row and the tallest list are
+		# different ticks, and a horizontal overflow read only at the moment the column was tallest
+		# would be a number about a coincidence.
+		var off_side := maxf(float(reach["off_right"]), float(reach["off_left"]))
+		if off_side > float(_off_side.get(which, -1.0)):
+			_off_side[which] = off_side
+			_off_side_tick[which] = tick
+			_off_side_who[which] = String(reach["worst"])
 		_tabs_measured[which] = int(_tabs_measured.get(which, 0)) + 1
 		# ROW DENSITY AT THE TICK THE SECTION WAS TALLEST, not at its own separate peak. The lever is
 		# "what does this section's worst moment cost per row", so it has to be read off that moment.
@@ -663,15 +725,30 @@ func _report() -> void:
 	print("    `off top` is the SAME QUESTION AT THE OTHER EDGE -- how far its HIGHEST button was")
 	print("    carried above the top of that box. A control scrolled off the top is exactly as")
 	print("    unreachable, and until 2026-10-06 this probe did not look at that edge at all.")
+	# **BOX 2 IS READ AS EITHER AXIS** (Maren, 19:50). Both columns above are vertical, and a column
+	# laid out wider than the window falls off a third edge that every instrument we owned was blind
+	# to. The reference is the PAINTED panel and not the clip rect, for the reason in `_button_reach`:
+	# the clip grows with the defect, the paint cannot.
+	print("    `off side` is THE OTHER AXIS -- how far a tab's worst Button was drawn outside the")
+	print("    PAINTED column (%d px wide, x %d..%d), left or right. On the build before 252fdb6"
+			% [int(round(_paint_w)),
+			int(round((_screen._column as Control).get_global_rect().position.x)),
+			int(round((_screen._column as Control).get_global_rect().end.x))])
+	print("    every `Make` button was drawn at x 1894..1944 -- 614 px past a 1280 px window -- and")
+	print("    the two columns above both read a comfortable zero. Measured against the paint and")
+	print("    not against the clip: the clip is clamped UP by the offending child, so it would grow")
+	print("    exactly as fast as the overflow and the check could never fail.")
 	var cut := ""
 	var cut_px := 0.0
 	var cut_edge := "past the bottom of"
+	var cut_who := ""
 	for which in ["make", "inventory", "bench", "mineralogy"]:
 		var reach: Dictionary = _reach.get(which, {"must_fit": 0.0, "buttons": 0, "tick": 0})
 		var must_fit := float(reach["must_fit"])
 		var buttons := int(reach["buttons"])
 		var over := float(_over_fold.get(which, 0.0))
 		var off_top := float(_off_top.get(which, 0.0))
+		var off_side := float(_off_side.get(which, 0.0))
 		var verdict := ""
 		if buttons == 0:
 			verdict = "no buttons -- a list, free to scroll in its own tab"
@@ -681,11 +758,14 @@ func _report() -> void:
 		elif off_top > 0.0:
 			verdict = "OFF THE TOP by %d px (tick %d)" % [int(round(off_top)),
 					int(_off_top_tick.get(which, 0))]
+		elif off_side > 0.0:
+			verdict = "OUTSIDE THE PAINT by %d px (tick %d): %s" % [int(round(off_side)),
+					int(_off_side_tick.get(which, 0)), String(_off_side_who.get(which, ""))]
 		else:
 			verdict = "REACHABLE"
-		print("    %-9s reach %4d px, %2d buttons, over fold %3d px, off top %3d px  %s"
+		print("    %-9s reach %4d px, %2d buttons, over fold %3d px, off top %3d px, off side %4d px  %s"
 				% [which, int(round(must_fit)), buttons, int(round(over)), int(round(off_top)),
-				verdict])
+				int(round(off_side)), verdict])
 		if buttons > 0 and over > cut_px:
 			cut_px = over
 			cut = which
@@ -695,12 +775,22 @@ func _report() -> void:
 			cut_px = off_top
 			cut = which
 			cut_edge = "off the top of"
+		# AND SO DOES OFF THE SIDE, which is the edge that actually had a defect on it today: a
+		# button 614 px to the right of the window is not reachable by any amount of scrolling,
+		# because the one box that scrolls has horizontal scrolling DISABLED by design.
+		if buttons > 0 and off_side > cut_px:
+			cut_px = off_side
+			cut = which
+			cut_edge = "outside the painted column of"
+			cut_who = String(_off_side_who.get(which, ""))
 	print("")
 	if cut != "":
 		print("  VERDICT  A CONTROL IS UNREACHABLE. `%s` has a button %d px %s the clip at its"
 				% [cut, int(round(cut_px)), cut_edge])
 		print("           worst. That is a cut control, which is the defect this item is about,")
 		print("           and it is not something a list is allowed to do. Report it, say what gives.")
+		if cut_who != "":
+			print("           THE CONTROL IS %s -- press that one." % cut_who)
 	else:
 		var deepest := ""
 		var deepest_px := -1.0
@@ -712,11 +802,13 @@ func _report() -> void:
 		if deepest == "":
 			print("  VERDICT  no tab has a button at all, which cannot be right -- check the probe")
 		else:
-			print("  VERDICT  THE PANEL KEEPS THE RULE. Not one button of any tab, on any tick of this")
-			print("           play, reached past the box that clips it. The deepest reach is `%s` at"
-					% deepest)
-			print("           %d px, and the worst clip of the run was %d px (tick %d)."
-					% [int(round(deepest_px)), int(round(_clip_min)), _clip_min_tick])
+			print("  VERDICT  THE PANEL KEEPS THE RULE ON BOTH AXES. Not one button of any tab, on any")
+			print("           tick of this play, was drawn past the bottom or the top of the box that")
+			print("           clips it, or outside the %d px of column that is actually painted. The"
+					% int(round(_paint_w)))
+			print("           deepest reach is `%s` at %d px; the worst clip of the run was %d px"
+					% [deepest, int(round(deepest_px)), int(round(_clip_min))])
+			print("           (tick %d)." % _clip_min_tick)
 	# **THE FOOTER'S COST, BECAUSE I PLACED IT AND NOBODY RULED IT.** The cursor readout is derived
 	# from the TILE, not from a system, so it is not a tab; it sits last in the scrolled area, under
 	# whichever tab is open. The claim I made in `main.gd` is that this costs the tab budget nothing,

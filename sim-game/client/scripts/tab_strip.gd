@@ -112,6 +112,7 @@ func add_tab(tab_name: String, body: Control, placeholder := false) -> Button:
 		_placeholders[tab_name] = true
 	button.pressed.connect(func() -> void: select(tab_name))
 	_names.add_child(button)
+	_mark_selection_by_rank(button)
 	_buttons[tab_name] = button
 	body.visible = false
 	_bodies_box.add_child(body)
@@ -121,6 +122,75 @@ func add_tab(tab_name: String, body: Control, placeholder := false) -> Button:
 	else:
 		_sync_pressed()
 	return button
+
+
+## **A SELECTED TAB IS A STATE, NOT A VERB** (Maren's ruling, 2026-10-06 18:34), and this is the
+## local half of it. `ACCENT` means *press this next*; a tab that is already open cannot mean that,
+## so selection is marked by RANK instead — `INK` for the open tab against the other three at
+## `INK_MUTED`, the 1.80:1 the palette already owns, with no new literal anywhere.
+##
+## **THE DEFECT THIS FIXES WAS INSIDE `Quiet` ITSELF AND NO TEST OF MINE COULD SEE IT.** I wrote
+## `test_no_tab_wears_the_accent`, it passed, and Maren then counted **172 accent-family pixels at
+## x 1143..1201** of a real 1x shot — core `(128,229,140)`, byte-identical to `Mine`'s — sitting
+## exactly where `mineralogy` is drawn. The variation declares it:
+##
+##     assay.tres   Quiet/colors/font_pressed_color = Color(0.5, 0.9, 0.55)   # ACCENT exactly
+##
+## So a `Quiet` button draws accent text in its pressed state with nobody setting a colour. My test
+## asked the variation and the variation was right; **`Quiet` was authored for LONE toggles**
+## (`_log_toggle`, `_make_toggle`) where pressed is an occasional state, and a four-tab strip is the
+## first control group in this client where exactly one member is ALWAYS pressed. What used to flash
+## under a finger is permanent here, which is why two days of shots could not catch it: in every one
+## of them the log toggle happened to be unpressed.
+##
+## **STATED, NOT MODULATED, AND READ OUT OF THE THEME RATHER THAN TYPED.** `modulate` is forbidden
+## (Maren); a literal would be a seventh colour nobody chose, which is the ASSA-233 defect. The
+## source is `Button/font_color` — *the ink this theme draws an ordinary button's label in* — so
+## retuning `INK` moves the tabs with it and the rank survives.
+##
+## HOVER-PRESSED TOO, because that is the same defect under a pointer: `Quiet` does not declare
+## `font_hover_pressed_color`, so the open tab would fall back to the base type's while hovered and
+## a reader of one shot would never know which state they were looking at.
+##
+## **THE LITERAL ITSELF IS ASSA-267'S, NOT THIS FILE'S** (Maren filed it either way). A surface
+## should not need a local override to obey a screen's rule, but taking `ACCENT` out of `Quiet`
+## touches the log and make toggles and is not a thing to slip in hours before a gate.
+## **IT ASKS THE THEME RESOURCE, NOT THE BUTTON, AND THE FIRST VERSION OF THIS LINE ASKED THE BUTTON
+## AND SILENTLY GOT THE WRONG COLOUR.** `button.get_theme_color(&"font_color", &"Button")` reads as
+## "the base type's ink" and is not: Godot treats a `theme_type` equal to the node's own CLASS as a
+## request for the node's full variation chain (`Control::get_theme_color` compares `p_theme_type`
+## against `get_class_name()` before it builds the type list), so on a `Quiet` Button that argument
+## resolves `Quiet/font_color` — `INK_MUTED`. The strip would have marked its open tab with the same
+## colour as its closed ones, and "no accent" would have been perfectly true of it. The test caught
+## it; a screenshot would have shown four identical tabs and nobody would have known which was open.
+##
+## `ThemeDB.get_project_theme()` is the resource `project.godot` installs (`theme/custom`), read with
+## no node, no variation chain and no theme cache in the way. No path is typed here either.
+func _mark_selection_by_rank(button: Button) -> void:
+	var theme := ThemeDB.get_project_theme()
+	if theme == null or not theme.has_color(&"font_color", &"Button"):
+		push_error("AssayTabStrip: no project theme declares `Button/font_color`, so a selected tab "
+				+ "cannot state its rank and would keep whatever the variation draws.")
+		return
+	var ink := theme.get_color(&"font_color", &"Button")
+	# **THE OVERRIDE HAS TO ACTUALLY CHANGE SOMETHING, OR IT IS A CHECK THAT CANNOT FAIL.** If the
+	# ink this reads is already the colour the variation declares for pressed, the theme has been
+	# retuned under us and the strip would go on drawing whatever it drew before while this line sat
+	# here looking like a fix. Said out loud rather than discovered on a screenshot again.
+	if theme.has_color(&"font_pressed_color", &"Quiet") \
+			and ink.is_equal_approx(theme.get_color(&"font_pressed_color", &"Quiet")):
+		push_error("AssayTabStrip: `Button/font_color` and `Quiet/font_pressed_color` are the same "
+				+ "colour (%s), so marking a selected tab by rank changes nothing it draws." % ink)
+		return
+	# AND IT MUST BE BRIGHTER THAN WHAT THE CLOSED TABS KEEP, or the rank is a claim about nothing.
+	if theme.has_color(&"font_color", &"Quiet"):
+		var muted := theme.get_color(&"font_color", &"Quiet")
+		if AssayHud.relative_luminance(ink) <= AssayHud.relative_luminance(muted):
+			push_error("AssayTabStrip: the ink for an open tab (%s) is not brighter than a closed "
+					% ink + "tab's (%s), so selection would be marked by nothing visible." % muted)
+			return
+	button.add_theme_color_override(&"font_pressed_color", ink)
+	button.add_theme_color_override(&"font_hover_pressed_color", ink)
 
 
 ## SOMETHING THAT SITS UNDER WHICHEVER TAB IS OPEN, inside the scrolled area and after every body.
