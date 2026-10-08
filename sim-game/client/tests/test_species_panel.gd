@@ -322,10 +322,14 @@ func test_a_species_verdict_is_indented_to_its_own_name() -> bool:
 		if box == null:
 			ok = _fail("%s's verdict has no `normal` stylebox to carry an inset" % _title_of(screen, row))
 			break
-		if absf(box.content_margin_left - want) > 0.01:
+		# `get_margin` AND NOT `content_margin_left`: the property is -1 when unset, which is a
+		# sentinel for "use the box's own margin" and not a position, so a failure would report a
+		# verdict as starting at -1 px. This is the number the engine actually indents by.
+		var got := box.get_margin(SIDE_LEFT)
+		if absf(got - want) > 0.01:
 			ok = _fail(("%s's verdict starts %.1f px into the row where its own name starts at %.1f: "
 					+ "the answer is aligned to the table instead of to the thing it is about")
-					% [_title_of(screen, row), box.content_margin_left, want])
+					% [_title_of(screen, row), got, want])
 			break
 		judged += 1
 	if ok and judged == 0:
