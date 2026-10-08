@@ -2479,3 +2479,61 @@ func test_the_machine_whose_menu_is_open_leaves_the_cursor_readout() -> bool:
 		return _fail("a building with no id lost its line with no menu open: %s"
 				% "\n".join(AssayHud.tile_lines(nameless)))
 	return true
+
+
+## **WHERE THE BUILD SCREEN IS ALLOWED TO BE, AS THE THREE THINGS IT MAY NEVER COVER** (ASSA-328;
+## Maren's `assay-build-screen` §1).
+##
+## **THE HUD COLUMN IS ASSERTED AGAINST THE WINDOW, NOT AGAINST `world_rect()`.** Staying off the
+## column falls out of taking the world as the frame, so comparing the screen to the world would be a
+## check that cannot fail -- the defect shape I have written down twice now. `VIEW.x - PANEL` is where
+## the column starts in the WINDOW, which is the claim a player can see.
+func test_the_build_screen_covers_neither_the_hud_column_nor_the_worlds_own_controls() -> bool:
+	var world := AssayHud.world_rect()
+	var band := world.end.y - AssayHud.WORLD_CONTROLS_BAND
+	var rect := AssayHud.build_screen_rect(world, band)
+	var column := AssayHud.VIEW.x - AssayHud.PANEL
+	if rect.end.x > column:
+		return _fail("the screen reaches x %.0f and the HUD column starts at %.0f; a screen over the "
+				% [rect.end.x, column] + "log is a surface whose failure mode is silence")
+	if rect.end.y > band - AssayHud.BUILD_SCREEN_CLEARANCE:
+		return _fail("the screen's bottom is %.0f and the world's control band starts at %.0f; the "
+				% [rect.end.y, band] + "status toast and `whole world (V)` live in there")
+	# NOTHING BELOW THE FOLD AT 1280x720, which is the item's own box and is about the WINDOW.
+	if rect.position.y < 0.0 or rect.end.y > AssayHud.VIEW.y or rect.position.x < 0.0:
+		return _fail("the screen is %s, which leaves the %s window" % [rect, AssayHud.VIEW])
+	if rect.size.x < 320.0 or rect.size.y < 320.0:
+		return _fail("the screen is %s, which is too small to hold three columns" % rect.size)
+	return true
+
+
+## **THE BAND IS A MEASUREMENT AND THIS IS THE LEVER THAT PROVES THE SCREEN READS IT** (ASSA-328).
+##
+## **MY OWN WRITTEN-DOWN RULE: a state green for free is a hole, and a guard with no lever is the same
+## thing.** `build_screen_rect` takes the band's top as an ARGUMENT precisely so the real client can
+## hand it a measurement off the live controls instead of a constant -- and a function that ignored
+## that argument would pass every assertion in the test above, because the shipped band and the
+## shipped constant agree. So: raise the band and the screen must get shorter by exactly as much.
+func test_the_build_screen_gives_back_whatever_the_control_band_takes() -> bool:
+	var world := AssayHud.world_rect()
+	var band := world.end.y - AssayHud.WORLD_CONTROLS_BAND
+	var tall := AssayHud.build_screen_rect(world, band)
+	var raised := AssayHud.build_screen_rect(world, band - 60.0)
+	if not is_equal_approx(tall.size.y - raised.size.y, 60.0):
+		return _fail(("a band 60 px taller shortened the screen by %.0f, so the screen is not reading "
+				+ "the band it is handed") % (tall.size.y - raised.size.y))
+	if raised.size.x != tall.size.x:
+		return _fail("raising the band changed the screen's WIDTH from %.0f to %.0f"
+				% [tall.size.x, raised.size.x])
+	# **AND A BAND THAT SWALLOWS THE WHOLE WORLD YIELDS NO SCREEN RATHER THAN AN INVERTED ONE.** A
+	# negative height is a rect Godot draws inside out; an empty one is a state a caller can see.
+	var none := AssayHud.build_screen_rect(world, world.position.y)
+	if none.size.y != 0.0:
+		return _fail("a band at the top of the world left a screen %s tall" % none.size.y)
+	# THE OTHER WAY: no band at all cannot grow the screen past the world's own pad, or the screen
+	# would hang below the world the day a control is deleted.
+	var free := AssayHud.build_screen_rect(world, world.end.y + 1000.0)
+	if free.end.y > world.end.y - AssayHud.MARGIN.y:
+		return _fail("with no band in the way the screen reaches %.0f and the world's pad ends at %.0f"
+				% [free.end.y, world.end.y - AssayHud.MARGIN.y])
+	return true

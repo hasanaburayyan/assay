@@ -291,7 +291,7 @@ func test_pressing_craft_puts_a_smelter_in_the_pack() -> bool:
 		var stacks: Array = screen._sim.inventory_of(screen._client.player_id)
 		# FROM THE MENU SINCE ASSA-86, which is also a better test of the move: the row has to name
 		# the smelter it will make for this to find it at all.
-		var button := _make_button_for(screen, "smelter")
+		var button := _build_button_for(screen, "smelter")
 		if button == null:
 			ok = _fail("no menu row offers a smelter: %s" % _text_of(screen._make))
 		else:
@@ -518,7 +518,7 @@ func _a_placed_smelter(screen: Node) -> int:
 				% [_counted(screen, ore), AssayHud.stack_line(ore), want])
 		return -1
 	# FROM THE CRAFTING MENU SINCE ASSA-86: the pack row carries only the verbs that MOVE an item.
-	var craft := _make_button_for(screen, "smelter")
+	var craft := _build_button_for(screen, "smelter")
 	if craft == null:
 		_fail("no menu row offers a smelter: %s" % _text_of(screen._make))
 		return -1
@@ -736,7 +736,7 @@ func test_a_running_craft_is_named_in_the_chrome_and_outlives_the_menu() -> bool
 	if ok and _running_text(screen).contains("making "):
 		ok = _fail("the panel claimed a craft before one was started: %s" % _running_text(screen))
 	if ok:
-		var button := _make_button_for(screen, "smelter")
+		var button := _build_button_for(screen, "smelter")
 		if button == null:
 			ok = _fail("no menu row offers a smelter: %s" % _text_of(screen._make))
 		else:
@@ -800,12 +800,34 @@ func _running_text(screen: Node) -> String:
 ## THE MENU ROW THAT OFFERS `want`, by the SIM'S OWN SENTENCE and never by a button label: every
 ## row's button says the same word on purpose (Maren's ruling), so the row is found by what it says
 ## it makes and the button is then the one inside it.
-func _make_button_for(screen: Node, want: String) -> Button:
+## THE ROW'S OWN CONTROL, which since ASSA-328 only OPENS the build screen. For tests about the row:
+## its label, whether it is pressable, where it sits.
+func _make_launcher_for(screen: Node, want: String) -> Button:
 	for row in screen._make.get_children():
 		var line := row.find_child(screen.MAKE_LINE, true, false) as Label
 		if line != null and line.text.contains(want):
-			return _find(row, AssayHud.make_button_text())
+			return _find(row, AssayHud.make_launch_text())
 	return null
+
+
+## **CRAFTING IS TWO GESTURES NOW, AND THIS IS WHERE THE SUITE LEARNS THEM** (ASSA-328; Maren's §2
+## price: *"there is no one-click make any more"*).
+##
+## **IT RETURNS THE SECOND BUTTON, NOT THE FIRST, so every caller that pressed one button and expected
+## a craft still presses one button and gets a craft.** That is deliberate: the three callers are
+## about what the SIM does with a press (a smelter lands in the pack, a countdown starts, a machine
+## gets placed), and rewriting each of them to know about a screen would make three tests about this
+## item instead of one helper.
+##
+## **AND IT GOES THROUGH THE REAL CONTROLS, NOT `_open_build_screen`.** Pressing the row's `Make…` is
+## what a player does; calling the open function directly would leave the row's one control untested
+## by every one of these paths, which is exactly how a launcher that opens nothing would ship green.
+func _build_button_for(screen: Node, want: String) -> Button:
+	var launcher := _make_launcher_for(screen, want)
+	if launcher == null:
+		return null
+	launcher.pressed.emit()
+	return _find(screen._build_box, AssayHud.build_button_text())
 
 
 ## A REFUSAL REACHES THE ALWAYS-VISIBLE LINE WITH THE LOG HIDDEN (ASSA-89), THROUGH A REAL SIM.
@@ -1138,10 +1160,20 @@ func test_pressing_any_menu_row_submits_the_sims_own_command_for_that_row() -> b
 			var offer: Dictionary = offers[i]
 			var row: Node = screen._make.get_child(i)
 			var line := row.find_child(screen.MAKE_LINE, true, false) as Label
-			var button := _find(row, AssayHud.make_button_text())
+			# **THROUGH BOTH GESTURES, AND THE PAIRING THIS TEST IS ABOUT NOW HAS A SECOND HOP TO
+			# SURVIVE** (ASSA-328). The row no longer sends anything: it opens the build screen on its
+			# own offer, and `Build` sends. So this walks row `i`'s launcher and then the screen's one
+			# act, and still requires the command to be about the sentence on row `i` -- which makes it
+			# a test of `_open_build_screen` carrying the right offer across, not just of the index.
+			var launcher := _find(row, AssayHud.make_launch_text())
+			if line == null or launcher == null:
+				ok = _fail("row %d has no sentence or no launcher" % i)
+				break
+			launcher.pressed.emit()
+			var button := _find(screen._build_box, AssayHud.build_button_text())
 			_asked.clear()
-			if line == null or button == null:
-				ok = _fail("row %d has no sentence or no button" % i)
+			if button == null:
+				ok = _fail("row %d opened a screen with no Build button" % i)
 				break
 			button.pressed.emit()
 			var wanted := "craft" if String(offer.get("verb", "")) == "craft" else "make"
@@ -1330,7 +1362,7 @@ func test_no_menu_button_label_carries_what_the_row_makes() -> bool:
 		elif labels.size() > 1:
 			ok = _fail("the menu's buttons say %s; a label that names the row is the bug Maren "
 					% JSON.stringify(labels.keys()) + "measured on the board's own pack")
-		elif not labels.has(AssayHud.make_button_text()):
+		elif not labels.has(AssayHud.make_launch_text()):
 			ok = _fail("the menu's button says %s" % JSON.stringify(labels.keys()))
 	screen.queue_free()
 	return ok
@@ -1859,21 +1891,158 @@ func test_a_row_you_cannot_afford_is_not_pressable_and_the_last_batch_is() -> bo
 		{"makes": made, "line": "no cost crossed", "verb": "craft", "tag": 0, "count": 1},
 	])
 	var ok := true
-	var want := [true, false, false]
 	var rows: Array = screen._make.get_children()
-	if rows.size() != want.size():
+	if rows.size() != 3:
 		screen.queue_free()
-		return _fail("the builder made %d rows from %d offers" % [rows.size(), want.size()])
+		return _fail("the builder made %d rows from 3 offers" % rows.size())
 	for i in range(rows.size()):
-		var button := _find(rows[i], AssayHud.make_button_text())
+		var button := _find(rows[i], AssayHud.make_launch_text())
 		var line := (rows[i] as Node).find_child(screen.MAKE_LINE, true, false) as Label
 		if button == null:
-			ok = _fail("row %d has no make button at all" % i)
-		elif button.disabled != want[i]:
-			ok = _fail(("the row reading `%s` is %s; it should be %s") % [
-					"?" if line == null else line.text,
-					"disabled" if button.disabled else "pressable",
-					"disabled" if want[i] else "pressable"])
+			ok = _fail("row %d has no launcher at all" % i)
+		elif button.disabled:
+			# **EVERY ROW OPENS, INCLUDING THE ONE YOU CANNOT AFFORD -- WHICH IS THE OPPOSITE OF WHAT
+			# THIS TEST ASSERTED BEFORE ASSA-328, AND IT IS THE SAME PRINCIPLE.** ASSA-247 disabled an
+			# unaffordable row because the control MADE something and the sim would refuse it: *"a
+			# weight that does not follow availability is a lying control"*. The control now opens the
+			# screen where have/need is printed for every material at once, and looking at what
+			# something costs is available always -- so the row a player most needs to open is the one
+			# the old rule shut.
+			ok = _fail(("the row reading `%s` cannot be pressed; since ASSA-328 the control opens the "
+					+ "build screen and the player who cannot afford it is the one who needs to read "
+					+ "the cost") % ["?" if line == null else line.text])
+	# **AND THE SCREEN DOES NOT BELIEVE THE ROW, WHICH THIS FIXTURE IS THE PROOF OF** (ASSA-328).
+	#
+	# **I EXPECTED THE COST BLOCK TO SAY `1 / 3` HERE AND IT SAYS SO FOR NO OFFER AT ALL -- the test
+	# was wrong and the client is right.** These three offers are written by this file; the sim never
+	# made them. `_chosen_offer` re-reads `make_offers` at every refresh and matches on the sim's own
+	# `verb`/`tag`/species/grade, so a screen opened from a row the sim does not offer says exactly
+	# that. **That is ASSA-55's rule on a surface that stays open for thousands of ticks**: nothing
+	# drawn or sent comes from what the row was showing when it was pressed.
+	#
+	# The two real counts are asserted against a real world in
+	# `test_the_build_screen_costs_a_real_offer_in_the_sims_own_two_numbers`, which is where a cost
+	# belongs: a number this file invented could only ever prove this file can echo itself.
+	if ok:
+		var short := _find(rows[0], AssayHud.make_launch_text())
+		short.pressed.emit()
+		if not screen._build_box.visible:
+			ok = _fail("a row the sim does not offer opened no screen at all")
+		elif not _text_of(screen._build_detail).contains("no longer offers"):
+			ok = _fail(("the screen opened on an offer this file invented and its detail says `%s`; "
+					+ "a surface that echoed the row would have drawn a cost for it")
+					% _text_of(screen._build_detail))
+	screen.queue_free()
+	return ok
+
+
+## **THE TWO COUNTS, FROM A REAL WORLD AND A REAL CATALOGUE** (ASSA-328; Maren's §5.3: *"Cost is
+## COUNTS, so it is text: `12 / 20`, have on the left"*, and §3's Factorio borrowing -- affordability
+## is READ, never computed by the player in their head).
+##
+## **THE NUMBERS COME OUT OF `make_offers` AND ARE COMPARED TO THE SCREEN, which is the only pairing
+## worth asserting here.** A literal would prove nothing: the fixture mines a seeded world, so how
+## much ore is in the pack at this tick is the sim's business and not a number this file may know.
+## What it may require is that the two numbers on the screen are the sim's `count` and `cost` for the
+## row that was pressed, in that order.
+##
+## **AND A MATERIAL ROW PER MATERIAL, which is the column Maren's mock does not have** (I gave the
+## middle column to materials in slice 1; it is on ASSA-328 for her to reverse). Asserted as "one row
+## per offer the sim makes for this recipe" rather than as a count, because how many materials a pack
+## holds is worldgen's answer.
+func test_the_build_screen_costs_a_real_offer_in_the_sims_own_two_numbers() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_some_ore(screen)
+	if ok:
+		var launcher := _make_launcher_for(screen, "smelter")
+		if launcher == null:
+			ok = _fail("no menu row offers a smelter: %s" % _text_of(screen._make))
+		else:
+			launcher.pressed.emit()
+			var offer: Dictionary = screen._chosen_offer()
+			if offer.is_empty():
+				ok = _fail("the screen opened from a real row and points at no offer")
+			else:
+				var want := AssayHud.have_need_line(int(offer.get("count", 0)),
+						int(offer.get("cost", 0)))
+				var said := _text_of(screen._build_cost)
+				if not said.contains(want):
+					ok = _fail(("the sim says you have %d and one batch needs %d, so the cost block "
+							+ "should carry `%s`; it says `%s`") % [int(offer.get("count", 0)),
+							int(offer.get("cost", 0)), want, said])
+				# THE DETAIL IS THE SIM'S OWN SENTENCE AND NOT A RE-WORDING OF IT (ASSA-88).
+				elif not _text_of(screen._build_detail).contains(String(offer.get("line", ""))):
+					ok = _fail(("the detail column says `%s` and the sim's sentence for this row is "
+							+ "`%s`; a client that re-words one is ASSA-43's defect")
+							% [_text_of(screen._build_detail), String(offer.get("line", ""))])
+				else:
+					var materials: int = screen._build_materials.get_child_count()
+					var offers: int = screen._offers_for_open_row().size()
+					if materials != offers:
+						ok = _fail(("the sim offers this recipe in %d materials and the picker draws "
+								+ "%d rows") % [offers, materials])
+					# **AND EVERY ONE OF THEM STATES ITS OWN TWO COUNTS**, which is the half that makes
+					# it a choice: a picker that costed only the chosen row would send the player back
+					# to pressing each material to find out what it costs.
+					for row in screen._build_materials.get_children():
+						if not _text_of(row).contains(" / "):
+							ok = _fail("a material row says `%s` and states no have/need"
+									% _text_of(row))
+							break
+	screen.queue_free()
+	return ok
+
+
+## **ONE POP-UP AT A TIME, AND ESC CLOSES WHICHEVER IT IS** (ASSA-328; Maren's §1: *"the build screen
+## and a machine menu are mutually exclusive -- opening either closes the other"*, and ASSA-316
+## ruling 2 for Esc).
+##
+## **BOTH DIRECTIONS, because a rule stated at one end holds until somebody opens the other.** The
+## exclusion is written in `_open_build_screen` AND in `_open_machine_menu`, so a test that only
+## opened them in one order would pass with half of it deleted.
+##
+## **AND CLOSING LOSES NOTHING** (her §1: *"a half-built design is client state until Build; it
+## survives a close and re-opens as you left it"*). Checked as the chosen material surviving a close,
+## which is the only chosen state slice 1 has.
+func test_the_build_screen_and_a_machine_menu_are_one_at_a_time() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var id := _a_placed_smelter(screen)
+	var ok := id >= 0
+	if ok:
+		var launcher := _make_launcher_for(screen, "ore")
+		if launcher == null:
+			ok = _fail("no menu row offers anything to make from ore: %s" % _text_of(screen._make))
+		else:
+			launcher.pressed.emit()
+			if not screen._build_box.visible:
+				ok = _fail("the row's launcher opened no screen")
+			elif screen._menu_at != -1:
+				ok = _fail("opening the build screen left machine %d's menu open" % screen._menu_at)
+			else:
+				var chose: int = screen._build_species
+				# THE MENU, OPENED SECOND, TAKES THE SCREEN DOWN.
+				screen._open_machine_menu(screen._menu_tile, id)
+				if screen._build_box.visible:
+					ok = _fail("opening a machine menu left the build screen on screen")
+				elif screen._build_verb != "":
+					ok = _fail("the build screen is hidden and still reports itself open")
+				else:
+					# AND RE-OPENING FINDS THE MATERIAL STILL CHOSEN.
+					launcher.pressed.emit()
+					if screen._menu_at != -1:
+						ok = _fail("re-opening the screen left the machine menu open")
+					elif screen._build_species != chose:
+						ok = _fail(("closing the screen forgot the chosen material: %d became %d")
+								% [chose, screen._build_species])
+					else:
+						var esc := InputEventKey.new()
+						esc.keycode = KEY_ESCAPE
+						esc.pressed = true
+						screen._unhandled_key_input(esc)
+						if screen._build_box.visible:
+							ok = _fail("Esc did not close the build screen")
 	screen.queue_free()
 	return ok
 
@@ -1899,7 +2068,7 @@ func test_a_make_rows_verb_sits_on_the_sentences_own_line() -> bool:
 	var ok := true
 	var row: Node = screen._make.get_child(0)
 	var line := row.find_child(screen.MAKE_LINE, true, false) as Label
-	var button := _find(row, AssayHud.make_button_text())
+	var button := _find(row, AssayHud.make_launch_text())
 	if line == null or button == null:
 		ok = _fail("the row has no sentence or no button")
 	elif button.get_parent().get_parent() != line.get_parent():

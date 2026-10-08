@@ -721,10 +721,24 @@ func _press_on_offer(verb: String, tag: Variant, species: int) -> bool:
 		if i >= screen._make.get_child_count():
 			return false
 		var row: Node = screen._make.get_child(i)
-		var button := _find_button(row, AssayHud.make_button_text())
+		# **TWO GESTURES SINCE ASSA-328, AND BOTH ARE REAL PRESSES** (Maren's §2: the row opens the
+		# build screen and `Build` is what sends). This tool exists to prove a person at the window can
+		# play the loop, so it may not take the shortcut of calling `_open_build_screen` itself -- the
+		# launcher opening nothing, or the screen opening on the wrong offer, are exactly the two
+		# defects this session is the last line of defence against.
+		var launcher := _find_button(row, AssayHud.make_launch_text())
+		if launcher == null:
+			return false
+		launcher.pressed.emit()
+		var button := _find_button(screen._build_box, AssayHud.build_button_text())
 		if button == null:
 			return false
-		pressed.append("%s on `%s` @%d" % [AssayHud.make_button_text(),
+		# **BOTH PRESSES ARE RECORDED, because the record is the evidence.** A log that said only
+		# `Build` would not show that the screen was reached through the row a player would use, and
+		# this list is what a human reads to believe the session.
+		pressed.append("%s on `%s` @%d" % [AssayHud.make_launch_text(),
+				String(offer.get("line", "?")), _world().tick()])
+		pressed.append("%s on `%s` @%d" % [AssayHud.build_button_text(),
 				String(offer.get("line", "?")), _world().tick()])
 		_quiet = 0
 		button.pressed.emit()

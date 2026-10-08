@@ -126,18 +126,29 @@ func _left_edge_of(node: Node) -> float:
 func test_the_screen_is_built_once_even_if_ready_runs_twice() -> bool:
 	var screen := _screen()
 	var column: Node = screen._carrying.get_parent()
+	# COUNTED BEFORE THE SECOND `_ready`, which is the whole of the comparison below.
+	var before: int = screen.find_children("*", "ScrollContainer", true, false).size()
 	screen._ready()
 	var ok := true
 	if screen._carrying.get_parent() != column:
 		ok = _fail("a second _ready reparented the HUD into a new column")
-	var columns := 0
-	# AT ANY DEPTH, since ASSA-117 put the scroll box inside the panel's chrome column. Counting one
-	# level found zero and reported "0 HUD columns", which happens to be the failure this test
-	# exists to catch -- a check that cannot tell "built twice" from "moved" is not a check.
-	for child in screen.find_children("*", "ScrollContainer", true, false):
-		columns += 1
-	if ok and columns != 1:
-		ok = _fail("a second _ready left %d HUD columns on the screen" % columns)
+	# **THE CHECK IS THAT THE COUNT DID NOT CHANGE, NOT THAT IT IS ONE** (ASSA-328).
+	#
+	# **IT ASSERTED `== 1` AND THAT NUMBER WAS NEVER THE PROPERTY.** The defect is a second `_ready`
+	# building a second copy of a panel; `1` was true only because the HUD column was the sole scroll
+	# box in the client, so this counted "every ScrollContainer anywhere" and called the answer "HUD
+	# columns". The build screen has four of its own (ASSA-328) and the test went red for a screen that
+	# is built exactly once -- a check satisfied by something other than the thing it is about.
+	#
+	# **AND COUNTING BEFORE AND AFTER IS STRICTLY STRONGER than counting after**: it now catches a
+	# SECOND copy of any panel in this client rather than of the one that happened to scroll, and it
+	# cannot be made to pass by a surface arriving or leaving. The non-zero clause is what stops a
+	# client that builds nothing at all from passing it twice over.
+	var after: int = screen.find_children("*", "ScrollContainer", true, false).size()
+	if ok and before == 0:
+		ok = _fail("the screen has no scroll boxes at all, so a duplicate could not be seen")
+	elif ok and after != before:
+		ok = _fail("a second _ready took the screen from %d scroll boxes to %d" % [before, after])
 	screen.queue_free()
 	return ok
 

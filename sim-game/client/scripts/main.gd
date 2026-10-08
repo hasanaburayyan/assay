@@ -432,6 +432,34 @@ const MENU_NAME := "MachineMenuName"
 const MENU_STATE := "MachineMenuState"
 const MENU_ROWS := "MachineMenuRows"
 
+## **THE BUILD SCREEN'S NAMED PARTS** (ASSA-328, ASSA-317). Same reason the menu's four are named: a
+## test, a probe and a shot tool have to find them without walking the tree by index, and each of
+## these changes on its own clock -- the picker only when the catalogue's shape moves, the materials
+## and the detail every time a material is chosen, the cost every refresh.
+const BUILD_BOX := "BuildScreen"
+const BUILD_TITLE := "BuildScreenTitle"
+const BUILD_PICKER := "BuildScreenPicker"
+const BUILD_MATERIALS := "BuildScreenMaterials"
+const BUILD_DETAIL := "BuildScreenDetail"
+const BUILD_COST := "BuildScreenCost"
+const BUILD_ACT := "BuildScreenAct"
+
+## **THE THREE COLUMNS, AS SHARES OF THE SCREEN RATHER THAN PIXEL WIDTHS** (ASSA-328). Maren's mock
+## fixes them at 287 / 304 / 240 inside 863 (`assay-build-screen` §0), and these are those three
+## numbers over that total. **A share and not a literal, which is ASSA-287's ruling applied to a
+## width**: the screen's own rect is derived from `world_rect()`, so three typed widths would be
+## correct at 1280x720 and wrong at every other size, and the mock's proportions are the part of it
+## she actually specified.
+const BUILD_COLUMNS := [287.0 / 863.0, 304.0 / 863.0, 240.0 / 863.0]
+
+## **THE GUTTER BETWEEN HER BLOCKS, READ OFF HER OWN RECTS** (ASSA-328): 335 -> 351 and 655 -> 671
+## horizontally, 91 -> 107 and 569 -> 585 vertically. One number, four places, so it is named once.
+const BUILD_GUTTER := 16
+
+## **HOW THE RIGHT COLUMN SPLITS** (ASSA-328): her block 5 (the readout) is 300 px and block 6 (cost)
+## is 146 of the 462 the columns get. Shares for `BUILD_COLUMNS`' reason.
+const BUILD_READOUT_SHARE := 300.0 / 446.0
+
 ## The map glyph's disc in a species row. Big enough for a 12px letter to sit in, which is above the
 ## 10px floor `glyph_size` refuses to draw under.
 const GLYPH_BOX_PX := 18.0
@@ -485,6 +513,34 @@ var _targeted := false
 ## opens this instead and leaves the placement target exactly where the player last put it.
 var _menu_at := -1
 var _menu_tile := Vector2i.ZERO
+
+## **WHAT THE BUILD SCREEN IS OPEN ON: THE SIM'S OWN TWO WORDS FOR A CATALOGUE ROW, OR "" FOR SHUT**
+## (ASSA-328).
+##
+## **IT IS `verb` + `tag` AND NOT AN INDEX INTO `make_offers`, which is the whole of why the screen
+## survives a tick.** The offer list is rebuilt from the pack every refresh and its length changes the
+## moment a craft lands, so an index would silently come to mean a different recipe -- ASSA-55's
+## defect (a count captured in a closure) moved into a screen that stays open for many ticks. `verb`
+## and `tag` are the sim's own spelling, which is what `button_play` already matches a row by.
+##
+## **AND THE CHOSEN MATERIAL IS A THIRD FACT, NOT A FOURTH NODE.** A recipe plus a species plus a
+## grade is one offer; keeping the three apart is what lets the material picker re-point at a
+## different material without reopening the screen, and what lets the screen say "the sim no longer
+## offers this" instead of drawing a stale row.
+var _build_verb := ""
+var _build_tag: Variant = null
+var _build_species := -1
+var _build_grade := ""
+var _build_region: Control = null
+var _build_box: PanelContainer = null
+var _build_title: Label = null
+var _build_picker: VBoxContainer = null
+var _build_materials: VBoxContainer = null
+var _build_detail: VBoxContainer = null
+var _build_cost: VBoxContainer = null
+var _build_act: Button = null
+var _build_showing := UNBUILT
+
 ## THE PARTS CHOSEN FOR THE NEXT `Assemble`, as the SIM'S OWN STACKS so a row can be named on screen
 ## and sent as an item without this client inventing either. THE FIRST ONE IS THE FRAME, which is
 ## `sim-cli`'s rule (`assemble <frame> <part>...`) kept rather than invented.
@@ -906,6 +962,11 @@ func _build_ui() -> void:
 	# with one press. What the menu may never cover is the HUD column (Maren's ruling 2), and that is
 	# true of its geometry rather than of this line: it lives in half of `world_rect`.
 	_build_machine_menu_over_the_map(world)
+	# **AFTER THE MENU, AND THE TWO CANNOT BOTH BE UP ANYWAY** (Maren's §1: mutually exclusive). The
+	# order still matters for one case this file cannot rule out -- a bug that left both visible -- and
+	# in it the thing the player opened last should be the thing they can read. The exclusion is
+	# enforced in `_open_build_screen` and `_open_machine_menu`; this is the belt to that braces.
+	_build_build_screen_over_the_map(world)
 
 	_view_toggle.position = world.end - Vector2(152.0, 36.0)
 	_view_toggle.custom_minimum_size = Vector2(144.0, 0.0)
@@ -1568,6 +1629,159 @@ func _build_machine_menu_over_the_map(world: Rect2) -> void:
 	inside.add_child(close)
 
 
+## **THE BUILD SCREEN'S SURFACE, BUILT ONCE AND EMPTY** (ASSA-328, slice 1 of ASSA-317; the board,
+## 10-08: *"We should have pop up modals and interactive build screens for crafting not just 'make'
+## buttons"*).
+##
+## **THE REGION IS THE WHOLE WORLD AND THE BOX IS PLACED INSIDE IT BY RECT**, which is the one
+## structural difference from the machine menu. That menu's position is a RULE (the half the machine
+## is not in) and its size is the engine's answer about its widest row, so it needs neither. This
+## screen's rect is SPECIFIED -- Maren's §1, the world less a pad, clear of the control band -- so
+## `_place_build_screen` writes it and `AssayHud.build_screen_rect` derives it.
+##
+## **IT STOPS THE MOUSE AND THE REGION AROUND IT DOES NOT**, the log's and the menu's rule for the
+## log's reason: the map is clicked through `_unhandled_input`, so an `IGNORE` panel would let a press
+## on the material picker fall through onto the tile behind it and walk the player away.
+##
+## **IT DOES NOT BLOCK INPUT, AND THAT IS A RULING AND NOT AN OVERSIGHT** (Maren's §1, carried from
+## ASSA-316 ruling 2): *"a screen that freezes a co-op game stops your partner's factory being
+## watchable, and watching each other work is the only reason this is co-op. 'Modal' is Hasan's word
+## for pop-up. I take the pop and leave the block."* So the region stays `IGNORE` and the world keeps
+## taking clicks everywhere this box is not.
+##
+## **THREE COLUMNS AS SHARES, NOT WIDTHS** -- see `BUILD_COLUMNS`. The box is sized to the derived
+## rect, so every column inside it is a fraction of a number nothing here typed.
+func _build_build_screen_over_the_map(world: Rect2) -> void:
+	_build_region = Control.new()
+	_build_region.position = world.position
+	_build_region.size = world.size
+	_build_region.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_build_region.clip_contents = true
+	add_child(_build_region)
+	_build_box = PanelContainer.new()
+	_build_box.name = BUILD_BOX
+	# SAID RATHER THAN INHERITED, as the log and the menu say it: `STOP` is a Control's default and
+	# the paragraph above is the reason this panel has it.
+	_build_box.mouse_filter = Control.MOUSE_FILTER_STOP
+	_build_box.visible = false
+	_build_region.add_child(_build_box)
+	var inside := VBoxContainer.new()
+	inside.add_theme_constant_override("separation", BUILD_GUTTER)
+	_build_box.add_child(inside)
+	# **BLOCK 1: THE TITLE AND THE WAY OUT, ON ONE LINE** (Maren's block 1, x 48..911 y 51..91).
+	#
+	# **THE TITLE IS THE SCREEN'S NAME AND NOT THE THING BEING MADE, which is a decision and is on the
+	# item.** `make_offers` crosses `makes` as an item's three FIELDS -- kind, species, grade -- and no
+	# name: `inventory_of` gets a sim-written `name` per stack and this does not. So a title naming the
+	# output would be GDScript composing "Tonore head (B)" out of three fields, which is ASSA-43/52's
+	# defect and is forbidden by `make_offers`' own docstring. The thing being made is named by the
+	# SIM's sentence in the detail column instead (ASSA-88: a row's identity lives in its sentence).
+	var crown := HBoxContainer.new()
+	crown.add_theme_constant_override("separation", BUILD_GUTTER)
+	_build_title = Label.new()
+	_build_title.name = BUILD_TITLE
+	_build_title.theme_type_variation = &"Display"
+	_build_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_build_title.text = "make"
+	crown.add_child(_build_title)
+	# **THE WAY OUT IS NAMED, AND IT NAMES ITS KEY** -- this client's own rule (`_show_log`: *"the
+	# control names the key, because the key is the half a stranger cannot discover"*). Maren's §1 gives
+	# the screen Esc and *"a visible way out"* in the title bar; Esc alone is invisible, and the board's
+	# first act on a new surface is to look for the way back (ASSA-316's close got the same treatment).
+	# QUIET, because the screen spends its one accent on `Build` (her §5).
+	var leave := _button("close (Esc)", func() -> void: _close_build_screen(),
+			"close this screen. Esc does the same, and nothing you have chosen is lost")
+	leave.theme_type_variation = &"Quiet"
+	crown.add_child(leave)
+	inside.add_child(crown)
+	var columns := HBoxContainer.new()
+	columns.add_theme_constant_override("separation", BUILD_GUTTER)
+	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	inside.add_child(columns)
+	# **BLOCK 2: THE CATALOGUE, AS THE PICKER** (her block 2, x 48..335). What you can make, by the
+	# sim's own name for it.
+	_build_picker = _build_column(columns, BUILD_COLUMNS[0], "what to make")
+	_build_picker.name = BUILD_PICKER
+	# **BLOCKS 3+4: THE MATERIAL PICKER, AND THIS IS THE ONE PLACE I DEPART FROM HER MOCK** (on the
+	# item, for her to reverse). Those two rects are drawn for the ASSEMBLY flow -- the frame's slots
+	# and the held part -- and a recipe has no slots. A recipe's one choice past the recipe itself is
+	# WHICH MATERIAL, so slice 1 gives the middle column to that, undivided; slice 2 takes it back for
+	# slots when a frame is chosen. ONI's picker is her §3 reference and this is it exactly: pick a
+	# material and the card's numbers move.
+	_build_materials = _build_column(columns, BUILD_COLUMNS[1], "from which material")
+	_build_materials.name = BUILD_MATERIALS
+	var right := VBoxContainer.new()
+	right.add_theme_constant_override("separation", BUILD_GUTTER)
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.size_flags_stretch_ratio = BUILD_COLUMNS[2]
+	columns.add_child(right)
+	# **BLOCK 5: WHAT THE SIM SAYS ABOUT THE CHOICE** (her block 5, x 671..911 y 107..407). In slice 1
+	# that is the sim's own sentences -- the cost line, the walls clause, the dead end -- and the output
+	# item's picture. **The RATIO fill and the SAFE / WILL BREAK verdict her §5 specifies are the
+	# ASSEMBLY readout and are slice 2/3**, behind Marlow's ASSA-324: `design_if_built` takes one
+	# species and one grade for a whole design and returns no speed, durability or capacity, so there is
+	# nothing for a recipe's screen to draw them from and I will not do the banding in GDScript.
+	_build_detail = _build_section(right, BUILD_READOUT_SHARE, "what you get")
+	_build_detail.name = BUILD_DETAIL
+	# **BLOCK 6: COST, AS A COUNT** (her block 6, x 671..911 y 423..569, and her §5.3: have on the
+	# left, text, never a band).
+	_build_cost = _build_section(right, 1.0 - BUILD_READOUT_SHARE, "cost")
+	_build_cost.name = BUILD_COST
+	# **BLOCK 7: THE ONE ACT, AND THE SCREEN'S ONE ACCENT** (her block 7 and §5: *"`Build` is the one
+	# ACCENT -- the only difference from the machine menu, where no act is primary"*).
+	#
+	# **IT IS NEVER DISABLED AND NEVER REFUSES**, which is the rule this whole item rests on (ASSA-5/7,
+	# ASSA-316 ruling 2): a player may always try a design and be TOLD, never refused, and the refusal
+	# is a line in the log. That is a deliberate difference from the make ROW, which disables an
+	# unaffordable press (ASSA-247) -- a row is a list where weight has to follow availability, and this
+	# is the one control on a screen the player opened on purpose to look at the cost.
+	_build_act = _button(AssayHud.build_button_text(), func() -> void: _send_build(),
+			"make one batch of this, out of the material you chose")
+	_build_act.name = BUILD_ACT
+	_build_act.theme_type_variation = &"Primary"
+	inside.add_child(_build_act)
+
+
+## ONE OF THE SCREEN'S COLUMNS: a heading, then a scroll box for its rows. Factored because the three
+## are the same shape and a fourth is coming in slice 2.
+##
+## **IT SCROLLS, AND THAT IS NOT THE MACHINE MENU'S CALL REVERSED.** ASSA-316 left the menu's overflow
+## as a red test rather than a `ScrollContainer`, because the menu's size is derived from its content
+## and a scroll box nothing can reach yet is a control a player cannot use. This screen's size is
+## FIXED by the spec and its content is the catalogue, which grows with the game -- so overflow here
+## is a certainty rather than a hypothetical, and ASSA-98 is what an unscrollable fixed column costs.
+func _build_column(into: HBoxContainer, share: float, heading: String) -> VBoxContainer:
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 6)
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.size_flags_stretch_ratio = share
+	into.add_child(column)
+	return _build_section(column, 1.0, heading)
+
+
+## A heading over a scrolling list of rows, returning the list. The heading is this file's word for a
+## section of its own screen and is not a second copy of anything the sim says.
+func _build_section(into: BoxContainer, share: float, heading: String) -> VBoxContainer:
+	var holder := VBoxContainer.new()
+	holder.add_theme_constant_override("separation", 6)
+	holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	holder.size_flags_stretch_ratio = share
+	into.add_child(holder)
+	var title := Label.new()
+	title.text = heading
+	title.theme_type_variation = &"Heading"
+	holder.add_child(title)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	holder.add_child(scroll)
+	var rows := VBoxContainer.new()
+	rows.add_theme_constant_override("separation", 6)
+	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(rows)
+	return rows
+
+
 ## SHOW OR HIDE THE EVENT LOG (ASSA-89). The board's words were "logs are hard on the eyes", and
 ## this is the toggle they asked for rather than the deletion they did not.
 ##
@@ -1729,11 +1943,18 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if key == null or not key.pressed or key.echo:
 		return
 	if key.keycode == KEY_ESCAPE:
-		# **ESC CLOSES A MACHINE MENU AND NOTHING ELSE** (ASSA-316, Maren's ruling 2). It is the key
-		# every pop-up in every game answers to, which is why the menu may rely on it; and with no menu
-		# open this does nothing at all, because Esc meaning "and otherwise, something" is how a key
-		# ends up quitting a session somebody was playing.
+		# **ESC CLOSES WHICHEVER POP-UP IS UP, AND NOTHING ELSE** (ASSA-316 ruling 2; ASSA-328 and
+		# Maren's §1 for the build screen). It is the key every pop-up in every game answers to, which
+		# is why both may rely on it; and with neither open this does nothing at all, because Esc
+		# meaning "and otherwise, something" is how a key ends up quitting a session somebody was
+		# playing.
+		#
+		# **BOTH, NOT A BRANCH, AND THE TWO CANNOT BOTH BE UP** (her §1: mutually exclusive). A branch
+		# here would be a third place that knows the exclusion, and the day a bug left both open Esc
+		# would close one and leave the other -- so each close is a no-op on a surface that is shut and
+		# both are called.
 		_close_machine_menu()
+		_close_build_screen()
 	elif key.keycode == KEY_L:
 		_show_log(not _log_shown)
 	elif key.keycode == KEY_K:
@@ -2705,6 +2926,10 @@ func _refresh() -> void:
 	# the other way round, the tick a machine is picked up prints neither: the menu is gone and the line
 	# it displaced was already composed.
 	_refresh_machine_menu()
+	# **AND THE BUILD SCREEN, WHICH IS WATCHING A COUNT THAT CLIMBS EVERY MINING CYCLE** (ASSA-328). A
+	# screen whose whole job is *"can you afford this"* and which answered with the pack you had when
+	# you opened it would be wrong for as long as it was up -- and this one is meant to be left up.
+	_refresh_build_screen()
 	# **THE MACHINE WHOSE MENU IS OPEN DOES NOT STATE ITS CASE TWICE** (Maren's ruling 6). One fact, one
 	# home, and the home is the surface that can act on it.
 	_cursor.text = "%s\n%s" % [source, "\n".join(AssayHud.tile_lines(_sim.tile_at(at), _menu_at))]
@@ -3318,30 +3543,38 @@ func _make_button(offer: Dictionary) -> Button:
 	# stopped sending `cost` leaves every row pressable exactly as it was before this slice rather
 	# than disabling the whole menu on a missing key. `test_sim_binding.gd` is what holds the field
 	# there; this path is the honest behaviour if it ever goes.
-	var cost: int = int(offer.get("cost", -1))
-	if cost >= 0 and int(offer.get("count", 0)) < cost:
-		button.disabled = true
+	# **AND THAT RULE DIED WITH THE VERB IT WAS ABOUT** (ASSA-328). Every paragraph above is kept
+	# because it is the record of why `cost` crosses the binding at all, and the DISABLE it justified is
+	# gone: the row's control no longer makes anything, it opens the screen where have/need is printed
+	# for every material at once (Maren's §3, Factorio). **A launcher disabled on affordability hides
+	# the one surface that explains the shortfall from the one player who needs it** -- which is
+	# ASSA-247's own principle, not an exception to it: a weight that does not follow availability is a
+	# lying control, and "you may look at what this costs" is available always.
+	#
+	# `cost` IS STILL READ, ON THE SCREEN, AS DATA (`AssayHud.have_need_line`), so nothing about the
+	# binding field or the reasoning above is withdrawn -- only the control it used to grey out.
 	return button
 
 
 ## THE PRESS ITSELF, split out so the availability rule above reads as one decision over one button
 ## rather than three returns each having to remember it.
-func _make_verb_button(offer: Dictionary, what: String, item: Dictionary) -> Button:
-	match String(offer.get("verb", "")):
-		"craft":
-			var recipe: Variant = offer.get("tag")
-			return _button(AssayHud.make_button_text(), func() -> void: _act(what,
-					AssayActions.craft(recipe, item, 1)), "one batch: %s" % what)
-		"make":
-			var kind: Variant = offer.get("tag")
-			return _button(AssayHud.make_button_text(), func() -> void: _act(what,
-					AssayActions.make_part(kind, item, 1)), "one part: %s" % what)
-		_:
-			# A VERB THIS CLIENT DOES NOT KNOW IS NAMED, NOT GUESSED AT. The day the sim grows a third
-			# catalogue the menu says so rather than sending one of the two commands it does know.
-			return _button(AssayHud.make_button_text(), func() -> void: _say(
-					"this client has no command for %s" % String(offer.get("verb", "?")),
-					AssayHud.Say.FAILED))
+func _make_verb_button(offer: Dictionary, what: String, _item: Dictionary) -> Button:
+	# **THERE IS NO ONE-CLICK MAKE ANY MORE, AND THAT IS THE PRICE MAREN SAID OUT LOUD** (ASSA-328;
+	# her §2: *"THE PRICE, SAID OUT LOUD: there is no one-click make any more. Crafting goes from one
+	# gesture to two. I am paying it because (a) Hasan asked for 'not just make buttons', which is a
+	# request for the step to exist, and (b) ASSA-316 ruling 6 -- one fact, one home. A row that both
+	# makes and opens a maker is the same verb with two homes."*)
+	#
+	# **SO THE MATCH ON `verb` LEFT THIS FUNCTION RATHER THAN BEING DUPLICATED.** Which command a row
+	# sends is now decided once, at the press of `Build`, in `_send_build` -- the row no longer sends
+	# anything, so the row no longer needs to know. The verb still crosses and is still the sim's
+	# answer; this button just stopped being the thing that acts on it.
+	#
+	# `_item` IS KEPT IN THE SIGNATURE AND UNUSED, because `_make_button` above reads `offer` for the
+	# affordability rule and builds the item for it; dropping the parameter would move that call and
+	# make this diff about two things.
+	return _button(AssayHud.make_launch_text(), func() -> void: _open_build_screen(offer),
+			"open the build screen on this: %s" % what)
 
 
 ## THE PACK, AS ROWS YOU CAN ACT ON. The words are `AssayHud.stack_line`'s and the verbs are
@@ -3671,6 +3904,10 @@ func _refresh_actions() -> void:
 ## is a command the sim judges. In particular this does NOT set `_target`: the placement cursor stays
 ## where the player last put it, so `where you stand` keeps its meaning (ruling 8's consequence).
 func _open_machine_menu(tile: Vector2i, id: int) -> void:
+	# **AND IT CLOSES THE BUILD SCREEN** (ASSA-328; Maren's §1: *"the build screen and a machine menu
+	# are mutually exclusive -- opening either closes the other"*). Said at both ends, because a rule
+	# written at one end holds only until somebody opens the other.
+	_close_build_screen()
 	_menu_at = id
 	_menu_tile = tile
 	# THE ROWS ARE REBUILT EVEN IF THE SAME MACHINE IS CLICKED TWICE, because the pack may have changed
@@ -3832,6 +4069,393 @@ func _place_machine_menu() -> void:
 	var room := AssayHud.machine_menu_room(AssayHud.world_rect(), point_of_tile(_menu_tile).x)
 	_menu_region.position = room.position
 	_menu_region.size = room.size
+
+
+## **OPEN THE BUILD SCREEN ON ONE CATALOGUE ROW** (ASSA-328). Maren's §2: a make row's button *"opens
+## this screen with that recipe already chosen -- one gesture from the thing you pointed at to the
+## screen that builds it"*.
+##
+## **ONE AT A TIME, AND THE OTHER ONE IS THE MACHINE MENU** (her §1: *"the build screen and a machine
+## menu are mutually exclusive -- opening either closes the other"*). Said in both directions, here
+## and in `_open_machine_menu`, because a rule stated at one end holds until somebody opens the other.
+##
+## **IT CHANGES NO SIM STATE AND SENDS NOTHING.** Opening is a client gesture; `Build` is the command.
+func _open_build_screen(offer: Dictionary) -> void:
+	_close_machine_menu()
+	_build_verb = String(offer.get("verb", ""))
+	_build_tag = offer.get("tag")
+	_build_species = int(offer.get("species", -1))
+	_build_grade = String(offer.get("grade", ""))
+	# REBUILT EVEN WHEN THE SAME ROW IS PRESSED TWICE, the menu's reason: the pack may have changed
+	# while the screen was shut and the signature cannot tell "closed" from "unchanged".
+	_build_showing = UNBUILT
+	_refresh_build_screen()
+
+
+## **CLOSE IT. Esc or the named control** (Maren's §1).
+##
+## **CLOSING DISCARDS NOTHING AND THAT IS HER RULING, NOT A SHORTCUT** (§1: *"a half-built design is
+## client state until Build; it survives a close and re-opens as you left it"*). So the three fields
+## that say what is chosen are untouched here and only `_build_verb` is cleared -- which is what
+## "shut" means -- and re-opening on the same row finds the material still chosen.
+##
+## **A CLICK ON THE MAP DOES NOT CLOSE THIS ONE, UNLIKE THE MACHINE MENU.** The menu is ABOUT a tile,
+## so clicking another tile is a way of pointing at something else; this screen is about nothing on
+## the map, so a click outside it is just a click and closing on it would throw away a half-made
+## choice for a gesture the player did not mean as a dismissal.
+func _close_build_screen() -> void:
+	if _build_verb == "":
+		return
+	_build_verb = ""
+	_build_showing = UNBUILT
+	if is_instance_valid(_build_box):
+		_build_box.visible = false
+
+
+## Whether the build screen is up. One reader, so the two surfaces' mutual exclusion and the tests ask
+## the same question rather than each spelling `_build_verb != ""`.
+func _build_screen_open() -> bool:
+	return _build_verb != "" and is_instance_valid(_build_box)
+
+
+## **EVERY OFFER THE SIM MAKES FOR THE ROW THIS SCREEN IS OPEN ON** -- same `verb` and same `tag`, one
+## per material in the pack that the recipe accepts. That list IS the material picker (ASSA-328).
+##
+## **MATCHED BY THE SIM'S OWN TWO WORDS, THE WAY `button_play` MATCHES A ROW.** `JSON.stringify` on
+## the tag because a part's tag is a Variant and may be a Dictionary (`{"Frame": "Held"}` for a
+## handle), which `==` compares by reference rather than by value for some shapes -- the same
+## comparison `_press_on_offer` has used since ASSA-86 and for the same reason.
+func _offers_for_open_row() -> Array:
+	var same: Array = []
+	if _build_verb == "" or _client == null or not _sim.running():
+		return same
+	var wanted := JSON.stringify(_build_tag)
+	for entry in _sim.make_offers(_client.player_id):
+		var offer: Dictionary = entry
+		if String(offer.get("verb", "")) == _build_verb:
+			if JSON.stringify(offer.get("tag")) == wanted:
+				same.append(offer)
+	return same
+
+
+## The one offer the screen is pointed at: the open row's recipe in the chosen material. `{}` when the
+## sim no longer makes that -- the pack ran out, or a `sort` moved the last stack to grade A -- which
+## is a state the screen SAYS rather than papering over with the first material it can find.
+func _chosen_offer() -> Dictionary:
+	for entry in _offers_for_open_row():
+		var offer: Dictionary = entry
+		if int(offer.get("species", -1)) == _build_species:
+			if String(offer.get("grade", "")) == _build_grade:
+				return offer
+	return {}
+
+
+## **WHAT THE SCREEN SAYS, AND ON WHICH CLOCK EACH PART SAYS IT** (ASSA-328, the machine menu's split).
+##
+## **IT CLOSES ITSELF WHEN THERE IS NO WORLD, AND NOT WHEN THE OFFER GOES.** No world means no
+## catalogue and no pack, so every row on it would be a claim about nothing (the menu's rule). A
+## chosen material running out is different: the screen stays up and the detail column says the sim no
+## longer offers it, because that is a thing the player did -- they built the last one -- and a screen
+## that vanished on success would hide the answer.
+##
+## **THE SIGNATURE IS THE PACK'S SHAPE PLUS WHAT IS CHOSEN**, so the rows are rebuilt when the
+## catalogue moves or the player picks another material, and NOT every tick: a row carries a Button a
+## cursor may be resting on (`_refresh_actions`' note). The cost text is re-written every refresh,
+## because a count climbs every mining cycle and a Label's text is idempotent and free.
+func _refresh_build_screen() -> void:
+	if not _build_screen_open():
+		return
+	if not _sim.running():
+		_close_build_screen()
+		return
+	_build_box.visible = true
+	var stacks := _sim.inventory_of(_client.player_id) if _client != null else []
+	var signature := "%s/%s/%d/%s/%s" % [_build_verb, JSON.stringify(_build_tag), _build_species,
+			_build_grade, _pack_shape(stacks)]
+	if signature != _build_showing:
+		_build_showing = signature
+		_rebuild_build_screen()
+	_refresh_build_cost()
+	_place_build_screen()
+
+
+## **WHERE THE SCREEN GOES, FROM A MEASUREMENT AND NOT FROM A CONSTANT** (ASSA-328).
+##
+## **THE BAND IT MAY NOT COVER IS ASKED FOR, NOT ASSUMED.** Maren's §1 forbids covering the status
+## toast and `whole world (V)`, which live INSIDE the world rect and are not the world -- the thing
+## her mock caught before any code did. Both are real nodes with real rects once a window has laid
+## out, so this takes the TOP of the highest one that is actually on screen and
+## `AssayHud.build_screen_rect` keeps its clearance from that.
+##
+## **AND `WORLD_CONTROLS_BAND` IS ONLY THE HEADLESS ANSWER.** Nothing has a size in the test suite, so
+## a node's rect there is `(0,0,0,0)` and taking its top would put the band at the top of the window
+## and leave the screen no room at all. A zero-sized node is "not laid out", not "at the origin", so
+## it is skipped and the constant answers instead -- which is why that constant's docstring says the
+## check that matters is a real-window one.
+func _place_build_screen() -> void:
+	if not is_instance_valid(_build_box):
+		return
+	var world := AssayHud.world_rect()
+	var band := world.end.y - AssayHud.WORLD_CONTROLS_BAND
+	for control in [_view_toggle, _map_key_toggle, _says_toast]:
+		var node := control as Control
+		if node != null and node.visible and node.size.y > 0.0:
+			band = minf(band, node.global_position.y)
+	var rect := AssayHud.build_screen_rect(world, band)
+	_build_region.position = world.position
+	_build_region.size = world.size
+	_build_box.position = rect.position - world.position
+	_build_box.size = rect.size
+
+
+## **THE THREE LISTS, REBUILT TOGETHER** (ASSA-328). They move on one clock -- the catalogue's shape
+## and what is chosen -- so they are one function and one signature.
+func _rebuild_build_screen() -> void:
+	_rebuild_build_picker()
+	_rebuild_build_materials()
+	_rebuild_build_detail()
+
+
+## **BLOCK 2: WHAT YOU CAN MAKE, ONE ROW PER CATALOGUE ENTRY, NAMED BY THE SIM** (ASSA-328).
+##
+## **THE ROWS ARE THE SIM'S LIST AND THE ORDER IS THE SIM'S TOO.** `make_offers` is ordered
+## `RecipeId::ALL`, then `PartKind::ALL`, then the pack's own order (its docstring), and this walks it
+## in that order keeping the first of each `verb`+`tag` -- so a recipe appears where the sim puts it
+## and nothing here sorts a catalogue.
+##
+## **THE LABEL IS THE SIM'S NAME OUT OF THE CATALOGUE, NOT THE TAG.** A tag is serde's spelling --
+## a bare `"Head"`, or `{"Frame": "Held"}` for a handle -- and `recipes()` / `part_kinds()` each cross
+## a sim-written `name` beside it for exactly this. Printing a tag would put an enum variant on a
+## player's screen and would read `{ "Frame": "Held" }` on the one row that is a Dictionary.
+##
+## **ONE ROW PER RECIPE AND NOT PER MATERIAL, WHICH IS THE WHOLE POINT OF THE SCREEN.** The make tab
+## lists an offer per (recipe x material you hold), which is how five materials became twenty-odd rows
+## of prose. Here the recipe is chosen once and the material is the other column.
+func _rebuild_build_picker() -> void:
+	for child in _build_picker.get_children():
+		child.queue_free()
+	var seen := {}
+	var chosen := JSON.stringify(_build_tag)
+	for entry in (_sim.make_offers(_client.player_id) if _client != null else []):
+		var offer: Dictionary = entry
+		var verb := String(offer.get("verb", ""))
+		var key := "%s/%s" % [verb, JSON.stringify(offer.get("tag"))]
+		if seen.has(key):
+			continue
+		seen[key] = true
+		var named := _catalogue_name(verb, offer.get("tag"))
+		# **THE ROW YOU ARE ON IS A LABEL, NOT A PRESSABLE BUTTON THAT DOES NOTHING** (ASSA-175's rule:
+		# a control that cannot do anything reads as available). Pressing the open row would re-point
+		# the screen at where it already is, so that row states which it is and offers no press.
+		if key == "%s/%s" % [_build_verb, chosen]:
+			var here := Label.new()
+			here.text = named
+			here.theme_type_variation = &"Heading"
+			_build_picker.add_child(here)
+			continue
+		var row := _button(named, func() -> void: _choose_build_row(offer),
+				"make %s instead" % named)
+		row.theme_type_variation = &"Quiet"
+		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		_build_picker.add_child(row)
+
+
+## **MOVE THE SCREEN TO ANOTHER CATALOGUE ROW WITHOUT CLOSING IT** (ASSA-328). The material goes with
+## it -- this offer's own species and grade -- because the material a `sort` can eat is not the
+## material a `head` can, and carrying the old choice across would point the screen at an offer the
+## sim does not make and then have to say so.
+func _choose_build_row(offer: Dictionary) -> void:
+	_build_verb = String(offer.get("verb", ""))
+	_build_tag = offer.get("tag")
+	_build_species = int(offer.get("species", -1))
+	_build_grade = String(offer.get("grade", ""))
+	_build_showing = UNBUILT
+	_refresh_build_screen()
+
+
+## **BLOCKS 3+4: THE MATERIAL PICKER -- ONI's, WHICH IS MAREN'S CLOSEST REFERENCE** (§3: *"you pick the
+## material and the card's numbers move ... ONI proves a player will happily shop by consequence"*).
+##
+## **ONE ROW PER MATERIAL THE SIM OFFERS THIS RECIPE, AND THE WORDS ARE THE PACK'S.** A material row
+## names its stack with `AssayHud.stack_line` over the SIM-written `name` on that pack stack -- the
+## same words the pack tab prints -- because `make_offers` crosses an offer's input as three fields
+## and no name, and spelling "Tonore refined (A)" out of kind, species and grade here would be this
+## client wording an item (ASSA-43/52, and `make_offers`' own docstring forbids it).
+##
+## **HAVE / NEED UNDER EACH ONE, WHICH IS WHAT MAKES THIS A CHOICE AND NOT A LIST** (her §3, Factorio):
+## affordability is read rather than computed in the player's head, on every material at once.
+func _rebuild_build_materials() -> void:
+	for child in _build_materials.get_children():
+		child.queue_free()
+	var offers := _offers_for_open_row()
+	if offers.is_empty():
+		_build_materials.add_child(_note("nothing you are carrying can be worked into this"))
+		return
+	for entry in offers:
+		var offer: Dictionary = entry
+		var mine := _pack_stack_of(offer)
+		var row := VBoxContainer.new()
+		row.add_theme_constant_override("separation", 2)
+		var named := AssayHud.stack_line(mine) if not mine.is_empty() else String(offer.get("line", ""))
+		var chosen := int(offer.get("species", -1)) == _build_species \
+				and String(offer.get("grade", "")) == _build_grade
+		if chosen:
+			var here := Label.new()
+			here.text = named
+			here.theme_type_variation = &"Heading"
+			here.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			row.add_child(here)
+		else:
+			var press := _button(named, func() -> void: _choose_build_material(offer),
+					"make it out of this instead")
+			press.theme_type_variation = &"Quiet"
+			press.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			row.add_child(press)
+		row.add_child(_note(AssayHud.have_need_line(int(offer.get("count", 0)),
+				int(offer.get("cost", 0)))))
+		_build_materials.add_child(row)
+
+
+## Point the open row at another material. The recipe does not move, which is the difference from
+## `_choose_build_row`.
+func _choose_build_material(offer: Dictionary) -> void:
+	_build_species = int(offer.get("species", -1))
+	_build_grade = String(offer.get("grade", ""))
+	_build_showing = UNBUILT
+	_refresh_build_screen()
+
+
+## **BLOCK 5: WHAT THE SIM SAYS YOU GET** (ASSA-328).
+##
+## **EVERY SENTENCE HERE IS THE SIM'S, APPENDED AND NEVER COMPOSED**, which is the make row's rule
+## (ASSA-125/158) carried onto a bigger surface: `line` states the cost and what you hold, `walls` is
+## the smelter's figure as a SENTENCE because what a player may know of a heat tolerance is a band
+## until they assay, and `dead_end` is `debug::DEAD_END_LABEL` plus the sim's clause.
+##
+## **THE DEAD END KEEPS ITS OWN VOICE** (Maren's ASSA-158 ruling: *"a permanent dead end may not be
+## drawn in the same series as a cost"*). One of those can become true by playing and the other never
+## can, so it is not another `_note` in the same ink -- it is `FAILED`, the one colour this screen
+## takes from the status scale, and it is the sim's words either way.
+##
+## **AND WHAT IS NOT HERE IS SAID OUT LOUD RATHER THAN QUIETLY MISSING:** the RATIO fill of mass
+## against budget and the SAFE / UNCERTAIN / WILL BREAK verdict her §5 specifies belong to the
+## ASSEMBLY flow, which is slice 2/3 behind Marlow's ASSA-324. A recipe is not a design: it has no
+## frame, no budget and no parts, so there is nothing for those marks to be about. Drawing them here
+## would mean inventing numbers in GDScript, which is the one rule this item says does not bend.
+func _rebuild_build_detail() -> void:
+	for child in _build_detail.get_children():
+		child.queue_free()
+	var offer := _chosen_offer()
+	if offer.is_empty():
+		# **THE SCREEN SAYS THE SIM HAS STOPPED OFFERING THIS, WHICH IS THE STATE AFTER A SUCCESSFUL
+		# BUILD OF YOUR LAST STACK.** It is not an error and it is not empty: the player did a thing and
+		# this is its consequence, so the one surface that was watching says so.
+		_build_detail.add_child(_note("the sim no longer offers this in that material"))
+		return
+	var makes: Dictionary = offer.get("makes", {}) as Dictionary
+	var picture := _icon_box(makes, true)
+	if picture != null:
+		_build_detail.add_child(picture)
+	var line := _note(String(offer.get("line", "")))
+	line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_build_detail.add_child(line)
+	var walls := String(offer.get("walls", ""))
+	if walls != "":
+		var said := _note("— %s" % walls)
+		said.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_build_detail.add_child(said)
+	var dead_end := String(offer.get("dead_end", ""))
+	if dead_end != "":
+		var warned := Label.new()
+		warned.text = "%s%s" % [_sim.dead_end_label(), dead_end]
+		warned.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		warned.add_theme_color_override(&"font_color",
+				AssayHud.status_color(AssayHud.Say.FAILED))
+		_build_detail.add_child(warned)
+
+
+## **BLOCK 6: COST, RE-READ EVERY REFRESH** (ASSA-328, Maren's §5.3: a COUNT, so it is text, have on
+## the left, and never a band).
+##
+## **THIS IS THE ONE PART THAT MOVES ON THE TICK CLOCK**, which is why it is not in
+## `_rebuild_build_screen`: `count` is what the pack holds AT THIS TICK and climbs every mining cycle,
+## so a cost drawn once would be stale on the surface whose whole job is telling you whether you can
+## afford something. It is Labels only, and a Label's text is idempotent and free.
+func _refresh_build_cost() -> void:
+	for child in _build_cost.get_children():
+		child.queue_free()
+	var offer := _chosen_offer()
+	if offer.is_empty():
+		_build_cost.add_child(_note("nothing chosen to cost"))
+		return
+	var counted := Label.new()
+	counted.theme_type_variation = &"Display"
+	counted.text = AssayHud.have_need_line(int(offer.get("count", 0)), int(offer.get("cost", 0)))
+	_build_cost.add_child(counted)
+	# WHICH NUMBER IS WHICH, ONCE, UNDER THEM. `12 / 20` is unreadable without it the first time and
+	# obvious forever after, which is what a `Small` note under a `Display` figure is for.
+	_build_cost.add_child(_note("you have / one batch needs"))
+
+
+## **PRESS `Build`: THE SAME COMMAND THE ROW USED TO SEND** (ASSA-328).
+##
+## **IT IS `_make_verb_button`'s BODY WITH THE BUTTON TAKEN OFF**, deliberately: the two commands are
+## `Craft` and `MakePart`, they have differently shaped payloads, and which one to send is the SIM's
+## answer in `offer.verb` (`make_offers`' docstring: *"`verb` IS WHICH COMMAND, NOT A LABEL"*). A
+## third copy of that match is how ASSA-146 happened, so the day a catalogue grows a verb there are
+## two places to look and both of them say the verb is unknown rather than guessing.
+##
+## **ONE BATCH, AND THE COUNT IS NEVER CAPTURED** (ASSA-55): the offer is re-read from the sim at the
+## press, not from what the screen was showing when it was opened, so a screen left up for a thousand
+## ticks sends what is true now.
+func _send_build() -> void:
+	var offer := _chosen_offer()
+	if offer.is_empty():
+		# **IT SAYS SO RATHER THAN DOING NOTHING.** A primary control that is never disabled has to
+		# answer every press, and "the sim does not offer this any more" is the honest answer -- the
+		# alternative is the dead button ASSA-262 found in Mineralogy.
+		_say("the sim no longer offers this in that material", AssayHud.Say.FAILED)
+		return
+	var what := String(offer.get("line", "?"))
+	var item := AssayActions.item_of_stack(offer)
+	match _build_verb:
+		"craft":
+			_act(what, AssayActions.craft(offer.get("tag"), item, 1))
+		"make":
+			_act(what, AssayActions.make_part(offer.get("tag"), item, 1))
+		_:
+			_say("this client has no command for %s" % _build_verb, AssayHud.Say.FAILED)
+
+
+## **THE SIM'S NAME FOR A CATALOGUE ROW, ASKED BY TAG** (ASSA-328). `recipes()` and `part_kinds()` each
+## cross a sim-written `name` beside the tag the wire carries, and they *"differ in case, which is
+## exactly the kind of thing a client should not be guessing at"* (`recipes`' docstring).
+##
+## **A TAG WITH NO CATALOGUE ENTRY IS NAMED AS UNKNOWN AND NOT PAPERED OVER**, the contract
+## `AssayHud.target_line` and the machine menu's name both keep: the only way here is a
+## `libsim_godot.dylib` older than the sim it was built from, and printing the tag instead would look
+## almost right.
+func _catalogue_name(verb: String, tag: Variant) -> String:
+	var wanted := JSON.stringify(tag)
+	for entry in (AssaySimHost.recipes() if verb == "craft" else AssaySimHost.part_kinds()):
+		var row: Dictionary = entry
+		if JSON.stringify(row.get("tag")) == wanted:
+			return String(row.get("name", ""))
+	return "unknown %s %s" % [verb, wanted]
+
+
+## The pack stack an offer eats, so a material row can be named in the SIM's words. `{}` when the pack
+## does not hold it, which the caller treats as "fall back to the sim's whole sentence" rather than as
+## an error: an offer always comes FROM a stack, so this is unreachable today and is the honest shape
+## if `make_offers` ever offers something out of a slot instead.
+func _pack_stack_of(offer: Dictionary) -> Dictionary:
+	for entry in (_sim.inventory_of(_client.player_id) if _client != null else []):
+		var stack: Dictionary = entry
+		if String(stack.get("kind", "")) == String(offer.get("kind", "")):
+			if int(stack.get("species", -1)) == int(offer.get("species", -2)):
+				if String(stack.get("grade", "")) == String(offer.get("grade", "")):
+					return stack
+	return {}
 
 
 ## ONE DOOR FOR EVERY BUTTON ON THIS SCREEN, and the only place any of them reaches the wire.

@@ -842,6 +842,101 @@ static func machine_menu_room(world: Rect2, middle: float) -> Rect2:
 			Vector2(half, world.size.y) - MARGIN * 2.0)
 
 
+## **HOW FAR UP THE WORLD'S OWN CONTROL BAND REACHES, WHEN NOTHING HAS LAID OUT** (ASSA-328).
+##
+## **THIS NUMBER IS THE HEADLESS ANSWER AND IT IS NOT THE ONE THE SCREEN USES IN A WINDOW.**
+## `main.gd::_place_build_screen` measures the live controls and passes their real top to
+## `build_screen_rect`; this is what that measurement reads before any container has a size, which in
+## this project is every test and every probe that does not open a window.
+##
+## **WHY A CONSTANT IS THE WRONG SHAPE FOR IT AND IT IS STILL HERE.** The band is three controls and
+## only one of them has a height written down: `_view_toggle` is placed at `world.end - (152, 36)`
+## (`main.gd`, and `show the map key (K)` sits with it), while the STATUS TOAST's height is whatever
+## a themed panel holding one or two lines measures — the engine's answer, not ours. Maren measured
+## the three together at **y 653..686** on a real 1280x720 window (`shared/assay-build-screen.md` §0),
+## which is 43 px up from `world_rect().end.y` of 696. **48 clears that with 5 px to spare and no
+## claim to be exact**: being generous here costs the screen pixels and being short covers a control,
+## so the error is spent in the safe direction on the configuration nobody can see.
+##
+## **AND THE REAL CHECK IS NOT THIS NUMBER.** A constant for a laid-out height is the shape of defect
+## that goes stale silently (my own ASSA-320), so the acceptance that matters is a REAL-WINDOW
+## measurement of the open screen against the toast's and the toggle's own rects, in pixels. That is
+## why the pure function below takes the top as an argument instead of reading this.
+const WORLD_CONTROLS_BAND := 48.0
+
+## **HOW FAR THE SCREEN KEEPS OFF THE BAND IT MAY NOT COVER** (ASSA-328). Maren's §1: the screen
+## *"stops 12 px above the world's own control band"*. Named because it is the same clear air
+## `TOAST_INSET` spends, and a reader should see the two are one decision.
+const BUILD_SCREEN_CLEARANCE := 12.0
+
+
+## **WHERE THE BUILD SCREEN IS ALLOWED TO BE** (ASSA-328, Maren's spec `assay-build-screen` §1: the
+## world rect less a 24 px pad, stopping 12 px above the world's own control band).
+##
+## **THREE THINGS IT MAY NEVER COVER, AND ONLY ONE OF THEM IS THE WORLD.** Her ruling, with her
+## reason for each: never the **HUD column** (x 936..1279) because *"a screen over the log is a
+## surface whose failure mode is silence"* — the sim's refusals are log lines (ASSA-316 ruling 2);
+## never the **status toast**; never **`whole world (V)`**. The last two live INSIDE the world rect
+## and are not the world, which is the thing her mock caught before any code did: her first pass took
+## the world less a pad and ate both.
+##
+## **THE COLUMN IS FREE, THE BAND IS NOT.** `world_rect()` already stops at `VIEW.x - PANEL`, so
+## staying off the HUD column falls out of taking the world as the frame — nothing here subtracts it
+## and no test of it can pass by arithmetic that happens to agree. The band is the half that needs
+## saying, and it is `band_top` rather than a constant **because it is a MEASUREMENT**: in a window
+## the live controls answer, headless `WORLD_CONTROLS_BAND` does, and a function that read the
+## constant itself could not tell the two apart.
+##
+## **`minf` AND NOT A BRANCH.** The bottom is the higher of "the world less its pad" and "clear of the
+## band", so a band that somehow reaches above the screen's own top yields an EMPTY rect rather than an
+## inverted one — a screen with no room is a thing a test can assert, and a negative height is a thing
+## Godot draws inside out.
+static func build_screen_rect(world: Rect2, band_top: float) -> Rect2:
+	var top := world.position + MARGIN
+	var bottom := minf(world.end.y - MARGIN.y, band_top - BUILD_SCREEN_CLEARANCE)
+	return Rect2(top, Vector2(world.size.x - MARGIN.x * 2.0, maxf(0.0, bottom - top.y)))
+
+
+## **THE WORD ON A MAKE ROW'S ONE CONTROL, NOW THAT IT OPENS A SCREEN INSTEAD OF MAKING SOMETHING**
+## (ASSA-328; Maren's §2: *"a row's button becomes `Make…` and opens this screen with that recipe
+## already chosen"*).
+##
+## **THE ELLIPSIS IS THE WHOLE INFORMATION AND IT IS A CONVENTION, NOT DECORATION.** Every toolkit
+## since the 1980s spells "this control opens something you then act in" with a trailing ellipsis, and
+## the board asked for the furniture the genre has. `Make` on a control that no longer makes anything
+## would be the lying label ASSA-175 is about — *"a control that cannot do anything is worse than an
+## absent one, because it reads as available"* — one step along: it still acts, but not as named.
+##
+## **ONE WORD ON EVERY ROW, STILL** (ASSA-88's rule, inherited from the deleted `make_button_text`):
+## the bug Maren measured was two buttons both labelled exactly `Craft smelter` making smelters with
+## different walls, a LABEL that was the only read and ambiguous. The row's identity is the sim's
+## sentence beside the button and never the button, so this returns one string however many catalogues
+## a row can come from.
+static func make_launch_text() -> String:
+	return "Make…"
+
+
+## **THE ONE ACT THE BUILD SCREEN IS FOR** (ASSA-328). Maren's §5: *"`Build` is the one ACCENT"*, so
+## this is the one control on that screen with weight, and the word is hers.
+static func build_button_text() -> String:
+	return "Build"
+
+
+## **COST AS A COUNT, HAVE ON THE LEFT** (ASSA-328; Maren's §5.3: *"Cost (block 6) is COUNTS, so it is
+## text: `12 / 20`, have on the left. A count is not a reading and must not be given a band"*).
+##
+## **FACTORIO'S ONE BORROWING, AND THE REASON IT IS WORTH A FUNCTION** (her §3): have/need beside an
+## ingredient means affordability is READ, never computed by the player in their head. The row this
+## replaces printed the sim's sentence — *"2 Tonore refined (A), you have 8"* — which says the same
+## thing in prose, and prose is what the board called a debug dump.
+##
+## **IT NAMES NO ITEM AND SO IT IS NOT A SECOND COPY OF A SIM SENTENCE** (ASSA-43/52's defect). The
+## two numbers are `offer.count` and `offer.cost`, both crossed as data by `make_offers` for exactly
+## this (ASSA-256), and the thing they are about is named once, by the sim, elsewhere on the screen.
+static func have_need_line(have: int, need: int) -> String:
+	return "%d / %d" % [have, need]
+
+
 ## **HOW MUCH OF A STACK A SLOT ROW OFFERS BESIDES ALL OF IT** (ASSA-316, Maren's ruling 4).
 ##
 ## **NO STEPPER, NO FIELD, NO MAGIC 10.** Her reasons, kept where the numbers are: a stepper is two
@@ -2336,10 +2431,10 @@ static func nothing_to_make_line(in_world: bool) -> String:
 	return "nothing you are carrying can be worked by hand — mine some rock first"
 
 
-## THE ONE WORD ON EVERY ROW'S BUTTON, and it is the same word on every row ON PURPOSE (ASSA-88,
-## Maren's ruling). The bug she measured was two buttons both labelled exactly `Craft smelter` making
-## smelters with different walls: a LABEL that was the only read, and ambiguous. So the identity of a
-## row lives in the sim's sentence beside the button, never in the button, and this returns one word
-## however many catalogues a row can come from.
-static func make_button_text() -> String:
-	return "Make"
+## **`make_button_text` WAS HERE AND IS GONE** (ASSA-328). It returned `Make` for the one control on a
+## make row, and since Maren's §2 that control opens the build screen instead of making anything --
+## so the word moved to `make_launch_text` and nothing pressed this. **A label function with no
+## caller is ASSA-175's defect in source form** (*"a control that cannot do anything is worse than an
+## absent one"*): the next person to add a make-like row would have found two of these and no way to
+## tell which one the screen uses. Its ASSA-88 rule -- one word on every row, identity in the sim's
+## sentence and never in the label -- is carried in full on `make_launch_text`.
