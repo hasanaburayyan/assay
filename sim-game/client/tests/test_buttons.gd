@@ -2057,6 +2057,76 @@ func test_a_row_you_cannot_afford_is_not_pressable_and_the_last_batch_is() -> bo
 	return ok
 
 
+## **ONE LIST, ONE OBJECT, TWO STATES — AND THE MATERIAL ROW NAMES THE MATERIAL** (ASSA-343; Maren's
+## ASSA-328 rulings 3 and her §5.5 of 20:51).
+##
+## Her words for the first: *"A selected and an unselected member of one list must be one object in
+## two states, never two objects — otherwise the state reads as a difference in kind."* So the
+## assertion is about CLASS and STATE, not about a colour: every row of both pickers is a `Button`,
+## no row is a `Label`, and exactly one of them is pressed.
+##
+## **AND THE LABEL IS THE MATERIAL, NOT THE STACK.** Her second ruling, off the shipped code: the row
+## printed `8 × Tonore refined (A)` one row above a `need · have` about that same count. Zipped
+## against `_offers_for_open_row` and compared to the SIM'S `name` on the pack stack, so this cannot
+## be satisfied by a row carrying some other row's words — and a literal is impossible here anyway,
+## because which species a seeded world hands you is worldgen's business.
+func test_a_picker_is_one_object_in_two_states_and_names_the_material() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_some_ore(screen)
+	if ok:
+		var launcher := _make_launcher_for(screen, "smelter")
+		if launcher == null:
+			ok = _fail("no menu row offers a smelter: %s" % _text_of(screen._make))
+		else:
+			launcher.pressed.emit()
+			# THE RECIPE PICKER: every row a Button, exactly one pressed.
+			var pressed := 0
+			for child in screen._build_picker.get_children():
+				if child is Label:
+					ok = _fail("the recipe picker draws `%s` as a Label; a chosen member of a list is "
+							% (child as Label).text + "the same object in another state")
+					break
+				var row := child as Button
+				if row == null:
+					ok = _fail("the recipe picker holds a %s, which is neither" % child.get_class())
+					break
+				if not row.toggle_mode or row.button_group == null:
+					ok = _fail("`%s` is not a toggle in a group, so `exactly one is chosen` is a "
+							% row.text + "thing each rebuild has to remember")
+					break
+				if row.button_pressed:
+					pressed += 1
+			if ok and pressed != 1:
+				ok = _fail("%d of %d recipe rows read as chosen"
+						% [pressed, screen._build_picker.get_child_count()])
+			# THE MATERIAL PICKER: the same two properties, plus the sim's own name for the material.
+			if ok:
+				var offers: Array = screen._offers_for_open_row()
+				var chosen := 0
+				for i in range(screen._build_materials.get_child_count()):
+					var row: Node = screen._build_materials.get_child(i)
+					var press := row.get_child(0) as Button
+					if press == null:
+						ok = _fail("material row %d leads with a %s, not a Button"
+								% [i, row.get_child(0).get_class()])
+						break
+					if press.button_pressed:
+						chosen += 1
+					var mine: Dictionary = screen._pack_stack_of(offers[i] as Dictionary)
+					var named := String(mine.get("name", ""))
+					if press.text != named:
+						ok = _fail(("material row %d is labelled `%s`; the sim's name for that "
+								+ "material is `%s`, and the count belongs on the row below")
+								% [i, press.text, named])
+						break
+				if ok and chosen != 1:
+					ok = _fail("%d of %d material rows read as chosen"
+							% [chosen, screen._build_materials.get_child_count()])
+	screen.queue_free()
+	return ok
+
+
 ## **THE TWO COUNTS, FROM A REAL WORLD AND A REAL CATALOGUE** (ASSA-332; Maren's §5.5: *"`need 1 ·
 ## have 2`: no slash, need first, both numbers always"*, and §3's Factorio borrowing -- affordability
 ## is READ, never computed by the player in their head).
