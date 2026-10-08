@@ -4200,6 +4200,71 @@ func test_no_control_is_drawn_above_the_world_in_a_played_screen() -> bool:
 	return ok
 
 
+## **NO PIXEL OF THE TITLE SCREEN IS BARE WINDOW** (ASSA-292, Maren's rectangle ruling of
+## 2026-10-08). The reasoning and her measurement are in `AssayHud.world_layer_rect`'s docstring; what
+## this owns is that the client actually asks it, in both states and in the right order.
+##
+## **IT IS THE WIRING AND NOT THE ARITHMETIC, AND THAT DISTINCTION IS THIS WEEK'S LESSON** (ASSA-292
+## box 3): three tests of `AssayScene.title_drift` passed for a whole night while nothing on the
+## screen called it. So the first clause reads the LAYER, the second reads the view the door actually
+## composed -- which is the half a rect assertion cannot see, since `_door_view` reads `_world.size`
+## while it works out the camera -- and the third blanks both and demands one `_refresh_world` put
+## them back.
+##
+## THE TWO STATES ARE ONE TEST because they are one claim with a sign: the door takes the whole
+## window, a world gives the column back. Split in two, a `world_layer_rect` that returned the same
+## rectangle either way would redden exactly one of them and read like a local failure.
+func test_the_door_world_fills_the_window_and_a_world_gives_the_column_back() -> bool:
+	var ok := true
+	var door := _screen()
+	var want := AssayHud.join_rect()
+	if not _same_rect(door._world.get_rect(), want):
+		ok = _fail(("the door's world layer is %s and the door is %s: %.0f px of bare window beside "
+				+ "a lit world is Maren's 26.9%% column (ASSA-292)")
+				% [door._world.get_rect(), want, want.size.x - door._world.get_rect().size.x])
+	# **THE CAMERA AGREES WITH THE RECTANGLE IT IS DRAWN IN.** `_door_view` reads `_world.size` twice,
+	# so a layer resized AFTER the view was composed draws a 912-wide camera stretched over a
+	# 1280-wide door -- a picture, not a crash, and nothing else here could see it.
+	var view: Dictionary = door._world.view
+	if view.is_empty():
+		ok = _fail("the door drew no world at all, so this test asked nothing (stale client-lib?)")
+	elif (view.get("size", Vector2.ZERO) as Vector2) != door._world.size:
+		ok = _fail(("the door camera was composed for a %s layer and the layer is %s: the resize "
+				+ "happens after the view") % [view.get("size"), door._world.size])
+	# **THE CALL, NOT THE STATE.** Both of the above are also true of a screen that was placed once in
+	# `_build_ui` and never again -- which is the state a session ENDING leaves. Blank them and demand
+	# one refresh rebuild both.
+	door._world.size = AssayHud.world_rect().size
+	door._world.view = {}
+	door._refresh_world()
+	if not _same_rect(door._world.get_rect(), want):
+		ok = _fail(("one refresh at the door left the layer at %s instead of %s: the rectangle is "
+				+ "set at build time and never restored") % [door._world.get_rect(), want])
+	if (door._world.view.get("size", Vector2.ZERO) as Vector2) != want.size:
+		ok = _fail(("one refresh at the door composed a camera for %s instead of %s")
+				% [door._world.view.get("size"), want.size])
+	door.queue_free()
+	# AND THE OTHER SIGN: in a world the column is standing there and the map must not be under it.
+	var joined := _joined_screen()
+	joined._process(0.016)
+	joined._refresh()
+	if not joined._sim.running():
+		joined.queue_free()
+		return _fail("the fixture never simulated, so the in-world half asked nothing")
+	if not _same_rect(joined._world.get_rect(), AssayHud.world_rect()):
+		ok = _fail(("in a world the layer is %s and `world_rect()` is %s: the door's full-window "
+				+ "rectangle is being drawn under the HUD column")
+				% [joined._world.get_rect(), AssayHud.world_rect()])
+	joined.queue_free()
+	return ok
+
+
+## Rect2 equality with one pixel-hundredth of slack, so a test about a 344 px column cannot fail on a
+## float.
+func _same_rect(a: Rect2, b: Rect2) -> bool:
+	return a.position.distance_to(b.position) < 0.01 and a.size.distance_to(b.size) < 0.01
+
+
 ## **THE WORLD MAY NEVER SHRINK** (ASSA-287, Maren's ruling on ASSA-239: *"ratchet it, do not raise
 ## it"*). The constant and the whole reasoning are `AssayHud.WORLD_HEIGHT_FLOOR_SHARE`'s docstring.
 ##

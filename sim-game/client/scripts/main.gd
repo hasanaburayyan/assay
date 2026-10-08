@@ -789,8 +789,12 @@ func _build_ui() -> void:
 	_door_backdrop.color = AssayHud.MAP_BG
 	_door_backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_door_backdrop)
-	_world.position = world.position
-	_world.size = world.size
+	# **AT THE DOOR'S RECTANGLE AND NOT THE MAP'S, BECAUSE THE DOOR IS WHAT IS UP AT BUILD TIME**
+	# (ASSA-292, Maren's rectangle ruling -- see `AssayHud.world_layer_rect`). `_refresh_front_door`
+	# moves it on every state change after this; starting it at the door's rect is what keeps the
+	# door camera (`_door_view`, which reads `_world.size`) from being built once against the
+	# narrower map on the very first frame, before any refresh has run.
+	_place_world_layer(true)
 	add_child(_world)
 	# **THE BIGGEST SURFACE IN THE GAME NAMES WHICH KIND OF EMPTY IT IS** (Maren, ASSA-127). Over the
 	# world's own rectangle and added straight after it, so it covers exactly the surface it explains
@@ -3758,11 +3762,14 @@ func _place_door_plate(showing: bool) -> void:
 		found = true
 	if not found:
 		return
-	# **CLIPPED TO THE WORLD, NOT TO THE DOOR, and the shot is what corrected this.** `join_rect()`
-	# is the whole window (ASSA-231) while the world is 912 px of it, so clipping to the door put a
-	# 344 px tongue of plate out over the bare margin beside the world -- scrim where there is nothing
-	# to scrim, and a visible seam for it. A plate exists to stand between the words and the PICTURE.
-	var plate := AssayHud.door_plate_rect(AssayHud.world_rect(), content)
+	# **CLIPPED TO THE DOOR, AND THIS LINE HAS NOW BEEN BOTH WAYS ROUND.** It read `world_rect()` for
+	# one night, with a note saying the shot had corrected it: clipping to the door put a 344 px
+	# tongue of plate out over bare window beside the world, *"scrim where there is nothing to
+	# scrim"*. **THAT WAS A SYMPTOM AND I TREATED IT AS THE CAUSE.** The bare window was the defect
+	# (Maren, ASSA-292: the backdrop belongs in `join_rect`), and now that the door's picture IS the
+	# whole window there is no margin for a plate to spill onto -- so the clip goes back to the rect
+	# the layer actually occupies. One source for all three: `AssayHud.world_layer_rect(true)`.
+	var plate := AssayHud.door_plate_rect(AssayHud.world_layer_rect(true), content)
 	# A sliver is not a plate. Below one pad in either direction the words are not standing on
 	# anything, and drawing it would be a dark line across the world for no legibility at all.
 	if plate.size.x < AssayHud.DOOR_PLATE_PAD or plate.size.y < AssayHud.DOOR_PLATE_PAD:
@@ -3770,6 +3777,20 @@ func _place_door_plate(showing: bool) -> void:
 	_door_plate.position = plate.position
 	_door_plate.size = plate.size
 	_door_plate.visible = true
+
+
+## **THE PICTURE MOVES WITH THE SCREEN IT IS ON** (ASSA-292, Maren's rectangle ruling). Two states,
+## one call site each way, and `AssayHud.world_layer_rect` owns which rectangle is which.
+##
+## IT IS A SETTER AND NOT A BRANCH AT THE THREE READERS for the reason the helper's note gives: the
+## door camera reads `_world.size` while it composes the view, so the layer has to be the right size
+## BEFORE `_door_view` runs, not after. `_refresh_world`'s door branch calls this first; everything
+## else comes through `_refresh_front_door`, which knows whether there is a world. Setting a Control
+## to the size it already has is free, so calling it twice on one frame costs nothing.
+func _place_world_layer(door: bool) -> void:
+	var at := AssayHud.world_layer_rect(door)
+	_world.position = at.position
+	_world.size = at.size
 
 
 func _refresh_front_door() -> void:
@@ -3785,6 +3806,7 @@ func _refresh_front_door() -> void:
 	# the column up over nothing.
 	var empty: bool = not _sim.running() or _world.view.is_empty()
 	_front_door.visible = empty
+	_place_world_layer(empty)
 	_place_door_plate(empty)
 	_door_backdrop.visible = empty
 	if _column != null:
@@ -3894,6 +3916,12 @@ func _refresh_world(frame_dt := -1.0) -> void:
 		# world at the seed solo plays -- so the first screen is the game instead of a picture of a
 		# menu. `_door_view` returns `{}` if the binding cannot build one, which is exactly the empty
 		# dictionary that used to be here, so the flat field is still the fallback and never the plan.
+		#
+		# **THE RECTANGLE BEFORE THE VIEW, AND THE ORDER IS THE WHOLE REASON THIS IS A CALL AND NOT A
+		# FIELD** (ASSA-292). `_door_view` reads `_world.size` twice -- the camera's clamp and the
+		# view's own `size` -- so a layer resized after the view was composed would spend the frame a
+		# session ends showing a 912-wide camera stretched over a 1280-wide door.
+		_place_world_layer(true)
 		_world.view = _door_view()
 		_world.me = null
 		_refresh_front_door()

@@ -748,6 +748,33 @@ static func join_rect() -> Rect2:
 	return Rect2(Vector2.ZERO, VIEW)
 
 
+## **WHERE THE WORLD IS DRAWN, WHICH IS NOT ONE RECTANGLE** (ASSA-292, Maren's ruling of 2026-10-08:
+## *"the backdrop is part of the door: it belongs in `join_rect()`"*).
+##
+## `join_rect` above has said since ASSA-231 that before a world exists the column is not drawn and
+## there is no map to frame, and the WORDS have been centred in the whole window ever since. The
+## PICTURE was not: the world layer stayed at `world_rect()` on every screen, so the moment the door
+## stopped being a dark rectangle and started being a lit world (ASSA-292), `world_rect`'s subtraction
+## became visible as bare window. Measured by Maren on my own 1x shot:
+##
+##     lit world + plate   912x672 at x 24..935    66.5% of the window
+##     BARE DARK WINDOW                            33.5%
+##       one column of it  344x720 at x 936..1279  26.9%, every px (26,28,33)
+##
+## **THE BARE MARGIN COST MORE PICTURE THAN THE PLATE DID** -- 26.9% against 25.8% -- which is why
+## this is the first move and the plate's size is the second. It is the same defect ASSA-231 fixed for
+## the composition, surviving in the layer underneath it: *"the empty column was replaced by an empty
+## margin."*
+##
+## **ONE FUNCTION WITH A FLAG RATHER THAN TWO CALLERS CHOOSING**, because the choice has to be made in
+## three places that must agree (the layer's rect, the door camera's own width, and the plate's clip)
+## and three copies of `join_rect() if door else world_rect()` is how two of them end up disagreeing
+## for a frame. `world_rect` itself is untouched and keeps its one meaning -- "where is the map drawn
+## in a world" -- which `visible_tiles` and `player_ceiling` depend on.
+static func world_layer_rect(door: bool) -> Rect2:
+	return join_rect() if door else world_rect()
+
+
 ## WHAT THE VIEW'S CONTROL SAYS, naming its key like the log's and the crafting menu's.
 ##
 ## IT NAMES WHAT YOU WILL GET, not what you are looking at, which is the same way round as the other
