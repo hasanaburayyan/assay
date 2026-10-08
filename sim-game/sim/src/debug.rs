@@ -839,7 +839,7 @@ pub fn event_line(
                 | RejectReason::NotAPart(_)
                 | RejectReason::BadAssembly(_)
                 | RejectReason::MissingItems(_) => plan_refusal_phrase(world, *player, *reason)
-                    .expect("every reason on this arm is one `plan` can return"),
+                    .expect("every reason on this arm is one the plan can return"),
                 RejectReason::AlreadyAssayed => {
                     "that species is already assayed, so its sheet already reads exact"
                         .to_string()

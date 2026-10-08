@@ -712,6 +712,45 @@ impl AssaySim {
         }
     }
 
+    /// **WHAT THE BUILD BUTTON WOULD DO, ASKED BEFORE IT IS PRESSED**
+    /// (ASSA-324). The interactive build screen the board asked for is a view
+    /// of this one answer.
+    ///
+    /// `design_if_built` above weighs a design made of ONE species at ONE
+    /// grade, which was a limit of the question ASSA-140 had. A screen fed from
+    /// a player's pack is mixed by construction — the rules let a grade-A head
+    /// sit on a grade-C frame — so this takes an ITEM per part:
+    /// `kind:species:grade`, species as its index, first entry the frame.
+    ///
+    /// It also answers the half `design_if_built` could not ask at all: whether
+    /// the pack can PAY. `cost` is what Build would spend, tallied; `missing`
+    /// names the first item short; `affordable` is the only thing that should
+    /// decide whether the button is live. **`design` is still filled in when it
+    /// is not** — pricing a machine you cannot afford yet is what a build
+    /// screen is for.
+    ///
+    /// Same `sim::assembly::plan` that `step`'s `Assemble` arm runs, so this
+    /// cannot flatter a design the press would refuse.
+    #[func]
+    pub fn design_preview(&self, player: i64, parts: PackedStringArray) -> VarDictionary {
+        let parts: Vec<String> = parts.as_slice().iter().map(ToString::to_string).collect();
+        let facts = self.design_preview_facts(player_id_of(player), &parts);
+        let mut out = vdict! {
+            "fault" => &gstring(&facts.fault).to_variant(),
+            "affordable" => facts.affordable,
+            "missing" => &gstring(&facts.missing).to_variant(),
+            "cost" => &facts.cost.iter().map(stack_dict)
+                .collect::<Array<VarDictionary>>().to_variant(),
+        };
+        // ABSENT, not null, when there is no design -- the same rule
+        // `design_dict` keeps for `durability` and `note`. A key carrying an
+        // empty design is one a screen can draw a blank verdict out of.
+        if let Some(design) = &facts.design {
+            out.set("design", &design_dict(design).to_variant());
+        }
+        out
+    }
+
     /// **A COUNT AND ITS NOUN, AGREEING**, from the sim (ASSA-145).
     ///
     /// `sim::debug::counted` and not a GDScript twin, so the window and
@@ -1354,6 +1393,11 @@ fn design_dict(design: &DesignFacts) -> VarDictionary {
         "mass_high" => design.mass_high,
         "budget_low" => design.budget_low,
         "budget_high" => design.budget_high,
+        "speed_low" => design.speed_low,
+        "speed_high" => design.speed_high,
+        "hand_speed" => design.hand_speed,
+        "capacity_low" => design.capacity_low,
+        "capacity_high" => design.capacity_high,
         "mount" => &gstring(&design.mount).to_variant(),
         "unassayed" => &design.unassayed.iter().map(|n| gstring(n))
             .collect::<PackedStringArray>().to_variant(),
@@ -1571,6 +1615,53 @@ impl DesignIfBuilt {
     }
 }
 
+/// What the rules would do with a set of items: [`AssaySim::design_preview`]'s
+/// answer, engine-free so `cargo test` can pin it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DesignPreview {
+    /// The machine these parts would make, or `None` when there is no design
+    /// to weigh at all. **Present even when the pack cannot pay for it.**
+    pub design: Option<DesignFacts>,
+    /// The sim's phrase for why this cannot be built — a slot fault, an item
+    /// that is not a part, or what the pack is short. Empty when the design is
+    /// sound AND affordable, which is the only state a Build button is live in.
+    pub fault: String,
+    /// What pressing Build would spend, TALLIED: two hoppers of one material
+    /// are one row of two. A bill drawn per part would ask the player for
+    /// something the rules never take.
+    pub cost: Vec<StackFacts>,
+    pub affordable: bool,
+    /// The first item the pack is short, by name. Empty when affordable.
+    pub missing: String,
+}
+
+impl DesignPreview {
+    fn refused(fault: String) -> Self {
+        Self {
+            design: None,
+            fault,
+            cost: Vec::new(),
+            affordable: false,
+            missing: String::new(),
+        }
+    }
+}
+
+/// An item from `kind:species:grade`, the three fields a pack row already
+/// crosses with and the order `sim-cli` spells them in.
+///
+/// Split from the RIGHT, so a kind that carries its own colon (`part:head`)
+/// reads as well as the bare name the catalogue uses.
+fn parse_item_spec(spec: &str) -> Option<Item> {
+    let (head, grade) = spec.rsplit_once(':')?;
+    let (kind, species) = head.rsplit_once(':')?;
+    Some(Item::new(
+        sim::item::ItemKind::parse(kind)?,
+        SpeciesId(species.parse::<u8>().ok()?),
+        sim::Grade::parse(grade)?,
+    ))
+}
+
 /// Weigh a design made entirely of one refined species at one grade.
 ///
 /// ONE SPECIES AND ONE GRADE IS A LIMIT OF THE QUESTION, NOT OF THE MODEL:
@@ -1604,13 +1695,29 @@ pub fn design_if_built_facts(
         let Some(kind) = PartKind::parse(name) else {
             return DesignIfBuilt::refused(sim::debug::not_a_part_phrase(name));
         };
-        parts.push(sim::assembly::Part::of(kind, material));
+        parts.push(sim::assembly::Part::of(kind, material).as_item());
     }
-    let assembly = Assembly::new(sim::assembly::Part::of(frame_kind, material), parts);
-    if let Err(e) = assembly.validate() {
-        return DesignIfBuilt::refused(sim::debug::assembly_error_phrase(e));
-    }
-    let range = assembly.stat_range(&world.species);
+    // **THROUGH `plan`, WHICH IS THE THIRD COPY GONE** (ASSA-324). This used to
+    // run `validate` itself, so the slot rule was decided here, in `step`, and
+    // in the preview -- three places that merely happened to agree.
+    //
+    // AN EMPTY PACK ON PURPOSE: this question has no player and never had one.
+    // `plan` still weighs a design nobody holds the parts for, so the
+    // `MissingItems` it reports is the expected answer here and not a refusal
+    // this function has anything to say about.
+    let frame = sim::assembly::Part::of(frame_kind, material).as_item();
+    let plan = sim::assembly::plan(frame, &parts, &world.species, &sim::Inventory::new());
+    let sim::assembly::AssemblyPlan::Weighed { built, .. } = &plan else {
+        let reason = plan.refusal().expect("a refused plan has a refusal");
+        return DesignIfBuilt::refused(
+            // No player, so `MissingItems` could not be worded here anyway --
+            // and `plan` cannot reach that arm above, because this branch is
+            // only taken when there is no design at all.
+            sim::debug::plan_refusal_phrase(world, PlayerId(0), reason)
+                .expect("`plan` refuses only in its own vocabulary"),
+        );
+    };
+    let range = built.assembly.stat_range(&world.species);
     DesignIfBuilt {
         verdict: range.verdict().label().to_string(),
         fault: String::new(),
@@ -1990,6 +2097,20 @@ pub struct DesignFacts {
     pub mass_high: i64,
     pub budget_low: i64,
     pub budget_high: i64,
+    /// Work done per tick while mining, banded like everything else.
+    ///
+    /// **`hand_speed` TRAVELS WITH IT AND IS NOT OPTIONAL** (the Game
+    /// Director's ruling 5 on ASSA-6). `speed 23` looks like a tool and can be
+    /// slower than the hands that built it; the readout prints the baseline
+    /// beside it for exactly that reason, and a menu drawing the number without
+    /// it reopens the hole in the other host.
+    pub speed_low: i64,
+    pub speed_high: i64,
+    pub hand_speed: i64,
+    /// Ore the machine holds before it stalls. Flat from the kinds, so usually
+    /// exact even while the sheets read rough.
+    pub capacity_low: i64,
+    pub capacity_high: i64,
     /// "held" or "planted", from the frame alone.
     pub mount: String,
     /// "90% of 2400-3600", or None on a planted design — the head contributes
@@ -2491,6 +2612,93 @@ impl AssaySim {
         }
     }
 
+    /// **WHAT `Assemble` WOULD DO WITH THESE ITEMS**, as facts (ASSA-324).
+    ///
+    /// The decision is `sim::assembly::plan` and none of it is re-derived here;
+    /// this turns strings into `Item`s, hands them over, and spells the answer.
+    /// That matters because the same `plan` is what `step`'s `Assemble` arm
+    /// runs, so a build screen drawn from this cannot read SAFE over a button
+    /// that refuses, and cannot blame the wrong missing part.
+    ///
+    /// Each entry of `parts` is `kind:species:grade` with the species as its
+    /// INDEX — the three fields a pack row already crosses with
+    /// (`stack_dict`), in the order `sim-cli` spells an item. The first entry
+    /// is the frame. **An item per part is the point**: the rules let a grade-A
+    /// head sit on a grade-C frame, and a screen fed from a real pack is mixed
+    /// by construction.
+    ///
+    /// A design the pack cannot pay for is **still weighed**, with `affordable`
+    /// false and `missing` naming the first item short. That is not a
+    /// convenience: a build screen prices a machine before the pack can buy it,
+    /// and `MissingItems` is the only refusal that leaves the design sound.
+    pub fn design_preview_facts(
+        &self,
+        player: Option<PlayerId>,
+        parts: &[String],
+    ) -> DesignPreview {
+        let Some(me) = player.and_then(|id| self.world.player(id)) else {
+            return DesignPreview::refused("there is nobody to build it".to_string());
+        };
+        let Some((frame_spec, mounted_specs)) = parts.split_first() else {
+            return DesignPreview::refused("a design needs a frame".to_string());
+        };
+        // THE PARSE IS THIS CRATE'S AND THE DECISION IS NOT. A spec that will
+        // not read is a caller bug -- GDScript built the string -- so it is
+        // worded here; everything downstream of a readable item is the sim's.
+        let Some(frame) = parse_item_spec(frame_spec) else {
+            return DesignPreview::refused(format!("`{frame_spec}` is not an item"));
+        };
+        let mut mounted = Vec::with_capacity(mounted_specs.len());
+        for spec in mounted_specs {
+            let Some(item) = parse_item_spec(spec) else {
+                return DesignPreview::refused(format!("`{spec}` is not an item"));
+            };
+            mounted.push(item);
+        }
+
+        let plan = sim::assembly::plan(frame, &mounted, &self.world.species, &me.inventory);
+        let sim::assembly::AssemblyPlan::Weighed {
+            built,
+            cost,
+            missing,
+        } = &plan
+        else {
+            let reason = plan.refusal().expect("a refused plan has a refusal");
+            return DesignPreview::refused(
+                sim::debug::plan_refusal_phrase(&self.world, me.id, reason)
+                    .expect("`plan` refuses only in its own vocabulary"),
+            );
+        };
+        DesignPreview {
+            // index -1 with `in_hand` false is "not built": a preview has no
+            // place in `Player::assemblies` to index, which is the whole of
+            // what makes it a preview.
+            design: Some(self.design(-1, false, built)),
+            fault: match missing {
+                None => String::new(),
+                Some(item) => sim::debug::plan_refusal_phrase(
+                    &self.world,
+                    me.id,
+                    sim::RejectReason::MissingItems(*item),
+                )
+                .expect("MissingItems is one of the four"),
+            },
+            cost: cost
+                .iter()
+                .map(|s| StackFacts {
+                    kind: s.item.kind.name().to_string(),
+                    species: s.item.species.0 as i64,
+                    species_name: self.world.species(s.item.species).name().to_string(),
+                    grade: s.item.grade.letter().to_string(),
+                    count: s.count as i64,
+                    name: self.world.item_name(s.item),
+                })
+                .collect(),
+            affordable: missing.is_none(),
+            missing: missing.map_or(String::new(), |item| self.world.item_name(item)),
+        }
+    }
+
     pub fn design_facts(&self, player: Option<PlayerId>) -> Vec<DesignFacts> {
         let Some(p) = player.and_then(|id| self.world.player(id)) else {
             return Vec::new();
@@ -2524,6 +2732,11 @@ impl AssaySim {
             mass_high: range.high.mass as i64,
             budget_low: range.low.budget as i64,
             budget_high: range.high.budget as i64,
+            speed_low: range.low.speed as i64,
+            speed_high: range.high.speed as i64,
+            hand_speed: sim::tuning::HAND_WORK_PER_TICK as i64,
+            capacity_low: range.low.capacity as i64,
+            capacity_high: range.high.capacity as i64,
             mount: match a.mount() {
                 Some(Mount::Held) => "held".to_string(),
                 Some(Mount::Planted) => "planted".to_string(),
@@ -5515,6 +5728,160 @@ mod tests {
             }
         }
         (world, i64::from(material.0))
+    }
+
+    /// A world with one player, so a preview has a pack to be priced against.
+    fn world_with_player(seed: u64) -> (AssaySim, i64, sim::PlayerId) {
+        let (mut world, material) = assayed_world(seed);
+        let join = sim::Input::System(sim::SystemCommand::AddPlayer { name: "ada".into() });
+        sim::step::step(&mut world, &[join], &mut Vec::new());
+        (AssaySim::from_world(world), material, sim::PlayerId(0))
+    }
+
+    fn part_spec(kind: &str, species: i64, grade: &str) -> String {
+        format!("{kind}:{species}:{grade}")
+    }
+
+    fn give(sim: &mut AssaySim, me: sim::PlayerId, spec: &str, n: u32) {
+        let item = parse_item_spec(spec).expect("the test's own spec reads");
+        sim.world
+            .player_mut(me)
+            .expect("the player joined")
+            .inventory
+            .add(item, n);
+    }
+
+    /// **A SCREEN FED FROM A REAL PACK IS MIXED BY CONSTRUCTION**, which is the
+    /// whole reason the preview takes an item per part rather than one species
+    /// and one grade. A grade-A head on a grade-C frame is a design the rules
+    /// allow, and each part has to report its own.
+    #[test]
+    fn a_preview_takes_an_item_per_part_and_each_keeps_its_own_grade() {
+        let (mut sim, material, me) = world_with_player(SHOWCASE_SEED);
+        let frame = part_spec("handle", material, "C");
+        let head = part_spec("head", material, "A");
+        give(&mut sim, me, &frame, 1);
+        give(&mut sim, me, &head, 1);
+
+        let facts = sim.design_preview_facts(Some(me), &[frame, head]);
+
+        assert!(facts.fault.is_empty(), "{facts:?}");
+        assert!(facts.affordable, "the pack holds both parts: {facts:?}");
+        let design = facts.design.expect("a sound design is weighed");
+        let grades: Vec<&str> = design.parts.iter().map(|p| p.grade.as_str()).collect();
+        assert_eq!(grades, vec!["C", "A"], "each part keeps its own grade");
+        assert!(!design.verdict.is_empty(), "{design:?}");
+        // The contributions the build screen's spec asks for, beside the masses.
+        assert!(design.speed_high >= design.speed_low);
+        assert!(design.capacity_high >= design.capacity_low);
+        assert_eq!(design.hand_speed, sim::tuning::HAND_WORK_PER_TICK as i64);
+        // **DURABILITY CROSSES AS THE SIM'S PHRASE AND NEVER AS A NUMBER**
+        // (ADR 0003 A10): an exact pool divided by a published constant IS the
+        // head's effective strength, so a menu spelling its own is how the
+        // leak comes back in one host and not the other.
+        let durability = design.durability.expect("a held design has a pool");
+        assert!(durability.contains("swings"), "{durability}");
+    }
+
+    /// **THE PREVIEW AND THE PRESS AGREE, ACROSS THE BINDING.** The sim's own
+    /// tests pin `plan` against `step`; this pins that the binding did not
+    /// re-derive anything on the way out.
+    #[test]
+    fn a_preview_refuses_exactly_what_the_press_refuses() {
+        let (mut sim, material, me) = world_with_player(SHOWCASE_SEED);
+        let frame = part_spec("frame", material, "B");
+        let head = part_spec("head", material, "B");
+        let hopper = part_spec("hopper", material, "B");
+        // One hopper in the pack, two in the design: the tallied duplicate.
+        give(&mut sim, me, &frame, 1);
+        give(&mut sim, me, &head, 1);
+        give(&mut sim, me, &hopper, 1);
+        let parts = vec![frame.clone(), head.clone(), hopper.clone(), hopper.clone()];
+
+        let facts = sim.design_preview_facts(Some(me), &parts);
+
+        // Weighed anyway -- a build screen prices what the pack cannot buy.
+        let design = facts.design.as_ref().expect("the design itself is sound");
+        assert!(!design.verdict.is_empty(), "{facts:?}");
+        assert!(!facts.affordable, "one hopper cannot pay for two");
+        assert!(facts.missing.contains("hopper"), "{facts:?}");
+        assert!(facts.fault.contains("not enough"), "{facts:?}");
+        // The bill is TALLIED: two hoppers are one row of two, not two rows.
+        let hoppers: Vec<&StackFacts> = facts.cost.iter().filter(|s| s.kind == "hopper").collect();
+        assert_eq!(hoppers.len(), 1, "the bill is tallied: {:?}", facts.cost);
+        assert_eq!(hoppers[0].count, 2, "{:?}", facts.cost);
+
+        // And the press says the same thing.
+        let items: Vec<Item> = parts
+            .iter()
+            .map(|s| parse_item_spec(s).expect("spec reads"))
+            .collect();
+        let mut events = Vec::new();
+        sim::step::step(
+            &mut sim.world,
+            &[sim::Input::player(
+                me,
+                sim::PlayerCommand::Assemble {
+                    frame: items[0],
+                    mounted: items[1..].to_vec(),
+                },
+            )],
+            &mut events,
+        );
+        let refused = events
+            .iter()
+            .find_map(|e| match e {
+                sim::Event::CommandRejected { reason, .. } => Some(*reason),
+                _ => None,
+            })
+            .expect("the press refuses too");
+        assert_eq!(
+            refused,
+            sim::RejectReason::MissingItems(items[2]),
+            "the press blamed a different item than the preview did"
+        );
+    }
+
+    /// There is no design at all, so nothing is weighed -- and the reason is
+    /// the sim's sentence, not this crate's.
+    #[test]
+    fn a_preview_of_something_that_is_not_a_design_weighs_nothing() {
+        let (mut sim, material, me) = world_with_player(SHOWCASE_SEED);
+        let handle = part_spec("handle", material, "B");
+        let head = part_spec("head", material, "B");
+        let hopper = part_spec("hopper", material, "B");
+        give(&mut sim, me, &handle, 1);
+        give(&mut sim, me, &head, 1);
+        give(&mut sim, me, &hopper, 1);
+
+        let facts = sim.design_preview_facts(Some(me), &[handle, head, hopper]);
+
+        assert!(facts.design.is_none(), "a handle has no hopper slot");
+        assert!(facts.fault.contains("hopper slot"), "{facts:?}");
+        assert!(facts.cost.is_empty(), "nothing to bill for: {facts:?}");
+        assert!(!facts.affordable);
+    }
+
+    /// A spec GDScript built wrongly is this crate's error, said plainly,
+    /// rather than a verdict invented out of a half-read item.
+    #[test]
+    fn a_preview_refuses_a_spec_it_cannot_read() {
+        let (sim, material, me) = world_with_player(SHOWCASE_SEED);
+        for bad in [
+            "handle",
+            "sprocket:0:B",
+            &part_spec("handle", material, "Z"),
+        ] {
+            let facts = sim.design_preview_facts(Some(me), &[bad.to_string()]);
+            assert!(facts.design.is_none(), "{bad}: {facts:?}");
+            assert!(facts.fault.contains("is not an item"), "{bad}: {facts:?}");
+        }
+        // ...and a host with no such player invents nothing either.
+        let nobody = sim.design_preview_facts(None, &[part_spec("handle", material, "B")]);
+        assert!(
+            nobody.design.is_none() && !nobody.fault.is_empty(),
+            "{nobody:?}"
+        );
     }
 
     /// The sim's verdict for each hopper count 0..=MAX on the demo's drill.
