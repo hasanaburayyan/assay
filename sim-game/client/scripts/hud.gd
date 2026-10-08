@@ -379,6 +379,15 @@ const MAP_MARKS: Array[Dictionary] = [
 			"label": "the species, as its own letter"},
 	{"id": &"target", "shape": &"brackets", "ink": HOVER, "in_key": true,
 			"label": "the tile the buttons act on"},
+	# **AND THE HOVER OUTLINE'S OWN RIM, WHICH IT WENT WITHOUT WHILE I AUDITED EVERY OTHER MARK FOR
+	# ONE** (ASSA-284, Maren 23:30 EDT on ASSA-275 box 5). At alpha 0.55 the outline has no value of
+	# its own, only the ground's: on seed 63's grade-A ore `234,234,47` becomes `239,239,154`, which is
+	# 5/255 in R and G and the rest in BLUE -- **gone in a greyscale copy**, which this map's rule
+	# forbids. And beside a machine it was eating one of the 2 px that hold the two hollow squares
+	# apart (her row at x=707 and x=509: the machine's `MAP_BG` rim read 145,146,148 while hovered).
+	# One device answers both, and it is the device every other mark here already has.
+	{"id": &"hover_keyline", "shape": &"outline", "ink": MAP_BG, "in_key": false,
+			"keyed_by": &"hover_tile", "label": "the map's own ink, outside the hovered tile's line"},
 	{"id": &"hover_tile", "shape": &"outline", "ink": HOVER, "alpha": 0.55, "in_key": true,
 			"label": "the tile the readout is describing"},
 ]
@@ -1043,6 +1052,48 @@ static func cross(at: Vector2, span: float, arm: float) -> PackedVector2Array:
 ## **THE RING IS A DIAMOND NOW AND IT HAD TO BE**: a 25.6 px yellow SQUARE outline round your body, on
 ## a map where a hollow square is what a machine's footprint looks like, is the defect this item is
 ## about, reintroduced one line below the fix.
+## HOW THICK THE HOVERED TILE'S OUTLINE IS, AND THEREFORE ITS RIM, in screen pixels (ASSA-284).
+##
+## **1 px BECAUSE IT IS THE THINNEST MARK WE DRAW AND SHOULD STAY SO** (Maren, ASSA-275 box 5). This
+## was a literal at the `draw_rect` call in `main.gd` -- a weight written at a draw call is a weight
+## the key cannot draw its own sample at, which is the same sentence the alphas in [constant MAP_MARKS]
+## carry.
+##
+## **THE RIM IS THE SAME 1 px AND THAT IS THE RULING, NOT A SECOND TUNING.** A machine's rim is 2 px
+## because its band is 2 px ([constant MARK_KEYLINE_PX], [constant BUILDING_STROKE_PX]); a rim thicker
+## than the mark it separates reads as the mark. So this one constant sets both, and the relationship
+## is the thing a reader should not have to rediscover.
+const HOVER_STROKE_PX := 1.0
+
+
+## **THE HOVERED TILE, ITS OUTLINE AND THE RIM OUTSIDE IT**, in the map's own view pixels (ASSA-284).
+##
+## Here rather than in `main.gd::_draw` for [method building_mark]'s reason: nothing in a headless
+## suite can read a `draw_rect` back off a canvas, so geometry computed inside the paint loop is
+## checkable only by a human looking at a PNG.
+##
+## **THE RECT STARTS AT THE TILE'S CORNER AND SPANS A CELL, AND THAT IS CORRECT HERE** -- the one
+## place on this map where it is. ASSA-220's rule is that *a rect which COVERS a cell is not a mark
+## that NAMES it*, and a body, a disc or a footprint frame is placed about a tile's MIDDLE. This mark
+## is the cell, so the corner is its origin, and the arithmetic looking identical to ASSA-220's bug is
+## not a reason to change it.
+##
+## **AND THE RIM IS GROWN OUTWARD, so the outline keeps every pixel of its own size** -- the rule the
+## building frame and both bodies keep. Godot's unfilled `draw_rect` straddles the edge it is given,
+## 0.5 px either side, so a rim at `rect.grow(HOVER_STROKE_PX)` lands exactly beside the outline's own
+## pixels with no gap and no overlap.
+static func hover_mark(tile: Vector2i, cell: float, origin: Vector2) -> Dictionary:
+	var box := Rect2(origin + Vector2(tile) * cell, Vector2(cell, cell))
+	return {
+		"tile": tile,
+		"rect": box,
+		"keyline_rect": box.grow(HOVER_STROKE_PX),
+		"width": HOVER_STROKE_PX,
+		"colour": HOVER,
+		"keyline": MAP_BG,
+	}
+
+
 static func player_mark(at: Vector2, mine: bool) -> Dictionary:
 	var mark := {"at": at, "span": Vector2(PLAYER_MARK_PX, PLAYER_MARK_PX),
 			"colour": MINE if mine else THEIRS, "keyline": MAP_BG}
