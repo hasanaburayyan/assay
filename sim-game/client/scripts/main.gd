@@ -4723,6 +4723,23 @@ func _draw() -> void:
 	# these diamonds laps a letter (ASSA-218 box 9), and two calls could be two different worlds in
 	# the same frame -- the mistake `window_shot.gd` already carries a comment about.
 	var shapes := _building_marks(_sim.buildings())
+	# **EVERY MACHINE'S OUTWARD KEYLINE FIRST, THEN EVERY MACHINE'S BAND: TWO PASSES, NOT ONE LOOP**
+	# (ASSA-289, under Maren's rule 11.39 of 2026-10-08: *where two marks overlap, the keyline yields and
+	# the ink does not*). A keyline grows OUTWARD, so it is the one part of this mark that leaves the
+	# mark's own rect -- and two legal adjacent 2x2 footprints put the younger machine's keyline band
+	# exactly on the older machine's frame band. One loop painted them per machine in
+	# `_sim.buildings()` order, so the younger machine ate **36 of the older one's 128 band px
+	# (28.1%), including a contiguous 2x14 run down one side** (Maren's probe, `shared/assay/
+	# maren-assa289/`). A hollow mark's band has been its whole identity since ASSA-236.
+	#
+	# **TWO PASSES AND NOT AN INWARD KEYLINE, WHICH IS THE OTHER MECHANISM SHE NAMED.** Turning this
+	# rim inward would retire the only thing that gives the band's OUTER edge a dark neighbour, and
+	# on a grade-A deposit the band is 2.19:1 against the ground and 11.40:1 against this rim
+	# (ASSA-278). That trade re-opens the defect ASSA-278 was filed for, on the other edge, and no
+	# test can buy it back. The order being load-bearing is the price, and a test can hold an order.
+	#
+	# The inward rim below stays in the second pass: it lands inside the mark's own hole, so it can
+	# never reach a neighbour, and it must stay after its own band.
 	for shape_entry in shapes:
 		var shape: Dictionary = shape_entry
 		# **FOUR BANDS AND FOUR BANDS, NOT A STROKE** (ASSA-236). The rim is drawn OUTSIDE the frame so
@@ -4731,6 +4748,8 @@ func _draw() -> void:
 		# is given, which on this mark would put white on the tile next door at every machine on the map.
 		for band: Rect2 in AssayHud.frame_bands(shape["keyline_rect"], AssayHud.MARK_KEYLINE_PX):
 			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
+	for shape_entry in shapes:
+		var shape: Dictionary = shape_entry
 		for band: Rect2 in AssayHud.frame_bands(shape["rect"], float(shape["stroke"])):
 			draw_rect(band, AssayHud.mark_ink_of(&"building", shape["colour"]), true)
 		# **AND A RIM INSIDE THE HOLE, SO EVERY PIXEL OF THE BAND HAS A DARK NEIGHBOUR ON BOTH SIDES**
