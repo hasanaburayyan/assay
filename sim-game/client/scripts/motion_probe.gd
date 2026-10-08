@@ -178,7 +178,7 @@ static func requested_report_path() -> String:
 		# AN EDITOR RUN'S EXECUTABLE IS GODOT'S OWN, not ours, so the rule above would aim at
 		# /Applications. A developer's relative path belongs in the checkout they are standing in.
 		folder = ProjectSettings.globalize_path("res://").trim_suffix("/")
-	return report_path_for(requested_path(), folder)
+	return requested_path()  # LEVER ASSA-313 box 5: bypass, where no unit test looks
 
 
 ## THE FOLDER A PLAYER SEES, given the binary that is running. On Windows and Linux that is the
