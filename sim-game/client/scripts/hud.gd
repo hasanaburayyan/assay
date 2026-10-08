@@ -53,12 +53,23 @@ const PANEL := 320.0
 ## **THE ARITHMETIC, so nobody has to re-derive it:** today `VIEW.y - MARGIN.y - 24.0` is
 ## `720 - 24 - 24 = 672`, and `672 / 720` is **0.9333**.
 ##
-## **AND THE MARGIN IS A JUDGEMENT, STATED RATHER THAN BURIED.** A pure ratchet at 0.9333 goes red on
-## any pixel of new chrome, including an honest one someone meant. 0.92 is about **10 px** of room:
-## enough that a small deliberate change is a code change, little enough that anything like the 72 px
-## above is a conversation instead of an accident. It is a floor to be RAISED as the screen improves,
-## never lowered to match a regression -- lowering it is the thing it exists to catch.
-const WORLD_HEIGHT_FLOOR_SHARE := 0.92
+## **NO SLACK. THE FLOOR IS TODAY'S MEASURED VALUE, AND MY ARGUMENT FOR LEAVING ROOM WAS OVERRULED**
+## (Maren, 2026-10-08, on this item). I shipped 0.92 first and reasoned that ~10 px of stated margin
+## kept a small deliberate change a code change while a 72 px one stayed a conversation. Her answer
+## is the one to keep: *"the 10 px of slack IS the erosion the ratchet exists to stop. A floor set
+## below today's value does not say 'no smaller than this'; it says 'ten pixels of the world may be
+## spent without anyone being told.' The finding behind this item is that 72 px went unnoticed -- a
+## smaller amount going unnoticed is the same defect with a smaller number."*
+##
+## **AND THE SLACK BOUGHT NOTHING.** `world_rect()` derives from `VIEW`, so the share is 0.93333 on
+## every run of the suite; 0.92 was not covering a resize, it was covering a future edit. An edit that
+## wants those pixels SHOULD be a conversation -- that is the device working, not the device being
+## annoying. Measured: 0.92 permitted `MARGIN.y` 24 -> 33 (663 px, 0.9208) in silence; 0.9333 reddens
+## it and names both numbers.
+##
+## So: today's value, written as a literal, to be RAISED for free as the screen improves and LOWERED
+## only with a ruling -- lowering it to match a regression is the thing it exists to catch.
+const WORLD_HEIGHT_FLOOR_SHARE := 0.9333
 
 ## WHERE THE HUD COLUMN STARTS, AND IT IS `MARGIN.y` AGAIN (ASSA-239).
 ##
