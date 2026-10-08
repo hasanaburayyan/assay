@@ -1463,7 +1463,8 @@ static func tile_lines(tile: Dictionary) -> PackedStringArray:
 	if deposit != null:
 		var d: Dictionary = deposit
 		lines.append("deposit %d · %s · %d ore left%s" % [int(d.get("id", -1)),
-				String(d.get("species_name", "?")), int(d.get("amount", 0)),
+				String(d.get("species_name", "?")) if bool(d.get("hand_minable", true))
+						else "a rock", int(d.get("amount", 0)),
 				" · DEPLETED" if bool(d.get("depleted", false)) else ""])
 		# REACH COMES BEFORE THE INVITATION (ASSA-47, Marlow's ask). `reach_note` is the SIM's
 		# sentence and is EMPTY when the rock yields, so this line appears only when it has something
