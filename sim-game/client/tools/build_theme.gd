@@ -62,9 +62,23 @@ const MIN_INK_SEPARATION := 1.5
 const MIN_AXIS_CONTRAST := 3.0
 
 # ---------------------------------------------------------------------------
-# THE TYPE SCALE. Four sizes, and the reason there are four is that `main.gd` currently reaches for
-# 12, 13 and 19 by hand at eight separate call sites, which is how a screen ends up with no scale at
-# all. Named here, they can be used by name.
+# THE TYPE SCALE. Four sizes in the game and a fifth that exists on exactly one surface, and the
+# reason they are named here is that `main.gd` once reached for 12, 13 and 19 by hand at eight
+# separate call sites, which is how a screen ends up with no scale at all.
+#
+## **THE GAME NAME, ON THE TITLE SCREEN AND NOWHERE ELSE** (ASSA-292, ASSA-276 §4).
+##
+## MEASURED, NOT CHOSEN. Maren on `after/01-join.png`: *"the wordmark is 56 x 19 px = 1,064 px =
+## 0.12% of the screen... The game name is 0.12% of its own title screen. On a flat field 14:1
+## carries it; on a lit green world a 19 px wordmark is gone. The title grows with the picture --
+## one move, not two."*
+##
+## **A FIFTH SIZE RATHER THAN A `font_size` POKED INTO ONE LABEL**, which is what the old comment in
+## `main.gd` said this would have to be: *"a bigger title means a fifth size in build_theme.gd, which
+## is a type-scale ruling and hers"*. She ruled it, so here it is by name, and the scale stays the one
+## place sizes live. It is deliberately NOT reachable as a general heading -- `Display` is still the
+## top of the scale for anything inside the game. This is a wordmark, a size for a proper noun.
+const WORDMARK := 56
 const DISPLAY := 20  # the bench verdict, SAFE / UNCERTAIN / WILL BREAK -- the one word to read first
 const HEADING := 15  # section headings: make, you, do, bench, rocks, cursor, last tick
 const BODY := 13  # readouts and rows
@@ -242,8 +256,8 @@ func _style_label(theme: Theme) -> void:
 	# Heading, which is INK_MUTED: the structure of the column is dimmer than its contents." A
 	# heading that is quieter than the paragraph under it inverts the one job a heading has. The
 	# muted ink keeps its own name, `Muted`, for the lines that really are secondary.
-	for variation in [["Display", DISPLAY, INK], ["Heading", HEADING, INK],
-			["Muted", SMALL, INK_MUTED]]:
+	for variation in [["Wordmark", WORDMARK, INK], ["Display", DISPLAY, INK],
+			["Heading", HEADING, INK], ["Muted", SMALL, INK_MUTED]]:
 		var name := StringName(variation[0])
 		theme.add_type(name)
 		theme.set_type_variation(name, "Label")

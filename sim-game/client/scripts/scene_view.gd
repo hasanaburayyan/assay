@@ -187,6 +187,62 @@ static func camera_origin(centre_tile: Vector2, world_tiles: Vector2i, view: Vec
 	return at
 
 
+# ---------------------------------------------------------------------------
+# THE TITLE SCREEN'S CAMERA (ASSA-292, ASSA-276 §4).
+
+## HOW LONG ONE LOOP OF THE TITLE CAMERA TAKES, in seconds.
+##
+## **A LOOP AND NOT A WANDER, WHICH IS MAREN'S FLOOR 3 AND NOT A STYLE CHOICE** (ASSA-292): *"the
+## camera drifts, so the background moves: measure at the WORST frame of the drift, not frame 0, and
+## bound the drift so a worst frame exists."*
+##
+## **THAT SENTENCE IS A CONSTRAINT ON THE ARITHMETIC, NOT ON THE MEASURING.** A camera that wanders --
+## noise, an unbounded `+= dt`, a random target -- has no worst frame: it has a worst frame SO FAR,
+## and a contrast promise measured on it expires the moment the camera goes somewhere it has not been.
+## A closed periodic path visits a finite set of pictures forever, so "the worst frame" is a frame
+## someone can go and find, and a number measured on it stays true. Everything else here follows.
+const TITLE_DRIFT_PERIOD := 48.0
+
+## HOW FAR THE TITLE CAMERA MAY EVER BE FROM ITS HOME, in TILES.
+##
+## In tiles and not pixels because this offsets the centre TILE handed to `camera_origin`, which is
+## what keeps the drift inside that function's existing world-edge clamp: a pixel offset bolted on
+## after the clamp is how a title screen ends up showing the void beside the world. 1.75 tiles is
+## **56 px** at `TILE_PX` across, half that down -- under two tiles, so no deposit or machine that is
+## in frame at rest leaves it over a whole loop.
+const TITLE_DRIFT_TILES := 1.75
+
+## HOW MANY SAMPLES OF THE LOOP A MEASUREMENT HAS TO TAKE, and the reason the number is stated here
+## rather than chosen in whatever tool does the measuring.
+##
+## **A SAMPLE COUNT IS HALF OF A WORST-FRAME CLAIM.** "Measured at the worst frame" off 8 samples of
+## a 48-second ellipse is measured at the worst of 8 frames, which is not the same sentence. With 64
+## the camera moves at most `title_drift_gap_px()` between neighbours, and that number is asserted by
+## `test_scene_view.gd` -- so a reported contrast is within one stated step of the true worst, and the
+## step is in the record instead of in somebody's head.
+const TITLE_DRIFT_SAMPLES := 64
+
+## WHERE THE TITLE CAMERA IS AT `seconds`, as an offset in tiles from its home tile.
+##
+## An ellipse, wider than tall, because the world is wider than tall and a circle spends half its
+## travel moving the picture in the direction with least to show. `fposmod` is what makes it periodic
+## **by construction rather than by care**: there is no accumulating state for a frame-rate hiccup or
+## a long-running window to turn into a slow wander.
+static func title_drift(seconds: float) -> Vector2:
+	var phase := TAU * fposmod(seconds, TITLE_DRIFT_PERIOD) / TITLE_DRIFT_PERIOD
+	return Vector2(cos(phase), sin(phase) * 0.5) * TITLE_DRIFT_TILES
+
+
+## THE MOST THE PICTURE MOVES BETWEEN TWO NEIGHBOURING SAMPLES OF THE LOOP, in pixels.
+##
+## Derived, never typed, so that changing `TITLE_DRIFT_SAMPLES` or the radius cannot leave a stale
+## tolerance behind in a tool or a doc. The bound is the chord of the widest arc: the x half-axis is
+## the larger one, so `2 * PI * R / N` over-states the true chord slightly, which is the safe
+## direction for a bound to be wrong in.
+static func title_drift_gap_px() -> float:
+	return TAU * TITLE_DRIFT_TILES * TILE_PX / float(TITLE_DRIFT_SAMPLES)
+
+
 ## EVERY TILE THE VIEW TOUCHES, including the two partial ones at each edge: 912x672 is 28.5 by 21
 ## tiles, so a whole-tile window would leave a dark strip down one side that moves as you walk. (The
 ## height was 600 = 18.75 tiles until ASSA-239 gave the header strip's 96px to the world; the WIDTH

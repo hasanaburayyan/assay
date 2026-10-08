@@ -4267,6 +4267,71 @@ func test_no_control_is_drawn_above_the_world_in_a_played_screen() -> bool:
 	return ok
 
 
+## **NO PIXEL OF THE TITLE SCREEN IS BARE WINDOW** (ASSA-292, Maren's rectangle ruling of
+## 2026-10-08). The reasoning and her measurement are in `AssayHud.world_layer_rect`'s docstring; what
+## this owns is that the client actually asks it, in both states and in the right order.
+##
+## **IT IS THE WIRING AND NOT THE ARITHMETIC, AND THAT DISTINCTION IS THIS WEEK'S LESSON** (ASSA-292
+## box 3): three tests of `AssayScene.title_drift` passed for a whole night while nothing on the
+## screen called it. So the first clause reads the LAYER, the second reads the view the door actually
+## composed -- which is the half a rect assertion cannot see, since `_door_view` reads `_world.size`
+## while it works out the camera -- and the third blanks both and demands one `_refresh_world` put
+## them back.
+##
+## THE TWO STATES ARE ONE TEST because they are one claim with a sign: the door takes the whole
+## window, a world gives the column back. Split in two, a `world_layer_rect` that returned the same
+## rectangle either way would redden exactly one of them and read like a local failure.
+func test_the_door_world_fills_the_window_and_a_world_gives_the_column_back() -> bool:
+	var ok := true
+	var door := _screen()
+	var want := AssayHud.join_rect()
+	if not _same_rect(door._world.get_rect(), want):
+		ok = _fail(("the door's world layer is %s and the door is %s: %.0f px of bare window beside "
+				+ "a lit world is Maren's 26.9%% column (ASSA-292)")
+				% [door._world.get_rect(), want, want.size.x - door._world.get_rect().size.x])
+	# **THE CAMERA AGREES WITH THE RECTANGLE IT IS DRAWN IN.** `_door_view` reads `_world.size` twice,
+	# so a layer resized AFTER the view was composed draws a 912-wide camera stretched over a
+	# 1280-wide door -- a picture, not a crash, and nothing else here could see it.
+	var view: Dictionary = door._world.view
+	if view.is_empty():
+		ok = _fail("the door drew no world at all, so this test asked nothing (stale client-lib?)")
+	elif (view.get("size", Vector2.ZERO) as Vector2) != door._world.size:
+		ok = _fail(("the door camera was composed for a %s layer and the layer is %s: the resize "
+				+ "happens after the view") % [view.get("size"), door._world.size])
+	# **THE CALL, NOT THE STATE.** Both of the above are also true of a screen that was placed once in
+	# `_build_ui` and never again -- which is the state a session ENDING leaves. Blank them and demand
+	# one refresh rebuild both.
+	door._world.size = AssayHud.world_rect().size
+	door._world.view = {}
+	door._refresh_world()
+	if not _same_rect(door._world.get_rect(), want):
+		ok = _fail(("one refresh at the door left the layer at %s instead of %s: the rectangle is "
+				+ "set at build time and never restored") % [door._world.get_rect(), want])
+	if (door._world.view.get("size", Vector2.ZERO) as Vector2) != want.size:
+		ok = _fail(("one refresh at the door composed a camera for %s instead of %s")
+				% [door._world.view.get("size"), want.size])
+	door.queue_free()
+	# AND THE OTHER SIGN: in a world the column is standing there and the map must not be under it.
+	var joined := _joined_screen()
+	joined._process(0.016)
+	joined._refresh()
+	if not joined._sim.running():
+		joined.queue_free()
+		return _fail("the fixture never simulated, so the in-world half asked nothing")
+	if not _same_rect(joined._world.get_rect(), AssayHud.world_rect()):
+		ok = _fail(("in a world the layer is %s and `world_rect()` is %s: the door's full-window "
+				+ "rectangle is being drawn under the HUD column")
+				% [joined._world.get_rect(), AssayHud.world_rect()])
+	joined.queue_free()
+	return ok
+
+
+## Rect2 equality with one pixel-hundredth of slack, so a test about a 344 px column cannot fail on a
+## float.
+func _same_rect(a: Rect2, b: Rect2) -> bool:
+	return a.position.distance_to(b.position) < 0.01 and a.size.distance_to(b.size) < 0.01
+
+
 ## **THE WORLD MAY NEVER SHRINK** (ASSA-287, Maren's ruling on ASSA-239: *"ratchet it, do not raise
 ## it"*). The constant and the whole reasoning are `AssayHud.WORLD_HEIGHT_FLOOR_SHARE`'s docstring.
 ##
@@ -4897,6 +4962,37 @@ func test_nothing_in_the_column_asks_for_more_width_than_the_panel() -> bool:
 				(worst as Label).text if worst is Label else "not a Label"])
 	screen.queue_free()
 	return ok
+
+
+## **THE DOOR KEEPS REFRESHING ITSELF WITH NO SESSION** (ASSA-292), which is a claim about a CALL and
+## not about arithmetic.
+##
+## THIS TEST EXISTS BECAUSE THREE GREEN TESTS DID NOT CATCH A DEAD SCREEN. `AssayScene.title_drift` is
+## asserted three ways -- periodic, bounded, continuous -- and every one of them passed while the
+## title camera never moved a pixel, because `_process` refreshed the world only
+## `if _close_up and _sim.running()` and there is no session at the door. The arithmetic was right and
+## nothing called it; a unit test on a pure function cannot tell those apart. The same guard also hid
+## the door plate, which is sized from laid-out children and so can only be computed after a layout
+## pass -- it ran once inside `_ready()`, found every child 0x0, and hid itself for good.
+##
+## So this asserts the only thing that would have gone red: that a frame at the door rebuilds the
+## view. It blanks `_world.view` by hand and demands `_process` put it back.
+func test_the_door_keeps_refreshing_itself_with_no_session() -> bool:
+	var screen: Node = load("res://scenes/main.tscn").instantiate()
+	runner.root_node.add_child(screen)
+	screen._ready()
+	if screen._sim.running():
+		screen.queue_free()
+		return _fail("this test is about the doorless case and the scene came up with a session")
+	screen._world.view = {}
+	screen._process(0.016)
+	var after: Dictionary = screen._world.view
+	screen.queue_free()
+	if after.is_empty():
+		return _fail("a frame at the door left the view empty: nothing is driving the title world, "
+				+ "so the camera cannot drift and the plate can never be sized. The guard in "
+				+ "_process is asking for a session that the door does not have")
+	return true
 
 
 ## **THE FIRST SCREEN SAYS WHAT THE GAME IS CALLED** (ASSA-116 box 4; Maren's finding 2 on that item,
