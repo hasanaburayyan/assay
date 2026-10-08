@@ -56,8 +56,42 @@ func _initialize() -> void:
 	print("  a band pixel is LOST only if the last ink on it is dark; both inks are alpha 1.0")
 	for case: Array in _cases():
 		_case(String(case[0]), case[1], case[2], case[3])
+	_shipped()
 	_floors()
 	quit()
+
+
+## **THE PAIR THE DEMO LOOP ACTUALLY PLANTS, WHICH IS THE ONLY PAIR ANY SHOT OF OURS CONTAINS.**
+##
+## Every case above is a pair a PLAYER can build. None of them is a pair we have ever photographed,
+## and the reason is worth writing down: `AssayDemoPlan.smelter_spot` and `drill_spot` both offset
+## from where the player stands, in a fixed order, so the demo's two machines land at the **same
+## relative offset in every world**. Twenty-five whole-world shots in `shared/assay/` -- nine
+## people's, back to ASSA-189, across every seed anyone has used -- and `08-whole-world-marks.json`
+## says `dx +22.5, dy +22.5` in **all twenty-five**, at mark 12, 16, 18 and 20 alike.
+##
+## So this case is not a hypothetical: it is the shipped world, and it is here to be the honest
+## answer to "does this bug happen in the game" rather than "can it happen". A 2.5 px diagonal gap,
+## no band touched, at the shipped floor.
+func _shipped() -> void:
+	print("")
+	print("  THE SHIPPED DEMO PAIR: a 1x1 drill and a 2x2 smelter, +2 tiles diagonally.")
+	print("    the offset in all 25 whole-world shots in shared/assay/ is dx +22.5, dy +22.5 px")
+	var drill := AssayHud.building_mark({"pos": Vector2i(52, 54), "footprint": Vector2i(1, 1)},
+			CELL, AssayHud.MARGIN)
+	var smelter := AssayHud.building_mark({"pos": Vector2i(54, 56), "footprint": Vector2i(2, 2)},
+			CELL, AssayHud.MARGIN)
+	var grid := {}
+	_two_passes(grid, [drill, smelter])
+	var gap: Rect2 = (drill["rect"] as Rect2).intersection(smelter["rect"])
+	print("    drill rect %s  smelter rect %s" % [drill["rect"], smelter["rect"]])
+	print("    marks overlap: %s   keyline rects overlap: %s"
+			% [gap.size, (drill["keyline_rect"] as Rect2).intersection(
+			smelter["keyline_rect"]).size])
+	_report(grid, drill, "drill 1x1")
+	_report(grid, smelter, "smelter 2x2")
+	if _png_dir != "":
+		_write(grid, [drill, smelter], "shipped-demo-pair")
 
 
 ## **BOX 5 AS A PICTURE INSTEAD OF A NUMBER: THE SAME TWO 1x1 MACHINES AT FOUR FLOORS.**
