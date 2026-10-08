@@ -2153,3 +2153,47 @@ func test_the_door_plate_is_always_inside_the_door() -> bool:
 		return _fail("words %s are off the door entirely and still produced a plate %s"
 				% [elsewhere, plate])
 	return true
+
+
+## **A CENTRED LABEL IS MOSTLY NOT WORDS** (ASSA-292, Maren's card ruling). `AssayHud.label_ink_rect`
+## carries the reasoning; this is the arithmetic, on the numbers that actually caused the defect.
+##
+## THE WORDMARK'S NUMBERS ARE MAREN'S OWN MEASUREMENT off the 1x frame -- **152x53 of ink** in a
+## centred Label as wide as the door -- so case 1 is this screen's real case and not a shape I chose
+## to pass.
+func test_a_centred_label_is_asked_for_its_ink_and_not_its_width() -> bool:
+	# 1. THE WORDMARK. 1280 px of control, 152 px of word, and the ink is centred in it.
+	var band := Rect2(Vector2(0.0, 229.0), Vector2(1280.0, 64.0))
+	var ink := AssayHud.label_ink_rect(band, Vector2(152.0, 53.0), HORIZONTAL_ALIGNMENT_CENTER)
+	if absf(ink.size.x - 152.0) > 0.01:
+		return _fail("a 152 px wordmark in a 1280 px Label measured %.0f px wide: a plate fitted to "
+				% ink.size.x + "this is still a band across the whole door")
+	if absf(ink.get_center().x - band.get_center().x) > 0.01:
+		return _fail("the ink is centred in the Label on screen and this puts it at x=%.1f against "
+				% ink.get_center().x + "the Label's centre %.1f" % band.get_center().x)
+	# **THE HEIGHT IS THE CONTROL'S AND NOT THE MEASUREMENT'S**, deliberately: a `VBoxContainer`
+	# already gives a Label its content height, and a measured height here would be a second opinion
+	# about line spacing -- which shows up as one clipped descender, not as a test failure.
+	if absf(ink.size.y - band.size.y) > 0.01:
+		return _fail("the ink rect is %.0f px tall and the Label is %.0f: the height is the "
+				% [ink.size.y, band.size.y] + "container's answer and must come across untouched")
+	if not band.encloses(ink):
+		return _fail("the ink %s is not inside the Label %s that holds it" % [ink, band])
+	# 2. **INK WIDER THAN ITS CONTROL IS THE MEASUREMENT TO DISTRUST, NOT THE CONTROL.** This is the
+	# mid-layout autowrap case that produced a 1452 px plate in a 672 px door last night, in its
+	# horizontal form: clamped, so it can never widen a card past the thing it was measured in.
+	var narrow := Rect2(Vector2(100.0, 100.0), Vector2(200.0, 40.0))
+	ink = AssayHud.label_ink_rect(narrow, Vector2(900.0, 40.0), HORIZONTAL_ALIGNMENT_CENTER)
+	if not narrow.encloses(ink):
+		return _fail("a 900 px measurement in a 200 px Label produced %s, outside it" % ink)
+	# 3. LEFT AND RIGHT, because the two Labels that move into the toast in a world keep their own
+	# alignment and this function has to be right for all three.
+	ink = AssayHud.label_ink_rect(band, Vector2(300.0, 20.0), HORIZONTAL_ALIGNMENT_LEFT)
+	if absf(ink.position.x - band.position.x) > 0.01:
+		return _fail("left-aligned ink starts at x=%.1f and the Label at %.1f"
+				% [ink.position.x, band.position.x])
+	ink = AssayHud.label_ink_rect(band, Vector2(300.0, 20.0), HORIZONTAL_ALIGNMENT_RIGHT)
+	if absf(ink.end.x - band.end.x) > 0.01:
+		return _fail("right-aligned ink ends at x=%.1f and the Label at %.1f"
+				% [ink.end.x, band.end.x])
+	return true

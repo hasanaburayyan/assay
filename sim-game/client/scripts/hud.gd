@@ -143,6 +143,41 @@ static func door_plate_rect(door: Rect2, content: Rect2) -> Rect2:
 	var pad := Vector2(DOOR_PLATE_PAD, DOOR_PLATE_PAD)
 	return Rect2(content.position - pad, content.size + pad * 2.0).intersection(door)
 
+
+## **WHERE THE WORDS ACTUALLY ARE INSIDE A LABEL THAT IS WIDER THAN THEM** (ASSA-292, Maren's card
+## ruling: *"the smallest rectangle that carries the words"*).
+##
+## **THE DEFECT THIS EXISTS FOR.** The plate was fitted to the union of the door's laid-out children,
+## and every one of them is a full-width container with centred content -- so a 152 px wordmark and a
+## ~520 px sentence produced a **912x261** plate: a band across the whole door, hiding the bottom of
+## the main deposit, all of the spawn pad and the bottom of the second, and giving back 206 px of
+## empty grass. *"A plate that hides every landmark and reveals only ground has inverted this item's
+## own claim."* A control's rect is not its ink, and on this screen the difference is most of the
+## picture.
+##
+## **SIZE BUYS NO LEGIBILITY AND THAT IS MEASURED, WHICH IS WHY FITTING IS FREE.** Over 128 real
+## frames of a whole 48 s camera loop the plated inks move 0.15 and 0.09 (INK 9.88-10.03:1,
+## INK_MUTED 5.49-5.58:1). Contrast comes from the alpha and the words' own extent, not from how much
+## world is covered -- so the smallest rectangle that carries the words reads the same as the band and
+## costs a third of the picture.
+##
+## **WIDTH ONLY, AND THE ASYMMETRY IS DELIBERATE.** A Label in a `VBoxContainer` is given its
+## content's height and the container's full width, so the vertical extent is already honest and the
+## horizontal one is not. Taking a measured height instead would be a second opinion about line
+## spacing, which is the kind of near-miss arithmetic that shows up as one clipped descender.
+##
+## `measured.x` is clamped to the rect because a Label can be measured at a width it is not drawn at
+## (`autowrap_mode` does not lower its reported minimum -- see `door_plate_rect` above), and ink wider
+## than the control it is in means the measurement is the thing to distrust.
+static func label_ink_rect(rect: Rect2, measured: Vector2, align: int) -> Rect2:
+	var width := minf(measured.x, rect.size.x)
+	var x := rect.position.x
+	if align == HORIZONTAL_ALIGNMENT_CENTER:
+		x = rect.position.x + (rect.size.x - width) * 0.5
+	elif align == HORIZONTAL_ALIGNMENT_RIGHT:
+		x = rect.end.x - width
+	return Rect2(Vector2(x, rect.position.y), Vector2(width, rect.size.y))
+
 ## THE FOUR MARKS ON A MAP THAT ARE NOT A SPECIES, named, because until now they were six `Color(...)`
 ## literals inside `main.gd::_draw`.
 ##

@@ -3745,22 +3745,16 @@ func _clear(box: Node) -> void:
 ## a layout pass every child is 0x0, which is the headless state, so headless draws no plate and
 ## nothing in the suite asserts this node -- the arithmetic is tested directly instead and the
 ## picture is measured off the PNG.
+##
+## **IT ASKS `_door_words_rect` NOW AND NOT THE CHILDREN'S UNION** (Maren's card ruling, ASSA-292):
+## every child here is a full-width container, so their union is a band across the whole door no
+## matter how few words are in it.
 func _place_door_plate(showing: bool) -> void:
 	_door_plate.visible = false
 	if not showing:
 		return
-	var content := Rect2()
-	var found := false
-	for child in _front_door.get_children():
-		var control := child as Control
-		if control == null or not control.is_visible_in_tree():
-			continue
-		var rect := control.get_global_rect()
-		if rect.size.x <= 0.0 or rect.size.y <= 0.0:
-			continue
-		content = rect if not found else content.merge(rect)
-		found = true
-	if not found:
+	var content := _door_words_rect()
+	if content.size.x <= 0.0 or content.size.y <= 0.0:
 		return
 	# **CLIPPED TO THE DOOR, AND THIS LINE HAS NOW BEEN BOTH WAYS ROUND.** It read `world_rect()` for
 	# one night, with a note saying the shot had corrected it: clipping to the door put a 344 px
@@ -3777,6 +3771,76 @@ func _place_door_plate(showing: bool) -> void:
 	_door_plate.position = plate.position
 	_door_plate.size = plate.size
 	_door_plate.visible = true
+
+
+## **THE SMALLEST RECTANGLE THAT CARRIES THE WORDS** (ASSA-292, Maren's card ruling), in screen
+## pixels, or an empty rect when there is nothing laid out to measure.
+##
+## **LEAVES ONLY, AND THAT IS THE WHOLE IDEA.** A container's rect is its parent's width; a leaf's is
+## its own. Every ancestor on this screen is a full-width `BoxContainer` with centred content, so a
+## walk that stopped at the direct children (which is what this did until tonight) could only ever
+## return a band. Descending to the controls that actually paint something -- two Labels, two Buttons
+## and two text boxes -- and asking each one what it drew is the difference between 912 px and the
+## ~570 the words occupy.
+##
+## **AND A LABEL IS ASKED FOR ITS INK, NOT ITS RECT**, through `AssayHud.label_ink_rect`: a centred
+## Label 1280 px wide holding a 152 px wordmark is 1280 px of control and 152 px of word. Buttons and
+## text boxes are the other way round -- they paint their own opaque bed edge to edge, so their rect
+## IS what they draw, and shrinking a plate inside a button's own background would be a seam.
+##
+## A LABEL WITH NO TEXT CARRIES NO WORDS. `_status` and `_detail` stand in this composition empty for
+## most of a session; counting their line boxes would grow the card by two rows of nothing.
+func _door_words_rect() -> Rect2:
+	var words := Rect2()
+	var found := false
+	var walk: Array[Node] = [_front_door]
+	while not walk.is_empty():
+		var node: Node = walk.pop_back()
+		var control := node as Control
+		if control != null and control != _front_door and not control.is_visible_in_tree():
+			continue
+		var descended := false
+		for child in node.get_children():
+			if child is Control:
+				descended = true
+				walk.append(child)
+		if descended or control == null or control == _front_door:
+			continue
+		var rect := control.get_global_rect()
+		if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+			continue
+		var ink := _control_ink_rect(control, rect)
+		if ink.size.x <= 0.0 or ink.size.y <= 0.0:
+			continue
+		words = ink if not found else words.merge(ink)
+		found = true
+	return words if found else Rect2()
+
+
+## WHAT ONE LEAF CONTROL ACTUALLY PAINTS, given the rect the engine gave it.
+##
+## THE MEASUREMENT IS THE ENGINE'S OWN, not a character count: `get_multiline_string_size` on the
+## font the Label resolves through its own `theme_type_variation`, so the `Wordmark` at 56 px and the
+## sentence at 13 px are each measured in the face they are drawn in. Asking the theme for a size
+## here instead would be a second copy of `build_theme.gd`'s type scale.
+##
+## THE WRAP WIDTH IS THE CONTROL'S OWN WIDTH when the Label wraps, and `-1` when it does not -- which
+## is the one number that makes a wrapped sentence's longest line come back instead of its whole
+## length on one line.
+func _control_ink_rect(control: Control, rect: Rect2) -> Rect2:
+	var label := control as Label
+	if label == null:
+		return rect
+	if label.text.strip_edges() == "":
+		return Rect2()
+	var font := label.get_theme_font(&"font")
+	var font_size := label.get_theme_font_size(&"font_size")
+	if font == null or font_size <= 0:
+		return rect
+	var wrap := rect.size.x if label.autowrap_mode != TextServer.AUTOWRAP_OFF else -1.0
+	var measured := font.get_multiline_string_size(label.text, label.horizontal_alignment, wrap,
+			font_size)
+	return AssayHud.label_ink_rect(rect, measured, label.horizontal_alignment)
 
 
 ## **THE PICTURE MOVES WITH THE SCREEN IT IS ON** (ASSA-292, Maren's rectangle ruling). Two states,
