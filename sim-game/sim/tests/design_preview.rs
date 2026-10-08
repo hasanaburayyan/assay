@@ -337,11 +337,63 @@ fn a_design_the_pack_cannot_pay_for_is_still_weighed() {
         line.contains("not enough"),
         "and it must say what is short: {line}"
     );
-    // The have/need column is the plan's tally, so an empty pack reads 0 on
-    // both rows rather than omitting them.
+    // The counts are the plan's tally, so an empty pack reads 0 on both rows
+    // rather than omitting them — and in §5.5's words, which make the short
+    // case an instruction (ASSA-338).
     assert!(
-        line.contains("0/1") && !line.contains("1/1"),
-        "and the have/need column must read off the same empty pack: {line}"
+        line.contains("need 1 · have 0") && !line.contains("have 1"),
+        "and the counts must read off the same empty pack, need first: {line}"
+    );
+}
+
+/// **THE SURPLUS CASE IS THE NORMAL CASE, WHICH IS WHY THE SLASH WENT**
+/// (ASSA-338; the Game Director's §5.5, reversing her own §5.3 the same
+/// evening). You have two heads and need one, and `2/1` says that as a ratio
+/// with its left side bigger than its right — which reads as 200% of
+/// something, not as a pack.
+///
+/// **THIS IS THE CASE THE OTHER TWO TESTS CANNOT SEE.** They weigh a design
+/// against a pack holding exactly one of each or none at all, where need and
+/// have are the same number or the same word — so `need 1 · have 1` survives
+/// swapping the pair, and the whole wording would be unpinned by tests that
+/// look green. A surplus is the one shape where the two numbers differ in the
+/// direction nothing else in this file produces.
+///
+/// It asks for the WHOLE entry, name included, because the name's place is the
+/// other half of her ruling (*name, then counts*) and a `contains` of the two
+/// counts alone would pass with the name anywhere on the line.
+#[test]
+fn a_surplus_pack_reads_need_then_have_and_never_a_ratio() {
+    let (mut world, me) = world_with_player();
+    let frame = part_item(HELD, LIGHT);
+    let head = part_item(PartKind::Head, LIGHT);
+    give(&mut world, me, frame, 1);
+    give(&mut world, me, head, 2);
+
+    let line = debug::design_preview(&world, me, frame, &[head]);
+    // The claim is about the pack clause, so the slash is looked for THERE and
+    // not on the whole line: a readout that grows a slash of its own some day
+    // is not this test's business.
+    let pack = line
+        .lines()
+        .find(|l| l.contains("your pack:"))
+        .unwrap_or_else(|| panic!("a weighed design prints its pack: {line}"));
+
+    assert!(
+        pack.contains(&format!("{} need 1 · have 2", world.item_name(head))),
+        "the head is wanted once and held twice, named then counted: {pack}"
+    );
+    assert!(
+        pack.contains(&format!("{} need 1 · have 1", world.item_name(frame))),
+        "and the frame's own entry is beside it: {pack}"
+    );
+    assert!(
+        !pack.contains('/'),
+        "a slash is a ratio's mark and this is not a ratio: {pack}"
+    );
+    assert!(
+        !line.contains("not enough"),
+        "a pack with a spare head is not short of anything: {line}"
     );
 }
 
@@ -359,7 +411,7 @@ fn the_preview_reads_as_the_machine_it_builds() {
     let planned = preview(&world, me, frame, &[head]);
     let before = debug::design_preview(&world, me, frame, &[head]);
     assert!(
-        before.contains("1/1") && !before.contains("not enough"),
+        before.contains("need 1 · have 1") && !before.contains("not enough"),
         "the pack does cover it: {before}"
     );
     let readout = debug::assembly_readout(&world, planned.built().expect("sound design"));

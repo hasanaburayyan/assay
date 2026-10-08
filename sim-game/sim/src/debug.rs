@@ -2965,8 +2965,10 @@ fn readout_after(world: &World, built: &Built, headline: &str) -> String {
 /// **A PACK TOO THIN IS NOT A REFUSAL HERE**, which is the one place this
 /// deliberately differs from [`crate::step::step`]. `step` rejects
 /// `MissingItems` last and builds nothing; a build screen has to show the
-/// verdict for the design you are SAVING UP FOR, with have/need beside it
-/// (the Game Director's §5.3: counts are text, have on the left). So the
+/// verdict for the design you are SAVING UP FOR, with the counts beside it
+/// (the Game Director's §5.5: counts are text, `need 1 · have 2`, both numbers
+/// always. She reversed §5.3's "have on the left" the same evening and
+/// ASSA-338 moved this line with her). So the
 /// counts are always printed and the refusal is PREDICTED in words instead.
 /// The tally is step's own all-or-nothing shape: two hoppers of one material
 /// need two in the pack, not one twice.
@@ -3002,18 +3004,40 @@ pub fn design_preview(world: &World, player: PlayerId, frame: Item, mounted: &[I
     // THE TALLY IS THE PLAN'S, not a second count of the same parts: a pack
     // column that disagreed with what the press spends is the bug this whole
     // function exists to prevent, one row lower down.
+    //
+    // **NEED FIRST, BOTH NUMBERS ALWAYS, NO SLASH** (ASSA-338; the Game
+    // Director's §5.5, which reverses her own §5.3 the same evening). This
+    // printed `2/1 Bokase head (B)` — you have two and need one — and a slash
+    // is a ratio's mark, which needs left ≤ right to read: `12 / 20` is
+    // progress, `2/1` reads as 200% of something. **On any stocked pack the
+    // surplus case is the NORMAL case**, so most rows on a working screen were
+    // broken ratios. Need first because the question the line answers is *is
+    // the need met*, and the short case then reads as an instruction:
+    // `need 1 · have 0`.
+    //
+    // **THE WINDOW ALREADY SAYS IT HER WAY AND THIS LINE DID NOT**, which is
+    // why it is worth a change rather than a note: `AssayHud.cost_counts_line`
+    // landed §5.5 on block 6 of the build screen, and a `--plain` player read
+    // the old wording of the same fact. Two surfaces spelling one fact apart is
+    // ASSA-43/52, and this is the half the charter calls the reference client.
+    //
+    // THE NAME LEADS THE ENTRY, because her entry is *name, then counts*, and
+    // the separator between ENTRIES had to move with it: the `·` is now INSIDE
+    // an entry, so entries part on `, `. **No two-row form here** — the two
+    // rows in §5.5 are a 240 px measurement about a GUI block, not about a line
+    // of text, and the sim owns no widths.
     let counts = cost
         .iter()
         .map(|s| {
             format!(
-                "{}/{} {}",
-                p.inventory.count(s.item),
+                "{} need {} · have {}",
+                world.item_name(s.item),
                 s.count,
-                world.item_name(s.item)
+                p.inventory.count(s.item)
             )
         })
         .collect::<Vec<_>>()
-        .join(" · ");
+        .join(", ");
 
     let mut out = match unfinished {
         Some(error) => unfinished_readout(world, built, error),

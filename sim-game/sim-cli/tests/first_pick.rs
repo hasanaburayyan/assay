@@ -134,6 +134,7 @@ tick {back}
 assay
 tick 31
 built
+design {handle} {head}
 inv
 quit
 ",
@@ -355,9 +356,47 @@ quit
              preview: {line:?}\n{transcript}"
         );
     }
-    // And the pack counts the Game Director's §5.3 asks for: have on the left.
+    // And the pack counts the Game Director's §5.5 asks for: the name, then
+    // `need` and `have`, both numbers, no slash (ASSA-338 — §5.5 reversed §5.3's
+    // "have on the left", which this line used to pin as `1/1`).
+    //
+    // **THREE SHAPES OF ONE CLAUSE, ALL IN THIS ONE TRANSCRIPT, WHICH IS WHY
+    // THEY ARE ASSERTED HERE AND NOT IN THREE UNIT TESTS.** The play-through
+    // makes TWO heads and one handle, so the first preview is already the
+    // surplus case her ruling is about — `need 1 · have 2` beside
+    // `need 1 · have 1` — and the last line of the script asks for the SAME
+    // design again after both presses have emptied the pack, so the identical
+    // words come back as `need 1 · have 0` with the refusal predicted. A
+    // terminal player reads affordability, loses it, and reads it again.
+    //
+    // The surplus is the shape that pins the ORDER: at `have 1` and `have 0`
+    // the pair survives being swapped (`need 1 · have 1` is its own mirror, and
+    // `need 0 · have 1` still reads), so a suite without a surplus row would
+    // stay green through a reversal of the thing §5.5 is entirely about.
+    let pack_lines: Vec<&str> = stdout
+        .lines()
+        .filter(|l| l.contains("your pack: "))
+        .collect();
     assert!(
-        stdout.contains("your pack: 1/1 "),
+        pack_lines.iter().any(|l| l.contains(" need 1 · have 1")),
         "the preview should count the parts the press will spend\n{transcript}"
     );
+    assert!(
+        pack_lines.iter().any(|l| l.contains(" need 1 · have 2")),
+        "two heads were made and one is wanted, so the surplus case the Game \
+         Director's §5.5 is about must appear\n{transcript}"
+    );
+    assert!(
+        pack_lines
+            .iter()
+            .any(|l| l.contains(" need 1 · have 0") && l.contains("not enough")),
+        "the same design asked with an emptied pack must read 0 and predict \
+         the refusal\n{transcript}"
+    );
+    for line in &pack_lines {
+        assert!(
+            !line.contains('/'),
+            "a slash is a ratio's mark and a pack is not a ratio: {line}\n{transcript}"
+        );
+    }
 }
