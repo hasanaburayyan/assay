@@ -1370,14 +1370,38 @@ fn a_merged_tail_keeps_each_reading_beside_the_verdict_it_earns() {
             .into_iter()
             .map(|q| debug::proximity_headline(&w, me, q))
             .collect();
+        // **THE PREMISE, ASSERTED.** The claim below is a RELATIVE one — the
+        // merged tail is the unmerged tails in order — and a relative claim is
+        // satisfied just as well by both sides being wrong together: I mutated
+        // `answer_about` to emit verdict-then-reading for every question and the
+        // whole Rust suite stayed green, 55 of 55, because the expected clauses
+        // come out of the same builder. So say what "in order" means on the one
+        // -question line it is measured against: the reading first, then the
+        // verdict it earns. This names the sim's own property name and not one
+        // word of the Game Director's wording, which stays hers to judge at 1x.
+        for (q, line) in Question::ALL.into_iter().zip(&alone) {
+            let first = clauses_of(line).into_iter().next().unwrap_or_else(|| {
+                panic!("seed {seed}: {q:?}'s answer has no clause at all: {line}")
+            });
+            assert!(
+                first.starts_with(q.property().name()),
+                "seed {seed}: {q:?}'s own line does not open its tail with the \
+                 reading — the first clause is `{first}`. A merged line is held \
+                 to being these two tails in order, so if THIS order is wrong \
+                 the merge inherits it and the comparison below cannot see it:\n\
+                 {line}"
+            );
+        }
         let expected: Vec<String> = alone.iter().flat_map(|l| clauses_of(l)).collect();
         assert_eq!(
             clauses_of(&a.line),
             expected,
-            "seed {seed}: the merged tail is not the two tails in order. The \
-             cheap cause is `answer_about` walking `qs` TWICE — every reading, \
-             then every tag — which splits each reading from the verdict it \
-             earns; one loop emitting reading-then-tag is the fix. The clauses \
+            "seed {seed}: the merged tail is not the two tails in order. READ \
+             THE TWO LISTS BEFORE THE DIAGNOSIS: if the readings are bunched \
+             ahead of the tags, `answer_about` is walking `qs` twice and one \
+             loop emitting reading-then-tag is the fix; if the pairs are intact \
+             but the questions come the other way round, it is the order the \
+             tail walks `qs` in, which must be `Question::ALL`'s. The clauses \
              themselves are not pinned here, so a reworded tag cannot be what \
              you are reading:\n  merged: {}\n   alone: {}",
             a.line,
