@@ -302,12 +302,32 @@ const SPAWN_PAD := Color(0.455, 0.429, 0.26)
 ## (`shared/assay/cove-assa236/`, arm B2, is the no-floor version rendered: a 1x1 drill is 64 px of
 ## white frame and I could not find it at 1x.)
 ##
-## **AND THE FLOOR IS WHAT PUTS A MARK ON A TILE ITS MACHINE DOES NOT STAND ON** (ASSA-289 box 5,
-## Maren's to rule). Because the mark is wider than the footprint, two machines on adjacent tiles have
-## overlapping marks, and the younger one's inward rim -- painted after its own band by construction,
-## so no paint order reaches it -- takes 8 px off the older one's band on two adjacent 1x1s.
-## `tools/assa289_paint_probe.gd` is the number, through the real paint sequence rather than off a
-## rect intersection. The 2x2 case is closed by the two passes in `main.gd::_draw`; this is the rest.
+## **AND THE FLOOR IS WHAT PUTS A MARK ON A TILE ITS MACHINE DOES NOT STAND ON. RULED, ASSA-326 /
+## ASSA-289 box 5: THE COST IS A READING AND NOT A DELETION, AND IT IS PAID RATHER THAN FIXED.**
+## This paragraph said the younger machine's rim *"takes 8 px off the older one's band"*. **No it does
+## not.** Neither `building` nor `building_keyline` carries alpha, so a neighbour's band is `HOVER` on
+## `HOVER`: Cove's 27.8% and Maren's 28.1% were both rect intersections reported as deletions, and
+## #421 and #429 have closed every real one (`tools/assa289_paint_probe.gd`: 144/144 at every
+## adjacency). What survives is that two 20 px marks whose centres are 9 px apart **overlap by 55%**,
+## so their outlines fuse: two adjacent 1x1 machines read as ONE box with a tick in it.
+##
+## **THREE WAYS OUT WERE MEASURED AND ALL THREE ARE CLOSED.**
+##
+## - **The floor.** It is a HOLE bar, not a visibility one: `hole_rect` is `outer.grow(-stroke)` and
+##   the inward rim takes 2 more, so the visible hole is span - 8 (12x12 at 20, 8x8 at 16, **3x3 at
+##   11**). `tools/person_under_machine.gd` is a person standing under a machine, and 11 erases them.
+## - **A species letter.** Two machines in a row are usually two of the same species, so they carry
+##   the SAME letter and a repeated letter counts nothing (and #431: a 2x2 carries no capital at any
+##   legal size, because a letter anchors on a TILE and a 2x2's mark on the JOIN of four).
+## - **Paint order** (`tools/maren_assa326_seam.gd`, pictures in `shared/assay/maren-assa326/`): one
+##   pass gives two shapes with the older mutilated to a bracket; 11.42's three passes give one box
+##   with three panes; a seam gives three shapes for two machines, neither whole. **No order divides a
+##   55% overlap, and 11.42 is itself inside the trade -- it bought integrity and paid in cardinality.**
+##
+## **SO THE SURFACE ANSWERS IT.** This is the whole-world SCHEMATIC at 9 px a tile -- `main.gd`'s
+## `_draw`, *"what makes it a map rather than a view"* -- and the close-up at 32 px a tile (ASSA-119)
+## is where sprites and counting live. **On this map the mark's unit is the CLUSTER, not the machine:
+## it says *machines here*.** That is what the key row says, and it is why the floor stays at 20.
 const BUILDING_MARK_PX := 20.0
 
 ## HOW THICK THE FOOTPRINT FRAME'S OWN STROKE IS, drawn INWARD from the footprint's edge (ASSA-236).
@@ -572,7 +592,12 @@ const MAP_MARKS: Array[Dictionary] = [
 	{"id": &"mine_ring", "shape": &"ring", "ink": MINE, "in_key": true,
 			"label": "the ring is on your own body"},
 	{"id": &"building", "shape": &"footprint", "ink": HOVER, "data_ink": true, "in_key": true,
-			"label": "a machine someone built, on the tiles it covers"},
+			# **PLURAL, AND THE NUMBER IS THE RULING** (ASSA-326). At 9 px a tile two machines on
+			# adjacent tiles fuse into one outline and nothing can divide them (see
+			# [constant BUILDING_MARK_PX]), so this mark's unit is the CLUSTER. "a machine" promised a
+			# count the map cannot keep; "machines ... they cover" promises only what is true here, and
+			# the close-up at 32 px a tile is where a player counts.
+			"label": "machines someone built, on the tiles they cover"},
 	# **AFTER THE BUILDING, AND THE TABLE'S ORDER IS THE PAINT ORDER** (ASSA-213). The letter used to
 	# sit between the hatch and the walk lines, which is where it was painted, which is why a machine
 	# standing on a deposit erased it. `tests/test_map_key.gd` now holds this list against the order
