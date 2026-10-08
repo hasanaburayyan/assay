@@ -132,7 +132,8 @@ enum Phase { SETTLE_JOIN, SHOOT_JOIN, PLAY, SETTLE_PACK, SHOOT_PACK, SETTLE_HALT
 		SETTLE_PLAY, SHOOT_PLAY,
 		SETTLE_FOLD, MEASURE_CONTROLS, SETTLE_MENUS, SHOOT_MENUS, SCROLL_ROCKS, SETTLE_ROCKS,
 		SHOOT_ROCKS, OPEN_MAKE, SCROLL_MAKE, SETTLE_MAKE, ANCHOR_MAKE, SHOOT_MAKE, WALK_NORTH, SETTLE_NORTH_LOG, SHOOT_NORTH_LOG, SETTLE_NORTH_CLEAR,
-		SHOOT_NORTH_CLEAR, WALK_OFF, SETTLE_WALK, SHOOT_WALK, PRESS_V, SETTLE_SCHEMATIC, SHOOT_SCHEMATIC, PRESS_K,
+		SHOOT_NORTH_CLEAR, WALK_OFF, SETTLE_WALK, SHOOT_WALK, PRESS_V, SETTLE_SCHEMATIC, SHOOT_SCHEMATIC,
+		HOVER_TILE, SETTLE_HOVER, SHOOT_HOVER, PRESS_K,
 		SETTLE_KEY, SHOOT_KEY, DONE }
 ## What `_play_frames` did with its last tick.
 enum Ticked { AGAIN, OVER, DEAD }
@@ -164,6 +165,13 @@ var _shot_buildings: Array = []
 ## The sim's deposit list in that frame, for `_shot_buildings`' reason: a deposit can be mined empty
 ## between two reads, and a letter in the table that the frame no longer carries is worse than none.
 var _shot_deposits: Array = []
+## **THE TILE THE MOUSE WAS PUT ON FOR `13-whole-world-hover.png`** (ASSA-275), and the machine it was
+## chosen to sit beside. Recorded rather than recomputed at report time for `_shot_buildings`' reason:
+## the hover is fed in one frame and measured in another, and a second choice made later could name a
+## tile the picture does not outline.
+var _hover_tile := Vector2i.ZERO
+var _hover_beside := Vector2i.ZERO
+var _hover_note := ""
 ## Fingerprint of every frame already written, to the name it was written under. See `_shoot`.
 var _taken := {}
 ## Shot name -> what its own subjects were doing instead of being on screen. Keyed by name and
@@ -611,6 +619,18 @@ func _process(_delta: float) -> bool:
 			if _walk_shot_done and bool(_walk_frame.get("walking", false)):
 				_walk_frame["control"] = _stroke_ink(_walk_frame["pos"], _walk_frame["target"])
 			_write_marks_table()
+			_phase = Phase.HOVER_TILE
+		Phase.HOVER_TILE:
+			_hover_beside_a_machine()
+		Phase.SETTLE_HOVER:
+			_settle(Phase.SHOOT_HOVER)
+		Phase.SHOOT_HOVER:
+			# NO SUBJECT, for `08`'s reason: the subject is the map. The check this shot has to pass
+			# is not presence but DIFFERENCE, and it is made in `_hover_report` against the frame
+			# written one phase ago -- `_shoot`'s own repeat guard cannot do it here, because the
+			# world keeps ticking and two frames of a live map differ whether or not an outline drew.
+			_shoot("13-whole-world-hover.png", PackedStringArray())
+			_hover_report()
 			_phase = Phase.PRESS_K
 		Phase.PRESS_K:
 			# **THE SAME FRAME WITH THE KEY UP** (ASSA-206). The pair is the point: `08` is what the
@@ -2194,6 +2214,119 @@ func _write_marks_table() -> void:
 	file.close()
 	_shots.append("    marks table   %d building(s), %d player(s), %d letter(s), %d disc(s) -> %s"
 			% [rows.size(), people.size(), letters.size(), discs.size(), path.get_file()])
+
+
+## **PUT THE MOUSE ON A TILE TOUCHING A MACHINE, WHICH NOTHING WE OWN HAS EVER DONE ON THIS VIEW**
+## (ASSA-275). Since ASSA-236 the map carries two hollow white squares in the same ink -- a machine's
+## footprint frame (>=16 px, 2 px stroke, alpha 1.0) and the tile the readout is describing (one
+## cell, 9 px here, 1 px stroke, alpha 0.55, `AssayHud.HOVER` for both). I made that collision and
+## named it against myself; the KEY half is measured and the MAP half was argued from code, because
+## `window_shot` never moves the mouse, `maren_coop_shot` does not hover, and `maren_hover_probe`
+## hovers HEADLESS, where nothing can be photographed. This takes the frame that settles it, and it
+## takes the hardest case on purpose: the outline ADJACENT to the frame, not across the map from it.
+##
+## THE MOTION GOES THROUGH THE SCREEN'S OWN INPUT PATH at the screen's own `point_of_tile`, copied
+## from `maren_hover_probe._hover` -- never `_hover`/`_hovering` set by hand. A tool that assigns the
+## state it is testing photographs its own assignment, and `_track_hover` is exactly what decides
+## whether a real mouse would have landed on that tile at all.
+func _hover_beside_a_machine() -> void:
+	if _shot_buildings.is_empty():
+		_finish(false, "13-whole-world-hover.png: no machine stands in this world, so there is "
+				+ "nothing for a hover outline to be next to and the shot would prove nothing")
+		return
+	var covered := {}
+	for entry in _shot_buildings:
+		var at: Vector2i = entry["pos"]
+		var foot: Vector2i = entry["footprint"]
+		for dx in foot.x:
+			for dy in foot.y:
+				covered[at + Vector2i(dx, dy)] = true
+	var origin: Vector2i = _shot_buildings[0]["pos"]
+	var foot: Vector2i = _shot_buildings[0]["footprint"]
+	# Left, right, above, below the footprint -- all four touch it, so whichever the world allows is
+	# the adjacent case. Order is a preference and not a requirement; the one that takes is reported.
+	var candidates: Array[Vector2i] = [origin + Vector2i(-1, 0), origin + Vector2i(foot.x, 0),
+			origin + Vector2i(0, -1), origin + Vector2i(0, foot.y)]
+	for tile in candidates:
+		if covered.has(tile):
+			continue
+		var event := InputEventMouseMotion.new()
+		event.position = _screen.point_of_tile(tile)
+		_screen._unhandled_input(event)
+		# **THE SCREEN'S ANSWER, NOT MINE.** Off the map `_track_hover` drops the hover entirely, so
+		# this is also the bounds check: a tile outside the world never becomes `_hover`.
+		if bool(_screen._hovering) and Vector2i(_screen._hover) == tile:
+			_hover_tile = tile
+			_hover_beside = origin
+			_hover_note = "mouse at %s on tile %s, touching the %s at %s" % [
+					event.position, tile, String(_shot_buildings[0].get("kind", "?")), origin]
+			_phase = Phase.SETTLE_HOVER
+			return
+	_finish(false, "13-whole-world-hover.png: none of the four tiles touching the %s at %s could be "
+			% [String(_shot_buildings[0].get("kind", "?")), origin]
+			+ "hovered -- the screen refused every one, so the frame would carry no outline")
+
+
+## **THE SHOT'S CHECK IS DIFFERENCE, AND IT IS MADE WHERE THE OUTLINE IS CLAIMED TO BE.** `_shoot`'s
+## repeat guard asks whether two frames differ ANYWHERE, which on a live map is true whether or not
+## the mouse did anything -- a vacuous pass, and I have filed one of those as evidence before. So
+## this reloads the frame written one phase ago and compares the HOVERED TILE'S OWN RECT: if those
+## pixels are identical with the mouse on them and without, nothing drew and the run says so by name.
+func _hover_report() -> void:
+	if _done:
+		return
+	var cell: float = _screen._cell
+	var hover_box := Rect2(AssayHud.MARGIN + Vector2(_hover_tile) * cell, Vector2(cell, cell))
+	var box := hover_box.grow(1.0)
+	var before := Image.load_from_file("%s/08-whole-world.png" % _out)
+	var after := Image.load_from_file("%s/13-whole-world-hover.png" % _out)
+	if before == null or after == null:
+		_finish(false, "13-whole-world-hover.png: cannot reload the pair to compare them")
+		return
+	var moved := 0
+	for y in range(int(box.position.y), int(box.end.y)):
+		for x in range(int(box.position.x), int(box.end.x)):
+			if x < 0 or y < 0 or x >= after.get_width() or y >= after.get_height():
+				continue
+			if before.get_pixel(x, y) != after.get_pixel(x, y):
+				moved += 1
+	if moved == 0:
+		_finish(false, "13-whole-world-hover.png: tile %s is pixel-identical to 08's, so the "
+				% _hover_tile + "mouse was on it and no outline drew")
+		return
+	var rows := []
+	for i in _schematic_marks.size():
+		var mark: Dictionary = _schematic_marks[i]
+		var building: Dictionary = _shot_buildings[i] if i < _shot_buildings.size() else {}
+		var rect: Rect2 = mark["rect"]
+		var pos: Vector2i = building.get("pos", Vector2i.ZERO)
+		var foot: Vector2i = building.get("footprint", Vector2i.ONE)
+		rows.append({"kind": String(building.get("kind", "?")), "tile": [pos.x, pos.y],
+				"footprint": [foot.x, foot.y],
+				"rect": [rect.position.x, rect.position.y, rect.size.x, rect.size.y],
+				"stroke": mark["stroke"], "alpha": AssayHud.HOVER.a})
+	var table := {
+		"shot": "13-whole-world-hover.png",
+		"control": "08-whole-world.png",
+		"cell": cell,
+		"note": _hover_note,
+		"hover": {"tile": [_hover_tile.x, _hover_tile.y],
+				"beside": [_hover_beside.x, _hover_beside.y],
+				"rect": [hover_box.position.x, hover_box.position.y, cell, cell],
+				"stroke": 1.0, "alpha": AssayHud.mark_ink(&"hover_tile").a},
+		"ink": [AssayHud.HOVER.r, AssayHud.HOVER.g, AssayHud.HOVER.b],
+		"machines": rows,
+		"pixels_changed_in_the_hovered_tile": moved,
+	}
+	var path := "%s/13-whole-world-hover.json" % _out
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		_finish(false, "cannot write %s" % path)
+		return
+	file.store_string(JSON.stringify(table, "  "))
+	file.close()
+	_shots.append("    hover        %s, %d px changed in its own tile -> %s"
+			% [_hover_note, moved, path.get_file()])
 
 
 ## **DOES THIS SHOT CONTAIN THE ASSA-213 CASE: A MACHINE STANDING ON A SPECIES LETTER** (box 2, "today's

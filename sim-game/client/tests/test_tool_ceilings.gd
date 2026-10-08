@@ -282,3 +282,41 @@ func test_every_ceiling_is_read_and_bails_non_zero() -> bool:
 		return _fail(("%d tool(s) reach their ceiling without quitting non-zero within 8 lines, so a "
 				+ "tool that gave up reports success: %s") % [quiet.size(), String(", ").join(quiet)])
 	return true
+
+
+## **A TOOL MAY NOT ASSIGN THE HOVER IT IS PHOTOGRAPHING** (ASSA-275). The map's "tile the readout is
+## describing" outline is drawn only while `main.gd::_track_hover` says the mouse is over a tile, and
+## `_track_hover` is the thing that decides whether a real mouse would have landed there at all --
+## it drops the hover entirely off the map, and it is the only code that turns a pixel into a tile.
+## A tool that writes `_screen._hover` / `_screen._hovering` by hand photographs its own assignment:
+## the outline appears in the frame whether or not a player could ever have put it there, which is
+## the shape of every instrument I have shipped that could not see its own subject.
+##
+## The rule is a prohibition and not a requirement, deliberately: most tools have no business
+## hovering, and demanding `point_of_tile` of all of them would fail twenty innocent files. What it
+## catches is the one shortcut that turns a measurement into a tautology, and the mutation that
+## proves it is one line -- swap `_screen._unhandled_input(event)` in `window_shot.gd` for
+## `_screen._hover = tile` + `_screen._hovering = true` and this goes red by file name.
+func test_no_tool_sets_the_screens_hover_by_hand() -> bool:
+	var guilty := PackedStringArray()
+	for name in DirAccess.get_files_at("res://tools"):
+		if not String(name).ends_with(".gd"):
+			continue
+		var source := FileAccess.get_file_as_string("res://tools/%s" % name)
+		if source == "":
+			continue
+		for raw in source.split("\n"):
+			var line := String(raw).strip_edges()
+			if line.begins_with("#"):
+				continue
+			for field in ["_hover", "_hovering"]:
+				# An assignment, not a read: `== tile` and `bool(_screen._hovering)` are exactly how
+				# a tool SHOULD check what the screen decided, and both must stay legal.
+				if line.contains("_screen.%s =" % field) or line.contains("_screen.%s=" % field):
+					guilty.append("%s sets %s" % [String(name), field])
+	if not guilty.is_empty():
+		return _fail(("%d tool(s) assign the screen's hover state instead of feeding a motion event "
+				+ "through its own input path, so the outline in their frames is their own "
+				+ "assignment and not a tile a mouse could reach: %s")
+				% [guilty.size(), String(", ").join(guilty)])
+	return true
