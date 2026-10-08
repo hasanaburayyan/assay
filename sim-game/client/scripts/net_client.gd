@@ -41,7 +41,12 @@ extends Node
 ## (ASSA-190): `Desync` leaves this node at DEAD with the socket closed BY US, so the join band comes
 ## back and one press of Join rebuilds the world from a fresh `Welcome`. The relay still closes
 ## nothing and still runs its clock -- that half is unchanged and is the host's business -- but the
-## peer no longer sits in a world it has stopped trusting. Nothing in this file resets `bundles_seen`, `last_tick`, `player_id` or
+## peer no longer sits in a world it has stopped trusting. **MEASURED, AND NOT BY FAKING A HASH:**
+## `tools/desync_probe.gd` makes this client's world genuinely wrong (one tick bundle the relay never
+## sent, one extra `MoveTo`), lets the real relay find it, and then presses the real Join button --
+## one press, same slot, world rebuilt, and the host accepting two further checkpoints afterwards.
+## Delete `stage = Stage.DEAD` and `_socket.disconnect_from_host()` from the `Desync` arm in `_handle`
+## and that probe reports `the window has a way out: NO` -- measured, not assumed. Nothing in this file resets `bundles_seen`, `last_tick`, `player_id` or
 ## `_reader` on a second `join`, which the probe shows is harmless today (the reader was empty at the
 ## drop) and is where to look first if a reconnect ever reads garbage.
 

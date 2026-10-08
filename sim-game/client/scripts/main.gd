@@ -3537,9 +3537,9 @@ func _note(line: String) -> Label:
 ## ASSA-117 box 8).
 ##
 ## **THE SIM AUTHORED THESE LINES TO BE TRUNCATED AND THIS CLIENT WAS WRAPPING THEM.**
-## `sim/src/debug.rs:1785` says so in writing: *"Verdict first, then the numbers, then the parts.
-## Deliberate: a side panel is narrow and the line gets truncated, so the thing the player needs
-## before spending parts must not be the thing that is cut."* A design verdict became SIX rows here,
+## `sim::debug::assembly_readout` says so in writing: *"Verdict first, then the numbers, then
+## the parts. Deliberate: a side panel is narrow and the line gets truncated, so the thing the player
+## needs before spending parts must not be the thing that is cut."* A design verdict became SIX rows,
 ## so the ordering that exists to survive a cut bought nothing and the log inherited a panel per
 ## event: Maren measured entries 1, 4, 4, 5 and 6 rows tall, 682px of them in a 566px box.
 ##
@@ -4476,9 +4476,23 @@ func _draw() -> void:
 	# The tile the readout is talking about, outlined. Drawn last so it is never buried, and only
 	# while the mouse is actually over the map -- an outline left behind would point at an answer the
 	# panel is no longer giving.
+	#
+	# **AND IT CARRIES A RIM NOW, WHICH IT WAS THE LAST MARK ON THIS MAP WITHOUT** (ASSA-284, Maren on
+	# ASSA-275 box 5). At alpha 0.55 this outline has no value of its own, only the ground's, so on
+	# grade-A ore it moved one channel -- `234,234,47` to `239,239,154`, nearly all of it BLUE, and
+	# gone in a greyscale copy. Beside a machine it was worse than invisible: it ate one of the 2 px
+	# that hold two hollow squares apart. **NOT FIXED BY PAINT ORDER**, which is the tempting one-line
+	# version: hovering a machine's own tile is the commonest useful hover and this outline must stay
+	# on top of it. The rim is drawn first, and INWARD -- which is a correction to the ruling and not
+	# the ruling: outward it lands on the neighbouring tile, where a machine's own mark starts, and
+	# the smelter's band went 242 -> 28 at the shared edge on both seeds. `AssayHud.hover_mark` carries
+	# the rows. What inward does NOT fix is the outline's own pixel sitting on the machine's rim; that
+	# needs the outline moved inside its own cell, which is ASSA-284's open box and Maren's call.
 	if _hovering:
-		draw_rect(Rect2(MARGIN + Vector2(_hover) * _cell, Vector2(_cell, _cell)),
-				AssayHud.mark_ink(&"hover_tile"), false, 1.0)
+		var hover := AssayHud.hover_mark(_hover, _cell, MARGIN)
+		draw_rect(hover["keyline_rect"], AssayHud.mark_ink(&"hover_keyline"), false,
+				float(hover["width"]))
+		draw_rect(hover["rect"], AssayHud.mark_ink(&"hover_tile"), false, float(hover["width"]))
 
 
 ## **WHAT THE SCHEMATIC IS ABOUT TO PAINT FOR EVERY BUILDING** (ASSA-189). One mark per building, in

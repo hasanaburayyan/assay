@@ -3701,9 +3701,19 @@ func test_a_deposit_and_its_letter_are_drawn_on_the_middle_of_the_tile_they_name
 		elif not source.contains("MARGIN + Vector2(_target) * _cell"):
 			ok = _fail("the target brackets no longer start at the tile's corner: a rect that covers a "
 					+ "cell is not a mark that names it, and ASSA-220 moved the marks, not the rects")
-		elif not source.contains("MARGIN + Vector2(_hover) * _cell"):
-			ok = _fail("the hover outline no longer starts at the tile's corner, so it no longer "
-					+ "covers the cell the readout is talking about")
+		# **THE HOVER OUTLINE'S CORNER IS NOW ASSERTED ON GEOMETRY INSTEAD OF ON A STRING** (ASSA-284).
+		# This read `source.contains("MARGIN + Vector2(_hover) * _cell")` and went red when the rect
+		# moved into `AssayHud.hover_mark` so that the outline could be given a rim -- correctly, since
+		# that string was the only thing holding the corner. The property it was standing in for is
+		# held directly by `test_hud.gd::test_the_hovered_tiles_outline_carries_its_own_opaque_rim`,
+		# which checks the rect IS tile (12, 7)'s own cell at three cell sizes. The scan stays, because
+		# ASSA-220's actual finding was two independent copies of the corner formula drifting apart:
+		# what it pins now is that `_draw` takes the rect from the shared helper rather than keeping a
+		# fourth copy of the arithmetic.
+		elif not source.contains("AssayHud.hover_mark(_hover, _cell, MARGIN)"):
+			ok = _fail("`_draw` no longer takes the hovered tile's rect from `AssayHud.hover_mark`, "
+					+ "so the corner formula has a copy in the paint loop again -- which is the shape "
+					+ "of ASSA-220's defect, and nothing headless can read a `draw_rect` back")
 	# **AND THE INSTRUMENT, BECAUSE IT CARRIED THE SAME BUG.** `window_shot.gd` recorded each disc's
 	# centre with its own third copy of `MARGIN + tile * _cell`, so it AGREED WITH THE DEFECT: every
 	# centre measured off `08-whole-world-marks.json` was the corner, and `main.gd` fixed alone would
@@ -4197,6 +4207,12 @@ func test_no_control_is_drawn_above_the_world_in_a_played_screen() -> bool:
 ## and the suite was 392/0, unchanged: the only floor was an absolute 600 sitting exactly on that
 ## mutation's own result. A share of the window cannot sit on a coincidence of one window size.
 ##
+## **THE FLOOR IS TODAY'S VALUE WITH NO SLACK, which is Maren overruling my 0.92** (2026-10-08): a
+## floor below today's value says "this much of the world may be spent without anyone being told".
+## So the failure has to earn its keep in one read -- it names the share AND the floor, says how many
+## pixels went, and says what to do if the shrink was meant. Her condition: *"a ratchet whose failure
+## reads `assertion failed` costs more than the pixels it protects."*
+##
 ## IT READS `world_rect()` AND NOT THE NODE, deliberately and the opposite way round from the sweep
 ## above: that one asks whether the layout HONOURED the rule, which has to come off the screen; this
 ## asks whether the rule itself has been weakened, which is a fact about the arithmetic and is true
@@ -4206,11 +4222,15 @@ func test_the_world_may_never_shrink_as_a_share_of_the_window() -> bool:
 	var world := AssayHud.world_rect()
 	var share := world.size.y / AssayHud.VIEW.y
 	if share < AssayHud.WORLD_HEIGHT_FLOOR_SHARE:
-		return _fail(("the world is %.0f px of a %.0f px window -- %.4f, under the ratcheted floor "
-				+ "of %.4f. Chrome has taken the gameplay view back. Raising this floor as the "
-				+ "screen improves is the point; lowering it to match a regression is the thing it "
-				+ "exists to catch") % [world.size.y, AssayHud.VIEW.y, share,
-				AssayHud.WORLD_HEIGHT_FLOOR_SHARE])
+		return _fail(("the world is %.0f of a %.0f px window = %.4f, floor %.4f. Chrome has taken "
+				+ "%.0f px of the gameplay view back. IF THIS SHRINK IS DELIBERATE, change "
+				+ "AssayHud.WORLD_HEIGHT_FLOOR_SHARE to %.4f in the same commit and say why in the "
+				+ "message; if it is not, the chrome you just added is the bug. Raising this floor "
+				+ "as the screen improves is free; lowering it to match a regression is the thing "
+				+ "it exists to catch") % [world.size.y, AssayHud.VIEW.y, share,
+				AssayHud.WORLD_HEIGHT_FLOOR_SHARE,
+				AssayHud.VIEW.y * AssayHud.WORLD_HEIGHT_FLOOR_SHARE - world.size.y,
+				floorf(share * 10000.0) / 10000.0])
 	return true
 
 

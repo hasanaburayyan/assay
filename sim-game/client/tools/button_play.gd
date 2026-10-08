@@ -75,6 +75,20 @@ var hoppers := -1
 ## ASSA-138's comparison, which needs worlds differing in nothing but the bar count, and this run
 ## then says `job` only as a label.
 var job := AssayDemoPlan.JOB_SHOWCASE
+## **NEVER PRESS `Assay`, so the design is read off a ROUGH sheet** (ASSA-173, `hold-assay`).
+##
+## The loop's own docstrings say twice that UNCERTAIN "should not appear, the loop assays its
+## material" -- true of every run until this flag, and it is exactly why the design-row sheet has
+## never been able to show the state every design starts in. `assembly.rs` hands UNCERTAIN to a
+## design whose species is still a 25-wide band, so holding one button back reaches it with no
+## fixture: the world, the walk, the mining and the parts are the ordinary showcase run.
+##
+## WHAT IT CHANGES, and nothing else: `_mining` neither presses `Assay` nor waits for the sheet to
+## sharpen, and `_keep_the_promise` has no job promise to keep, because a run that was asked to
+## guess cannot be held to what the sim would have said if it knew. It is NOT a second job: the job
+## still picks the hopper count, and with every count UNCERTAIN the loop ends `no_such_design`,
+## which `hoppers_for_job` already calls an answer rather than a failure.
+var hold_assay := false
 ## The count the sim's verdicts chose for `job`, or -1 before it has been asked.
 var job_hoppers := -1
 ## WHY THAT COUNT, in one line for the report: the job, the count, the sim's word for it, and the
@@ -235,7 +249,7 @@ func _walk_to(tile: Vector2i, then: Step) -> void:
 ## a band into a number.
 func _mining() -> void:
 	_press_once("Mine", "Mine")
-	if not AssaySessionPlan.is_assayed(_world().species_sheets(), _material):
+	if not hold_assay and not AssaySessionPlan.is_assayed(_world().species_sheets(), _material):
 		_press_once("Assay", "Assay")
 	var held := AssaySessionPlan.ore_held(_world().inventory_of(_me()), _material)
 	if held < _ore_wanted():
@@ -245,7 +259,10 @@ func _mining() -> void:
 		elif _quiet > 1200:
 			_stop(false, "mined for 1200 ticks and hold %d of %d ore" % [held, _ore_wanted()])
 		return
-	if not AssaySessionPlan.is_assayed(_world().species_sheets(), _material):
+	# THE SECOND GATE IS THE ONE THAT MATTERS: the press above can be skipped and this would still
+	# wait here for ever, because nothing else in the loop ever sharpens a sheet. `hold_assay` has
+	# to be read in both places or the flag is a stall with a nicer name.
+	if not hold_assay and not AssaySessionPlan.is_assayed(_world().species_sheets(), _material):
 		return
 	_press_once("Stop", "Stop")
 	step = Step.CRAFTING
@@ -610,6 +627,13 @@ func _keep_the_promise() -> void:
 				% [_drill_at, job_note, outcome]))
 		return
 	if hoppers >= 0:
+		return
+	# A RUN ASKED TO GUESS CANNOT BE HELD TO WHAT THE SIM WOULD HAVE SAID IF IT KNEW (ASSA-173).
+	# With a rough sheet every count is UNCERTAIN, so there is no SAFE drill to plant and no job to
+	# keep -- the two checks below would fail every `hold-assay` run on the one thing it was asked
+	# to do. The two promises ABOVE still bind: a verdict read before the press is still a promise,
+	# whatever sharpened the sheet.
+	if hold_assay:
 		return
 	if job == AssayDemoPlan.JOB_SHOWCASE and outcome_kind != "mining" and not _off_ore:
 		_stop(false, ("A SHOWCASE RUN MUST END WITH A MACHINE MINING and this one did not · %s · %s"

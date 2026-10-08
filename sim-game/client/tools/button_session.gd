@@ -77,19 +77,43 @@ var _ceiling := Time.get_unix_time_from_system() + RUN_CEILING
 ## same shape `bench_read.gd` prints, so the layout half downstream is untouched.
 var _designs_path := ""
 
+## **PLAY WITHOUT ASSAYING, so the bench holds the state every design starts in** (`hold-assay`,
+## ASSA-173). Off by default and when it is off **not one byte of this tool's output changes**.
+##
+## WHY A WHOLE FLAG FOR ONE UNPRESSED BUTTON. The design-row sheet has to show what `UNCERTAIN`
+## looks like, and Maren's ruling on it is the reason: `assembly.rs` hands UNCERTAIN to a design
+## that uses a ROUGH species, so it is not an exotic third state -- **it is the state every design
+## is in before the player assays**, and `main.gd::_write_design` says an assay turns it into SAFE
+## or WILL BREAK *without the design moving*. That transition is the whole reason the game is
+## called Assay, so a sheet that cannot show the row cannot explain its own title verb.
+##
+## **AND IT IS A PLAY, NOT A FIXTURE.** The alternative was a scripted world with a hand-written
+## sheet state in it, which buys the same row at the cost of a picture of something no player
+## reaches. This presses the same buttons in the same order and simply never presses `Assay`, which
+## is a thing any player does by walking away early.
+##
+## THE RUN ENDS SOMEWHERE ELSE AND THAT IS THE POINT, not a failure to paper over: with a rough
+## sheet the sim answers UNCERTAIN for every hopper count, `hoppers_for_job` has no SAFE to pick,
+## and the loop stops with `no_such_design` holding the parts. The dump is written there.
+var _hold_assay := false
+
 
 func _initialize() -> void:
 	# `designs=` IS PULLED OUT BEFORE THE POSITIONALS, so it can be passed in either mode without
-	# becoming a fifth positional that the host form would have to count past.
+	# becoming a fifth positional that the host form would have to count past. `hold-assay` rides
+	# in the same lane for the same reason.
 	var argv := PackedStringArray()
 	for raw in OS.get_cmdline_user_args():
 		var arg := String(raw)
 		if arg.begins_with("designs="):
 			_designs_path = arg.substr("designs=".length())
+		elif arg == "hold-assay":
+			_hold_assay = true
 		else:
 			argv.append(arg)
 	if argv.is_empty():
-		print("FAIL  usage: -- offline [seed] [rank] [job] | host[:port] name [rank] [job] [designs=P]")
+		print("FAIL  usage: -- offline [seed] [rank] [job] | host[:port] name [rank] [job] "
+				+ "[designs=P] [hold-assay]")
 		quit(1)
 		return
 	_offline = String(argv[0]) == "offline"
@@ -115,6 +139,7 @@ func _initialize() -> void:
 	_screen._client.link_failed.connect(func(reason: String) -> void: _finish(false, reason))
 	_play = AssayButtonPlay.new(_screen, rank)
 	_play.job = job
+	_play.hold_assay = _hold_assay
 
 	if _offline:
 		_run_offline(seed_text)
