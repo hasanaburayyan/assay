@@ -2,8 +2,9 @@
 //! same inputs. These tests hammer that property with random input streams.
 
 use sim::{
-    BuildingId, Grade, Input, Item, ItemKind, ItemStack, PartKind, PlayerCommand, PlayerId,
-    RecipeId, Rng, Slot, SpeciesId, SystemCommand, TilePos, World, WorldConfig, step,
+    Assembly, BuildingId, Event, Grade, Input, Item, ItemKind, ItemStack, Mount, Part, PartKind,
+    PlayerCommand, PlayerId, Property, RecipeId, Rng, Slot, SpeciesId, SystemCommand, TilePos,
+    World, WorldConfig, step,
 };
 
 fn new_world() -> World {
@@ -255,7 +256,10 @@ fn golden_hash_is_stable_across_machines() {
     }
     assert_eq!(
         format!("{:016x}", world.state_hash()),
-        "6f2062de05c2d6f7",
+        // Moved by ASSA-170 step 2's starter clause, which changes which roster
+        // a seed is accepted with. 10.0% of seeds move (40 of 402 measured);
+        // seed 42 is one of them, seed 14247 is not.
+        "0e830b520e8f9721",
         "world hash changed; see the comment on this test"
     );
 }
@@ -295,15 +299,179 @@ fn peers_agree_on_the_assembly_commands() {
     reached("MachinePlaced", &|e| {
         matches!(e, sim::Event::MachinePlaced { .. })
     });
-    let breaks = reached("MachineBroke", &|e| {
-        matches!(e, sim::Event::MachineBroke { .. })
-    });
-    // Every break is a roll per part off `world.rng`, so the breaks are what
-    // make this test say anything about determinism that the others do not.
+
+    // **THE BREAK ROLL IS FORCED, NOT HOPED FOR** (ASSA-170 step 2). Every
+    // break is a roll per part off `world.rng`, so the breaks are what make
+    // this test say anything about determinism that the others do not — and
+    // until step 2 the only thing producing them was luck.
+    //
+    // The random script above reached breaks on seed 42 because that roster
+    // happened to hold four species of strength 6-28, and a frame that frail
+    // carries almost nothing, so three-part designs went over budget
+    // constantly. Step 2's starter clause rejects exactly that kind of roster,
+    // so "seed 42" now names a uniformly strong world (lowest strength 39) and
+    // the script reaches ZERO breaks there — measured on seven script seeds,
+    // not just this one. **The roster moved; no rule stopped machines
+    // breaking.** A seed is the wrong thing to rest coverage on, so the design
+    // below is computed from whatever roster the world actually has.
+    let me = PlayerId(0);
+    let design = heaviest_legal_design(&a);
+    let stats = design.stats(&a.species);
     assert!(
-        breaks > 2,
-        "only {breaks} breaks; the roll is barely exercised"
+        stats.is_overweight(),
+        "THE PREMISE: this roster must offer some overweight design, or the \
+         break roll is unreachable and the coverage below proves nothing \
+         (mass {} vs budget {})",
+        stats.mass,
+        stats.budget
     );
+
+    // Stop whatever the script left player 0 doing, so a walk or a mining
+    // cycle cannot swallow the commands below.
+    both(&mut a, &mut b, &mut ea, &mut eb, PlayerCommand::Stop, me);
+    for part in design.parts() {
+        both(
+            &mut a,
+            &mut b,
+            &mut ea,
+            &mut eb,
+            PlayerCommand::MakePart {
+                kind: part.kind,
+                material: part.material,
+                count: 1,
+            },
+            me,
+        );
+    }
+    let index = a
+        .player(me)
+        .expect("player 0 joined in the fixture")
+        .assemblies
+        .len() as u32;
+    both(
+        &mut a,
+        &mut b,
+        &mut ea,
+        &mut eb,
+        PlayerCommand::Assemble {
+            frame: design.frame.as_item(),
+            mounted: design.mounted.iter().map(Part::as_item).collect(),
+        },
+        me,
+    );
+    let pos = clear_tile_in_reach(&a, me);
+    both(
+        &mut a,
+        &mut b,
+        &mut ea,
+        &mut eb,
+        PlayerCommand::PlaceAssembly {
+            assembly: index,
+            pos,
+        },
+        me,
+    );
+    assert_eq!(ea, eb, "the peers disagree about the forced break");
+
+    // Counted inline rather than through `reached`, which still holds a borrow
+    // of `ea` from before the forced phase.
+    let breaks = ea
+        .iter()
+        .filter(|e| matches!(e, Event::MachineBroke { .. }))
+        .count();
+    assert!(
+        breaks > 0,
+        "the forced overweight design did not break: the commands above were \
+         rejected, so the roll was never reached"
+    );
+    // `break_apart` rolls once per part, so the design's own part count is the
+    // number of rolls — asserted on the design rather than counted off the
+    // event, whose `returned`/`lost` stack and would under-report it.
+    assert!(
+        design.part_count() > 2,
+        "the forced design has only {} parts; the per-part roll is barely \
+         exercised",
+        design.part_count()
+    );
+}
+
+/// One player command, applied to both peers, with the hash compared after it.
+/// The point of every call is that both peers saw exactly the same thing.
+fn both(
+    a: &mut World,
+    b: &mut World,
+    ea: &mut Vec<Event>,
+    eb: &mut Vec<Event>,
+    command: PlayerCommand,
+    player: PlayerId,
+) {
+    let inputs = vec![Input::player(player, command)];
+    step(a, &inputs, ea);
+    step(b, &inputs, eb);
+    assert_eq!(a.state_hash(), b.state_hash(), "desync at tick {}", a.tick);
+}
+
+/// The frailest frame this world offers, loaded with the densest parts it
+/// offers, filling every slot the frame has: the design most likely to be over
+/// budget on **any** roster.
+///
+/// It is computed rather than named because naming is what rotted. A planted
+/// frame's hopper limit is "generous on purpose: mass is what stops you
+/// stacking hoppers, not a slot count" (`assembly.rs`), and that is exactly
+/// what keeps an overweight design reachable whatever worldgen hands over.
+///
+/// Parts are made at grade C: grade scales strength and never density, so C is
+/// the frailest frame and the densest load at once.
+fn heaviest_legal_design(world: &World) -> Assembly {
+    // Ties break on the lowest id, as the rest of the sim's selections do.
+    let frailest = world
+        .species
+        .iter()
+        .min_by_key(|s| (s.effective(Property::Strength, Grade::C), s.id.0))
+        .expect("a world has a species roster");
+    let densest = world
+        .species
+        .iter()
+        .max_by_key(|s| (s.sheet.density, std::cmp::Reverse(s.id.0)))
+        .expect("a world has a species roster");
+    let load = Item::new(ItemKind::Refined, densest.id, Grade::C);
+    let mut mounted = vec![Part::of(PartKind::Head, load)];
+    mounted.extend((0..sim::tuning::MAX_HOPPER_SLOTS).map(|_| Part::of(PartKind::Hopper, load)));
+    Assembly::new(
+        Part::of(
+            PartKind::Frame(Mount::Planted),
+            Item::new(ItemKind::Refined, frailest.id, Grade::C),
+        ),
+        mounted,
+    )
+}
+
+/// A tile next to `player` with nothing built on it or around it, so a forced
+/// placement cannot be refused for a reason the test did not mean to test.
+/// The 3x3 clearance is deliberately larger than any footprint in the game.
+fn clear_tile_in_reach(world: &World, player: PlayerId) -> TilePos {
+    let me = world
+        .player(player)
+        .expect("player joined in the fixture")
+        .pos;
+    for dy in -1..=1 {
+        for dx in -1..=1 {
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+            let pos = TilePos::new(me.x + dx * 2, me.y + dy * 2);
+            let clear = (-1..=1).all(|ny| {
+                (-1..=1).all(|nx| {
+                    let t = TilePos::new(pos.x + nx, pos.y + ny);
+                    world.in_bounds(t) && world.building_at(t).is_none()
+                })
+            });
+            if clear {
+                return pos;
+            }
+        }
+    }
+    panic!("no clear tile within reach of player {player:?} at {me:?}")
 }
 
 /// The test world, plus a stock of refined material of every species and grade
@@ -448,7 +616,12 @@ fn golden_hash_covers_a_held_tool_and_a_planted_machine() {
 
     assert_eq!(
         format!("{:016x}", world.state_hash()),
-        "9afde5135ca07119",
+        // Moved by ASSA-170 step 2, and the move is the point: the starter
+        // clause rejects rosters whose rung zero cannot carry a first machine,
+        // so seed 42 is accepted with a different roster and every number
+        // derived from it changes. Step 1 did NOT move this hash and was not
+        // bumped. Both premises above still hold on the new roster.
+        "3775ddad9b1e10be",
         "world hash changed; see the comment on this test"
     );
 }
