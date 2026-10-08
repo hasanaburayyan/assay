@@ -509,6 +509,72 @@ func test_machine_rims_then_players_then_bands() -> bool:
 	return true
 
 
+## **EVERY MACHINE MARK IS ONE INK, WHICH IS THE WHOLE REASON TWO ADJACENT BANDS DELETE NOTHING**
+## (ASSA-289, Maren's condition of 2026-10-08: *"if a machine mark ever gains an owner or kind tint,
+## band-on-band is a deletion again and this finding reopens"*).
+##
+## **THE ITEM'S HEADLINE NUMBERS -- her 28.1% and my 27.8% -- WERE RECT INTERSECTIONS REPORTED AS
+## PAINT.** White over white deletes nothing, so the overlap costs a neighbour's band nothing, and
+## that is what closed the item rather than any geometry. **But it is a property of the PALETTE, not
+## of the paint order**, and nothing tested it: two conditions carry it, both of them one edit away
+## from false, and a comment is what we had.
+##
+## 1. **ONE INK.** `building_mark` returns `"colour": HOVER` whatever the building is -- it reads
+##    `pos` and `footprint` and nothing else -- and `sim/src/building.rs` has no owner. An owner tint
+##    for co-op or a tint per machine kind is a reasonable thing for someone to want; this is the test
+##    that tells them what it costs on the schematic before they ship it.
+## 2. **OPAQUE.** The band's painted ink is `mark_ink_of(&"building", colour)`, which takes the
+##    table's alpha. At alpha 1 a second coat of the same ink is a no-op; at anything less, two coats
+##    of ONE ink still differ from one coat, so the probe's 144/144 would stop being true with the
+##    palette untouched. I did not notice that until I wrote this test.
+##
+## It asks `building_mark` for marks across everything a caller can vary, including keys a future
+## caller might carry (`kind`, `owner`, `material`), and requires one ink for all of them.
+func test_every_machine_mark_is_one_ink_so_a_neighbours_band_deletes_nothing() -> bool:
+	var cell := 9.0
+	var origin := AssayHud.MARGIN
+	var cases: Array[Dictionary] = [
+		{"pos": Vector2i(54, 56), "footprint": Vector2i(1, 1)},
+		{"pos": Vector2i(55, 56), "footprint": Vector2i(1, 1)},
+		{"pos": Vector2i(54, 56), "footprint": Vector2i(2, 2)},
+		{"pos": Vector2i(12, 7), "footprint": Vector2i(3, 2)},
+		# The keys a future caller might hand it. A tint keyed on any of these is the change this
+		# test exists to catch, and it has to be caught at `building_mark` rather than at the paint.
+		{"pos": Vector2i(20, 20), "footprint": Vector2i(1, 1), "kind": "smelter", "owner": 0},
+		{"pos": Vector2i(21, 20), "footprint": Vector2i(1, 1), "kind": "machine", "owner": 1,
+				"material": {"species": 3, "grade": "A"}},
+	]
+	var inks := {}
+	var spans := {}
+	for case in cases:
+		var mark := AssayHud.building_mark(case, cell, origin)
+		var ink: Color = mark["colour"]
+		var rect: Rect2 = mark["rect"]
+		inks[ink.to_html()] = int(inks.get(ink.to_html(), 0)) + 1
+		spans[rect.size] = true
+	# NON-VACUITY FIRST: if every case produced the same mark, one ink would be free. The cases must
+	# differ in geometry for "and yet one ink" to mean anything.
+	if spans.size() < 2:
+		return _fail("every case produced the same mark, so this test asserts nothing: %s" % [spans])
+	if inks.size() != 1:
+		return _fail(("machine marks come in %d inks now (%s). ASSA-289 closed on there being ONE: "
+				+ "two adjacent marks overlap by construction at a 20 px mark on a 9 px cell, and "
+				+ "white over white deletes nothing only while both are the same white. With a "
+				+ "second ink the younger machine takes a side off the older one's band again -- "
+				+ "re-open ASSA-289 and re-run `tools/assa289_paint_probe.gd` before shipping it.")
+				% [inks.size(), inks])
+	var ink_seen: Color = AssayHud.building_mark(cases[0], cell, origin)["colour"]
+	if ink_seen != AssayHud.HOVER:
+		return _fail("a machine mark is painted in %s, not the map's own mark ink" % [ink_seen])
+	# AND THE SECOND HALF, WHICH IS THE TABLE'S: two coats of a TRANSLUCENT ink are not one coat.
+	var painted := AssayHud.mark_ink_of(&"building", AssayHud.HOVER)
+	if not is_equal_approx(painted.a, 1.0):
+		return _fail(("the `building` row paints at alpha %f, so a neighbour's band laid over this "
+				+ "one composites to a different value and the 144/144 of ASSA-289 is stale even "
+				+ "with one ink. The row's alpha is part of that finding.") % painted.a)
+	return true
+
+
 ## **`MIN_DEPOSIT_RADIUS_TILES` IS A SIM FACT LIVING IN A CLIENT CONSTANT, SO IT IS CHECKED AGAINST
 ## THE SIM** (ASSA-293). The held letter's whole justification is that it fits the narrowest patch
 ## `worldgen` can roll; `sim/src/worldgen.rs` rolls `rng.range(2, 5)` and there is no named constant

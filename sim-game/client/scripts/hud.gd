@@ -328,6 +328,14 @@ const SPAWN_PAD := Color(0.455, 0.429, 0.26)
 ## `_draw`, *"what makes it a map rather than a view"* -- and the close-up at 32 px a tile (ASSA-119)
 ## is where sprites and counting live. **On this map the mark's unit is the CLUSTER, not the machine:
 ## it says *machines here*.** That is what the key row says, and it is why the floor stays at 20.
+##
+## **AND THE HALF OF THAT WHICH COULD STOP BEING TRUE QUIETLY IS NOW A TEST, NOT A SENTENCE** (Maren's
+## condition on ASSA-289). "A neighbour's band is `HOVER` on `HOVER`" holds only while every building
+## mark is ONE ink -- `building_mark` reads `pos` and `footprint` and nothing else, and
+## `sim/src/building.rs` has no owner. An owner tint for co-op or a tint per machine kind is a
+## reasonable thing to want and would make band-on-band a DELETION again.
+## `test_hud.gd::test_every_machine_mark_is_one_ink_so_a_neighbours_band_deletes_nothing` is what
+## tells whoever ships that tint what it costs here, with the item to re-open and the probe to re-run.
 const BUILDING_MARK_PX := 20.0
 
 ## HOW THICK THE FOOTPRINT FRAME'S OWN STROKE IS, drawn INWARD from the footprint's edge (ASSA-236).
