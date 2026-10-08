@@ -4260,11 +4260,25 @@ func _draw() -> void:
 			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
 		for band: Rect2 in AssayHud.frame_bands(shape["rect"], float(shape["stroke"])):
 			draw_rect(band, AssayHud.mark_ink_of(&"building", shape["colour"]), true)
-		# **AND A RIM INSIDE THE HOLE, BECAUSE A HOLE IS ONLY A HOLE IF IT IS DARKER THAN ITS BAND**
-		# (ASSA-278 candidate, not ruled). Drawn AFTER the frame and INSIDE it, so the frame keeps
-		# every pixel of its own size -- the same rule the outward rim keeps. The species letter is
-		# painted later still (the glyph pass below), so ASSA-213 is untouched by this: a letter on a
-		# machine's tile still lands on top of both rims.
+		# **AND A RIM INSIDE THE HOLE, SO EVERY PIXEL OF THE BAND HAS A DARK NEIGHBOUR ON BOTH SIDES**
+		# (ASSA-278, Maren ruled option 1 at 23:10 EDT). Drawn AFTER the frame and INSIDE it, so the
+		# frame keeps every pixel of its own size -- the same rule the outward rim keeps. The species
+		# letter is painted later still (the glyph pass below), so ASSA-213 is untouched: a letter on a
+		# machine's tile still lands on top of both rims, and this does NOT fix ASSA-273.
+		#
+		# **I FILED THIS AS "A HOLLOW MARK SHOULD LOOK HOLLOW" AND THAT IS NOT THE RULING.** Hers is
+		# about the band: without an inner rim the band's weight is rented from whatever the map put
+		# under the mark, which on seed 63's grade-A disc was 1.53:1 and unreadable. A claim about the
+		# hole is a claim about one seed's disc; a claim about the band's neighbours holds on any tint.
+		#
+		# **AND IT IS PAID FOR OUT OF THE PERSON STANDING THERE, WHICH MY OWN COSTING LEFT OUT.** These
+		# marks go in AFTER the players (the paragraph above), so this rim is painted over them: a
+		# partner on a 1x1 machine keeps 69.2% of their cross without it and 38.5% with it, and your
+		# own body 85.3% -> 47.1% (your ring is outside the frame and untouched). Measured on the real
+		# geometry by `tools/person_under_machine.gd`. ASSA-236's case for the hollow frame was that it
+		# ENDED that trade (25.3% -> 70.4%), so this buys part of it back; the lever that would not is
+		# painting this rim BEFORE the player pass, where a person replaces the rim they stand on and
+		# their own MAP_BG keyline holds the band apart. That is Maren's to rule and it is on ASSA-278.
 		for band: Rect2 in AssayHud.frame_bands(shape["hole_rect"], AssayHud.MARK_KEYLINE_PX):
 			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
 

@@ -1483,6 +1483,112 @@ func test_a_building_on_the_schematic_is_the_footprint_it_stands_on() -> bool:
 	return true
 
 
+## **EVERY PIXEL OF A MACHINE'S BAND HAS A DARK NEIGHBOUR ON BOTH SIDES** (ASSA-278, Maren's ruling
+## at 23:10 EDT: option 1, the inward keyline).
+##
+## **HER REASON IS NOT THE ONE I FILED IT UNDER, AND THE DIFFERENCE IS THIS TEST.** I filed "a hollow
+## mark whose hole is as bright as its band is not hollow". She ruled on the band instead: *"every
+## pixel of the band gets a dark neighbour on both sides, so the band stops renting its weight from
+## the ground it stands on"* -- which is true on any ore tint, where a statement about the hole is a
+## statement about one seed's disc.
+##
+## **WHAT WAS WRONG.** `MARK_KEYLINE_PX` was grown OUTWARD only, so the frame's outer edge read
+## 11.40:1 on every ground we had shot and its inner edge read whatever the map had put there. On
+## seed 63's grade-A disc the band measured **1.53:1** against the ring immediately inside it, and
+## Nerite -- the only independent reader we had -- could not call the mark a machine at all. With the
+## rim that ring is `MAP_BG`: **15.23:1**, exactly the dark-map number.
+##
+## **IT FAILED NOTHING. 394 passed, 0 failed, WITH the defect, and 394/0 WITHOUT it.** The test above
+## asserts the hole is a hole in GEOMETRY -- a point at the centre is outside the ink -- and geometry
+## is exactly what was never wrong. Nothing here asked what the band stands next to.
+##
+## **THE PROPERTY, NOT A PIXEL COUNT.** A band pixel's four neighbours are each either band or
+## keyline, never the map. One assertion covers both edges, it is independent of what the ground
+## happens to be, and it reddens with the rim removed naming the pixel and the direction. A pixel
+## count would pass a rim drawn in the mark's own white.
+##
+## **THE RIM IS NOT FREE AND THE PRICE IS IN HERE BECAUSE IT IS WHERE THE NEXT PERSON MEETS IT**
+## (`tools/person_under_machine.gd`, the real geometry at cell 9): `_draw` paints buildings AFTER
+## players, so the rim lands on whoever is standing on the machine. A partner on a 1x1 keeps **69.2%
+## of their cross without the rim and 38.5% with it**, and ASSA-236's whole case for the hollow frame
+## was that it ended that trade (25.3% -> 70.4%). So the hole must still have a middle, which is the
+## second assertion below -- and the hole's clear square is 8x8 px where it was 12x12.
+##
+## **WHAT IT CANNOT SEE, the same gap every mark test here admits: whether `_draw` paints these three
+## lists.** Nothing headless rasterises a `draw_rect`. The bands come out of `AssayHud` in the
+## painter's own order and `test_main_screen.gd` holds the wiring; the 1x proof is the window shot on
+## ASSA-278, two seeds.
+func test_a_machines_band_has_a_dark_neighbour_on_both_of_its_edges() -> bool:
+	var origin := Vector2(24.0, 96.0)
+	for case in [{"foot": Vector2i(1, 1), "cell": 9.0}, {"foot": Vector2i(2, 2), "cell": 9.0},
+			{"foot": Vector2i(3, 2), "cell": 32.0}]:
+		var foot: Vector2i = case["foot"]
+		var cell: float = case["cell"]
+		var mark := AssayHud.building_mark({"pos": Vector2i(12, 7), "footprint": foot}, cell, origin)
+		if not mark.has("hole_rect"):
+			return _fail(("a %s building's mark carries no `hole_rect`, so the painter has no inward "
+					+ "rim to ask for: the band's inner edge is whatever the map put there, which on "
+					+ "a grade-A disc is 1.53:1 and unfindable (ASSA-278)") % [foot])
+		# THE THREE LISTS `_draw` PAINTS FOR ONE MACHINE, in its order, asked of the same functions it
+		# asks. `hole_rect` and not `hole_points`, because the painter needs a Rect2 to grow bands from
+		# and a polygon cannot be handed to `frame_bands`.
+		var band: Array[Rect2] = AssayHud.frame_bands(mark["rect"], float(mark["stroke"]))
+		var dark: Array[Rect2] = AssayHud.frame_bands(mark["keyline_rect"], AssayHud.MARK_KEYLINE_PX)
+		dark.append_array(AssayHud.frame_bands(mark["hole_rect"], AssayHud.MARK_KEYLINE_PX))
+		# **AND THE TWO INKS MAKE A STEP, AS A NUMBER.** Without this the property above is satisfied
+		# by a rim in any colour at all -- including the band's own white, which is the shape of the
+		# defect: a neighbour that is not an edge.
+		var step := AssayHud.contrast_ratio(mark["colour"] as Color, mark["keyline"] as Color)
+		if step < 4.5:
+			return _fail(("a %s building's band is %s against a keyline of %s: %.2f:1, so the "
+					+ "neighbour on each side is not an EDGE and the rim buys nothing")
+					% [foot, mark["colour"], mark["keyline"], step])
+		# SAMPLED AT A QUARTER PIXEL, NOT AT A PIXEL CENTRE: the map's rects sit on half-pixels at
+		# cell 9 (a 1x1 mark is 16px about a tile's middle) and on integers at cell 32, and a sample
+		# that lands on an edge is a coin toss in `Rect2.has_point`.
+		var outer: Rect2 = mark["keyline_rect"]
+		var y := floorf(outer.position.y) + 0.25
+		var seen := 0
+		while y <= outer.end.y:
+			var x := floorf(outer.position.x) + 0.25
+			while x <= outer.end.x:
+				var point := Vector2(x, y)
+				if _in_any(band, point):
+					seen += 1
+					for step_to: Vector2 in [Vector2.RIGHT, Vector2.LEFT, Vector2.DOWN, Vector2.UP]:
+						var next := point + step_to
+						if _in_any(band, next) or _in_any(dark, next):
+							continue
+						return _fail(("a %s building's band at %s has the map itself %s of it: the "
+								+ "band is renting its weight from whatever is under the mark, which "
+								+ "on a grade-A disc is 1.53:1 and which QA could not read at all "
+								+ "(ASSA-278). Every band pixel needs a %s neighbour on both sides.")
+								% [foot, point, step_to, mark["keyline"]])
+				x += 1.0
+			y += 1.0
+		if seen == 0:
+			return _fail("a %s building's frame sampled 0 band pixels inside its own keyline rect %s, "
+					% [foot, outer] + "so this test looked at nothing")
+		# **AND THE HOLE STILL HAS A MIDDLE.** The rim is painted over a person standing on the
+		# machine (buildings go in after players), so a rim that closed the hole would be ASSA-203's
+		# 0.0% back by another route. 8x8 px of a 1x1's 12x12 hole, and the cost is in the docstring.
+		var centre: Vector2 = (mark["rect"] as Rect2).get_center()
+		if _in_any(band, centre) or _in_any(dark, centre):
+			return _fail(("a %s building's mark is ink at its own centre %s once the inward rim is "
+					+ "drawn: a person standing on this machine is painted out by it, which is the "
+					+ "trade the hollow frame was filed to end (ASSA-236)") % [foot, centre])
+	return true
+
+
+## True when [param point] is inside any of [param rects]; the painter's bands as drawn, so a gap
+## between two of them is a gap here too.
+func _in_any(rects: Array[Rect2], point: Vector2) -> bool:
+	for rect in rects:
+		if rect.has_point(point):
+			return true
+	return false
+
+
 ## **THE GLYPH BED COVERS EVERY PIXEL AT DISTANCE 1 FROM THE LETTER'S INK** (ASSA-218, Maren's P1 on
 ## the half of ASSA-213 that did not work).
 ##

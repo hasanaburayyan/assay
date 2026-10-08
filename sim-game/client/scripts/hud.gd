@@ -123,10 +123,16 @@ const BUILDING_MARK_PX := 16.0
 ## HOW THICK THE FOOTPRINT FRAME'S OWN STROKE IS, drawn INWARD from the footprint's edge (ASSA-236).
 ##
 ## **IT IS THE SAME 2 px AS THE KEYLINE AND IT IS NOT THE SAME THING**, which is why it is its own
-## constant: `MARK_KEYLINE_PX` is a rim of the map's ground colour grown OUTWARD so the mark it
-## separates keeps every pixel, and this is the mark itself. They are equal today because 2 px is
-## what reads at 1x on both counts; a reader who assumed one constant would be re-tuning the rim every
-## time the frame got heavier.
+## constant: `MARK_KEYLINE_PX` is a rim of the map's ground colour that separates this mark from
+## whatever it stands on, and this is the mark itself. They are equal today because 2 px is what reads
+## at 1x on both counts; a reader who assumed one constant would be re-tuning the rim every time the
+## frame got heavier.
+##
+## **AND THE RIM IS NOW DRAWN TWICE ON THIS MARK, OUTWARD AND INWARD** (ASSA-278). This docstring said
+## "grown OUTWARD" as though that were the definition of a keyline; it was a description of the only
+## edge the frame had a rim on, and the band's INNER edge had none -- 1.53:1 against a grade-A disc
+## showing through its own hole. Both rims are grown clear of the band, so the frame still keeps every
+## pixel of its own size; what shrinks is the hole, 12x12 px to 8x8 on a 1x1.
 ##
 ## **WHY THE FRAME IS HOLLOW AT ALL, AND IT IS THE FINDING OF ASSA-236 RATHER THAN A STYLE.** Two
 ## filled marks on one tile cannot both survive: Maren's ASSA-203 measurement is 92.4% of a machine
@@ -155,6 +161,12 @@ const PARTNER_CROSS_ARM_PX := 6.0
 ## **WHAT IT IS FOR IS A DEFECT A PIXEL COUNT COULD NOT SEE** (Cove, ASSA-193). A white mark on a disc
 ## with a white species letter FUSES INTO ONE BLOB -- the letter stops being a letter -- and the count
 ## said 63% of the glyph survived. Coverage is not legibility; the picture is what said so.
+##
+## **ON A BUILDING'S FRAME IT IS DRAWN TWICE: OUTWARD ROUND THE BAND AND INWARD INSIDE THE HOLE**
+## (ASSA-278, Maren 23:10 EDT). One rim rims one edge, and a hollow mark has two. The outward rim gave
+## the frame 11.40:1 on every ground and the inner edge went a fortnight with nothing: on seed 63's
+## grade-A disc the band read 1.53:1 against the ring just inside it -- a white line round a yellow
+## patch -- and the only independent reader we had could not call it a machine. 15.23:1 with the rim.
 ##
 ## **NOT `BUILDING_KEYLINE_PX`, WHICH IS WHAT COVE'S HAND-OFF CALLS IT, BECAUSE MAREN'S SECOND RULING
 ## GAVE IT TO THE PLAYER MARKS TOO** (ASSA-189, 17:40): `THEIRS` is a pale near-white with no keyline,
@@ -955,10 +967,15 @@ static func building_mark(building: Dictionary, cell: float, origin: Vector2) ->
 	return {
 		"points": rect_points(outer),
 		"hole_points": rect_points(outer.grow(-BUILDING_STROKE_PX)),
-		# **THE HOLE AS A RECT, FOR THE RIM THAT HAS TO GO INSIDE IT** (ASSA-278 candidate). The
-		# outward keyline above buys the frame's OUTER edge 11.40:1 on every ground we have shot. The
-		# inner edge had nothing, so on a grade-A deposit the hole came back at 0.627 against the
-		# band's 0.888 -- 1.39:1, and QA could not call the mark a machine at all.
+		# **THE HOLE AS A RECT, FOR THE RIM THAT GOES INSIDE IT** (ASSA-278, Maren ruled option 1 at
+		# 23:10 EDT). The outward keyline above buys the frame's OUTER edge 11.40:1 on every ground we
+		# have shot. The inner edge had nothing, so on a grade-A deposit the band measured 1.53:1
+		# against the ring immediately inside it and QA could not call the mark a machine at all.
+		#
+		# **THE RULING IS ABOUT THE BAND AND NOT ABOUT HOLLOWNESS**, which is why the test that holds
+		# it asserts a neighbour rather than a ratio: *"every pixel of the band gets a dark neighbour
+		# on both sides, so the band stops renting its weight from the ground it stands on"*. A claim
+		# about the HOLE is a claim about one seed's disc; this one is true on any ore tint.
 		"hole_rect": outer.grow(-BUILDING_STROKE_PX),
 		"rect": outer,
 		"stroke": BUILDING_STROKE_PX,
