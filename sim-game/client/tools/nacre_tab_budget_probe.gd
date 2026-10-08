@@ -751,6 +751,13 @@ func _report() -> void:
 	print("    the top of the box and nothing can ever be above it. Measuring a SCROLLED state instead")
 	print("    would assert a state the rulings permit -- a list may scroll because it holds no")
 	print("    controls -- so zero is the right answer and a non-zero would mean that changed.")
+	# **AND THE INVARIANT IT RESTS ON IS NOW A TEST** (ASSA-277, Limpet's reading). It used to rest on
+	# a line in `select` that nothing checked, so this column's zero was an accident rather than a
+	# promise; delete the reset and every reading here stayed 0 while the screen got worse. Now the
+	# mutation reddens one named test instead of nothing.
+	print("    The reset it depends on is held by")
+	print("    `test_tab_strip.gd::test_selecting_a_tab_shows_you_the_top_of_it`; before ASSA-277 that")
+	print("    invariant was untested, so this zero was an accident. A tripwire whose wire is checked.")
 	# **BOX 2 IS READ AS EITHER AXIS** (Maren, 19:50). Both columns above are vertical, and a column
 	# laid out wider than the window falls off a third edge that every instrument we owned was blind
 	# to. The reference is the PAINTED panel and not the clip rect, for the reason in `_button_reach`:
