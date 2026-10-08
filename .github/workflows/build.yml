@@ -155,6 +155,18 @@ jobs:
       # inside a comment saying why nothing runs it. Stdlib only, no Godot.
       - name: Every client tool says whether a gate runs it
         run: python3 client/tools/check_tools_declare_ci.py
+      # THE SUITE POKES A CONTROL IN EXACTLY ONE PLACE (ASSA-312). A project-themed
+      # control resolves the PLAIN type's entries until it gets
+      # NOTIFICATION_THEME_CHANGED, which frames do not deliver, so every headless
+      # theme read is wrong until poked. The poke was hand-rolled in two test files
+      # and ASSA-267 showed what that costs: it removed the one override propping up
+      # a raw read in `test_tab_strip.gd` and 16 assertions went red against a theme
+      # that was already CORRECT. Nothing had broken; the prop went away and nothing
+      # said so. Both arms are checked -- a poke outside the helper fails, and the
+      # helper holding ZERO pokes fails too, so deleting the thing under test cannot
+      # earn the green. Stdlib only, no Godot, milliseconds.
+      - name: The theme poke lives in exactly one place
+        run: python3 client/tools/check_one_theme_poke.py
       # ONE SPECIES PALETTE, WRITTEN DOWN TWICE. The Blender pipeline tints the
       # ore sprite from `art/species_tints.py`; the Godot client fills a deposit
       # from a const in `client/scripts/hud.gd`. Neither language can read the
