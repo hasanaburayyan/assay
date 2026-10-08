@@ -69,13 +69,38 @@ ROWS = LAYOUT["rows"]
 PANEL = int(LAYOUT["panel_px"])
 
 
-def clear_colour():
-    """The viewport's own clear colour, as the framebuffer gets it. 2D is sRGB-native."""
-    nums = LAYOUT["clear_color"].strip("()").split(",")
+def as_rgb(godot_colour):
+    """A Godot `Color(r, g, b, a)` string as 8-bit RGB. 2D is sRGB-native, so no transfer curve."""
+    nums = godot_colour.strip("()").split(",")
     return tuple(int(round(float(n) * 255)) for n in nums[:3])
 
 
-BG = clear_colour()
+def ground():
+    """THE COLOUR ACTUALLY BEHIND THE ROW, and where the probe got it (ASSA-308).
+
+    **THIS USED TO READ `clear_color` AND THAT WAS THE BUG.** The viewport's clear colour is what
+    sits behind everything -- Godot's default 0.3 grey, `(76,76,76)` -- and in the shipped client it
+    is COVERED: a bench row lives inside a panel filled with `SURFACE` `(37,40,48)`. Painting the
+    layer furthest back cost real contrast, and Maren caught it off the PNG rather than by reading
+    this file: `INK_MUTED` ships at **6.74:1** and read **3.92:1** here, under the 4.5:1 floor
+    `build_theme.gd` refuses to ship. A reviewer judging legibility off that sheet judged a screen we
+    do not ship, and judged it WORSE than it is.
+
+    The defect was never a typed literal -- it was a DERIVATION POINTED ONE LAYER TOO DEEP. So this
+    still derives, now from `ground`, which the probe reads off the built tree. A hard-coded
+    `(37,40,48)` would be a colour nobody chose and would not follow a retune.
+
+    **AN OLDER DUMP HAS NO `ground` KEY, AND THAT CASE IS LOUD RATHER THAN SILENT.** It returns the
+    clear colour with a source saying so, and the caption prints it, because a quiet fallback to the
+    wrong layer is precisely what went unnoticed for days.
+    """
+    if "ground" in LAYOUT:
+        return as_rgb(LAYOUT["ground"]), LAYOUT.get("ground_from", "unstated")
+    return (as_rgb(LAYOUT["clear_color"]),
+            "NO `ground` IN THIS DUMP -- the viewport clear colour, which the client COVERS")
+
+
+BG, BG_FROM = ground()
 GAP = 14
 PAD = 12
 
@@ -186,9 +211,10 @@ head = font(15)
 small = font(12)
 paragraph = (
     "THE BENCH AS THE ENGINE LAYS IT OUT. Decision #38 asks whether this reads as a DESIGN or as "
-    "a DEBUG STRIP. Every rect, font size, verdict colour and the %d px panel width are read back "
-    "off the nodes real main.tscn built; only the letterforms are this sheet's font, so each line "
-    "carries a tick at the width the ENGINE measured it to be. Widest line %d px of %d."
+    "a DEBUG STRIP. Every rect, font size, verdict colour, the ground under the text and the %d px "
+    "panel width are read back off the nodes real main.tscn built; only the letterforms are this "
+    "sheet's font, so each line carries a tick at the width the ENGINE measured it to be. "
+    "Widest line %d px of %d."
     % (PANEL, int(max(max(r["body"]["widths"]) for r in ROWS if r["body"])), PANEL))
 # NO `tick` AND NO `hash` IN THIS LIST, and their absence is the point rather than an omission.
 # They are per-row facts (see `stamp_of`) and a single one of each over merged rows is the lie
@@ -196,6 +222,11 @@ paragraph = (
 # caption.
 facts = ["%s: %s" % (k, PROVENANCE[k])
          for k in ("source", "seed", "rules", "note") if k in PROVENANCE]
+# **THE GROUND, NAMED ON THE SHEET'S FACE** (Maren, ASSA-308): *"on a sheet whose purpose is
+# declaring what it is a picture of, the background is the one undeclared thing."* True even now
+# that it is correct -- a reader measuring contrast off this PNG needs to know whose grey it is, and
+# the SOURCE is the half that would catch this breaking again.
+facts.append("ground: rgb%s, from %s" % (BG, BG_FROM))
 
 W = max(PANEL, one.width) + GAP + two.width + PAD * 3
 
@@ -250,4 +281,8 @@ for r in ROWS:
         ", ".join(v["label"] for v in r["verbs"]) or "none"))
     for line, w in zip(b["logical"], b["widths"]):
         print("    %5.0f px | %s" % (w, line))
+# **SAID ON STDOUT AS WELL AS DRAWN**, because the drawn caption is pixels and no log, check or
+# reviewer's grep can read it. The fallback arm of [`ground`] is the one that matters here: proving
+# "it says so on the sheet" by reading a PNG is how a claim goes unverified for a week.
+print("ground: rgb%s, from %s" % (BG, BG_FROM))
 print("sheet written to %s (%dx%d)" % (OUT, sheet.width, sheet.height))
