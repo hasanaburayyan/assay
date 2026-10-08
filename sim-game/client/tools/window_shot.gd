@@ -2634,8 +2634,11 @@ func _finish(ok: bool, why: String) -> void:
 		# frames directory is not purely pictures is not a usable blind run.
 		var leaked := _unblind_offenders()
 		if not leaked.is_empty():
-			var said := "FAIL  blind run: %s holds %d file(s) that are not pictures" % [_frames,
-					leaked.size()]
+			# NAMED AS THE PROPERTY AND NOT AS "not a picture", because one of the two things this
+			# catches IS a picture -- the map key. A red whose sentence is wrong about its own
+			# offender teaches the next reader the wrong rule.
+			var said := "FAIL  blind run: %s holds %d file(s) that name what is in the pictures" % [
+					_frames, leaked.size()]
 			said += ", so handing this directory to a cold reader hands them the answer too: "
 			said += ", ".join(leaked)
 			said += ". Move them under %s, which is where this run put its own report." % _key
