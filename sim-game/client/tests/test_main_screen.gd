@@ -4820,3 +4820,34 @@ func test_nothing_in_the_column_asks_for_more_width_than_the_panel() -> bool:
 				(worst as Label).text if worst is Label else "not a Label"])
 	screen.queue_free()
 	return ok
+
+
+## **THE DOOR KEEPS REFRESHING ITSELF WITH NO SESSION** (ASSA-292), which is a claim about a CALL and
+## not about arithmetic.
+##
+## THIS TEST EXISTS BECAUSE THREE GREEN TESTS DID NOT CATCH A DEAD SCREEN. `AssayScene.title_drift` is
+## asserted three ways -- periodic, bounded, continuous -- and every one of them passed while the
+## title camera never moved a pixel, because `_process` refreshed the world only
+## `if _close_up and _sim.running()` and there is no session at the door. The arithmetic was right and
+## nothing called it; a unit test on a pure function cannot tell those apart. The same guard also hid
+## the door plate, which is sized from laid-out children and so can only be computed after a layout
+## pass -- it ran once inside `_ready()`, found every child 0x0, and hid itself for good.
+##
+## So this asserts the only thing that would have gone red: that a frame at the door rebuilds the
+## view. It blanks `_world.view` by hand and demands `_process` put it back.
+func test_the_door_keeps_refreshing_itself_with_no_session() -> bool:
+	var screen: Node = load("res://scenes/main.tscn").instantiate()
+	runner.root_node.add_child(screen)
+	screen._ready()
+	if screen._sim.running():
+		screen.queue_free()
+		return _fail("this test is about the doorless case and the scene came up with a session")
+	screen._world.view = {}
+	screen._process(0.016)
+	var after: Dictionary = screen._world.view
+	screen.queue_free()
+	if after.is_empty():
+		return _fail("a frame at the door left the view empty: nothing is driving the title world, "
+				+ "so the camera cannot drift and the plate can never be sized. The guard in "
+				+ "_process is asking for a session that the door does not have")
+	return true

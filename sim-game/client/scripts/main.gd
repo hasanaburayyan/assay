@@ -1721,7 +1721,21 @@ func _process(delta: float) -> void:
 	# the one the frame was shown for. Measured: on runs where frame time was steady the drawn speed
 	# was inside the bar 95% of the time, and on runs where it varied 11-28 ms it fell to 82-86%,
 	# with the failing frames alternating too-fast and too-slow in pairs.
-	if _close_up and _sim.running():
+	# **THE DOOR HAS A WORLD NOW, SO THIS MAY NOT REQUIRE A SESSION** (ASSA-292). This read
+	# `_close_up and _sim.running()`, which was exactly right for as long as the door was a dark
+	# rectangle: before a world existed nothing on this screen moved. `_door_view` is built inside
+	# `_refresh_world`, so under the old guard the title camera advanced only on frames where
+	# something else happened to refresh -- which at the door is never.
+	#
+	# **THE TITLE SCREEN WAS A STILL PHOTOGRAPH OF A DRIFTING CAMERA, and all three of my drift tests
+	# passed the whole time** (ASSA-292): they assert `AssayScene.title_drift`, which is correct
+	# arithmetic that nothing was calling. A unit test cannot see an unwired caller -- hence
+	# `test_the_door_keeps_refreshing_itself_with_no_session` below the fix, which asserts the CALL.
+	#
+	# It also fixed the door plate, which is sized from laid-out children: `_place_door_plate` ran
+	# exactly once, inside `_ready()`, where every child is still 0x0 -- so it hid itself and was
+	# never asked again. Two defects, one guard.
+	if _close_up:
 		_refresh_world(delta)
 	# ABOVE THE EARLY RETURN BELOW, which is about the solo relay and skips most frames of a session.
 	_refresh_join_band()

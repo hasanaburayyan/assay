@@ -113,8 +113,24 @@ TOLERANCE = 10
 ## every pixel of it that is not a glyph or a glyph fringe is exactly this, which is what makes the
 ## before frame usable as a stencil. Tight tolerance: a loose one lets the dark end of the
 ## anti-aliasing back in and the bug above returns quietly.
-MAP_BG = (26, 28, 33)
-FIELD_TOLERANCE = 4
+## How far from a glyph core a pixel must be before it counts as background.
+DILATE = 3
+## **OTHER CONTROLS ARE NOT "WHAT IS BEHIND THE WORDS", AND THE CONTROL CAUGHT ME TREATING THEM AS
+## IT.** On the flat field this script reported 1.00:1 for the wordmark where Maren measured 14.0,
+## because a 12 px surround reaches the `Play solo` button and a host field, and their fills are
+## bright. A button sitting near a sentence is not the surface the sentence stands on -- and its own
+## legibility is already held by `build_theme.gd`, which REFUSES to write a theme whose ink pairs
+## fall under 4.5:1. That is a better guard than this script, so this script stays out of its way.
+FURNITURE = {
+    "ACCENT": (128, 229, 140),
+    "RAISED": (53, 57, 67),
+    "BORDER": (74, 79, 92),
+}
+FURNITURE_TOLERANCE = 24
+## Above this the pixel is the lit world, below it the plate (or the old flat field).
+PLATE_MAX_LUMA = 0.06
+## How deep the measured ring of plate is, inside DOOR_PLATE_PAD = 24 so it holds no text.
+RING = 16
 # The door's own rectangle, `AssayHud.join_rect()`: x 24..936, y 24..696. Keeps the HUD column and
 # the world's own sprites out of the mask.
 DOOR = (24, 24, 936, 696)
@@ -124,71 +140,73 @@ def near(rgb, want, tolerance=TOLERANCE):
     return all(abs(rgb[i] - want[i]) <= tolerance for i in range(3))
 
 
-def bands(mask_rows, height):
-    """Group masked rows into contiguous bands, so the title and the sentence come out separately."""
-    out, run = [], None
-    for y in range(height):
-        if mask_rows[y]:
-            run = [y, y] if run is None else [run[0], y]
-        elif run is not None:
-            out.append(run)
-            run = None
-    if run is not None:
-        out.append(run)
-    return out
-
-
 def main():
-    if len(sys.argv) != 3:
-        raise SystemExit(__doc__)
-    before_path, after_path = sys.argv[1], sys.argv[2]
-    bw, bh, bc, before = read_png(before_path)
-    aw, ah, ac, after = read_png(after_path)
-    if (bw, bh) != (aw, ah):
-        raise SystemExit("frames differ in size: %dx%d vs %dx%d" % (bw, bh, aw, ah))
-    x0, y0, x1, y1 = DOOR
+    """**MEASURE THE SURFACE, NEVER THE GLYPHS.**
 
-    for name, token in INKS.items():
-        mask = {}
-        rows_hit = [False] * bh
-        for y in range(y0, min(y1, bh)):
-            for x in range(x0, min(x1, bw)):
-                if near(pixel(before, bc, x, y), token):
-                    mask.setdefault(y, set()).add(x)
-                    rows_hit[y] = True
-        for band in bands(rows_hit, bh):
-            top, bottom = band
-            xs = [x for y in range(top, bottom + 1) for x in mask.get(y, ())]
-            if len(xs) < 20:
-                continue
-            left, right = min(xs), max(xs)
-            text_px = len(xs)
-            # THE BACKGROUND IS WHAT WAS THE FLAT FIELD, not "whatever the mask missed" -- see the
-            # module docstring for the 1.10:1 that reading cost.
-            worst_before, worst_after, bg_px = None, None, 0
-            for y in range(top, bottom + 1):
-                for x in range(left, right + 1):
-                    if not near(pixel(before, bc, x, y), MAP_BG, FIELD_TOLERANCE):
-                        continue
-                    bg_px += 1
-                    rb, ra = pixel(before, bc, x, y), pixel(after, ac, x, y)
-                    cb, ca = ratio(token, rb), ratio(token, ra)
-                    if worst_before is None or cb < worst_before[0]:
-                        worst_before = (cb, rb, x, y)
-                    if worst_after is None or ca < worst_after[0]:
-                        worst_after = (ca, ra, x, y)
-            print("%-10s band y %3d..%-3d  x %3d..%-4d  %5d text px, %5d background px"
-                  % (name, top, bottom, left, right, text_px, bg_px))
-            # A BAND WITH NO FIELD AROUND IT CANNOT BE JUDGED, and reporting it as a pass would be
-            # the "check that cannot fail" shape. Say so and move on.
-            if bg_px < 40:
-                print("    SKIPPED: only %d field pixels in this box, too few to judge" % bg_px)
-                continue
-            print("    BEFORE (flat field)  worst %6.2f:1 against %-15s at (%d,%d)"
-                  % (worst_before[0], str(worst_before[1]), worst_before[2], worst_before[3]))
-            print("    AFTER  (lit world)   worst %6.2f:1 against %-15s at (%d,%d)   %s"
-                  % (worst_after[0], str(worst_after[1]), worst_after[2], worst_after[3],
-                     "PASS >= 4.5" if worst_after[0] >= 4.5 else "FAILS MAREN FLOOR 1"))
+    Four versions of this script tried to separate text pixels from background pixels by colour, and
+    all four were wrong in a different way -- the last because a 13 px anti-aliased sentence has
+    strokes that NEVER reach the token colour, so the mask missed the glyph entirely and then scored
+    its own fringe as background. Colour cannot do this job: a half-lit glyph edge and a bright
+    background are the same number, which is precisely the case the tool exists to catch.
+
+    So it stops trying. The inks are KNOWN -- they are tokens out of `build_theme.gd`, not something
+    to be found in a picture. The only unknown is the SURFACE the words stand on, and that can be
+    measured where there are provably no glyphs: the plate's own padding, `DOOR_PLATE_PAD` of air on
+    every side by construction. The reported number is the WORST (brightest) pixel of that ring,
+    because a light ink loses contrast as its background brightens.
+
+    The control is unchanged and is what every version was judged against: on the flat field this
+    must return Maren's independently measured 14.0:1 and 7.79:1.
+    """
+    if len(sys.argv) < 2:
+        raise SystemExit(__doc__)
+    for path in sys.argv[1:]:
+        width, height, channels, rows = read_png(path)
+        x0, y0, x1, y1 = DOOR
+        x1, y1 = min(x1, width), min(y1, height)
+        print("\n=== %s ===" % path)
+        # THE PLATE IS THE DARK RECTANGLE INSIDE THE WORLD. Over lit grass it composites to roughly
+        # (48,53,55) and over an ore deposit to (58,51,51); the world around it is several times
+        # brighter. On the flat field there is no plate and the whole door is dark, so the bounding
+        # box becomes the door -- which is the right answer there and is what keeps the control honest
+        # rather than needing a second code path.
+        dark = None
+        for y in range(y0, y1):
+            for x in range(x0, x1):
+                if luminance(pixel(rows, channels, x, y)) < PLATE_MAX_LUMA:
+                    dark = (min(dark[0], x), min(dark[1], y), max(dark[2], x), max(dark[3], y)) \
+                        if dark else (x, y, x, y)
+        if dark is None:
+            print("  no plate and no dark field found: nothing to measure")
+            continue
+        px0, py0, px1, py1 = dark
+        print("  surface x %d..%d  y %d..%d  (%dx%d)"
+              % (px0, px1, py0, py1, px1 - px0 + 1, py1 - py0 + 1))
+        # THE RING: the outer band of that rectangle. Provably text-free -- the plate is built with a
+        # full pad of air on every side -- and inside it, so it is the same composite the words sit on.
+        worst = None
+        ring = 0
+        for y in range(py0, py1 + 1):
+            for x in range(px0, px1 + 1):
+                inner = (px0 + RING < x < px1 - RING) and (py0 + RING < y < py1 - RING)
+                if inner:
+                    continue
+                rgb = pixel(rows, channels, x, y)
+                if any(near(rgb, f, FURNITURE_TOLERANCE) for f in FURNITURE.values()):
+                    continue
+                ring += 1
+                lum = luminance(rgb)
+                if worst is None or lum > worst[1]:
+                    worst = (rgb, lum, x, y)
+        if worst is None:
+            print("  the ring is empty, so the surface cannot be judged")
+            continue
+        print("  worst surface pixel %-16s at (%d,%d), out of %d ring px"
+              % (str(worst[0]), worst[2], worst[3], ring))
+        for name, token in INKS.items():
+            got = ratio(token, worst[0])
+            print("    %-10s %6.2f:1   %s"
+                  % (name, got, "PASS >= 4.5" if got >= 4.5 else "FAILS MAREN FLOOR 1"))
 
 
 if __name__ == "__main__":
