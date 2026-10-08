@@ -22,14 +22,19 @@ moving the art under a sheet nobody re-drew is red.
 
 FOUR STATES, AND THE MIDDLE TWO ARE WHY THIS IS NOT ONE LINE.
   CURRENT     every file the sheet recorded is byte-identical to the shipped art today.
-  NO SOURCES  the sheet recorded an EMPTY list -- a run that opened no shipped art, so it
-              cannot go stale against it. Green, and a MEASURED empty rather than an assumed
-              one: every generator records, so the day one starts blitting an icon the stamp
-              grows by itself and this check starts holding it to one.
-  NO ART PATH the one narrow exemption, for a sheet with no stamp whose generator cannot reach
-              shipped art at all. `design_rows.png` only. Keyed to a measured property of the
-              script rather than an allowlist, fails safe, and designed to become dead code --
-              see `composites_no_art`, which states the hole it leaves.
+  NO SOURCES  the sheet recorded an EMPTY list. **RED unless `composites_no_art` accepts it**,
+              in which case it is reported as NO ART PATH below. It was green for free until
+              ASSA-144 box 4, and the justification written here -- "a MEASURED empty rather
+              than an assumed one: every generator records" -- rested on an invariant Cove
+              broke by walking into it: a path that writes the stamp OUTSIDE `recording()`
+              produces a present, well-formed, empty one. An empty stamp cannot tell "I
+              composited nothing" from "the recorder was not running", so it may not pass on
+              its own word; it passes only on the same measured key UNSTAMPED already needed.
+  NO ART PATH the one narrow exemption, for a sheet that recorded NOTHING -- no stamp or an
+              empty one -- whose generator cannot reach shipped art at all. `design_rows.png`
+              only. Keyed to a measured property of the script rather than an allowlist, fails
+              safe, and designed to become dead code -- see `composites_no_art`, which states
+              the hole it leaves.
   UNSTAMPED   no chunk at all. RED, and deliberately not merged with NO SOURCES: a sheet that
               cannot say what it reviewed is the exact condition this item is about, and
               reading it as "composited nothing" would hand every pre-ASSA-144 sheet a clean
@@ -123,16 +128,29 @@ def composites_no_art(sheet):
     script cannot name the art folder cannot have composited art, so it cannot be stale against
     it.
 
-    IT FAILS IN THE SAFE DIRECTION, which is the whole reason it is allowed to exist. It can
-    only ever excuse a sheet that has NO stamp; a stamped sheet is held to its stamp whatever
-    its script says. And the day somebody teaches that script to blit an icon, the reference
-    appears, the exemption evaporates, and the sheet goes red until it is redrawn.
+    IT FAILS IN THE SAFE DIRECTION, which is the whole reason it is allowed to exist. It excuses
+    a sheet that recorded NOTHING -- no stamp at all, or a stamp with an empty list; a sheet that
+    named any art is held to it whatever its script says. And the day somebody teaches that
+    script to blit an icon, the reference appears, the exemption evaporates, and the sheet goes
+    red until it is redrawn.
+
+    **THIS USED TO GATE `UNSTAMPED` ALONE AND THAT WAS THE HOLE** (ASSA-144 box 4, Maren's ruling
+    of 2026-10-05, Cove's finding). `NO SOURCES` -- a stamp that is present, well-formed and
+    EMPTY -- was handed a pass with no key at all, so a sheet whose generator provably CAN reach
+    shipped art but ran outside `recording()` read green while its guard was gone: the condition
+    this check exists to kill, wearing the other state's clothes. Both states now come through
+    here, and a sheet that records nothing while its script names the art folder is RED.
+
+    I ALSO HAD THE SUNSET WRONG, in this docstring, in my own words. It said the hole below
+    "closes by itself the first time this sheet is redrawn, because then it will carry a measured
+    empty stamp and take the EMPTY path instead" -- which was only ever true because the EMPTY
+    path was green for free. Redrawing moves `design_rows.png` from `UNSTAMPED` to `NO SOURCES`
+    and this function keys both, so a redraw does not retire the exemption. **Only the script
+    learning to name the art folder does.**
 
     WHAT IT IS NOT: a test of behaviour. A generator that read art through a helper holding the
-    path would be wrongly exempted. That is a real hole and it is bounded by the paragraph
-    above -- and it closes by itself the first time this sheet is redrawn, because then it will
-    carry a measured empty stamp and take the EMPTY path instead. This function is designed to
-    become dead code.
+    path would be wrongly exempted. That is a real hole, bounded by the paragraph above, and it
+    is why this function is designed to become dead code rather than to be trusted for ever.
     """
     script = GENERATOR.get(sheet)
     if not script:
@@ -258,14 +276,29 @@ def main():
         else:
             state, lines = review_sources.verdict(path)
 
-        # The one narrow exemption, and only ever for a sheet with NO stamp. See
-        # `composites_no_art`: keyed to a measured property of the generator, fails safe, and
-        # designed to become dead code the first time that sheet is redrawn.
-        if state == ABSENT and composites_no_art(name):
+        # The one narrow exemption, for a sheet that recorded NOTHING -- whether that is no stamp
+        # (UNSTAMPED) or a present, empty one (NO SOURCES). See `composites_no_art`: keyed to a
+        # measured property of the generator, fails safe, dead code the day that script names the
+        # art folder. EMPTY was UNGATED until ASSA-144 box 4 and that was the whole hole: a sheet
+        # that CAN reach shipped art and recorded none of it passed for free.
+        if state in (ABSENT, EMPTY) and composites_no_art(name):
+            how = ("It carries no stamp because it predates stamping"
+                   if state == ABSENT else "Its stamp is present and empty")
             state = NOT_A_COMPOSITE
             lines = ["%s names no shipped-art path, so this sheet composites none and cannot\n"
-                     "      be stale against it. It carries no stamp because it predates\n"
-                     "      stamping and needs a live bench to redraw." % GENERATOR[name]]
+                     "      be stale against it. %s." % (GENERATOR[name], how)]
+        elif state == EMPTY:
+            # SAY WHAT TO DO, NOT WHAT IS MISSING. `review_sources.verdict` phrases EMPTY as
+            # "nothing for it to go stale against", which was an explanation while this state
+            # was green and is an excuse now that it is red: a reader of that line learns
+            # nothing they can act on. The exemption just declined this sheet, so we know the
+            # one thing worth printing -- its generator CAN name the art folder and recorded
+            # none of it, which is a recorder that was not running.
+            lines = ["recorded an EMPTY source list while %s names the shipped-art path, so it\n"
+                     "      was drawn OUTSIDE `review_sources.recording()` and its stamp is a\n"
+                     "      forgery of 'composited nothing'. Redraw it through the recorder\n"
+                     "      (for contact.png: `art/build.py --contact-only`, never a direct\n"
+                     "      `contact()` call)." % GENERATOR[name]]
 
         states[name] = state
         stamp = review_sources.read_stamp(path)
@@ -276,7 +309,10 @@ def main():
                 pass
         n = "-" if stamp is None else str(len(json.loads(stamp))) if stamp.startswith("{") else "?"
         print("  %-22s %-11s %s" % (name, state, n))
-        if state in (STALE, ABSENT):
+        # EMPTY JOINED THIS LIST IN ASSA-144 box 4. It is only reachable here when the exemption
+        # above declined it, which means the generator CAN name shipped art and recorded none --
+        # a recorder that stopped recording, not a sheet that composites nothing.
+        if state in (STALE, ABSENT, EMPTY):
             for line in lines:
                 bad.append("%s %s" % (name, line))
 
@@ -312,11 +348,14 @@ def main():
         # a stronger claim than it is -- the exact way a review sheet got believed in the
         # first place.
         if state == NOT_A_COMPOSITE:
-            print("  %s is exempt and carries no stamp: %s names no shipped-art path. This pass\n"
+            print("  %s is exempt and recorded no art: %s names no shipped-art path. This pass\n"
                   "    says nothing about whether that picture is current."
                   % (name, GENERATOR[name]))
-        elif state == EMPTY:
-            print("  %s recorded an empty source list, so there is nothing to compare." % name)
+    # THERE IS NO `elif state == EMPTY` HERE ANY MORE, and its removal is the fix rather than
+    # tidying (ASSA-144 box 4). It printed "recorded an empty source list, so there is nothing
+    # to compare" on a PASS, which is the sentence a forged empty stamp wanted said about it.
+    # EMPTY is now either declined by the exemption and RED above, or accepted by it and
+    # reported as NO ART PATH on the line before this one, so reaching here is impossible.
     return 0
 
 
