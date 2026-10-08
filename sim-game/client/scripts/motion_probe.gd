@@ -156,6 +156,59 @@ static func requested_path() -> String:
 	return path_in(OS.get_cmdline_user_args())
 
 
+## **WHERE A RELATIVE REPORT PATH GOES, WHICH IS NOT WHERE THE PROCESS HAPPENS TO STAND** (ASSA-313).
+##
+## MEASURED, on the macOS zip from run 37778116449, running the packaging README's own line:
+## `Assay.app/Contents/MacOS/Assay -- --motion-probe motion.txt 10` in the unzipped folder exited 0,
+## printed "report written", and left the file at **`Assay.app/Contents/Resources/motion.txt`** --
+## inside the bundle, behind Show Package Contents. Godot's macOS launcher chdirs into the bundle's
+## resources, so the process's working directory is not the player's. Both READMEs promise "it leaves
+## motion.txt beside this README", and on a Mac that sentence was false.
+##
+## So a relative path is measured from THE FOLDER THE PLAYER UNZIPPED, never from the CWD, which also
+## makes the one case nobody can type a line for -- a double-click -- land somewhere findable. An
+## absolute path is passed through untouched: every CI step and hand-run passes one, and a resolver
+## that "helped" them would move a file somebody is already reading.
+##
+## Three pieces on purpose: the arithmetic is two pure functions a test can drive with fixture paths
+## for both platforms, and the OS lookup is the three lines below with no arithmetic in them.
+static func requested_report_path() -> String:
+	var folder := unzipped_folder(OS.get_executable_path())
+	if not OS.has_feature("template"):
+		# AN EDITOR RUN'S EXECUTABLE IS GODOT'S OWN, not ours, so the rule above would aim at
+		# /Applications. A developer's relative path belongs in the checkout they are standing in.
+		folder = ProjectSettings.globalize_path("res://").trim_suffix("/")
+	return report_path_for(requested_path(), folder)
+
+
+## THE FOLDER A PLAYER SEES, given the binary that is running. On Windows and Linux that is the
+## executable's own directory, which is where the README sits. On macOS the executable is three levels
+## down inside `Assay.app`, so we walk out of the bundle: the `.app` is the thing a player drags
+## around, and the folder holding it is the one they unzipped.
+static func unzipped_folder(executable: String) -> String:
+	var dir := executable.get_base_dir()
+	# Bounded, and the bound is the shape of a bundle: MacOS -> Contents -> Assay.app. Four steps so a
+	# deeper layout still finds it, and a `.app` nowhere in the ancestry leaves `dir` alone.
+	var probe := dir
+	for _step in range(4):
+		if probe == "" or probe == "/":
+			break
+		if probe.get_file().to_lower().ends_with(".app"):
+			return probe.get_base_dir()
+		probe = probe.get_base_dir()
+	return dir
+
+
+## A relative path joined to that folder; anything else handed back exactly as it came in. `""` is a
+## normal run with no probe asked for and must stay `""`, because that is what `main.gd` tests.
+## `is_absolute_path()` is the engine's own rule and it covers all four forms a caller can type:
+## `/tmp/x`, `C:\Users\...`, `res://` and `user://`.
+static func report_path_for(raw: String, folder: String) -> String:
+	if raw == "" or raw.is_absolute_path() or folder == "":
+		return raw
+	return folder.path_join(raw)
+
+
 ## Optional seconds after the path: `-- --motion-probe out.txt 12`. Defaults to the dev tool's 8.
 static func requested_seconds(fallback := 8.0) -> float:
 	return seconds_in(OS.get_cmdline_user_args(), fallback)
