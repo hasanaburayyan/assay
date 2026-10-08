@@ -84,6 +84,7 @@ REVIEW = os.path.join(ROOT, "assets", "review")
 
 sys.path.insert(0, ART)
 import review_layout  # noqa: E402
+import design_row_dump  # noqa: E402
 from ask_layout import CannotCheck, ask_the_engine  # noqa: E402
 
 #: Perturb the engine's answer as a client change would. See the docstring.
@@ -109,34 +110,41 @@ GENERATOR = {
 #: The only probe this check knows how to re-ask. A sheet naming any other is NO VERDICT, never
 #: green: the day a second probe appears, `ask_layout` grows a parameter and this grows a row --
 #: and until then a stamp this cannot reproduce must not be read as one that matched.
-ASKABLE = {"pack_icon_layout.gd": lambda: ask_the_engine(
-    "ASSA-151: a review sheet claims it was drawn from this layout, and only the engine can say "
-    "whether that is still the layout the client has.")}
-
-#: THE ONE SHEET THAT CANNOT DECLARE ITSELF YET, NAMED OUT LOUD WITH ITS REASON (CO-6).
-#:
-#: `design_rows.png` is a picture of a client panel -- `design_row_sheet.py` is drawn from
-#: `design_row_layout.gd`'s answer -- so an `art-only` declaration on it would be a lie, and a
-#: layout stamp would need a digest of the bench run that drew it, which nobody has.
-#:
-#: **THE REASON PRINTED HERE WAS WRONG FOR THREE DAYS AND I WROTE IT** (ASSA-173). It said the probe
-#: needs a LIVE RELAY with designs in it, so nobody without a bench up could redraw the sheet. Both
-#: halves were true when filed and neither is the blocker: `button_session.gd designs=` has built
-#: that world offline from a seed since #357, and the thing actually stopping the redraw was that
-#: the probe ran `--headless`, where no layout pass runs -- it reported 98 drawn lines for a
-#: four-line paragraph and `design_row_sheet.py` refused the dump every time. A relay would not have
-#: helped anyone. The probe left `--headless` in this change; what is left is the picture itself,
-#: which is ONE design where the old bench had several, so the Game Director judges it before it
-#: lands.
-#:
-#: This is the same narrow shape `check_review_sources.py` already uses for the same sheet
-#: (`composites_no_art`): one named sheet, the reason printed every run, and designed to become
-#: dead code the first time somebody redraws it with a bench running. What it is NOT is the thing
-#: CO-6 was filed about -- a whole CLASS passing by default, unnamed and unexplained.
-UNDECLARABLE = {
-    "design_rows.png": "drawn from design_row_layout.gd; the probe runs in a real window now "
-                       "(ASSA-173), so what is left is the Game Director judging the new picture",
+ASKABLE = {
+    "pack_icon_layout.gd": lambda: ask_the_engine(
+        "ASSA-151: a review sheet claims it was drawn from this layout, and only the engine can "
+        "say whether that is still the layout the client has."),
+    # THE SECOND PROBE, AND THE ROW THE COMMENT ABOVE PROMISED (ASSA-173). It costs three Godot
+    # runs rather than one -- two offline demo runs for the bench's two verdicts, then the layout
+    # probe over the merge -- so the whole chain lives in `design_row_dump` and both the generator
+    # and this check call the one definition. Measured before it was wired: two independent full
+    # chains digest identically (b988766c5d5bb8b0), so this is a comparison and not a flake, the
+    # same thing `review_layout`'s header measured for the first probe.
+    design_row_dump.PROBE: lambda: _ask_the_bench(),
 }
+
+
+def _ask_the_bench():
+    """`design_row_layout.gd`'s answer today, in a scratch directory that does not survive."""
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="design-rows-") as scratch:
+        return design_row_dump.layout_now(scratch)
+
+#: SHEETS THAT CANNOT DECLARE THEMSELVES YET, NAMED OUT LOUD WITH THEIR REASON (CO-6).
+#:
+#: **EMPTY SINCE ASSA-173, WHICH IS WHAT IT WAS BUILT FOR.** Its only entry was `design_rows.png`,
+#: and the exemption did its job in the way an exemption should: it stayed visible, printed its
+#: reason on every run, and was deleted by the commit that removed the need for it rather than
+#: surviving as a habit. The counts went `3 current, 5 art only, 1 no stamp yet` -> `4 current,
+#: 5 art only`, and the `NO STAMP YET` class now never prints.
+#:
+#: **THE REASON PRINTED HERE WAS WRONG FOR THREE DAYS AND I WROTE IT** -- it said the probe needs a
+#: LIVE RELAY with designs in it. That was the first of three wrong blockers on that item, none of
+#: them the real one (the probe is fine headless; what was missing was a REPRODUCIBLE chain the
+#: check could re-run, which is now `design_row_dump.py`). Kept as a dict rather than deleted
+#: outright because the mechanism is sound and the next sheet in this position should land in a
+#: named list with a reason, not in silence -- which is the whole finding of CO-6.
+UNDECLARABLE = {}
 
 # `ART_DECLARED` and not `ART`: `ART` is this module's path to the art folder, and naming
 # a state the same thing made every generator "not there" -- a collision I shipped into my
