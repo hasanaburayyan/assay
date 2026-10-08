@@ -416,12 +416,20 @@ func test_a_letter_too_big_for_its_patch_is_not_drawn() -> bool:
 ## 1. **The overlap is real and is measured here**, not taken from the item. Two legal adjacent 2x2
 ##    footprints at cell 9 (no occupancy conflict — the normal thing anyone building a factory does).
 ##    If it ever stops overlapping, this fails as a stale test rather than passing vacuously.
-## 2. **`_draw` paints every machine's outward keyline before any machine's band** — two loops over
-##    `shapes`, not one. Nothing headless can read a `draw_rect` back off a canvas, so the order is a
-##    source scan, which is exactly the cost Maren named for this mechanism: *"makes paint order
-##    load-bearing for a correctness property, which is the kind of thing that dies in a refactor
-##    with no test."* This is the test.
-func test_two_adjacent_machines_paint_every_keyline_before_any_band() -> bool:
+## 2. **`_draw` paints every machine's RIMS, then every PLAYER, then every machine's BAND** — Maren's
+##    rule 11.42, which widened 11.39 from per-mark to global and is **one order serving two items**:
+##    rims-before-bands is ASSA-289 (a neighbour's rim cannot eat a band) and rims-before-players is
+##    ASSA-278 box 7 / #392 (a rim cannot eat a person's fill). Nothing headless can read a
+##    `draw_rect` back off a canvas, so the order is a source scan, which is exactly the cost she
+##    named: *"makes paint order load-bearing for a correctness property, which is the kind of thing
+##    that dies in a refactor with no test."* This is that test, and whichever item had landed second
+##    inherits it rather than adding a parallel one.
+##
+## **THE SCAN GREW A LEG AND THE OLD TWO-LEG VERSION WOULD STILL HAVE PASSED THIS FILE**, which is
+## why it is worth saying: with the rims moved above the player pass, `first loop < rim < second loop
+## < band` is still true, so the previous assertion would have gone green on a change it was blind
+## to. A scan that cannot fail on the thing you just changed is not holding it.
+func test_machine_rims_then_players_then_bands() -> bool:
 	var cell := 9.0
 	var origin := AssayHud.MARGIN
 	# Maren's own case, from her probe: 2x2 at (54,56) and (56,56).
@@ -451,29 +459,53 @@ func test_two_adjacent_machines_paint_every_keyline_before_any_band() -> bool:
 		return _fail(("two adjacent 2x2 machines no longer overlap: the younger one's keyline covers "
 				+ "none of the older one's %d band px. If the geometry changed on purpose, this test "
 				+ "is stale and the paint-order scan below is guarding nothing.") % [band_px])
-	# **THE ORDER, AND IT IS THE ONLY HALF A CHANGE CAN BREAK.**
+	# **THE ORDER, AND IT IS THE ONLY HALF A CHANGE CAN BREAK.** Three marks in `_draw`'s own source,
+	# which must appear in this sequence: both of a machine's rims, then a person, then the band.
 	var source := FileAccess.get_file_as_string("res://scripts/main.gd")
 	if source == "":
 		return _fail("main.gd could not be read, so the order scan says nothing")
-	var first_loop := source.find("for shape_entry in shapes:")
-	var second_loop := source.find("for shape_entry in shapes:", first_loop + 1)
-	var rim_at := source.find("AssayHud.mark_ink_of(&\"building_keyline\", shape[\"keyline\"])")
+	var outward := source.find("frame_bands(shape[\"keyline_rect\"], AssayHud.MARK_KEYLINE_PX)")
+	var inward := source.find("frame_bands(shape[\"hole_rect\"], AssayHud.MARK_KEYLINE_PX)")
+	var player := source.find("AssayHud.mark_ink_of(&\"player_mine\" if mine else &\"player_theirs\"")
 	var band_at := source.find("AssayHud.mark_ink_of(&\"building\", shape[\"colour\"])")
-	if first_loop < 0 or rim_at < 0 or band_at < 0:
-		return _fail(("`_draw` no longer paints a machine's keyline (%d) and band (%d) out of a loop "
-				+ "over `shapes` (%d) through the map's table, so this scan says nothing")
-				% [rim_at, band_at, first_loop])
-	if second_loop < 0:
-		return _fail(("`_draw` paints machine keylines and bands in ONE loop over `shapes`, so a "
-				+ "younger machine's keyline is painted over an older machine's band: %d of its %d "
-				+ "band px (%.1f%%) on two legal adjacent 2x2 footprints. Rule 11.39 says the "
-				+ "keyline yields and the ink does not, so every keyline goes in a first pass and "
-				+ "every band in a second.") % [eaten, band_px, 100.0 * float(eaten) / float(band_px)])
-	if not (first_loop < rim_at and rim_at < second_loop and second_loop < band_at):
-		return _fail(("the two building passes are out of order: first loop@%d, keyline@%d, second "
-				+ "loop@%d, band@%d. The outward keyline belongs to the FIRST pass and the band to "
-				+ "the SECOND, or a neighbour's rim eats a band again (%d of %d px).")
-				% [first_loop, rim_at, second_loop, band_at, eaten, band_px])
+	var legs := {"the outward rim": outward, "the inward rim": inward, "a player": player,
+			"the band": band_at}
+	for leg: String in legs:
+		if int(legs[leg]) < 0:
+			return _fail(("`_draw` no longer paints %s through the map's table, so this scan says "
+					+ "nothing about paint order at all: outward@%d inward@%d player@%d band@%d")
+					% [leg, outward, inward, player, band_at])
+	# **THE TWO RIMS MUST BOTH BEAT THE PLAYER, AND THE PLAYER MUST BEAT THE BAND.** Named one leg at
+	# a time, because "the order is wrong" does not tell the next person which half they broke.
+	if not (outward < player):
+		return _fail(("11.42: a machine's OUTWARD rim (@%d) is painted after a player (@%d), so a rim "
+				+ "takes a person's fill — on main that was 13.1%% of your body and 30.8%% of a "
+				+ "partner's (ASSA-278 box 7). A separator goes before the people it stands among.")
+				% [outward, player])
+	if not (inward < player):
+		return _fail(("11.42: a machine's INWARD rim (@%d) is painted after a player (@%d). This is "
+				+ "the ring ASSA-278 shipped and it is the one that eats a person standing on a 1x1: "
+				+ "a partner kept 69.2%% of their cross without it and 38.5%% with it.")
+				% [inward, player])
+	if not (player < band_at):
+		return _fail(("11.42: a machine's BAND (@%d) is painted before a player (@%d). The band is the "
+				+ "mark's identity and goes last; moving it under the people hides the machine "
+				+ "instead of the person, which is ASSA-203's trade and was settled against.")
+				% [band_at, player])
+	# **AND THE LEG I ALMOST WROTE HERE WOULD HAVE ASSERTED NOTHING.** `maxi(outward, inward) <
+	# band_at` is implied by the three legs above — rims < player and player < band give it for free —
+	# so it could never fail, which is the shape of the pin that guarded paint order for four days
+	# while asserting nothing (ASSA-326). What is NOT implied is a rim painted *again* further down:
+	# the glyph pass repeats a lapped machine's band (ASSA-273 box 3), and a rim added beside it would
+	# land after every band in the frame and slip past all three legs. So this looks at the LAST rim.
+	var last_rim := maxi(source.rfind("frame_bands(shape[\"keyline_rect\"], AssayHud.MARK_KEYLINE_PX)"),
+			source.rfind("frame_bands(shape[\"hole_rect\"], AssayHud.MARK_KEYLINE_PX)"))
+	if last_rim > band_at:
+		return _fail(("11.42: `_draw` paints a machine rim at %d, AFTER the first band at %d — a "
+				+ "second rim pass further down the frame. Every rim belongs in the one pass above "
+				+ "the players; a rim after a band covers %d of an adjacent machine's %d band px "
+				+ "(%.1f%%).") % [last_rim, band_at, eaten, band_px,
+				100.0 * float(eaten) / float(band_px)])
 	return true
 
 

@@ -169,18 +169,24 @@ func _case(name: String, foot: Vector2i, a_pos: Vector2i, b_pos: Vector2i) -> vo
 	var b_rect: Rect2 = b["rect"]
 	print("    A rect %s  B rect %s   rects overlap %s"
 			% [a_rect, b_rect, a_rect.intersection(b_rect).size])
-	for sequence: String in ["ONE PASS (main before #421)", "TWO PASSES (#421)"]:
+	for sequence: String in ["ONE PASS (main before #421)", "TWO PASSES (#421)",
+			"THREE PASSES (11.42)"]:
 		var grid := {}
-		if sequence.begins_with("ONE"):
-			_one_pass(grid, [a, b])
-		else:
-			_two_passes(grid, [a, b])
+		var slug := "two-passes"
+		match sequence.split(" ")[0]:
+			"ONE":
+				_one_pass(grid, [a, b])
+				slug = "one-pass"
+			"TWO":
+				_two_passes(grid, [a, b])
+			_:
+				_three_passes(grid, [a, b])
+				slug = "three-passes"
 		print("    %s" % sequence)
 		_report(grid, a, "A (older)")
 		_report(grid, b, "B (younger)")
 		if _png_dir != "":
-			_write(grid, [a, b], "%s-%s" % [_slug(name), "one-pass" if sequence.begins_with("ONE")
-					else "two-passes"])
+			_write(grid, [a, b], "%s-%s" % [_slug(name), slug])
 
 
 ## **THE GRID AS A PICTURE, ON THE REAL GROUND INK.** Only two things are visible to a player here:
@@ -229,6 +235,25 @@ func _two_passes(grid: Dictionary, marks: Array) -> void:
 		var mark: Dictionary = mark_entry
 		_bands(grid, mark["rect"], float(mark["stroke"]), BAND)
 		_bands(grid, mark["hole_rect"], AssayHud.MARK_KEYLINE_PX, DARK)
+
+
+## **MAREN'S RULE 11.42, WHICH IS WIDER THAN THE FIX I BUILT AND REACHES WHAT I SAID NOTHING COULD.**
+## *Paint order is global, not per-mark: one pass of every SEPARATOR, then PEOPLE, then every
+## IDENTITY.* Players are not modelled here — this probe has no world — so what it measures is the
+## half that bears on ASSA-289: **both rims of every machine before any machine's band.**
+##
+## I told her on the item that the 1x1 residual was out of reach of paint order, *"because a mark's
+## own rim is painted after its own band by construction"*. That construction is exactly what 11.42
+## dissolves. Measured here rather than conceded on paper.
+func _three_passes(grid: Dictionary, marks: Array) -> void:
+	for mark_entry in marks:
+		var mark: Dictionary = mark_entry
+		_bands(grid, mark["keyline_rect"], AssayHud.MARK_KEYLINE_PX, DARK)
+		_bands(grid, mark["hole_rect"], AssayHud.MARK_KEYLINE_PX, DARK)
+	# (pass 2 is the players, which need a world and are measured by `person_under_machine.gd`)
+	for mark_entry in marks:
+		var mark: Dictionary = mark_entry
+		_bands(grid, mark["rect"], float(mark["stroke"]), BAND)
 
 
 func _bands(grid: Dictionary, outer: Rect2, thickness: float, ink: StringName) -> void:

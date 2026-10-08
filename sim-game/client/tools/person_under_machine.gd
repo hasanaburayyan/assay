@@ -87,7 +87,7 @@ func _two_paint_orders(mark: Dictionary, at: Vector2) -> void:
 	print("")
 	print("  THE TWO PAINT ORDERS AT BUILDING_MARK_PX %.0f, SPLIT" % AssayHud.BUILDING_MARK_PX)
 	print("                            FILL lost      KEYLINE lost")
-	for named: Array in [["main (whole mark on top)", whole], ["#392 (rims under, band on top)",
+	for named: Array in [["before 11.42 (whole mark on top)", whole], ["11.42 (rims under, band on top)",
 			band_only]]:
 		var ink: Array[Rect2] = named[1]
 		var you := _split_loss(AssayHud.player_mark(at, true), ink)
@@ -150,8 +150,9 @@ func _band_neighbours(mark: Dictionary, at: Vector2) -> void:
 	var band := AssayHud.frame_bands(mark["rect"], float(mark["stroke"]))
 	var rim_bands := AssayHud.frame_bands(mark["hole_rect"], rim)
 	var hole: Rect2 = mark["hole_rect"]
-	for arm: String in ["rim AFTER the player pass (shipped, 1d8b6af)",
-			"rim BEFORE the player pass (option 3)", "no inward rim at all (main before 278)"]:
+	for arm: String in ["rim AFTER the player pass (before 11.42)",
+			"rim BEFORE the player pass (SHIPPED under 11.42)",
+			"no inward rim at all (main before 278)"]:
 		var rim_under := arm.begins_with("rim BEFORE")
 		var has_rim := not arm.begins_with("no inward")
 		print("")
