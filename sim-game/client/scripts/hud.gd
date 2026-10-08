@@ -1677,10 +1677,22 @@ static func hatch_segments(at: Vector2, radius: float) -> PackedVector2Array:
 ##   machine covers, so a 2x2's edges lie on its four tiles' outer edges. The diamond was a square
 ##   rotated 45 degrees off the only grid on the screen.
 ## - **It is hollow**, which is what lets the paint order stop being a choice -- see
-##   [constant BUILDING_STROKE_PX]. The stroke is drawn INWARD from the footprint's edge, so the frame
-##   never claims a tile the machine does not stand on.
-## - **The floor still applies** and on a 1x1 it overstates the tile; [constant BUILDING_MARK_PX]
-##   carries that admission rather than this function.
+##   [constant BUILDING_STROKE_PX]. The stroke is drawn INWARD from `outer`.
+## - **`outer` IS NOT THE FOOTPRINT'S EDGE, AND THIS BULLET SAID IT WAS** (Maren, 2026-10-08). It
+##   read *"the stroke is drawn INWARD from the footprint's edge, so the frame never claims a tile
+##   the machine does not stand on"* -- true the day it was written and false twice over since. The
+##   floor makes `outer` 20 px whatever the footprint is, and ASSA-278's keyline then grows 2 px
+##   OUTSIDE it. At the schematic's 9 px cell:
+##
+##     footprint   its own px   band px   painted px incl. the outward keyline
+##     1x1              9          20      24  = 2.67 tiles
+##     2x2             18          20      24  = 2.67 tiles  (every building in today's roster)
+##
+##   So the frame claims tiles the machine does not stand on, by design, and the sentence that
+##   denied it was the kind of prose that becomes somebody else's measurement.
+## - **The floor still applies** and it overstates every footprint we have at 9 px, not only a 1x1;
+##   [constant BUILDING_MARK_PX] carries that admission, with its +394% / +23% reading cost, rather
+##   than this function.
 ##
 ## `hole_points` IS NOT DECORATION: [method letter_occlusions] subtracts it, because a frame that
 ## reported its whole bounding box as covering a letter would say a machine lands on a letter it is

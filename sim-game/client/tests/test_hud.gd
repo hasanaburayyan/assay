@@ -2338,6 +2338,57 @@ func test_a_building_mark_has_a_floor_and_it_clears_a_persons_own_box() -> bool:
 	return true
 
 
+## **HOW MANY TILES A MACHINE'S MARK CLAIMS, HELD AS A NUMBER INSTEAD OF A SENTENCE** (ASSA-326,
+## Maren 2026-10-08).
+##
+## `building_mark`'s docstring said for months that the stroke is drawn inward from the footprint's
+## edge *"so the frame never claims a tile the machine does not stand on"*. It was true when written
+## and false twice over since: `BUILDING_MARK_PX`'s floor makes `outer` 20 px whatever the footprint
+## is, and ASSA-278's keyline then grows 2 px OUTSIDE that. Nothing noticed, because **nothing tests
+## prose** -- the same shape as the 16/20 that went stale in the same file, and as ASSA-174.
+##
+## So the corrected table is held here rather than merely rewritten. The failure message names the
+## docstring, because the point of this test is not that 24 is the right number -- it is that the
+## number in the prose is the number in the painter. A constant may move; the table moves with it or
+## this goes red.
+##
+## **IT ALSO ASSERTS THE DIRECTION, which is the claim that was actually wrong:** at the schematic's
+## own cell every footprint in today's roster is painted wider than the tiles it stands on. If a
+## future roster or cell makes that false for some footprint, this reddens and the paragraph above
+## has to be rewritten -- which is correct, because that sentence would then be true again.
+func test_a_machines_mark_claims_more_tiles_than_it_stands_on_and_the_docstring_says_how_many()\
+		-> bool:
+	# The schematic's own cell on the test world, from the painter, not typed: 96x64 tiles.
+	var cell := AssayHud.map_cell(Vector2i(96, 64))
+	if absf(cell - 9.0) > 1e-4:
+		return _fail(("the schematic's cell is %.2f px, not the 9 that `building_mark`'s table is "
+				+ "written at. The table is still the painter's arithmetic, but its numbers are "
+				+ "now about a cell nobody draws: rewrite it.") % cell)
+	# Every footprint the sim can hand us today: a planted machine and a smelter.
+	for foot: Vector2i in [Vector2i(1, 1), Vector2i(2, 2)]:
+		var mark := AssayHud.building_mark({"pos": Vector2i(40, 30), "footprint": foot}, cell,
+				Vector2.ZERO)
+		var painted: Rect2 = mark["keyline_rect"]
+		var want: float = maxf(float(maxi(foot.x, foot.y)) * cell, AssayHud.BUILDING_MARK_PX) \
+				+ 2.0 * AssayHud.MARK_KEYLINE_PX
+		if absf(painted.size.x - want) > 1e-4 or absf(painted.size.y - want) > 1e-4:
+			return _fail(("a %s machine paints %s, and the floor plus the outward keyline make "
+					+ "%.1f px: the mark's outermost rect is not what this function's own "
+					+ "constants say it is") % [foot, painted.size, want])
+		if absf(painted.size.x - 24.0) > 1e-4:
+			return _fail(("a %s machine is painted %.1f px across at a 9 px cell and "
+					+ "`building_mark`'s docstring table says 24 (2.67 tiles). One of them is "
+					+ "stale and it is not the painter: update the table in that docstring.")
+					% [foot, painted.size.x])
+		if painted.size.x <= float(foot.x) * cell:
+			return _fail(("a %s machine stands on %.0f px of tiles and is painted %.1f px, so the "
+					+ "frame no longer claims a tile it does not stand on. That makes "
+					+ "`building_mark`'s corrected bullet wrong in the other direction -- rewrite "
+					+ "it, do not delete this check") % [foot, float(foot.x) * cell,
+					painted.size.x])
+	return true
+
+
 ## **THE WINDOW SAYS "dead end" IN THE SIM'S WORDS, AND NEVER IN ITS OWN** (ASSA-158).
 ##
 ## Maren's ruling is that a permanent dead end may not be drawn in the same series as a cost: one
