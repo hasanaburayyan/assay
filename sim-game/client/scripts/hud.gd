@@ -102,15 +102,7 @@ const LOG_TOGGLE_H := 28.0
 ## deposit's colour against it to decide whether a letter on top should be dark or light.
 const MAP_BG := Color(0.10, 0.11, 0.13)
 
-## **THE PLATE THE TITLE SCREEN WORDS WILL STAND ON -- MEASURED, SPECIFIED, AND NOT YET BUILT**
-## (ASSA-292, ASSA-276 §4). Nothing reads these two constants yet and that is deliberate: they are the
-## derivation, kept where the next slice needs it rather than in a comment on a pull request. The
-## plate itself was attempted and withdrawn the same night -- the rectangle it produced in a real
-## window did not match the one its own arithmetic asks for, and a half-working panel in the draw path
-## is worse than an honest absence. **Until it is built, the words on the lit door read INK 2.10:1 and
-## INK_MUTED 1.00:1, so this screen FAILS Marens floor 1.**
-##
-## `build_theme.gd`s SURFACE
+## **THE PLATE THE TITLE SCREEN WORDS STAND ON** (ASSA-292, ASSA-276 §4). `build_theme.gd`s SURFACE
 ## -- the same surface every panel in the game is drawn on -- at an alpha DERIVED and not chosen.
 ##
 ## THE DERIVATION, so the next person can redo it rather than trust it. Measured on a real 1x frame
@@ -129,6 +121,27 @@ const DOOR_PLATE := Color(0.145, 0.157, 0.188, 0.90)
 ## How far the plate stands outside the words it carries. `MARGIN.y` worth of air on every side, so
 ## the plate reads as a panel in this games own idiom rather than as a highlighter stroke.
 const DOOR_PLATE_PAD := 24.0
+
+
+## WHERE THE PLATE GOES: the words it carries, padded, AND CLIPPED TO THE DOOR IT SITS IN.
+##
+## **THE INTERSECTION IS THE WHOLE FIX AND IT IS WHY THIS IS ARITHMETIC AND NOT LAYOUT CODE**
+## (ASSA-292). The first version of this plate read the laid-out children and padded their union, and
+## in a real window it produced a **565x1452** rectangle inside a 912x672 door -- taller than the
+## screen. The cause is a trap this file already knew about one caller away (`main.gd`, the make row):
+## **`autowrap_mode` does NOT lower a Labels reported minimum**, so the door sentence can be measured
+## mid-layout at a width it will never be drawn at, and its height balloons. Chasing that number was
+## the wrong move; a plate that CANNOT be bigger than its door makes the whole family of causes
+## unable to reach the screen.
+##
+## Taking rects as arguments rather than reading nodes is the other half: it is testable headless with
+## hand-made rects, including the 1404 px one that actually happened, which a function that read the
+## scene could only be tested against a real window.
+##
+## An empty rect is a legitimate answer -- content entirely off the door -- and the caller hides.
+static func door_plate_rect(door: Rect2, content: Rect2) -> Rect2:
+	var pad := Vector2(DOOR_PLATE_PAD, DOOR_PLATE_PAD)
+	return Rect2(content.position - pad, content.size + pad * 2.0).intersection(door)
 
 ## THE FOUR MARKS ON A MAP THAT ARE NOT A SPECIES, named, because until now they were six `Color(...)`
 ## literals inside `main.gd::_draw`.

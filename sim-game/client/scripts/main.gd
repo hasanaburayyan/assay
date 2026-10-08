@@ -88,6 +88,15 @@ var _door_title := Label.new()
 ## **IT IS THE SEED SOLO PLAYS, BY REFERENCE.** `AssaySoloRelay.DEFAULT_SEED`, never a copy of its
 ## digits, because the design is *"press the button and you walk into the field you were looking at"*
 ## and that sentence is only true while the two seeds are the same one.
+## **THE PLATE THE WORDS STAND ON** (ASSA-292, Maren: *"THE PLATE IS APPROVED, with floors"*).
+##
+## **IT IS THE SIZE OF THE TEXT, NOT THE SIZE OF THE DOOR, AND THAT IS FLOOR 2 OBEYED RATHER THAN
+## QUOTED.** Her warning: *"a scrim may help and may not be the whole answer. Dimming the world until
+## text passes is how a title screen becomes a flat field with extra steps."* The arithmetic agrees:
+## to lift `INK_MUTED` to 4.5:1 against the worst pixel the lit world actually puts behind a word --
+## (244,154,81), an ore deposit -- a FULL-DOOR scrim needs alpha 0.73. A plate the size of the words
+## needs the same alpha over about a tenth of the door and leaves the rest of the world alone.
+var _door_plate := ColorRect.new()
 var _door_sim := AssaySimHost.new()
 ## Ore in the door world, computed ONCE. The live `_ore_under` re-caches on `_sim.tick()`; this world
 ## never ticks, so the only thing that could move the answer is the camera, and the margin below
@@ -785,6 +794,13 @@ func _build_ui() -> void:
 	# over the map, and a Container does NOT inherit the note's filter. IGNORE does not apply to
 	# children, so every button inside it still gets its clicks -- and the failure if it did would
 	# read as "Play solo does nothing", nowhere near this line.
+	# **BETWEEN THE WORLD AND THE WORDS**: added after `_world` so it covers the picture, before
+	# `_front_door` so the words sit on it. `MOUSE_FILTER_IGNORE` for the reason everything else over
+	# this map has it -- the map is clicked through `_unhandled_input`.
+	_door_plate.color = AssayHud.DOOR_PLATE
+	_door_plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_door_plate.visible = false
+	add_child(_door_plate)
 	_front_door.position = door.position
 	_front_door.size = door.size
 	_front_door.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -3628,6 +3644,45 @@ func _clear(box: Node) -> void:
 ## fact, which is why it is set here rather than on a predicate of its own -- Maren's Gap 5 is one
 ## ruling about one screen, and two conditions for it is how a door and a column end up both on
 ## screen for a frame.
+## THE PLATE, FITTED TO THE WORDS AND BOUNDED BY THE DOOR (ASSA-292).
+##
+## **`get_global_rect()` AND NOT MY OWN `parent.position + child.position`**, which is what the
+## withdrawn first version did. A hand-rolled walk up the tree is a second implementation of
+## something the engine already knows, and it is wrong the moment a child is nested one level deeper
+## than I assumed -- the kind of defect that looks like a layout mystery.
+##
+## The judgement is all in `AssayHud.door_plate_rect`, which clips to the door, so the worst this
+## function can do is ask about a rectangle that is not there yet. That case hides the plate: before
+## a layout pass every child is 0x0, which is the headless state, so headless draws no plate and
+## nothing in the suite asserts this node -- the arithmetic is tested directly instead and the
+## picture is measured off the PNG.
+func _place_door_plate(showing: bool) -> void:
+	_door_plate.visible = false
+	if not showing:
+		return
+	var content := Rect2()
+	var found := false
+	for child in _front_door.get_children():
+		var control := child as Control
+		if control == null or not control.is_visible_in_tree():
+			continue
+		var rect := control.get_global_rect()
+		if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+			continue
+		content = rect if not found else content.merge(rect)
+		found = true
+	if not found:
+		return
+	var plate := AssayHud.door_plate_rect(AssayHud.join_rect(), content)
+	# A sliver is not a plate. Below one pad in either direction the words are not standing on
+	# anything, and drawing it would be a dark line across the world for no legibility at all.
+	if plate.size.x < AssayHud.DOOR_PLATE_PAD or plate.size.y < AssayHud.DOOR_PLATE_PAD:
+		return
+	_door_plate.position = plate.position
+	_door_plate.size = plate.size
+	_door_plate.visible = true
+
+
 func _refresh_front_door() -> void:
 	# **THE PREDICATE IS "AM I IN A WORLD I CAN SEE", AND IT USED TO BE "IS ANYTHING DRAWN"**
 	# (ASSA-292). `_world.view.is_empty()` alone was a correct proxy for exactly as long as the door
@@ -3641,6 +3696,7 @@ func _refresh_front_door() -> void:
 	# the column up over nothing.
 	var empty: bool = not _sim.running() or _world.view.is_empty()
 	_front_door.visible = empty
+	_place_door_plate(empty)
 	_door_backdrop.visible = empty
 	if _column != null:
 		_column.visible = not empty

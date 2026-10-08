@@ -1870,3 +1870,50 @@ func test_the_dead_end_label_comes_from_the_sim_and_not_from_this_client() -> bo
 	if main_src.contains("_note(\"— %s\" % dead_end)"):
 		return _fail("the dead end is still drawn in the cost clause's em-dash series")
 	return true
+
+
+## **THE DOOR PLATE CAN NEVER BE BIGGER THAN THE DOOR** (ASSA-292).
+##
+## THIS TEST EXISTS BECAUSE THE FIRST PLATE WAS 565x1452 INSIDE A 912x672 DOOR -- taller than the
+## whole window -- and I could not explain it from the scene, so I withdrew it rather than patch it.
+## The cause is reachable from `main.gd`'s own note one caller away: `autowrap_mode` does not lower a
+## Label's reported minimum, so the door sentence can be measured at a width it will never be drawn
+## at and its height balloons. **The fix is not to chase that number but to make it unable to reach
+## the screen**, and that is one `intersection`.
+##
+## The pathological case is a real measurement and not an invented one, which is the difference
+## between a regression test and a test that agrees with me.
+func test_the_door_plate_is_always_inside_the_door() -> bool:
+	var door := AssayHud.join_rect()
+	var pad := AssayHud.DOOR_PLATE_PAD
+	# 1. THE ORDINARY CASE: a block of words near the middle of the door is padded on every side.
+	var words := Rect2(door.position + Vector2(200.0, 250.0), Vector2(500.0, 210.0))
+	var plate := AssayHud.door_plate_rect(door, words)
+	if not door.encloses(plate):
+		return _fail("an ordinary block of words produced a plate %s outside the door %s"
+				% [plate, door])
+	if not plate.encloses(words):
+		return _fail("the plate %s does not contain the words %s it is supposed to carry"
+				% [plate, words])
+	if absf(plate.size.x - (words.size.x + pad * 2.0)) > 0.01 \
+			or absf(plate.size.y - (words.size.y + pad * 2.0)) > 0.01:
+		return _fail("the plate is %s for words %s: that is not one pad of air on each side"
+				% [plate.size, words.size])
+	# 2. **THE REGRESSION, WITH THE NUMBER THAT ACTUALLY HAPPENED.** A 1404 px tall content rect is
+	# what a mid-layout autowrap Label reported on the night this was withdrawn.
+	var ballooned := Rect2(door.position, Vector2(517.0, 1404.0))
+	plate = AssayHud.door_plate_rect(door, ballooned)
+	if not door.encloses(plate):
+		return _fail(("content %s (the real mid-layout measurement) produced a plate %s outside the "
+				+ "door %s: the clip is gone and a Label's minimum can paint over the window again")
+				% [ballooned.size, plate, door])
+	if plate.size.y > door.size.y:
+		return _fail("the plate is %.0f px tall in a %.0f px door" % [plate.size.y, door.size.y])
+	# 3. CONTENT NOWHERE NEAR THE DOOR IS AN EMPTY PLATE, not a plate somewhere else. The caller
+	# reads this as "nothing to stand on yet" and draws nothing.
+	var elsewhere := Rect2(door.end + Vector2(500.0, 500.0), Vector2(100.0, 100.0))
+	plate = AssayHud.door_plate_rect(door, elsewhere)
+	if plate.size.x > 0.0 and plate.size.y > 0.0:
+		return _fail("words %s are off the door entirely and still produced a plate %s"
+				% [elsewhere, plate])
+	return true
