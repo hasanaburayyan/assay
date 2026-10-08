@@ -1090,5 +1090,38 @@ fn the_plain_empty_answer_offers_no_ladder() {
             "the sentence quotes a rate, which is a recipe fact and belongs \
              where a player would act on it (Maren, ASSA-257): {too_poor}"
         );
+        // **THE FULL STOP AND THE ABSENT SEMICOLON ARE A RULING THAT NOTHING
+        // ASKED FOR UNTIL NOW** (Maren, ASSA-257, ruled after #352 had already
+        // landed). Her reason is VALENCE: the clauses before the ladder close a
+        // door and the ladder opens one, so a semicolon — *same thought, read
+        // straight on* — fuses a cost with a dead end and leaves the remedy
+        // reading as an afterthought to the bad news. It is the half a player
+        // can act on.
+        //
+        // It lived in one format string and a comment, and a rule that lives
+        // only in a comment is one this file has watched rot twice: the
+        // capitalised `contains` two assertions up, and the case-sensitive
+        // negative above it that sat green over the exact lie it forbids.
+        //
+        // ASSERTED ON WHAT PRECEDES THE CLAUSE, not on a punctuation mark
+        // somewhere in the string: the claim is that the ladder STARTS a
+        // sentence, which is where the reversal gets its signal.
+        let (before_ladder, _) = too_poor
+            .to_lowercase()
+            .split_once("sorting lifts a grade")
+            .map(|(head, tail)| (head.to_string(), tail.to_string()))
+            .expect("the presence assertion above has already proved the clause is in here");
+        assert!(
+            before_ladder.trim_end().ends_with('.'),
+            "the ladder clause does not begin its own sentence — it is joined to \
+             the dead end by {:?}, and the two pull opposite ways (Maren, \
+             ASSA-257): {too_poor}",
+            before_ladder.trim_end().chars().last()
+        );
+        assert!(
+            !too_poor.contains(';'),
+            "a semicolon puts a dead end and its way out in one series, which is \
+             the shape ASSA-158 ruled against (Maren, ASSA-257): {too_poor}"
+        );
     }
 }
