@@ -206,6 +206,15 @@ func _initialize() -> void:
 	_style_scroll(theme)
 	_style_track(theme)
 
+	# **AFTER THE BUILD, BECAUSE IT ASKS THE THEME AND NOT THIS FILE** (ASSA-304). `_contrast_problems`
+	# above runs first and on constants; this one runs on the finished resource, which is the only
+	# thing that knows which states were actually declared and what bed each one landed on.
+	var unnamed := unnamed_ink_states(theme)
+	if not unnamed.is_empty():
+		for line in unnamed:
+			print("  ", line)
+		_fail("a control's label is drawn in a colour or on a bed this theme never named")
+		return
 	if DirAccess.make_dir_recursive_absolute("res://theme") != OK:
 		_fail("cannot make res://theme")
 		return
@@ -246,6 +255,106 @@ func _contrast_problems() -> PackedStringArray:
 	return problems
 
 
+## EVERY STATE GODOT CAN DRAW A BUTTON'S LABEL IN, with the stylebox whose fill is the bed it is
+## drawn on. Six, and this theme named four of them.
+const BUTTON_INK_STATES := [
+	["font_color", "normal"],
+	["font_hover_color", "hover"],
+	["font_pressed_color", "pressed"],
+	# NO `hover_pressed` STYLEBOX EXISTS IN THIS THEME, and the engine's own fallback for that state
+	# is the pressed box, so that is the bed this measures against. Looked up below rather than
+	# assumed, so declaring one later moves the measurement with it.
+	["font_hover_pressed_color", "hover_pressed"],
+	["font_focus_color", "focus"],
+	["font_disabled_color", "disabled"],
+]
+
+## **DISABLED TEXT HAS ITS OWN FLOOR RATHER THAN AN EXEMPTION** (ASSA-304). WCAG 1.4.3 exempts
+## *"text that is part of an inactive user interface component"* from 4.5:1, and both disabled inks
+## here are **3.91:1** -- a deliberate, long-standing choice I am not reopening inside a bug about
+## focus. But "exempt" would mean a disabled label could reach 1.39:1 and the build would shrug,
+## which is the shape of the defect this whole function exists to stop. So: a named lower floor, at
+## the same 3.0 the non-text marks use, which 3.91 clears and a ghost does not.
+const MIN_DISABLED_CONTRAST := 3.0
+
+
+## **NO LABEL IS DRAWN IN A COLOUR NOBODY CHOSE, IN ANY STATE** (ASSA-304; ASSA-237 box 6's claim,
+## which was true of every SURFACE and not yet of every STATE).
+##
+## **WHY `_contrast_problems` ABOVE COULD NOT CATCH THIS.** It is a hand-written list of pairs, and
+## every pair in it is real -- including `["primary button label", ON_ACCENT, ACCENT]`, which is the
+## pairing this very button fails at. It passed while the screen failed, because the pair it checks
+## is the one state that button is never in when you meet it. **A LIST OF PAIRS CAN ONLY CHECK THE
+## PAIRS SOMEBODY REMEMBERED TO WRITE DOWN**, and the whole family of defects here is forgetting.
+##
+## SO THIS ASKS THE THEME INSTEAD OF A TABLE. The types come from `get_type_variation_list`, so a
+## variation added tomorrow is covered the day it is added; the states come from the list above,
+## which is the engine's, not ours; and the bed is the fill of the stylebox the engine pairs with
+## that state, read back off the same theme. Nothing here is a second copy of a decision made
+## elsewhere in this file, so nothing here can disagree with one.
+##
+## **AN UNDECLARED STATE IS A FAILURE, NOT A FALLBACK.** A variation inherits `Button`'s colours, so
+## `Primary` could have taken a sensible `font_focus_color` from the base type -- and it would have
+## been `INK` on an accent fill, which is the pale-on-pale this palette has `ON_ACCENT` for. A bed
+## differs per variation, so an ink must be chosen per variation.
+##
+## **THE BOUND, because a loop over an empty list is a check that cannot fail** (and I have shipped
+## two of those this week): fewer than three button types means the enumeration broke, and that is
+## reported as a problem rather than as silence.
+##
+## **WHAT THIS DOES NOT COVER, SAID OUT LOUD.** `LineEdit` declares no `font_selected_color`, no
+## `font_uneditable_color` and no `selection_color`, so selected text in the host and name boxes --
+## on this same title screen -- is drawn by the engine today. It is the same class of defect and it
+## is NOT fixed here: the bed of selected text is a translucent selection colour, so both the fix
+## and the measurement are a different shape, and picking a selection colour is the Game Director's.
+## Named here so it is a known gap rather than a silent one.
+static func unnamed_ink_states(theme: Theme) -> PackedStringArray:
+	var problems := PackedStringArray()
+	var types: Array = [&"Button"]
+	for variation in theme.get_type_variation_list("Button"):
+		types.append(StringName(variation))
+	if types.size() < 3:
+		problems.append("only %d button type(s) found (%s): the variation list is not being read, "
+				% [types.size(), ", ".join(types)] + "so this check is passing over nothing")
+	for type: StringName in types:
+		for state in BUTTON_INK_STATES:
+			var ink_name := String(state[0])
+			var box_name := String(state[1])
+			if not theme.has_color(ink_name, type):
+				problems.append(("%s declares no %s, so Godot draws that state's label in its own "
+						+ "default -- a colour nobody here chose") % [type, ink_name])
+				continue
+			var bed: Variant = _bed(theme, type, box_name)
+			if bed == null:
+				problems.append("%s declares %s but no bed for it (%s), so what it is drawn on is "
+						% [type, ink_name, box_name] + "whatever the engine falls back to")
+				continue
+			var floor_at := MIN_DISABLED_CONTRAST if ink_name == "font_disabled_color" \
+					else MIN_CONTRAST
+			var ratio := AssayHud.contrast_ratio(theme.get_color(ink_name, type), bed)
+			if ratio < floor_at:
+				problems.append("%s %s on its %s fill: %.2f:1, needs %.1f:1"
+						% [type, ink_name, box_name, ratio, floor_at])
+	return problems
+
+
+## THE FILL A STATE'S LABEL IS DRAWN ON, or `null` when the theme has no box for it.
+##
+## **THE ENGINE'S OWN FALLBACK, NOT A GUESS**: a state with no stylebox of its own is drawn on the
+## `pressed` box if it is the hover-pressed one and on `normal` otherwise, which is what Godot does.
+## `null` rather than a default colour, so "there is no bed" is a reportable answer and not a
+## measurement against a surface nobody draws.
+static func _bed(theme: Theme, type: StringName, box_name: String) -> Variant:
+	var names := [box_name, "pressed"] if box_name == "hover_pressed" else [box_name]
+	for try_name: String in names:
+		if not theme.has_stylebox(try_name, type):
+			continue
+		var flat := theme.get_stylebox(try_name, type) as StyleBoxFlat
+		if flat != null:
+			return flat.bg_color
+	return null
+
+
 ## LABELS, AND THE THREE NAMES ANYTHING ELSE REACHES FOR. A type variation rather than a font-size
 ## override at the call site: `main.gd` says what a label IS ("Heading") and this file says how big
 ## that is, so the scale can be retuned once instead of at eight call sites.
@@ -280,6 +389,17 @@ func _style_button(theme: Theme) -> void:
 	# about controls that are pressed AND STAY pressed; Maren amended the item in place to say so,
 	# because the first wording would have failed any shot that caught a button mid-press.
 	theme.set_color("font_pressed_color", "Button", ACCENT)
+	# **THE SAME MOMENTARY FEEDBACK, UNDER A POINTER** (ASSA-304). Undeclared, this fell through to
+	# the engine's own default while the line above says what a pressed button's label is -- and a
+	# press almost always happens with the pointer on the control, so the engine's colour was the
+	# one actually drawn and ours was the exception. `Quiet` found this first and fixed only itself.
+	theme.set_color("font_hover_pressed_color", "Button", ACCENT)
+	# **FOCUS DOES NOT CHANGE WHAT A WORD MEANS, SO IT DOES NOT CHANGE ITS COLOUR** (ASSA-304, Maren).
+	# The focus STYLEBOX below has been designed since ASSA-224 -- *"a focus ring that is visible,
+	# because keyboard focus is the half nobody looks at"* -- and the ink of the same state was never
+	# named at all, so Godot drew it in its own 0.95 grey. The ring says "the keyboard is here"; the
+	# label goes on saying what the button does, in the ink this theme chose for it.
+	theme.set_color("font_focus_color", "Button", INK)
 	theme.set_color("font_disabled_color", "Button", INK_MUTED.darkened(0.25))
 	theme.set_stylebox("normal", "Button", _box(RAISED, BORDER))
 	theme.set_stylebox("hover", "Button", _box(RAISED.lightened(0.10), BORDER.lightened(0.15)))
@@ -313,6 +433,16 @@ func _style_primary_button(theme: Theme) -> void:
 	theme.set_color("font_color", name, ON_ACCENT)
 	theme.set_color("font_hover_color", name, ON_ACCENT)
 	theme.set_color("font_pressed_color", name, ON_ACCENT)
+	theme.set_color("font_hover_pressed_color", name, ON_ACCENT)
+	# **THIS IS THE DEFECT ASSA-304 IS ABOUT, AND IT WAS THE WORST PLACE IN THE CLIENT TO HAVE IT.**
+	# `Play solo` is the only Primary drawn focused (`main.gd` grabs focus on `tree_entered`), so the
+	# one button on the title screen was the one control taking Godot's 0.95 grey -- **1.39:1 on the
+	# accent**, measured by Maren on four real 1x frames including main's. Six other words on that
+	# screen passed. At 1x it read as a green pill with a ghost on it.
+	#
+	# `ON_ACCENT` is simply this variation's own ink: 9.51:1, the pair the build already refuses to
+	# ship under 4.5. The focus ring here inverts to `INK` (see below) and that is what marks focus.
+	theme.set_color("font_focus_color", name, ON_ACCENT)
 	theme.set_color("font_disabled_color", name, INK_MUTED)
 	theme.set_stylebox("normal", name, _box(ACCENT, ACCENT.darkened(0.15)))
 	theme.set_stylebox("hover", name, _box(ACCENT.lightened(0.12), ACCENT))
@@ -372,6 +502,12 @@ func _style_quiet_button(theme: Theme) -> void:
 	# have taken the accent out of the open tab and handed it straight back the moment a pointer
 	# crossed it, with every shot of an un-hovered strip looking fixed.
 	theme.set_color("font_hover_pressed_color", name, INK)
+	# **AND THE STATE NEITHER OF THOSE TWO FIXES REACHED** (ASSA-304). `Quiet` named its hover, its
+	# pressed and its hover-pressed and still left focus to the engine. It keeps its own resting ink
+	# rather than borrowing hover's `INK`: a focused toggle that brightened would compete with the
+	# open tab beside it, which is the exact defect ASSA-267 took the accent out of this weight for.
+	# Quiet's business is not shouting; the accent ring below is what says the keyboard is here.
+	theme.set_color("font_focus_color", name, INK_MUTED)
 	theme.set_color("font_disabled_color", name, INK_MUTED.darkened(0.25))
 	# **AN EDGE AT REST, AT LOWER ALPHA** (ASSA-233, Maren's 18:40Z ruling, which is her third on this
 	# clause and the only one carrying a measurement -- see `QUIET_EDGE`). A dim centred line across

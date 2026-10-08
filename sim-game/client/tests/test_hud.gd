@@ -1151,6 +1151,57 @@ func test_an_empty_bench_says_so_rather_than_showing_nothing() -> bool:
 ## actually is, so a `MAP_BG` that moves reddens this with both numbers in the message.
 ##
 ## The precedent is `check_species_tints.py`, which fails CI when two copies of a table drift.
+## **NO LABEL IN THE SHIPPED THEME IS DRAWN IN A COLOUR NOBODY CHOSE** (ASSA-304, Maren's finding).
+##
+## `Play solo` is the only `Primary` in the client drawn FOCUSED -- `main.gd` grabs focus on
+## `tree_entered` -- and no variation declared `font_focus_color`, so Godot drew the title screen's
+## one button in its own 0.95 grey: **1.39:1 on the accent**, measured on four real 1x frames
+## including main's. The theme's focus STYLEBOX has been designed since ASSA-224; the ink of the
+## same state was never named.
+##
+## **IT READS `theme/assay.tres`, NOT THE GENERATOR.** The generator refuses to write a bad theme,
+## which only covers the day somebody runs it; this covers the file that actually ships, so a
+## hand-edit or a forgotten regenerate fails here too. (ASSA-152's lesson, applied to the resource.)
+##
+## **AND IT MUTATES THE THEME TO PROVE ITS OWN DETECTOR FIRES.** A check that enumerates states is
+## exactly the kind that can quietly enumerate nothing -- I have shipped two of those this week --
+## so clause 2 erases the one colour this item is about from a duplicate and demands the check name
+## it. If `unnamed_ink_states` ever stops looking, clause 2 goes red while clause 1 stays green.
+func test_no_buttons_label_is_drawn_in_a_colour_the_theme_never_named() -> bool:
+	var builder = load("res://tools/build_theme.gd")
+	var theme: Theme = load("res://theme/assay.tres")
+	if theme == null:
+		return _fail("no theme/assay.tres to check")
+	# 1. THE SHIPPED RESOURCE, as it stands.
+	var problems: PackedStringArray = builder.unnamed_ink_states(theme)
+	if not problems.is_empty():
+		return _fail("the shipped theme leaves a label's state to the engine: %s"
+				% ", ".join(problems))
+	# AND THE ONE NUMBER THIS ITEM IS ABOUT, named rather than left inside the sweep: a focused
+	# primary is this theme's `ON_ACCENT` on the accent, not Godot's grey.
+	var on_accent: Color = builder.ON_ACCENT
+	var focused := theme.get_color(&"font_focus_color", &"Primary")
+	if not focused.is_equal_approx(on_accent):
+		return _fail("a focused Primary draws its label in %s and the theme's ink for that bed is "
+				% focused + "%s (ASSA-304 was Godot's (242,242,242) at 1.39:1)" % on_accent)
+	var ratio := AssayHud.contrast_ratio(focused, theme.get_stylebox(&"focus", &"Primary").bg_color)
+	if ratio < 4.5:
+		return _fail("a focused Primary reads %.2f:1 on its own focus fill" % ratio)
+	# 2. **THE LEVER.** Erase exactly the colour ASSA-304 was filed for and demand it is named.
+	var mutated: Theme = theme.duplicate(true)
+	mutated.clear_color(&"font_focus_color", &"Primary")
+	problems = builder.unnamed_ink_states(mutated)
+	var named := false
+	for line in problems:
+		if line.contains("Primary") and line.contains("font_focus_color"):
+			named = true
+	if not named:
+		return _fail(("a theme with Primary's font_focus_color deleted -- the exact ASSA-304 defect "
+				+ "-- produced %d problem(s), none naming it: %s") % [problems.size(),
+				", ".join(problems) if not problems.is_empty() else "(none at all)"])
+	return true
+
+
 func test_the_themes_borrowed_colours_are_still_the_ones_they_say_they_borrowed() -> bool:
 	var theme_script = load("res://tools/build_theme.gd")
 	var accent: Color = theme_script.ACCENT
