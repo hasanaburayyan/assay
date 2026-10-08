@@ -3445,7 +3445,14 @@ func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> b
 			x += 1.0
 		y += 1.0
 	var covered := float(on_letter) / float(maxi(mark_px, 1))
-	if covered < 0.8:
+	# **THE BAR MOVED WITH THE LETTER, NOT WITH THE CASE** (ASSA-293). This read 0.8 while the letter on
+	# a radius-4 patch was 32px; holding every letter at the size that fits a radius-2 patch makes the
+	# box on this deposit 23x27 instead, so the same machine on the same tile measures **72.4%** of its
+	# frame inside it (110 of 152 px). The mark is still landing on the middle of the letter, which is
+	# the premise; what shrank is the box the share is taken against. Said out loud rather than quietly
+	# relaxed: if 0.7 ever passes for a mark that has slid OFF the letter, this instrument is broken and
+	# the number to look at is this comment's.
+	if covered < 0.7:
 		ok = _fail(("a machine on the deposit's own centre tile %s puts %.1f%% of its frame (%d of "
 				+ "%d sampled px) inside the letter's box %s: the case this item is about is not in "
 				+ "this test") % [tile, covered * 100.0, on_letter, mark_px, box])
@@ -3581,6 +3588,44 @@ func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> b
 ## the mark. Nerite's `if false:` arm lives in that gap. The only cover for it is a 1x picture, so
 ## `window_shot.gd`'s marks table now reports `bedded` per letter -- the painter's own answer, beside
 ## the frame, for Maren's `disc02/05/12` arms to be checked against.
+## **EVERY LETTER IN ONE FRAME IS ONE SIZE** (ASSA-293, Maren's ruling). The painter, not the rule:
+## `AssayHud.letter_size` is unit-tested in `test_hud.gd`, and this asks the function that actually
+## publishes the marks, on a world the binding generated, whether any patch's own radius still reaches
+## the letter.
+##
+## **THE SPREAD OF RADII IS THE PREMISE AND IT IS CHECKED.** On a world where every deposit happened to
+## share a radius, a held size and a derived size produce identical marks, and this test would pass
+## without being about anything -- which is how I have shipped a test that could not fail before.
+func test_every_species_letter_in_the_frame_is_one_size() -> bool:
+	var screen := _joined_screen()
+	screen._show_close_up(false)
+	screen._refresh()
+	if screen._close_up or not screen._sim.running() or screen._cell <= 0.0:
+		screen.queue_free()
+		return _fail(("premise: close_up %s, running %s, cell %f -- `_draw` returns before any mark")
+				% [screen._close_up, screen._sim.running(), screen._cell])
+	var deposits: Array = screen._sim.deposits()
+	var radii := {}
+	for raw in deposits:
+		radii[int((raw as Dictionary).get("radius", 0))] = true
+	var marks: Array = screen._glyph_marks(deposits, ThemeDB.fallback_font)
+	var expected := AssayHud.letter_size(screen._cell)
+	screen.queue_free()
+	if radii.size() < 2:
+		return _fail(("premise: every deposit on this world has the same radius (%s), so a held letter "
+				+ "and a letter derived from the patch are the same mark") % [radii.keys()])
+	if marks.size() < 2:
+		return _fail("premise: %d letter(s) on this world, and two sizes need two letters"
+				% marks.size())
+	for raw in marks:
+		var glyph: Dictionary = raw
+		if int(glyph["size"]) != expected:
+			return _fail(("the letter at %s is %d px against the frame's %d: size is reading the "
+					+ "patch's radius again, which is the channel the disc under it already carries")
+					% [glyph.get("tile", Vector2i.ZERO), int(glyph["size"]), expected])
+	return true
+
+
 func test_a_letter_is_bedded_when_a_mark_laps_it_or_a_hatch_crosses_it() -> bool:
 	var screen := _joined_screen()
 	screen._show_close_up(false)

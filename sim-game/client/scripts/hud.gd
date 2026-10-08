@@ -490,8 +490,11 @@ const MAP_MARKS: Array[Dictionary] = [
 			"label": "the world, out to its edge"},
 	{"id": &"spawn", "shape": &"rect", "ink": SPAWN_PAD, "in_key": true,
 			"label": "where a joining player appears"},
+	# **THE SIZE IS NAMED HERE BECAUSE IT IS A CHANNEL, AND THE KEY SAID NOTHING ABOUT IT** (ASSA-293,
+	# Maren's ruling, in the table's own voice: the fact, not the shape). A disc's width is its
+	# patch's width, and two readers read it as two other things while this row stayed silent.
 	{"id": &"deposit", "shape": &"disc", "ink": MAP_BG, "data_ink": true, "in_key": true,
-			"label": "ore you can work"},
+			"label": "ore you can work · as wide as the patch"},
 	# `data_ink` SINCE ASSA-209: the hatch is near-black on a light disc and WHITE on a dark one, so
 	# the table's `MAP_BG` is an example and not the colour. `mark_ink_of` is what `_draw` calls.
 	{"id": &"dead_end", "shape": &"hatch", "ink": MAP_BG, "data_ink": true, "in_key": true,
@@ -1005,6 +1008,41 @@ static func glyph_color(on: Color) -> Color:
 static func glyph_size(drawn_radius: float) -> int:
 	var size := int(floorf(drawn_radius * 1.4))
 	return 0 if size < 10 else mini(size, 32)
+
+
+## THE SMALLEST PATCH THE SIM CAN GENERATE, in tiles: `worldgen`'s `rng.range(2, 5)` floor.
+## `tests/test_hud.gd` holds it against a world the binding actually generates, because a sim that
+## started rolling radius 1 would leave every letter here too big for the disc it sits on -- which is
+## the one thing `glyph_size` exists to prevent.
+const SMALLEST_PATCH_TILES := 2
+
+
+## **HOW BIG EVERY LETTER IS: ONE SIZE PER FRAME, AND IT IS NOT THIS PATCH'S SIZE** (ASSA-293, Maren's
+## ruling). The letter used to be sized by `glyph_size(this deposit's drawn radius)`, which made it a
+## LOSSY COPY of a channel the disc underneath already carries exactly: three radii, two letter sizes,
+## and over ten seeds **62.6% of deposits wore a letter indistinguishable from a differently sized
+## patch** (147 deposits, radius 2/3/4 = 55/53/39; `glyph_size` clamps at 32, so radius 3 and 4 draw
+## the identical letter at the shipped cell of 9).
+##
+## It cost two wrong cold reads from two readers, both taken off letters rather than discs: Nacre read
+## size as QUANTITY (ASSA-206), I read a big letter as HOVER (ASSA-278) -- and the two pink N's that
+## made me say it are 1.62x apart by area with the same species, in one frame. Amount has 3.5x of
+## range and belongs to a readout, not to an extent; selection is `hover_tile`'s outline and
+## `target`'s brackets. **So the disc keeps radius -- its edge is a claim about which tiles hold ore,
+## and ASSA-213 forbids a mark lying about position -- and the letter says nothing with its size.**
+##
+## THE SIZE IS THE ONE THAT FITS THE SMALLEST PATCH THE SIM CAN GENERATE, so `glyph_size`'s own fit
+## rule is satisfied by construction on every disc: anything bigger than a radius-2 patch has room to
+## spare. At the shipped cell of 9 that is 25px, which also shrinks 11 of the 16 letters in Cove's
+## seed-63 frame from 32 and can only reduce the letter/building overlap `case.overlaps` tracks.
+##
+## **THE CONSEQUENCE WORTH SAYING OUT LOUD: at a cell of 3px or less the map now draws NO letters**,
+## where before a radius-4 patch kept one. 2.8 x cell has to clear `glyph_size`'s 10px floor, so
+## letters need cell >= 4 -- a world past ~304 x 224 tiles on today's 912x672 map rect. That is this
+## file's existing rule ("below about 7px of radius COLOUR IS THE ONLY MAP READ") arriving for every
+## patch at once instead of for small ones first, and it is the honest end of one size per frame.
+static func letter_size(cell: float) -> int:
+	return glyph_size(float(SMALLEST_PATCH_TILES) * cell)
 
 
 ## **WHAT ONE SCHEMATIC DISC IS, INCLUDING WHETHER THE ROCK IS WORTH THE WALK** (ASSA-187, Maren's

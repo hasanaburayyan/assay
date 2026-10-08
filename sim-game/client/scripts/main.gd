@@ -4953,6 +4953,14 @@ func _glyph_marks(deposits: Array, font: Font, building_marks: Array = []) -> Ar
 	var marks := []
 	if font == null:
 		return marks
+	# **ONE SIZE FOR EVERY LETTER IN THE FRAME, AND IT IS NOT THIS PATCH'S SIZE** (ASSA-293, Maren's
+	# ruling; the measurement and the three readings it gives up are on `AssayHud.letter_size`). Read
+	# once, above the loop, so "one size per frame" is the shape of the code rather than a property
+	# somebody has to re-derive from the arithmetic inside it. A cell too small for a 10px letter means
+	# no letters at all, which is `glyph_size`'s own floor arriving for every patch at once.
+	var size := AssayHud.letter_size(_cell)
+	if size <= 0:
+		return marks
 	for entry in deposits:
 		var deposit: Dictionary = entry
 		if int(deposit.get("amount", 0)) <= 0:
@@ -4969,10 +4977,9 @@ func _glyph_marks(deposits: Array, font: Font, building_marks: Array = []) -> Ar
 		# the corner formula, which is why one defect sat in two places: a letter centred on `at` inherited
 		# the disc's half-tile error exactly.
 		var at := point_of_tile(centre)
+		# THE DISC STILL GETS THE PATCH'S OWN RADIUS, and that is the other half of the ruling: its edge
+		# is a claim about which tiles hold ore, and ASSA-213 forbids a mark lying about position.
 		var radius := maxf(_cell, float(int(deposit.get("radius", 1))) * _cell)
-		var size := AssayHud.glyph_size(radius)
-		if size <= 0:
-			continue
 		var disc := AssayHud.deposit_disc(deposit, radius)
 		var measured := font.get_string_size(symbol, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
 		var baseline := at + Vector2(-measured.x * 0.5, float(size) * 0.36)

@@ -403,6 +403,68 @@ func test_a_letter_too_big_for_its_patch_is_not_drawn() -> bool:
 	return true
 
 
+## **THE LETTER'S SIZE IS HELD, AND WHAT IT IS HELD AT IS THE SMALLEST PATCH THE SIM CAN MAKE**
+## (ASSA-293, Maren's ruling). Size used to be `glyph_size(this patch's drawn radius)` -- a lossy copy
+## of the disc's own channel, with 62.6% of deposits over ten seeds collapsed onto a shared letter
+## size. Held, it has to clear two bars at once: still legible, and still INSIDE the smallest disc it
+## can land on, which is the only fit `glyph_size` ever cared about.
+func test_the_letter_is_sized_for_the_smallest_patch_the_sim_can_make() -> bool:
+	# The shipped map: a 96x64 world in the 912x672 rect gives a 9px cell, and 25px is the letter the
+	# frame's own key records for a radius-2 patch (`08-whole-world-marks.json`, Maren's measurement).
+	var shipped := AssayHud.map_cell(Vector2i(96, 64))
+	if not is_equal_approx(shipped, 9.0):
+		return _fail("the shipped cell is %f, not 9: the numbers below are about a map nobody draws"
+				% shipped)
+	if AssayHud.letter_size(shipped) != 25:
+		return _fail("the shipped letter is %d px, not the 25 the frame's key records"
+				% AssayHud.letter_size(shipped))
+	for cell in [4.0, 6.0, 9.0, 12.0, 40.0]:
+		var size := AssayHud.letter_size(cell)
+		# INSIDE THE SMALLEST DISC, which is the whole reason the size is held at this one. 1.5x the
+		# drawn radius is the bound `glyph_size`'s own test uses.
+		var smallest: float = float(AssayHud.SMALLEST_PATCH_TILES) * float(cell)
+		if float(size) > smallest * 1.5:
+			return _fail("a %d px letter overflows the smallest patch at cell %f (radius %f px)"
+					% [size, cell, smallest])
+		if size < 10:
+			return _fail("a %d px letter at cell %f is under the legible floor" % [size, cell])
+	# **THE HONEST END OF ONE SIZE PER FRAME:** a cell this small drew a letter on big patches before
+	# and draws none on any patch now. Asserted rather than merely written down, because it is the one
+	# thing a reader of the ruling would want to know and the one regression a future cell change
+	# could hide.
+	for cell in [2.0, 3.0]:
+		if AssayHud.letter_size(cell) != 0:
+			return _fail(("cell %f still draws a %d px letter: below the floor the map is colour only, "
+					+ "for every patch at once") % [cell, AssayHud.letter_size(cell)])
+	return true
+
+
+## **THE CONSTANT THE HELD SIZE RESTS ON, AGAINST A WORLD THE BINDING ACTUALLY GENERATES.** If the sim
+## ever rolled a radius-1 patch, every letter on the map would be sized for a disc bigger than the one
+## it sits on -- a label for the tile next door, which is the defect `glyph_size` exists to prevent
+## and which holding the size would hide. `worldgen`'s `rng.range(2, 5)` is the source; this is the
+## only thing in the client that can notice it moving.
+func test_the_sim_never_makes_a_patch_smaller_than_the_letter_is_sized_for() -> bool:
+	var seen := 0
+	for seed_text in ["14247", "777042", "63"]:
+		var host := AssaySimHost.new()
+		if not host.start(AssaySimHost.fresh_welcome_json(seed_text, "limpet")):
+			return _fail("could not build seed %s: %s" % [seed_text, host.fail_reason])
+		for raw in host.deposits():
+			var deposit: Dictionary = raw
+			var radius := int(deposit.get("radius", 0))
+			if radius < AssayHud.SMALLEST_PATCH_TILES:
+				return _fail(("seed %s has a deposit of radius %d at %s, under the %d every letter is "
+						+ "sized to fit: the held letter would overflow that disc")
+						% [seed_text, radius, deposit.get("center", Vector2i.ZERO),
+						AssayHud.SMALLEST_PATCH_TILES])
+			seen += 1
+	# A sweep that read no deposits would pass the loop above in silence.
+	if seen < 3:
+		return _fail("only %d deposits were read across three seeds, so nothing was checked" % seen)
+	return true
+
+
 ## THE MAP MUST NOT RUN UNDER THE HUD. The panel's width comes out of the map's width term, so the map
 ## shrinks (Maren's ruling). Checked at several world sizes, including one far too big to fit.
 func test_the_map_always_stops_short_of_the_hud_column() -> bool:
