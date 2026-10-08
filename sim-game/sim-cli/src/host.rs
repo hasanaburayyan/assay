@@ -58,6 +58,9 @@ Player
   assemble <frame> <part>...  build a machine; the first part is the frame.
                               A handle is held (a pick), a frame is planted
                               (a drill): assemble handle:kel head:kel
+  design <frame> <part>...    weigh that machine WITHOUT building it: the
+                              verdict, its mass against the frame's budget,
+                              and whether your pack covers it. Spends nothing
   built                       what you have built, with mass against budget
   equip [n]                   take a held design in hand (default 0)
   unequip                     put your tool away, keeping its wear
@@ -757,6 +760,29 @@ impl Host {
                         mounted: mounted.to_vec(),
                     },
                 )?;
+            }
+            // THE REFERENCE CLIENT CAN NOW ASK WHAT A DESIGN WEIGHS WITHOUT
+            // SPENDING THE PARTS (ASSA-324). The Godot client has had this
+            // since ASSA-140 and headless play had not, which inverts
+            // principle 2 — text mode is the client that can do everything,
+            // not the one that has to buy the answer.
+            //
+            // Same resolver and the same `plan` the Build button runs, so this
+            // cannot flatter a design `assemble` would refuse.
+            "design" | "preview" => {
+                let usage = "Usage: design <frame> <part>..., e.g. design handle:kel head:kel. Weighs the machine without building it; `assemble` builds it.";
+                if args.len() < 2 {
+                    return Err(format!("Missing the frame.\n{usage}"));
+                }
+                let mut items = Vec::new();
+                for arg in args.rest(1) {
+                    items.push(resolve_item(s, Some(*arg), None)?);
+                }
+                let (frame, mounted) = items.split_first().expect("checked above");
+                let me = s.me()?;
+                let plan = sim::assembly::plan(*frame, mounted, &s.world.species, &me.inventory);
+                let id = me.id;
+                out!("{}", debug::design_preview(&s.world, id, &plan));
             }
             "equip" | "hold" => {
                 let assembly: u32 = optional_arg(args, 1, "number", 0).map_err(|e| {

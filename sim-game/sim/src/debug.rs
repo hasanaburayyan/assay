@@ -4,7 +4,7 @@
 use std::fmt::Write;
 
 use crate::assembly::{
-    Assembly, AssemblyError, BreakVerdict, Built, Mount, PART_SPECS, PartKind, Source,
+    Assembly, AssemblyError, AssemblyPlan, BreakVerdict, Built, Mount, PART_SPECS, PartKind, Source,
 };
 use crate::building::{
     Building, BuildingId, BuildingKind, BuildingState, Machine, MachineIdle, MachineStall,
@@ -829,7 +829,17 @@ pub fn event_line(
                 RejectReason::NotHandCraftable => {
                     "that needs a machine to make, not bare hands".to_string()
                 }
-                RejectReason::UnknownSpecies => "no such mineral in this world".to_string(),
+                // **SAID ONCE, FOR BOTH MOMENTS** (ASSA-324). These four are
+                // the whole vocabulary `assembly::plan` refuses with, so they
+                // are worded in `plan_refusal_phrase` where a host asking
+                // BEFORE the press can reach them too. Kept as named arms
+                // rather than a catch-all so a new `RejectReason` still fails
+                // this match to compile.
+                RejectReason::UnknownSpecies
+                | RejectReason::NotAPart(_)
+                | RejectReason::BadAssembly(_)
+                | RejectReason::MissingItems(_) => plan_refusal_phrase(world, *player, *reason)
+                    .expect("every reason on this arm is one `plan` can return"),
                 RejectReason::AlreadyAssayed => {
                     "that species is already assayed, so its sheet already reads exact"
                         .to_string()
@@ -853,12 +863,6 @@ pub fn event_line(
                 },
                 RejectReason::NoSuchPlayer => "nobody in this world has that name".to_string(),
                 RejectReason::AlreadyGranted => "they can already rename it".to_string(),
-                RejectReason::MissingItems(item) => {
-                    let have = world
-                        .player(*player)
-                        .map_or(0, |p| p.inventory.count(*item));
-                    format!("not enough {} (you have {have})", name(item))
-                }
                 RejectReason::WrongItem => "that's the wrong kind of item for this".to_string(),
                 RejectReason::AlreadyBestGrade => best_grade_note().to_string(),
                 RejectReason::RequirementNotMet(property, min) => format!(
@@ -889,16 +893,6 @@ pub fn event_line(
                     "that slot is full or holds a different item".to_string()
                 }
                 RejectReason::NothingToTake => "it has nothing waiting to be taken".to_string(),
-                RejectReason::BadAssembly(e) => assembly_error_phrase(*e),
-                // **THE SUBJECT IS THE KIND, NOT THE ITEM.** This refusal is
-                // categorical — no ore of any species or grade is a machine
-                // part — so naming "Korvite ore (B)" would imply some other
-                // ore might work, and `item.code()` (what this said until
-                // ASSA-102's QA found it) shows a player `ore#3(B)`, an id
-                // that exists for save files. It is also the only subject a
-                // host asking *before* the press can have: it holds a pack
-                // row's kind, not a rejected `Item`. One sentence, one noun.
-                RejectReason::NotAPart(item) => not_a_part_phrase(item.kind.name()),
                 RejectReason::NoSuchAssembly => {
                     "you have not built that design".to_string()
                 }
@@ -2764,6 +2758,74 @@ pub fn durability_readout(world: &World, built: &Built) -> String {
 /// against its true max once the sheet is known, a percentage of the pool's
 /// *class* while it is not. See the held branch for why a number there was a
 /// leak.
+/// The sentence a refusal from [`crate::assembly::plan`] reads as.
+///
+/// **ONE WORDING, TWO MOMENTS.** The event log says this AFTER a press; the
+/// headless `design` command and a build screen say it BEFORE one, off the same
+/// plan. Until ASSA-324 the only copy lived inside `event_line`'s match on a
+/// `CommandRejected` that had already happened, where a host asking *before*
+/// the press could not reach it — so the second copy was going to be written in
+/// GDScript, which is exactly how the window got two verdicts out of three
+/// wrong in ASSA-90.
+///
+/// `None` for any other reason. These four are the whole vocabulary
+/// `assembly::plan` has, and a caller holding anything else got it from some
+/// other command.
+pub fn plan_refusal_phrase(
+    world: &World,
+    player: PlayerId,
+    reason: RejectReason,
+) -> Option<String> {
+    Some(match reason {
+        RejectReason::UnknownSpecies => "no such mineral in this world".to_string(),
+        // **THE SUBJECT IS THE KIND, NOT THE ITEM.** This refusal is
+        // categorical — no ore of any species or grade is a machine part — so
+        // naming "Korvite ore (B)" would imply some other ore might work, and
+        // `item.code()` (what this said until ASSA-102's QA found it) shows a
+        // player `ore#3(B)`, an id that exists for save files. It was also
+        // called "the only subject a host asking *before* the press can have",
+        // which was written when no host could ask before the press; ASSA-324
+        // made that literal rather than hypothetical.
+        RejectReason::NotAPart(item) => not_a_part_phrase(item.kind.name()),
+        RejectReason::BadAssembly(e) => assembly_error_phrase(e),
+        RejectReason::MissingItems(item) => {
+            let have = world.player(player).map_or(0, |p| p.inventory.count(item));
+            format!("not enough {} (you have {have})", world.item_name(item))
+        }
+        _ => return None,
+    })
+}
+
+/// What a design would read if it were built, for one that has not been
+/// (ASSA-324).
+///
+/// **The readout is [`assembly_readout`], unchanged and unbranched.** A preview
+/// that worded its own verdict is the second copy this whole function exists to
+/// prevent, and the player-visible shape of that bug is a build screen saying
+/// SAFE over a button that refuses. What a preview adds is the one thing a
+/// machine already built never has to say: whether the pack can pay for it, and
+/// what is short.
+///
+/// **An unaffordable design is still weighed**, because `plan` still weighs it.
+/// A build screen has to price a machine before the pack can buy it, and
+/// `MissingItems` is the only refusal that leaves the design itself sound.
+pub fn design_preview(world: &World, player: PlayerId, plan: &AssemblyPlan) -> String {
+    let AssemblyPlan::Weighed { built, missing, .. } = plan else {
+        let reason = plan.refusal().expect("a Refused plan has a refusal");
+        return format!(
+            "no design: {}",
+            plan_refusal_phrase(world, player, reason)
+                .expect("`plan` only ever refuses with its own four reasons")
+        );
+    };
+    let pack = match missing {
+        None => "your pack covers it".to_string(),
+        Some(item) => plan_refusal_phrase(world, player, RejectReason::MissingItems(*item))
+            .expect("MissingItems is one of the four"),
+    };
+    format!("{}\n      {pack}", assembly_readout(world, built))
+}
+
 pub fn assembly_readout(world: &World, built: &Built) -> String {
     let a = &built.assembly;
     let range = a.stat_range(&world.species);
