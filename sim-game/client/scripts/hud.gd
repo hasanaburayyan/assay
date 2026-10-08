@@ -385,6 +385,19 @@ const MAP_MARKS: Array[Dictionary] = [
 	# the table's `MAP_BG` is an example and not the colour. `mark_ink_of` is what `_draw` calls.
 	{"id": &"dead_end", "shape": &"hatch", "ink": MAP_BG, "data_ink": true, "in_key": true,
 			"label": "hatched: nothing can get this ore out"},
+	# **A MACHINE'S KEYLINES MOVED DOWN THE STACK HERE, UNDER EVERY MARK THAT IS A PERSON** (ASSA-278
+	# box 7, Maren's option 3 and her 11.14: *a mark may take space from the ground for free and never
+	# from a person*). A keyline separates a mark from what it STANDS ON, which is the ground's
+	# business; the band -- the machine's whole identity now that the mark is hollow -- is still
+	# painted after the people, two rows below.
+	#
+	# **AND IT IS ONE ROW FOR BOTH OF THAT MARK'S RIMS, WHICH IS WHY HER RULING REACHED THE OUTWARD
+	# ONE TOO.** She ruled the INWARD rim under the players. `test_map_key.gd` holds this table AS the
+	# paint order, and `building_keyline` is a single row, so the two rims cannot sit in different
+	# layers without a 22nd row in the key -- new vocabulary for a colour that is already in it. The
+	# same sentence covers both, so both moved; what it changes is measured on ASSA-278.
+	{"id": &"building_keyline", "shape": &"footprint", "ink": MAP_BG, "in_key": false,
+			"keyed_by": &"building", "label": "the map's own ink, under a machine's mark"},
 	{"id": &"walk_mine", "shape": &"line", "ink": MINE, "alpha": 0.35, "in_key": true,
 			"label": "where a player is walking to"},
 	{"id": &"walk_theirs", "shape": &"line", "ink": THEIRS, "alpha": 0.25, "in_key": false,
@@ -401,8 +414,6 @@ const MAP_MARKS: Array[Dictionary] = [
 			"label": "another player"},
 	{"id": &"mine_ring", "shape": &"ring", "ink": MINE, "in_key": true,
 			"label": "the ring is on your own body"},
-	{"id": &"building_keyline", "shape": &"footprint", "ink": MAP_BG, "in_key": false,
-			"keyed_by": &"building", "label": "the map's own ink, under a machine's mark"},
 	{"id": &"building", "shape": &"footprint", "ink": HOVER, "data_ink": true, "in_key": true,
 			"label": "a machine someone built, on the tiles it covers"},
 	# **AFTER THE BUILDING, AND THE TABLE'S ORDER IS THE PAINT ORDER** (ASSA-213). The letter used to

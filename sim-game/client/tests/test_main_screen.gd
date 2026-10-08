@@ -2963,8 +2963,19 @@ func test_the_schematic_is_handed_every_building_the_sim_reports() -> bool:
 		elif not source.contains("_building_marks(_sim.buildings())"):
 			ok = _fail("`_building_marks` is never handed `_sim.buildings()` in main.gd, which is "
 					+ "ASSA-189 exactly: the mark is right and the schematic still draws no factory")
-		elif source.find("_building_marks(_sim.buildings())") \
-				< source.rfind("for entry in _sim.players():"):
+		elif not source.contains("for entry in _players():"):
+			# **THIS PIN WAS DEAD FOR FOUR DAYS AND I FOUND IT BY BREAKING IT** (ASSA-278 box 7). It
+			# read `source.rfind("for entry in _sim.players():")`, and #273 (ASSA-196, 2026-10-04)
+			# wrapped every such loop in `_players()`. `rfind` returned -1 from that day on, so the
+			# comparison below was `index < -1` -- false for every possible main.gd, and the one
+			# property Maren and I have been ruling on all week asserted nothing. A string that stops
+			# existing turns a guard off silently; this branch is here so the next rename reddens
+			# instead.
+			ok = _fail("main.gd has no `for entry in _players():` loop, so the paint-order assertion "
+					+ "below compares against nothing -- which is exactly how this pin died on "
+					+ "2026-10-04 (ASSA-196 renamed the loop and nothing noticed for four days)")
+		elif source.find("AssayHud.mark_ink_of(&\"building\", shape[\"colour\"])") \
+				< source.rfind("for entry in _players():"):
 			# **AND IT IS PAINTED AFTER THE PLAYERS, WHICH IS THE ONE CLAUSE OF THE APPROVED DESIGN MAIN
 			# DOES NOT FOLLOW, AND IT IS OPEN ON ASSA-203.** Cove's hand-off and Maren's 17:40 ruling
 			# both say deposits -> buildings -> players, so that a person is never hidden by a thing.
@@ -2985,6 +2996,22 @@ func test_the_schematic_is_handed_every_building_the_sim_reports() -> bool:
 			ok = _fail("main.gd paints the building marks BEFORE the players, so a machine on the tile "
 					+ "you stand on is covered whole by your own 16px mark -- see ASSA-203, where both "
 					+ "orders are photographed at 1x and the ruling is Maren's")
+		elif source.find("AssayHud.frame_bands(shape[\"hole_rect\"]") \
+				> source.rfind("for entry in _players():"):
+			# **AND THE ONE PART OF THAT MARK WHICH GOES UNDER THE PLAYERS IS THE INWARD RIM**
+			# (ASSA-278 box 7, Maren 04:52 EDT: option 3). The two halves of this assertion are the
+			# same law from both sides -- 11.14, *a mark may take space from the ground for free and
+			# never from a person*: the band is the machine's identity and stays on top, while the rim
+			# only separates that band from what it STANDS ON, so a person must not pay for it. Drawn
+			# after the players it cost a partner on a 1x1 69.2% -> 38.5% of their cross
+			# (`tools/person_under_machine.gd`).
+			#
+			# A SOURCE ORDER, for the reason the assertion above gives: `_draw`'s calls happen in the
+			# order they are written.
+			ok = _fail("main.gd paints a machine's INWARD RIM after the player pass, so the rim is "
+					+ "painted over whoever stands on the machine -- 69.2% of a partner's cross down "
+					+ "to 38.5% on a 1x1. The rim separates the band from the GROUND, so it belongs "
+					+ "under the people (ASSA-278 box 7, option 3)")
 	screen.queue_free()
 	return ok
 

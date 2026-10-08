@@ -56,8 +56,62 @@ func _initialize() -> void:
 		# AND THE HOLE ITSELF, which is what the ore under the machine shows through.
 		var hole := _clear_hole(mark, rim)
 		print("    hole      %.0f x %.0f px clear of ink" % [hole.x, hole.y])
+	_option_three(mark, at)
 	_band_neighbours(mark, at)
 	quit()
+
+
+## **WHAT A PERSON KEEPS ONCE BOTH RIMS ARE PAINTED UNDER THEM** (ASSA-278 box 7, Maren's option 3,
+## built 2026-10-08). The arms above all paint the whole mark on top of the body, which is what `_draw`
+## did until today. Option 3 leaves only the BAND on top, so the number to beat is not "rim 0 px"
+## (85.3% / 69.2%) but this one -- rim 0 still painted the outward keyline over a person, and that rim
+## is `MAP_BG` on a body, which is a hole in it exactly as the inner one is.
+##
+## **AND THE RING, because I claimed it in a comment in `main.gd` and a claim in a comment is a claim.**
+## Your ring is a 1.6x diamond polyline, so it crosses the outward rim's ring at four points whatever
+## the footprint; the rim used to be painted after it. Sampled along the ring's own path at a quarter
+## pixel -- the stroke's centre line, not its 2 px width, so it is the share of the PATH that was being
+## cut rather than of the ink.
+func _option_three(mark: Dictionary, at: Vector2) -> void:
+	var band_only: Array[Rect2] = AssayHud.frame_bands(mark["rect"], float(mark["stroke"]))
+	print("")
+	print("  OPTION 3, SHIPPED: BOTH RIMS UNDER THE PLAYERS, ONLY THE BAND ON TOP")
+	for mine: bool in [true, false]:
+		var person := AssayHud.player_mark(at, mine)
+		var body: PackedVector2Array = person["points"]
+		var total := 0
+		var kept := 0
+		for point in _grid(_bounds(body)):
+			if not Geometry2D.is_point_in_polygon(point, body):
+				continue
+			total += 1
+			if not _covered(band_only, point):
+				kept += 1
+		print("    %-8s body %3d px, keeps %3d px = %5.1f%%"
+				% ["you" if mine else "partner", total, kept,
+				100.0 * float(kept) / float(maxi(total, 1))])
+	var whole := _machine_ink(mark, AssayHud.MARK_KEYLINE_PX)
+	var outward: Array[Rect2] = AssayHud.frame_bands(mark["keyline_rect"], AssayHud.MARK_KEYLINE_PX)
+	var ring := (AssayHud.player_mark(at, true)["ring_points"] as PackedVector2Array)
+	var samples := 0
+	var cut_before := 0
+	var cut_after := 0
+	for i in ring.size():
+		var from := ring[i]
+		var to := ring[(i + 1) % ring.size()]
+		var steps := int(ceilf(from.distance_to(to) * 4.0))
+		for s in steps:
+			var point := from.lerp(to, float(s) / float(maxi(steps, 1)))
+			samples += 1
+			if _covered(whole, point):
+				cut_before += 1
+			if _covered(band_only, point):
+				cut_after += 1
+	print("    your ring  %d samples along its path, %d cut by the mark before (%.1f%%), %d after (%.1f%%)"
+			% [samples, cut_before, 100.0 * float(cut_before) / float(maxi(samples, 1)),
+			cut_after, 100.0 * float(cut_after) / float(maxi(samples, 1))])
+	print("    (the ring is 1.6x the body, so on a 1x1 it crosses the OUTWARD rim's ring and nothing")
+	print("     else; a 0 after means the only thing that ever cut it was a rim that is now beneath it)")
 
 
 ## **BOX 7: WHAT THE BAND'S INNER NEIGHBOUR ACTUALLY IS WHEN A PERSON IS STANDING THERE** (ASSA-278,

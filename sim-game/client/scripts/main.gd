@@ -4230,6 +4230,45 @@ func _draw() -> void:
 			for i in range(0, strokes.size(), 2):
 				draw_line(strokes[i], strokes[i + 1], AssayHud.mark_ink_of(&"dead_end", ink), thick)
 
+	# **EVERY MACHINE'S INWARD RIM, BEFORE THE PLAYERS AND AFTER THE GROUND** (ASSA-278 box 7, Maren
+	# 04:52 EDT: option 3, "the rim goes under the player pass"). The rest of a machine's mark -- its
+	# outward keyline and its band -- is still painted AFTER the players, further down; this one list
+	# is painted here and nowhere else.
+	#
+	# **THE LAW IT OBEYS, which is hers and is now doc 11.14: A MARK MAY TAKE SPACE FROM THE GROUND
+	# FOR FREE. IT MAY NEVER TAKE SPACE FROM A PERSON.** A keyline separates a mark from what it
+	# STANDS ON, so it belongs in the ground's layer. Drawn after the players it spent a person to
+	# protect a rectangle: a partner on a 1x1 kept 69.2% of their cross and 38.5% with the rim, and
+	# ASSA-236's whole case for the hollow frame was that it ended that trade (25.3% -> 70.4%).
+	# `tools/person_under_machine.gd` has both arms at the shipped constants.
+	#
+	# **WHAT IT COSTS, AS A NUMBER RATHER THAN AS A FAILED TEST** (her 05:24 amendment). Where a body
+	# stands on the band's inner edge the rim is behind it, so the band's inner neighbour there is the
+	# body's own fill: 22 of 48 band pixels for you (45.8%) and 24 of 48 for a partner (50.0%) on a
+	# 1x1. She put ~25% on paper from a 16 px side; the band's inner edge of a 1x1 is the 12x12 hole's
+	# perimeter, 12 px a side, and a 16 px diamond covers 5-6 of each -- the geometry, not the ruling,
+	# is what was out. Those pixels are not naked: a person carries their own 2 px `MAP_BG` keyline,
+	# which is a dark edge of its own, and 11.1 says two named marks that meet both own rims.
+	# **BOTH OF THE MARK'S RIMS, NOT ONLY THE INWARD ONE, AND THAT IS A CONSEQUENCE OF HER RULING
+	# RATHER THAN A SECOND DECISION.** `AssayHud.MAP_MARKS` is held AS the paint order by
+	# `test_map_key.gd`, and `building_keyline` is one row for both rims, so splitting them across the
+	# player pass would need a 22nd row in the key for an ink that is already in it. The law reads the
+	# same on both: a rim separates this mark from the ground.
+	#
+	# **AND I WROTE "YOUR RING IS NO LONGER CUT BY IT" HERE BEFORE MEASURING IT, WHICH IS WRONG.** Your
+	# yellow ring is a 1.6x diamond, so its path runs 9.05 to 12.8 px from the centre while the band is
+	# a SQUARE annulus whose corners reach 11.3 -- the band crosses it whatever the order. Sampled
+	# along the ring's own path (`tools/person_under_machine.gd`): **57.5% of it was cut by the mark
+	# before and 24.7% is cut now.** Less, not none, and the remainder is the band, which is the one
+	# part of this mark that is meant to be on top.
+	var shapes := _building_marks(_sim.buildings())
+	for shape_entry in shapes:
+		var shape: Dictionary = shape_entry
+		for band: Rect2 in AssayHud.frame_bands(shape["keyline_rect"], AssayHud.MARK_KEYLINE_PX):
+			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
+		for band: Rect2 in AssayHud.frame_bands(shape["hole_rect"], AssayHud.MARK_KEYLINE_PX):
+			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
+
 	# EVERY PLAYER, AT A SIZE THAT DOES NOT COME FROM THE TILE (ASSA-119 box 6, Maren's finding 1).
 	# This mark used to be two cells square, which made it 18 px on this world and would make it 36 on
 	# a small one -- so the bigger and more confusing the world, the smaller you got. Measured on the
@@ -4328,39 +4367,26 @@ func _draw() -> void:
 	# `_building_marks` hands it -- see that function for why a test can read it and this cannot.
 	# HELD IN A LOCAL AND NOT CALLED TWICE: the glyph pass below asks `letter_occlusions` which of
 	# these diamonds laps a letter (ASSA-218 box 9), and two calls could be two different worlds in
-	# the same frame -- the mistake `window_shot.gd` already carries a comment about.
-	var shapes := _building_marks(_sim.buildings())
+	# the same frame -- the mistake `window_shot.gd` already carries a comment about. **AND THE LOCAL
+	# IS FETCHED ABOVE THE PLAYER PASS NOW** (ASSA-278 box 7), because the inward rim is painted there
+	# and it has to be the same list: one call, two passes, one frame.
 	for shape_entry in shapes:
 		var shape: Dictionary = shape_entry
-		# **FOUR BANDS AND FOUR BANDS, NOT A STROKE** (ASSA-236). The rim is drawn OUTSIDE the frame so
-		# the frame keeps every pixel of its own size -- the same rule the diamond's two polygons kept --
-		# and the frame itself is four filled rects because an unfilled `draw_rect` straddles the edge it
-		# is given, which on this mark would put white on the tile next door at every machine on the map.
-		for band: Rect2 in AssayHud.frame_bands(shape["keyline_rect"], AssayHud.MARK_KEYLINE_PX):
-			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
+		# **FOUR BANDS, NOT A STROKE** (ASSA-236). The frame is four filled rects because an unfilled
+		# `draw_rect` straddles the edge it is given, which on this mark would put white on the tile
+		# next door at every machine on the map.
+		#
+		# **AND THIS LOOP IS THE BAND ALONE NOW: BOTH RIMS ARE PAINTED BEFORE THE PLAYERS** (ASSA-278
+		# box 7). The two `frame_bands(keyline_rect)` and `frame_bands(hole_rect)` calls that stood
+		# here moved to the pass above. The paragraph here said the lever was "painting this rim BEFORE
+		# the player pass ... That is Maren's to rule"; she ruled it at 04:52 EDT -- option 3 -- and
+		# called the omission hers, because 11.2 is a rule about what a band STANDS ON and a person is
+		# not the ground. What stays after the players is the band, which is the machine's whole
+		# identity now that the mark is hollow, so ASSA-203's order still holds for everything a
+		# person can be hidden BY. The species letter is painted later still, so ASSA-213 is untouched
+		# and none of this fixes ASSA-273.
 		for band: Rect2 in AssayHud.frame_bands(shape["rect"], float(shape["stroke"])):
 			draw_rect(band, AssayHud.mark_ink_of(&"building", shape["colour"]), true)
-		# **AND A RIM INSIDE THE HOLE, SO EVERY PIXEL OF THE BAND HAS A DARK NEIGHBOUR ON BOTH SIDES**
-		# (ASSA-278, Maren ruled option 1 at 23:10 EDT). Drawn AFTER the frame and INSIDE it, so the
-		# frame keeps every pixel of its own size -- the same rule the outward rim keeps. The species
-		# letter is painted later still (the glyph pass below), so ASSA-213 is untouched: a letter on a
-		# machine's tile still lands on top of both rims, and this does NOT fix ASSA-273.
-		#
-		# **I FILED THIS AS "A HOLLOW MARK SHOULD LOOK HOLLOW" AND THAT IS NOT THE RULING.** Hers is
-		# about the band: without an inner rim the band's weight is rented from whatever the map put
-		# under the mark, which on seed 63's grade-A disc was 1.53:1 and unreadable. A claim about the
-		# hole is a claim about one seed's disc; a claim about the band's neighbours holds on any tint.
-		#
-		# **AND IT IS PAID FOR OUT OF THE PERSON STANDING THERE, WHICH MY OWN COSTING LEFT OUT.** These
-		# marks go in AFTER the players (the paragraph above), so this rim is painted over them: a
-		# partner on a 1x1 machine keeps 69.2% of their cross without it and 38.5% with it, and your
-		# own body 85.3% -> 47.1% (your ring is outside the frame and untouched). Measured on the real
-		# geometry by `tools/person_under_machine.gd`. ASSA-236's case for the hollow frame was that it
-		# ENDED that trade (25.3% -> 70.4%), so this buys part of it back; the lever that would not is
-		# painting this rim BEFORE the player pass, where a person replaces the rim they stand on and
-		# their own MAP_BG keyline holds the band apart. That is Maren's to rule and it is on ASSA-278.
-		for band: Rect2 in AssayHud.frame_bands(shape["hole_rect"], AssayHud.MARK_KEYLINE_PX):
-			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
 
 	# **THE SPECIES LETTER, LAST, BECAUSE A MACHINE STANDS ON THE ROCK IT WORKS** (ASSA-213, Maren's
 	# P1: "a building mark may not remove the species letter from a deposit it stands on").
