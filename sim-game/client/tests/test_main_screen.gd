@@ -659,6 +659,18 @@ func test_the_l_key_toggles_the_log_and_cannot_eat_a_typed_l() -> bool:
 ## BOTH SHAPES, because only one of them ever was wrong: a stack row has an icon beside its body and
 ## a bench row is the full panel with nothing beside it. A fix that just subtracted 38 everywhere
 ## would have broken the bench and passed a test that only looked at the pack.
+##
+## **AND THE CRAFTING MENU, WHICH WAS NOT IN THIS LIST UNTIL ASSA-116 BOX 3 MADE ME READ IT.** The
+## box is *"pack AND CRAFTING rows ... no clipping in the 320px panel"*, and the four sections swept
+## here were pack, bench, species and `do`. A make row is the newest surface to get the icon column
+## (ASSA-240) and the one whose own comment names a budget — `main.gd` measures its sentence "against
+## a budget of about 313" with "the row's floor is the icon box's 48 px" — so it is the shape where
+## 48 px beside a flowing body is most likely to push the total past the box. That is ASSA-98's
+## defect exactly, and the one section it was never asked about.
+##
+## `_rebuild_make` is driven with the real builder and the sim's own offer shape, one row with art and
+## one without, because the icon column and the reserved gap are different children and both have to
+## fit.
 func test_no_row_asks_for_more_width_than_the_panel_that_clips_it() -> bool:
 	var screen := _screen()
 	var ok := true
@@ -668,8 +680,19 @@ func test_no_row_asks_for_more_width_than_the_panel_that_clips_it() -> bool:
 		{"kind": "ore", "species": 4, "grade": "B", "count": 22, "name": "Minyte ore (B)"},
 		{"kind": "head", "species": 4, "grade": "B", "count": 2, "name": "Minyte head (B)"},
 	])
+	# A LONG SENTENCE ON PURPOSE: the widest make line the sim can be asked to draw, shaped like
+	# `make_offers`' own (a named species, a grade, a count and what one batch spends). A short
+	# `line` would fit whatever the icon column did and the arm would prove nothing.
+	screen._rebuild_make([
+		{"makes": {"kind": "ore", "species": 4, "grade": "B", "count": 1, "name": "Minyte ore (B)"},
+			"line": "sort 3 Minyte ore (B) into 1 Minyte ore (A) · you have 22 · spends 3",
+			"verb": "craft", "tag": 0},
+		{"makes": {"kind": "gear", "species": 4, "grade": "B", "count": 1, "name": "Minyte gear (B)"},
+			"line": "make 1 Minyte gear (B) from 2 Minyte refined (B) · you have 6 · spends 2",
+			"verb": "make", "tag": 0},
+	])
 	var checked := 0
-	for section in [screen._carrying, screen._bench, screen._species, screen._actions]:
+	for section in [screen._carrying, screen._bench, screen._species, screen._actions, screen._make]:
 		for child in section.get_children():
 			if not (child is Control):
 				continue
