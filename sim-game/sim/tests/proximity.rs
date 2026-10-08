@@ -1125,3 +1125,385 @@ fn the_plain_empty_answer_offers_no_ladder() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// ONE PATCH, ONE ANSWER (ASSA-272)
+//
+// The Game Director measured the Mineralogy tab printing one fact twice on 17
+// of 40 worlds at spawn, and I measured 28 of 40 once the player walks where
+// the game sent them (ASSA-290): both proximity questions are distance-ranked,
+// and standing on a rock that qualifies for both makes it win both. These tests
+// scan a seed range and FAIL IF AN ARM NEVER OCCURRED rather than skipping it,
+// because an arm that never ran is a green test proving nothing — the mistake
+// I made on 10-06 asserting inside a loop over an empty array.
+// ---------------------------------------------------------------------------
+
+/// The seeds every scan below walks. 1..=60 is the Game Director's own range
+/// (`shared/assay/maren-proximity-twice/`), where she counted 28 worlds whose
+/// two questions name one patch, so the arms are known to be reachable rather
+/// than hoped to be — **but only in a world the size a session plays**, which
+/// is why [`played`] exists.
+const SCAN: std::ops::RangeInclusive<u64> = 1..=60;
+
+/// A SEED MEANS A WORLD, AND `joined` BUILDS A DIFFERENT ONE. The helper at the
+/// top of this file takes `WorldConfig::default()` — 8x8 chunks — and every
+/// measurement on this item was made through `sim-cli`, which uses
+/// `sim_net::SESSION_CHUNKS`, 6x4. Different size, different chunks, different
+/// deposits: `joined(14247)` answers both questions from one patch at spawn and
+/// the real demo world answers them from two, which is how I found this —
+/// a test I wrote failed quoting a number I had measured on the other world.
+///
+/// So the scans below stand up the world the game plays. The size is spelled
+/// out here rather than imported because `SESSION_CHUNKS` lives in `sim-net`
+/// deliberately (*"a world's size is a session convention, not a rule"*) and
+/// `sim` may not depend on a host; `limpet_209_seed.rs` and six other tests in
+/// this folder spell it the same way. The assertion in
+/// [`the_scan_walks_the_world_a_session_plays`] is what stops the duplicate
+/// from drifting silently.
+fn played(seed: u64) -> (World, PlayerId) {
+    let mut w = World::new(WorldConfig {
+        seed,
+        width_chunks: 6,
+        height_chunks: 4,
+    });
+    step(
+        &mut w,
+        &[Input::System(SystemCommand::AddPlayer {
+            name: "ada".into(),
+        })],
+        &mut Vec::new(),
+    );
+    (w, PlayerId(0))
+}
+
+/// **THE WORLD THESE SCANS WALK IS THE ONE EVERY SWEEP ON ASSA-272 MEASURED.**
+///
+/// Seed 14247 is the demo seed, and `sim-cli --plain` prints `96x64 tiles · 6
+/// species · 13 deposits` for it. If `SESSION_CHUNKS` moves and the two
+/// integers in [`played`] do not, every seed below quietly starts meaning a
+/// different world — the failure that cost me the first version of the walk
+/// test — and this is where that reddens.
+#[test]
+fn the_scan_walks_the_world_a_session_plays() {
+    let (w, _) = played(14247);
+    assert_eq!(
+        (w.width_chunks, w.height_chunks),
+        (6, 4),
+        "the scan's world is not 6x4 chunks"
+    );
+    assert_eq!(
+        w.deposits.len(),
+        13,
+        "the demo seed has 13 deposits in a session world and {} here, so the \
+         seeds in these tests no longer name the worlds every sweep on ASSA-272 \
+         measured",
+        w.deposits.len()
+    );
+}
+
+/// Whether both questions are answered by the same patch — the predicate the
+/// merge turns on, asked of the SEARCH and not of the sentences, so these tests
+/// never decide what a line should say by reading what it does say.
+fn both_questions_name_one_patch(w: &World, me: PlayerId) -> bool {
+    let at = w.player(me).expect("the player we added").pos;
+    match (
+        w.nearest_answering(Question::Burns, at),
+        w.nearest_answering(Question::HardEnough, at),
+    ) {
+        (Some(a), Some(b)) => a.deposit == b.deposit && a.tile == b.tile,
+        _ => false,
+    }
+}
+
+/// Every clause of a one-question answer, which is what a merged line may not
+/// lose: the readings and the trailing tag, but not the label or the species
+/// and place that open every line.
+fn clauses_of(line: &str) -> Vec<String> {
+    let (_, answer) = line
+        .split_once(": ")
+        .expect("a headline is `label: answer`");
+    answer.split(" · ").skip(1).map(str::to_string).collect()
+}
+
+/// **WHEN ONE PATCH ANSWERS BOTH QUESTIONS THE SIM SAYS IT ONCE** (ASSA-272
+/// box 1, the Game Director's ruling).
+///
+/// Her bar for the wording is that it reads as a GAIN and not as a
+/// deduplication: *one rock being both your fuel and your material is the
+/// starter ladder working*, and printing it as two near-identical paragraphs
+/// buries that as a coincidence. What a test can hold is the structure under
+/// the wording — one answer, a label naming both questions, and not one clause
+/// of either answer lost. The sentence itself is hers to judge at 1x, so
+/// nothing here pins it.
+#[test]
+fn one_patch_answering_both_questions_is_said_once_and_names_both() {
+    let mut merged = Vec::new();
+    for seed in SCAN {
+        let (w, me) = played(seed);
+        if !both_questions_name_one_patch(&w, me) {
+            continue;
+        }
+        merged.push(seed);
+        let answers = debug::proximity_headlines(&w, me);
+        assert_eq!(
+            answers.len(),
+            1,
+            "seed {seed}: one patch is the nearest answer to both questions, so \
+             there is one answer and not {}:\n{}",
+            answers.len(),
+            answers
+                .iter()
+                .map(|a| a.line.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let a = &answers[0];
+        assert_eq!(
+            a.questions,
+            Question::ALL.to_vec(),
+            "seed {seed}: the merged answer must say which questions it answers"
+        );
+        // THE LABEL NAMES BOTH QUESTIONS. A merged line whose label named one
+        // of them would be answering a question the player did not ask and
+        // silently dropping the one they did.
+        for q in Question::ALL {
+            assert!(
+                a.asked.contains(debug::question_predicate(q)),
+                "seed {seed}: the merged label `{}` does not name {q:?}",
+                a.asked
+            );
+        }
+        assert!(
+            a.line.starts_with(&a.asked),
+            "seed {seed}: `asked` must be the line's own prefix: `{}` / `{}`",
+            a.asked,
+            a.line
+        );
+        // **NOT ONE CLAUSE OF EITHER ANSWER IS LOST** (box 3), measured
+        // against the two sentences the merge replaces rather than against
+        // literals I typed: both properties and both tags, each still through
+        // `debug::reading`, so a rough species stays rough on a merged line.
+        for q in Question::ALL {
+            let alone = debug::proximity_headline(&w, me, q);
+            for clause in clauses_of(&alone) {
+                assert!(
+                    a.line.contains(&clause),
+                    "seed {seed}: the merged line dropped `{clause}`\n  alone: \
+                     {alone}\n merged: {}",
+                    a.line
+                );
+            }
+        }
+        // AND THE READING IS STILL THE SHEET AS THE PLAYERS KNOW IT.
+        let at = w.player(me).expect("the player we added").pos;
+        let near = w
+            .nearest_answering(Question::Burns, at)
+            .expect("the predicate above answered both questions");
+        let s = w.species(
+            w.deposit(near.deposit)
+                .expect("the search names a deposit of this world")
+                .species,
+        );
+        for q in Question::ALL {
+            let shown = format!(
+                "{} {}",
+                q.property().name(),
+                debug::reading(s, q.property())
+            );
+            assert!(
+                a.line.contains(&shown),
+                "seed {seed}: the merged line does not carry `{shown}`, so a \
+                 number escaped `reading`:\n{}",
+                a.line
+            );
+        }
+        assert_eq!(
+            a.tile,
+            Some(near.tile),
+            "seed {seed}: the merged answer is about the patch both questions named"
+        );
+    }
+    assert!(
+        !merged.is_empty(),
+        "no seed in {SCAN:?} had one patch answering both questions, so this \
+         test proved nothing. The Game Director counted 28 of these 60 \
+         (shared/assay/maren-proximity-twice) and I counted 17 of her 40 at \
+         tick 1 — re-measure before trusting a green here"
+    );
+}
+
+/// **WHEN THE ANSWERS DIFFER, NOTHING MOVED** (ASSA-272 box 4). Byte for byte
+/// against `proximity_headline`, on every seed of the scan that does not
+/// merge — which is the whole claim, not a sample of it.
+///
+/// It holds by construction rather than by luck: one sentence builder, walked
+/// with one question instead of two. This test is what makes that reading of
+/// the code checkable.
+#[test]
+fn an_unmerged_answer_is_todays_sentence_byte_for_byte() {
+    let mut distinct = 0;
+    for seed in SCAN {
+        let (w, me) = played(seed);
+        if both_questions_name_one_patch(&w, me) {
+            continue;
+        }
+        distinct += 1;
+        let answers = debug::proximity_headlines(&w, me);
+        assert_eq!(
+            answers.len(),
+            Question::ALL.len(),
+            "seed {seed}: the two questions name different patches, so there are \
+             two answers"
+        );
+        for (a, q) in answers.iter().zip(Question::ALL) {
+            assert_eq!(
+                a.questions,
+                vec![q],
+                "seed {seed}: the answers are in the sim's question order"
+            );
+            assert_eq!(
+                a.line,
+                debug::proximity_headline(&w, me, q),
+                "seed {seed}: {q:?}'s line is not what it was before the merge existed"
+            );
+            assert_eq!(
+                a.asked,
+                debug::question_asked(q),
+                "seed {seed}: {q:?}'s label is not today's label"
+            );
+        }
+    }
+    assert!(
+        distinct > 0,
+        "every seed in {SCAN:?} merged, so the unchanged arm never ran"
+    );
+}
+
+/// **AN UNANSWERED QUESTION KEEPS ITS OWN SENTENCE AND NEVER MERGES**
+/// (ASSA-272 box 3's third arm). The merge is "one patch answers both", and a
+/// question with no patch has nothing to be the same as. Both empty states are
+/// different news in each direction and neither may be swallowed by the other
+/// question's answer.
+#[test]
+fn an_unanswered_question_is_never_merged_away() {
+    let mut seen = 0;
+    for seed in SCAN {
+        let (w, me) = played(seed);
+        let at = w.player(me).expect("the player we added").pos;
+        let unanswered: Vec<Question> = Question::ALL
+            .into_iter()
+            .filter(|&q| w.nearest_answering(q, at).is_none())
+            .collect();
+        if unanswered.is_empty() {
+            continue;
+        }
+        seen += 1;
+        let answers = debug::proximity_headlines(&w, me);
+        assert_eq!(
+            answers.len(),
+            Question::ALL.len(),
+            "seed {seed}: a question with no patch cannot merge, so every \
+             question still has its own line"
+        );
+        for q in unanswered {
+            let a = answers
+                .iter()
+                .find(|a| a.questions == vec![q])
+                .unwrap_or_else(|| panic!("seed {seed}: {q:?} lost its own line"));
+            assert_eq!(
+                a.line,
+                debug::proximity_headline(&w, me, q),
+                "seed {seed}: {q:?}'s empty sentence changed"
+            );
+            assert!(
+                a.tile.is_none() && !a.underfoot,
+                "seed {seed}: nothing answers {q:?}, so there is no tile and \
+                 nothing underfoot"
+            );
+        }
+    }
+    assert!(
+        seen > 0,
+        "no seed in {SCAN:?} left a question unanswered, so the empty arm never \
+         ran — it was 64 of 399 worlds when measured (test_mineralogy.gd)"
+    );
+}
+
+/// **THE LABEL IS COMPOSED FROM THE QUESTIONS, NOT CARVED OUT OF A SENTENCE.**
+///
+/// The merged label is built as "what near me" plus each question's predicate,
+/// so this holds the one-question label and the predicate together: the day a
+/// question's own wording stops fitting that pattern, the merged label would
+/// quietly stop matching it too, and the failure would be a sentence in a tab
+/// rather than a red test. This is that red test.
+#[test]
+fn every_question_asked_is_what_near_me_plus_its_predicate() {
+    for q in Question::ALL {
+        assert_eq!(
+            debug::question_asked(q),
+            format!("what near me {}", debug::question_predicate(q)),
+            "{q:?}'s label is no longer `what near me` + its predicate, so the \
+             merged label in `proximity_headlines` is composed from a pattern \
+             this question does not follow"
+        );
+    }
+}
+
+/// **THE CASE THAT ACTUALLY BITES PLAYERS: STANDING ON THE ROCK** (ASSA-272
+/// box 6). Tick 1 understates the duplication because both questions are
+/// distance-ranked and "right where you are standing" is distance 0 — so the
+/// rate goes up when a player walks to the fuel to pick it up or to the rock to
+/// mine it, which is the loop. Measured at 70% of 40 seeds (ASSA-290).
+///
+/// This walks the demo seed onto the tile its fuel answer names and asserts the
+/// merge happens THERE, through the sim's own `MoveTo`. 14247 at spawn is the
+/// seed that filed the item: its two answers differ until the player makes the
+/// fuel errand.
+#[test]
+fn walking_onto_the_rock_merges_the_answer_that_was_two() {
+    let (mut w, me) = played(14247);
+    assert!(
+        !both_questions_name_one_patch(&w, me),
+        "seed 14247's two questions already name one patch at spawn, so this \
+         test no longer measures the walk. Re-measure (ASSA-290) and pick a seed"
+    );
+    let target = w
+        .nearest_answering(Question::Burns, w.player(me).expect("joined").pos)
+        .expect("seed 14247 has something that burns")
+        .tile;
+    for _ in 0..200 {
+        if w.player(me).expect("joined").pos == target {
+            break;
+        }
+        walk(&mut w, me, Some(target));
+    }
+    assert_eq!(
+        w.player(me).expect("joined").pos,
+        target,
+        "the walk never arrived, so what follows would read a failure to move \
+         as `standing there changes nothing`"
+    );
+    assert!(
+        both_questions_name_one_patch(&w, me),
+        "standing on seed 14247's fuel tile no longer answers both questions. \
+         That is the walk ASSA-290 measured as IDENTICAL on this seed — \
+         re-measure rather than deleting this"
+    );
+    let answers = debug::proximity_headlines(&w, me);
+    assert_eq!(
+        answers.len(),
+        1,
+        "the player is standing on the patch that answers both questions and \
+         the tab still prints two paragraphs:\n{}",
+        answers
+            .iter()
+            .map(|a| a.line.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    assert!(
+        answers[0].underfoot && answers[0].line.contains("right where you are standing"),
+        "the merged answer is the tile underfoot, and says so: {}",
+        answers[0].line
+    );
+}
