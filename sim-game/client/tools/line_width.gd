@@ -1,4 +1,6 @@
 extends SceneTree
+## CI: local -- an instrument you point at a file of candidate log lines (ASSA-242). It
+## answers a question somebody asks, not one a gate can ask on every push.
 ## **HOW WIDE IS THIS LINE IN THE LOG'S OWN FONT?** (ASSA-242's instrument.)
 ##
 ##   godot --headless --path . --script res://tools/line_width.gd -- <file-of-lines>
