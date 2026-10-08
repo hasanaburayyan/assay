@@ -167,6 +167,11 @@ def main():
     """
     if len(sys.argv) < 2:
         raise SystemExit(__doc__)
+    ## ONE READING PER FILE, kept so a set of files can be reduced to its worst member. See the
+    ## summary at the bottom: this is how box 2's "the worst frame of the drift" is answered, and the
+    ## per-file numbers above are unchanged by it.
+    readings = []
+    unreadable = []
     for path in sys.argv[1:]:
         width, height, channels, rows = read_png(path)
         x0, y0, x1, y1 = DOOR
@@ -198,6 +203,7 @@ def main():
                 run_start = None
         if dark is None:
             print("  no plate and no dark field found: nothing to measure")
+            unreadable.append(path)
             continue
         px0, py0, px1, py1 = dark
         print("  surface x %d..%d  y %d..%d  (%dx%d)"
@@ -220,13 +226,52 @@ def main():
                     worst = (rgb, lum, x, y)
         if worst is None:
             print("  the ring is empty, so the surface cannot be judged")
+            unreadable.append(path)
             continue
         print("  worst surface pixel %-16s at (%d,%d), out of %d ring px"
               % (str(worst[0]), worst[2], worst[3], ring))
+        got_all = {}
         for name, token in INKS.items():
             got = ratio(token, worst[0])
+            got_all[name] = got
             print("    %-10s %6.2f:1   %s"
                   % (name, got, "PASS >= 4.5" if got >= 4.5 else "FAILS MAREN FLOOR 1"))
+        readings.append((path, got_all, worst))
+    if len(sys.argv) > 2:
+        summarise(readings, unreadable)
+
+
+def summarise(readings, unreadable):
+    """**THE WORST FRAME OF A SET, WHICH IS MAREN'S BOX 2** (ASSA-292): *"measured at the WORST frame
+    of the drift and not frame 0, with the sample gap stated."*
+
+    The sample gap is the other tool's business -- `tools/nacre_door_drift_sweep.gd` sweeps one whole
+    `TITLE_DRIFT_PERIOD` in a real window and prints the step it achieved between neighbours. This
+    reduces the frames it wrote to the one that reads worst, per ink, because a floor is a promise
+    about every frame and so it is decided by the worst of them.
+
+    **AN UNREADABLE FRAME IS A LOUD FAILURE AND NOT A SKIPPED ROW.** A minimum over the frames that
+    happened to parse is exactly the shape of a check that cannot fail: the frame where the plate
+    went missing is the frame most likely to read worst, and quietly dropping it would turn the
+    defect into a better number.
+    """
+    print("\n=== WORST OF %d FRAMES ===" % len(readings))
+    if unreadable:
+        print("  %d FRAMES HELD NO MEASURABLE SURFACE, so there is no worst-frame claim to make "
+              "here: %s" % (len(unreadable), ", ".join(unreadable[:4])))
+        raise SystemExit(1)
+    if not readings:
+        print("  nothing was measured")
+        raise SystemExit(1)
+    failed = False
+    for name in INKS:
+        path, got_all, worst = min(readings, key=lambda row: row[1][name])
+        verdict = "PASS >= 4.5" if got_all[name] >= 4.5 else "FAILS MAREN FLOOR 1"
+        failed = failed or got_all[name] < 4.5
+        print("  %-10s %6.2f:1   %s   worst at %s, surface %s"
+              % (name, got_all[name], verdict, path.split("/")[-1], str(worst[0])))
+    if failed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
