@@ -55,6 +55,10 @@ Player
   grant <species> <player>    let another player rename it too
   make <part> [item] [n]      make a part from refined material, e.g.
                               make head refined:kel:b  (`parts` lists them)
+  design <frame> <part>...    read what a design WOULD be before you build it:
+                              its verdict, mass against budget and what the
+                              parts give it, plus have/need for your pack.
+                              Same words as `assemble`; nothing is spent
   assemble <frame> <part>...  build a machine; the first part is the frame.
                               A handle is held (a pick), a frame is planted
                               (a drill): assemble handle:kel head:kel
@@ -757,6 +761,25 @@ impl Host {
                         mounted: mounted.to_vec(),
                     },
                 )?;
+            }
+            // THE SAME WORDS AS `assemble`, AND NOTHING IS BUILT (ASSA-323).
+            // Deliberately the identical argument path: a preview you have to
+            // type differently from the press it previews is a preview of a
+            // different design. The sentence is the sim's, not composed here,
+            // so this and the Godot build screen cannot drift on a line a
+            // player reads (ASSA-90).
+            "design" | "preview" => {
+                let usage = "Usage: design <frame> <part>..., e.g. design handle:kel head:kel. The same words as `assemble`; nothing is built. `inv` lists your parts.";
+                if args.len() < 2 {
+                    return Err(format!("Missing the frame.\n{usage}"));
+                }
+                let mut items = Vec::new();
+                for arg in args.rest(1) {
+                    items.push(resolve_item(s, Some(*arg), None)?);
+                }
+                let (frame, mounted) = items.split_first().expect("checked above");
+                let me = s.me()?.id;
+                out!("{}", debug::design_preview(&s.world, me, *frame, mounted));
             }
             "equip" | "hold" => {
                 let assembly: u32 = optional_arg(args, 1, "number", 0).map_err(|e| {
