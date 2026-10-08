@@ -431,6 +431,13 @@ jobs:
               || { echo "$f does not tell a tester how to run the motion probe"; exit 1; }
             grep -q 'motion.txt' "$f" \
               || { echo "$f does not name the file the tester is meant to send back"; exit 1; }
+            # **AND THE FORM IT TELLS THEM TO PASTE IS THE FORM THE BUNDLE JOBS RUN** (ASSA-313).
+            # Those steps used to pass an absolute path, so the bare name a tester actually types
+            # was proved by nothing -- and on macOS it wrote the file inside the .app. They now run
+            # `--motion-probe motion.txt`; this line is what keeps the two in step, so a README
+            # rewritten to an absolute path cannot leave the gate testing a route nobody is told.
+            grep -q -- '--motion-probe motion.txt' "$f" \
+              || { echo "$f no longer pastes the relative form the bundle jobs prove"; exit 1; }
           done
       # The client's own GDScript suite gates the bundles below. Editor only:
       # running tests needs no export templates, which is the ~1 GB download.
@@ -667,6 +674,31 @@ jobs:
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
             python3 art/check_pack_icon_scale.py
+      # AND SO IS A CRAFTING ROW'S, WHICH NOTHING ASKED UNTIL ASSA-306. ASSA-116 box 3
+      # is "pack AND CRAFTING rows show icons at their drawn size" and only the pack
+      # half had a measurement: the crafting half rested on the menu calling the same
+      # `_icon_box` -- the by-construction argument the step above rejects in its own
+      # docstring -- and on a suite assertion that reads `custom_minimum_size` back
+      # before any layout pass. ASSA-65's defect was a CONTAINER defect, and a make row
+      # is a different container from a pack row (ASSA-247).
+      #
+      # It drives `client/tools/make_icon_layout.gd`, which PLAYS THE REAL LOOP offline
+      # and opens each tab. Both of those are load-bearing and both were found the
+      # expensive way: ASSA-264 put the column in tabs, so `MakeBody` is invisible until
+      # pressed and an invisible container keeps nothing but its children's minimum
+      # sizes -- measured in a hidden tab the rows came back 95px wide and up to 1361px
+      # tall and scored green. And the moment it measures is not the fullest one: on the
+      # fullest tick every drawn row is exactly the icon's box tall, so taking
+      # SIZE_SHRINK_CENTER off the slot changed nothing and the mutation PASSED. The
+      # probe now scores the tick where a drawn row is TALLER than the box.
+      #
+      # Measured by mutation: the slot losing SIZE_SHRINK_CENTER reds naming 32x59
+      # against 32x48, and the probe losing its tab press exits 2 rather than scoring a
+      # collapsed layout. Same three-valued exits as the step above.
+      - name: A crafting row's icon is drawn at a scale someone chose
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
+            python3 art/check_make_icon_scale.py
       # THE SLOT PLATE IS STILL THE GROUND'S OWN COLOUR (ASSA-71, Maren's ruling).
       # The plate is not "a colour that tested well": it is ground.png's median, so a
       # stack in the pack row and a rock on the map are the same object. A hex that
@@ -956,22 +988,41 @@ jobs:
         #
         # After the upload above on purpose: a red probe must not cost us the zip to
         # look at.
+        # **AND IT IS THE README'S OWN LINE, RELATIVE PATH AND ALL** (ASSA-313). This step used to
+        # pass `"$PWD/motion.txt"`, which no tester types: the README says to paste
+        # `Assay.app/Contents/MacOS/Assay -- --motion-probe motion.txt 10` and promises the file
+        # "beside this README". Measured on run 37778116449, that bare name landed in
+        # `Assay.app/Contents/Resources/` -- inside the app, behind Show Package Contents -- because
+        # the macOS launcher chdirs into the bundle. An absolute path could never see that, and the
+        # README grep in the test job only proves the sentence EXISTS. So the form under test here is
+        # the player's form, and the assertion is the README's own promise.
         timeout-minutes: 5
         run: |
-          rm -rf unzipped motion.txt
+          rm -rf unzipped
           ditto -x -k bundle/assay-macos.zip unzipped
-          app=unzipped/assay-macos/Assay.app/Contents/MacOS/Assay
+          # THE PLAYER'S WORKING DIRECTORY: the folder they unzipped, the folder the README is in.
+          cd unzipped/assay-macos
+          test -f README.txt || { echo "no README.txt in the zip to be 'beside'"; exit 1; }
+          app=Assay.app/Contents/MacOS/Assay
           test -x "$app" || { echo "the zip's Assay is not executable: $app"; exit 1; }
           code=0
-          "$app" -- --motion-probe "$PWD/motion.txt" 6 || code=$?
+          "$app" -- --motion-probe motion.txt 6 || code=$?
           echo "the zip's own client exited $code"
           test -f motion.txt || {
-            echo "the zip's client wrote no report: the argument was not honoured"; exit 1; }
+            echo "no motion.txt beside README.txt: either the argument was not honoured or the"
+            echo "report went somewhere a tester will not look. Inside the bundle:"
+            find Assay.app -name 'motion.txt' || true
+            exit 1; }
+          # THE REGRESSION BY NAME, so a resolver that quietly stopped resolving is caught even if
+          # something else happened to leave a file beside the README.
+          test ! -e Assay.app/Contents/Resources/motion.txt || {
+            echo "the report landed inside the .app as well: ASSA-313 is back"; exit 1; }
           cat motion.txt
           grep -q 'MACHINE:' motion.txt
           grep -q 'EXPORTED (template)' motion.txt \
             || { echo "the report did not come from an exported build"; exit 1; }
-          rm -rf unzipped motion.txt
+          cd ../..
+          rm -rf unzipped
 
   windows:
     name: Windows bundle
@@ -1128,21 +1179,38 @@ jobs:
         # PC.** `windows-motion-probe` already measures a window on this runner, but
         # it measures the PROJECT with an editor binary. This measures the `Assay.exe`
         # a player unzips, which is the only artefact anybody actually runs.
+        # **THE BARE `motion.txt` A README TELLS A TESTER TO PASTE, FROM A WORKING
+        # DIRECTORY THAT IS NOT THE ZIP'S** (ASSA-313). The macOS copy explains the
+        # defect; this leg is deliberately harsher than the README's own case,
+        # because the launch nobody can write a line for is a DOUBLE-CLICK, where
+        # the working directory is whatever Explorer felt like. The file still has
+        # to turn up beside the README, which is where the README says it will be.
         timeout-minutes: 5
         shell: pwsh
         run: |
-          $report = Join-Path $pwd 'motion.txt'
-          Remove-Item $report, unzipped -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item unzipped -Recurse -Force -ErrorAction SilentlyContinue
           Expand-Archive -Path bundle/assay-windows.zip -DestinationPath unzipped
           # Absolute, via Resolve-Path, for the Start-Process reason the selfcheck
-          # step above gives.
+          # step above gives. The REPORT path is the relative one under test.
           $exe = (Resolve-Path unzipped/assay-windows/Assay.exe).Path
-          $p = Start-Process -FilePath $exe `
-            -ArgumentList '--', '--motion-probe', $report, '6' `
+          $folder = Split-Path $exe -Parent
+          if (-not (Test-Path (Join-Path $folder 'README.txt'))) {
+            throw "no README.txt in the zip to be 'beside'"
+          }
+          # NOT the zip's folder: this is the whole point of the step.
+          $p = Start-Process -FilePath $exe -WorkingDirectory $pwd `
+            -ArgumentList '--', '--motion-probe', 'motion.txt', '6' `
             -Wait -PassThru -NoNewWindow
           Write-Output "the zip's own client exited $($p.ExitCode)"
+          $report = Join-Path $folder 'motion.txt'
           if (-not (Test-Path $report)) {
-            throw "the zip's client wrote no report: the argument was not honoured"
+            Write-Output "no motion.txt beside README.txt. Anywhere under the job:"
+            Get-ChildItem -Recurse -Filter motion.txt | ForEach-Object { $_.FullName }
+            throw "the report is not where the README promises it, or was not written at all"
+          }
+          # The stray a chdir or a raw path would leave: the launcher's own directory.
+          if (Test-Path (Join-Path $pwd 'motion.txt')) {
+            throw "the report landed in the working directory too: ASSA-313 is back"
           }
           Get-Content $report
           if (-not (Select-String -Path $report -Pattern 'MACHINE:' -Quiet)) {
@@ -1151,7 +1219,7 @@ jobs:
           if (-not (Select-String -Path $report -Pattern 'EXPORTED \(template\)' -Quiet)) {
             throw "the report did not come from an exported build"
           }
-          Remove-Item $report; Remove-Item unzipped -Recurse -Force
+          Remove-Item unzipped -Recurse -Force
 
   windows-motion-probe:
     # **HOW FAST THE BODY IS DRAWN ON A WINDOWS BOX** (ASSA-205). Every motion

@@ -757,7 +757,13 @@ func _ready() -> void:
 	# presses the real "Play solo" button and a button that does not exist yet cannot be found. Not
 	# before the UI the way `--selfcheck` is: that one answers without a window, this one is ABOUT the
 	# window, so it needs the whole screen standing.
-	_motion_probe_path = AssayMotionProbe.requested_path()
+	#
+	# **AND THE PATH IS RESOLVED, NOT TAKEN AS TYPED** (ASSA-313): a bare `motion.txt` used to land in
+	# `Assay.app/Contents/Resources/` on a Mac, because the engine's launcher chdirs into the bundle --
+	# so the one file we ask a tester to send us was inside the app they were sent, and the README's
+	# "beside this README" was false. `requested_report_path` measures a relative path from the folder
+	# the player unzipped.
+	_motion_probe_path = AssayMotionProbe.requested_report_path()
 	if _motion_probe_path != "":
 		_motion_probe = AssayMotionProbe.new()
 		_motion_probe.begin(self, AssayMotionProbe.requested_seconds(), OS.get_name())

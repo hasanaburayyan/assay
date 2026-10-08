@@ -61,6 +61,53 @@ func test_the_flag_parses_a_path_and_optional_seconds() -> bool:
 	return true
 
 
+## **THE FILE GOES WHERE THE README SAYS IT GOES** (ASSA-313). A bare `motion.txt`, which is the form
+## both packaging READMEs tell a tester to paste, used to land in `Assay.app/Contents/Resources/` --
+## measured on the zip from run 37778116449, not reasoned -- because the macOS launcher chdirs into the
+## bundle. These are fixture paths for BOTH platforms on whichever one is running the suite: the
+## arithmetic is the engine's own `get_base_dir`/`path_join`, which do not care what OS they are on,
+## and that is the reason the rule was split out of the OS lookup at all.
+##
+## THE PASS-THROUGH HALF MATTERS AS MUCH AS THE JOIN: every CI step and every hand-run passes an
+## absolute path, so a resolver that touched those would move a file somebody is already reading.
+func test_a_relative_report_path_is_measured_from_the_folder_the_player_unzipped() -> bool:
+	var mac := "/Users/sam/Downloads/assay-macos/Assay.app/Contents/MacOS/Assay"
+	var win := "C:\\Users\\Sam\\Downloads\\assay-windows\\Assay.exe"
+	var folders: Array = [
+		# The folder a player sees: the one holding the .app, never the three inside it.
+		[mac, "/Users/sam/Downloads/assay-macos"],
+		[win, "C:\\Users\\Sam\\Downloads\\assay-windows"],
+		# No bundle in the ancestry: the binary's own folder, which is where the README sits.
+		["/opt/assay/Assay", "/opt/assay"],
+	]
+	for case in folders:
+		var got := AssayMotionProbe.unzipped_folder(String(case[0]))
+		if got != String(case[1]):
+			return _fail("the folder for %s came out as '%s', not '%s'" % [case[0], got, case[1]])
+	var folder := "/Users/sam/Downloads/assay-macos"
+	var paths: Array = [
+		# The README's own line.
+		["motion.txt", folder, folder + "/motion.txt"],
+		["reports/motion.txt", folder, folder + "/reports/motion.txt"],
+		# Absolute, in all four forms the engine recognises: handed back byte for byte.
+		["/tmp/motion.txt", folder, "/tmp/motion.txt"],
+		["C:\\Users\\Sam\\My Docs\\a.txt", folder, "C:\\Users\\Sam\\My Docs\\a.txt"],
+		["res://motion.txt", folder, "res://motion.txt"],
+		["user://motion.txt", folder, "user://motion.txt"],
+		# No probe asked for stays no probe asked for: `main.gd` runs the probe on `!= ""`, so a
+		# resolver that turned "" into a folder would measure every normal launch and quit on it.
+		["", folder, ""],
+		# A folder we could not work out leaves the caller's path alone rather than inventing one.
+		["motion.txt", "", "motion.txt"],
+	]
+	for case in paths:
+		var got := AssayMotionProbe.report_path_for(String(case[0]), String(case[1]))
+		if got != String(case[2]):
+			return _fail("'%s' from '%s' resolved to '%s', not '%s'"
+					% [case[0], case[1], got, case[2]])
+	return true
+
+
 ## **THE MEASURING IS INSIDE THE PACK AND THE DRIVING IS NOT, which is the entire fix.** A report
 ## generator that drifts back into `tools/` would leave the exported client with a flag and nothing to
 ## run, so this pins the side of the fence each half is on.
@@ -120,7 +167,9 @@ func test_main_opens_the_door_and_steps_before_publishing() -> bool:
 	var main := FileAccess.get_file_as_string(MAIN)
 	if main == "":
 		return _fail("%s could not be read" % MAIN)
-	for needed in ["AssayMotionProbe.requested_path()", "func _step_motion_probe(",
+	# `requested_report_path`, not `requested_path`: the raw argument is what landed inside the .app
+	# (ASSA-313), so the door main.gd is meant to open is the resolving one.
+	for needed in ["AssayMotionProbe.requested_report_path()", "func _step_motion_probe(",
 			"_motion_probe.report_text()"]:
 		if not main.contains(needed):
 			return _fail(("%s no longer contains `%s`, so an exported build asked to measure itself "
