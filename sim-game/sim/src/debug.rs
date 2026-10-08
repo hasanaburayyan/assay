@@ -4,7 +4,8 @@
 use std::fmt::Write;
 
 use crate::assembly::{
-    Assembly, AssemblyError, AssemblyPlan, BreakVerdict, Built, Mount, PART_SPECS, PartKind, Source,
+    Assembly, AssemblyError, AssemblyPlan, BreakVerdict, Built, Mount, PART_SPECS, PartKind,
+    SlotLimit, Source,
 };
 use crate::building::{
     Building, BuildingId, BuildingKind, BuildingState, Machine, MachineIdle, MachineStall,
@@ -2662,12 +2663,56 @@ pub fn building_table(world: &World) -> String {
     out
 }
 
-/// The part catalogue: every row, what it costs, and what it contributes.
+/// What a frame accepts, read off its own slot limits: `head 1`, or
+/// `head 1, hopper 0-4`. `""` for a part that offers no slots at all.
+///
+/// **A RANGE ONLY WHERE THERE IS A RANGE.** `min == max` is a count, not a
+/// span, and `head 1-1` invites the reader to wonder what the other number is
+/// for. The two frames differ in exactly this way today — a held frame takes
+/// one head and nothing else; a planted one takes up to
+/// `MAX_HOPPER_SLOTS` — so both forms are reachable from the shipped
+/// catalogue rather than being defence against a case nobody has.
+///
+/// Generated from the spec and naming no kind, which is `part_table`'s own
+/// rule: a fifth part kind, or a frame with a different slot list, is
+/// described here without this function being touched.
+///
+/// **PUBLIC SO THAT NO HOST EVER WORDS A SLOT LIMIT ITSELF** (ASSA-43/52). The
+/// build screen draws the limits as a SHAPE and so needs the numbers rather
+/// than this sentence — `AssaySim::part_kinds` crosses `min` and `max` as data
+/// — but the day any surface says one in words, this is where the words are.
+pub fn slots_phrase(slots: &[SlotLimit]) -> String {
+    slots
+        .iter()
+        .map(|slot| {
+            if slot.min == slot.max {
+                format!("{} {}", slot.kind.name(), slot.max)
+            } else {
+                format!("{} {}-{}", slot.kind.name(), slot.min, slot.max)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The part catalogue: every row, what it costs, what it accepts, and what it
+/// contributes.
 ///
 /// Generated from `PART_SPECS` and naming no kind, so a row added to the
 /// catalogue appears here without this function being touched.
+///
+/// **`accepts` IS HERE BECAUSE A SLOT LIMIT WAS A RULE WITH NO HEADLESS
+/// SURFACE** (ASSA-340). A handle takes one head and offers no hopper slot at
+/// all; a planted frame takes up to four hoppers. Until this column a
+/// `sim-cli` player learned either fact by being refused at `assemble`, and
+/// the build screen was about to draw the same limits as a shape in the Godot
+/// window — which would have made a rule visible only with graphics, the one
+/// thing this repo's `CLAUDE.md` says is never done.
 pub fn part_table() -> String {
-    let mut out = format!("{:<8} {:<9} {:>5}  contributes\n", "name", "mount", "size");
+    let mut out = format!(
+        "{:<8} {:<9} {:>5}  {:<18} contributes\n",
+        "name", "mount", "size", "accepts"
+    );
     for s in &PART_SPECS {
         let mount = match s.kind {
             PartKind::Frame(Mount::Held) => "held",
@@ -2683,14 +2728,22 @@ pub fn part_table() -> String {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        let _ = writeln!(out, "{:<8} {mount:<9} {:>5}  {gives}", s.name, s.size);
+        let _ = writeln!(
+            out,
+            "{:<8} {mount:<9} {:>5}  {:<18} {gives}",
+            s.name,
+            s.size,
+            slots_phrase(s.slots)
+        );
     }
     let _ = write!(
         out,
         "\nsize is both the refined cost and how much stuff the part is made of for\n\
          mass. A frame carries mass = size x strength x {}; over that, the design\n\
-         breaks when it is planted or first used. `make <part> <refined>` then\n\
-         `assemble <frame> <part>...`.\n",
+         breaks when it is planted or first used. accepts is what may be mounted\n\
+         on a frame and how many: a count, or a range where there is one, and a\n\
+         minimum above zero is a slot the design is not finished without.\n\
+         `make <part> <refined>` then `assemble <frame> <part>...`.\n",
         crate::tuning::FRAME_BUDGET_PER_STRENGTH
     );
     out
