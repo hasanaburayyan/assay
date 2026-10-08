@@ -196,7 +196,27 @@ static func label_ink_rect(rect: Rect2, measured: Vector2, align: int) -> Rect2:
 const MINE := Color(0.95, 0.85, 0.45)
 const THEIRS := Color(0.75, 0.78, 0.85)
 const HOVER := Color(0.95, 0.95, 0.95)
-const SPAWN_PAD := Color(0.35, 0.33, 0.20)
+## SPAWN, THE ONE PLACE A JOINING PARTNER TURNS UP, AND THE ONLY NAMED MAP COLOUR THAT USED TO HAVE
+## NO REASON BESIDE IT (Nacre's observation on ASSA-283; it was `Color(0.35, 0.33, 0.20)`).
+##
+## It was 2.23:1 against `MAP_BG` and a cold reader filed it under *things I would mistake for
+## something else*: "a tiny dull square mid-map that reads as a speck or a rendering artefact". A row
+## in `MAP_MARKS` with `in_key: true` is a promise that the thing is on the map, so a keyed mark
+## nobody can see is the key lying. 0.455/0.429/0.26 is the same olive scaled 1.30 -- scaling r, g
+## and b together is scaling HSV's V, so hue and saturation do not move -- and it reads **3.26:1**,
+## clear of the 3:1 mark floor with 0.26 of headroom rather than the 0.017 the smallest clearing
+## value would have had.
+##
+## **THE OTHER HALF OF MAREN'S GATE IS "SPAWN MUST NOT READ AS ORE", AND THE AXIS SHE WORDED IT ON
+## CANNOT CARRY IT.** Her condition was "strictly dimmer than the dimmest deposit disc the generator
+## can produce". `art/spawn_pad_gap.py` measures that gap and it is EMPTY, by 3.6x of luminance: the
+## dimmest disc is `#7A29CC` at purity 1, itself **1.422:1** against the map, and four of the six
+## species slots have a dim end under the 3:1 floor. Nothing a player can see is dimmer than every
+## disc. So the gate is enforced on the axis that actually carries species -- hue and chroma, `dAB`
+## against `DISTINCT` = 12, the studio's own confusion threshold -- where this pad sits **36.5** from
+## the nearest of the 600 disc states. It was never in danger of reading as ore; it was in danger of
+## reading as nothing.
+const SPAWN_PAD := Color(0.455, 0.429, 0.26)
 
 ## HOW BIG A BUILDING'S MARK IS, in screen pixels, as a FLOOR under the footprint (Cove, ASSA-193).
 ##
