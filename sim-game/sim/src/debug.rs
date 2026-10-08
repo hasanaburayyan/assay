@@ -2700,6 +2700,26 @@ pub fn part_table() -> String {
     out
 }
 
+/// HOW MANY SWINGS A DURABILITY POOL AFFORDS — **the only unit a pool may be
+/// said in** (ADR 0003 amendment A10), and now the only place that division
+/// happens.
+///
+/// **Public because the build screen draws this as a BAR and not a sentence**
+/// (`assay-build-screen` §5.2, ASSA-325), so the number has to cross the
+/// binding while **the pool itself must not**: `pool = HEAD_SIZE × effective
+/// strength × PICK_DURABILITY_PER_STRENGTH` and both constants are published,
+/// so an exact pool *is* the head's effective strength and a pick would be a
+/// free assay of it. Swings are that pool over a constant and are what
+/// [`durability_readout`] has printed since ASSA-5, so a host drawing them
+/// leaks nothing the sentence did not already say.
+///
+/// **CAPACITY CEILS**, and [`durability_readout`] explains at length why
+/// consumption floors while this does not: the last swing drains a part-full
+/// pool and still yields, so a pool with one point left affords one swing.
+pub fn swings_afforded(pool: u32) -> u32 {
+    pool.div_ceil(PICK_WEAR_PER_SWING)
+}
+
 /// THE PICK'S LIFE AS A PLAYER MAY READ IT: **swings used, out of the swings
 /// its class affords.** `20 of 120-180 swings used` while any species in it is
 /// rough, `20 of 144 swings used` once they are all known.
@@ -2735,7 +2755,7 @@ pub fn part_table() -> String {
 pub fn durability_readout(world: &World, built: &Built) -> String {
     let range = built.assembly.stat_range(&world.species);
     let max = built.assembly.stats(&world.species).durability;
-    let affords = |pool: u32| pool.div_ceil(PICK_WEAR_PER_SWING);
+    let affords = swings_afforded;
     let used = max.saturating_sub(built.durability) / PICK_WEAR_PER_SWING;
     if range.low.durability == range.high.durability {
         format!("{used} of {} swings used", affords(max))
