@@ -25,10 +25,12 @@ extends SceneTree
 ## the composition and nothing about the client.
 ##
 ## WHAT IT WRITES: `01-close-up-two.png` (the screen you play on), `02-whole-world-two.png` (the
-## schematic, one V press away), `04-whole-world-two-walking.png` (**the same schematic with both
-## bodies still walking**, ASSA-274 box 1) and `03-whole-world-two-key.png` (the key up), plus a
-## verdict naming both players, which one the client thinks is mine, how far apart they stand in
-## tiles, and whether each body still had a `target` when the walking shot was taken.
+## schematic, one V press away), `05-whole-world-two-walking.png` (**the same schematic with both
+## bodies still walking**, ASSA-274 box 1) and `03-whole-world-two-key.png` (the same frame with the
+## key up), plus a verdict naming both players, which one the client thinks is mine, how far apart
+## they stand in tiles, and whether each body still had a `target` when the walking shot was taken.
+## **AND `04-marks-two.json`, THE POLYGONS THE TWO BODIES WERE PAINTED FROM** (ASSA-236) -- see
+## `_write_marks_table` for why a name is not enough and what the control is.
 ##
 ## **AND `play` BUILDS A FACTORY FIRST, WHICH IS WHAT ASSA-206 BOX 3 ASKS FOR AND NOTHING COULD MAKE.**
 ## That box wants one frame holding a building, TWO players and a dead-end disc, judged at 1x. The two
@@ -249,13 +251,17 @@ func _process(_delta: float) -> bool:
 			_settle_then(11)
 		11:
 			_shoot("02-whole-world-two.png")
+			# **THE MARKS TABLE DESCRIBES THE FRAME ABOVE AND NOT THE ONE BELOW**, which is why it
+			# is written here and not after the walk: `04-marks-two.json` is the polygons those two
+			# STANDING bodies were painted from, and the walking shot moves them.
+			_write_marks_table()
 			_step = 20
 		20:
 			_send_both_walking()
 		21:
 			_wait_a_breath()
 		22:
-			_shoot("04-whole-world-two-walking.png")
+			_shoot("05-whole-world-two-walking.png")
 			_step = 12
 		12:
 			# THE PRESS ITSELF AGAIN, and its VISIBILITY is recorded rather than assumed: a state a
@@ -568,7 +574,7 @@ func _wait_for_the_peer_to_arrive() -> void:
 ## **BOTH BODIES SENT WALKING, OPPOSITE WAYS, AND THEN NOT WAITED FOR** (ASSA-274 box 1).
 ##
 ## The two existing whole-world shots are of people standing still, which is every whole-world shot
-## this studio has ever taken bar one. `04-whole-world-two-walking.png` is the first frame that can
+## this studio has ever taken bar one. `05-whole-world-two-walking.png` is the first frame that can
 ## contain a PARTNER's walk line, which is the quietest mark on the map at 1.824:1.
 ##
 ## MINE GOES THROUGH THE CLIENT AND THEIRS THROUGH A TERMINAL, which is not symmetry for its own
@@ -676,7 +682,7 @@ func _report() -> void:
 	if _walk_note != "":
 		print(_walk_note.strip_edges(false, true))
 	else:
-		print("  WALKING SHOT: never taken, so 04-whole-world-two-walking.png is not in this run")
+		print("  WALKING SHOT: never taken, so 05-whole-world-two-walking.png is not in this run")
 	_report_the_subject(mine, theirs)
 	print("  said: %s" % " | ".join(_said))
 	if _is_empty_pair():
@@ -727,6 +733,87 @@ func _report_the_subject(mine: Variant, theirs: Variant) -> void:
 				% [who, tile, _distance_to_a_building(tile),
 				"" if _clear_of_buildings(tile) else "  <- UNDER %d, THE MARKS OVERLAP"
 				% CLEAR_TILES])
+
+
+## **THE GEOMETRY THE TWO BODIES AND THE MACHINES WERE PAINTED FROM, BESIDE THE SHOT** (ASSA-236
+## box 3: "you and your partner are told apart by SHAPE or form at 1x, not by hue alone plus a ring").
+##
+## `window_shot.gd::_write_marks_table` does this for the one-player screens and its own docstring
+## says why: measure the polygon the painter used, never a lump of bright pixels in an image. **But
+## that tool plays SOLO, so the one mark this box is about -- a partner -- has never been in any file
+## it wrote.** Every number anyone has published about telling two bodies apart, mine included, came
+## off a Python replica of this geometry.
+##
+## **IT CARRIES THE WHOLE POLYGON AND NOT JUST THE SHAPE'S NAME**, which is the one way this is more
+## than a copy of the solo version: a name can be compared to a name, and what box 3 asks is whether
+## the INK in the frame has the form the table claims. With the points here, a measurement can
+## rasterise `points` against the real PNG and ask how much of the ink is inside -- and, as a control
+## in the same frame, how much of it a RECT of the same box would have claimed, which is the shape
+## both bodies were before this item.
+##
+## Straight off `AssayHud.player_mark` and `main.gd::_building_marks`: the SAME calls `_draw` makes
+## (main.gd:3941, 3999), so nothing here can drift from the painter without the painter moving.
+func _write_marks_table() -> void:
+	var people := []
+	for entry in _screen._sim.players():
+		var player: Dictionary = entry
+		var mine := int(player.get("id", -1)) == int(_screen._client.player_id)
+		var at: Vector2 = _screen.point_of_tile(player.get("pos", Vector2i.ZERO) as Vector2i)
+		var mark: Dictionary = AssayHud.player_mark(at, mine)
+		var row := {"id": int(player.get("id", -1)), "mine": mine,
+				"who": "me" if mine else _peer_name,
+				"tile": [int((player.get("pos", Vector2i.ZERO) as Vector2i).x),
+						int((player.get("pos", Vector2i.ZERO) as Vector2i).y)],
+				"x": at.x, "y": at.y,
+				"w": (mark["span"] as Vector2).x, "h": (mark["span"] as Vector2).y,
+				"shape": String(mark["shape"]), "points": _flat(mark["points"]),
+				"keyline_points": _flat(mark["keyline_points"]),
+				"colour": _rgb(mark["colour"] as Color)}
+		# THE RING ONLY EXISTS ON ONE BODY, so the key is ABSENT on the other rather than empty: "this
+		# player has no ring" and "I did not look" are different answers, and box 3 is partly about
+		# whether the ring is still doing all the work.
+		if mark.has("ring_points"):
+			row["ring_points"] = _flat(mark["ring_points"])
+		people.append(row)
+	var machines := []
+	var buildings: Array = _screen._sim.buildings()
+	var marks: Array = _screen._building_marks(buildings)
+	for i in marks.size():
+		var mark: Dictionary = marks[i]
+		var building: Dictionary = buildings[i] if i < buildings.size() else {}
+		machines.append({"kind": String(building.get("kind", "?")),
+				"x": (mark["at"] as Vector2).x, "y": (mark["at"] as Vector2).y,
+				"w": (mark["span"] as Vector2).x, "h": (mark["span"] as Vector2).y,
+				"shape": String(AssayHud.mark_entry(&"building")["shape"]),
+				"points": _flat(mark["points"]), "hole_points": _flat(mark["hole_points"]),
+				"stroke": float(mark["stroke"])})
+	var table := {"seed": _seed, "cell": _screen._cell,
+			"map": [_screen.MARGIN.x, _screen.MARGIN.y,
+					(Vector2(_screen._sim.size_tiles()) * _screen._cell).x,
+					(Vector2(_screen._sim.size_tiles()) * _screen._cell).y],
+			"my_id": int(_screen._client.player_id), "people": people, "machines": machines}
+	var path := _out.path_join("04-marks-two.json")
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		_bail("could not write %s" % path)
+		return
+	file.store_string(JSON.stringify(table, "  "))
+	file.close()
+	print("  wrote %s (%d people, %d machine(s))" % [path, people.size(), machines.size()])
+
+
+## A polygon as a flat `[x, y, x, y, ...]`, because `JSON.stringify` turns a `Vector2` into the string
+## `"(1, 2)"` and a measurement would then be parsing Godot's `print` format.
+func _flat(points: Variant) -> Array:
+	var out := []
+	for p in points as PackedVector2Array:
+		out.append((p as Vector2).x)
+		out.append((p as Vector2).y)
+	return out
+
+
+func _rgb(colour: Color) -> Array:
+	return [colour.r, colour.g, colour.b]
 
 
 func _spawn_relay() -> bool:

@@ -731,15 +731,33 @@ func _report() -> void:
 	# probe never does: `AssayTabStrip.select` sets `scroll_vertical = 0` and the round-robin selects
 	# a tab every tick, so every reading below is taken at the top of the box. The defect that made
 	# me add this edge was real and was found in a SCROLLED state, so the number is not meaningless
-	# -- it is simply not being asked. Said in the output rather than left for the next reader to
-	# infer from a column of zeroes. Fixing it means measuring each tab a second time with the scroll
-	# clamped to its maximum, which is a change to the phase machine and not a thing to slip in hours
-	# before a gate.
-	print("    **`off top` IS STRUCTURALLY ZERO IN THIS RUN AND IS NOT EVIDENCE.** `select` resets")
-	print("    the scroll and this probe selects a tab every tick, so every reading is taken at the")
-	print("    top of the box and nothing can ever be above it. The edge is real -- it was found in")
-	print("    a scrolled state -- but this run does not ask it. Owed: a second reading per tab with")
-	print("    the scroll clamped to its maximum.")
+	# -- it is simply not being asked.
+	#
+	# **AND I AM WITHDRAWING THE FIX I OWED FOR IT, HAVING THOUGHT ABOUT WHAT IT WOULD ASSERT.** My
+	# first note here promised a second reading per tab with the scroll clamped to its maximum. That
+	# would measure a state the rulings EXPLICITLY PERMIT: Wren's rule is that no control is below the
+	# fold, and Maren's is that the list may scroll BECAUSE it holds no controls. Scroll Mineralogy's
+	# 826 px of index to the bottom and `go here` is of course above the frame -- the player did that,
+	# and one scroll back undoes it. The rule is about whether a control is reachable WITHOUT
+	# scrolling, which is the unscrolled reading this probe already takes.
+	#
+	# So building it would have produced large non-zero numbers that mean nothing, under a heading
+	# that says "unreachable", which is how a measurement becomes a false alarm. What this column
+	# honestly is: a TRIPWIRE for a control positioned above the viewport in the DEFAULT state, which
+	# cannot happen while `select` resets the scroll. Zero is the correct answer and a non-zero would
+	# mean that invariant had changed. Kept, reported, and no longer cited as independent evidence.
+	print("    **`off top` IS STRUCTURALLY ZERO HERE AND IS A TRIPWIRE, NOT EVIDENCE.** `select`")
+	print("    resets the scroll and this probe selects a tab every tick, so every reading is taken at")
+	print("    the top of the box and nothing can ever be above it. Measuring a SCROLLED state instead")
+	print("    would assert a state the rulings permit -- a list may scroll because it holds no")
+	print("    controls -- so zero is the right answer and a non-zero would mean that changed.")
+	# **AND THE INVARIANT IT RESTS ON IS NOW A TEST** (ASSA-277, Limpet's reading). It used to rest on
+	# a line in `select` that nothing checked, so this column's zero was an accident rather than a
+	# promise; delete the reset and every reading here stayed 0 while the screen got worse. Now the
+	# mutation reddens one named test instead of nothing.
+	print("    The reset it depends on is held by")
+	print("    `test_tab_strip.gd::test_selecting_a_tab_shows_you_the_top_of_it`; before ASSA-277 that")
+	print("    invariant was untested, so this zero was an accident. A tripwire whose wire is checked.")
 	# **BOX 2 IS READ AS EITHER AXIS** (Maren, 19:50). Both columns above are vertical, and a column
 	# laid out wider than the window falls off a third edge that every instrument we owned was blind
 	# to. The reference is the PAINTED panel and not the clip rect, for the reason in `_button_reach`:
@@ -819,11 +837,31 @@ func _report() -> void:
 		else:
 			print("  VERDICT  THE PANEL KEEPS THE RULE ON BOTH AXES. Not one button of any tab, on any")
 			print("           tick of this play, was drawn past the bottom or the top of the box that")
-			print("           clips it, or outside the %d px of column that is actually painted. The"
+			print("           clips it, or outside the %d px of column that is actually painted."
 					% int(round(_paint_w)))
-			print("           deepest reach is `%s` at %d px; the worst clip of the run was %d px"
-					% [deepest, int(round(deepest_px)), int(round(_clip_min))])
-			print("           (tick %d)." % _clip_min_tick)
+			# **THE TWO HIGH WATERS ARE FROM DIFFERENT TICKS AND THIS USED TO PRINT THEM AS IF THEY
+			# MET** (Limpet, on seed 19: deepest reach 358 at t513, worst clip 337 at t146 -- 21 px the
+			# wrong way, inside a sentence that said the rule was kept). Per tick the verdict is true
+			# and the measured columns above are what it rests on. The sentence was the part that
+			# overclaimed: a reader takes "deepest reach X, worst clip Y" as a comparison, and these two
+			# numbers were never observed together.
+			#
+			# **SO THE GAP IS NAMED AND ITS SIGN IS STATED**, rather than leaving two figures side by
+			# side for the reader to subtract. Nothing couples "a machine stalled" to "the make list is
+			# short", so their not meeting is luck on this seed, not a property of the panel -- which is
+			# exactly why the per-tick columns stay the verdict and this stays a note.
+			var unmet := _clip_min - deepest_px
+			print("           Deepest reach `%s` %d px (tick %d); worst clip %d px (tick %d) -- "
+					% [deepest, int(round(deepest_px)), int(_reach[deepest]["tick"]),
+					int(round(_clip_min)), _clip_min_tick])
+			if unmet >= 0.0:
+				print("           DIFFERENT TICKS, so this is not a measurement of them meeting. Had")
+				print("           they met the reach would still fit by %d px." % int(round(unmet)))
+			else:
+				print("           DIFFERENT TICKS, and had they met the reach would NOT have fit, by")
+				print("           %d px. Nothing couples them, so this is luck on this seed and not a"
+						% int(round(-unmet)))
+				print("           property: hold a tab open through the worst clip before trusting it.")
 	# **THE FOOTER'S COST, BECAUSE I PLACED IT AND NOBODY RULED IT.** The cursor readout is derived
 	# from the TILE, not from a system, so it is not a tab; it sits last in the scrolled area, under
 	# whichever tab is open. The claim I made in `main.gd` is that this costs the tab budget nothing,
