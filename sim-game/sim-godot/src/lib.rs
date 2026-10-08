@@ -510,7 +510,8 @@ impl AssaySim {
     /// ONE ENTRY PER ANSWER, in the sim's order — **not one per question**
     /// (ASSA-272). `Burns` and `HardEnough` normally give two entries; when one
     /// patch is the nearest answer to both there is ONE, labelled "what near me
-    /// burns and is hard enough", carrying both readings and both tags. The
+    /// burns and is hard enough", carrying each question's reading beside the
+    /// verdict that reading earns (ASSA-272 box 7) — nothing dropped. The
     /// count is the sim's to decide and a renderer must not assume it: a body
     /// that drew `Question::ALL.len()` blocks would draw an empty one here, and
     /// a body that merged two entries itself would be inventing wording.

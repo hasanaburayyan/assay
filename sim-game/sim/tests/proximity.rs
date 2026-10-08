@@ -1332,6 +1332,90 @@ fn one_patch_answering_both_questions_is_said_once_and_names_both() {
     );
 }
 
+/// **A MERGED LINE IS THE TWO UNMERGED LINES WITH THE SHARED HEAD SAID ONCE**
+/// (ASSA-272 box 7, the Game Director's ruling of 10-08).
+///
+/// Not a wording claim — a grammar one, and hers: *"interleaved, a merged line
+/// is exactly the two unmerged lines with the shared head said once."* A reading
+/// and the verdict it earns are ADJACENT on a one-question line, and the box
+/// fails the moment the merge separates them, because at 1x a tail of
+/// `reactivity · hardness · fuel at B · hand-minable` reads as four facts rather
+/// than two roles — and two roles is the whole of the item.
+///
+/// **THE EXPECTED CLAUSES ARE BUILT FROM THE UNMERGED SENTENCES, NEVER TYPED.**
+/// Nothing here pins a word of the Game Director's wording: every clause comes
+/// out of `proximity_headline` on the same world, so a reworded tag moves both
+/// sides of the assertion and only the ORDER can redden it. That is also why
+/// this is a sequence comparison and not a set of `contains` — the test above
+/// already proves nothing is lost, and losing nothing is exactly what a
+/// mis-ordered line does.
+#[test]
+fn a_merged_tail_keeps_each_reading_beside_the_verdict_it_earns() {
+    let mut merged = Vec::new();
+    for seed in SCAN {
+        let (w, me) = played(seed);
+        if !both_questions_name_one_patch(&w, me) {
+            continue;
+        }
+        merged.push(seed);
+        let answers = debug::proximity_headlines(&w, me);
+        assert_eq!(
+            answers.len(),
+            1,
+            "seed {seed}: one patch answers both questions, so the merge is what \
+             this test is about and there is nothing merged to read"
+        );
+        let a = &answers[0];
+        let alone: Vec<String> = Question::ALL
+            .into_iter()
+            .map(|q| debug::proximity_headline(&w, me, q))
+            .collect();
+        // **THE PREMISE, ASSERTED.** The claim below is a RELATIVE one — the
+        // merged tail is the unmerged tails in order — and a relative claim is
+        // satisfied just as well by both sides being wrong together: I mutated
+        // `answer_about` to emit verdict-then-reading for every question and the
+        // whole Rust suite stayed green, 55 of 55, because the expected clauses
+        // come out of the same builder. So say what "in order" means on the one
+        // -question line it is measured against: the reading first, then the
+        // verdict it earns. This names the sim's own property name and not one
+        // word of the Game Director's wording, which stays hers to judge at 1x.
+        for (q, line) in Question::ALL.into_iter().zip(&alone) {
+            let first = clauses_of(line).into_iter().next().unwrap_or_else(|| {
+                panic!("seed {seed}: {q:?}'s answer has no clause at all: {line}")
+            });
+            assert!(
+                first.starts_with(q.property().name()),
+                "seed {seed}: {q:?}'s own line does not open its tail with the \
+                 reading — the first clause is `{first}`. A merged line is held \
+                 to being these two tails in order, so if THIS order is wrong \
+                 the merge inherits it and the comparison below cannot see it:\n\
+                 {line}"
+            );
+        }
+        let expected: Vec<String> = alone.iter().flat_map(|l| clauses_of(l)).collect();
+        assert_eq!(
+            clauses_of(&a.line),
+            expected,
+            "seed {seed}: the merged tail is not the two tails in order. READ \
+             THE TWO LISTS BEFORE THE DIAGNOSIS: if the readings are bunched \
+             ahead of the tags, `answer_about` is walking `qs` twice and one \
+             loop emitting reading-then-tag is the fix; if the pairs are intact \
+             but the questions come the other way round, it is the order the \
+             tail walks `qs` in, which must be `Question::ALL`'s. The clauses \
+             themselves are not pinned here, so a reworded tag cannot be what \
+             you are reading:\n  merged: {}\n   alone: {}",
+            a.line,
+            alone.join("\n   alone: ")
+        );
+    }
+    assert!(
+        !merged.is_empty(),
+        "no seed in {SCAN:?} merged, so this test read no merged tail at all. \
+         It was 17 of 40 at spawn (ASSA-272) — re-measure before trusting a \
+         green here"
+    );
+}
+
 /// **WHEN THE ANSWERS DIFFER, NOTHING MOVED** (ASSA-272 box 4). Byte for byte
 /// against `proximity_headline`, on every seed of the scan that does not
 /// merge — which is the whole claim, not a sample of it.
