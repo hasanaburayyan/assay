@@ -281,6 +281,47 @@ func test_the_table_carries_the_weight_a_mark_is_drawn_at() -> bool:
 	return true
 
 
+## **A KEYED MARK IN A FIXED INK CLEARS THE MARK FLOOR AGAINST THE GROUND IT STANDS ON** (ASSA-283).
+##
+## `in_key: true` is a promise that the thing is on the map; a keyed row nobody can see is the key
+## lying, and a cold reader found exactly that -- the spawn pad at **2.23:1**, filed under "things I
+## would mistake for something else". Nothing in the suite read that colour: this file checked only
+## that the row's ink comes from the table rather than from a literal, which a 1.0:1 row would pass.
+##
+## 3:1 is the floor for a non-text mark (Maren, §11.9: a 9x9 mark is a mark, and contrast floors are
+## for marks and text, never for regions). The ink is composited on `MAP_BG` the way `glyph_color`
+## does it, so a row's WEIGHT counts -- a 25% line is not its colour.
+##
+## **TWO KINDS OF ROW ARE OUT, BOTH BY NAME SO THAT TURNING THEM ON IS DELETING A WORD.** `data_ink`
+## rows have no fixed colour to check (a disc's ink is its species and purity; `species_probe.py`
+## owns that surface). And `walk_mine` is **2.62:1 today and it is ASSA-274's**, Maren's own item,
+## which keeps the walk lines and the terminus while this one owns the pad -- so it is excluded here
+## rather than fixed here, and the guard comes on for it the moment 274 lands.
+const FLOOR_EXEMPT := [&"walk_mine"]
+const MARK_FLOOR := 3.0
+
+
+func test_a_keyed_mark_in_a_fixed_ink_clears_the_mark_floor() -> bool:
+	var checked := 0
+	for row: Dictionary in AssayHud.MAP_MARKS:
+		if not row.get("in_key", false) or row.get("data_ink", false):
+			continue
+		if row["id"] in FLOOR_EXEMPT:
+			continue
+		var ink: Color = AssayHud.mark_ink(row["id"])
+		var on_ground := AssayHud.MAP_BG.lerp(Color(ink.r, ink.g, ink.b), ink.a)
+		var ratio := AssayHud.contrast_ratio(on_ground, AssayHud.MAP_BG)
+		if ratio < MARK_FLOOR:
+			return _fail("the key promises `%s` and it is %.3f:1 on MAP_BG, under the %.1f floor"
+					% [row["id"], ratio, MARK_FLOOR])
+		checked += 1
+	# A test whose set came back empty passes for the absence of its own data: five rows qualify
+	# today (spawn, player_mine, player_theirs, mine_ring, target, hover_tile).
+	if checked < 5:
+		return _fail("only %d keyed fixed-ink rows found, so this checked almost nothing" % checked)
+	return true
+
+
 ## **THE SPAWN PAD IS THE TILE IT NAMES AND NEVER BIGGER THAN A PERSON** (box 7, Maren's ruling).
 func test_the_spawn_pad_is_one_tile_and_never_larger_than_the_player_mark() -> bool:
 	var at := Vector2i(48, 32)
