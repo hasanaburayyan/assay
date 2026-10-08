@@ -12,7 +12,7 @@ use crate::ladder;
 use crate::mineral::{MineralSpecies, Sheet, SpeciesId};
 use crate::ore::OreDeposit;
 use crate::rng::{Rng, hash_coords, mix};
-use crate::tuning::{PURITY_SPREAD, SPECIES_PER_WORLD, STARTER_MIN_PURITY};
+use crate::tuning::{PURITY_SPREAD, SHEET_SCALE, SPECIES_PER_WORLD, STARTER_MIN_PURITY};
 use crate::types::{ChunkPos, DepositId, TilePos};
 use crate::world::CHUNK_SIZE;
 
@@ -46,6 +46,14 @@ pub const STARTER_CHUNKS: [(i32, i32); 2] = [(1, 0), (0, 1)];
 /// at 95 a deposit can only be 50–100. That is intended — a rich world has
 /// no poor ore — and it is why the test asserts a *strictly rising mean*
 /// rather than a shifted distribution.
+///
+/// **THE `1, 100` HERE IS NOT [`SHEET_SCALE`] AND MUST NOT BECOME IT**
+/// (ASSA-279). Purity and a sheet property share two numbers and nothing
+/// else: purity rounds into a `Grade`, a sheet value feeds property
+/// thresholds, and a reading's scale is now published to hosts as a bar's
+/// denominator. One constant for both would mean the day either range moved
+/// the other moved with it, silently, and a purity bar would start claiming
+/// a sheet's axis.
 pub fn roll_purity(rng: &mut Rng, core_quality: u32) -> u8 {
     let offset = i64::from(rng.range(0, 2 * PURITY_SPREAD + 1)) - i64::from(PURITY_SPREAD);
     (i64::from(core_quality) + offset).clamp(1, 100) as u8
@@ -165,8 +173,17 @@ fn roll_roster(seed: u64, attempt: u64) -> Vec<MineralSpecies> {
         .collect()
 }
 
+/// One sheet property, rolled flat across [`SHEET_SCALE`].
+///
+/// The ends come from the constant rather than from `1` and `101` here
+/// (ASSA-279), because a reading's scale is now published to hosts
+/// (`debug::reading_scale`) and a bar drawn against it would be wrong the
+/// moment these two literals and that constant disagreed.
+///
+/// `SHEET_SCALE.1 + 1` because `Rng::range` excludes its top and the scale is
+/// inclusive at both ends.
 fn roll(rng: &mut Rng) -> u8 {
-    rng.range(1, 101) as u8
+    rng.range(u32::from(SHEET_SCALE.0), u32::from(SHEET_SCALE.1) + 1) as u8
 }
 
 const ONSETS: [&str; 20] = [

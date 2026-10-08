@@ -1286,6 +1286,28 @@ pub fn reading_range(species: &MineralSpecies, property: Property) -> (u8, u8) {
     }
 }
 
+/// **THE AXIS EVERY READING SITS ON, inclusive at both ends: a bar's
+/// denominator** (ASSA-279).
+///
+/// [`reading_range`] hands a surface the two ends of what a player knows, and
+/// that is a numerator with nothing under it. A host that wanted to draw it
+/// had to type `100`, which is a renderer holding an opinion about worldgen —
+/// the exact failure `make_offers`' docstring warns about for wording, in
+/// numbers.
+///
+/// **IT IS ONE PAIR FOR EVERY PROPERTY AND EVERY GRADE, and that is a fact
+/// about `reading_range`, not a simplification.** What crosses to a host is
+/// the **raw** sheet value or its band — `species.sheet.get(property)` — so no
+/// grade multiplier is in it. (`assembly::reading` is the other function with
+/// this name, for an assembly's stat ranges; it *does* scale by grade, and it
+/// is not what a species row shows.) The day a row starts showing a
+/// grade-scaled reading, this returns a pair per grade and the callers that
+/// assumed one pair will fail to compile, which is the point of it being a
+/// function and not a constant re-exported.
+pub const fn reading_scale() -> (u8, u8) {
+    crate::tuning::SHEET_SCALE
+}
+
 /// WHAT A RECIPE'S ROW SAYS WHEN NOTHING IN THE GAME CONSUMES ITS OUTPUT, or
 /// "" when something does. The one place that sentence is written.
 ///

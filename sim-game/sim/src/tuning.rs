@@ -103,6 +103,24 @@ pub const ASSAY_TICKS: u32 = 30;
 /// Width of the bands a rough (unassayed) sheet reading shows, e.g. 26–50.
 pub const SHEET_BAND: u8 = 25;
 
+/// The two ends, inclusive, of the scale every sheet property is rolled and
+/// read on. **The axis a reading sits on, and the only place it is named.**
+///
+/// It was three unnamed literals until ASSA-279: the roll in
+/// `worldgen::roll`, the top band's clamp in `Sheet::band`, and a doc comment
+/// saying "All 1–100" that nothing tested. A surface drawing a reading as a
+/// bar needs this pair as its denominator, and a host typing `100` of its own
+/// would be inventing a rule that fails silently the day the roll moves.
+/// `debug::reading_scale` publishes it; nothing may re-derive it.
+///
+/// **PURITY IS A DIFFERENT AXIS THAT HAPPENS TO SHARE TWO NUMBERS.**
+/// `worldgen::roll_purity` clamps to `1..=100` as well, and it deliberately
+/// does **not** read this constant: purity rounds into a grade
+/// (`GRADE_B_MIN_PURITY`, `GRADE_A_MIN_PURITY`) and a sheet value feeds
+/// property thresholds. One name for two rules would make the day either
+/// range moves the day both do.
+pub const SHEET_SCALE: (u8, u8) = (1, 100);
+
 /// Longest name a player may give a species.
 pub const SPECIES_NAME_MAX: usize = 20;
 

@@ -390,11 +390,10 @@ impl AssaySim {
     /// carries no more than `readings` always did. The number an assay buys
     /// stays out of this process until someone buys it.
     ///
-    /// **THE SCALE THESE SIT ON IS NOT HERE YET.** Readings run 1..=100, and a
-    /// bar needs that denominator — but the sim publishes it nowhere a host can
-    /// read (`worldgen::roll` is `rng.range(1, 101)`, `Sheet::band` clamps its
-    /// top at 100), and a host typing `100` would be inventing a rule that
-    /// fails silently the day the roll moves. Own item; do not guess it here.
+    /// **THE SCALE THESE SIT ON IS [`Self::reading_scale`]** (ASSA-279), which
+    /// is the denominator a bar needs. It is not a key on these rows because
+    /// it is a constant of the rules and not a fact about a species: one pair,
+    /// every property, every grade. Read it once; never type `100`.
     #[func]
     pub fn species_sheets(&self) -> Array<VarDictionary> {
         self.species_facts()
@@ -449,6 +448,30 @@ impl AssaySim {
                 row
             })
             .collect()
+    }
+
+    /// **THE AXIS A READING SITS ON, as a `Vector2i` of its two inclusive
+    /// ends: the denominator a bar needs** (ASSA-279, `debug::reading_scale`).
+    ///
+    /// [`Self::species_sheets`] hands over `reading_ranges`, which is a
+    /// numerator with nothing under it, and a surface that wanted to draw it
+    /// had to type `100` — a renderer holding an opinion about worldgen, which
+    /// would go on looking right for as long as the opinion happened to match.
+    ///
+    /// **ONE PAIR FOR EVERY PROPERTY AND EVERY GRADE**, because what crosses
+    /// as a reading is the raw sheet value or its band and no grade
+    /// multiplier is in it. A `Vector2i` rather than two ints or a dict for
+    /// the same reason `reading_ranges` is one: it is the shape a surface
+    /// already lerps with, and a pair cannot be half-read.
+    ///
+    /// It takes `&self` because every `#[func]` does, not because it depends
+    /// on this world: the scale is a constant of the rules, so the answer is
+    /// the same before a world is loaded, which is what lets a title screen
+    /// lay out an axis.
+    #[func]
+    pub fn reading_scale(&self) -> Vector2i {
+        let (lo, hi) = sim::debug::reading_scale();
+        Vector2i::new(i32::from(lo), i32::from(hi))
     }
 
     /// WHAT NEAR THIS PLAYER ANSWERS EACH QUESTION, as the sim's own sentence

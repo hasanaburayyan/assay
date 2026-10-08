@@ -547,9 +547,74 @@ const TOAST_INSET := 12.0
 ## IT TAKES THE TOAST'S OWN MEASURED SIZE rather than guessing one: a panel sized here would be a
 ## second opinion about how tall a themed `PanelContainer` holding one or two labels is, and the first
 ## time the type scale moved the two would disagree.
-static func status_toast_rect(toast: Vector2) -> Rect2:
+##
+## **`blocked` IS THE MAP KEY, AND IT IS HERE BECAUSE I PUT THE TOAST ON TOP OF IT** (ASSA-281). The
+## paragraph above says the bottom-left "is the only free corner". It was not: `_build_map_key_over_
+## the_map` had already pinned the shape key to exactly that corner, and the key is only up on the one
+## view where the toast has the most to say. Measured on five real-window shots by four people, the
+## key's last row -- *"the tile the readout is describing"* -- lost **64% of its sample swatch** (476
+## px before this toast existed, 172 px in every shot since), and because the toast's fill IS this
+## panel's `SURFACE`, it does not read as something on top: it reads as a twelfth key row.
+##
+## **THE TOAST YIELDS, NOT THE KEY.** The key is a reference a player deliberately opened and is
+## reading; the toast is a transient they did not ask for. A panel that shoved the thing being read
+## out of the way would be the louder half winning, which is the whole argument of this screen.
+##
+## **IT MOVES SIDEWAYS, NOT UP, AND THE REASON IS A NUMBER RATHER THAN A PREFERENCE.** Above the key
+## the toast lands at y 365, and `test_the_status_toast_appears_only_with_something_to_say` requires
+## the lower half of the world, whose boundary is y 360. **Five pixels.** One more row in the key and
+## a correct fix would start failing a test that is right -- so the vertical anchor a player has
+## already learned stays put, and only x moves. Sideways the same slack is 140 px.
+##
+## `Rect2()` MEANS NOTHING IS BLOCKING and is the default, so every caller that has no key to care
+## about keeps the rect it had, byte for byte. An empty rect intersects nothing, so that is a fact
+## about `Rect2.intersects` and not a special case written here.
+static func status_toast_rect(toast: Vector2, blocked := Rect2()) -> Rect2:
 	var world := world_rect()
-	return Rect2(Vector2(world.position.x + TOAST_INSET, world.end.y - TOAST_INSET - toast.y), toast)
+	var at := Rect2(Vector2(world.position.x + TOAST_INSET, world.end.y - TOAST_INSET - toast.y),
+			toast)
+	if not at.intersects(blocked):
+		return at
+	# **FIRST CHOICE: BESIDE IT, ON THE SAME BASELINE.** This is what happens in the shipped window --
+	# `Place 0 · submitted` is 139 px wide against the key's 304, so there is 450 px of room.
+	var beside := at
+	beside.position.x = blocked.end.x + TOAST_INSET
+	if beside.end.x <= world.end.x - TOAST_INSET:
+		return beside
+	# **SECOND CHOICE: ABOVE IT, AND ONLY BECAUSE THE FIRST ONE FAILED.** A long sentence -- a refusal,
+	# a quiet host -- can be wider than the room beside the key, and then there is no placement that
+	# keeps both the baseline and the key. **MY OWN TEST FOUND THIS, NOT MY READING OF THE CODE**: the
+	# first version of this function only moved sideways and clamped, which quietly put the toast back
+	# on top of the key whenever it did not fit -- a fix that silently stops fixing is worse than the
+	# bug, because the shot that proves it looks right.
+	var above := at
+	above.position.y = blocked.position.y - TOAST_INSET - toast.y
+	if above.position.y >= world.position.y:
+		return above
+	# **AND IF IT FITS NOWHERE, THE SENTENCE WINS.** A toast pushed off the map is a client that has
+	# stopped speaking, and `no refusal is silent` outranks a covered legend row. Back to the corner,
+	# which is at least the place a player has learned to look.
+	return at
+
+
+## **WHERE THE SHAPE KEY LANDS, SO SOMETHING ELSE CAN KEEP OFF IT** (ASSA-281).
+##
+## Nothing draws from this: `main.gd::_build_map_key_over_the_map` puts the key in a region covering
+## `world_rect()` with `ALIGNMENT_END` + `SIZE_SHRINK_END`/`SIZE_SHRINK_BEGIN`, and the ENGINE does
+## the placing. **This states the same answer in arithmetic**, because `status_toast_rect` has to know
+## the key's rect in the headless suite, where no container has laid out and `_map_key_box.position`
+## is still (0, 0).
+##
+## **SO IT IS A SECOND COPY OF ONE FACT AND THAT IS A REAL COST** -- change the region's alignment and
+## this goes quietly wrong. It is here rather than read off the node because the alternative is a
+## measurement that only exists in a real window, which is the one place our tests are not. The
+## builder's side carries a comment pointing back at this function.
+##
+## The size is the key's own `get_combined_minimum_size()`, for `status_toast_rect`'s reason: content
+## -derived sizes are the ones that survive having no window.
+static func map_key_rect(key: Vector2) -> Rect2:
+	var world := world_rect()
+	return Rect2(Vector2(world.position.x, world.end.y - key.y), key)
 
 
 ## **THE SURFACE THE JOIN SCREEN GETS, WHICH IS ALL OF IT** (ASSA-231, Maren's Gap 5: "one screen,

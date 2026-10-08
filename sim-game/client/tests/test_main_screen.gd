@@ -4194,6 +4194,74 @@ func test_the_status_toast_appears_only_with_something_to_say() -> bool:
 	return ok
 
 
+## **THE TOAST KEEPS OFF THE SHAPE KEY, AND BOTH OF THEM USED TO BE IN THAT CORNER** (ASSA-281).
+##
+## `status_toast_rect`'s own docstring said the world's bottom-left was "the only free corner". It was
+## not free: `_build_map_key_over_the_map` had pinned the key there first, on the one view where the
+## toast has the most to say. **Measured on five real-window shots by four people**: the key's last
+## row, *"the tile the readout is describing"*, held 476 px of sample swatch before this toast existed
+## and 172 px in every shot since -- and because the toast's fill IS the key panel's `SURFACE`, it did
+## not read as an overlay at all, it read as a twelfth row.
+##
+## **WHY THE ASSERTION IS `intersects` AND NOT A PAIR OF COORDINATES.** Where the toast goes instead
+## is a layout decision that may be revisited -- above, beside, inset further. What must never be true
+## again is the two overlapping, so that is the sentence the test holds. A test naming x = 340 would
+## have to be rewritten by anyone who improved the placement, which is how a test starts being edited
+## to agree with the code.
+##
+## **AND IT PINS THE UNBLOCKED CASE TOO**, because a fix that moved the toast when nothing was in the
+## way would be a regression for every player who never opens the key: with the key down the rect must
+## be byte-identical to the one `status_toast_rect` has always returned.
+##
+## WHAT IT CANNOT SEE: the picture. Headless has no window, so this asserts geometry and the shot is
+## `tools/window_shot.gd`'s key leg measured by `probe/nacre_keyrows.py` -- the same instrument that
+## found the defect, which is on the item.
+func test_the_status_toast_keeps_off_the_shape_key() -> bool:
+	var ok := true
+	var joined := _joined_screen()
+	joined._process(0.016)
+	joined._refresh()
+	joined._say("mined 1 x ore", AssayHud.Say.IDLE)
+
+	# WITH THE KEY DOWN, NOTHING MOVES. The close-up is where a player spends most of a session and
+	# the key cannot be drawn there at all.
+	var corner := AssayHud.status_toast_rect(joined._says_toast.get_combined_minimum_size())
+	joined._place_says_toast()
+	var down := Rect2(joined._says_toast.position, joined._says_toast.size)
+	if down != corner:
+		ok = _fail("with no key up the toast moved: %s, where it has always been %s" % [down, corner])
+
+	# NOW THE SCHEMATIC AND THE KEY, THROUGH THE SAME TWO SETTERS THE (V) AND (K) BUTTONS CALL.
+	joined._show_close_up(false)
+	joined._show_map_key(true)
+	if not joined._map_key_box.visible:
+		joined.queue_free()
+		return _fail("premise: the key is not visible after V then K, so this test is about nothing")
+
+	var key := AssayHud.map_key_rect(joined._map_key_box.get_combined_minimum_size())
+	var at := Rect2(joined._says_toast.position, joined._says_toast.size)
+	if at.intersects(key):
+		ok = _fail(("the toast at %s is on top of the shape key at %s: it hides the row a player "
+				+ "opened the key to read") % [at, key])
+	# STILL ON THE MAP. **NOT "and still on the same baseline", which is what this asserted first and
+	# is a promise the function cannot always keep:** a sentence wider than the room beside the key has
+	# nowhere to go but above it, and the headless font makes that the case in this very test. The
+	# baseline is preserved whenever there IS room -- which is every frame of the shipped window -- and
+	# the real-window shot on the item is what says so. Asserting it here would pin the test to a font.
+	if not AssayHud.world_rect().encloses(at):
+		ok = _fail("the toast at %s left the world %s getting out of the key's way"
+				% [at, AssayHud.world_rect()])
+
+	# AND IT GOES BACK when the key does, so the corner is not lost for the rest of the session.
+	joined._show_map_key(false)
+	var back := Rect2(joined._says_toast.position, joined._says_toast.size)
+	if back != corner:
+		ok = _fail("the toast did not return to the corner after the key went down: %s, want %s"
+				% [back, corner])
+	joined.queue_free()
+	return ok
+
+
 ## **AN ACCEPTED COMMAND SAYS IT WAS ACCEPTED, AND NEVER SAYS WHEN** (ASSA-245, Maren's full ruling
 ## on ASSA-237: *"The acceptance is a fact a player uses; the tick is not. Press-to-motion on this
 ## relay is 204-362 ms, so 'the game took your command' is real feedback and must not simply be

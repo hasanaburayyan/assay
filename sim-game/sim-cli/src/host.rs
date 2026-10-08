@@ -534,6 +534,16 @@ impl Host {
                     out!("  (asked from where you stand, ({}, {}))", at.x, at.y);
                 }
                 out!("{}", debug::species_table(&s.world));
+                // **THE AXIS THOSE SIX COLUMNS SIT ON** (ASSA-279). A window
+                // reads it as a number to draw a bar against
+                // (`AssaySim.reading_scale`), and a feature that only the
+                // window can see is the "only works with graphics" failure by
+                // rule, so the terminal gets the same fact in the same place
+                // the readings are. Printed from `debug::reading_scale`, so a
+                // scale that moved and a sentence that did not cannot both be
+                // on this screen.
+                let (lo, hi) = debug::reading_scale();
+                out!("  (every reading above is on the {lo}-{hi} scale)");
             }
             "buildings" => out!("{}", debug::building_table(&s.world)),
             // The headless half of ASSA-94: `buildings` answers "what have I

@@ -6,7 +6,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::tuning::{
-    GRADE_A_MIN_PURITY, GRADE_B_MIN_PURITY, GRADE_MULTIPLIER_PERCENT, SHEET_BAND, SPECIES_NAME_MAX,
+    GRADE_A_MIN_PURITY, GRADE_B_MIN_PURITY, GRADE_MULTIPLIER_PERCENT, SHEET_BAND, SHEET_SCALE,
+    SPECIES_NAME_MAX,
 };
 use crate::types::PlayerId;
 
@@ -14,7 +15,10 @@ use crate::types::PlayerId;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SpeciesId(pub u8);
 
-/// The six numbers that describe a species. All 1–100.
+/// The six numbers that describe a species. Every one of them is on
+/// [`SHEET_SCALE`], which is the pair a surface drawing one as a bar reads
+/// (`debug::reading_scale`) — this line used to say "All 1–100", which was
+/// prose, and nothing tests prose.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Sheet {
     pub density: u8,
@@ -93,9 +97,13 @@ impl Sheet {
 
     /// The rough band a first-contact reading shows for a value: the
     /// `SHEET_BAND`-wide range it falls in, as (low, high) inclusive.
+    ///
+    /// The top band is cut off at the top of [`SHEET_SCALE`] rather than at a
+    /// literal `100` (ASSA-279), so the day the scale moves this follows it
+    /// instead of quietly promising a value the roll can no longer produce.
     pub fn band(value: u8) -> (u8, u8) {
         let low = (value - 1) / SHEET_BAND * SHEET_BAND + 1;
-        (low, (low + SHEET_BAND - 1).min(100))
+        (low, (low + SHEET_BAND - 1).min(SHEET_SCALE.1))
     }
 
     /// The value an item of this species has at `grade`.

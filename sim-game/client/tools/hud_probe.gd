@@ -12,7 +12,8 @@ extends SceneTree
 ##
 ## WHAT WOULD MAKE IT FAIL:
 ##  - a reading of an unassayed species is a single number: the client narrowed a 25-wide band itself
-##  - a deposit tile's readout does not name its species in words (colour-blind players read the words)
+##  - any deposit with ore in it has a line that does not name its species in words, on the deposit's
+##    own line (colour-blind players read the words, and the sim's reach sentence is not that line)
 ##  - the tile under our own feet reads as off the map
 ##  - no event line ever mentions "you" after we walk, so the log is not about this player
 const DEFAULT_TICKS := 25
@@ -150,29 +151,67 @@ func _report() -> void:
 	for line in AssayHud.tile_lines(mine):
 		print("    %s" % line)
 
-	# 2. A DEPOSIT TILE, found in the world rather than invented, and its readout must name the
-	# species in words -- hue alone cannot carry species for a colour-blind player.
-	var deposit := _a_deposit()
-	if deposit.is_empty():
+	# 2. EVERY DEPOSIT WITH ORE IN IT, found in the world rather than invented, and the species must
+	# be named ON THE DEPOSIT'S OWN LINE -- hue alone cannot carry species for a colour-blind player
+	# (Maren's limit, ASSA-39).
+	#
+	# BOTH HALVES OF THAT WERE WEAKER THAN THEY READ, AND A MUTATION FOUND IT (ASSA-238, the item
+	# that put this probe in a gate). This check used to join the WHOLE tile readout and ask whether
+	# the name appeared anywhere in it. On rock nothing can hand-mine -- 40.7% of deposits, Maren's
+	# measurement -- the SIM's own reach sentence names the species ("Krerine is too hard for
+	# anything you can build"), so a HUD that dropped the name from the deposit line altogether
+	# still passed: hiding it behind `hand_minable` printed `deposit 0 · a rock · 919 ore left` with
+	# `HUD PROBE OK` under it. The client suite was green too, because every `_tile_with` fixture in
+	# `test_hud.gd` has `hand_minable: true`. The reach line is exactly the wrong thing to lean on:
+	# the sim leaves it EMPTY on rock that yields, so the check was strongest where the bug is least
+	# likely and silent where it is most.
+	#
+	# And it asked ONE deposit, the first with ore, so WHICH of those two cases got checked was the
+	# seed's choice rather than anybody's decision. A 6x4-chunk world holds up to 24; this is string
+	# work on data already in hand, so it asks all of them and says how many.
+	var checked := 0
+	var shown: Dictionary = {}
+	for entry in _sim.deposits():
+		var deposit: Dictionary = entry
+		if int(deposit.get("amount", 0)) <= 0:
+			continue
+		var at := deposit.get("center", Vector2i.ZERO) as Vector2i
+		var tile := _sim.tile_at(at)
+		var found: Variant = tile.get("deposit")
+		if found == null:
+			_finish(false, "deposit %s is centred on (%d, %d) and that tile reports no deposit"
+					% [deposit.get("id"), at.x, at.y])
+			return
+		var lines := AssayHud.tile_lines(tile)
+		var text := "\n".join(lines)
+		var species_name := String((found as Dictionary).get("species_name", ""))
+		if species_name == "":
+			_finish(false, "the sim gave deposit %s no species name at all" % deposit.get("id"))
+			return
+		var own_line := ""
+		for line in lines:
+			if line.begins_with("deposit "):
+				own_line = line
+				break
+		if own_line == "":
+			_finish(false, "a deposit tile's readout has no `deposit ...` line at all: %s" % text)
+			return
+		if not own_line.contains(species_name):
+			_finish(false, ("the deposit's own line does not name the species (%s): %s -- and the "
+					+ "name may not live only in the sim's reach sentence, which is empty on rock "
+					+ "that yields") % [species_name, own_line])
+			return
+		if not text.contains("grade %s" % String((found as Dictionary).get("grade", "?"))):
+			_finish(false, "the readout does not carry the sim's grade: %s" % text)
+			return
+		if shown.is_empty():
+			shown = tile
+		checked += 1
+	if checked == 0:
 		_finish(false, "no deposit with ore left in a world of %d" % _sim.deposits().size())
 		return
-	var at := deposit.get("center", Vector2i.ZERO) as Vector2i
-	var tile := _sim.tile_at(at)
-	var found: Variant = tile.get("deposit")
-	if found == null:
-		_finish(false, "deposit %s is centred on (%d, %d) and that tile reports no deposit"
-				% [deposit.get("id"), at.x, at.y])
-		return
-	var text := "\n".join(AssayHud.tile_lines(tile))
-	var species_name := String((found as Dictionary).get("species_name", ""))
-	if species_name == "" or not text.contains(species_name):
-		_finish(false, "the readout does not name the species (%s): %s" % [species_name, text])
-		return
-	if not text.contains("grade %s" % String((found as Dictionary).get("grade", "?"))):
-		_finish(false, "the readout does not carry the sim's grade: %s" % text)
-		return
-	print("  under the cursor, at a real deposit:")
-	for line in AssayHud.tile_lines(tile):
+	print("  under the cursor, at a real deposit (%d with ore left, every one checked):" % checked)
+	for line in AssayHud.tile_lines(shown):
 		print("    %s" % line)
 
 	# 2b. THE BENCH, AS THE PANEL WOULD SHOW IT. Built by the same `AssayHud` calls `main.gd`'s
@@ -241,14 +280,6 @@ func _report() -> void:
 	for line in AssayHud.trimmed_log(_events, 6):
 		print("    %s" % line)
 	_finish(true, "")
-
-
-func _a_deposit() -> Dictionary:
-	for entry in _sim.deposits():
-		var deposit: Dictionary = entry
-		if int(deposit.get("amount", 0)) > 0:
-			return deposit
-	return {}
 
 
 func _finish(ok: bool, why: String) -> void:
