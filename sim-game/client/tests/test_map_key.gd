@@ -363,6 +363,45 @@ func test_the_panel_asks_for_room_for_the_rows_the_table_has() -> bool:
 	return true
 
 
+## **THE DEPOSIT ROW SAYS WHAT A DISC'S SIZE MEANS, AND SAYING IT COSTS THE PANEL NO WIDTH**
+## (ASSA-293 box 3, Maren's words: *"ore you can work · as wide as the patch"*).
+##
+## The row said only *"ore you can work"*, so the one channel two independent cold readers decoded
+## WRONG -- size, read as quantity by one and as hover by the other -- was the channel the key was
+## silent about. A key that names the colour and the shape and not the size leaves the reader to
+## invent a meaning for it, which is exactly what both of them did.
+##
+## **THE WIDTH IS THE HALF THAT COULD HAVE BEEN A PREDICTION.** The ruling claims 39 chars against a
+## widest existing row of 46 *"so it should cost no width"*. `wants` takes the widest label, so that
+## is checkable rather than assertable: this fails if the deposit row ever becomes the widest one,
+## and the panel's own fit-the-map bound is the test above.
+func test_the_deposit_row_names_the_size_channel_without_widening_the_panel() -> bool:
+	var font := ThemeDB.fallback_font
+	var rows := AssayHud.map_key_rows()
+	var label := ""
+	var widest := 0.0
+	var widest_label := ""
+	for row in rows:
+		var text := String(row["label"])
+		var width := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+		if width > widest:
+			widest = width
+			widest_label = text
+		if StringName(row["id"]) == &"deposit":
+			label = text
+	if label == "":
+		return _fail("the table has no `deposit` row, so the map's ore has no entry at all")
+	if not label.contains("as wide as the patch"):
+		return _fail(("the deposit row is \"%s\" and says nothing about what a disc's SIZE means. "
+				+ "Size is the channel Nacre read as quantity and Limpet read as hover (ASSA-293); "
+				+ "radius is what it actually carries and the key is where that is said.") % [label])
+	if label == widest_label:
+		return _fail(("the deposit row is now the panel's widest at %.0f px, so naming the size "
+				+ "channel moved the panel -- which ASSA-293's ruling predicted it would not. Either "
+				+ "shorten it or re-measure the panel against the map.") % [widest])
+	return true
+
+
 ## THE TOGGLE NAMES ITS KEY, which is the half of a keyboard shortcut a stranger cannot discover
 ## (ASSA-88/89, and the pattern every other toggle on this screen follows).
 func test_the_toggle_names_the_key_and_says_which_way_it_goes() -> bool:

@@ -75,6 +75,44 @@ var _join_button := Button.new()
 var _row := HBoxContainer.new()
 var _front_door := VBoxContainer.new()
 var _door_title := Label.new()
+
+## **THE WORLD BEHIND THE DOOR** (ASSA-292, ASSA-276 §4, Maren's ruling 2026-10-08).
+##
+## A SECOND SIM AND NOT THE SESSION'S ONE, which is the whole reason this is safe. `_sim` is the world
+## you are PLAYING; this one is scenery, it is never stepped, no command is ever submitted to it, and
+## nothing reads it except the view dictionary `_door_view` builds. The two can never be confused
+## because every input path in this file guards on `_sim.running()` (`_tile_under`), which is false
+## for the entire life of this one -- so *"the world behind the door is scenery and never responds"*
+## (her floor 4) is a property of the existing guard rather than a new rule to remember.
+##
+## **IT IS THE SEED SOLO PLAYS, BY REFERENCE.** `AssaySoloRelay.DEFAULT_SEED`, never a copy of its
+## digits, because the design is *"press the button and you walk into the field you were looking at"*
+## and that sentence is only true while the two seeds are the same one.
+## **THE PLATE THE WORDS STAND ON** (ASSA-292, Maren: *"THE PLATE IS APPROVED, with floors"*).
+##
+## **IT IS A BAND, AND I SHOULD SAY SO RATHER THAN CALL IT WHAT I MEANT TO BUILD.** I wrote that this
+## would be "the size of the words, about a tenth of the door". It is not: the door's children are
+## full-width containers with their content centred inside them, so the union of what they occupy is
+## **912 x 261 -- 36% of the door**, a horizontal band and not a card. The words sit well on it and
+## the world reads above and below, but the claim and the rectangle were two different things and the
+## shot is what told me. **The composition is Maren's to rule on; the number is mine and it is real.**
+##
+## WHAT IS STILL TRUE AND IS THE REASON FOR A PLATE AT ALL: her floor 2 -- *"a scrim may help and may
+## not be the whole answer. Dimming the world until text passes is how a title screen becomes a flat
+## field with extra steps."* To lift `INK_MUTED` to 4.5:1 against the worst pixel the lit world
+## actually puts behind a word -- (244,154,81), an ore deposit -- a scrim over the WHOLE door needs
+## alpha 0.73. This band is opaque where it is and absent everywhere else, which is why 64% of the
+## picture is still the picture.
+var _door_plate := ColorRect.new()
+var _door_sim := AssaySimHost.new()
+## Ore in the door world, computed ONCE. The live `_ore_under` re-caches on `_sim.tick()`; this world
+## never ticks, so the only thing that could move the answer is the camera, and the margin below
+## covers every tile the whole drift can reach.
+var _door_ore := {}
+var _door_ore_built := false
+## A binding with no `AssaySim` (an editor run without `make client-lib`) must fall back to the flat
+## field rather than retry `fresh_welcome_json` sixty times a second forever.
+var _door_dead := false
 ## The two travelling cells: the primary on its own line, and the host path on the next one. They
 ## are what `_refresh_join_band` hides in a world, wherever they are currently parented.
 var _solo_cell := HBoxContainer.new()
@@ -719,7 +757,13 @@ func _ready() -> void:
 	# presses the real "Play solo" button and a button that does not exist yet cannot be found. Not
 	# before the UI the way `--selfcheck` is: that one answers without a window, this one is ABOUT the
 	# window, so it needs the whole screen standing.
-	_motion_probe_path = AssayMotionProbe.requested_path()
+	#
+	# **AND THE PATH IS RESOLVED, NOT TAKEN AS TYPED** (ASSA-313): a bare `motion.txt` used to land in
+	# `Assay.app/Contents/Resources/` on a Mac, because the engine's launcher chdirs into the bundle --
+	# so the one file we ask a tester to send us was inside the app they were sent, and the README's
+	# "beside this README" was false. `requested_report_path` measures a relative path from the folder
+	# the player unzipped.
+	_motion_probe_path = AssayMotionProbe.requested_report_path()
 	if _motion_probe_path != "":
 		_motion_probe = AssayMotionProbe.new()
 		_motion_probe.begin(self, AssayMotionProbe.requested_seconds(), OS.get_name())
@@ -751,8 +795,12 @@ func _build_ui() -> void:
 	_door_backdrop.color = AssayHud.MAP_BG
 	_door_backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_door_backdrop)
-	_world.position = world.position
-	_world.size = world.size
+	# **AT THE DOOR'S RECTANGLE AND NOT THE MAP'S, BECAUSE THE DOOR IS WHAT IS UP AT BUILD TIME**
+	# (ASSA-292, Maren's rectangle ruling -- see `AssayHud.world_layer_rect`). `_refresh_front_door`
+	# moves it on every state change after this; starting it at the door's rect is what keeps the
+	# door camera (`_door_view`, which reads `_world.size`) from being built once against the
+	# narrower map on the very first frame, before any refresh has run.
+	_place_world_layer(true)
 	add_child(_world)
 	# **THE BIGGEST SURFACE IN THE GAME NAMES WHICH KIND OF EMPTY IT IS** (Maren, ASSA-127). Over the
 	# world's own rectangle and added straight after it, so it covers exactly the surface it explains
@@ -769,6 +817,13 @@ func _build_ui() -> void:
 	# over the map, and a Container does NOT inherit the note's filter. IGNORE does not apply to
 	# children, so every button inside it still gets its clicks -- and the failure if it did would
 	# read as "Play solo does nothing", nowhere near this line.
+	# **BETWEEN THE WORLD AND THE WORDS**: added after `_world` so it covers the picture, before
+	# `_front_door` so the words sit on it. `MOUSE_FILTER_IGNORE` for the reason everything else over
+	# this map has it -- the map is clicked through `_unhandled_input`.
+	_door_plate.color = AssayHud.DOOR_PLATE
+	_door_plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_door_plate.visible = false
+	add_child(_door_plate)
 	_front_door.position = door.position
 	_front_door.size = door.size
 	_front_door.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -781,7 +836,11 @@ func _build_ui() -> void:
 	# a type-scale ruling and hers, so the shot goes to her with the limit named rather than with a
 	# number I invented in this file.
 	_door_title.text = ProjectSettings.get_setting("application/config/name", "Assay")
-	_door_title.theme_type_variation = &"Display"
+	# **`Wordmark`, THE FIFTH SIZE, AND MAREN RULED THE GROWTH** (ASSA-292). This said `Display` and
+	# carried a comment that a bigger title "means a fifth size in build_theme.gd, which is a
+	# type-scale ruling and hers". She ruled it on her own measurement -- the game name was 0.12% of
+	# its own title screen -- so the size is in the scale by name and not poked in here.
+	_door_title.theme_type_variation = &"Wordmark"
 	_door_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_door_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_front_door.add_child(_door_title)
@@ -1685,7 +1744,21 @@ func _process(delta: float) -> void:
 	# the one the frame was shown for. Measured: on runs where frame time was steady the drawn speed
 	# was inside the bar 95% of the time, and on runs where it varied 11-28 ms it fell to 82-86%,
 	# with the failing frames alternating too-fast and too-slow in pairs.
-	if _close_up and _sim.running():
+	# **THE DOOR HAS A WORLD NOW, SO THIS MAY NOT REQUIRE A SESSION** (ASSA-292). This read
+	# `_close_up and _sim.running()`, which was exactly right for as long as the door was a dark
+	# rectangle: before a world existed nothing on this screen moved. `_door_view` is built inside
+	# `_refresh_world`, so under the old guard the title camera advanced only on frames where
+	# something else happened to refresh -- which at the door is never.
+	#
+	# **THE TITLE SCREEN WAS A STILL PHOTOGRAPH OF A DRIFTING CAMERA, and all three of my drift tests
+	# passed the whole time** (ASSA-292): they assert `AssayScene.title_drift`, which is correct
+	# arithmetic that nothing was calling. A unit test cannot see an unwired caller -- hence
+	# `test_the_door_keeps_refreshing_itself_with_no_session` below the fix, which asserts the CALL.
+	#
+	# It also fixed the door plate, which is sized from laid-out children: `_place_door_plate` ran
+	# exactly once, inside `_ready()`, where every child is still 0x0 -- so it hid itself and was
+	# never asked again. Two defects, one guard.
+	if _close_up:
 		_refresh_world(delta)
 	# ABOVE THE EARLY RETURN BELOW, which is about the solo relay and skips most frames of a session.
 	_refresh_join_band()
@@ -2693,9 +2766,42 @@ func _species_row(species: Dictionary) -> Control:
 	if not tags.is_empty():
 		var verdict := _note("[%s]" % "] [".join(tags))
 		verdict.name = SPECIES_TAGS
+		_indent_under_the_name(verdict, head, disc)
 		row.add_child(verdict)
 	row.add_child(_readings_table(species))
 	return row
+
+
+## **THE VERDICT STARTS WHERE ITS NAME STARTS** (ASSA-264, Maren's ruling of 2026-10-08 11:02Z, the
+## second half of ORDER BEFORE RANK).
+##
+## Moving the verdict under the name fixed the 80 px but left it **flush with the readings table**:
+## measured on a 1x real window, the verdict's ink began at x947 and the property labels under it at
+## x946, while the name it belongs to began at x970 -- 24 px right, because the name sits past its
+## 18 px map disc. So the line read as the table's first row rather than as the name's answer.
+##
+## **THE REASON IS HERS AND IT IS WHY THERE IS STILL NO THIRD INK.** A verdict that can never change
+## and a reading that will are different kinds of fact; flush and same-grey are two signals both
+## saying *same kind*. Alignment is the second free signal, spent before a colour.
+##
+## **THE NUMBER IS READ OFF THE ROW, NEVER TYPED.** The disc's own box plus the head's own gap are
+## what put the name where it is, so they are what put the verdict there too: change `GLYPH_BOX_PX`
+## or the gap and this follows, with nothing to remember. A typed 24 would be correct today and a
+## silent lie the first time the disc grew.
+##
+## The no-type-argument `get_theme_constant` read is honest for the one reason ASSA-246 leaves open:
+## this separation is an OVERRIDE on this very node, and an override is consulted before the type
+## chain, so there is no unpoked variation to resolve through (Limpet, ASSA-312).
+##
+## **AND NOTHING ELSE MOVES** -- in particular the readings table is not shifted to meet it, because
+## ASSA-288's axis geometry is measured and 24 px would re-derive it. The inset narrows the verdict's
+## own wrap width by exactly those 24 px, which is the cost of an indent and not a bug: a shift
+## without the narrowing would push the longest verdict off the column's right edge (ASSA-98).
+func _indent_under_the_name(line: Label, head: HBoxContainer, disc: Control) -> void:
+	var inset := disc.custom_minimum_size.x + float(head.get_theme_constant(&"separation"))
+	var pad := line.get_theme_stylebox(&"normal", &"Label").duplicate() as StyleBox
+	pad.content_margin_left = inset
+	line.add_theme_stylebox_override(&"normal", pad)
 
 
 ## **THE SIX READINGS AS A TABLE WITH AN AXIS, WHERE THEY WERE ONE WRAPPED SENTENCE** (ASSA-288,
@@ -3666,9 +3772,145 @@ func _clear(box: Node) -> void:
 ## fact, which is why it is set here rather than on a predicate of its own -- Maren's Gap 5 is one
 ## ruling about one screen, and two conditions for it is how a door and a column end up both on
 ## screen for a frame.
+## THE PLATE, FITTED TO THE WORDS AND BOUNDED BY THE DOOR (ASSA-292).
+##
+## **`get_global_rect()` AND NOT MY OWN `parent.position + child.position`**, which is what the
+## withdrawn first version did. A hand-rolled walk up the tree is a second implementation of
+## something the engine already knows, and it is wrong the moment a child is nested one level deeper
+## than I assumed -- the kind of defect that looks like a layout mystery.
+##
+## The judgement is all in `AssayHud.door_plate_rect`, which clips to the door, so the worst this
+## function can do is ask about a rectangle that is not there yet. That case hides the plate: before
+## a layout pass every child is 0x0, which is the headless state, so headless draws no plate and
+## nothing in the suite asserts this node -- the arithmetic is tested directly instead and the
+## picture is measured off the PNG.
+##
+## **IT ASKS `_door_words_rect` NOW AND NOT THE CHILDREN'S UNION** (Maren's card ruling, ASSA-292):
+## every child here is a full-width container, so their union is a band across the whole door no
+## matter how few words are in it.
+func _place_door_plate(showing: bool) -> void:
+	_door_plate.visible = false
+	if not showing:
+		return
+	var content := _door_words_rect()
+	if content.size.x <= 0.0 or content.size.y <= 0.0:
+		return
+	# **CLIPPED TO THE DOOR, AND THIS LINE HAS NOW BEEN BOTH WAYS ROUND.** It read `world_rect()` for
+	# one night, with a note saying the shot had corrected it: clipping to the door put a 344 px
+	# tongue of plate out over bare window beside the world, *"scrim where there is nothing to
+	# scrim"*. **THAT WAS A SYMPTOM AND I TREATED IT AS THE CAUSE.** The bare window was the defect
+	# (Maren, ASSA-292: the backdrop belongs in `join_rect`), and now that the door's picture IS the
+	# whole window there is no margin for a plate to spill onto -- so the clip goes back to the rect
+	# the layer actually occupies. One source for all three: `AssayHud.world_layer_rect(true)`.
+	var plate := AssayHud.door_plate_rect(AssayHud.world_layer_rect(true), content)
+	# A sliver is not a plate. Below one pad in either direction the words are not standing on
+	# anything, and drawing it would be a dark line across the world for no legibility at all.
+	if plate.size.x < AssayHud.DOOR_PLATE_PAD or plate.size.y < AssayHud.DOOR_PLATE_PAD:
+		return
+	_door_plate.position = plate.position
+	_door_plate.size = plate.size
+	_door_plate.visible = true
+
+
+## **THE SMALLEST RECTANGLE THAT CARRIES THE WORDS** (ASSA-292, Maren's card ruling), in screen
+## pixels, or an empty rect when there is nothing laid out to measure.
+##
+## **LEAVES ONLY, AND THAT IS THE WHOLE IDEA.** A container's rect is its parent's width; a leaf's is
+## its own. Every ancestor on this screen is a full-width `BoxContainer` with centred content, so a
+## walk that stopped at the direct children (which is what this did until tonight) could only ever
+## return a band. Descending to the controls that actually paint something -- two Labels, two Buttons
+## and two text boxes -- and asking each one what it drew is the difference between 912 px and the
+## ~570 the words occupy.
+##
+## **AND A LABEL IS ASKED FOR ITS INK, NOT ITS RECT**, through `AssayHud.label_ink_rect`: a centred
+## Label 1280 px wide holding a 152 px wordmark is 1280 px of control and 152 px of word. Buttons and
+## text boxes are the other way round -- they paint their own opaque bed edge to edge, so their rect
+## IS what they draw, and shrinking a plate inside a button's own background would be a seam.
+##
+## A LABEL WITH NO TEXT CARRIES NO WORDS. `_status` and `_detail` stand in this composition empty for
+## most of a session; counting their line boxes would grow the card by two rows of nothing.
+func _door_words_rect() -> Rect2:
+	var words := Rect2()
+	var found := false
+	var walk: Array[Node] = [_front_door]
+	while not walk.is_empty():
+		var node: Node = walk.pop_back()
+		var control := node as Control
+		if control != null and control != _front_door and not control.is_visible_in_tree():
+			continue
+		var descended := false
+		for child in node.get_children():
+			if child is Control:
+				descended = true
+				walk.append(child)
+		if descended or control == null or control == _front_door:
+			continue
+		var rect := control.get_global_rect()
+		if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+			continue
+		var ink := _control_ink_rect(control, rect)
+		if ink.size.x <= 0.0 or ink.size.y <= 0.0:
+			continue
+		words = ink if not found else words.merge(ink)
+		found = true
+	return words if found else Rect2()
+
+
+## WHAT ONE LEAF CONTROL ACTUALLY PAINTS, given the rect the engine gave it.
+##
+## THE MEASUREMENT IS THE ENGINE'S OWN, not a character count: `get_multiline_string_size` on the
+## font the Label resolves through its own `theme_type_variation`, so the `Wordmark` at 56 px and the
+## sentence at 13 px are each measured in the face they are drawn in. Asking the theme for a size
+## here instead would be a second copy of `build_theme.gd`'s type scale.
+##
+## THE WRAP WIDTH IS THE CONTROL'S OWN WIDTH when the Label wraps, and `-1` when it does not -- which
+## is the one number that makes a wrapped sentence's longest line come back instead of its whole
+## length on one line.
+func _control_ink_rect(control: Control, rect: Rect2) -> Rect2:
+	var label := control as Label
+	if label == null:
+		return rect
+	if label.text.strip_edges() == "":
+		return Rect2()
+	var font := label.get_theme_font(&"font")
+	var font_size := label.get_theme_font_size(&"font_size")
+	if font == null or font_size <= 0:
+		return rect
+	var wrap := rect.size.x if label.autowrap_mode != TextServer.AUTOWRAP_OFF else -1.0
+	var measured := font.get_multiline_string_size(label.text, label.horizontal_alignment, wrap,
+			font_size)
+	return AssayHud.label_ink_rect(rect, measured, label.horizontal_alignment)
+
+
+## **THE PICTURE MOVES WITH THE SCREEN IT IS ON** (ASSA-292, Maren's rectangle ruling). Two states,
+## one call site each way, and `AssayHud.world_layer_rect` owns which rectangle is which.
+##
+## IT IS A SETTER AND NOT A BRANCH AT THE THREE READERS for the reason the helper's note gives: the
+## door camera reads `_world.size` while it composes the view, so the layer has to be the right size
+## BEFORE `_door_view` runs, not after. `_refresh_world`'s door branch calls this first; everything
+## else comes through `_refresh_front_door`, which knows whether there is a world. Setting a Control
+## to the size it already has is free, so calling it twice on one frame costs nothing.
+func _place_world_layer(door: bool) -> void:
+	var at := AssayHud.world_layer_rect(door)
+	_world.position = at.position
+	_world.size = at.size
+
+
 func _refresh_front_door() -> void:
-	var empty: bool = _world.view.is_empty()
+	# **THE PREDICATE IS "AM I IN A WORLD I CAN SEE", AND IT USED TO BE "IS ANYTHING DRAWN"**
+	# (ASSA-292). `_world.view.is_empty()` alone was a correct proxy for exactly as long as the door
+	# was a dark rectangle; the moment the door draws a world (`_door_view`) that proxy says a stranger
+	# who has pressed nothing is playing -- it hid the front door and raised the whole HUD column over
+	# the title screen. Seventeen tests said so, which is the cheapest way I have ever been told.
+	#
+	# BOTH CLAUSES ARE LOAD-BEARING AND THE SECOND IS NOT REDUNDANT: the `_player_facts_missing`
+	# refusal in `_refresh_world` blanks the view while `_sim` is still running (box 5's decision), and
+	# that case must go back to the door exactly as it did before. `_sim.running()` alone would leave
+	# the column up over nothing.
+	var empty: bool = not _sim.running() or _world.view.is_empty()
 	_front_door.visible = empty
+	_place_world_layer(empty)
+	_place_door_plate(empty)
 	_door_backdrop.visible = empty
 	if _column != null:
 		_column.visible = not empty
@@ -3773,7 +4015,17 @@ func _players() -> Array:
 
 func _refresh_world(frame_dt := -1.0) -> void:
 	if not _sim.running():
-		_world.view = {}
+		# **THE DOOR IS NOT A DARK RECTANGLE ANY MORE** (ASSA-292). Same renderer, same sheets, a real
+		# world at the seed solo plays -- so the first screen is the game instead of a picture of a
+		# menu. `_door_view` returns `{}` if the binding cannot build one, which is exactly the empty
+		# dictionary that used to be here, so the flat field is still the fallback and never the plan.
+		#
+		# **THE RECTANGLE BEFORE THE VIEW, AND THE ORDER IS THE WHOLE REASON THIS IS A CALL AND NOT A
+		# FIELD** (ASSA-292). `_door_view` reads `_world.size` twice -- the camera's clamp and the
+		# view's own `size` -- so a layer resized after the view was composed would spend the frame a
+		# session ends showing a 912-wide camera stretched over a 1280-wide door.
+		_place_world_layer(true)
+		_world.view = _door_view()
 		_world.me = null
 		_refresh_front_door()
 		_world.queue_redraw()
@@ -3888,6 +4140,83 @@ func _refresh_world(frame_dt := -1.0) -> void:
 ## deposit that changes what is DRAWN -- the row becomes `depleted_full` -- and `amount` appears on no
 ## sprite, which is `sim`'s own position: one number for the whole patch, so a sparser rim would be a
 ## mark for a difference the game does not have.
+## HOW MANY TILES OF ORE ARE WORKED OUT BEYOND THE DOOR CAMERA'S RESTING WINDOW. The drift reaches
+## `AssayScene.TITLE_DRIFT_TILES` (1.75) in each direction, so 3 covers it with a tile to spare and the
+## one-shot cache below can never be caught short by the camera moving.
+const DOOR_ORE_MARGIN := 3
+
+
+## THE VIEW DICTIONARY FOR THE WORLD BEHIND THE DOOR (ASSA-292), or `{}` if there is no binding to
+## build one from -- in which case the caller draws the flat field this screen had before.
+##
+## **NOBODY IS DRAWN IN IT, AND THAT IS THE DESIGN AND NOT AN OMISSION.** `players` is empty and
+## `_world.me` stays null, because the sentence this screen makes is *"press the button and you walk
+## into the field you were looking at"*. A body already standing in the field contradicts the button.
+##
+## IT ASKS `AssayScene.title_drift` FOR THE CAMERA AND NOTHING ELSE. All the judgement -- that the
+## path is a closed loop, how wide, how finely a measurement has to sample it -- is arithmetic over
+## there with three tests on it, so this function has nothing in it to get wrong.
+func _door_view() -> Dictionary:
+	if _door_dead:
+		return {}
+	if not _door_sim.running():
+		var welcome := AssaySimHost.fresh_welcome_json(AssaySoloRelay.DEFAULT_SEED, "the door")
+		if welcome == "" or not _door_sim.start(welcome):
+			_door_dead = true
+			return {}
+	if _manifest.is_empty():
+		_manifest = AssaySprites.manifest()
+	if _layout.is_empty():
+		_layout = AssayAssembly.contract()
+	var size := _door_sim.size_tiles()
+	var seconds := float(Time.get_ticks_msec()) / 1000.0
+	# THE DRIFT IS ADDED TO THE CENTRE TILE AND NOT TO THE ORIGIN, so it passes through
+	# `camera_origin`'s world-edge clamp like any other camera. Added afterwards it would be the one
+	# camera in the client allowed to show the void beside the world.
+	var centre := Vector2(_door_sim.spawn_tile()) + AssayScene.title_drift(seconds)
+	# `0.0` headroom: the north exception exists for the event log hanging over the map, and at the
+	# door there is no log and no body for it to hide (ASSA-184).
+	var origin := AssayScene.camera_origin(centre, size, _world.size, 0.0)
+	return {
+		"world_tiles": size,
+		"origin": origin,
+		"size": _world.size,
+		"spawn": _door_sim.spawn_tile(),
+		"ore": _door_ore_under(size),
+		"players": [],
+		"buildings": _door_sim.buildings(),
+		"manifest": _manifest,
+		"layout": _layout,
+		"seconds": seconds,
+	}
+
+
+## ORE IN THE DOOR WORLD, WORKED OUT ONCE AND KEPT. A separate `_door_ore_built` flag rather than
+## `_door_ore.is_empty()`: a world with no ore in frame is a legitimate answer, and an emptiness test
+## would recompute ~600 `tile_at` calls every frame forever on exactly that world.
+func _door_ore_under(size: Vector2i) -> Dictionary:
+	if _door_ore_built:
+		return _door_ore
+	var home := AssayScene.camera_origin(Vector2(_door_sim.spawn_tile()), size, _world.size, 0.0)
+	var window := AssayScene.visible_tiles(home, _world.size, size).grow(DOOR_ORE_MARGIN)
+	window = window.intersection(Rect2i(Vector2i.ZERO, size))
+	_door_ore = {}
+	for y in range(window.position.y, window.end.y):
+		for x in range(window.position.x, window.end.x):
+			var at := Vector2i(x, y)
+			var patch: Variant = (_door_sim.tile_at(at) as Dictionary).get("deposit")
+			if patch == null:
+				continue
+			var deposit: Dictionary = patch
+			_door_ore[at] = {
+				"species": int(deposit.get("species", 0)),
+				"grade": String(deposit.get("grade", "C")),
+				"depleted": bool(deposit.get("depleted", false)),
+			}
+	_door_ore_built = true
+	return _door_ore
+
+
 func _ore_under(origin: Vector2, size: Vector2i) -> Dictionary:
 	var window := AssayScene.visible_tiles(origin, _world.size, size)
 	var stamp := _ore_stamp
@@ -4647,7 +4976,13 @@ func _glyph_marks(deposits: Array, font: Font, building_marks: Array = []) -> Ar
 		# the disc's half-tile error exactly.
 		var at := point_of_tile(centre)
 		var radius := maxf(_cell, float(int(deposit.get("radius", 1))) * _cell)
-		var size := AssayHud.glyph_size(radius)
+		# **ONE SIZE FOR EVERY LETTER ON THE MAP, AND IT IS NOT THIS DISC'S** (ASSA-293, Maren's
+		# ruling 11.35). This was `glyph_size(radius)`, which made the letter a second, lossier copy
+		# of the channel the disc under it already carries: three radii, two letter sizes, 63.6% of
+		# deposits over ten seeds wearing a size that distinguished nothing. `radius` stays, because
+		# `deposit_disc` below is about the patch and its edge is a claim about which tiles hold ore.
+		# The LETTER is not, so it is held at `glyph_size_held`. See `tools/letter_size_spread.gd`.
+		var size := AssayHud.glyph_size_held(_cell)
 		if size <= 0:
 			continue
 		var disc := AssayHud.deposit_disc(deposit, radius)

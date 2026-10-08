@@ -102,6 +102,82 @@ const LOG_TOGGLE_H := 28.0
 ## deposit's colour against it to decide whether a letter on top should be dark or light.
 const MAP_BG := Color(0.10, 0.11, 0.13)
 
+## **THE PLATE THE TITLE SCREEN WORDS STAND ON** (ASSA-292, ASSA-276 §4). `build_theme.gd`s SURFACE
+## -- the same surface every panel in the game is drawn on -- at an alpha DERIVED and not chosen.
+##
+## THE DERIVATION, so the next person can redo it rather than trust it. Measured on a real 1x frame
+## of the lit door world (`nacre_door_contrast.py`), the worst pixel the world puts behind a word is
+## **(244,154,81)**, an ore deposit, and against it the two door inks read **INK 2.10:1** and
+## **INK_MUTED 1.00:1** -- the sentence is invisible, not dim. With SURFACE at this alpha over that
+## same pixel they read **10.11:1** and **5.62:1**, a 1.25x margin on Marens 4.5:1 floor. The
+## numbers barely move on a benign background (5.68:1 over lit grass), and that steadiness is what a
+## plate is FOR: it makes a word legible almost independently of what it is standing over.
+##
+## **WHY NOT LOWER:** 0.79 is the bare minimum for INK_MUTED and leaves no margin for a brighter
+## world. **WHY NOT A FULL-DOOR SCRIM AT ALL:** that needs 0.73 over 912x672, which is Marens
+## *"flat field with extra steps"* arrived at by arithmetic rather than by taste.
+const DOOR_PLATE := Color(0.145, 0.157, 0.188, 0.90)
+
+## How far the plate stands outside the words it carries. `MARGIN.y` worth of air on every side, so
+## the plate reads as a panel in this games own idiom rather than as a highlighter stroke.
+const DOOR_PLATE_PAD := 24.0
+
+
+## WHERE THE PLATE GOES: the words it carries, padded, AND CLIPPED TO THE DOOR IT SITS IN.
+##
+## **THE INTERSECTION IS THE WHOLE FIX AND IT IS WHY THIS IS ARITHMETIC AND NOT LAYOUT CODE**
+## (ASSA-292). The first version of this plate read the laid-out children and padded their union, and
+## in a real window it produced a **565x1452** rectangle inside a 912x672 door -- taller than the
+## screen. The cause is a trap this file already knew about one caller away (`main.gd`, the make row):
+## **`autowrap_mode` does NOT lower a Labels reported minimum**, so the door sentence can be measured
+## mid-layout at a width it will never be drawn at, and its height balloons. Chasing that number was
+## the wrong move; a plate that CANNOT be bigger than its door makes the whole family of causes
+## unable to reach the screen.
+##
+## Taking rects as arguments rather than reading nodes is the other half: it is testable headless with
+## hand-made rects, including the 1404 px one that actually happened, which a function that read the
+## scene could only be tested against a real window.
+##
+## An empty rect is a legitimate answer -- content entirely off the door -- and the caller hides.
+static func door_plate_rect(door: Rect2, content: Rect2) -> Rect2:
+	var pad := Vector2(DOOR_PLATE_PAD, DOOR_PLATE_PAD)
+	return Rect2(content.position - pad, content.size + pad * 2.0).intersection(door)
+
+
+## **WHERE THE WORDS ACTUALLY ARE INSIDE A LABEL THAT IS WIDER THAN THEM** (ASSA-292, Maren's card
+## ruling: *"the smallest rectangle that carries the words"*).
+##
+## **THE DEFECT THIS EXISTS FOR.** The plate was fitted to the union of the door's laid-out children,
+## and every one of them is a full-width container with centred content -- so a 152 px wordmark and a
+## ~520 px sentence produced a **912x261** plate: a band across the whole door, hiding the bottom of
+## the main deposit, all of the spawn pad and the bottom of the second, and giving back 206 px of
+## empty grass. *"A plate that hides every landmark and reveals only ground has inverted this item's
+## own claim."* A control's rect is not its ink, and on this screen the difference is most of the
+## picture.
+##
+## **SIZE BUYS NO LEGIBILITY AND THAT IS MEASURED, WHICH IS WHY FITTING IS FREE.** Over 128 real
+## frames of a whole 48 s camera loop the plated inks move 0.15 and 0.09 (INK 9.88-10.03:1,
+## INK_MUTED 5.49-5.58:1). Contrast comes from the alpha and the words' own extent, not from how much
+## world is covered -- so the smallest rectangle that carries the words reads the same as the band and
+## costs a third of the picture.
+##
+## **WIDTH ONLY, AND THE ASYMMETRY IS DELIBERATE.** A Label in a `VBoxContainer` is given its
+## content's height and the container's full width, so the vertical extent is already honest and the
+## horizontal one is not. Taking a measured height instead would be a second opinion about line
+## spacing, which is the kind of near-miss arithmetic that shows up as one clipped descender.
+##
+## `measured.x` is clamped to the rect because a Label can be measured at a width it is not drawn at
+## (`autowrap_mode` does not lower its reported minimum -- see `door_plate_rect` above), and ink wider
+## than the control it is in means the measurement is the thing to distrust.
+static func label_ink_rect(rect: Rect2, measured: Vector2, align: int) -> Rect2:
+	var width := minf(measured.x, rect.size.x)
+	var x := rect.position.x
+	if align == HORIZONTAL_ALIGNMENT_CENTER:
+		x = rect.position.x + (rect.size.x - width) * 0.5
+	elif align == HORIZONTAL_ALIGNMENT_RIGHT:
+		x = rect.end.x - width
+	return Rect2(Vector2(x, rect.position.y), Vector2(width, rect.size.y))
+
 ## THE FOUR MARKS ON A MAP THAT ARE NOT A SPECIES, named, because until now they were six `Color(...)`
 ## literals inside `main.gd::_draw`.
 ##
@@ -434,8 +510,13 @@ const MAP_MARKS: Array[Dictionary] = [
 			"label": "the world, out to its edge"},
 	{"id": &"spawn", "shape": &"rect", "ink": SPAWN_PAD, "in_key": true,
 			"label": "where a joining player appears"},
+	# **"AS WIDE AS THE PATCH" IS ASSA-293's RULING, AND IT IS THE ROW SAYING WHAT SIZE MEANS.** The
+	# label said only "ore you can work", so the one channel two cold readers decoded wrong (size)
+	# was the one the key was silent about. Maren's words, in the table's own voice: the FACT, not
+	# the shape. It is not the widest row and does not move the panel -- `letter_size_spread.gd`
+	# prints both widths, because "it should cost no width" was a prediction in the ruling.
 	{"id": &"deposit", "shape": &"disc", "ink": MAP_BG, "data_ink": true, "in_key": true,
-			"label": "ore you can work"},
+			"label": "ore you can work · as wide as the patch"},
 	# `data_ink` SINCE ASSA-209: the hatch is near-black on a light disc and WHITE on a dark one, so
 	# the table's `MAP_BG` is an example and not the colour. `mark_ink_of` is what `_draw` calls.
 	{"id": &"dead_end", "shape": &"hatch", "ink": MAP_BG, "data_ink": true, "in_key": true,
@@ -727,6 +808,33 @@ static func join_rect() -> Rect2:
 	return Rect2(Vector2.ZERO, VIEW)
 
 
+## **WHERE THE WORLD IS DRAWN, WHICH IS NOT ONE RECTANGLE** (ASSA-292, Maren's ruling of 2026-10-08:
+## *"the backdrop is part of the door: it belongs in `join_rect()`"*).
+##
+## `join_rect` above has said since ASSA-231 that before a world exists the column is not drawn and
+## there is no map to frame, and the WORDS have been centred in the whole window ever since. The
+## PICTURE was not: the world layer stayed at `world_rect()` on every screen, so the moment the door
+## stopped being a dark rectangle and started being a lit world (ASSA-292), `world_rect`'s subtraction
+## became visible as bare window. Measured by Maren on my own 1x shot:
+##
+##     lit world + plate   912x672 at x 24..935    66.5% of the window
+##     BARE DARK WINDOW                            33.5%
+##       one column of it  344x720 at x 936..1279  26.9%, every px (26,28,33)
+##
+## **THE BARE MARGIN COST MORE PICTURE THAN THE PLATE DID** -- 26.9% against 25.8% -- which is why
+## this is the first move and the plate's size is the second. It is the same defect ASSA-231 fixed for
+## the composition, surviving in the layer underneath it: *"the empty column was replaced by an empty
+## margin."*
+##
+## **ONE FUNCTION WITH A FLAG RATHER THAN TWO CALLERS CHOOSING**, because the choice has to be made in
+## three places that must agree (the layer's rect, the door camera's own width, and the plate's clip)
+## and three copies of `join_rect() if door else world_rect()` is how two of them end up disagreeing
+## for a frame. `world_rect` itself is untouched and keeps its one meaning -- "where is the map drawn
+## in a world" -- which `visible_tiles` and `player_ceiling` depend on.
+static func world_layer_rect(door: bool) -> Rect2:
+	return join_rect() if door else world_rect()
+
+
 ## WHAT THE VIEW'S CONTROL SAYS, naming its key like the log's and the crafting menu's.
 ##
 ## IT NAMES WHAT YOU WILL GET, not what you are looking at, which is the same way round as the other
@@ -922,6 +1030,38 @@ static func glyph_color(on: Color) -> Color:
 static func glyph_size(drawn_radius: float) -> int:
 	var size := int(floorf(drawn_radius * 1.4))
 	return 0 if size < 10 else mini(size, 32)
+
+
+## **THE SMALLEST PATCH `worldgen` CAN ROLL, IN TILES** (`sim/src/worldgen.rs`: `rng.range(2, 5)`,
+## commented `2..=4`). It is a SIM fact living in a client constant, which is a thing to be uneasy
+## about -- there is no named constant on the Rust side to ask and nothing crosses the binding -- so
+## `test_hud.gd` checks it against the real roster of a dozen seeds rather than taking it on trust.
+## If worldgen ever rolls a one-tile patch, the test reddens and says the held letter no longer fits
+## the smallest patch, which is the only claim this number carries.
+const MIN_DEPOSIT_RADIUS_TILES := 2
+
+
+## **ONE SIZE FOR EVERY SPECIES LETTER IN A FRAME, AND IT MEANS NOTHING** (ASSA-293, Maren's ruling
+## 11.35). A letter's size used to be `glyph_size(radius x cell)`, i.e. a copy of the channel the
+## disc UNDERNEATH it already carries -- and a lossy one: `glyph_size` clamps at 32, so at the
+## shipped cell of 9 a radius-3 and a radius-4 patch drew the identical letter, and over ten seeds
+## **62.6% of deposits wore a size that distinguished nothing** (`tools/letter_size_spread.gd`).
+## Two cold readers each decoded the surviving difference WRONG and in different directions -- Nacre
+## read size as quantity, Limpet read it as hover -- so the channel was not merely redundant, it was
+## actively misleading.
+##
+## **WHY THE SMALLEST PATCH AND NOT THE AVERAGE ONE:** `glyph_size`'s own rule one function up is
+## that a letter must fit inside its own patch, because one that does not reads as a label for the
+## tile next door. Sized for a radius-2 disc, a letter fits every patch the sim can generate, so
+## that rule is satisfied by construction and never has to be re-checked per deposit.
+##
+## **WHAT IT COSTS, AND IT IS NOT NOTHING.** Held at the smallest patch, the 10 px floor now decides
+## for EVERY letter at once: on a world wide enough that the cell falls under 4 px no letter draws at
+## all, where today the wide patches would still get one. Today's world is 96 tiles wide at cell 9;
+## the flip is past about 228 tiles (`letter_size_spread.gd` prints the sweep). Drawing them all
+## under the floor instead would break the rule the floor is there for.
+static func glyph_size_held(cell: float) -> int:
+	return glyph_size(float(MIN_DEPOSIT_RADIUS_TILES) * cell)
 
 
 ## **WHAT ONE SCHEMATIC DISC IS, INCLUDING WHETHER THE ROCK IS WORTH THE WALK** (ASSA-187, Maren's

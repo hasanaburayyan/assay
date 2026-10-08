@@ -67,16 +67,23 @@ class CannotCheck(Exception):
     """No verdict is available. Never allowed to look like a pass."""
 
 
-def ask_the_engine(because):
-    """Run the layout probe and return the whole answer. `because` is the caller's reason."""
+def ask_the_engine(because, probe=None):
+    """Run a layout probe and return the whole answer. `because` is the caller's reason.
+
+    `probe` names which one, defaulting to the pack's. ASSA-306 added a second: the crafting
+    menu's rows need their own tab opened and the real loop played, which is a different run
+    and not a key in the pack probe's JSON -- but every failure path above is the same, and
+    the whole argument of this module is that a copy of a rule is a copy.
+    """
     if not os.path.exists(GODOT):
         raise CannotCheck(
             "no Godot at %r. Set GODOT=<path>.\nDeliberately not a pass: %s" % (GODOT, because))
-    if not os.path.exists(PROBE):
-        raise CannotCheck("no layout probe at %s" % PROBE)
+    probe = probe or PROBE
+    if not os.path.exists(probe):
+        raise CannotCheck("no layout probe at %s" % probe)
     try:
         p = subprocess.run(
-            [GODOT, "--headless", "--path", CLIENT, "--script", PROBE],
+            [GODOT, "--headless", "--path", CLIENT, "--script", probe],
             capture_output=True, text=True, timeout=TIMEOUT)
     except subprocess.TimeoutExpired:
         raise CannotCheck(
