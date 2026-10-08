@@ -24,7 +24,14 @@ extends SceneTree
 const SEED := "777042"
 const SETTLE_FRAMES := 12
 
+## **HOW LONG THIS MAY HOLD THE MACHINE** (`test_tool_ceilings.gd`, which caught this one the hour
+## it was written). A tool whose `_process` returns `false` keeps the engine running, so a runtime
+## error anywhere above leaves it spinning until somebody notices. 60 s is twenty times the dozen
+## frames this actually needs; it is a dead-man's handle, not a budget.
+const RUN_CEILING := 60.0
+
 var _out := ""
+var _ceiling := Time.get_unix_time_from_system() + RUN_CEILING
 var _screen: Node = null
 var _frames := 0
 var _mine: Button = null
@@ -44,6 +51,10 @@ func _initialize() -> void:
 
 
 func _process(_delta: float) -> bool:
+	if Time.get_unix_time_from_system() > _ceiling:
+		_finish(false, "ran past its %ds ceiling at frame %d (mine found: %s, pressed: %s)"
+				% [int(RUN_CEILING), _frames, _mine != null, _pressed])
+		return true
 	_frames += 1
 	if _frames == 2:
 		var welcome := AssaySimHost.fresh_welcome_json(SEED, "nacre")
