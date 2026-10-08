@@ -6,7 +6,7 @@
 ## the answer, and the species rows sit under it as the evidence for it.
 ##
 ## **THIS FILE COMPOSES AND DOES NOT COMPUTE. Every word in the headline is the sim's**, handed over
-## by `AssaySim.proximity_answers` (`debug::proximity_headline`, verbatim). It carries the question
+## by `AssaySim.proximity_answers` (`debug::proximity_headlines`, verbatim). It carries the question
 ## it answers, the species, the grade, the distance and the heading -- and both empty answers, which
 ## are different news: a world where no patch can ever answer, and one where a species would answer
 ## from a richer patch. That is why box 5 ("a world where nothing burns shows the sim's plain
@@ -48,10 +48,16 @@ extends VBoxContainer
 ## is how a defect gets rebuilt by the next reader in good faith, so it is corrected in the same
 ## change as the code rather than left for someone to trust.
 ##
-## **THERE IS NO SELECTOR.** `AssaySim.proximity_answers` returns one answer per
-## `sim::proximity::Question`, and every one of them is rendered, in the order the sim gave them.
-## `Burns` is first because the sim puts it first — it is the question Rainy asked ("what is nearby
-## that's viable as fuel"). Nothing here picks.
+## **THERE IS NO SELECTOR.** `AssaySim.proximity_answers` returns the sim's ANSWERS and every one of
+## them is rendered, in the order the sim gave them. `Burns` is first because the sim puts it first —
+## it is the question Rainy asked ("what is nearby that's viable as fuel"). Nothing here picks.
+##
+## **AND THERE IS NOT ONE ANSWER PER QUESTION** (ASSA-272). This said there was, which stopped being
+## true the day the sim learned to merge: when one patch is the nearest answer to BOTH questions it
+## is said once, under a label naming both, because 17 of 40 worlds at spawn and 28 of 40 in play
+## were printing one fact as two near-identical paragraphs. **So the count is the sim's and this body
+## may not assume it** — `_fit_blocks(answers.size())` is load-bearing, and a body that drew one
+## block per question would draw an empty one on seven worlds in ten.
 ##
 ## **AND MAREN'S WORLDGEN FINDING, written where the next builder reads it rather than in an item
 ## nobody opens:** `Burns` is unanswered in **0 of 399 worlds**, because worldgen always puts the
@@ -196,13 +202,33 @@ func show_answer(answers: Array) -> void:
 			# `answer_is_underfoot()` are the surface the strip and the suite already read.
 			_tile = target
 			_underfoot = underfoot
+	# **THE SURPLUS BLOCKS ARE STOOD DOWN, AND IT WAS A LIVE DEFECT UNTIL THIS LOOP EXISTED**
+	# (ASSA-272). `_fit_blocks` only ever GREW, which was enough while the count was always two and
+	# stopped being enough the day the sim learned to merge: a player walks onto their own ore, the
+	# two answers become one, and the block that is no longer answered keeps its sentence AND a live
+	# walk button pointing at a tile the current answer never named. Measured rather than imagined --
+	# the tab held `what near me is hard enough: nothing in this world does` under a merged answer
+	# until this ran (`test_a_merge_stands_down_the_block_it_no_longer_needs`, red before, green now).
+	#
+	# The empty-answers path at the top of this body has always done this; only the answered path did
+	# not, because its count could not shrink.
+	for i in range(answers.size(), _blocks.size()):
+		(_blocks[i]["headline"] as Label).text = ""
+		(_blocks[i]["walk"] as Button).visible = false
+		# AND THE PAYLOAD GOES WITH THE BUTTON. A hidden button whose tile is still set is one
+		# `visible = true` away from walking a player to a rock nobody asked about.
+		_blocks[i]["tile"] = null
+		_blocks[i]["underfoot"] = false
 
 
-## ONE BLOCK PER QUESTION, ADDED ONLY WHEN THE COUNT GROWS.
+## ONE BLOCK PER ANSWER, ADDED ONLY WHEN THE COUNT GROWS.
 ##
-## The count is the sim's (`Question::ALL`), so this runs once in practice. It is a function rather
-## than a loop in `show_answer` because the thing that must never happen -- rebuilding a button under
-## the player's pointer every tick -- is easier to see guarded in one place.
+## **THE COUNT IS THE SIM'S AND IT MOVES WITH THE PLAYER** (ASSA-272). This said the count was
+## `Question::ALL` and "runs once in practice", which was true until one patch answering both
+## questions became one answer: walking onto your own ore drops it from two to one and walking away
+## puts it back. Growing is still all this function does -- a button is never rebuilt under the
+## player's pointer, which is why it is a function rather than a loop in `show_answer` -- and
+## `show_answer` stands the surplus down rather than destroying it, for the same reason.
 ##
 ## A LATER QUESTION'S CONTROLS LOOK EXACTLY LIKE THE FIRST'S: same `Heading` headline, same `Quiet`
 ## verb sized to its words. Nothing distinguishes question 2 but the sim's own sentence, which already
@@ -237,9 +263,13 @@ func answer_is_underfoot() -> bool:
 	return _underfoot
 
 
-## HOW MANY QUESTIONS THIS BODY IS CURRENTLY SHOWING, for a test that asserts BOTH are rendered
-## rather than trusting that the loop ran.
-func question_count() -> int:
+## HOW MANY ANSWER BLOCKS THIS BODY IS CURRENTLY SHOWING, for a test that asserts every answer is
+## rendered rather than trusting that the loop ran.
+##
+## **IT COUNTS ANSWERS AND WAS CALLED `question_count` UNTIL ASSA-272**, when the two stopped being
+## the same number: one patch answering both questions is one block. A name that says "question"
+## about a count of answers is the kind of prose that gets a defect rebuilt by the next reader.
+func answer_count() -> int:
 	return _blocks.size()
 
 

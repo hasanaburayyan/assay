@@ -376,9 +376,9 @@ func test_both_questions_are_stacked_in_the_sims_order_with_no_selector() -> boo
 	tab.show_answer(answers)
 	var ok := true
 	# ONE BLOCK PER ANSWER, no more and no fewer.
-	if tab.question_count() != answers.size():
+	if tab.answer_count() != answers.size():
 		ok = _fail("the sim answered %d questions and the body built %d blocks"
-				% [answers.size(), tab.question_count()])
+				% [answers.size(), tab.answer_count()])
 	# EVERY SENTENCE RENDERED, AND IN THE SIM'S ORDER. Compared by index, so a body that drew both
 	# but swapped them fails here.
 	for i in answers.size():
@@ -445,3 +445,87 @@ func test_each_questions_walk_carries_that_questions_own_tile() -> bool:
 		return ok
 	return _fail(("no seed in the list gave both questions a distinct walkable answer, so this arm "
 			+ "never ran. Widen the list rather than trusting it"))
+
+
+## **ONE PATCH ANSWERING BOTH QUESTIONS IS ONE BLOCK** (ASSA-272).
+##
+## The sim merges the answer when the same patch is the nearest one that burns AND the nearest one
+## hard enough -- 25 of 60 seeds at spawn, measured in `shared/assay/marlow-assa272-merge/`. The
+## claim here is the client's half: the body draws what the sim ANSWERED and not one block per
+## question, so a merged world gets one block carrying the sim's own merged sentence.
+func test_one_patch_answering_both_questions_draws_one_block() -> bool:
+	var made := _world("5")
+	if made.is_empty():
+		return _fail("could not stand seed 5 up through the binding")
+	var sim: AssaySimHost = made[0]
+	var players: Array = made[1]
+	if players.is_empty():
+		return _fail("the welcome carried no player")
+	var me: int = int((players[0] as Dictionary).get("id", -1))
+	var answers := sim.proximity_answers(me)
+	if answers.size() != 1:
+		return _fail(("seed 5's two questions no longer name one patch (the sim gave %d answers), "
+				+ "so this arm is vacuous. 25 of 60 seeds merged when measured "
+				+ "(shared/assay/marlow-assa272-merge); re-measure and pick a seed") % answers.size())
+	var want := String((answers[0] as Dictionary)["headline"])
+	var tab := AssayMineralogy.new()
+	tab.show_answer(answers)
+	var ok := true
+	if tab.answer_count() != 1:
+		ok = _fail(("the sim gave one answer and the body built %d blocks, so the tab shows a "
+				+ "block the sim never answered") % tab.answer_count())
+	if tab.headline_text(0) != want:
+		ok = _fail("the body says `%s` and the sim's merged answer is `%s`"
+				% [tab.headline_text(0), want])
+	# THE MERGED LABEL NAMES BOTH QUESTIONS, so neither is silently dropped from the tab.
+	for predicate in ["burns", "is hard enough"]:
+		if not tab.headline_text(0).contains(predicate):
+			ok = _fail("the merged line does not name `%s`: %s" % [predicate, tab.headline_text(0)])
+	tab.free()
+	return ok
+
+
+## **A TAB THAT SHOWED TWO ANSWERS AND IS HANDED ONE MUST NOT KEEP THE SECOND** (ASSA-272).
+##
+## This is the defect the merge introduced and the reason I went looking: `_fit_blocks` only ever
+## GREW, which was sufficient while the count was always two. It is not any more. A player walks
+## onto their own ore, the sim merges the two answers into one, and the old second sentence stays on
+## screen with a LIVE walk button pointing at a tile the current answer never named -- a stale fact
+## and the dead control ASSA-263 exists to prevent, in one block.
+##
+## Driven by two real worlds through one tab, in the order a session hits them: seed 1 answers two
+## questions, seed 5 answers one.
+func test_a_merge_stands_down_the_block_it_no_longer_needs() -> bool:
+	var two := _world("1")
+	var one := _world("5")
+	if two.is_empty() or one.is_empty():
+		return _fail("could not stand seeds 1 and 5 up through the binding")
+	var two_answers := (two[0] as AssaySimHost).proximity_answers(
+			int(((two[1] as Array)[0] as Dictionary).get("id", -1)))
+	var one_answer := (one[0] as AssaySimHost).proximity_answers(
+			int(((one[1] as Array)[0] as Dictionary).get("id", -1)))
+	if two_answers.size() != 2 or one_answer.size() != 1:
+		return _fail(("this needs a 2-answer world and a 1-answer world: seed 1 gave %d and seed 5 "
+				+ "gave %d. Re-measure (shared/assay/marlow-assa272-merge) and pick seeds")
+				% [two_answers.size(), one_answer.size()])
+	var tab := AssayMineralogy.new()
+	tab.show_answer(two_answers)
+	var stale := tab.headline_text(1)
+	if stale == "":
+		return _fail_freeing(tab, "the two-answer world never rendered a second block, so nothing "
+				+ "could go stale and this proves nothing")
+	tab.show_answer(one_answer)
+	var ok := true
+	if tab.headline_text(1) != "":
+		ok = _fail(("the merged world still shows the old second answer: `%s`")
+				% tab.headline_text(1))
+	if tab.walk_shown(1):
+		ok = _fail("the merged world leaves a live walk button on a block the sim did not answer")
+	if tab.tile_for(1) != null:
+		ok = _fail("the stood-down block still carries a tile, so its button has a payload")
+	# AND THE ANSWER THAT IS REAL IS UNTOUCHED.
+	if tab.headline_text(0) != String((one_answer[0] as Dictionary)["headline"]):
+		ok = _fail("standing the surplus block down changed the answer that is real: `%s`"
+				% tab.headline_text(0))
+	tab.free()
+	return ok
