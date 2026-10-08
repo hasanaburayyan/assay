@@ -21,8 +21,9 @@ func _initialize() -> void:
 ## English, not about the command the button submits.
 ##
 ## `AssayHud.stack_verbs` returns descriptors carrying a `verb` -- the sim-facing name -- in the same
-## order the buttons are built, out of `AssaySimHost.recipes()` and `part_kinds()`. So this asks the
-## recipe table, exactly as the screen did when it made the button.
+## order the buttons are built, out of `AssaySimHost.part_kinds()`. So this asks the sim's catalogue,
+## exactly as the screen did when it made the button. **It asked the RECIPE TABLE too until ASSA-331**,
+## which deleted the pack row's insert pair -- the only thing that reading fed.
 func _verb_kinds(stack: Dictionary) -> PackedStringArray:
 	var out := PackedStringArray()
 	for entry in _verbs_for(stack):
@@ -38,8 +39,7 @@ func _verb_kinds(stack: Dictionary) -> PackedStringArray:
 func _verbs_for(stack: Dictionary) -> Array:
 	var footprint := AssaySimHost.footprint_of_item(String(stack.get("kind", "")),
 			int(stack.get("species", -1)), String(stack.get("grade", "C")))
-	return AssayHud.stack_verbs(stack, AssaySimHost.recipes(), AssaySimHost.part_kinds(),
-			footprint)
+	return AssayHud.stack_verbs(stack, AssaySimHost.part_kinds(), footprint)
 
 
 ## **THE LABELS WITH A FRAME ALREADY CHOSEN, WHICH SINCE ASSA-103 ARE THE SAME LABELS.** That is
