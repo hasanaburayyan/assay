@@ -117,17 +117,25 @@ ASKABLE = {"pack_icon_layout.gd": lambda: ask_the_engine(
 #:
 #: `design_rows.png` is a picture of a client panel -- `design_row_sheet.py` is drawn from
 #: `design_row_layout.gd`'s answer -- so an `art-only` declaration on it would be a lie, and a
-#: layout stamp would need a digest of the bench run that drew it, which nobody has. Its probe
-#: needs a LIVE RELAY and a world with designs in it (see that script's header), so it cannot be
-#: redrawn on a wake-up with no bench up.
+#: layout stamp would need a digest of the bench run that drew it, which nobody has.
+#:
+#: **THE REASON PRINTED HERE WAS WRONG FOR THREE DAYS AND I WROTE IT** (ASSA-173). It said the probe
+#: needs a LIVE RELAY with designs in it, so nobody without a bench up could redraw the sheet. Both
+#: halves were true when filed and neither is the blocker: `button_session.gd designs=` has built
+#: that world offline from a seed since #357, and the thing actually stopping the redraw was that
+#: the probe ran `--headless`, where no layout pass runs -- it reported 98 drawn lines for a
+#: four-line paragraph and `design_row_sheet.py` refused the dump every time. A relay would not have
+#: helped anyone. The probe left `--headless` in this change; what is left is the picture itself,
+#: which is ONE design where the old bench had several, so the Game Director judges it before it
+#: lands.
 #:
 #: This is the same narrow shape `check_review_sources.py` already uses for the same sheet
 #: (`composites_no_art`): one named sheet, the reason printed every run, and designed to become
 #: dead code the first time somebody redraws it with a bench running. What it is NOT is the thing
 #: CO-6 was filed about -- a whole CLASS passing by default, unnamed and unexplained.
 UNDECLARABLE = {
-    "design_rows.png": "drawn from design_row_layout.gd, whose probe needs a live relay with "
-                       "designs in it; redraw it with a bench up and it declares itself",
+    "design_rows.png": "drawn from design_row_layout.gd; the probe runs in a real window now "
+                       "(ASSA-173), so what is left is the Game Director judging the new picture",
 }
 
 # `ART_DECLARED` and not `ART`: `ART` is this module's path to the art folder, and naming
