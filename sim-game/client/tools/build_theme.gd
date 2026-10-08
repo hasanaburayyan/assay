@@ -399,11 +399,42 @@ func _style_quiet_button(theme: Theme) -> void:
 	theme.set_stylebox("focus", name, _box(SURFACE, ACCENT))
 
 
+## **THE THREE COLOURS THIS USED TO LEAVE TO THE ENGINE** (ASSA-315, Game Director's ruling in the
+## item body; the same cause as ASSA-304 in a second place on the same screen).
+##
+## This function declared `font_size`, `font_color`, `font_placeholder_color`, `caret_color` and two
+## styleboxes and stopped — so the moment anyone selected the text in the host or name box, the bed
+## and the ink under the drag were Godot's defaults, chosen by nobody here. The board's very first
+## act on the door screen is to click into the host box.
+##
+## **`selection_color` := `BORDER`, opaque.** It spends no new literal — every edge in this theme is
+## already drawn in it (ASSA-116 counts the colours). `INK` keeps 6.73:1 on it, and the bed is
+## 2.04:1 against the well (`SURFACE.darkened(0.25)`), so you can see what you selected.
+##
+## **`font_selected_color` := `INK`, the same ink as unselected: a selection is a BED, not a second
+## ink.** Selecting a word does not change what the word is.
+##
+## **NOT `ACCENT`, for two reasons.** ASSA-224 is one accent, one meaning — *press this* — and the
+## caret on this very control is already `ACCENT`, so an accent selection puts two accents on one
+## field, one of which cannot be pressed. The arithmetic agrees: `INK` on `ACCENT` is 1.27:1, the
+## text simply gone.
+##
+## **`font_uneditable_color` := `INK_MUTED`, and nothing in this client is uneditable today —
+## WHICH IS THE REASON TO DECLARE IT.** An undeclared colour is an engine default waiting for the
+## first person who writes `editable = false`. `INK_MUTED` because *"you cannot type here"* and
+## *"nothing is typed here"* are the same grade of fact, and the placeholder already uses it.
+##
+## **The 6.73:1 above is derived, and derived is not drawn.** Godot may composite `selection_color`
+## rather than painting it flat, so the claim is only earned on a real window with text selected;
+## that is ASSA-315's own box and it is not ticked by this function existing.
 func _style_line_edit(theme: Theme) -> void:
 	theme.set_font_size("font_size", "LineEdit", BODY)
 	theme.set_color("font_color", "LineEdit", INK)
 	theme.set_color("font_placeholder_color", "LineEdit", INK_MUTED)
 	theme.set_color("caret_color", "LineEdit", ACCENT)
+	theme.set_color("selection_color", "LineEdit", BORDER)
+	theme.set_color("font_selected_color", "LineEdit", INK)
+	theme.set_color("font_uneditable_color", "LineEdit", INK_MUTED)
 	theme.set_stylebox("normal", "LineEdit", _box(SURFACE.darkened(0.25), BORDER))
 	theme.set_stylebox("focus", "LineEdit", _box(SURFACE.darkened(0.25), ACCENT))
 

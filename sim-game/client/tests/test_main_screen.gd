@@ -4924,6 +4924,55 @@ func test_a_command_that_never_reached_the_wire_still_says_so() -> bool:
 ##    branch is dead code today and becomes the real assertion the moment anybody retunes a heading,
 ##    which Maren has already done once (`INK_MUTED` -> `INK`, ASSA-224). Nacre's tab strip will add
 ##    variations whose colours do NOT coincide, and they will land straight in branch two.
+## **EVERY COLOUR THE ENGINE WOULD OTHERWISE PICK FOR A `LineEdit` IS NAMED BY US** (ASSA-315).
+##
+## **THE LIST IS ASKED FOR, NOT TYPED, AND THAT IS THE WHOLE POINT.** A hand-written list of the
+## three colours ASSA-315 happened to notice would only ever check the three somebody remembered —
+## the same defect as the bug it guards, one level up (ASSA-304's lesson, and my own). So the
+## expected set comes from `ThemeDB.get_default_theme()`: whatever Godot declares for `LineEdit` is
+## exactly the set of colours it will draw for us if we stay quiet, today and after an engine
+## upgrade that invents a fourth.
+##
+## It asserts only that each is DECLARED, never what it equals: the values are the Game Director's
+## and live in `build_theme.gd` beside her reasons. A test that pinned them here would be a second
+## place to change her mind.
+func test_the_theme_names_every_line_edit_colour_the_engine_would_otherwise_pick() -> bool:
+	var theme: Theme = load("res://theme/assay.tres")
+	if theme == null:
+		return _fail("no theme/assay.tres to read declared values from")
+	var fallback := ThemeDB.get_default_theme()
+	if fallback == null:
+		return _fail("no default theme to ask, so this test cannot know what the engine would pick")
+	var engine_picks := fallback.get_color_list("LineEdit")
+	if engine_picks.is_empty():
+		return _fail(("the engine declares NO LineEdit colours, so this test would pass against a "
+				+ "theme that declares none either: the premise is gone, not the defect"))
+	# **THE THREE THE GAME DIRECTOR HAS NOT RULED YET, NAMED OUT LOUD RATHER THAN QUIETLY PASSED.**
+	# Asking the engine found more than ASSA-315 set out to fix: Godot declares NINE LineEdit
+	# colours and her ruling covers three. These are the remainder. They are not a tolerance — the
+	# test still fails for any colour outside this list, so an engine upgrade that invents a tenth
+	# lands here, and it ALSO fails once one of these is declared, so the list cannot rot into a
+	# permanent excuse. It shrinks to empty the day she rules them.
+	const UNRULED := ["font_outline_color", "clear_button_color", "clear_button_color_pressed"]
+	var undeclared := PackedStringArray()
+	for name in engine_picks:
+		if not theme.has_color(name, "LineEdit") and not UNRULED.has(name):
+			undeclared.append(name)
+	var stale := PackedStringArray()
+	for name in UNRULED:
+		if theme.has_color(name, "LineEdit"):
+			stale.append(name)
+	if not stale.is_empty():
+		return _fail(("%s is declared now but still listed as unruled, so this test is excusing a "
+				+ "colour somebody already chose. Delete it from UNRULED.") % ", ".join(stale))
+	if undeclared.is_empty():
+		return true
+	return _fail(("the theme leaves %d of the engine's %d LineEdit colours undeclared and unruled, "
+			+ "so Godot chooses them and nobody here did: %s. Declare them in "
+			+ "`build_theme.gd::_style_line_edit` and rebuild the theme.")
+			% [undeclared.size(), engine_picks.size(), ", ".join(undeclared)])
+
+
 func test_the_theme_poke_is_load_bearing_and_the_sweeps_coincidence_is_declared() -> bool:
 	var screen := _screen()
 	var ok := true
