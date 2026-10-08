@@ -3021,35 +3021,50 @@ pub fn design_preview(world: &World, player: PlayerId, frame: Item, mounted: &[I
     // the old wording of the same fact. Two surfaces spelling one fact apart is
     // ASSA-43/52, and this is the half the charter calls the reference client.
     //
-    // THE NAME LEADS THE ENTRY, because her entry is *name, then counts*, and
-    // the separator between ENTRIES had to move with it: the `·` is now INSIDE
-    // an entry, so entries part on `, `. **No two-row form here** — the two
-    // rows in §5.5 are a 240 px measurement about a GUI block, not about a line
-    // of text, and the sim owns no widths.
-    let counts = cost
-        .iter()
-        .map(|s| {
-            format!(
-                "{} need {} · have {}",
-                world.item_name(s.item),
-                s.count,
-                p.inventory.count(s.item)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
+    // THE NAME LEADS THE ENTRY AND THERE IS ONE ENTRY PER LINE, which is the
+    // Game Director taking back her own `, ` (ASSA-338, third ruling). Her
+    // §5.5 moved `·` INSIDE an entry (`need 1 · have 2`) while `·` is already
+    // this sim's TOP-LEVEL clause mark (`SAFE · mass … · …`), so one mark held
+    // two ranks; a wrap could then split `need 1` from `have 2`, which is the
+    // one thing ASSA-305 lets a client do to our sentences. Parting entries on
+    // `, ` would have fixed the collision by inverting the hierarchy — the
+    // weakest mark doing the strongest job. **A list with no separator cannot
+    // give a mark two jobs**, so the list is lines and `·` keeps one rank.
+    //
+    // The counts are in a column because her ruling's own sample is in a
+    // column, and the width comes off the names actually printed: this is a
+    // list, and a list the eye can scan down is the whole reason for the shape.
+    let names: Vec<String> = cost.iter().map(|s| world.item_name(s.item)).collect();
+    let column = names.iter().map(|n| n.chars().count()).max().unwrap_or(0);
 
     let mut out = match unfinished {
         Some(error) => unfinished_readout(world, built, error),
         None => assembly_readout(world, built),
     };
-    let _ = write!(out, "\n      your pack: {counts}");
+    let _ = write!(out, "\n      your pack:");
+    for (name, s) in names.iter().zip(cost.iter()) {
+        let pad = " ".repeat(column - name.chars().count());
+        let _ = write!(
+            out,
+            "\n        {name}{pad}  need {} · have {}",
+            s.count,
+            p.inventory.count(s.item)
+        );
+    }
     if let Some(item) = missing {
         let item = *item;
         // The sentence `step` would answer the press with, said before it.
+        //
+        // **ITS OWN LINE, AT THE HEADER'S INDENT AND NOT THE ENTRIES'.** It
+        // used to trail the counts, which worked only while they were one line.
+        // It is not a fourth entry and must not read as one: it is a verdict on
+        // the whole list, and `plan` picks it with `cost.iter().find(…)` — the
+        // FIRST entry the pack cannot pay for, which is not in general the last
+        // one printed, so trailing it on the final row would have hung it off a
+        // number that is not the one at fault.
         let _ = write!(
             out,
-            " — not enough {}: assembling it would be refused",
+            "\n      not enough {}: assembling it would be refused",
             world.item_name(item)
         );
     }

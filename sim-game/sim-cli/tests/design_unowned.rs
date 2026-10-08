@@ -113,14 +113,34 @@ quit
     // a ratio's mark and `2/1` reads as 200% of something. The window's block 6
     // already said it her way, so until this landed the two clients spelled one
     // fact apart — and this is the one the charter calls the reference client.
-    let pack_line = stdout
-        .lines()
-        .find(|l| l.contains("your pack: "))
+    // ONE ENTRY PER LINE as of her third ruling, so the counts and the refusal
+    // are no longer one string to search: the entries sit under the header and
+    // the clause closes them at the header's own indent.
+    let lines: Vec<&str> = stdout.lines().collect();
+    let header = lines
+        .iter()
+        .position(|l| l.contains("your pack:"))
         .unwrap_or_else(|| panic!("the readout counted no parts\n{transcript}"));
+    let entries: Vec<&&str> = lines[header + 1..]
+        .iter()
+        .take_while(|l| l.contains(" need ") && l.contains(" · have "))
+        .collect();
     assert!(
-        pack_line.contains("need 1 · have 0") && pack_line.contains("not enough"),
-        "an empty pack reads `need 1 · have 0` and predicts the refusal: \
-         {pack_line}\n{transcript}"
+        !entries.is_empty() && entries.iter().all(|l| l.ends_with("need 1 · have 0")),
+        "every part of this design is unowned, so each entry is its own line \
+         reading `need 1 · have 0`: {entries:?}\n{transcript}"
+    );
+    let clause = lines[header + 1 + entries.len()..]
+        .iter()
+        .find(|l| l.contains("not enough"))
+        .unwrap_or_else(|| panic!("the refusal was not predicted\n{transcript}"));
+    // The clause carries the item's DISPLAY name (`Bokase handle (A)`), not the
+    // spec that was typed (`handle:bokase:a`), so the kind word is what this
+    // can honestly assert without rebuilding an `Item` from a string here.
+    assert!(
+        clause.contains("handle"),
+        "the clause names `plan`'s own choice — the FIRST entry the pack cannot \
+         pay for, which is the frame here: {clause:?}\n{transcript}"
     );
 
     // READS 2 AND 3 — NO COMMAND THAT SPENDS SOMETHING MOVED. Same words as

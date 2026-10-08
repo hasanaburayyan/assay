@@ -362,6 +362,15 @@ fn a_design_the_pack_cannot_pay_for_is_still_weighed() {
 /// It asks for the WHOLE entry, name included, because the name's place is the
 /// other half of her ruling (*name, then counts*) and a `contains` of the two
 /// counts alone would pass with the name anywhere on the line.
+///
+/// **AND IT NOW PINS THE LIST'S SHAPE WITH `ends_with`** (ASSA-338, her third
+/// ruling: one entry per line). Each entry must END at its own `have`, which is
+/// a claim no `contains` can make: re-joining the entries with `, ` — the shape
+/// this replaced — leaves the first entry's line running on into the second, so
+/// that entry no longer ends where its counts do and this test reddens. The
+/// reason the list is lines at all is that `·` is the sim's TOP-LEVEL clause
+/// mark, so an entry that contains one may not also be separated by one, and
+/// the weaker marks all invert the hierarchy.
 #[test]
 fn a_surplus_pack_reads_need_then_have_and_never_a_ratio() {
     let (mut world, me) = world_with_player();
@@ -372,28 +381,84 @@ fn a_surplus_pack_reads_need_then_have_and_never_a_ratio() {
 
     let line = debug::design_preview(&world, me, frame, &[head]);
     // The claim is about the pack clause, so the slash is looked for THERE and
-    // not on the whole line: a readout that grows a slash of its own some day
-    // is not this test's business.
-    let pack = line
+    // not on the whole readout: a verdict line that grows a slash of its own
+    // some day is not this test's business.
+    let header = line
         .lines()
-        .find(|l| l.contains("your pack:"))
+        .position(|l| l.contains("your pack:"))
         .unwrap_or_else(|| panic!("a weighed design prints its pack: {line}"));
+    let entries: Vec<&str> = line.lines().skip(header + 1).collect();
 
+    for (item, counts) in [(head, "need 1 · have 2"), (frame, "need 1 · have 1")] {
+        let name = world.item_name(item);
+        let entry = entries
+            .iter()
+            .find(|l| l.trim_start().starts_with(&name))
+            .unwrap_or_else(|| panic!("no entry of its own for {name}: {line}"));
+        assert!(
+            entry.ends_with(counts),
+            "{name}'s entry must be a line of its own that ENDS at its counts \
+             ({counts}), or the separator is back: {entry:?}\n{line}"
+        );
+    }
     assert!(
-        pack.contains(&format!("{} need 1 · have 2", world.item_name(head))),
-        "the head is wanted once and held twice, named then counted: {pack}"
-    );
-    assert!(
-        pack.contains(&format!("{} need 1 · have 1", world.item_name(frame))),
-        "and the frame's own entry is beside it: {pack}"
-    );
-    assert!(
-        !pack.contains('/'),
-        "a slash is a ratio's mark and this is not a ratio: {pack}"
+        !entries.iter().any(|l| l.contains('/')),
+        "a slash is a ratio's mark and this is not a ratio: {line}"
     );
     assert!(
         !line.contains("not enough"),
         "a pack with a spare head is not short of anything: {line}"
+    );
+}
+
+/// **THE REFUSAL CLAUSE NAMES THE FIRST ENTRY THE PACK CANNOT PAY FOR, WHICH IS
+/// NOT THE LAST ONE PRINTED** — the thing one-entry-per-line made askable.
+///
+/// While the counts were a single line the clause trailed them and there was
+/// nothing to get wrong. Now it is a line, and the only wrong place to put it is
+/// hanging off the final row: `assembly::plan` picks the item with
+/// `cost.iter().find(…)`, so it is the FIRST short entry in `part_items()`
+/// order. This fixture holds the head and not the frame, so the short entry is
+/// the frame — printed FIRST, with an affordable row after it. A clause trailed
+/// on the last row would blame the head, which the player is holding.
+///
+/// It also pins the clause's indent as the HEADER's and not the entries': it is
+/// a verdict on the list, not a fourth entry, and the indent is what says so.
+#[test]
+fn the_refusal_clause_blames_the_first_short_entry_and_is_not_an_entry() {
+    let (mut world, me) = world_with_player();
+    let frame = part_item(HELD, LIGHT);
+    let head = part_item(PartKind::Head, LIGHT);
+    give(&mut world, me, head, 1);
+
+    let line = debug::design_preview(&world, me, frame, &[head]);
+    let clause = line
+        .lines()
+        .find(|l| l.contains("not enough"))
+        .unwrap_or_else(|| panic!("an unaffordable design predicts the refusal: {line}"));
+
+    assert!(
+        clause.contains(&world.item_name(frame)),
+        "the frame is the part the pack is short of: {clause:?}\n{line}"
+    );
+    assert!(
+        !clause.contains(&world.item_name(head)),
+        "the head is held, so blaming it would be the clause trailing the last \
+         row instead of naming `plan`'s own choice: {clause:?}\n{line}"
+    );
+    // The entries are indented one step deeper than the header; the clause sits
+    // at the header's step. Measured off the strings rather than asserted as a
+    // constant, because the width is `debug.rs`'s to change.
+    let header = line
+        .lines()
+        .find(|l| l.contains("your pack:"))
+        .expect("a weighed design prints its pack");
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    assert_eq!(
+        indent(clause),
+        indent(header),
+        "the clause is a verdict on the list, so it sits at the header's \
+         indent, not an entry's:\n{line}"
     );
 }
 

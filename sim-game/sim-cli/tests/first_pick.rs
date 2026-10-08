@@ -373,27 +373,52 @@ quit
     // the pair survives being swapped (`need 1 · have 1` is its own mirror, and
     // `need 0 · have 1` still reads), so a suite without a surplus row would
     // stay green through a reversal of the thing §5.5 is entirely about.
-    let pack_lines: Vec<&str> = stdout
-        .lines()
-        .filter(|l| l.contains("your pack: "))
-        .collect();
+    // **ONE ENTRY PER LINE** since her third ruling on ASSA-338, so these are
+    // found by the shape of an entry rather than under the `your pack:` header
+    // they now sit beneath — this transcript holds several previews and the
+    // entries of all of them are the subject.
+    let lines: Vec<&str> = stdout.lines().collect();
+    let is_entry = |l: &str| l.contains(" need ") && l.contains(" · have ");
+    let entries: Vec<&str> = lines.iter().copied().filter(|l| is_entry(l)).collect();
     assert!(
-        pack_lines.iter().any(|l| l.contains(" need 1 · have 1")),
+        entries.iter().any(|l| l.ends_with("need 1 · have 1")),
         "the preview should count the parts the press will spend\n{transcript}"
     );
     assert!(
-        pack_lines.iter().any(|l| l.contains(" need 1 · have 2")),
+        entries.iter().any(|l| l.ends_with("need 1 · have 2")),
         "two heads were made and one is wanted, so the surplus case the Game \
          Director's §5.5 is about must appear\n{transcript}"
     );
     assert!(
-        pack_lines
-            .iter()
-            .any(|l| l.contains(" need 1 · have 0") && l.contains("not enough")),
-        "the same design asked with an emptied pack must read 0 and predict \
-         the refusal\n{transcript}"
+        entries.iter().any(|l| l.ends_with("need 1 · have 0")),
+        "the same design asked with an emptied pack must read 0\n{transcript}"
     );
-    for line in &pack_lines {
+    // **AND THE REFUSAL IS STILL READ WITH THE COUNT THAT CAUSES IT**, which
+    // is what the old single-line assertion was really about. It is now a line
+    // of its own, so the claim is positional: the clause closes a pack block,
+    // and the block it closes is the one carrying the short entry. Walking back
+    // over the contiguous entry lines above the clause IS that block.
+    let clause = lines
+        .iter()
+        .position(|l| l.contains("not enough"))
+        .unwrap_or_else(|| panic!("no preview predicted the refusal\n{transcript}"));
+    assert!(
+        !is_entry(lines[clause]),
+        "the refusal is a verdict on the list, not an entry with counts of its \
+         own: {:?}\n{transcript}",
+        lines[clause]
+    );
+    assert!(
+        lines[..clause]
+            .iter()
+            .copied()
+            .rev()
+            .take_while(|l| is_entry(l))
+            .any(|l| l.ends_with("need 1 · have 0")),
+        "the refusal must close the very block that reads 0, or a player is \
+         told they are short beside counts that are all met\n{transcript}"
+    );
+    for line in &entries {
         assert!(
             !line.contains('/'),
             "a slash is a ratio's mark and a pack is not a ratio: {line}\n{transcript}"
