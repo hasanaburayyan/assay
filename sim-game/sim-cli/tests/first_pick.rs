@@ -113,6 +113,8 @@ tick 1
 make {frame_kind} {refined} 1
 tick 1
 inv
+design {handle} {head}
+design {frame} {head}
 assemble {handle} {head}
 tick 1
 built
@@ -292,5 +294,37 @@ quit
     assert!(
         !carrying.contains("handle") && !carrying.contains("frame"),
         "both frames should have been consumed: {carrying}\n{transcript}"
+    );
+
+    // ASSA-323: THE DESIGN READ BEFORE THE PRESS, IN THE PLAY-THROUGH A TESTER
+    // DRIVES. `design` takes the same words as `assemble` and spends nothing —
+    // which this transcript proves twice over, because the two `assemble`
+    // commands come after the two `design` commands and neither was rejected
+    // (asserted above), and the final inventory is empty of frames.
+    //
+    // The claim worth a test is the harder one: the sentence you read before
+    // you commit is the sentence you read afterwards. So the previews are not
+    // matched against text written here — they are matched against the readout
+    // the BUILT designs got later in the same run.
+    let readouts: Vec<&str> = stdout.lines().filter(|l| l.contains("· mass ")).collect();
+    assert!(
+        readouts.len() > 2,
+        "expected two previews and then the built designs' own readouts, \
+         got {}:\n{transcript}",
+        readouts.len()
+    );
+    let (previews, after) = readouts.split_at(2);
+    for preview in previews {
+        let line = preview.trim_start();
+        assert!(
+            after.iter().any(|l| l.contains(line)),
+            "a preview that nothing later repeats is a second opinion, not a \
+             preview: {line:?}\n{transcript}"
+        );
+    }
+    // And the pack counts the Game Director's §5.3 asks for: have on the left.
+    assert!(
+        stdout.contains("your pack: 1/1 "),
+        "the preview should count the parts the press will spend\n{transcript}"
     );
 }
