@@ -264,6 +264,27 @@ var _log_heading: Label = null
 ## what a verdict has to be read off.
 var _log_region: VBoxContainer = null
 var _log_box: PanelContainer = null
+## **THE MACHINE MENU'S SURFACE, THE SAME TWO-PART TRICK AS THE LOG'S** (ASSA-316).
+##
+## `_menu_region` is one HALF of the map, inset by a pad, and it is what MOVES: Maren's ruling 1 places
+## the menu by which half the machine is not in, so the placing is a rect written on this node and
+## nothing inside it knows where it ended up. `_menu_box` is the panel, and it takes the size the
+## ENGINE gives it from its own widest row (`SIZE_SHRINK_BEGIN` both ways, the door card's rule in
+## ASSA-292: no literal width anywhere). The region clips, so the derivation cannot reach past the cap
+## and over the machine it is about.
+var _menu_region: VBoxContainer = null
+var _menu_box: PanelContainer = null
+## The three parts of the menu whose content moves on three different clocks: the name on open, the
+## state sentence every tick, the slot and act rows only when the pack's shape changes. Held rather
+## than found so the per-tick path never walks the tree (`_refresh_machine_menu`).
+var _menu_name: Label = null
+var _menu_state: Label = null
+var _menu_rows: VBoxContainer = null
+## WHAT THE MENU'S ROWS WERE BUILT FOR. Same contract as `_actions_showing`: the building's ID and the
+## pack's SHAPE, never its counts or the machine's status. A smelter's status sentence changes every
+## tick while it burns, and rebuilding on that would free the button under the player's cursor four
+## times a second -- the defect `_refresh_actions` documents and this surface would have inherited.
+var _menu_showing := UNBUILT
 ## HOW TALL THE LOG'S PANEL MAY BE, in the map's own pixels, or -1.0 when nothing bounds it
 ## (ASSA-156, Maren's measurement). `AssayScene.player_ceiling`: the panel is anchored to the map's
 ## top and the camera puts your body in the map's centre, so a panel sized only by its content owns
@@ -402,6 +423,15 @@ const COLUMN_PAD := "ColumnPad"
 ## structure: one panel, the systems selectable at the top.
 const TABS := "SystemsTabs"
 
+## **THE MACHINE MENU'S FOUR NAMED PARTS** (ASSA-316). The board asked for menus you can interact
+## with; a test, a probe and a shot tool all have to find them, and every one of these is a node whose
+## CONTENT changes on a different clock -- the name on open, the state every tick, the rows only when
+## the pack's shape moves. ASSA-117's lesson with no half missing this time.
+const MENU_BOX := "MachineMenu"
+const MENU_NAME := "MachineMenuName"
+const MENU_STATE := "MachineMenuState"
+const MENU_ROWS := "MachineMenuRows"
+
 ## The map glyph's disc in a species row. Big enough for a 12px letter to sit in, which is above the
 ## 10px floor `glyph_size` refuses to draw under.
 const GLYPH_BOX_PX := 18.0
@@ -441,6 +471,20 @@ var _world_shown := false
 ## player does most.
 var _target := Vector2i.ZERO
 var _targeted := false
+## **THE MACHINE WHOSE MENU IS OPEN, BY ID, OR -1** (ASSA-316, the board: *"machines should have menus
+## so we can interact with them"*).
+##
+## **THE ID IS THE SUBJECT AND THE TILE IS ONLY WHERE IT IS DRAWN.** Every command the menu sends takes
+## a `BuildingId` (`AssayActions.take`/`pickup`/`insert`), the ring needs a tile, and a building that is
+## picked up while its menu is open leaves the id behind on a tile that now holds nothing -- which is
+## the one state this pair makes checkable (`_refresh_machine_menu` closes on it).
+##
+## IT IS NOT `_target`, AND THAT IS MAREN'S RULING 8. `_target` is "the tile every placement lands on",
+## and `Place` is refused on a tile that already carries a building (`step.rs:225` `TileOccupied`), so
+## pointing the placement cursor at a machine would arm a guaranteed refusal. A click on a building
+## opens this instead and leaves the placement target exactly where the player last put it.
+var _menu_at := -1
+var _menu_tile := Vector2i.ZERO
 ## THE PARTS CHOSEN FOR THE NEXT `Assemble`, as the SIM'S OWN STACKS so a row can be named on screen
 ## and sent as an item without this client inventing either. THE FIRST ONE IS THE FRAME, which is
 ## `sim-cli`'s rule (`assemble <frame> <part>...`) kept rather than invented.
@@ -855,6 +899,13 @@ func _build_ui() -> void:
 
 	_build_log_over_the_map(world)
 	_build_map_key_over_the_map(world)
+	# **AFTER THE LOG AND THE KEY, WHICH IS A DECISION ABOUT WHAT MAY COVER WHAT** (ASSA-316). Siblings
+	# are drawn in tree order, so the menu -- the thing a player just opened and is reading -- sits over
+	# the log's top-left panel if both are up. The other way round would hide a surface behind one the
+	# player asked for, which is ASSA-147's defect; and the log is a CONSULTING surface they can lower
+	# with one press. What the menu may never cover is the HUD column (Maren's ruling 2), and that is
+	# true of its geometry rather than of this line: it lives in half of `world_rect`.
+	_build_machine_menu_over_the_map(world)
 
 	_view_toggle.position = world.end - Vector2(152.0, 36.0)
 	_view_toggle.custom_minimum_size = Vector2(144.0, 0.0)
@@ -1442,6 +1493,81 @@ func _build_log_over_the_map(world: Rect2) -> void:
 	inside.add_child(_log)
 
 
+## **THE MACHINE MENU'S SURFACE, BUILT ONCE AND EMPTY** (ASSA-316; the board, 10-08: *"machines should
+## have menus so we can interact with them"*).
+##
+## **WHY THIS SCREEN NEEDED IT, IN OUR OWN PIXELS** (Maren's reading, and she disagreed with the pop-up
+## before ruling it): on `nacre-assa292-rect/rect-only/02-play.png` the column already prints a
+## machine's entire state -- `holding 0 of 210 · mining Minyte · mass 490 of 1095 budget · speed 44 ·
+## frame(...) + hopper x4` -- **with nothing you can press.** The data was there and the interaction
+## was not.
+##
+## **IT STOPS THE MOUSE AND THE REGION AROUND IT DOES NOT**, the log's rule for the log's reason: the
+## map is clicked through `_unhandled_input`, so an `IGNORE` panel would let a press on a slot button
+## fall through onto the tile behind it and walk the player away from the machine they were loading.
+## The region is `IGNORE` so the rest of the half stays clickable -- the menu does NOT block input
+## (ruling 2: *"a menu that freezes a co-op game stops your partner's factory being watchable"*).
+##
+## **`clip_contents` IS THE CAP, AND IT IS STRUCTURAL ON PURPOSE.** The box's size is the engine's
+## answer about its own widest row; `machine_menu_room` is the most that answer is allowed to be. A
+## clip cannot be forgotten the way a `minf` in a later refresh can, and the one thing this item may
+## never do is cover the machine the menu is about. **A test holds the content inside the room** rather
+## than trusting the clip to hide a defect: Maren's rule is that past the room it SCROLLS, and a scroll
+## box nothing can reach yet is a control a player cannot use, so the bound is a red test today and a
+## `ScrollContainer` the day a menu outgrows 408x624.
+func _build_machine_menu_over_the_map(world: Rect2) -> void:
+	_menu_region = VBoxContainer.new()
+	_menu_region.position = world.position
+	_menu_region.size = world.size
+	_menu_region.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_menu_region.clip_contents = true
+	add_child(_menu_region)
+	_menu_box = PanelContainer.new()
+	_menu_box.name = MENU_BOX
+	# THE SIZE IS THE CONTENT'S, IN BOTH DIRECTIONS, and that is the whole of "no literal width
+	# anywhere": `SHRINK_BEGIN` in a `VBoxContainer` gives a child its own minimum and puts it at the
+	# top-left of the region. Which region is Maren's ruling 1 and is written in `_place_machine_menu`.
+	_menu_box.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_menu_box.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	# SAID RATHER THAN INHERITED, as the log says it: `STOP` is a Control's default and the paragraph
+	# above is the reason this panel has it. A default nobody wrote down is a default somebody changes.
+	_menu_box.mouse_filter = Control.MOUSE_FILTER_STOP
+	_menu_box.visible = false
+	_menu_region.add_child(_menu_box)
+	var inside := VBoxContainer.new()
+	inside.add_theme_constant_override("separation", 6)
+	_menu_box.add_child(inside)
+	# THE MACHINE'S OWN NAME, AT HEADING SIZE (ruling 5). `debug::building_name` wrote it -- `Minyte
+	# machine (B)` -- so the species that caps the fire and the grade that comes back in your pack are
+	# in the title, and this file composes nothing. No punctuation the sim did not write (ASSA-305).
+	_menu_name = Label.new()
+	_menu_name.name = MENU_NAME
+	_menu_name.theme_type_variation = &"Heading"
+	inside.add_child(_menu_name)
+	# **ITS STATE, WHICH LEFT `where you stand` ON THIS COMMIT** (ruling 6). One fact, one home, and the
+	# home is the surface that can act on it. The words are the sim's `status`, which crosses the
+	# binding as ONE string: the slot contents, the burn and the progress behind it are not separate
+	# fields yet (`sim-godot/src/lib.rs:1392`), so this menu cannot draw a fill as the RATIO ruling 5
+	# calls for until they are. That is Marlow's half and it is on the item, not papered over here.
+	_menu_state = _note("")
+	_menu_state.name = MENU_STATE
+	inside.add_child(_menu_state)
+	_menu_rows = VBoxContainer.new()
+	_menu_rows.name = MENU_ROWS
+	_menu_rows.add_theme_constant_override("separation", 6)
+	inside.add_child(_menu_rows)
+	# **THE WAY OUT IS NAMED, WHICH IS THIS CLIENT'S OWN RULE AND NOT A THIRD DISMISSAL** (`_show_log`:
+	# *"the control names the key, because the key is the half a stranger cannot discover"*). Maren ruled
+	# Esc and a click outside; both are invisible, and the board's first act on a new surface is to look
+	# for the way back. QUIET, because it is furniture (ASSA-224) and the menu spends no accent at all --
+	# it offers several equal acts and must not choose for you.
+	var close := _button("close (Esc)", func() -> void: _close_machine_menu(),
+			"close this menu. Esc does the same, and so does a click on the map")
+	close.theme_type_variation = &"Quiet"
+	close.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	inside.add_child(close)
+
+
 ## SHOW OR HIDE THE EVENT LOG (ASSA-89). The board's words were "logs are hard on the eyes", and
 ## this is the toggle they asked for rather than the deletion they did not.
 ##
@@ -1602,7 +1728,13 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	var key := event as InputEventKey
 	if key == null or not key.pressed or key.echo:
 		return
-	if key.keycode == KEY_L:
+	if key.keycode == KEY_ESCAPE:
+		# **ESC CLOSES A MACHINE MENU AND NOTHING ELSE** (ASSA-316, Maren's ruling 2). It is the key
+		# every pop-up in every game answers to, which is why the menu may rely on it; and with no menu
+		# open this does nothing at all, because Esc meaning "and otherwise, something" is how a key
+		# ends up quitting a session somebody was playing.
+		_close_machine_menu()
+	elif key.keycode == KEY_L:
 		_show_log(not _log_shown)
 	elif key.keycode == KEY_K:
 		# K ARMS THE KEY IN EITHER VIEW, unlike V's shortcut, and that is not an inconsistency with
@@ -2567,7 +2699,15 @@ func _refresh() -> void:
 	if not _hovering:
 		at = _my_tile()
 		source = "where you stand"
-	_cursor.text = "%s\n%s" % [source, "\n".join(AssayHud.tile_lines(_sim.tile_at(at)))]
+	# **BEFORE THE READOUT, AND THE ORDER IS THE WHOLE REASON THIS CALL IS HERE AND NOT BELOW** (ASSA-316).
+	# This is the function that closes the menu when its machine stops existing -- `Pick up` is one of its
+	# own buttons -- and the readout under it gives that machine's prose up while a menu is open. Asked
+	# the other way round, the tick a machine is picked up prints neither: the menu is gone and the line
+	# it displaced was already composed.
+	_refresh_machine_menu()
+	# **THE MACHINE WHOSE MENU IS OPEN DOES NOT STATE ITS CASE TWICE** (Maren's ruling 6). One fact, one
+	# home, and the home is the surface that can act on it.
+	_cursor.text = "%s\n%s" % [source, "\n".join(AssayHud.tile_lines(_sim.tile_at(at), _menu_at))]
 	_refresh_log()
 	_refresh_halt()
 	# WHAT IS RUNNING, beside what has stopped. This replaces the running-craft label that used to
@@ -3440,8 +3580,6 @@ func _stack_button(descriptor: Dictionary, stack: Dictionary, footprint: Vector2
 func _refresh_actions() -> void:
 	var target := _target_tile()
 	var facts := _sim.tile_at(target) if _sim.running() else {}
-	var building: Variant = facts.get("building")
-	var at := -1 if building == null else int((building as Dictionary).get("id", -1))
 	# **AND THE MINABLE BIT IS IN THE SIGNATURE, WHICH IS THE HALF THAT WOULD HAVE FAILED SILENTLY.**
 	# This row is only rebuilt when the signature changes, and `Mine` acts on the tile you are
 	# STANDING on while every other term here is about the tile you are ACTING on. Walking off a
@@ -3459,7 +3597,11 @@ func _refresh_actions() -> void:
 	# signature changes, and a dropped link moves none of the other terms, so the button would keep
 	# an accent that no longer means anything until something else happened to move.
 	var live := _client.stage == AssayNetClient.Stage.JOINED
-	var signature := "%s/%s/%d/%s/%s/%s" % [target, _targeted, at, _building, minable, live]
+	# **THE BUILDING'S ID LEFT THIS SIGNATURE WITH THE TWO BUTTONS IT WAS FOR** (ASSA-316, Maren's
+	# ruling 3). It was here for `Take` and `Pick up`, which now live in the machine's own menu; a term
+	# in a cache key that no drawn thing depends on is a rebuild nobody asked for, every time a machine
+	# under the cursor changes -- the exact note `_pack_shape` carries one section away.
+	var signature := "%s/%s/%s/%s/%s" % [target, _targeted, _building, minable, live]
 	if signature == _actions_showing:
 		return
 	_actions_showing = signature
@@ -3501,17 +3643,195 @@ func _refresh_actions() -> void:
 	# as well as the wrong place: `_refresh_actions` runs whenever the target tile or the building
 	# under it changes, and every run replaced the node whose text `_refresh` sets.
 
-	if building != null:
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 4)
-		row.add_child(_button("Take", func() -> void: _act("Take", AssayActions.take(at)),
-				"empty the output slot into your pack"))
-		row.add_child(_button("Pick up", func() -> void: _act("Pick up", AssayActions.pickup(at)),
-				"take the building back, with whatever is inside it"))
-		_actions.add_child(row)
+	# **`Take` AND `Pick up` ARE NOT HERE ANY MORE: THEY ARE IN THE MACHINE'S OWN MENU** (ASSA-316,
+	# Maren's ruling 3, and her condition that they leave on the commit that makes the menu reachable --
+	# which is this one).
+	#
+	# THE REASON IS THAT THEY WERE ALREADY CONDITIONAL ON A BUILDING. This block ran `if building !=
+	# null`, so both verbs only ever existed when a machine was chosen; the menu is their true home and
+	# two homes for one verb is the defect. **AND IT DISCHARGES §11.36 FOR FREE** (a verb may not sit
+	# under a subject it does not act on, ASSA-276 move 2): what is left in `do` is Mine / Stop / Assay,
+	# all three acting under your own body, so there is nothing left to disambiguate and the two-bar
+	# redesign that move had costed is not needed.
 
 	# THE CHOSEN PARTS USED TO BE DRAWN HERE and are now in the crafting menu, under the running
 	# craft (ASSA-107). `_refresh_assembling` owns them.
+
+
+## **OPEN A MACHINE'S MENU** (ASSA-316). Either mouse button on a tile carrying a building, which is
+## Maren's rulings 7 and 8 together: left-click because *"in a click-to-move game the single gesture a
+## player has must resolve on what is under the cursor, ground meaning go"*, and right-click because
+## after ruling 3 a right-click on a building would otherwise arm a placement the sim is guaranteed to
+## refuse (`TileOccupied`) and offer no verb that acts on it.
+##
+## **ONE MENU AT A TIME, AND OPENING A SECOND CLOSES THE FIRST RATHER THAN STACKING** (ruling 2). That
+## is this function with no extra code: there is one `_menu_at`, so a second machine replaces the first.
+##
+## **IT CHANGES NO SIM STATE AND SENDS NOTHING.** Opening is a client gesture; every act inside the menu
+## is a command the sim judges. In particular this does NOT set `_target`: the placement cursor stays
+## where the player last put it, so `where you stand` keeps its meaning (ruling 8's consequence).
+func _open_machine_menu(tile: Vector2i, id: int) -> void:
+	_menu_at = id
+	_menu_tile = tile
+	# THE ROWS ARE REBUILT EVEN IF THE SAME MACHINE IS CLICKED TWICE, because the pack may have changed
+	# while the menu was shut and the signature cannot tell "closed" from "unchanged".
+	_menu_showing = UNBUILT
+	_refresh_machine_menu()
+	# THE RING COMES FROM THE OPEN MENU, NOT FROM `_target` (ruling 8). `_refresh_world` is where that is
+	# written; this call is what makes it true in the frame of the click rather than on the next tick
+	# bundle -- the same quarter-second ASSA-215 measured for the walk echo.
+	_refresh_world()
+	queue_redraw()
+
+
+## **CLOSE IT. Esc, the named control, or a click on the map outside it** (ruling 2).
+##
+## NOTHING IS SENT AND NOTHING IS CLEARED BUT THIS. Walking out of range does not close the menu
+## either: the sim refuses an act at distance and the refusal is a line in the log, which is the rule
+## this whole item is built on -- *no act is ever disabled, the sim refuses and says why.*
+func _close_machine_menu() -> void:
+	if _menu_at == -1:
+		return
+	_menu_at = -1
+	_menu_showing = UNBUILT
+	if is_instance_valid(_menu_box):
+		_menu_box.visible = false
+	_refresh_world()
+	queue_redraw()
+
+
+## **WHAT THE MENU SAYS, ON THE THREE CLOCKS ITS THREE PARTS MOVE ON** (ASSA-316).
+##
+## **IT CLOSES ITSELF WHEN THE MACHINE IS GONE, AND THAT IS THE ONE BRANCH THIS SURFACE CANNOT DO
+## WITHOUT.** `Pick up` is in this menu, so the common way to leave it is to delete the thing it is
+## about: the building comes back into your pack and the tile is bare. A menu left open over nothing
+## would be the only surface in this client making a claim the sim has withdrawn -- and `_menu_at` is
+## an id, so it cannot be mistaken for the next building that lands on the same tile.
+##
+## THE STATE SENTENCE IS RE-TEXTED EVERY TICK AND THE ROWS ARE NOT. A Label's text is idempotent and
+## free; a row carries a Button a cursor may be resting on (`_refresh_actions`' note).
+func _refresh_machine_menu() -> void:
+	if _menu_at == -1 or not is_instance_valid(_menu_box):
+		return
+	if not _sim.running():
+		_close_machine_menu()
+		return
+	var facts := _sim.tile_at(_menu_tile)
+	var building: Variant = facts.get("building")
+	if building == null or int((building as Dictionary).get("id", -1)) != _menu_at:
+		_close_machine_menu()
+		return
+	var it: Dictionary = building
+	_menu_box.visible = true
+	var named := String(it.get("name", ""))
+	# A MISSING NAME IS LOUD AND NOT PAPERED OVER, the same contract as `AssayHud.target_line`: the only
+	# way here is a stale `libsim_godot.dylib`, and falling back to `kind` would look fine.
+	_menu_name.text = named if named != "" else "building %d" % _menu_at
+	_menu_state.text = String(it.get("status", ""))
+	var stacks := _sim.inventory_of(_client.player_id) if _client != null else []
+	var signature := "%d/%s" % [_menu_at, _pack_shape(stacks)]
+	if signature != _menu_showing:
+		_menu_showing = signature
+		_rebuild_machine_menu_rows(stacks)
+	_place_machine_menu()
+
+
+## **THE SLOT ROWS AND THE ACTS** (ASSA-316, Maren's ruling 4).
+##
+## **A SLOT ROW LISTS THE STACKS THAT CAN GO IN IT, ONE BUTTON PER STACK, AND THE LABEL IS THE RESULT**
+## -- `put all 37 Tonore ore` -- so the common case is one gesture and the button says what it does. The
+## column's old pair said `Fuel` and `Smelt` with the number hidden in a tooltip.
+##
+## **WHICH SLOTS EXIST AND WHAT MAY GO IN THEM IS THE SIM'S ANSWER, ASKED PER STACK.**
+## `AssayHud.stack_verbs` returns an `insert` descriptor per slot for a kind a non-hand recipe eats, out
+## of the sim's own recipe table -- *"which one a species is good for (hot enough fuel, or ore that
+## melts) is a sheet reading and only the sim has it"*. So this walks the pack and groups by the slot
+## the sim named, rather than this file knowing a smelter has two slots.
+##
+## **NOTHING IS EVER GREYED OUT AND NOTHING IS HIDDEN FOR BEING REFUSABLE** (ruling 4, ASSA-37): a stack
+## of 1 simply has no fractions to offer, which is a shorter row and not a disabled control.
+##
+## **WHAT IS NOT HERE YET, SAID OUT LOUD RATHER THAN QUIETLY MISSING:** what is ALREADY in each slot,
+## the fire's heat and the craft's progress. Those are behind the binding's one `status` string
+## (`sim-godot/src/lib.rs:1392`), so a slot's fill cannot be drawn as the BAND ruling 5 asks for. The
+## sentence above the rows carries all of it as prose in the meantime.
+func _rebuild_machine_menu_rows(stacks: Array) -> void:
+	_clear(_menu_rows)
+	var recipes := AssaySimHost.recipes()
+	var part_kinds := AssaySimHost.part_kinds()
+	# THE SIM'S ORDER, NOT A SORT OF MINE: `AssayActions` names the two slots and `stack_verbs` offers
+	# them in that order, so the rows read the same way every time whatever the pack happens to hold.
+	var slots := PackedStringArray()
+	var per_slot := {}
+	for entry in stacks:
+		var stack: Dictionary = entry
+		var footprint := AssaySimHost.footprint_of_item(String(stack.get("kind", "")),
+				int(stack.get("species", -1)), String(stack.get("grade", "C")))
+		for descriptor in AssayHud.stack_verbs(stack, recipes, part_kinds, footprint):
+			var verb: Dictionary = descriptor
+			if String(verb.get("verb", "")) != "insert":
+				continue
+			var slot := String(verb.get("slot", ""))
+			if not per_slot.has(slot):
+				per_slot[slot] = []
+				slots.append(slot)
+			(per_slot[slot] as Array).append(stack)
+	for slot in slots:
+		var heading := _note("%s slot" % slot)
+		_menu_rows.add_child(heading)
+		for entry in per_slot[slot] as Array:
+			var stack: Dictionary = entry
+			var count := int(stack.get("count", 0))
+			var named := String(stack.get("name", "?"))
+			var row := VBoxContainer.new()
+			row.add_theme_constant_override("separation", 2)
+			row.add_child(_button(AssayHud.insert_label(count, named),
+					func() -> void: _insert_into(_menu_at, stack, slot, 0),
+					"put everything you are carrying of this into the %s slot" % slot))
+			# THE FRACTIONS, AS A ROW OF QUIET BUTTONS THAT NAME WHAT YOU WILL GET. `or 1 · or 18`, never
+			# `or half`: a toggle that named a fraction would make the player do the arithmetic the stack
+			# already answers. Empty for a stack of 1, which adds no row at all.
+			var some := AssayHud.insert_fractions(count)
+			if not some.is_empty():
+				var fractions := HFlowContainer.new()
+				fractions.add_theme_constant_override("h_separation", 4)
+				for want in some:
+					var part := _button(AssayHud.insert_some_label(want),
+							func() -> void: _insert_into(_menu_at, stack, slot, want),
+							"put %d of your %d %s into the %s slot" % [want, count, named, slot])
+					part.theme_type_variation = &"Quiet"
+					fractions.add_child(part)
+				row.add_child(fractions)
+			_menu_rows.add_child(row)
+	# **THE TWO VERBS THAT LEFT `do` ON THIS COMMIT** (ruling 3). Their words are the ones the column
+	# used, because this item moves a control and does not retune a sentence.
+	var acts := HFlowContainer.new()
+	acts.add_theme_constant_override("h_separation", 4)
+	acts.add_child(_button("Take", func() -> void: _act("Take", AssayActions.take(_menu_at)),
+			"empty the output slot into your pack"))
+	acts.add_child(_button("Pick up", func() -> void: _act("Pick up", AssayActions.pickup(_menu_at)),
+			"take the building back, with whatever is inside it"))
+	_menu_rows.add_child(acts)
+
+
+## **WHICH HALF OF THE MAP THE MENU IS IN** (Maren's ruling 1), re-asked every refresh.
+##
+## **EVERY REFRESH AND NOT ONCE AT OPEN, WHICH IS A TRADE AND NOT AN OVERSIGHT.** In the close-up the
+## camera follows the player, so a machine's screen x moves while you walk and a half decided at open
+## would eventually have the menu standing on top of its own machine -- the one thing ruling 1 exists to
+## prevent. The cost is that walking past the centre line makes the menu change sides. I have not seen
+## that in a real window yet and it is on the item for Maren; if she would rather it held still, the
+## answer is this function reading a half stored at open, and the invariant becomes "never covers the
+## machine WHEN OPENED".
+##
+## THE SIZE IS NEVER WRITTEN HERE. The region is the room; the box inside it takes its own content's
+## minimum. `point_of_tile` is the screen's own answer for where a tile is, in whichever view is up.
+func _place_machine_menu() -> void:
+	if not is_instance_valid(_menu_region):
+		return
+	var room := AssayHud.machine_menu_room(AssayHud.world_rect(), point_of_tile(_menu_tile).x)
+	_menu_region.position = room.position
+	_menu_region.size = room.size
 
 
 ## ONE DOOR FOR EVERY BUTTON ON THIS SCREEN, and the only place any of them reaches the wire.
@@ -3560,12 +3880,31 @@ func _insert(stack: Dictionary, slot: String) -> void:
 	var target := _target_tile()
 	var building: Variant = _sim.tile_at(target).get("building")
 	if building == null:
-		_say("nothing to insert into at %d, %d — right-click a building first"
+		# **THE ADVICE CHANGED WITH THE GESTURE IT NAMES** (ASSA-316). This said *"right-click a building
+		# first"*, which was the way to aim these buttons until Maren's ruling 8 gave both mouse buttons
+		# on a building to its menu. A sentence telling a player to make a gesture that now does
+		# something else is worse than no sentence: it is this client's own instruction, failing.
+		_say("nothing to insert into at %d, %d — click a building to open its menu"
 				% [target.x, target.y], AssayHud.Say.FAILED)
 		return
-	# HOW MANY WE ARE ACTUALLY CARRYING, ASKED NOW. Grade is part of the question: two grades of one
-	# ore are two stacks and two rows, and inserting the other row's count would be a number from a
-	# different row.
+	_insert_into(int((building as Dictionary).get("id", -1)), stack, slot, 0)
+
+
+## **ONE DOOR FOR EVERY INSERT, WHICHEVER SURFACE PRESSED IT** (ASSA-316). The pack row finds its
+## building through `_target_tile`; a machine menu already knows which building it is about. What they
+## share is the part that has been wrong before, so it is written once.
+##
+## `want` 0 MEANS THE WHOLE STACK, counted here. **AND "THE WHOLE STACK" IS COUNTED WHEN THE BUTTON IS
+## PRESSED, NOT WHEN IT WAS BUILT** -- the rule `_stack_button` carries, learned from a `Fuel` press on
+## a row reading 12 that inserted 2 and let the fire go out mid-stack. Grade is part of the question:
+## two grades of one ore are two stacks and two rows, and inserting the other row's count would be a
+## number from a different row.
+##
+## **A FRACTION IS CLAMPED TO WHAT IS LEFT RATHER THAN SENT AS TYPED.** `or 18` was written on the
+## button when the row was built; a mining cycle or a partner's hands can leave fewer than that by the
+## time it is pressed, and a count larger than the pack is a refusal the player did not earn. Floored to
+## 1 only when something is held at all -- which is why the zero case is answered first and separately.
+func _insert_into(at: int, stack: Dictionary, slot: String, want: int) -> void:
 	var count := AssayInventory.held(_sim.inventory_of(_client.player_id),
 			String(stack.get("kind", "")), int(stack.get("species", -1)),
 			String(stack.get("grade", "")))
@@ -3573,9 +3912,9 @@ func _insert(stack: Dictionary, slot: String) -> void:
 		_say("you are not carrying any %s any more" % String(stack.get("name", "?")),
 				AssayHud.Say.FAILED)
 		return
-	_act("Insert %d into %s" % [count, slot], AssayActions.insert(
-			int((building as Dictionary).get("id", -1)), slot,
-			AssayActions.item_of_stack(stack), count))
+	var sending := count if want <= 0 else mini(want, count)
+	_act("Insert %d into %s" % [sending, slot], AssayActions.insert(
+			at, slot, AssayActions.item_of_stack(stack), sending))
 
 
 ## Choose a part for the next `Assemble`. The first one is the FRAME, which is `sim-cli`'s rule kept
@@ -4123,7 +4462,13 @@ func _refresh_world(frame_dt := -1.0) -> void:
 	# to `destination` one line up and deliberately so: a click echo is an unanswered input that
 	# only the player's own click knows about, while `_target` is state this screen already owns.
 	# Pushing it would give the same fact two writers and a way to go stale.
-	_world.selection = _target if _targeted else null
+	# **AND AN OPEN MACHINE MENU OUTRANKS THE PLACEMENT TARGET HERE** (ASSA-316, Maren's ruling 8: *"the
+	# ring on the machine comes from the open menu, not from `_target`"*). A menu is not anchored to its
+	# machine (ruling 1 puts it in the other half of the map), so this ring is the only thing tying the
+	# panel to the thing it acts on -- and ruling 8 deliberately leaves `_target` untouched when a
+	# building is clicked, so without this line the ring would sit on whatever tile was last right-clicked
+	# while a menu for a different machine was open.
+	_world.selection = _menu_tile if _menu_at != -1 else (_target if _targeted else null)
 	_refresh_front_door()
 	_world.queue_redraw()
 
@@ -4413,6 +4758,39 @@ func _unhandled_input(event: InputEvent) -> void:
 	if at == null:
 		return
 	var tile: Vector2i = at
+	# **A TILE CARRYING A BUILDING ANSWERS BOTH BUTTONS WITH ITS MENU** (ASSA-316, Maren's rulings 7 and
+	# 8). An EMPTY tile keeps today's split exactly: left walks, right targets the placement.
+	#
+	# **THIS IS NOT THE THING ASSA-37 FORBIDS.** Its rule is that a click never means two things at once;
+	# two buttons reaching one result is the opposite -- the same meaning from either hand, which is what
+	# makes it impossible for the board to miss the feature they asked for.
+	#
+	# IT IS ASKED BEFORE THE DISMISSAL BELOW, so clicking a second machine opens that machine's menu
+	# instead of merely shutting the first (ruling 2: opening a second closes the first).
+	if event.button_index == MOUSE_BUTTON_LEFT or event.button_index == MOUSE_BUTTON_RIGHT:
+		var standing: Variant = _sim.tile_at(tile).get("building") if _sim.running() else null
+		if standing != null:
+			_open_machine_menu(tile, int((standing as Dictionary).get("id", -1)))
+			return
+	# **THE DISMISSING LEFT CLICK IS CONSUMED: IT CLOSES AND DOES NOT WALK. A SECOND CLICK WALKS**
+	# (ruling 7's condition). A gesture that both shut a panel and sent the player across the map would
+	# be two meanings on one press, and the player who wanted the walk still gets it from the next click,
+	# with the menu already out of the way.
+	#
+	# **THE RIGHT BUTTON CLOSES AND STILL TARGETS, AND THAT IS MEASURED RATHER THAN PREFERRED.** I
+	# consumed both buttons first, and `window_shot.gd`'s own demo loop then failed on the next beat: it
+	# opens a machine's menu to Take, then right-clicks a free tile to aim the next placement, and that
+	# press was swallowed -- so `Place` landed on the STALE target, which was the smelter, and the sim
+	# refused with *"another building is in the way"*. The loop is a player proxy, so that is a player
+	# losing a gesture they can see no reason for.
+	#
+	# Maren's ruling 8 is the authority for the fix rather than my taste: *"an empty tile keeps today's
+	# split EXACTLY"*. A cursor is not travel -- the whole reason the walk is consumed is that it sends
+	# you somewhere -- so moving it costs nothing and surprises nobody. Hers to reverse in one line.
+	if _menu_at != -1:
+		_close_machine_menu()
+		if event.button_index != MOUSE_BUTTON_RIGHT:
+			return
 	if event.button_index == MOUSE_BUTTON_RIGHT:
 		_target = tile
 		_targeted = true
