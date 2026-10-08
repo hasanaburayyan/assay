@@ -169,11 +169,46 @@ const SPAWN_PAD := Color(0.35, 0.33, 0.20)
 ## a mark that scales only with the tile disappears exactly as the world gets big enough to need a
 ## map. So the footprint sets the size and this is the floor.
 ##
-## **16 IS THE SAME NUMBER AS `PLAYER_MARK_PX` AND THAT IS THE POINT, NOT A COINCIDENCE.** Cove's
-## reason: a building and a person occupy the SAME BOX, so the SHAPE does all the telling -- and shape
-## is the half that survives a greyscale copy, which is what Maren's box asks for. They rendered the
-## alternatives: at 14 the diamond reads lighter than a player, at 20 it outweighs one
+## **IT WAS 16 -- THE SAME NUMBER AS `PLAYER_MARK_PX` -- AND MAREN SPENT THAT EQUALITY DELIBERATELY ON
+## 2026-10-08 (ASSA-278). IT IS 20.** The sentence that stood here was mine: *"a building and a person
+## occupy the SAME BOX, so the SHAPE does all the telling"*, with my own render beside it -- *"at 14
+## the diamond reads lighter than a player, at 20 it outweighs one"*
 ## (`shared/assay/cove-assa193/assa-193-diamond-sizes-1x.png`).
+##
+## **THAT RENDER WAS OF A FILLED DIAMOND AND THIS MARK IS A HOLLOW FRAME, SO "OUTWEIGHS ONE" HAD TO BE
+## RE-MEASURED RATHER THAN QUOTED.** In mark pixels at cell 9, a 1x1:
+##
+## ```
+##                        16          20
+## machine's frame ink   112 px     144 px
+## you (diamond)         136 px     136 px   -> the machine goes from 0.82x you to 1.06x you
+## a partner (cross)     156 px     156 px   -> 0.72x to 0.92x, still lighter
+## ```
+##
+## So the equality the old paragraph defended is gone and the machine now outweighs YOU slightly. That
+## is the price of her ruling and she named a different one: a 1x1's tile is 9 px on this world, so the
+## mark overstates it by 78% at 16, **122% at 20** and 167% at 24, which is the number she refused.
+## Both prices are real; this is the one the old paragraph argued against, so it is recorded here
+## rather than left as a contradiction a reader has to spot.
+##
+## **WHAT THE 20 BUYS, WHICH IS WHY SHE RULED IT, STATED CAREFULLY BECAUSE I FIRST WROTE IT TOO
+## STRONGLY.** It is the smallest value at which a person standing on a 1x1 keeps **as much of their
+## body as they did before the inward rim existed** -- not a value at which the rim is free. Measured
+## at the shipped constants by `tools/person_under_machine.gd`, body pixels kept of 136 (you) and 156
+## (a partner):
+##
+## ```
+##                      16 px mark        20 px mark
+##   no inward rim      116 / 108         136 / 156   (hole 12x12 / 16x16)
+##   rim 2 px           64 / 60           116 / 108   (hole 8x8 / 12x12)
+##                      47.1% / 38.5%     85.3% / 69.2%
+## ```
+##
+## So at 20 the rim still takes 20 px of your body and 48 of a partner's; what it no longer does is
+## take them ON TOP of what the band already took. 116 and 108 are the same two numbers the mark cost
+## a person at 16 with no rim at all, which is the bar Maren set. **18 and 19 both miss it** -- the
+## suite was run at each, 69.1% and 77.9% -- so 20 is the smallest value measured to meet it rather
+## than a round number picked near one. Every band pixel is still dark on both edges.
 ##
 ## **AND IT IS A FLOOR, NOT A FOOTPRINT READ.** On this world `_cell` is 9, so the rule gives 16 px
 ## for a 1x1 and 18 px for a 2x2 -- and Maren's own item says a 2 px difference is not a separation.
@@ -196,7 +231,7 @@ const SPAWN_PAD := Color(0.35, 0.33, 0.20)
 ## person, for the same reason, and it is what keeps a drill findable on a world whose cells are 4 px.
 ## A 2x2 smelter is 18 px and exact. (`shared/assay/cove-assa236/`, arm B2, is the no-floor version
 ## rendered: a 1x1 drill is 64 px of white frame and I could not find it at 1x.)
-const BUILDING_MARK_PX := 16.0
+const BUILDING_MARK_PX := 20.0
 
 ## HOW THICK THE FOOTPRINT FRAME'S OWN STROKE IS, drawn INWARD from the footprint's edge (ASSA-236).
 ##
