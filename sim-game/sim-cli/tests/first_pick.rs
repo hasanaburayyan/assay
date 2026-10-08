@@ -115,6 +115,7 @@ tick 1
 inv
 design {handle} {head}
 design {frame} {head}
+design {handle}
 assemble {handle} {head}
 tick 1
 built
@@ -313,6 +314,37 @@ quit
          got {}:\n{transcript}",
         readouts.len()
     );
+    // ASSA-329: AND THE ONE AT THE END IS A DESIGN WITH ITS SLOT STILL EMPTY.
+    // Asked last, with the pack emptied by the two builds, which is the point
+    // of asking it here at all: a frame-only design spends nothing, so it
+    // needs no material and cannot disturb the run above it.
+    //
+    // A held frame has ONE slot, so before this it had only two states —
+    // empty and done — and the numbers appeared on the last click. It carries
+    // `· mass ` now, which is why it is in `readouts` at all, and it carries
+    // the sim's phrase for the empty slot WHERE THE VERDICT WOULD BE. Checked
+    // negatively too: a verdict word here would mean the screen can say SAFE
+    // over a press that refuses.
+    // Found by its words, not its position: it has to be asked while the pack
+    // still holds the handle, because `sim-cli` can only name items you carry
+    // (ASSA-330, filed, not this item's).
+    let placing = readouts
+        .iter()
+        .find(|l| l.contains("needs at least 1 head"))
+        .unwrap_or_else(|| {
+            panic!(
+                "no readout named the empty slot, so `design <frame>` printed \
+                 nothing or printed a refusal:\n{transcript}"
+            )
+        });
+    for label in ["SAFE", "UNCERTAIN", "WILL BREAK", "not a machine"] {
+        assert!(
+            !placing.contains(label),
+            "a design still being placed is neither judged nor refused, and \
+             this one says {label:?}: {placing}\n{transcript}"
+        );
+    }
+
     let (previews, after) = readouts.split_at(2);
     for preview in previews {
         let line = preview.trim_start();
