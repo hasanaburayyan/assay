@@ -4970,7 +4970,13 @@ func _glyph_marks(deposits: Array, font: Font, building_marks: Array = []) -> Ar
 		# the disc's half-tile error exactly.
 		var at := point_of_tile(centre)
 		var radius := maxf(_cell, float(int(deposit.get("radius", 1))) * _cell)
-		var size := AssayHud.glyph_size(radius)
+		# **ONE SIZE FOR EVERY LETTER ON THE MAP, AND IT IS NOT THIS DISC'S** (ASSA-293, Maren's
+		# ruling 11.35). This was `glyph_size(radius)`, which made the letter a second, lossier copy
+		# of the channel the disc under it already carries: three radii, two letter sizes, 63.6% of
+		# deposits over ten seeds wearing a size that distinguished nothing. `radius` stays, because
+		# `deposit_disc` below is about the patch and its edge is a claim about which tiles hold ore.
+		# The LETTER is not, so it is held at `glyph_size_held`. See `tools/letter_size_spread.gd`.
+		var size := AssayHud.glyph_size_held(_cell)
 		if size <= 0:
 			continue
 		var disc := AssayHud.deposit_disc(deposit, radius)
