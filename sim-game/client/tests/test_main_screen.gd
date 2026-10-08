@@ -1,4 +1,9 @@
 extends RefCounted
+
+#: THE SUITE'S ONE THEME-POKE SITE (ASSA-312). A project-themed control resolves the PLAIN
+#: type's entries until it gets `NOTIFICATION_THEME_CHANGED`, which frames do not deliver, so
+#: every headless theme read in here goes through this.
+const Poke := preload("res://tests/theme_poke.gd")
 ## THE SCREEN ITSELF, INSTANTIATED. `test_hud.gd` checks the words and colours; this checks that they
 ## are wired to anything at all.
 ##
@@ -1446,33 +1451,35 @@ func _panel_surface() -> Color:
 ## blind to every heading in the window while staying green. One poke here fixes every caller at
 ## once, and no caller has to remember.
 func _drawn_color(label: Label) -> Color:
-	_poke_theme(label)
-	var c := label.get_theme_color(&"font_color")
-	var m := label.modulate
-	return Color(c.r * m.r, c.g * m.g, c.b * m.b, c.a * m.a)
+	return Poke.drawn_color(label)
 
 
-## THE ONE PLACE THIS HARNESS POKES A CONTROL, AND IT IS ONE PLACE SO THAT DELETING IT HAS A LEVER.
+## **THE POKE ITSELF MOVED OUT OF THIS FILE (ASSA-312), AND THESE THREE ARE NOW NAMES FOR IT.**
 ##
 ## ASSA-246 shipped the poke inside `_drawn_color` and disclosed that nothing could catch its
 ## removal: every `Label` variation's ink coincides with plain `Label`'s, so a colour assertion is
 ## blind to it, and the one test that reads a property where the two types DO differ -- `font_size`,
 ## `Heading` 15 against `Label` 13 -- poked its own probe by hand. So it proved that poking works,
-## not that the helper does it. Three hand-rolled pokes and a removal that stayed green.
+## not that the helper does it. ASSA-252 fixed that by routing the size read through the helper.
 ##
-## Now every read goes through here, and the `font_size` assertion goes through `_drawn_font_size`,
-## so deleting the `notification()` below reddens by name on today's build with nothing retuned.
+## **WHAT MOVED IT OUT WAS A SECOND FILE NEEDING IT.** ASSA-267 removed the override that was the
+## only thing propping up `test_tab_strip.gd`'s theme read, and 12 assertions went red against a
+## theme that was already correct. Two sites is where "a shared helper rather than call sites each
+## remembering" -- ASSA-246's own words -- stops being theoretical.
+##
+## These three wrappers stay because ~30 call sites in this file use them and renaming those would
+## be a diff nobody could review for the thing it is actually about. The poke lives in
+## `tests/theme_poke.gd`, `check_one_theme_poke.py` fails if it reappears anywhere else in
+## `tests/`, and deleting it from the helper still reddens by name on the `font_size` lever.
 func _poke_theme(control: Control) -> Control:
-	control.notification(Control.NOTIFICATION_THEME_CHANGED)
-	return control
+	return Poke.poke(control)
 
 
 ## The font size a label DRAWS, which is not what a headless read reports until it is poked. Same
 ## helper as `_drawn_color`, so the two cannot drift apart, and this is the read that gives the poke
 ## a lever: `Heading` declares 15 and plain `Label` 13, so an un-poked `Heading` is off by 2px.
 func _drawn_font_size(label: Label) -> int:
-	_poke_theme(label)
-	return label.get_theme_font_size(&"font_size")
+	return Poke.drawn_font_size(label)
 
 
 ## THE SURFACE ACTUALLY BEHIND A LABEL, ASKED OF THE BUILT TREE (ASSA-152, Maren's amended box 3).

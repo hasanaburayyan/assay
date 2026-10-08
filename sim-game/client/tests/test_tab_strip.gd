@@ -1,4 +1,9 @@
 extends RefCounted
+
+#: THE SUITE'S ONE THEME-POKE SITE (ASSA-312). A project-themed control resolves the PLAIN
+#: type's entries until it gets `NOTIFICATION_THEME_CHANGED`, which frames do not deliver, so
+#: every headless theme read in here goes through this.
+const Poke := preload("res://tests/theme_poke.gd")
 ## THE TABBED SYSTEMS PANEL'S MECHANISM (ASSA-247), tested for the properties the rulings name.
 ##
 ## **NOT ONE PIXEL IS ASSERTED HERE, DELIBERATELY.** The suite runs inside `SceneTree._initialize`:
@@ -186,7 +191,7 @@ func test_the_open_tab_is_marked_by_rank_and_not_by_the_accent() -> bool:
 		# Second poke site in the suite -- `test_main_screen.gd::_poke_theme` is the other. ASSA-246's
 		# own "what I would do" called for one shared helper instead of call sites remembering; it is
 		# filed, not done, and two sites is where that stops being theoretical.
-		button.notification(Control.NOTIFICATION_THEME_CHANGED)
+		Poke.poke(button)
 		for state in [&"font_pressed_color", &"font_hover_pressed_color"]:
 			var drawn: Color = button.get_theme_color(state)
 			if drawn.is_equal_approx(accent):
@@ -216,7 +221,7 @@ func test_the_open_tab_is_marked_by_rank_and_not_by_the_accent() -> bool:
 	var declared := theme.get_color(&"font_pressed_color", &"Quiet")
 	if declared.is_equal_approx(accent):
 		var probe := _button_for(strip, "make")
-		probe.notification(Control.NOTIFICATION_THEME_CHANGED)
+		Poke.poke(probe)
 		if probe.get_theme_color(&"font_pressed_color").is_equal_approx(declared):
 			ok = _fail(("`Quiet` still declares the accent for its pressed state and the strip is "
 					+ "not overriding it: a tab inherits %s. If ASSA-267 has landed, the theme is "
