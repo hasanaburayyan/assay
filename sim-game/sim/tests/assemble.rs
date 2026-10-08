@@ -1528,3 +1528,215 @@ fn a_mixed_design_bands_each_part_by_its_own_species() {
          band) while mass is not"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The design read BEFORE the press (ASSA-323, for ASSA-317's build screen).
+// `debug::design_preview` adds no rule: these tests are about the two things
+// that make it a preview rather than a second opinion — it says the line the
+// built machine will say, and it refuses what `step` refuses.
+// ---------------------------------------------------------------------------
+
+fn preview_of(world: &World, me: PlayerId, design: &Assembly) -> String {
+    debug::design_preview(
+        world,
+        me,
+        design.frame.as_item(),
+        &design.mounted.iter().map(Part::as_item).collect::<Vec<_>>(),
+    )
+}
+
+fn assemble_command(design: &Assembly) -> PlayerCommand {
+    PlayerCommand::Assemble {
+        frame: design.frame.as_item(),
+        mounted: design.mounted.iter().map(Part::as_item).collect(),
+    }
+}
+
+/// The reason half of a refusal a player reads, with the action stripped off.
+fn why(line: &str) -> &str {
+    line.split_once("was refused: ")
+        .expect("every refusal names its reason")
+        .1
+}
+
+/// THE WHOLE POINT OF THE COMMAND: the sentence you read before you spend the
+/// parts is the sentence you read afterwards, character for character.
+///
+/// Not "agrees with" and not "shows the same verdict". Two wordings of one
+/// machine is the defect ASSA-90 found in the Godot window, which had written
+/// its own and got two verdicts out of three wrong. If this ever needs
+/// loosening, the preview has stopped being a preview.
+#[test]
+fn a_preview_is_the_line_the_built_design_gets() {
+    let (mut world, me) = world_with_player();
+    let design = pick(LIGHT, LIGHT);
+    give_parts(&mut world, me, &design);
+    let pack_before = world.player(me).unwrap().inventory.clone();
+
+    let preview = preview_of(&world, me, &design);
+
+    assert!(
+        world.player(me).unwrap().assemblies.is_empty(),
+        "asking what a design would be must build nothing: {preview}"
+    );
+    assert_eq!(
+        world.player(me).unwrap().inventory,
+        pack_before,
+        "asking must spend nothing either"
+    );
+
+    let events = send(&mut world, me, assemble_command(&design));
+    assert_eq!(rejection(&events), None, "the same words were refused");
+    let built = &world.player(me).unwrap().assemblies[0];
+    let readout = debug::assembly_readout(&world, built);
+
+    assert!(
+        preview.starts_with(&readout),
+        "the preview must open with the built design's own readout.\n\
+         preview: {preview}\nbuilt:   {readout}"
+    );
+}
+
+/// Every refusal `step` has for an `Assemble`, asked before the press, in the
+/// same words.
+///
+/// A preview that answered only the arithmetic would print `SAFE` for a design
+/// the rules throw out, and the player would spend the press to find out. The
+/// expected string is not written here: it is read off the real
+/// `CommandRejected` event, so a reworded refusal cannot leave the preview
+/// behind.
+#[test]
+fn a_preview_refuses_what_assemble_refuses_and_says_it_the_same_way() {
+    let ore = |species| Item::new(ItemKind::Ore, species, Grade::B);
+    let head = part_item(PartKind::Head, LIGHT);
+    let handle = part_item(HELD, LIGHT);
+
+    // frame that is not a part; mounted thing that is not a part; a selection
+    // the slot rules throw out (a handle takes one head, not two).
+    let cases: [(Item, Vec<Item>); 3] = [
+        (ore(LIGHT), vec![head]),
+        (handle, vec![ore(LIGHT)]),
+        (handle, vec![head, head]),
+    ];
+
+    for (frame, mounted) in cases {
+        let (mut world, me) = world_with_player();
+        give(&mut world, me, frame, 2);
+        for item in &mounted {
+            give(&mut world, me, *item, 2);
+        }
+
+        let preview = debug::design_preview(&world, me, frame, &mounted);
+        let events = send(
+            &mut world,
+            me,
+            PlayerCommand::Assemble {
+                frame,
+                mounted: mounted.clone(),
+            },
+        );
+        let refusal = rejection_line(&world, me, &events);
+
+        assert_eq!(
+            preview,
+            format!("not a machine · {}", why(&refusal)),
+            "the preview and the refusal must be one sentence, not two.\n\
+             refused: {refusal}"
+        );
+        assert!(
+            world.player(me).unwrap().assemblies.is_empty(),
+            "nothing should have been built for {frame:?} + {mounted:?}"
+        );
+    }
+}
+
+/// The verdict the build screen is for, on both of its interesting values,
+/// with no machine in the world.
+///
+/// `stat_range().verdict()` was always callable; what this holds is that the
+/// path a player actually has — type the design, read the word — reaches both
+/// answers. The `WILL BREAK` case is the one that pays for the command: it is
+/// the press you want talked out of, and decision 11 means the sim will not
+/// talk you out of it.
+#[test]
+fn safe_and_will_break_are_both_readable_before_anything_is_built() {
+    let (mut world, me) = world_with_player();
+    let safe = pick(LIGHT, LIGHT);
+    let doomed = pick(FRAIL, HEAVY);
+    give_parts(&mut world, me, &safe);
+    give_parts(&mut world, me, &doomed);
+
+    let safe_line = preview_of(&world, me, &safe);
+    let doomed_line = preview_of(&world, me, &doomed);
+
+    assert!(
+        safe_line.starts_with("SAFE · mass "),
+        "a design inside its budget reads SAFE: {safe_line}"
+    );
+    assert!(
+        doomed_line.starts_with("WILL BREAK · mass "),
+        "a design over its budget reads WILL BREAK: {doomed_line}"
+    );
+    assert!(
+        world.player(me).unwrap().assemblies.is_empty(),
+        "both answers came out of an empty built list"
+    );
+}
+
+/// THE ALL-OR-NOTHING TALLY, SAID BEFORE THE PRESS. Two hoppers of one
+/// material need two in the pack, not one counted twice.
+///
+/// This is the one place the preview deliberately differs from `step`: a thin
+/// pack is not a refusal here, because a build screen has to show the verdict
+/// for the design you are saving up for, with have/need beside it (the Game
+/// Director's §5.3 — counts are text, have on the left). So the counts print
+/// either way and the refusal is PREDICTED in words. The press is sent in the
+/// same test to prove the prediction is true and not decoration.
+#[test]
+fn a_thin_pack_is_counted_in_the_preview_and_the_refusal_is_predicted() {
+    let (mut world, me) = world_with_player();
+    let design = drill(LIGHT, 2);
+    give(&mut world, me, part_item(PLANTED, LIGHT), 1);
+    give(&mut world, me, part_item(PartKind::Head, LIGHT), 1);
+    give(&mut world, me, part_item(PartKind::Hopper, LIGHT), 1);
+
+    let thin = preview_of(&world, me, &design);
+    assert!(
+        thin.contains("1/2 "),
+        "one hopper against two needed must read 1/2: {thin}"
+    );
+    assert!(
+        thin.contains("not enough"),
+        "the preview must predict the refusal: {thin}"
+    );
+    assert!(
+        thin.starts_with("SAFE · mass "),
+        "a pack too thin says nothing about whether the design is sound, and \
+         the verdict must still be there to save up towards: {thin}"
+    );
+
+    let events = send(&mut world, me, assemble_command(&design));
+    let hopper = part_item(PartKind::Hopper, LIGHT);
+    assert_eq!(
+        rejection(&events),
+        Some(RejectReason::MissingItems(hopper)),
+        "the prediction has to be the truth about the press"
+    );
+
+    give(&mut world, me, hopper, 1);
+    let full = preview_of(&world, me, &design);
+    assert!(
+        full.contains("2/2 "),
+        "the second hopper must show up in the count: {full}"
+    );
+    assert!(
+        !full.contains("not enough"),
+        "and the predicted refusal must go with it: {full}"
+    );
+    let events = send(&mut world, me, assemble_command(&design));
+    assert_eq!(
+        rejection(&events),
+        None,
+        "with the pack full the press goes through"
+    );
+}

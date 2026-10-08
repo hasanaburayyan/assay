@@ -4,8 +4,8 @@ use sim::tuning::{
 };
 use sim::{
     BuildingId, BuildingKind, Event, Grade, Input, Item, ItemKind, PlayerCommand, PlayerId,
-    RecipeId, RejectReason, Sheet, Slot, SmelterStall, SpeciesId, SystemCommand, TilePos, World,
-    WorldConfig, step,
+    RecipeId, RejectReason, Sheet, Slot, SmelterStall, SmelterState, SpeciesId, SystemCommand,
+    TilePos, World, WorldConfig, step,
 };
 
 /// Species used by these tests, with sheets set explicitly so the rules are
@@ -487,6 +487,223 @@ fn smelter_stops_when_its_output_is_full() {
         events
             .iter()
             .any(|e| matches!(e, Event::ItemSmelted { .. }))
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ASSA-321: the batch a smelter is part-way through, which nothing could read
+// ---------------------------------------------------------------------------
+
+fn work_of(world: &World, id: BuildingId) -> Option<sim::WorkReading> {
+    world.building_work(world.building(id).unwrap())
+}
+
+/// The clause a player reads, or `""` when there is no batch to report.
+fn work_words(world: &World, id: BuildingId) -> String {
+    sim::debug::work_clause(world, world.building(id).unwrap()).unwrap_or_default()
+}
+
+/// **AN EMPTY SMELTER MUST NOT OFFER A NUMBER.** `0 of 20` on a cold empty
+/// smelter is an invitation to wait for something nobody has fed it (ASSA-43's
+/// rule), which is why the reading is `Option` rather than a zeroed pair.
+#[test]
+fn a_smelter_with_nothing_in_it_has_no_batch_to_report() {
+    let (world, _, id, _) = world_with_smelter();
+    assert_eq!(work_of(&world, id), None);
+    assert_eq!(work_words(&world, id), "");
+    let status = sim::debug::building_status(&world, world.building(id).unwrap());
+    assert!(
+        !status.contains(" of 20 "),
+        "an idle smelter's status must carry no batch numbers: {status}"
+    );
+}
+
+/// The reading exists while the smelter is STOPPED, and says the batch has not
+/// started — a different sentence from the stall on its own.
+#[test]
+fn ore_with_no_fuel_reads_as_a_batch_that_has_not_started() {
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(WALLS), 3);
+    run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Input, ore(WALLS), 3))],
+        5,
+    );
+    assert_eq!(
+        world.smelter_state(world.building(id).unwrap()),
+        SmelterState::Stalled(SmelterStall::NoFuel)
+    );
+    assert_eq!(
+        work_of(&world, id),
+        Some(sim::WorkReading { done: 0, total: 20 }),
+        "a stall does not remove the batch in front of it"
+    );
+    assert_eq!(work_words(&world, id), "0 of 20 ticks into this batch");
+}
+
+/// The number moves with the ticks, and `building_status` carries it — the
+/// whole of what ASSA-321 found missing.
+#[test]
+fn a_smelters_batch_progress_is_readable_as_it_refines() {
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(WALLS), 3);
+    give(&mut world, me, ore(FUEL), 1);
+    let total = RecipeId::Refine.recipe().ticks;
+    run(
+        &mut world,
+        &[
+            Input::player(me, insert(id, Slot::Input, ore(WALLS), 3)),
+            Input::player(me, insert(id, Slot::Fuel, ore(FUEL), 1)),
+        ],
+        7,
+    );
+    assert_eq!(
+        work_of(&world, id),
+        Some(sim::WorkReading { done: 7, total }),
+        "seven ticks of refining is seven ticks of progress"
+    );
+    let status = sim::debug::building_status(&world, world.building(id).unwrap());
+    assert!(
+        status.contains("7 of 20 ticks into this batch"),
+        "the status line is where a headless player reads it: {status}"
+    );
+
+    // Finishing resets it, and the next unit of the same stack starts over.
+    run(&mut world, &[], total - 7);
+    assert_eq!(
+        work_of(&world, id),
+        Some(sim::WorkReading { done: 0, total }),
+        "two ore are left, so a new batch is in front of it at zero"
+    );
+}
+
+/// **THE DENOMINATOR IS NOT A CONSTANT**, which is the reason this reading is
+/// a sim function at all. A client that divided by one number would be wrong
+/// about every resmelt a player runs; this test is what goes red if anyone
+/// writes `20` into a host.
+#[test]
+fn the_total_comes_from_the_recipe_in_the_slot_and_not_from_one_constant() {
+    let (mut world, me, id, _) = world_with_smelter();
+    let refined_b = Item::new(ItemKind::Refined, WALLS, Grade::B);
+    give(&mut world, me, refined_b, 3);
+    give(&mut world, me, ore(FUEL), 1);
+    run(
+        &mut world,
+        &[
+            Input::player(me, insert(id, Slot::Input, refined_b, 3)),
+            Input::player(me, insert(id, Slot::Fuel, ore(FUEL), 1)),
+        ],
+        3,
+    );
+    let resmelt = RecipeId::Resmelt.recipe().ticks;
+    assert_ne!(
+        resmelt,
+        RecipeId::Refine.recipe().ticks,
+        "if the two recipes ever take the same time this test proves nothing"
+    );
+    assert_eq!(
+        work_of(&world, id),
+        Some(sim::WorkReading {
+            done: 3,
+            total: resmelt
+        })
+    );
+    assert_eq!(work_words(&world, id), "3 of 40 ticks into this batch");
+}
+
+/// **A SLOT HOLDING LESS THAN A BATCH IS NOT A BATCH** — and the state line
+/// does not know it.
+///
+/// `run_smelters` skips a smelter whose input is short of `recipe.input.1`
+/// (resmelt eats 3), but `World::smelter_state` never checks the count: it
+/// reports `Working` for a smelter that will sit there forever. So the status
+/// line of a smelter holding 2 refined says `working at 60` and nothing
+/// happens, which is the "honest status" defect ASSA-80 and ASSA-94 exist to
+/// kill, one slot over.
+///
+/// **THIS TEST PINS THE DISAGREEMENT RATHER THAN FIXING IT.** The reading is
+/// `None` here because the sim's own precondition says there is no batch; the
+/// fix is a new state whose WORDING is the Game Director's (filed with a price
+/// on ASSA-322), and it needs a `PROTOCOL_VERSION` bump because `SmelterStall`
+/// rides on an event. Pinning it means the day that lands, this test names
+/// exactly what changed.
+#[test]
+fn a_part_batch_makes_no_progress_and_the_state_line_does_not_know_it() {
+    let (mut world, me, id, _) = world_with_smelter();
+    let refined_b = Item::new(ItemKind::Refined, WALLS, Grade::B);
+    let needs = RecipeId::Resmelt.recipe().input.1;
+    assert!(
+        needs > 2,
+        "the fixture needs a recipe that eats more than 2"
+    );
+    give(&mut world, me, refined_b, 2);
+    give(&mut world, me, ore(FUEL), 1);
+    run(
+        &mut world,
+        &[
+            Input::player(me, insert(id, Slot::Input, refined_b, 2)),
+            Input::player(me, insert(id, Slot::Fuel, ore(FUEL), 1)),
+        ],
+        RecipeId::Resmelt.recipe().ticks * 3,
+    );
+    let s = smelter_of(&world, id);
+    assert_eq!(s.input.map(|i| i.count), Some(2), "nothing was consumed");
+    assert_eq!(s.output, None, "and nothing was produced");
+    assert_eq!(s.progress, 0, "because the step loop never reached it");
+    assert_eq!(
+        work_of(&world, id),
+        None,
+        "no batch is in front of it, so there is no batch to report"
+    );
+    // The half that is wrong, recorded as wrong.
+    assert_eq!(
+        world.smelter_state(world.building(id).unwrap()),
+        SmelterState::Working { at: 60 },
+        "ASSA-322: the state line claims it is working. It is not."
+    );
+}
+
+/// The invariant my own doc comment leant on, pinned because I first wrote the
+/// opposite: for a smelter, `progress > 0` means it refined on the last tick.
+/// Every stall is tested before `progress += 1` and one unit of legal fuel
+/// outlasts the longest batch, so there is no stalled smelter part-way through
+/// a unit. A fuel rule that makes this false should arrive as a red test here.
+#[test]
+fn a_smelters_progress_is_zero_unless_it_refined_last_tick() {
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(WALLS), SMELTER_INPUT_CAP);
+    give(&mut world, me, ore(FUEL), 2);
+    run(
+        &mut world,
+        &[
+            Input::player(me, insert(id, Slot::Input, ore(WALLS), SMELTER_INPUT_CAP)),
+            Input::player(me, insert(id, Slot::Fuel, ore(FUEL), 2)),
+        ],
+        1,
+    );
+    let mut seen_working_mid_unit = 0;
+    for _ in 0..600 {
+        let before = smelter_of(&world, id).progress;
+        step(&mut world, &[], &mut Vec::new());
+        let s = smelter_of(&world, id);
+        let state = world.smelter_state(world.building(id).unwrap());
+        if s.progress > 0 {
+            assert!(
+                matches!(state, SmelterState::Working { .. }),
+                "progress {} while {state:?}",
+                s.progress
+            );
+            seen_working_mid_unit += 1;
+        }
+        assert!(
+            s.progress <= before + 1,
+            "a tick advances a batch by at most one tick"
+        );
+    }
+    assert!(
+        seen_working_mid_unit > 50,
+        "the run has to spend real time mid-unit or this proves nothing: \
+         {seen_working_mid_unit}"
     );
 }
 

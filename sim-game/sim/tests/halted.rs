@@ -545,6 +545,170 @@ fn all_five_machine_states_are_reachable_and_each_says_its_own_thing() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// ASSA-321: the unit a drill is part-way through
+// ---------------------------------------------------------------------------
+
+fn work_of(world: &World, id: BuildingId) -> Option<sim::WorkReading> {
+    world.building_work(world.building(id).unwrap())
+}
+
+fn status_of(world: &World, id: BuildingId) -> String {
+    sim::debug::building_status(world, world.building(id).unwrap())
+}
+
+/// **WHICH STATES HAVE A UNIT IN FRONT OF THEM, AS AN EQUALITY** — the shape
+/// `all_five_machine_states_are_reachable_and_each_says_its_own_thing` uses,
+/// for its reason: a state that stops being reachable must fail here rather
+/// than shrink the claim.
+///
+/// Working and buffer-full have a reading; the three idles do not, and that is
+/// the asymmetry `World::building_work` documents. A drill on bare ground
+/// reading `0 of 100` would invite a player to wait for a unit that cannot
+/// arrive (ASSA-43), and a mined-out deposit will never produce again.
+#[test]
+fn only_the_machine_states_with_a_unit_in_front_of_them_have_a_reading() {
+    let (mut world, me) = world_with_player();
+    let spawn = world.spawn_tile();
+    let pos = TilePos::new(spawn.x + 3, spawn.y);
+    let deposit = deposit_under(&mut world, pos);
+    let id = plant_drill(&mut world, me, pos);
+
+    let mut seen: Vec<(&str, bool)> = Vec::new();
+    let mut observe = |world: &World, label: &'static str| {
+        seen.push((label, work_of(world, id).is_some()));
+    };
+
+    observe(&world, "working");
+    run(&mut world, &[], 4_000);
+    observe(&world, "full");
+    world.species_mut(ROCK).sheet.hardness = HAND_MINE_MAX_HARDNESS as u8 + 1;
+    observe(&world, "too hard");
+    world.species_mut(ROCK).sheet.hardness = 30;
+    world.deposit_mut(deposit).unwrap().amount = 0;
+    observe(&world, "mined out");
+    clear_deposits_from(&mut world, pos);
+    observe(&world, "no deposit");
+
+    assert_eq!(
+        seen,
+        vec![
+            ("working", true),
+            ("full", true),
+            ("too hard", false),
+            ("mined out", false),
+            ("no deposit", false),
+        ],
+        "a reading belongs to exactly the states with work in front of them"
+    );
+
+    // And the prose agrees: no idle sentence is followed by a number.
+    let idle = status_of(&world, id);
+    assert!(
+        idle.contains("idle: no deposit underneath"),
+        "fixture: {idle}"
+    );
+    assert!(
+        !idle.contains("work toward"),
+        "an idle drill must not report progress toward a unit: {idle}"
+    );
+}
+
+/// **THE BANKED REMAINDER IS WHY A STALL KEEPS ITS READING.**
+///
+/// `Machine::has_room_for` stops AT the cap so a unit is never mined and
+/// thrown away, and `mine_by_machine` carries the remainder (ADR 0003 A3) — so
+/// emptying the buffer resumes mid-unit rather than restarting. That mechanic
+/// was invisible: `None` here, or a reading that reset on the stall, would
+/// hide the only evidence a player gets that their progress survived.
+#[test]
+fn a_full_drill_keeps_the_progress_that_emptying_it_will_resume() {
+    let (mut world, me) = world_with_player();
+    let spawn = world.spawn_tile();
+    let pos = TilePos::new(spawn.x + 3, spawn.y);
+    deposit_under(&mut world, pos);
+    let id = plant_drill(&mut world, me, pos);
+
+    let speed = match &world.building(id).unwrap().kind {
+        BuildingKind::Machine(m) => m.assembly.stats(&world.species).speed,
+        _ => panic!("not a machine"),
+    };
+    assert!(
+        !sim::tuning::WORK_PER_UNIT.is_multiple_of(speed),
+        "this fixture's speed ({speed}) has to leave a remainder, or a banked \
+         progress of zero would pass for the wrong reason"
+    );
+
+    run(&mut world, &[], 4_000);
+    let state = state_of(&world, id);
+    assert!(
+        matches!(
+            state,
+            MachineState::Stalled(MachineStall::BufferFull { .. })
+        ),
+        "the fixture must actually fill: {state:?}"
+    );
+    let banked = work_of(&world, id).expect("a full drill still has its unit");
+    assert_eq!(banked.total, sim::tuning::WORK_PER_UNIT);
+    assert!(
+        banked.done > 0,
+        "the remainder emptying the buffer will resume from must be visible"
+    );
+    let status = status_of(&world, id);
+    assert!(
+        status.contains(&format!(
+            "{} of {} work toward the next unit",
+            banked.done, banked.total
+        )),
+        "the status line is where a headless player reads it: {status}"
+    );
+
+    // Emptying it resumes from exactly there, rather than restarting.
+    run(
+        &mut world,
+        &[Input::player(me, PlayerCommand::Take { building: id })],
+        1,
+    );
+    let after = work_of(&world, id).expect("working again");
+    assert_eq!(
+        after.done,
+        banked.done + speed,
+        "one tick of mining on from the banked remainder, not from zero"
+    );
+}
+
+/// The number a drill reports is the work its own speed puts in, each tick —
+/// which is what makes `speed 44` two clauses later readable as "three ticks
+/// to go" without the game asserting a figure it must recompute every tick.
+#[test]
+fn a_drills_reading_climbs_by_its_own_speed_each_tick() {
+    let (mut world, me) = world_with_player();
+    let spawn = world.spawn_tile();
+    let pos = TilePos::new(spawn.x + 3, spawn.y);
+    deposit_under(&mut world, pos);
+    let id = plant_drill(&mut world, me, pos);
+    let speed = match &world.building(id).unwrap().kind {
+        BuildingKind::Machine(m) => m.assembly.stats(&world.species).speed,
+        _ => panic!("not a machine"),
+    };
+
+    let mut last = work_of(&world, id).expect("working").done;
+    let mut climbs = 0;
+    for _ in 0..20 {
+        step(&mut world, &[], &mut Vec::new());
+        let now = work_of(&world, id).expect("still working").done;
+        if now > last {
+            assert_eq!(now, last + speed, "a tick is exactly one speed of work");
+            climbs += 1;
+        }
+        last = now;
+    }
+    assert!(
+        climbs > 5,
+        "the drill has to actually be working for this to mean anything: {climbs}"
+    );
+}
+
 /// **ONE VOCABULARY.** For every halted building, the reason on the halt
 /// surface is character-for-character the state the status line prints.
 ///

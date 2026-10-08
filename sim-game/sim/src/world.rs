@@ -2,10 +2,10 @@
 
 use crate::building::{
     Building, BuildingId, BuildingKind, BuildingState, Machine, MachineIdle, MachineStall,
-    MachineState, Smelter, SmelterStall, SmelterState,
+    MachineState, SlotRole, Smelter, SmelterStall, SmelterState, WorkReading,
 };
 use crate::hash::fnv64;
-use crate::item::Item;
+use crate::item::{Item, ItemStack};
 use crate::mineral::{MineralSpecies, SpeciesId};
 use crate::ore::OreDeposit;
 use crate::player::Player;
@@ -345,6 +345,108 @@ impl World {
         match &b.kind {
             BuildingKind::Smelter(_) => BuildingState::Smelter(self.smelter_state(b)),
             BuildingKind::Machine(m) => BuildingState::Machine(self.machine_state(b, m)),
+        }
+    }
+
+    /// Every holder this building has: what it is for, what is in it, and how
+    /// much it takes. In the order a player fixes things in, which is
+    /// `building_status`' order and `smelter_state`'s.
+    ///
+    /// **THE SET OF ROWS IS THE SIM'S, NOT A MENU'S.** A host that listed the
+    /// slots itself would have to know that a smelter has three and a machine
+    /// has one, that the third takes no inserts, and that the machine's cap is
+    /// its parts' `Capacity` rather than a tuning constant — four rules, in
+    /// GDScript, that a new building kind would silently leave behind. Adding a
+    /// `BuildingKind` fails to compile here instead.
+    ///
+    /// The cap is what the *sim* will accept, so a fill is two sim numbers and
+    /// no host divides anything it had to derive first (ASSA-276 move 3).
+    pub fn building_slots(&self, b: &Building) -> Vec<(SlotRole, Option<ItemStack>, u32)> {
+        match &b.kind {
+            BuildingKind::Smelter(s) => vec![
+                (SlotRole::Input, s.input, tuning::SMELTER_INPUT_CAP),
+                (SlotRole::Fuel, s.fuel, tuning::SMELTER_FUEL_CAP),
+                (SlotRole::Output, s.output, tuning::SMELTER_OUTPUT_CAP),
+            ],
+            BuildingKind::Machine(m) => vec![(
+                SlotRole::Buffer,
+                m.held,
+                m.assembly.stats(&self.species).capacity,
+            )],
+        }
+    }
+
+    /// How far through the unit in front of it this building is, or `None` when
+    /// there is no unit in front of it at all.
+    ///
+    /// **THE ONE PLACE THAT DECIDES**, for [`World::smelter_state`]'s reason
+    /// (ASSA-80/94). Until ASSA-321 both `progress` fields were printed by
+    /// nothing: not `building_status`, not the inspector, not the binding — so
+    /// the smelter you fed was the only thing in the game that worked in
+    /// silence, while your own hand-craft counted its ticks down at you. A
+    /// client reaching for it would have had to divide by `recipe.ticks`
+    /// itself, which is a sim rule written in GDScript.
+    ///
+    /// **A STALL STILL HAS A READING, AND THAT IS THE POINT.** The gate is "is
+    /// there a unit in front of it", not "is it moving". A smelter holding ore
+    /// and no fuel reads `0 of 20` beside `stalled: no fuel` — the batch has
+    /// not started, which is a different sentence from the stall alone — and a
+    /// drill whose buffer filled mid-unit keeps a *non-zero* reading, because
+    /// `Machine::has_room_for` banks that progress on purpose so emptying the
+    /// buffer carries on. `None` there would hide the one mechanic that
+    /// comment exists to protect.
+    ///
+    /// **ONLY THE DRILL CAN BE STALLED PART-WAY THROUGH A UNIT, AND I WROTE
+    /// THE OPPOSITE HERE FIRST.** All four smelter stalls are tested in
+    /// `run_smelters` *before* `s.progress += 1`, and the fire cannot die
+    /// mid-batch: one unit of anything that passes the fuel gate burns
+    /// `>= FUEL_MIN_REACTIVITY * BURN_TICKS_PER_REACTIVITY` = 50 ticks against
+    /// a 40-tick resmelt. So for a smelter `done > 0` implies it refined last
+    /// tick. The gate is still not "is it moving", because `0 of 20` while
+    /// stalled is a reading a player needs; it just means the dramatic version
+    /// of this paragraph described a world the rules forbid.
+    /// `a_smelters_progress_is_zero_unless_it_refined_last_tick` pins the
+    /// invariant, so a fuel rule that ever makes it false arrives as a red test
+    /// beside a reading that already handles it.
+    ///
+    /// **`None` MEANS NOTHING IS BEING WORKED, AND THE TWO KINDS DISAGREE
+    /// ABOUT WHEN** — the same asymmetry [`MachineState::halted`] documents,
+    /// for the same reason. An empty smelter has nothing in front of it and one
+    /// insert fixes that. A drill on no deposit, a mined-out one, or rock
+    /// nothing can break has nothing in front of it *and never will*; reading
+    /// `0 of 100` there would invite a player to wait for a unit that cannot
+    /// arrive (ASSA-43's rule).
+    ///
+    /// **THE SMELTER'S GATE MIRRORS `run_smelters`' OWN PRECONDITIONS** rather
+    /// than guessing at them: a slot holding 2 refined against a recipe that
+    /// eats 3 is not a batch, and the step loop skips it. See
+    /// `sim/tests/smelter.rs::a_part_batch_makes_no_progress_and_the_state_line_does_not_know_it`
+    /// for what that currently costs us elsewhere.
+    pub fn building_work(&self, b: &Building) -> Option<WorkReading> {
+        match &b.kind {
+            BuildingKind::Smelter(s) => {
+                let input = s.input?;
+                let recipe = crate::recipe::smelter_recipe_for(input.item.kind)?.recipe();
+                if input.count < recipe.input.1 {
+                    return None;
+                }
+                // Grade A against a grade-raising recipe: `Insert` refuses it,
+                // so this is unreachable from play and still answered, because
+                // a save or a future inserter could put it there and "0 of 40
+                // forever" is the worst of the three possible answers.
+                recipe.output_for(input.item)?;
+                Some(WorkReading {
+                    done: s.progress,
+                    total: recipe.ticks,
+                })
+            }
+            BuildingKind::Machine(m) => match self.machine_state(b, m) {
+                MachineState::Idle(_) => None,
+                MachineState::Working { .. } | MachineState::Stalled(_) => Some(WorkReading {
+                    done: m.progress,
+                    total: crate::tuning::WORK_PER_UNIT,
+                }),
+            },
         }
     }
 
