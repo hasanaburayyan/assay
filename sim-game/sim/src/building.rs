@@ -226,6 +226,33 @@ impl MachineState {
     }
 }
 
+/// How far through the unit in front of it a building is: the two numbers a
+/// progress band is drawn from, and nothing else.
+///
+/// **IT IS A PAIR AND NEVER A FRACTION** (`reading_scale`'s rule, ASSA-276
+/// move 3): a host handed `0.35` cannot say "7 of 20 ticks", and a host handed
+/// the pair can draw either. Dividing is the renderer's business; both numbers
+/// are the sim's.
+///
+/// **THE DENOMINATOR IS NOT A CONSTANT ANY HOST COULD KNOW**, which is the
+/// reason this type exists rather than two public fields. A smelter's total is
+/// the `ticks` of whichever recipe matches what is *in* its input slot — 20 to
+/// refine ore, 40 to resmelt refined — so a client that divided by one number
+/// would be wrong about half the batches a player runs. A machine's is
+/// [`crate::tuning::WORK_PER_UNIT`]. Asking lets both be right.
+///
+/// `done < total` through the whole of a unit: both systems finish and reset
+/// in the same tick they cross. A machine can carry a remainder (ADR 0003 A3)
+/// and a reachable head tops out at 80 work a tick against 100, so the
+/// remainder stays below the total too; a design that out-paced the cap would
+/// read `done >= total`, and **that reads as the bug it is rather than being
+/// clamped into a plausible number** (ASSA-141's rule).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WorkReading {
+    pub done: u32,
+    pub total: u32,
+}
+
 /// What any building is doing, so one question answers for every kind.
 ///
 /// A host asking "has this stopped?" should not have to match the kind first
