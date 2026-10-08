@@ -102,6 +102,26 @@ const LOG_TOGGLE_H := 28.0
 ## deposit's colour against it to decide whether a letter on top should be dark or light.
 const MAP_BG := Color(0.10, 0.11, 0.13)
 
+## **THE PLATE THE TITLE SCREEN WORDS STAND ON** (ASSA-292, ASSA-276 §4). `build_theme.gd`s SURFACE
+## -- the same surface every panel in the game is drawn on -- at an alpha DERIVED and not chosen.
+##
+## THE DERIVATION, so the next person can redo it rather than trust it. Measured on a real 1x frame
+## of the lit door world (`nacre_door_contrast.py`), the worst pixel the world puts behind a word is
+## **(244,154,81)**, an ore deposit, and against it the two door inks read **INK 2.10:1** and
+## **INK_MUTED 1.00:1** -- the sentence is invisible, not dim. With SURFACE at this alpha over that
+## same pixel they read **10.11:1** and **5.62:1**, a 1.25x margin on Marens 4.5:1 floor. The
+## numbers barely move on a benign background (5.68:1 over lit grass), and that steadiness is what a
+## plate is FOR: it makes a word legible almost independently of what it is standing over.
+##
+## **WHY NOT LOWER:** 0.79 is the bare minimum for INK_MUTED and leaves no margin for a brighter
+## world. **WHY NOT A FULL-DOOR SCRIM AT ALL:** that needs 0.73 over 912x672, which is Marens
+## *"flat field with extra steps"* arrived at by arithmetic rather than by taste.
+const DOOR_PLATE := Color(0.145, 0.157, 0.188, 0.90)
+
+## How far the plate stands outside the words it carries. `MARGIN.y` worth of air on every side, so
+## the plate reads as a panel in this games own idiom rather than as a highlighter stroke.
+const DOOR_PLATE_PAD := 24.0
+
 ## THE FOUR MARKS ON A MAP THAT ARE NOT A SPECIES, named, because until now they were six `Color(...)`
 ## literals inside `main.gd::_draw`.
 ##
