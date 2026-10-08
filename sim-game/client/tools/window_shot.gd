@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- a shot: --headless writes a BLANK frame and reports success, the worst kind of green
 ## A PICTURE OF THE REAL WINDOW, at 1:1, with no hands (ASSA-116 box 5).
 ##
 ##   godot --path . --script res://tools/window_shot.gd -- <out_dir> [seed] [ticks] [hoppers]

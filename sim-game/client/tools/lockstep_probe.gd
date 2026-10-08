@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- needs two peers and a real relay; a candidate for a gate, wired to nothing today
 ## IS THIS CLIENT A REAL LOCKSTEP PEER? Headless, against a real relay, one line of verdict.
 ##
 ##   godot --headless --path . --script res://tools/lockstep_probe.gd \

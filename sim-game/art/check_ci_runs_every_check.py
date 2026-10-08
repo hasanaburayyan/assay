@@ -50,13 +50,27 @@ def main() -> int:
         return 2
 
     text = WORKFLOW.read_text()
-    # Every reference in the workflow, whatever the surrounding command: these are invoked as
-    # `python3 art/check_x.py` today, but a step that calls one some other way still counts as
-    # running it, and a `grep` for the bare filename is the question actually being asked.
-    named = set(re.findall(r"check_[A-Za-z0-9_]+\.py", text))
+    # THE TWO DIRECTIONS ASK DIFFERENT QUESTIONS, SO THEY MATCH DIFFERENTLY, and conflating them
+    # cost a red build the first time a `check_*.py` lived anywhere but here (ASSA-282 put one in
+    # `client/tools/`). A bare-filename grep reported `DANGLING IN CI: build.yml names
+    # art/check_tools_declare_ci.py and there is no such file` -- about a file that exists, is run
+    # by CI, and was never claimed to be in `art/`. The name was right and the directory was
+    # invented by this check.
+    #
+    #   UNRUN (a check here that CI does not run) is GENEROUS: any mention of the filename counts
+    #   as naming it. A step that invokes one through a variable or a shell script still runs it,
+    #   and a false "NOT RUN" would send someone to add a step that already exists.
+    #
+    #   DANGLING (CI names a check that is not there) is STRICT: only an `art/`-pathed reference
+    #   counts, because that is the only kind this directory can be missing. A check somewhere
+    #   else in the tree is not this check's business.
+    #
+    # Each direction's wrong answer is the one the other rule would produce.
+    named_anywhere = set(re.findall(r"check_[A-Za-z0-9_]+\.py", text))
+    named_here = set(re.findall(r"art/(check_[A-Za-z0-9_]+\.py)", text))
 
-    unrun = sorted(present - named)
-    dangling = sorted(named - present)
+    unrun = sorted(present - named_anywhere)
+    dangling = sorted(named_here - present)
 
     for name in unrun:
         print("NOT RUN BY CI: art/%s exists and no step in build.yml names it" % name)
@@ -65,8 +79,8 @@ def main() -> int:
 
     if unrun or dangling:
         print(
-            "\n%d check(s) in the tree, %d named by CI. A check and its step must land and leave "
-            "together." % (len(present), len(named))
+            "\n%d check(s) in the tree, %d named by CI as art/. A check and its step must land "
+            "and leave together." % (len(present), len(named_here))
         )
         return 1
 

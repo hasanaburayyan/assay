@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- needs a mouse over a real window
 ## MAREN'S PROBE, not a shipped tool: what does the cursor section say when the mouse is over a
 ## building? Two claims rest on that line and NEITHER had been run.
 ##

@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- measures a CLIP, the scroll box's share of the window, which reads 0 px headless
 ## **DOES ONE TAB FIT?** The number I promised Maren on ASSA-198 BEFORE building the tabbed panel.
 ##
 ##   godot --path . --script res://tools/nacre_tab_budget_probe.gd -- [seed]

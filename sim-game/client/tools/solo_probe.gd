@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- presses Play Solo against a real relay; a candidate for a gate, wired to nothing today
 ## PRESS PLAY SOLO, HEADLESS, AGAINST THE REAL RELAY (ASSA-106).
 ##
 ##   godot --headless --path . --script res://tools/solo_probe.gd

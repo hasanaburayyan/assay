@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- clicks a real window and reads the frame it was painted in
 ## LIMPET, ASSA-215 BOXES 1 AND 2: DOES THE CLICKED TILE GET PAINTED IN THE FRAME YOU CLICKED IN,
 ## AND IS IT STILL THERE WHILE THE BODY IS FROZEN?
 ##

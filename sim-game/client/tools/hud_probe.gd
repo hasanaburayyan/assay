@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: gated
 ## DOES THE HUD READ A REAL WORLD? Headless, against a real relay, one line of verdict.
 ##
 ##   godot --headless --path . --script res://tools/hud_probe.gd -- localhost:7777 limpet [ticks]

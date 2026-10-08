@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- a one-off width survey for ASSA-247; kept for re-asking it, not for watching
 ## **WHAT IN THE HUD COLUMN ASKS FOR MORE WIDTH THAN THE COLUMN HAS** (ASSA-247).
 ##
 ## **THE DEFECT THIS EXISTS FOR, MEASURED OFF A PICTURE FIRST.** On a 1x shot of the built panel the

@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- turns a schematic shot into numbers so a human can measure it rather than eyeball it
 ## EVERY DISC THE WHOLE-WORLD SCHEMATIC DRAWS, AS NUMBERS, SO A SHOT CAN BE MEASURED RATHER THAN
 ## EYEBALLED (ASSA-187).
 ##

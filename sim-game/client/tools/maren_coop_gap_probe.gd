@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- needs two real peers against a live relay over wall-clock time
 ## ASSA-179 PART 2, THE HOLE I NAMED IN MY OWN MEASUREMENT. (Maren.)
 ##
 ##   godot --headless --path client --script res://tools/maren_coop_gap_probe.gd -- [seed] [secs]

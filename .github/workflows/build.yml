@@ -138,6 +138,23 @@ jobs:
       # Stdlib only, no Godot, ~0.05s.
       - name: Every art check is actually run by CI
         run: python3 art/check_ci_runs_every_check.py
+      # THE SAME QUESTION FOR `client/tools/`, WHICH COULD NOT BE ASKED THE SAME
+      # WAY (ASSA-282). `art/check_*.py` has one class -- every check should run
+      # -- so a set difference answers it. `client/tools/` has two, and most of it
+      # SHOULD stay local: the shots write a blank frame headless, and the budget
+      # probe measures a clip that reads 0 px without a window. So the FILE
+      # declares `# CI: gated`, `# CI: local -- <why not>` or `# CI: library`, and
+      # this holds the claim to the tree in both directions: a tool that says
+      # gated and is wired to nothing reddens, and so does one that says local
+      # after somebody wired it up and did not edit its header.
+      #
+      # IT FOLLOWS INDIRECTION, and that is not theoretical: the gate reaches
+      # `hud_probe.gd` only through `tools/hud_in_a_gate.sh`, so a grep of this
+      # file for the filename would have called the probe ungated. It also strips
+      # YAML comment lines first, because `window_shot.gd` is named in this file
+      # inside a comment saying why nothing runs it. Stdlib only, no Godot.
+      - name: Every client tool says whether a gate runs it
+        run: python3 client/tools/check_tools_declare_ci.py
       # ONE SPECIES PALETTE, WRITTEN DOWN TWICE. The Blender pipeline tints the
       # ore sprite from `art/species_tints.py`; the Godot client fills a deposit
       # from a const in `client/scripts/hud.gd`. Neither language can read the
