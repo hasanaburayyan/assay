@@ -210,11 +210,20 @@ func test_the_binding_hands_gdscript_a_readings_two_ends() -> bool:
 	if not host.start(AssaySimHost.fresh_welcome_json("14247", "marlow")):
 		return _fail("no world: %s" % host.fail_reason)
 
+	# --- THE AXIS, ASKED FOR RATHER THAN TYPED (ASSA-279). This test used to
+	# check each pair against a literal `1` and `100` of its own, which is the
+	# defect the item is about wearing a test's clothes: the sim moved its roll
+	# and this suite would have gone on agreeing with the old scale.
+	var scale: Vector2i = host.reading_scale()
+	if scale.x >= scale.y:
+		return _fail("reading_scale() is %s, which is not an axis" % scale)
+
 	# --- a reading's two ends, on a world that has assayed nothing.
 	var sheets: Array = host.species_sheets()
 	if sheets.is_empty():
 		return _fail("no species sheets, so this proves nothing")
 	var checked := 0
+	var at_top := 0
 	for entry in sheets:
 		var species: Dictionary = entry
 		if not species.has("reading_ranges"):
@@ -237,9 +246,12 @@ func test_the_binding_hands_gdscript_a_readings_two_ends() -> bool:
 			var hi := pair.y
 			if lo > hi:
 				return _fail("%s reads %d-%d, which is backwards" % [property, lo, hi])
-			if lo < 1 or hi > 100:
-				return _fail("%s reads %d-%d, outside the scale a sheet is rolled on"
-						% [property, lo, hi])
+			if lo < scale.x or hi > scale.y:
+				return _fail(("%s reads %d-%d, outside the %d-%d scale the sim publishes: a bar "
+						+ "drawn against reading_scale() would overflow its own axis")
+						% [property, lo, hi, scale.x, scale.y])
+			if hi == scale.y:
+				at_top += 1
 			# NOTHING IS ASSAYED IN A FRESH WORLD, so a point here means the exact value crossed.
 			if lo == hi:
 				return _fail(("%s crossed as a point (%d) on an unassayed sheet: that is the exact "
@@ -254,4 +266,12 @@ func test_the_binding_hands_gdscript_a_readings_two_ends() -> bool:
 			checked += 1
 	if checked < 6:
 		return _fail("only %d readings compared; a sheet has six properties" % checked)
+	# **THE PREMISE OF THE AXIS CHECK ABOVE**: if no reading on this world reaches the
+	# scale's top, `hi > scale.y` is never tested anywhere near its boundary and the
+	# comparison could be against anything. Printed, not just asserted, because a
+	# count I cannot see is a count I will assume.
+	print("reading_scale %d-%d, %d readings, %d at the top band" % [scale.x, scale.y, checked, at_top])
+	if at_top == 0:
+		return _fail(("no reading on this world reaches %d, so the top of the published scale is "
+			+ "untested here") % scale.y)
 	return true

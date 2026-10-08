@@ -288,9 +288,24 @@ func tile_at(at: Vector2i) -> Dictionary:
 
 
 ## Every species as the players know it: `id`, `name`, `assayed`, `readings` (property name to the
-## exact value or the sim's band, as TEXT), `hand_minable`, `hand_lit_fuel`.
+## exact value or the sim's band, as TEXT), `reading_ranges` (the same two ends as a `Vector2i`),
+## `hand_minable`, `hand_lit_fuel`.
 func species_sheets() -> Array:
 	return _sim.species_sheets() if _sim != null else []
+
+
+## **THE AXIS A READING SITS ON, as a `Vector2i` of its two inclusive ends** (ASSA-279): the
+## denominator for drawing `reading_ranges` as a bar. One pair for every property and every grade.
+##
+## NEVER TYPE THE ENDS. They were three unnamed literals in the sim and one more in this suite until
+## ASSA-279; a surface holding its own copy goes on looking right for exactly as long as its copy
+## happens to match worldgen.
+##
+## `Vector2i.ZERO` with no sim, which is not a scale and is meant to be unusable: a caller that
+## reached here without a world has nothing to draw against, and a plausible-looking fallback is
+## how a wrong axis gets onto a screen.
+func reading_scale() -> Vector2i:
+	return _sim.reading_scale() if _sim != null else Vector2i.ZERO
 
 
 ## `[material, fuel]` species ids: the pair this world GUARANTEES can be mined and smelted, from
