@@ -549,6 +549,50 @@ jobs:
           "$GODOT" --headless --path . --script res://tools/button_session.gd \
             -- offline 14247 0 break | tee session-break.log
           grep -q '^BUTTON SESSION OK · DESIGN BROKE' session-break.log
+      # THE HUD'S OWN PROBE, IN A GATE FOR THE FIRST TIME (ASSA-238). ASSA-116's
+      # box 6 is about the HUD panels, and the only instrument that reads them is
+      # `client/tools/hud_probe.gd`, which until this step had ZERO references in
+      # this file: every number it has ever produced came off one Mac, by hand. A
+      # probe that runs when somebody remembers it is not a guard, it is a tool.
+      # The sweep behind the item is worse than one probe -- 3 of 45 scripts in
+      # `client/tools/` are run by any gate, and 32 of them print an `X OK`
+      # marker nothing greps.
+      #
+      # WHY A SCRIPT AND NOT TEN LINES HERE. `tools/hud_in_a_gate.sh` is the same
+      # code a developer runs, which is how the mutation below could be proved
+      # locally before costing a runner anything. It starts the relay on a
+      # KERNEL-ASSIGNED port (`--port 0`, printed as `LISTENING <addr>:<port>`,
+      # so it cannot collide with a parallel job, a leftover process or anyone's
+      # 7777), kills it from an EXIT trap that escalates TERM -> KILL and says if
+      # it had to force it, and ends a relay that never comes up with a sentence
+      # about THE RELAY instead of a HUD assertion. Its header carries the rest.
+      #
+      # WHAT IT CATCHES THAT THE 393-TEST SUITE ABOVE CANNOT, measured and not
+      # asserted. Hiding the species name on rock nothing can hand-mine --
+      # `deposit 0 · a rock · 919 ore left` -- leaves that suite at `393 passed,
+      # 0 failed`, because every `_tile_with` fixture in `test_hud.gd` has
+      # `hand_minable: true`. This step goes red on it. The suite's fixtures are
+      # a hand-made copy of what the binding sends; this is the only thing in CI
+      # that reads the dictionaries a real world actually produces.
+      #
+      # AND THE PROBE WAS WEAKER THAN IT READ, found by that same mutation: its
+      # species check joined the WHOLE tile readout, and on unmineable rock the
+      # sim's own reach sentence names the species, so the mutation passed it too.
+      # It now asserts the name on the deposit's own line, for every deposit with
+      # ore in it (13 on seed 14247) rather than the first one the seed happens
+      # to hand it.
+      #
+      # Seed 14247 is the pinned showcase seed, `--fresh` so the world is at tick
+      # 0 and every sheet is still rough -- the band check has something to bite.
+      #
+      # COST, since the item asked for it: ubuntu-latest, inside this job, no
+      # macOS runner and no 10x. The relay crate is the only thing it compiles --
+      # `sim` and `sim-net` are already release-built above for the binding.
+      - name: The HUD reads a real world, through a relay this job started
+        run: |
+          cargo build -p sim-relay --release
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
+            tools/hud_in_a_gate.sh 14247 25
       # THE LETTER ON A MAP DISC IS READABLE. Runs the client and scores what
       # `AssayHud.glyph_color` actually returned for all 600 species x purity
       # states (ASSA-39/44), rather than reimplementing the rule -- computing
