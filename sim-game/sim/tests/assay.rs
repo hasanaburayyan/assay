@@ -133,6 +133,66 @@ fn a_rough_range_cannot_tell_two_values_in_one_band_apart() {
     );
 }
 
+/// **THE PUBLISHED SCALE IS THE AXIS THE ROLL AND THE BANDS ACTUALLY USE,
+/// MEASURED OVER EVERY WORLD I CAN AFFORD** (ASSA-279).
+///
+/// `debug::reading_scale` exists so a surface drawing a reading as a bar has a
+/// denominator it did not invent. That makes the pair a promise about
+/// worldgen, and this is the test that keeps it: the day `worldgen::roll`
+/// moves and the constant does not, a reading lands outside the axis and a bar
+/// silently overflows. Nothing else would catch it — `Sheet::band` reads the
+/// constant now, so band arithmetic would agree with the stale scale and look
+/// fine.
+///
+/// **BOTH ENDS ARE ASSERTED REACHED, which is the half that stops this passing
+/// against a scale twice as wide.** A containment check alone is true of
+/// `(0, 1000)`.
+#[test]
+fn the_published_scale_is_the_axis_every_reading_sits_on() {
+    let (lo, hi) = debug::reading_scale();
+    assert!(lo < hi, "a scale with no width is not an axis: {lo}-{hi}");
+
+    let (mut readings, mut at_floor, mut at_ceiling, mut top_band) = (0, 0, 0, 0);
+    for seed in 1..=60u64 {
+        let world = World::new(WorldConfig {
+            seed,
+            ..WorldConfig::default()
+        });
+        for s in &world.species {
+            for property in Property::ALL {
+                let v = s.sheet.get(property);
+                assert!(
+                    (lo..=hi).contains(&v),
+                    "seed {seed} rolled {v} for {property:?}, outside the published scale \
+                     {lo}-{hi}: a bar drawn against reading_scale() would overflow its axis"
+                );
+                let (blo, bhi) = debug::reading_range(s, property);
+                assert!(
+                    lo <= blo && bhi <= hi,
+                    "seed {seed} reads {property:?} as {blo}-{bhi}, outside the published \
+                     scale {lo}-{hi}"
+                );
+                readings += 1;
+                at_floor += usize::from(v == lo);
+                at_ceiling += usize::from(v == hi);
+                top_band += usize::from(bhi == hi);
+            }
+        }
+    }
+    assert!(readings > 0, "premise: no world generated a species");
+    assert!(
+        at_floor > 0 && at_ceiling > 0,
+        "in {readings} readings nothing rolled {lo} and nothing rolled {hi} \
+         ({at_floor} / {at_ceiling}), so the ends of the scale are untouched and this test \
+         would pass against an axis twice as wide"
+    );
+    assert!(
+        top_band > 0,
+        "no band reached {hi} in {readings} readings, so the clamp in Sheet::band is untested \
+         at the only value it clamps"
+    );
+}
+
 #[test]
 fn a_fresh_species_reads_as_bands_until_assayed() {
     let (mut world, me, _) = world_with_players();
