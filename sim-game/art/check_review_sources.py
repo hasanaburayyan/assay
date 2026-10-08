@@ -61,14 +61,28 @@ nothing, and this check's whole value rests on a recorder it cannot see run.
      stops observing a pattern, new stamps silently lose sources and this check goes green over
      a sheet drawn from art it never recorded. NO VERDICT, not a pass.
 
-THE RED LEVER, since two guards in this pipeline have silently stopped guarding:
+TWO RED LEVERS, since two guards in this pipeline have silently stopped guarding. They prove
+DIFFERENT guards and a run can only be evidence for one, so setting both is NO VERDICT.
 
-    REVIEW_SOURCES_FAKE_MOVE=ground.png python3 art/check_review_sources.py   # must FAIL
+    REVIEW_SOURCES_FAKE_MOVE=ground.png python3 art/check_review_sources.py   # must exit 1
+    REVIEW_SOURCES_FAKE_EMPTY=1         python3 art/check_review_sources.py   # must exit 2
 
-It reproduces the CAUSE rather than lowering a bar: the digest of one shipped file is perturbed
-exactly as a re-render would perturb it, and every sheet that composited that file must name it.
-The honest version was run too -- a real byte appended to a real sprite, red reproduced, then
-restored -- because a lever I wrote cannot be the only thing that has ever made this red.
+Each reproduces a CAUSE rather than lowering a bar. FAKE_MOVE perturbs the digest of one
+shipped file exactly as a re-render would, and every sheet that composited that file must name
+it. FAKE_EMPTY reads every stamp as present and EMPTY -- what a bad merge or a recorder that
+stopped recording leaves behind -- and ANTI-VACUITY 1 must fire.
+
+**FAKE_EMPTY MUST END IN exit 2 AND NOT exit 1, AND THAT IS THE WHOLE POINT OF HAVING IT**
+(ASSA-326). All nine empty makes eight sheets individually red as well, so the only thing
+separating "the guard is gone" from "a sheet is stale" is that ANTI-VACUITY 1 is tested before
+`if bad`. Nothing held that order down. A reader who got exit 1 here would go redraw sheets
+while the recorder stayed broken.
+
+The honest version of each was run too, because a lever I wrote cannot be the only thing that
+has ever made this red. FAKE_MOVE: a real byte appended to a real sprite, red reproduced, then
+restored. FAKE_EMPTY: all nine committed sheets really rewritten without their chunk (Pillow,
+each strip asserted on disk), the check run with NO lever set, exit 2 on a real tree, then
+`git checkout -- assets/review` and green again.
 
 Exit codes, matching the other art checks: 0 green, 1 a sheet is stale or unstamped, 2 NO
 VERDICT (the recorder is broken, or there is nothing to measure), which fails the job rather
@@ -89,6 +103,10 @@ from review_sources import ABSENT, CURRENT, EMPTY, KEY, STALE  # noqa: E402
 
 #: Perturb one shipped file's digest as a re-render would. See the docstring.
 FAKE_MOVE = os.environ.get("REVIEW_SOURCES_FAKE_MOVE")
+
+#: Read EVERY stamp as a present, well-formed, EMPTY one -- a bad merge, or a recorder that
+#: stopped recording. Proves ANTI-VACUITY 1 still bites. See the docstring.
+FAKE_EMPTY = os.environ.get("REVIEW_SOURCES_FAKE_EMPTY")
 
 #: Which script draws which sheet. Needed anyway -- a red that does not say what to re-run is a
 #: red people route around -- and a new sheet landing without an entry is NO VERDICT rather
@@ -213,6 +231,23 @@ def prove_the_recorder_still_sees_opens():
     return ["builtins.open", "json.load(open(Path))", "Path.read_bytes", "writes ignored"]
 
 
+def stamp_as_read(path):
+    """The stamp this run is reasoning about: the file's own, or a lever's forgery.
+
+    ONE PLACE, because the stamp used to be read twice by two routes -- once for the per-sheet
+    verdict and once for ANTI-VACUITY 1 -- and a lever that only reached the first would have
+    reported nine EMPTY sheets and then checked the anti-vacuity guard against the real file,
+    which is green. That is the shape of a lever that proves nothing.
+
+    The forgery is spelled by `review_sources.stamp_of`, the same function that writes real
+    stamps, so an empty stamp here is byte-identical to the empty stamp a broken recorder
+    would actually leave behind.
+    """
+    if FAKE_EMPTY:
+        return review_sources.stamp_of({})
+    return review_sources.read_stamp(path)
+
+
 def fake_moved(sources):
     """The stamp as it would read if one shipped file had been re-rendered."""
     out = dict(sources)
@@ -227,6 +262,12 @@ def main():
         raise CannotCheck("no review folder at %s" % REVIEW)
     if not os.path.isdir(review_sources.SPRITES):
         raise CannotCheck("no shipped art at %s" % review_sources.SPRITES)
+
+    if FAKE_MOVE and FAKE_EMPTY:
+        raise CannotCheck(
+            "both red levers are set. They prove different guards and a run can only be\n"
+            "evidence for one: FAKE_MOVE must end in exit 1 naming the sheets that drew the\n"
+            "moved file, FAKE_EMPTY in exit 2 on ANTI-VACUITY 1. Set one.")
 
     patterns = prove_the_recorder_still_sees_opens()
     print("\n  recorder sees: %s" % ", ".join(patterns))
@@ -248,15 +289,21 @@ def main():
     if FAKE_MOVE:
         print("\n  [RED RUN] pretending client/assets/sprites/%s was re-rendered; every sheet\n"
               "            that composited it MUST be named below." % FAKE_MOVE)
+    if FAKE_EMPTY:
+        print("\n  [RED RUN] reading every stamp as present and EMPTY, which is what a bad merge\n"
+              "            or a recorder that stopped recording leaves behind. This MUST end in\n"
+              "            NO VERDICT (exit 2) on ANTI-VACUITY 1, and never in a pass.")
 
     bad, states, stamped_any = [], {}, False
     print("\n  %-22s %-11s %s" % ("sheet", "verdict", "sources"))
     for name in sheets:
         path = os.path.join(REVIEW, name)
-        if FAKE_MOVE:
-            # Perturb the RECORDED side, which is what a re-render does to the relationship
-            # between a sheet and the art under it, without touching a committed file.
-            stamp = review_sources.read_stamp(path)
+        if FAKE_MOVE or FAKE_EMPTY:
+            # Perturb the RECORDED side, which is what a re-render (FAKE_MOVE) or a stopped
+            # recorder (FAKE_EMPTY) does to the relationship between a sheet and the art under
+            # it, without touching a committed file. An empty stamp moves nothing, so it falls
+            # through to EMPTY below and then through the exemption, exactly as a real one does.
+            stamp = stamp_as_read(path)
             sources = json.loads(stamp) if stamp else None
             if sources is None:
                 state, lines = ABSENT, ["carries no `%s` stamp." % KEY]
@@ -301,7 +348,7 @@ def main():
                      "      `contact()` call)." % GENERATOR[name]]
 
         states[name] = state
-        stamp = review_sources.read_stamp(path)
+        stamp = stamp_as_read(path)
         if stamp:
             try:
                 stamped_any = stamped_any or bool(json.loads(stamp))

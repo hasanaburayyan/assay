@@ -4,7 +4,7 @@
 use std::fmt::Write;
 
 use crate::assembly::{
-    Assembly, AssemblyError, BreakVerdict, Built, Mount, PART_SPECS, PartKind, Source,
+    Assembly, AssemblyError, BreakVerdict, Built, Mount, PART_SPECS, Part, PartKind, Source,
 };
 use crate::building::{
     Building, BuildingId, BuildingKind, BuildingState, Machine, MachineIdle, MachineStall,
@@ -2201,11 +2201,18 @@ pub fn machine_status(world: &World, b: &Building, m: &Machine) -> String {
     // assayed anything; mass and speed are read off sheets and are not.
     let capacity = range.low.capacity;
     let state = machine_state_line(world, world.machine_state(b, m));
+    // After the state, unlike the smelter's, because the three idle states have
+    // no unit in front of them at all and so no clause here: `idle: no deposit
+    // underneath` must not be followed by a progress number, and the one
+    // ordering that is right whether or not the clause exists is this one.
+    let work = work_clause(world, b)
+        .map(|c| format!(" · {c}"))
+        .unwrap_or_default();
     // Same reason as `assembly_readout`: what it is holding and what it is
     // doing come before the design it was built from, because the table line
     // is truncated in the inspector's side panel.
     format!(
-        "holding {} of {} · {state} · mass {} of {} budget · speed {} · {}",
+        "holding {} of {} · {state}{work} · mass {} of {} budget · speed {} · {}",
         m.held.map_or(0, |h| h.count),
         capacity,
         show(range.low.mass, range.high.mass),
@@ -2400,6 +2407,30 @@ pub fn machine_state_line(world: &World, state: MachineState) -> String {
     }
 }
 
+/// How far through the unit in front of it a building is, in words, or nothing
+/// when there is no unit in front of it.
+///
+/// **TWO NOUNS FOR ONE PAIR, BOTH HERE**, which is [`lighting_clause`]'s
+/// arrangement for [`lighting_tag`]'s reason. A smelter's progress is *ticks*
+/// of a recipe and a drill's is *work* against
+/// [`crate::tuning::WORK_PER_UNIT`] — not the same quantity, and a host that
+/// picked the noun would be deciding which. The drill's clause names the unit
+/// `speed` is measured in two clauses later, so `speed 44` and `44 of 100
+/// work` visibly multiply: a player can read how many ticks are left without
+/// the game asserting a number it would have to recompute every tick.
+///
+/// The decision is [`World::building_work`]'s and the words are mine — ASSA-80
+/// again. Nothing wrote these words before ASSA-321, because nothing asked.
+pub fn work_clause(world: &World, b: &Building) -> Option<String> {
+    let w = world.building_work(b)?;
+    Some(match b.kind {
+        BuildingKind::Smelter(_) => format!("{} of {} ticks into this batch", w.done, w.total),
+        BuildingKind::Machine(_) => {
+            format!("{} of {} work toward the next unit", w.done, w.total)
+        }
+    })
+}
+
 /// What any building is doing, in words, whichever kind it is.
 ///
 /// The one wording for a standing condition: `building_status` puts it after
@@ -2447,8 +2478,15 @@ pub fn building_status(world: &World, b: &Building) -> String {
     };
     let walls = world.max_temperature(b);
     let state = smelter_state_line(world.smelter_state(b));
+    // THE BATCH BEFORE THE CONDITION, because a stall is read as "what do I do
+    // about it" and the progress is what says whether fixing it resumes or
+    // restarts (`World::building_work`). Absent, not zero, when no batch is in
+    // front of it: an empty smelter saying `0 of 20` would be inviting a wait.
+    let work = work_clause(world, b)
+        .map(|c| format!("{c} · "))
+        .unwrap_or_default();
     format!(
-        "walls {walls} · in {} · fuel {} ({} burning at {}) · out {} · {state}",
+        "walls {walls} · in {} · fuel {} ({} burning at {}) · out {} · {work}{state}",
         slot(world, s.input),
         slot(world, s.fuel),
         counted(u64::from(s.burn_left), "tick", "ticks"),
@@ -2662,6 +2700,26 @@ pub fn part_table() -> String {
     out
 }
 
+/// HOW MANY SWINGS A DURABILITY POOL AFFORDS — **the only unit a pool may be
+/// said in** (ADR 0003 amendment A10), and now the only place that division
+/// happens.
+///
+/// **Public because the build screen draws this as a BAR and not a sentence**
+/// (`assay-build-screen` §5.2, ASSA-325), so the number has to cross the
+/// binding while **the pool itself must not**: `pool = HEAD_SIZE × effective
+/// strength × PICK_DURABILITY_PER_STRENGTH` and both constants are published,
+/// so an exact pool *is* the head's effective strength and a pick would be a
+/// free assay of it. Swings are that pool over a constant and are what
+/// [`durability_readout`] has printed since ASSA-5, so a host drawing them
+/// leaks nothing the sentence did not already say.
+///
+/// **CAPACITY CEILS**, and [`durability_readout`] explains at length why
+/// consumption floors while this does not: the last swing drains a part-full
+/// pool and still yields, so a pool with one point left affords one swing.
+pub fn swings_afforded(pool: u32) -> u32 {
+    pool.div_ceil(PICK_WEAR_PER_SWING)
+}
+
 /// THE PICK'S LIFE AS A PLAYER MAY READ IT: **swings used, out of the swings
 /// its class affords.** `20 of 120-180 swings used` while any species in it is
 /// rough, `20 of 144 swings used` once they are all known.
@@ -2697,7 +2755,7 @@ pub fn part_table() -> String {
 pub fn durability_readout(world: &World, built: &Built) -> String {
     let range = built.assembly.stat_range(&world.species);
     let max = built.assembly.stats(&world.species).durability;
-    let affords = |pool: u32| pool.div_ceil(PICK_WEAR_PER_SWING);
+    let affords = swings_afforded;
     let used = max.saturating_sub(built.durability) / PICK_WEAR_PER_SWING;
     if range.low.durability == range.high.durability {
         format!("{used} of {} swings used", affords(max))
@@ -2798,6 +2856,99 @@ pub fn assembly_readout(world: &World, built: &Built) -> String {
         let _ = write!(out, "\n      {note}");
     }
     out
+}
+
+/// A DESIGN READ BEFORE A SINGLE PART IS SPENT, in the words it will have
+/// once it is built (ASSA-323, for ASSA-317's build screen).
+///
+/// The charter's order is sim rules, then `sim-cli`, then graphics, and this
+/// one ran backwards: the Godot binding has previewed a design since
+/// `design_if_built`, and no terminal could ask the question at all. Nothing
+/// new is computed here. Every number is `Assembly::stat_range`, which needs
+/// no player, no world and no built machine, and the sentence is
+/// [`assembly_readout`]'s — so a player who previews a design and then builds
+/// it reads the SAME LINE TWICE, rather than two opinions about one machine.
+/// That identity is what `a_preview_is_the_line_the_built_design_gets` holds.
+///
+/// **THE REFUSALS ARE STEP'S, IN STEP'S ORDER**, and that is most of the
+/// value: `NotAPart` on the frame, then on each mounted part, then
+/// `validate`. A preview that answered only the arithmetic would print SAFE
+/// for a design `Assemble` throws out, which is worse than no preview —
+/// the player spends the press to find out. `why` is the same phrase the
+/// `CommandRejected` event carries, not a second wording of it.
+///
+/// **A PACK TOO THIN IS NOT A REFUSAL HERE**, which is the one place this
+/// deliberately differs from [`crate::step::step`]. `step` rejects
+/// `MissingItems` last and builds nothing; a build screen has to show the
+/// verdict for the design you are SAVING UP FOR, with have/need beside it
+/// (the Game Director's §5.3: counts are text, have on the left). So the
+/// counts are always printed and the refusal is PREDICTED in words instead.
+/// The tally is step's own all-or-nothing shape: two hoppers of one material
+/// need two in the pack, not one twice.
+pub fn design_preview(world: &World, player: PlayerId, frame: Item, mounted: &[Item]) -> String {
+    let Some(p) = world.player(player) else {
+        return "No such player.".into();
+    };
+    // Step's order, step's phrases. See `PlayerCommand::Assemble` in `step.rs`.
+    let Some(frame_part) = Part::from_item(frame) else {
+        return design_refusal(&not_a_part_phrase(frame.kind.name()));
+    };
+    let mut parts = Vec::with_capacity(mounted.len());
+    for item in mounted {
+        let Some(part) = Part::from_item(*item) else {
+            return design_refusal(&not_a_part_phrase(item.kind.name()));
+        };
+        parts.push(part);
+    }
+    let assembly = Assembly::new(frame_part, parts);
+    if let Err(e) = assembly.validate() {
+        return design_refusal(&assembly_error_phrase(e));
+    }
+
+    let mut needed: Vec<ItemStack> = Vec::new();
+    for item in assembly.part_items() {
+        match needed.iter_mut().find(|s| s.item == item) {
+            Some(s) => s.count += 1,
+            None => needed.push(ItemStack::new(item, 1)),
+        }
+    }
+    let mut short = None;
+    let counts = needed
+        .iter()
+        .map(|s| {
+            let have = p.inventory.count(s.item);
+            if have < s.count && short.is_none() {
+                short = Some(s.item);
+            }
+            format!("{have}/{} {}", s.count, world.item_name(s.item))
+        })
+        .collect::<Vec<_>>()
+        .join(" · ");
+
+    let built = Built::new(assembly, &world.species);
+    let mut out = assembly_readout(world, &built);
+    let _ = write!(out, "\n      your pack: {counts}");
+    if let Some(item) = short {
+        // The sentence `step` would answer the press with, said before it.
+        let _ = write!(
+            out,
+            " — not enough {}: assembling it would be refused",
+            world.item_name(item)
+        );
+    }
+    out
+}
+
+/// A design the rules throw out, said in a way that cannot be read as a
+/// verdict.
+///
+/// SAFE / UNCERTAIN / WILL BREAK is a sentence about a machine that exists
+/// (the Game Director's ASSA-305 ruling: drawn whole, never recomposed), and a
+/// refused design never gets one — it has no mass, because it is not a
+/// machine. The Godot binding keeps the same split: `design_if_built` returns
+/// an empty `verdict` and a filled `fault`, never a fourth verdict word.
+fn design_refusal(why: &str) -> String {
+    format!("not a machine · {why}")
 }
 
 /// What the player has built but not placed, and what is in their hand.

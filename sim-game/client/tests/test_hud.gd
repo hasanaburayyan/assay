@@ -403,6 +403,80 @@ func test_a_letter_too_big_for_its_patch_is_not_drawn() -> bool:
 	return true
 
 
+## **TWO MACHINES SIDE BY SIDE: THE YOUNGER ONE'S KEYLINE LANDS ON THE OLDER ONE'S BAND, AND WHAT
+## SETTLES IT IS THE PAINT ORDER** (ASSA-289, under Maren's rule 11.39: *where two marks overlap, the
+## keyline yields and the ink does not*).
+##
+## **BOX 1 AS WRITTEN CANNOT PASS AND I SAY SO RATHER THAN RE-WORD IT QUIETLY.** It asks for a test on
+## `building_mark` alone that fails before the change and passes after — which presumes the *inward
+## keyline* mechanism, where the geometry stops overlapping. Two passes do not move a pixel of
+## geometry: the overlap is still there, and the band is simply painted after every keyline. So this
+## test holds BOTH halves, and only the second one can change:
+##
+## 1. **The overlap is real and is measured here**, not taken from the item. Two legal adjacent 2x2
+##    footprints at cell 9 (no occupancy conflict — the normal thing anyone building a factory does).
+##    If it ever stops overlapping, this fails as a stale test rather than passing vacuously.
+## 2. **`_draw` paints every machine's outward keyline before any machine's band** — two loops over
+##    `shapes`, not one. Nothing headless can read a `draw_rect` back off a canvas, so the order is a
+##    source scan, which is exactly the cost Maren named for this mechanism: *"makes paint order
+##    load-bearing for a correctness property, which is the kind of thing that dies in a refactor
+##    with no test."* This is the test.
+func test_two_adjacent_machines_paint_every_keyline_before_any_band() -> bool:
+	var cell := 9.0
+	var origin := AssayHud.MARGIN
+	# Maren's own case, from her probe: 2x2 at (54,56) and (56,56).
+	var older := AssayHud.building_mark({"pos": Vector2i(54, 56), "footprint": Vector2i(2, 2)},
+			cell, origin)
+	var younger := AssayHud.building_mark({"pos": Vector2i(56, 56), "footprint": Vector2i(2, 2)},
+			cell, origin)
+	var bands: Array[Rect2] = AssayHud.frame_bands(older["rect"], float(older["stroke"]))
+	var rims: Array[Rect2] = AssayHud.frame_bands(younger["keyline_rect"], AssayHud.MARK_KEYLINE_PX)
+	var band_px := 0
+	var eaten := 0
+	for band in bands:
+		var y := band.position.y + 0.5
+		while y < band.end.y:
+			var x := band.position.x + 0.5
+			while x < band.end.x:
+				band_px += 1
+				for rim in rims:
+					if rim.has_point(Vector2(x, y)):
+						eaten += 1
+						break
+				x += 1.0
+			y += 1.0
+	if band_px <= 0:
+		return _fail("the older machine's frame has no band pixels at all, so this test is vacuous")
+	if eaten <= 0:
+		return _fail(("two adjacent 2x2 machines no longer overlap: the younger one's keyline covers "
+				+ "none of the older one's %d band px. If the geometry changed on purpose, this test "
+				+ "is stale and the paint-order scan below is guarding nothing.") % [band_px])
+	# **THE ORDER, AND IT IS THE ONLY HALF A CHANGE CAN BREAK.**
+	var source := FileAccess.get_file_as_string("res://scripts/main.gd")
+	if source == "":
+		return _fail("main.gd could not be read, so the order scan says nothing")
+	var first_loop := source.find("for shape_entry in shapes:")
+	var second_loop := source.find("for shape_entry in shapes:", first_loop + 1)
+	var rim_at := source.find("AssayHud.mark_ink_of(&\"building_keyline\", shape[\"keyline\"])")
+	var band_at := source.find("AssayHud.mark_ink_of(&\"building\", shape[\"colour\"])")
+	if first_loop < 0 or rim_at < 0 or band_at < 0:
+		return _fail(("`_draw` no longer paints a machine's keyline (%d) and band (%d) out of a loop "
+				+ "over `shapes` (%d) through the map's table, so this scan says nothing")
+				% [rim_at, band_at, first_loop])
+	if second_loop < 0:
+		return _fail(("`_draw` paints machine keylines and bands in ONE loop over `shapes`, so a "
+				+ "younger machine's keyline is painted over an older machine's band: %d of its %d "
+				+ "band px (%.1f%%) on two legal adjacent 2x2 footprints. Rule 11.39 says the "
+				+ "keyline yields and the ink does not, so every keyline goes in a first pass and "
+				+ "every band in a second.") % [eaten, band_px, 100.0 * float(eaten) / float(band_px)])
+	if not (first_loop < rim_at and rim_at < second_loop and second_loop < band_at):
+		return _fail(("the two building passes are out of order: first loop@%d, keyline@%d, second "
+				+ "loop@%d, band@%d. The outward keyline belongs to the FIRST pass and the band to "
+				+ "the SECOND, or a neighbour's rim eats a band again (%d of %d px).")
+				% [first_loop, rim_at, second_loop, band_at, eaten, band_px])
+	return true
+
+
 ## **`MIN_DEPOSIT_RADIUS_TILES` IS A SIM FACT LIVING IN A CLIENT CONSTANT, SO IT IS CHECKED AGAINST
 ## THE SIM** (ASSA-293). The held letter's whole justification is that it fits the narrowest patch
 ## `worldgen` can roll; `sim/src/worldgen.rs` rolls `rng.range(2, 5)` and there is no named constant
@@ -2291,4 +2365,117 @@ func test_a_centred_label_is_asked_for_its_ink_and_not_its_width() -> bool:
 	if absf(ink.end.x - band.end.x) > 0.01:
 		return _fail("right-aligned ink ends at x=%.1f and the Label at %.1f"
 				% [ink.end.x, band.end.x])
+	return true
+
+
+## **THE MACHINE MENU GOES IN THE HALF ITS MACHINE IS NOT IN** (ASSA-316, Maren's ruling 1).
+##
+## **THE PROPERTY IS "NEVER COVERS THE MACHINE", AND IT IS CHECKED AGAINST THE TILE RATHER THAN AGAINST
+## A HALF I NAME HERE.** A test that asserted "x is 504 for a machine on the left" would pass a function
+## that had both halves swapped and a sign error cancelling out. So this walks the world's whole width,
+## asks for the room at every step, and requires that the machine's own column is outside it -- which is
+## the clause the ruling exists for and the one a reader can check by eye.
+func test_a_machine_menu_never_opens_over_its_own_machine() -> bool:
+	var world := AssayHud.world_rect()
+	var halves := {}
+	for step in range(0, 913, 8):
+		var middle := world.position.x + float(step)
+		var room := AssayHud.machine_menu_room(world, middle)
+		if room.position.x <= middle and middle <= room.end.x:
+			return _fail("a machine at x=%.0f is inside its own menu's room %s" % [middle, room])
+		if not world.encloses(room):
+			return _fail("the room %s for a machine at x=%.0f is not inside the world %s"
+					% [room, middle, world])
+		halves[room.position.x] = true
+	# **TWO PLACES A PLAYER CAN LEARN, AND NOT THREE.** Her ruling is one boolean; a function that
+	# slid the panel along with the machine would pass every check above and fail this one.
+	if halves.size() != 2:
+		return _fail("a menu opens in %d places across the world, not 2: %s"
+				% [halves.size(), halves.keys()])
+	return true
+
+
+## **THE CENTRE LINE IS DECIDED, NOT LEFT TO A FLOAT** (her "deterministic on the exact centre"), AND
+## THE CAP IS HALF THE WORLD LESS TWO PADS.
+func test_a_machine_menus_room_is_bounded_and_decided_on_the_boundary() -> bool:
+	var world := AssayHud.world_rect()
+	var middle := world.get_center().x
+	var room := AssayHud.machine_menu_room(world, middle)
+	# Maren's test is `machine.centre.x < world.centre.x`, which is FALSE on the line: the machine
+	# counts as being in the right half, so the menu goes left.
+	if room.position.x > middle:
+		return _fail("a machine exactly on the centre line sent the menu right, to %s" % room)
+	# AND A HAIR EITHER SIDE MUST DISAGREE, or the branch above is vacuous.
+	if AssayHud.machine_menu_room(world, middle - 0.5).position.x <= middle:
+		return _fail("a machine just left of centre did not send the menu right")
+	var want := Vector2(world.size.x * 0.5, world.size.y) - AssayHud.MARGIN * 2.0
+	if not room.size.is_equal_approx(want):
+		return _fail("the room is %s and half the world less two pads is %s" % [room.size, want])
+	return true
+
+
+## **ONE AND HALF ARE THE ONLY COUNTS DERIVABLE FROM A STACK** (ASSA-316, Maren's ruling 4), AND
+## NEITHER IS EVER THE WHOLE STACK -- that is the row's own button, labelled with the result.
+func test_a_slots_fractions_are_derived_from_the_stack_and_never_repeat_it() -> bool:
+	var cases := {1: [], 2: [1], 3: [1], 4: [1, 2], 37: [1, 18], 210: [1, 105]}
+	for count in cases:
+		var got := AssayHud.insert_fractions(int(count))
+		var want: Array = cases[count]
+		if got.size() != want.size():
+			return _fail("a stack of %d offers %s, want %s" % [count, got, want])
+		for i in range(want.size()):
+			if got[i] != int(want[i]):
+				return _fail("a stack of %d offers %s, want %s" % [count, got, want])
+		if got.has(int(count)):
+			return _fail("a stack of %d offers the whole stack as a fraction: %s" % [count, got])
+	# A STACK OF 0 IS NOT A ROW, and nothing may be offered for it: `held` answers 0 between the
+	# press and the bundle that spends the stack.
+	if not AssayHud.insert_fractions(0).is_empty():
+		return _fail("a stack of 0 offers %s" % AssayHud.insert_fractions(0))
+	return true
+
+
+## **A SLOT BUTTON NAMES THE RESULT AND A TOGGLE NAMES WHAT YOU WILL GET** (ruling 4). The wording is
+## the only thing in this menu that is this client's own, so it is held somewhere a reader can see it.
+func test_a_slot_buttons_label_is_the_result_with_its_own_number() -> bool:
+	if AssayHud.insert_label(37, "Tonore ore") != "put all 37 Tonore ore":
+		return _fail("a slot button reads `%s`" % AssayHud.insert_label(37, "Tonore ore"))
+	if AssayHud.insert_some_label(18) != "or 18":
+		return _fail("a fraction toggle reads `%s`" % AssayHud.insert_some_label(18))
+	return true
+
+
+## **THE OPEN MENU'S MACHINE GIVES UP ITS LINE IN THE CURSOR READOUT, AND ONLY THAT ONE** (ASSA-316,
+## Maren's ruling 6: one fact, one home).
+func test_the_machine_whose_menu_is_open_leaves_the_cursor_readout() -> bool:
+	var tile := {
+		"pos": Vector2i(56, 40),
+		"in_bounds": true,
+		"chunk": Vector2i(3, 2),
+		"chunks_from_spawn": 0,
+		"ground_note": "no deposit here",
+		"building": {"id": 7, "name": "Minyte machine (B)", "kind": "machine",
+				"status": "holding 0 of 210 · mining Minyte"},
+	}
+	var shown := "\n".join(AssayHud.tile_lines(tile))
+	if not shown.contains("Minyte machine (B)"):
+		return _fail("the readout does not name a building standing on the tile: %s" % shown)
+	var hidden := "\n".join(AssayHud.tile_lines(tile, 7))
+	if hidden.contains("Minyte machine (B)"):
+		return _fail("the machine whose menu is open is still in the readout: %s" % hidden)
+	# EVERY OTHER LINE STAYS. The tile, the chunk, the ground: this drops one line, not a section.
+	if not hidden.contains("no deposit here") or not hidden.contains("(56, 40)"):
+		return _fail("dropping the building's line took the rest of the readout with it: %s" % hidden)
+	# ANOTHER MACHINE'S MENU DOES NOT SILENCE THIS ONE.
+	if not "\n".join(AssayHud.tile_lines(tile, 8)).contains("Minyte machine (B)"):
+		return _fail("a menu open for building 8 hid building 7's line")
+	# **AND A BUILDING WITH NO ID IS NOT SILENCED BY THE DEFAULT.** -1 is "no menu open"; a dictionary
+	# with no `id` also reads -1, and that pair is the one way this could drop the line nobody asked
+	# it to -- on the building whose name is missing, where this readout is the last surface left.
+	var nameless := tile.duplicate(true)
+	(nameless["building"] as Dictionary).erase("id")
+	(nameless["building"] as Dictionary).erase("name")
+	if not "\n".join(AssayHud.tile_lines(nameless)).contains("machine"):
+		return _fail("a building with no id lost its line with no menu open: %s"
+				% "\n".join(AssayHud.tile_lines(nameless)))
 	return true

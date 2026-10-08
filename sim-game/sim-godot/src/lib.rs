@@ -329,16 +329,7 @@ impl AssaySim {
     pub fn inventory_of(&self, player: i64) -> Array<VarDictionary> {
         self.inventory_facts(player_id_of(player))
             .iter()
-            .map(|stack| {
-                vdict! {
-                    "kind" => &gstring(&stack.kind).to_variant(),
-                    "species" => stack.species,
-                    "species_name" => &gstring(&stack.species_name).to_variant(),
-                    "grade" => &gstring(&stack.grade).to_variant(),
-                    "count" => stack.count,
-                    "name" => &gstring(&stack.name).to_variant(),
-                }
-            })
+            .map(stack_dict)
             .collect()
     }
 
@@ -718,6 +709,35 @@ impl AssaySim {
             "mass_high" => facts.mass_high,
             "budget_low" => facts.budget_low,
             "budget_high" => facts.budget_high,
+        }
+    }
+
+    /// EVERY NUMBER THE BUILD SCREEN'S READOUT DRAWS, for a design built out of
+    /// the parts a pack actually holds — one item per slot, each with its own
+    /// species and grade (ASSA-325).
+    ///
+    /// `design_if_built` above stays the question for a uniform design and its
+    /// caller is untouched; see [`DesignReadout`] for why this is not three more
+    /// fields on that one, and why durability crosses as SWINGS.
+    #[func]
+    pub fn design_readout(&self, frame: GString, mounted: PackedStringArray) -> VarDictionary {
+        let mounted: Vec<String> = mounted.as_slice().iter().map(ToString::to_string).collect();
+        let facts = design_readout_facts(&self.world, &frame.to_string(), &mounted);
+        vdict! {
+            "verdict" => &gstring(&facts.verdict).to_variant(),
+            "fault" => &gstring(&facts.fault).to_variant(),
+            "mass_low" => facts.mass_low,
+            "mass_high" => facts.mass_high,
+            "budget_low" => facts.budget_low,
+            "budget_high" => facts.budget_high,
+            "speed_low" => facts.speed_low,
+            "speed_high" => facts.speed_high,
+            "hand_speed" => facts.hand_speed,
+            "swings_low" => facts.swings_low,
+            "swings_high" => facts.swings_high,
+            "capacity_low" => facts.capacity_low,
+            "capacity_high" => facts.capacity_high,
+            "held" => facts.held,
         }
     }
 
@@ -1390,7 +1410,52 @@ fn design_dict(design: &DesignFacts) -> VarDictionary {
 /// renderer draws) both need this. Two copies is exactly the drift this repo
 /// keeps paying for: the tile under the mouse would go on saying one thing
 /// while the list it is drawn from said another, and both would look right.
+/// The exact string `PlayerCommand::Insert` round-trips for this slot, asked of
+/// serde rather than spelt.
+///
+/// **A LITERAL HERE WOULD OUTLIVE A RENAME.** The client submits commands as
+/// JSON (`{"Insert":{"building":1,"slot":"Fuel",…}}`), so the tag has to be the
+/// wire format's and not this crate's opinion of it; a hand-typed "Fuel" would
+/// keep compiling after the variant moved and the relay would drop every
+/// insert. `the_insert_tag_a_menu_is_handed_is_the_one_the_sim_parses` holds it
+/// against a real `PlayerCommand`.
+fn insert_tag(slot: sim::Slot) -> Option<String> {
+    match serde_json::to_value(slot) {
+        Ok(serde_json::Value::String(tag)) => Some(tag),
+        // Unreachable while `Slot` is a plain enum, and reported rather than
+        // papered over if it ever stops being one: a menu with no tag offers no
+        // put control, which is wrong but visible. Silently returning "Fuel"
+        // would be wrong and invisible.
+        _ => None,
+    }
+}
+
+fn slot_facts(world: &World, building: &sim::building::Building) -> Vec<SlotFacts> {
+    world
+        .building_slots(building)
+        .into_iter()
+        .map(|(role, held, cap)| SlotFacts {
+            role: role.name().to_string(),
+            insert_tag: role.insertable().and_then(insert_tag),
+            held: held.map(|stack| StackFacts {
+                kind: stack.item.kind.name().to_string(),
+                species: stack.item.species.0 as i64,
+                species_name: world.species(stack.item.species).name().to_string(),
+                grade: stack.item.grade.letter().to_string(),
+                count: stack.count as i64,
+                name: world.item_name(stack.item),
+            }),
+            count: held.map_or(0, |s| s.count) as i64,
+            cap: cap as i64,
+        })
+        .collect()
+}
+
 fn building_fact(world: &World, building: &sim::building::Building) -> BuildingFacts {
+    let (burn_left, burn_temperature) = match &building.kind {
+        sim::building::BuildingKind::Smelter(s) => (s.burn_left as i64, s.burn_temperature as i64),
+        sim::building::BuildingKind::Machine(_) => (0, 0),
+    };
     BuildingFacts {
         id: building.id.0 as i64,
         kind: building.kind.name().to_string(),
@@ -1412,6 +1477,22 @@ fn building_fact(world: &World, building: &sim::building::Building) -> BuildingF
             sim::SmelterState::Working { .. }
         ),
         stopped: world.building_state(building).halted(),
+        slots: slot_facts(world, building),
+        state: match world.building_state(building) {
+            sim::BuildingState::Smelter(sim::SmelterState::Working { .. })
+            | sim::BuildingState::Machine(sim::MachineState::Working { .. }) => "working",
+            sim::BuildingState::Smelter(sim::SmelterState::Idle)
+            | sim::BuildingState::Machine(sim::MachineState::Idle(_)) => "idle",
+            sim::BuildingState::Smelter(sim::SmelterState::Stalled(_))
+            | sim::BuildingState::Machine(sim::MachineState::Stalled(_)) => "stalled",
+        }
+        .to_string(),
+        state_line: sim::debug::building_state_line(world, building),
+        work: world
+            .building_work(building)
+            .map(|w| (i64::from(w.done), i64::from(w.total))),
+        burn_left,
+        burn_temperature,
     }
 }
 
@@ -1432,7 +1513,60 @@ fn building_dict(building: &BuildingFacts) -> VarDictionary {
         "species" => building.species,
         "lit" => building.lit,
         "stopped" => building.stopped,
+        "slots" => &building.slots.iter().map(slot_dict)
+            .collect::<Array<VarDictionary>>().to_variant(),
+        "state" => &gstring(&building.state).to_variant(),
+        "state_line" => &gstring(&building.state_line).to_variant(),
+        // ABSENT AS `nil`, NOT AS A ZEROED PAIR, which is `designs_of`'s
+        // treatment of `durability` for the same reason: `0 of 100` on a drill
+        // standing on bare ground is a number that reads as a promise.
+        "work" => &match building.work {
+            Some((done, total)) => Vector2i::new(done as i32, total as i32).to_variant(),
+            None => Variant::nil(),
+        },
+        "burn_left" => building.burn_left,
+        "burn_temperature" => building.burn_temperature,
     }
+}
+
+/// ONE STACK, SPELLED ONCE.
+///
+/// `inventory_of` inlined these six keys and a comment two hundred lines away
+/// said why they matter: "the three item fields are spelled exactly as
+/// `inventory_of` spells them, so `AssayActions.item_of_stack` builds the input
+/// item out of an offer with no second rearranging function". A slot's contents
+/// is a stack in exactly that sense — the thing a menu's put button sends back
+/// — so it goes through the same function rather than a second copy that agrees
+/// today. ASSA-146 is what a second copy of one spelling costs.
+fn stack_dict(stack: &StackFacts) -> VarDictionary {
+    vdict! {
+        "kind" => &gstring(&stack.kind).to_variant(),
+        "species" => stack.species,
+        "species_name" => &gstring(&stack.species_name).to_variant(),
+        "grade" => &gstring(&stack.grade).to_variant(),
+        "count" => stack.count,
+        "name" => &gstring(&stack.name).to_variant(),
+    }
+}
+
+fn slot_dict(slot: &SlotFacts) -> VarDictionary {
+    let mut out = vdict! {
+        "role" => &gstring(&slot.role).to_variant(),
+        "count" => slot.count,
+        "cap" => slot.cap,
+    };
+    // SET ONLY WHEN THERE IS ONE, both of these: `held` absent means empty and
+    // `insert_tag` absent means nothing can be put here. A key carrying "" for
+    // either is a value a caller can accidentally use (`Insert` with an empty
+    // slot name is a command the relay drops), where a missing key is a
+    // mistake GDScript reports on the line that made it.
+    if let Some(tag) = &slot.insert_tag {
+        out.set("insert_tag", &gstring(tag).to_variant());
+    }
+    if let Some(held) = &slot.held {
+        out.set("held", &stack_dict(held).to_variant());
+    }
+    out
 }
 
 /// The sim's reading of a design that does not exist: [`AssaySim::design_if_built`]'s
@@ -1463,6 +1597,140 @@ impl DesignIfBuilt {
             budget_low: 0,
             budget_high: 0,
         }
+    }
+}
+
+/// EVERY NUMBER THE BUILD SCREEN'S READOUT DRAWS, for a design that is not
+/// built and whose parts came out of a pack one click at a time (ASSA-325, for
+/// ASSA-317 / `assay-build-screen` §5.2).
+///
+/// **WHY THIS IS NOT THREE MORE FIELDS ON [`DesignIfBuilt`]**, which is where I
+/// started. That question takes ONE species and ONE grade for the whole design,
+/// and `only_the_frames_grade_moves_a_single_species_drill` says in its own
+/// docstring why that is sound: *"IT IS THE FOUR NUMBERS AND NOT THE WHOLE
+/// `StatRange`… the head contributes SPEED from hardness and DURABILITY from
+/// strength, both of which DO scale"*. Mass and budget do not move with a
+/// mounted part's grade; speed, durability and capacity do. Three fields on
+/// that signature would be exact only for a uniform-grade design, and
+/// `button_play.gd` asks it with one stack's grade. It is also the wrong shape
+/// for the screen: §4's model is clicking parts **out of your pack**, and pack
+/// rows carry their own species and grade.
+///
+/// **DURABILITY CROSSES AS SWINGS, NEVER AS THE POOL** — `debug::swings_afforded`
+/// and no arithmetic here. See that function: an exact pool is the head's
+/// effective strength, so a bar drawn off the pool would make a pick a free
+/// assay (ADR 0003 amendment A10).
+///
+/// **`held` AND `hand_speed` ARE HERE SO THE CLIENT DECIDES NOTHING.** Which of
+/// durability and capacity a design even has is the Game Director's display
+/// ruling on ASSA-5 (drill wear is parked, so a planted design showing a pool
+/// teaches a mechanic that does not exist), and the bare-hands baseline is her
+/// ruling 5 on ASSA-6 — without it, `speed 23` looks like a tool and is in fact
+/// slower than the hands that built it, which is a measured defect and not a
+/// nicety. Both are the sim's facts and neither may be a GDScript constant.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DesignReadout {
+    /// "SAFE" / "UNCERTAIN" / "WILL BREAK", or EMPTY when the rules refuse the
+    /// design — in which case `fault` says why and EVERY number below is zero.
+    pub verdict: String,
+    /// The sim's own phrase for why not. Never this crate's wording.
+    pub fault: String,
+    pub mass_low: i64,
+    pub mass_high: i64,
+    pub budget_low: i64,
+    pub budget_high: i64,
+    pub speed_low: i64,
+    pub speed_high: i64,
+    /// What bare hands do, from `tuning::HAND_WORK_PER_TICK`. The baseline
+    /// `speed` is only legible against. Zero on a refusal like everything else.
+    pub hand_speed: i64,
+    /// Swings, not the pool. Meaningless unless `held`.
+    pub swings_low: i64,
+    pub swings_high: i64,
+    /// What a planted design buffers. Meaningless when `held`.
+    pub capacity_low: i64,
+    pub capacity_high: i64,
+    /// True for a tool, false for a machine you plant. `Assembly::mount()`.
+    pub held: bool,
+}
+
+impl DesignReadout {
+    /// A design the rules throw out: the fault and **nothing else**.
+    ///
+    /// Every number zero and `held` false, deliberately exhaustive rather than
+    /// `..Default::default()`: a new field that forgot to be zeroed here is a
+    /// client drawing a bar for a design that cannot exist, and the test
+    /// `a_refused_design_crosses_no_numbers_at_all` reads the struct field by
+    /// field so adding one without thinking about it goes red.
+    fn refused(fault: String) -> Self {
+        Self {
+            verdict: String::new(),
+            fault,
+            mass_low: 0,
+            mass_high: 0,
+            budget_low: 0,
+            budget_high: 0,
+            speed_low: 0,
+            speed_high: 0,
+            hand_speed: 0,
+            swings_low: 0,
+            swings_high: 0,
+            capacity_low: 0,
+            capacity_high: 0,
+            held: false,
+        }
+    }
+}
+
+/// [`DesignReadout`] for the parts a pack row names, each with its own
+/// material. `frame` and every entry of `mounted` is an item as
+/// [`item_text`] spells one.
+///
+/// Engine-free so `cargo test` pins the numbers against `Assembly::stat_range`
+/// — see `AssaySim::design_readout`.
+pub fn design_readout_facts(world: &World, frame: &str, mounted: &[String]) -> DesignReadout {
+    let read = |text: &str| serde_json::from_str::<Item>(text).ok();
+    let Some(frame_item) = read(frame) else {
+        return DesignReadout::refused(format!("{frame} is not an item"));
+    };
+    // STEP'S REFUSALS IN STEP'S ORDER (`PlayerCommand::Assemble`): the frame's
+    // kind, then each mounted kind, then the slot rules. A readout that
+    // answered only the arithmetic would hand back numbers for a design
+    // `Assemble` throws out.
+    let Some(frame_part) = sim::assembly::Part::from_item(frame_item) else {
+        return DesignReadout::refused(sim::debug::not_a_part_phrase(frame_item.kind.name()));
+    };
+    let mut parts = Vec::with_capacity(mounted.len());
+    for text in mounted {
+        let Some(item) = read(text) else {
+            return DesignReadout::refused(format!("{text} is not an item"));
+        };
+        let Some(part) = sim::assembly::Part::from_item(item) else {
+            return DesignReadout::refused(sim::debug::not_a_part_phrase(item.kind.name()));
+        };
+        parts.push(part);
+    }
+    let assembly = Assembly::new(frame_part, parts);
+    if let Err(e) = assembly.validate() {
+        return DesignReadout::refused(sim::debug::assembly_error_phrase(e));
+    }
+
+    let range = assembly.stat_range(&world.species);
+    DesignReadout {
+        verdict: range.verdict().label().to_string(),
+        fault: String::new(),
+        mass_low: range.low.mass as i64,
+        mass_high: range.high.mass as i64,
+        budget_low: range.low.budget as i64,
+        budget_high: range.high.budget as i64,
+        speed_low: range.low.speed as i64,
+        speed_high: range.high.speed as i64,
+        hand_speed: i64::from(sim::tuning::HAND_WORK_PER_TICK),
+        swings_low: i64::from(sim::debug::swings_afforded(range.low.durability)),
+        swings_high: i64::from(sim::debug::swings_afforded(range.high.durability)),
+        capacity_low: range.low.capacity as i64,
+        capacity_high: range.high.capacity as i64,
+        held: assembly.mount() == Some(Mount::Held),
     }
 }
 
@@ -1727,6 +1995,44 @@ pub struct BuildingFacts {
     /// RULE ON is `FireTooCool` — lit, too cool, burning nothing — which draws
     /// cold today and is the Game Director's to settle (ASSA-119 box 11).
     pub lit: bool,
+    /// Every holder it has, in the sim's order. See [`SlotFacts`].
+    pub slots: Vec<SlotFacts>,
+    /// **WHICH OF THE THREE STANDING CONDITIONS THIS IS**, for branching and
+    /// for colour: `"working"`, `"idle"` or `"stalled"`. One vocabulary across
+    /// both kinds, from `BuildingState` — a caller asking "has this stopped?"
+    /// should not have to learn two (`building.rs`'s own reason for that enum).
+    ///
+    /// `stopped` STAYS and is not this. The bool is the sim's judgement about
+    /// whether a *person* is needed, and the two deliberately disagree: a
+    /// smelter's `idle` is not a problem and a machine's always is
+    /// (`MachineState::halted`). A client that derived one from the other would
+    /// re-litigate ASSA-80's ruling in GDScript.
+    pub state: String,
+    /// That condition as the one sentence the sim writes for it
+    /// (`debug::building_state_line`) — `stalled: no fuel`,
+    /// `idle: deposit is mined out`, `mining Tonore`.
+    ///
+    /// **NOT A NEW WORDING, AND THAT IS WHY IT IS SEPARATE FROM `status`.** The
+    /// menu needs the condition on its own line, in `FAILED` when it is a stall
+    /// (Maren's ruling 5 on ASSA-316); `status` is the whole dense line the
+    /// terminal table prints. Both are the same function's output, so they
+    /// cannot say different things.
+    pub state_line: String,
+    /// How far through the unit in front of it, as `(done, total)`, or `None`
+    /// when there is none — `World::building_work`. See [`sim::WorkReading`]
+    /// for why it is a pair and never a fraction.
+    pub work: Option<(i64, i64)>,
+    /// Ticks of burn left in the unit currently in the fire, and how hot it is.
+    /// Both zero when cold, and on a machine.
+    ///
+    /// Plain numbers and NOT a gauge, because the denominator — the full burn
+    /// of a fuel unit, `reactivity * BURN_TICKS_PER_REACTIVITY` — is a rule,
+    /// and a host multiplying it out would be writing that rule in GDScript.
+    /// If the menu wants a burn band, that total becomes a sim function beside
+    /// `building_work`; it is half a day and it is asked on ASSA-316 rather
+    /// than guessed at here.
+    pub burn_left: i64,
+    pub burn_temperature: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1753,6 +2059,44 @@ pub struct TileFacts {
     pub deposit: Option<DepositFacts>,
     pub building: Option<BuildingFacts>,
     pub players_here: Vec<String>,
+}
+
+/// ONE HOLDER OF A BUILDING, as a menu row needs it (ASSA-321, under
+/// ASSA-316's machine menu).
+///
+/// Before this, the only thing that crossed about a building's contents was
+/// `status` — one prose sentence. A menu built on that would have to parse
+/// `in 3 Tonore ore (C) · fuel 0 (0 ticks burning at 0)`, which is ASSA-140's
+/// bill: `button_play` asked `status.begins_with("mining")` and mislabelled
+/// the demo's own payoff. `stopped` exists because of that incident; this is
+/// the same remedy for the rest of the sentence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SlotFacts {
+    /// `SlotRole::name` — "input", "fuel", "output", "buffer". The sim's noun,
+    /// so the window and the terminal cannot drift (ASSA-146).
+    pub role: String,
+    /// **THE STRING `PlayerCommand::Insert` DESERIALISES, OR `None`.** Taken
+    /// from serde itself rather than typed here, because a tag this crate spelt
+    /// by hand would be a second copy of the wire format: it would survive a
+    /// variant rename and send a command the relay drops.
+    ///
+    /// `None` on the output slot and a machine's buffer, which are emptied by
+    /// `Take`. A host with no tag cannot build an `Insert` for them at all, so
+    /// a menu cannot offer a put control where the rules have no target — the
+    /// refusal is structural, not remembered (ASSA-43).
+    pub insert_tag: Option<String>,
+    /// What is in it, or `None` for empty. The same `StackFacts` the pack rows
+    /// get, so one stack is drawn one way wherever it is standing.
+    pub held: Option<StackFacts>,
+    /// How many units are in it: `held`'s count, or 0. Here as well as on
+    /// `held` because a fill is `count` over `cap` whether or not the slot has
+    /// anything in it, and an empty slot still has a band to draw.
+    pub count: i64,
+    /// What the sim will accept — the tuning cap for a smelter's slots, and the
+    /// `Capacity` its parts give a machine. **A RATIO AS TWO SIM NUMBERS**
+    /// (ASSA-276 move 3): nothing here is a percentage, and no host multiplies
+    /// anything out to get the denominator.
+    pub cap: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -4803,6 +5147,335 @@ mod tests {
         assert_eq!(placed.parts[0].grade, "B");
     }
 
+    // -----------------------------------------------------------------------
+    // ASSA-321: the slots, the batch and the condition, as data
+    // -----------------------------------------------------------------------
+
+    /// **THE TAG A MENU IS HANDED IS THE TAG THE SIM PARSES**, held against a
+    /// real `PlayerCommand` rather than against the string I typed.
+    ///
+    /// This is the premise every put button rests on: the client submits
+    /// commands as JSON, so a tag spelt by hand in this crate would survive a
+    /// variant rename and the relay would drop every insert. Asserting it
+    /// against my own constant is the shape that stays green while both sides
+    /// are wrong together — which my box-7 test did last week, and it is the
+    /// reason this test exists at all.
+    #[test]
+    fn the_insert_tag_a_menu_is_handed_is_the_one_the_sim_parses() {
+        for slot in [sim::Slot::Input, sim::Slot::Fuel] {
+            let tag = insert_tag(slot).expect("a slot an Insert can name has a tag");
+            let command = sim::PlayerCommand::Insert {
+                building: sim::BuildingId(1),
+                slot,
+                item: Item::new(sim::ItemKind::Ore, sim::SpeciesId(0), sim::Grade::A),
+                count: 2,
+            };
+            let wire = serde_json::to_string(&command).expect("a command serialises");
+            assert!(
+                wire.contains(&format!("\"slot\":\"{tag}\"")),
+                "the tag {tag} is not how {slot:?} appears on the wire: {wire}"
+            );
+            // And it comes back as the same slot, which is the half a `contains`
+            // cannot see.
+            let back: sim::PlayerCommand =
+                serde_json::from_str(&wire).expect("and deserialises again");
+            assert_eq!(back, command);
+        }
+    }
+
+    /// A smelter's three holders cross with their contents and the cap the SIM
+    /// will accept — and the output slot carries no tag, so a menu cannot offer
+    /// a put control for an act the rules have no target for (ASSA-43).
+    #[test]
+    fn a_smelters_slots_carry_their_contents_the_sims_caps_and_no_tag_for_the_output() {
+        let (mut sim, me) = with_a_player("nacre");
+        let rock = sim.world().species[0].id;
+        sim.world.species_mut(rock).sheet = sim::Sheet {
+            density: 50,
+            strength: 50,
+            hardness: 30,
+            heat_tolerance: 60,
+            reactivity: 1,
+            conductivity: 50,
+        };
+        let smelter = Item::new(sim::ItemKind::Smelter, rock, sim::Grade::B);
+        let ore = Item::new(sim::ItemKind::Ore, rock, sim::Grade::A);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.inventory.add(smelter, 1);
+            p.inventory.add(ore, 7);
+        }
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 1, at.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place {
+                item: smelter,
+                pos: spot,
+            },
+        )]);
+        let id = sim.world().building_at(spot).expect("placed").id;
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Insert {
+                building: id,
+                slot: sim::Slot::Input,
+                item: ore,
+                count: 7,
+            },
+        )]);
+
+        let facts = sim.building_facts();
+        let slots = &facts[0].slots;
+        let roles: Vec<&str> = slots.iter().map(|s| s.role.as_str()).collect();
+        assert_eq!(
+            roles,
+            vec!["input", "fuel", "output"],
+            "the set of rows is the sim's, in the order a player fixes things in"
+        );
+
+        let input = &slots[0];
+        assert_eq!(input.count, 7);
+        assert_eq!(
+            input.cap as u32,
+            sim::tuning::SMELTER_INPUT_CAP,
+            "the cap is what the sim accepts, so a fill needs no host arithmetic"
+        );
+        let held = input.held.as_ref().expect("seven ore are in it");
+        assert_eq!(held.count, 7);
+        assert_eq!(
+            held.name,
+            sim.world().item_name(ore),
+            "a slot's stack is named by the sim, exactly as a pack row is"
+        );
+        assert_eq!(
+            input.insert_tag.as_deref(),
+            Some("Input"),
+            "and the tag round-trips through the sim: see the test above"
+        );
+
+        assert_eq!(slots[1].count, 0, "nothing was put in the fuel slot");
+        assert!(slots[1].held.is_none(), "empty is absent, not a zero stack");
+        assert_eq!(slots[1].insert_tag.as_deref(), Some("Fuel"));
+
+        assert_eq!(
+            slots[2].insert_tag, None,
+            "NOTHING can be inserted into an output slot: `Slot` has no variant \
+             for it, so a menu is handed no way to try"
+        );
+        assert_eq!(slots[2].cap as u32, sim::tuning::SMELTER_OUTPUT_CAP);
+    }
+
+    /// **A MACHINE'S ONE HOLDER IS BOUNDED BY ITS OWN PARTS**, not by a tuning
+    /// constant — which is the rule a client listing the slots itself would
+    /// have had to know. Two drills with different hoppers have different caps,
+    /// and the fixture proves the number moves rather than trusting one world.
+    #[test]
+    fn a_machines_buffer_takes_its_cap_from_the_parts_it_was_built_from() {
+        let (mut sim, me) = with_a_player("nacre");
+        let species = sim.world().species[0].id;
+        let material = Item::new(sim::ItemKind::Refined, species, sim::Grade::B);
+        let frame = sim::assembly::Part::of(
+            sim::assembly::PartKind::Frame(sim::assembly::Mount::Planted),
+            material,
+        );
+        let head = sim::assembly::Part::of(sim::assembly::PartKind::Head, material);
+        let hopper = sim::assembly::Part::of(sim::assembly::PartKind::Hopper, material);
+        let bare = sim::assembly::Assembly::new(frame, vec![head]);
+        let hoppered = sim::assembly::Assembly::new(frame, vec![head, hopper]);
+        let roster = sim.world().species.clone();
+        let at = sim.world().player(me).expect("exists").pos;
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.assemblies
+                .push(sim::assembly::Built::new(bare.clone(), &roster));
+            p.assemblies
+                .push(sim::assembly::Built::new(hoppered.clone(), &roster));
+        }
+        // Planted one tile apart, so both are in the same fact list.
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::PlaceAssembly {
+                assembly: 1,
+                pos: sim::TilePos::new(at.x + 2, at.y),
+            },
+        )]);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::PlaceAssembly {
+                assembly: 0,
+                pos: sim::TilePos::new(at.x + 3, at.y),
+            },
+        )]);
+
+        let facts = sim.building_facts();
+        assert_eq!(facts.len(), 2, "both machines must plant: {facts:?}");
+        for machine in &facts {
+            assert_eq!(
+                machine.slots.len(),
+                1,
+                "a machine has one holder, and it is not a smelter's three"
+            );
+            assert_eq!(machine.slots[0].role, "buffer");
+            assert_eq!(
+                machine.slots[0].insert_tag, None,
+                "ore leaves a drill by Take: a machine has no insertable slot \
+                 at all (`RejectReason::NotInsertable`)"
+            );
+        }
+        let caps: Vec<i64> = facts.iter().map(|f| f.slots[0].cap).collect();
+        assert_eq!(
+            caps[0] as u32,
+            hoppered.stats(&roster).capacity,
+            "the cap is this machine's own Capacity stat"
+        );
+        assert_eq!(caps[1] as u32, bare.stats(&roster).capacity);
+        assert_ne!(
+            caps[0], caps[1],
+            "the fixture has to make the number MOVE, or a cap read off a \
+             constant would pass this test"
+        );
+    }
+
+    /// **THE TAG IS NOT `stopped` RENAMED**, and the arm that proves it is a
+    /// smelter's idle: the sim says `idle` and `stopped == false` on the same
+    /// building, because an empty smelter follows every finished batch and is
+    /// not something to fix (ASSA-80, restated on ASSA-94). A client deriving
+    /// one from the other would re-litigate that ruling in GDScript.
+    #[test]
+    fn the_state_tag_and_the_stopped_bool_are_allowed_to_disagree() {
+        let (mut sim, me) = with_a_player("nacre");
+        let rock = sim.world().species[0].id;
+        let smelter = Item::new(sim::ItemKind::Smelter, rock, sim::Grade::B);
+        sim.world
+            .player_mut(me)
+            .expect("the player exists")
+            .inventory
+            .add(smelter, 1);
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 1, at.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place {
+                item: smelter,
+                pos: spot,
+            },
+        )]);
+
+        let facts = sim.building_facts();
+        assert_eq!(facts[0].state, "idle");
+        assert!(
+            !facts[0].stopped,
+            "an empty smelter is idle and is NOT a problem: the two fields \
+             carry different questions"
+        );
+        assert_eq!(
+            facts[0].state_line,
+            sim::debug::building_state_line(sim.world(), sim.world().building_at(spot).unwrap()),
+            "the sentence is the sim's one wording, not a second copy"
+        );
+        assert_eq!(
+            facts[0].work, None,
+            "nothing is in front of it, so there is no batch to report"
+        );
+        assert_eq!((facts[0].burn_left, facts[0].burn_temperature), (0, 0));
+    }
+
+    /// The batch crosses as the pair the sim decided, and keeps crossing while
+    /// the smelter is STOPPED — the reading a player needs to know that feeding
+    /// it resumes rather than restarts.
+    #[test]
+    fn the_batch_a_smelter_is_part_way_through_crosses_as_two_numbers() {
+        let (mut sim, me) = with_a_player("nacre");
+        let rock = sim.world().species[0].id;
+        let fuel_species = sim.world().species[1].id;
+        sim.world.species_mut(rock).sheet = sim::Sheet {
+            density: 50,
+            strength: 50,
+            hardness: 30,
+            heat_tolerance: 60,
+            reactivity: 1,
+            conductivity: 50,
+        };
+        sim.world.species_mut(fuel_species).sheet = sim::Sheet {
+            density: 50,
+            strength: 50,
+            hardness: 30,
+            heat_tolerance: sim::tuning::HAND_SPARK_TEMPERATURE as u8,
+            reactivity: 60,
+            conductivity: 50,
+        };
+        let smelter = Item::new(sim::ItemKind::Smelter, rock, sim::Grade::B);
+        let ore = Item::new(sim::ItemKind::Ore, rock, sim::Grade::A);
+        let fuel = Item::new(sim::ItemKind::Ore, fuel_species, sim::Grade::A);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.inventory.add(smelter, 1);
+            p.inventory.add(ore, 5);
+            p.inventory.add(fuel, 1);
+        }
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 1, at.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place {
+                item: smelter,
+                pos: spot,
+            },
+        )]);
+        let id = sim.world().building_at(spot).expect("placed").id;
+
+        // Ore and no fuel: stalled, and the batch has not started.
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Insert {
+                building: id,
+                slot: sim::Slot::Input,
+                item: ore,
+                count: 5,
+            },
+        )]);
+        let stalled = &sim.building_facts()[0];
+        assert_eq!(stalled.state, "stalled");
+        assert_eq!(
+            stalled.work,
+            Some((0, i64::from(sim::RecipeId::Refine.recipe().ticks))),
+            "a stall does not remove the batch in front of it"
+        );
+
+        // Now light it and let it work.
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Insert {
+                building: id,
+                slot: sim::Slot::Fuel,
+                item: fuel,
+                count: 1,
+            },
+        )]);
+        for _ in 0..6 {
+            sim.step_with(&[]);
+        }
+        let working = &sim.building_facts()[0];
+        assert_eq!(working.state, "working");
+        let (done, total) = working.work.expect("a working smelter has a batch");
+        assert_eq!(total, i64::from(sim::RecipeId::Refine.recipe().ticks));
+        assert!(done > 0 && done < total, "mid-batch: {done} of {total}");
+        assert!(
+            working.burn_left > 0 && working.burn_temperature > 0,
+            "a fire is burning in it: {working:?}"
+        );
+        // THE PAIR IS THE SIM'S, not a number this crate reproduced.
+        let theirs = sim
+            .world()
+            .building_work(sim.world().building(id).expect("standing"))
+            .expect("the sim says there is a batch");
+        assert_eq!(
+            (done, total),
+            (i64::from(theirs.done), i64::from(theirs.total))
+        );
+    }
+
     /// **EVERY PART OF A PLANTED MACHINE CARRIES ITS OWN MATERIAL**, which is
     /// the whole of what makes one drawable (ASSA-138).
     ///
@@ -5116,6 +5789,284 @@ mod tests {
         assert!(
             seen.len() > 1,
             "every count and grade agreed, so this test cannot see a disagreement: {seen:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // ASSA-325: the whole readout, for a design made of the parts a pack holds.
+    // -----------------------------------------------------------------------
+
+    /// One item as the text `design_readout` takes.
+    fn item_of(kind: ItemKind, species: sim::SpeciesId, grade: sim::Grade) -> String {
+        serde_json::to_string(&Item::new(kind, species, grade)).expect("an item spells")
+    }
+
+    /// `(frame, mounted)` as texts, and the `Assembly` they stand for, so every
+    /// test below can ask the binding and the sim the same question.
+    fn design_of(
+        parts: &[(sim::PartKind, sim::SpeciesId, sim::Grade)],
+    ) -> (String, Vec<String>, Assembly) {
+        let texts: Vec<String> = parts
+            .iter()
+            .map(|(k, s, g)| item_of(ItemKind::Part(*k), *s, *g))
+            .collect();
+        let as_part = |(k, s, g): &(sim::PartKind, sim::SpeciesId, sim::Grade)| {
+            sim::Part::of(*k, Item::new(ItemKind::Refined, *s, *g))
+        };
+        let (frame, mounted) = parts.split_first().expect("a frame");
+        let assembly = Assembly::new(as_part(frame), mounted.iter().map(as_part).collect());
+        (texts[0].clone(), texts[1..].to_vec(), assembly)
+    }
+
+    /// **EVERY NUMBER IS `Assembly::stat_range`'S, not this crate's.** Driven
+    /// over two species (one assayed, one rough), all three grades and every
+    /// legal hopper count, because a roster that reads exact everywhere has
+    /// `low == high` on every stat and cannot see a band's ends swapped.
+    ///
+    /// The two premises at the end are the test's own honesty: a population
+    /// that held one verdict, or no band at all, would agree with anything.
+    #[test]
+    fn every_number_the_build_readout_crosses_is_the_sims_own() {
+        let (mut sim, _me) = with_a_player("limpet");
+        sim.world.species[0].assayed = true;
+        sim.world.species[1].assayed = false;
+        let mut verdicts: Vec<String> = Vec::new();
+        let mut saw_a_band = false;
+        for index in [0usize, 1] {
+            let species = sim.world().species[index].id;
+            for grade in [sim::Grade::C, sim::Grade::B, sim::Grade::A] {
+                for hoppers in 0..=sim::tuning::MAX_HOPPER_SLOTS as usize {
+                    let mut parts = vec![
+                        (sim::PartKind::Frame(Mount::Planted), species, grade),
+                        (sim::PartKind::Head, species, grade),
+                    ];
+                    parts.extend(std::iter::repeat_n(
+                        (sim::PartKind::Hopper, species, grade),
+                        hoppers,
+                    ));
+                    let (frame, mounted, assembly) = design_of(&parts);
+                    let got = design_readout_facts(sim.world(), &frame, &mounted);
+                    let range = assembly.stat_range(&sim.world().species);
+
+                    assert!(
+                        got.fault.is_empty(),
+                        "{hoppers} hoppers was refused: {got:?}"
+                    );
+                    assert_eq!(
+                        (
+                            got.verdict.as_str(),
+                            got.mass_low,
+                            got.mass_high,
+                            got.budget_low,
+                            got.budget_high,
+                            got.speed_low,
+                            got.speed_high,
+                            got.capacity_low,
+                            got.capacity_high,
+                            got.swings_low,
+                            got.swings_high,
+                            got.held,
+                        ),
+                        (
+                            range.verdict().label(),
+                            range.low.mass as i64,
+                            range.high.mass as i64,
+                            range.low.budget as i64,
+                            range.high.budget as i64,
+                            range.low.speed as i64,
+                            range.high.speed as i64,
+                            range.low.capacity as i64,
+                            range.high.capacity as i64,
+                            i64::from(sim::debug::swings_afforded(range.low.durability)),
+                            i64::from(sim::debug::swings_afforded(range.high.durability)),
+                            false,
+                        ),
+                        "species {index} grade {} with {hoppers} hoppers: {got:?} against {range:?}",
+                        grade.letter()
+                    );
+                    saw_a_band = saw_a_band
+                        || got.speed_low < got.speed_high
+                        || got.swings_low < got.swings_high;
+                    verdicts.push(got.verdict);
+                }
+            }
+        }
+        assert!(
+            saw_a_band,
+            "every design read exact, so swapping a band's ends is invisible here"
+        );
+        verdicts.sort();
+        verdicts.dedup();
+        assert!(
+            verdicts.len() > 1,
+            "every design agreed, so this fixture cannot see a disagreement: {verdicts:?}"
+        );
+    }
+
+    /// **THE CASE THAT MADE THIS A SECOND ENTRY POINT RATHER THAN THREE FIELDS
+    /// ON `design_if_built`.** A head a grade lower really does make a slower,
+    /// shorter-lived machine, and a question that takes one grade for the whole
+    /// design cannot say so -- while mass and budget, which is all
+    /// `design_if_built` answers, genuinely do not move.
+    ///
+    /// Asserted in both directions: the two numbers that must NOT move, and the
+    /// two that MUST. Without the second half this test would pass against a
+    /// readout that ignored the mounted parts' grades entirely.
+    #[test]
+    fn a_pack_holding_two_grades_is_weighed_part_by_part() {
+        let (mut sim, _me) = with_a_player("limpet");
+        sim.world.species[0].assayed = true;
+        let rock = sim.world().species[0].id;
+        let ask = |head: sim::Grade| {
+            let (frame, mounted, _) = design_of(&[
+                (sim::PartKind::Frame(Mount::Held), rock, sim::Grade::A),
+                (sim::PartKind::Head, rock, head),
+            ]);
+            design_readout_facts(sim.world(), &frame, &mounted)
+        };
+        let best = ask(sim::Grade::A);
+        let worse = ask(sim::Grade::C);
+
+        assert_eq!(
+            (
+                best.mass_low,
+                best.mass_high,
+                best.budget_low,
+                best.budget_high
+            ),
+            (
+                worse.mass_low,
+                worse.mass_high,
+                worse.budget_low,
+                worse.budget_high
+            ),
+            "the head's grade must not move mass or budget -- that is the claim\n\
+             `design_if_built`'s single grade rests on: {best:?} against {worse:?}"
+        );
+        assert!(
+            worse.speed_high < best.speed_high && worse.swings_high < best.swings_high,
+            "a grade-C head must give a slower, shorter-lived tool, or this\n\
+             readout is ignoring the grades of the parts it was handed:\n\
+             {worse:?} against {best:?}"
+        );
+        assert!(best.held, "a handle frame is held");
+        assert_eq!(
+            best.hand_speed,
+            i64::from(sim::tuning::HAND_WORK_PER_TICK),
+            "the baseline speed is only legible against is the sim's constant"
+        );
+    }
+
+    /// **A DESIGN THE RULES THROW OUT CROSSES NO NUMBERS**, read field by field.
+    ///
+    /// Every number zero and `held` false. A client that drew a bar off a
+    /// refused design would draw one for a machine that cannot exist, and the
+    /// three refusals here are step's three, in step's order.
+    #[test]
+    fn a_refused_design_crosses_no_numbers_at_all() {
+        let (mut sim, _me) = with_a_player("limpet");
+        sim.world.species[0].assayed = true;
+        let rock = sim.world().species[0].id;
+        let head = item_of(ItemKind::Part(sim::PartKind::Head), rock, sim::Grade::A);
+        let handle = item_of(
+            ItemKind::Part(sim::PartKind::Frame(Mount::Held)),
+            rock,
+            sim::Grade::A,
+        );
+        let ore = item_of(ItemKind::Ore, rock, sim::Grade::A);
+
+        for (what, frame, mounted) in [
+            ("an ore in the frame slot", ore.clone(), vec![head.clone()]),
+            ("an ore mounted", handle.clone(), vec![ore.clone()]),
+            (
+                "two heads on a handle",
+                handle.clone(),
+                vec![head.clone(), head.clone()],
+            ),
+            ("not an item at all", "{}".to_string(), vec![head.clone()]),
+        ] {
+            let got = design_readout_facts(sim.world(), &frame, &mounted);
+            assert!(!got.fault.is_empty(), "{what} should have a fault: {got:?}");
+            // THE ZEROS ARE WRITTEN OUT HERE AND NOT TAKEN FROM
+            // `DesignReadout::refused`, and a mutation is why. Comparing
+            // against that constructor compared the function with itself: a
+            // mutation putting 7 in one of its fields left this GREEN. A
+            // struct literal also makes a new field a COMPILE error here,
+            // which is stronger than a red -- whoever adds one has to decide
+            // what a refused design says about it.
+            assert_eq!(
+                got,
+                DesignReadout {
+                    verdict: String::new(),
+                    fault: got.fault.clone(),
+                    mass_low: 0,
+                    mass_high: 0,
+                    budget_low: 0,
+                    budget_high: 0,
+                    speed_low: 0,
+                    speed_high: 0,
+                    hand_speed: 0,
+                    swings_low: 0,
+                    swings_high: 0,
+                    capacity_low: 0,
+                    capacity_high: 0,
+                    held: false,
+                },
+                "{what}: a refusal must carry the fault and NOTHING else: {got:?}"
+            );
+        }
+
+        // THE PREMISE, or the loop above would pass against a readout that
+        // refused everything: the legal version of the same parts answers.
+        let (frame, mounted, _) = design_of(&[
+            (sim::PartKind::Frame(Mount::Held), rock, sim::Grade::A),
+            (sim::PartKind::Head, rock, sim::Grade::A),
+        ]);
+        let fine = design_readout_facts(sim.world(), &frame, &mounted);
+        assert!(fine.fault.is_empty() && fine.mass_low > 0, "{fine:?}");
+    }
+
+    /// **DURABILITY CROSSES AS SWINGS AND THE POOL NEVER CROSSES AT ALL**
+    /// (ADR 0003 amendment A10). The number here is the pool over
+    /// `PICK_WEAR_PER_SWING`, which is what `durability_readout` has printed
+    /// since ASSA-5, and the pool is what a bar drawn off it would leak:
+    /// divided by 60 it IS the head's effective strength.
+    ///
+    /// The constant is 20, so a readout that crossed the pool by mistake would
+    /// be twenty times this and the inequality below is not cosmetic.
+    #[test]
+    fn durability_crosses_as_swings_and_never_as_the_pool() {
+        let (mut sim, _me) = with_a_player("limpet");
+        sim.world.species[0].assayed = true;
+        let rock = sim.world().species[0].id;
+        let (frame, mounted, assembly) = design_of(&[
+            (sim::PartKind::Frame(Mount::Held), rock, sim::Grade::A),
+            (sim::PartKind::Head, rock, sim::Grade::A),
+        ]);
+        let got = design_readout_facts(sim.world(), &frame, &mounted);
+        let pool = assembly.stat_range(&sim.world().species).high.durability;
+
+        assert!(pool > 0, "the fixture needs a head that gives a pool");
+        assert_eq!(
+            got.swings_high,
+            i64::from(sim::debug::swings_afforded(pool)),
+            "swings must come from the sim's own division"
+        );
+        assert!(
+            got.swings_high < i64::from(pool),
+            "the pool itself ({pool}) must never be what crosses: {got:?}"
+        );
+        // And a planted design says it is not held, so a client cannot draw a
+        // pool on a drill -- the Game Director's ruling, crossed as data.
+        let (frame, mounted, _) = design_of(&[
+            (sim::PartKind::Frame(Mount::Planted), rock, sim::Grade::A),
+            (sim::PartKind::Head, rock, sim::Grade::A),
+        ]);
+        let drill = design_readout_facts(sim.world(), &frame, &mounted);
+        assert!(!drill.held, "a planted frame is not held: {drill:?}");
+        assert!(
+            drill.capacity_high > 0,
+            "a drill buffers something: {drill:?}"
         );
     }
 

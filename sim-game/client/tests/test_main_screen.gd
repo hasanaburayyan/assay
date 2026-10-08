@@ -4539,6 +4539,84 @@ func test_the_door_world_fills_the_window_and_a_world_gives_the_column_back() ->
 	return ok
 
 
+## **THE DOOR CAMERA IS ON ITS NAMED LOOK-AT, AND THE ORE WAS GATHERED THERE TOO** (ASSA-311, Maren).
+##
+## ASSA-292 pointed this camera at `spawn_tile()`, and ADR 0001 guarantees ore beside spawn in every
+## seed, so the title card sat on a deposit by construction. `DOOR_LOOK_AT` moves it; what this owns
+## is that BOTH places that need the look-at use it.
+##
+## **AND THE SECOND HALF IS THE ONE THAT WOULD HAVE SHIPPED BROKEN.** `_door_ore_under` gathers the
+## ore ONCE, over a window around its own `home`, and nothing afterwards asks the sim about a tile
+## outside it. Move the camera and leave that line on spawn and the title screen is a lit world with
+## **no ore in it at all** -- a picture, not a crash, and every other test on this screen still green.
+## That is this week's lesson twice over (ASSA-292 box 3, ASSA-292's `_process` guard): a constant
+## used in two places needs a test that the two agree, not two tests that each read it.
+##
+## **THE PHASES COME FROM `AssayScene`'s OWN PUBLISHED SAMPLE COUNT**, not from a list typed here, so
+## a retune of the loop cannot leave a stale phase table behind. A deposit the camera sees at ANY
+## phase must have been gathered, because the ore window is built once and the camera keeps moving.
+##
+## **ITS BOUND:** if the look-at ever coincides with spawn this test cannot tell one from the other,
+## and if no deposit is in frame at any phase it asserts nothing about ore. Both fail loudly instead.
+func test_the_door_gathers_its_ore_where_its_camera_is_pointing() -> bool:
+	var ok := true
+	var door := _screen()
+	var view: Dictionary = door._world.view
+	if view.is_empty():
+		door.queue_free()
+		return _fail("the door drew no world at all, so this test asked nothing (stale client-lib?)")
+	var world_tiles: Vector2i = view.get("world_tiles", Vector2i.ZERO)
+	var layer: Vector2 = view.get("size", Vector2.ZERO)
+	var seconds := float(view.get("seconds", 0.0))
+	var drift := AssayScene.title_drift(seconds)
+	var want := AssayScene.camera_origin(door.DOOR_LOOK_AT + drift, world_tiles, layer, 0.0)
+	var spawn_at := AssayScene.camera_origin(
+			Vector2(door._door_sim.spawn_tile()) + drift, world_tiles, layer, 0.0)
+	if want.distance_to(spawn_at) < 1.0:
+		ok = _fail(("DOOR_LOOK_AT %s and spawn %s put the camera in the same place, so this test "
+				+ "cannot tell the framing ASSA-311 asked for from the one it replaced")
+				% [door.DOOR_LOOK_AT, door._door_sim.spawn_tile()])
+	elif (view.get("origin", Vector2.ZERO) as Vector2).distance_to(want) > 0.01:
+		ok = _fail(("the door camera is at %s where DOOR_LOOK_AT puts it at %s (spawn would be %s): "
+				+ "the title card is framed on whatever the camera found")
+				% [view.get("origin"), want, spawn_at])
+	var ore: Dictionary = view.get("ore", {})
+	var in_frame := 0
+	var missed: Array[Vector2i] = []
+	for entry in door._door_sim.deposits():
+		var patch: Dictionary = entry
+		var at: Vector2i = patch.get("center", Vector2i.ZERO)
+		var radius := int(patch.get("radius", 0))
+		var box := Rect2i(at - Vector2i(radius, radius), Vector2i(radius * 2 + 1, radius * 2 + 1))
+		var seen := false
+		for i in range(AssayScene.TITLE_DRIFT_SAMPLES):
+			var at_second := i * AssayScene.TITLE_DRIFT_PERIOD / float(AssayScene.TITLE_DRIFT_SAMPLES)
+			var origin := AssayScene.camera_origin(
+					door.DOOR_LOOK_AT + AssayScene.title_drift(at_second), world_tiles, layer, 0.0)
+			if AssayScene.visible_tiles(origin, layer, world_tiles).intersects(box):
+				seen = true
+				break
+		if not seen:
+			continue
+		in_frame += 1
+		var gathered := false
+		for y in range(box.position.y, box.end.y):
+			for x in range(box.position.x, box.end.x):
+				if ore.has(Vector2i(x, y)):
+					gathered = true
+		if not gathered:
+			missed.append(at)
+	if ok and in_frame == 0:
+		ok = _fail(("no deposit of the %d in the door world is in frame at any phase of the loop, so "
+				+ "this test said nothing about the ore") % door._door_sim.deposits().size())
+	elif ok and not missed.is_empty():
+		ok = _fail(("%d of the %d deposits the door camera sees have no ore gathered for them, the "
+				+ "first at %s: the ore window is built somewhere the camera is not pointing")
+				% [missed.size(), in_frame, missed[0]])
+	door.queue_free()
+	return ok
+
+
 ## Rect2 equality with one pixel-hundredth of slack, so a test about a 344 px column cannot fail on a
 ## float.
 func _same_rect(a: Rect2, b: Rect2) -> bool:

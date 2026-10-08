@@ -16,7 +16,25 @@ extends SceneTree
 ## has no layout pass, so a width this file computed would be an arithmetic claim about a window
 ## nobody opened. Three widths are swept instead of one, so the verdict cannot rest on a guess at the
 ## padding: 318 px is Maren's measured HUD column, 300 and 286 are it less plausible inner padding.
+##
+## **THE BREAK FLAGS WERE WRONG UNTIL 2026-10-08 AND THAT IS MINE.** This file passed
+## `BREAK_WORD_BOUND | BREAK_GRAPHEME_BOUND`, reasoning that `AUTOWRAP_WORD_SMART` is those two
+## flags. It is not: `AutowrapMode` and `LineBreakFlag` are different enums (WORD_SMART is 3, that
+## pair is 6), and a `Label` on WORD_SMART asks for `MANDATORY | WORD_BOUND | ADAPTIVE |
+## TRIM_EDGE_SPACES`. `GRAPHEME_BOUND` is what ARBITRARY wraps with, so the old flags let a break
+## land INSIDE a word and so undercounted rows. Measured cost of the bug on ASSA-272's own sentence:
+## the reorder reads as 4 rows at 300 px under the old flags and **5 under a Label's**. Every row
+## count this tool printed before today is suspect by a row; the unwrapped px are not, since they
+## never went through a break.
 const WIDTHS: Array[int] = [318, 300, 286]
+## What a `Label` set to `AUTOWRAP_WORD_SMART` passes to the text server. Named rather than inlined
+## so the next instrument of this family cannot quietly disagree with this one.
+const WORD_SMART_BREAKS: int = (
+	TextServer.BREAK_MANDATORY
+	| TextServer.BREAK_WORD_BOUND
+	| TextServer.BREAK_ADAPTIVE
+	| TextServer.BREAK_TRIM_EDGE_SPACES
+)
 
 
 func _initialize() -> void:
@@ -56,10 +74,11 @@ func _initialize() -> void:
 		var unwrapped := font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size).x
 		var counts := PackedStringArray()
 		for w in WIDTHS:
-			# get_multiline_string_size wraps the same way a Label does at a given width.
+			# get_multiline_string_size wraps the same way a Label does at a given width -- which is
+			# true only with the flags a Label actually passes; see WORD_SMART_BREAKS.
 			var h := font.get_multiline_string_size(
 					line, HORIZONTAL_ALIGNMENT_LEFT, float(w), size,
-					-1, TextServer.BREAK_WORD_BOUND | TextServer.BREAK_GRAPHEME_BOUND).y
+					-1, WORD_SMART_BREAKS).y
 			var rows := int(round(h / line_h))
 			counts.append("%d px: %d rows (%d px tall)" % [w, rows, int(round(h))])
 		print("%7.1f px unwrapped | %s" % [unwrapped, " · ".join(counts)])
