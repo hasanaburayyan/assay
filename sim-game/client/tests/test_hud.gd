@@ -2469,9 +2469,22 @@ func test_a_slots_fractions_are_derived_from_the_stack_and_never_repeat_it() -> 
 
 ## **A SLOT BUTTON NAMES THE RESULT AND A TOGGLE NAMES WHAT YOU WILL GET** (ruling 4). The wording is
 ## the only thing in this menu that is this client's own, so it is held somewhere a reader can see it.
+##
+## **AND THE LABEL CARRIES ITS SLOT** (ASSA-331, Maren: *"a button says what IT does, not what the
+## heading above it does"*). A stack the sim takes as either fuel or input draws two of these buttons;
+## the slot is the only thing that differs, so the test that matters is that two labels for one stack
+## CANNOT COME OUT THE SAME -- not that either of them reads a particular way.
 func test_a_slot_buttons_label_is_the_result_with_its_own_number() -> bool:
-	if AssayHud.insert_label(37, "Tonore ore") != "put all 37 Tonore ore":
-		return _fail("a slot button reads `%s`" % AssayHud.insert_label(37, "Tonore ore"))
+	if AssayHud.insert_label(37, "Tonore ore", AssayActions.SLOT_FUEL) \
+			!= "put all 37 Tonore ore in the Fuel slot":
+		return _fail("a slot button reads `%s`"
+				% AssayHud.insert_label(37, "Tonore ore", AssayActions.SLOT_FUEL))
+	# THE SIM'S OWN TWO SLOT NAMES, not two strings of mine: `Insert` deserialises these (`insert_tag`),
+	# so a label that differed only in a word this client invented would be a second naming of them.
+	if AssayHud.insert_label(37, "Tonore ore", AssayActions.SLOT_FUEL) \
+			== AssayHud.insert_label(37, "Tonore ore", AssayActions.SLOT_INPUT):
+		return _fail("the fuel and input buttons for one stack read alike: `%s`"
+				% AssayHud.insert_label(37, "Tonore ore", AssayActions.SLOT_FUEL))
 	if AssayHud.insert_some_label(18) != "or 18":
 		return _fail("a fraction toggle reads `%s`" % AssayHud.insert_some_label(18))
 	return true

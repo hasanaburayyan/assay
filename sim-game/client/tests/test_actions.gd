@@ -211,12 +211,16 @@ func test_the_recipe_table_says_which_recipes_are_a_players_to_make() -> bool:
 	return true
 
 
-## WHICH VERBS A STACK OFFERS IS READ OUT OF THOSE TWO CATALOGUES, never written down here.
+## WHICH VERBS A STACK OFFERS IS READ OUT OF THE SIM'S CATALOGUE, never written down here.
 ##
-## The rule being tested: an Insert pair appears because some recipe eats this kind inside a
-## BUILDING; Place appears because the item has a footprint; Frame/Mount appears because the kind is
-## in the part catalogue. Nothing about whether it is affordable, in reach or hard enough --
-## `sim::step` owns all of that.
+## The rule being tested: Place appears because the item has a footprint; Frame/Mount appears because
+## the kind is in the part catalogue. Nothing about whether it is affordable, in reach or hard enough
+## -- `sim::step` owns all of that.
+##
+## **THE INSERT PAIR USED TO BE THE FIRST THING ASSERTED HERE AND IS NOW ASSERTED AGAINST** (ASSA-331,
+## Maren's ruling). `Fuel`/`Smelt` on a pack row needed a building under the placement cursor, which her
+## ruling 8 made unreachable, so they could only refuse. The sheet reading they rested on is tested next
+## door against `insert_slots`, which is what the machine menu asks.
 ##
 ## **AND NO `craft` OR `make`, WHICH IS THE ASSERTION THAT FLIPPED (ASSA-86, Maren's ruling.)** A
 ## pack row keeps the verbs that MOVE an item; everything that MAKES something is in the crafting
@@ -227,30 +231,33 @@ func test_the_recipe_table_says_which_recipes_are_a_players_to_make() -> bool:
 func test_a_stacks_verbs_come_from_the_sims_recipes_and_catalogue() -> bool:
 	var recipes := AssaySimHost.recipes()
 	var part_kinds := AssaySimHost.part_kinds()
-	var ore := AssayHud.stack_verbs(_stack("ore", 2, "C", 9), recipes, part_kinds,
-			Vector2i.ZERO)
+	var ore := AssayHud.stack_verbs(_stack("ore", 2, "C", 9), part_kinds, Vector2i.ZERO)
 	if _has(ore, "craft"):
 		return _fail("ore offers a Craft; making something belongs to the menu: %s" % [ore])
-	if not _has(ore, "insert"):
-		return _fail("ore offers no Insert, though a smelter refines it: %s" % [ore])
+	# **ORE IS THE KIND A SMELTER EATS, AND THAT IS WHY IT MAY NOT OFFER AN INSERT HERE** (ASSA-331).
+	# A pack row has no machine, so this is the one kind on which the deleted pair could look right.
+	if _has(ore, "insert"):
+		return _fail(("ore offers an Insert on a PACK ROW, which can only be aimed at the placement "
+				+ "cursor and so can only refuse (ASSA-331): %s") % [ore])
 	if _has(ore, "place"):
 		return _fail("ore is not a building and must not offer Place: %s" % [ore])
-	# ONE Insert PAIR, not one per smelter recipe: `Refine` and `Resmelt` both eat ore-ish things and
-	# two identical buttons beside each other is a menu that looks broken.
-	var inserts := 0
-	for entry in ore:
-		if String((entry as Dictionary).get("verb", "")) == "insert":
-			inserts += 1
-	if inserts != 2:
-		return _fail("ore offers %d Insert buttons; it should be exactly fuel and input" % inserts)
+	# AND NOT ONE SURVIVING ON ANY KIND, which is the assertion a hand-picked kind would miss: the pair
+	# was derived from the recipe table, so every kind some non-hand recipe eats grew it.
+	for entry in recipes:
+		var recipe: Dictionary = entry
+		if bool(recipe.get("hand", false)):
+			continue
+		var eaten := String(recipe.get("input", ""))
+		var verbs := AssayHud.stack_verbs(_stack(eaten, 2, "C", 9), part_kinds, Vector2i.ZERO)
+		if _has(verbs, "insert"):
+			return _fail("`%s` is eaten by a building recipe and its pack row still offers an Insert: %s"
+					% [eaten, verbs])
 
-	var smelter := AssayHud.stack_verbs(_stack("smelter", 2, "C", 1), recipes, part_kinds,
-			Vector2i(2, 2))
+	var smelter := AssayHud.stack_verbs(_stack("smelter", 2, "C", 1), part_kinds, Vector2i(2, 2))
 	if not _has(smelter, "place"):
 		return _fail("a smelter item has a 2x2 footprint and must offer Place: %s" % [smelter])
 
-	var head := AssayHud.stack_verbs(_stack("head", 2, "B", 1), recipes, part_kinds,
-			Vector2i.ZERO)
+	var head := AssayHud.stack_verbs(_stack("head", 2, "B", 1), part_kinds, Vector2i.ZERO)
 	if not _has(head, "build"):
 		return _fail("a part offers no way into an Assemble: %s" % [head])
 	# A HEAD IS NOT A FRAME, SO ITS ROW SAYS `Mount` -- and says it whatever the player has chosen so
@@ -261,8 +268,7 @@ func test_a_stacks_verbs_come_from_the_sims_recipes_and_catalogue() -> bool:
 
 	# A kind nothing eats and nothing places offers nothing, and is STILL LISTED by the pack -- the
 	# row is what a player is carrying, not a menu of what they can do.
-	var gear := AssayHud.stack_verbs(_stack("gear", 2, "B", 1), recipes, part_kinds,
-			Vector2i.ZERO)
+	var gear := AssayHud.stack_verbs(_stack("gear", 2, "B", 1), part_kinds, Vector2i.ZERO)
 	for entry in gear:
 		if String((entry as Dictionary).get("verb", "")) in ["craft", "place", "build"]:
 			return _fail("a gear is not craftable, placeable or a part: %s" % [gear])
@@ -274,13 +280,47 @@ func test_a_stacks_verbs_come_from_the_sims_recipes_and_catalogue() -> bool:
 	for entry in part_kinds:
 		kinds.append(String((entry as Dictionary).get("name", "?")))
 	for kind in kinds:
-		var verbs := AssayHud.stack_verbs(_stack(String(kind), 2, "B", 9), recipes, part_kinds,
-				Vector2i.ZERO)
+		var verbs := AssayHud.stack_verbs(_stack(String(kind), 2, "B", 9), part_kinds, Vector2i.ZERO)
 		for entry in verbs:
 			var verb := String((entry as Dictionary).get("verb", ""))
 			if verb == "craft" or verb == "make":
 				return _fail("a %s row offers `%s`; making something is the menu's (ASSA-88): %s"
 						% [kind, verb, verbs])
+	return true
+
+
+## **THE SHEET READING OUTLIVED THE BUTTONS IT FED** (ASSA-331). `Fuel`/`Smelt` left the pack rows, and
+## *which slots of a machine this stack may enter* is still the sim's answer and still needed -- by the
+## machine menu, which is a surface that cannot be aimed at a deposit.
+##
+## MEMBERSHIP IS COMPUTED FROM THE CATALOGUE, NOT LISTED HERE. The pair was derived from the recipe
+## table, so the test that it still is has to walk the same table: every kind some NON-hand recipe eats
+## has slots, every other kind has none. A kind name written into this file would pass over a sixth
+## recipe arriving with no client edit, which is ADR 0003's whole point.
+func test_which_slots_a_stack_may_enter_is_the_sims_reading_not_this_clients() -> bool:
+	var recipes := AssaySimHost.recipes()
+	var eaten_in_a_building := {}
+	var every_kind := {"ore": true, "refined": true, "gear": true, "smelter": true}
+	for entry in recipes:
+		var recipe: Dictionary = entry
+		var input := String(recipe.get("input", ""))
+		every_kind[input] = true
+		if not bool(recipe.get("hand", false)):
+			eaten_in_a_building[input] = true
+	for entry in AssaySimHost.part_kinds():
+		every_kind[String((entry as Dictionary).get("name", "?"))] = true
+	if eaten_in_a_building.is_empty():
+		return _fail("no recipe happens in a building, so this test measured nothing")
+	for kind in every_kind:
+		var slots := AssayHud.insert_slots(_stack(String(kind), 2, "C", 9), recipes)
+		if eaten_in_a_building.has(kind):
+			# ONE PAIR AND IN THE SIM'S ORDER. `Refine` and `Resmelt` both eat ore-ish things, so a
+			# reading that appended per recipe would draw the same two buttons twice.
+			if Array(slots) != [AssayActions.SLOT_FUEL, AssayActions.SLOT_INPUT]:
+				return _fail(("a building recipe eats `%s`, so it may go in fuel then input, and the "
+						+ "sim's reading says %s") % [kind, slots])
+		elif not slots.is_empty():
+			return _fail("nothing in a building eats `%s`, yet it is offered %s" % [kind, slots])
 	return true
 
 
@@ -308,8 +348,7 @@ func test_every_part_kinds_verb_word_is_its_own_frame_ness() -> bool:
 		if not part.has("is_frame"):
 			return _fail("`%s` has no is_frame, so the client would be inventing the word" % name)
 		var is_frame := bool(part["is_frame"])
-		var verbs := AssayHud.stack_verbs(_stack(name, 2, "B", 1), recipes, part_kinds,
-				Vector2i.ZERO)
+		var verbs := AssayHud.stack_verbs(_stack(name, 2, "B", 1), part_kinds, Vector2i.ZERO)
 		var word := _label_of(verbs, "build")
 		var wanted := "Frame" if is_frame else "Mount"
 		if word != wanted:

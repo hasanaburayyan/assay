@@ -1622,7 +1622,7 @@ func _build_machine_menu_over_the_map(world: Rect2) -> void:
 	# Esc and a click outside; both are invisible, and the board's first act on a new surface is to look
 	# for the way back. QUIET, because it is furniture (ASSA-224) and the menu spends no accent at all --
 	# it offers several equal acts and must not choose for you.
-	var close := _button("close (Esc)", func() -> void: _close_machine_menu(),
+	var close := _button(AssayHud.menu_close_text(), func() -> void: _close_machine_menu(),
 			"close this menu. Esc does the same, and so does a click on the map")
 	close.theme_type_variation = &"Quiet"
 	close.alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -1689,7 +1689,7 @@ func _build_build_screen_over_the_map(world: Rect2) -> void:
 	# the screen Esc and *"a visible way out"* in the title bar; Esc alone is invisible, and the board's
 	# first act on a new surface is to look for the way back (ASSA-316's close got the same treatment).
 	# QUIET, because the screen spends its one accent on `Build` (her §5).
-	var leave := _button("close (Esc)", func() -> void: _close_build_screen(),
+	var leave := _button(AssayHud.menu_close_text(), func() -> void: _close_build_screen(),
 			"close this screen. Esc does the same, and nothing you have chosen is lost")
 	leave.theme_type_variation = &"Quiet"
 	crown.add_child(leave)
@@ -3578,8 +3578,9 @@ func _make_verb_button(offer: Dictionary, what: String, _item: Dictionary) -> Bu
 
 
 ## THE PACK, AS ROWS YOU CAN ACT ON. The words are `AssayHud.stack_line`'s and the verbs are
-## `AssayHud.stack_verbs`', which reads them out of the sim's own recipe table and part catalogue --
-## so a Craft button exists because some hand recipe eats this kind of item, and for no other reason.
+## `AssayHud.stack_verbs`', which reads them out of the sim's own part catalogue and the item's
+## footprint -- so a Frame button exists because the sim has that part kind, and for no other reason.
+## **IT READ THE RECIPE TABLE TOO UNTIL ASSA-331** (Maren's ruling: the insert pair is deleted).
 ##
 ## SAME SIGNATURE RULE AS THE BENCH: a count climbs every mining cycle, so only the shape of the pack
 ## rebuilds the rows.
@@ -3709,7 +3710,10 @@ func _rebuild_pack(stacks: Array) -> void:
 	if stacks.is_empty():
 		_carrying.add_child(_note(AssayHud.nothing_carried_line()))
 		return
-	var recipes := AssaySimHost.recipes()
+	# **THE RECIPE TABLE IS NOT READ HERE ANY MORE** (ASSA-331). It was read for one thing: whether some
+	# non-hand recipe eats this kind, which is what made the row's `Fuel`/`Smelt` pair. The pair is
+	# deleted and the reading moved to the machine menu, so a pack row now asks the part catalogue and
+	# the footprint and nothing else.
 	var part_kinds := AssaySimHost.part_kinds()
 	for entry in stacks:
 		var stack: Dictionary = entry
@@ -3752,7 +3756,7 @@ func _rebuild_pack(stacks: Array) -> void:
 		# for a thing that is not a building.
 		var footprint := AssaySimHost.footprint_of_item(String(stack.get("kind", "")),
 				int(stack.get("species", -1)), String(stack.get("grade", "C")))
-		var verbs := AssayHud.stack_verbs(stack, recipes, part_kinds, footprint)
+		var verbs := AssayHud.stack_verbs(stack, part_kinds, footprint)
 		if not verbs.is_empty():
 			body.add_child(_verb_row(verbs, func(descriptor: Dictionary) -> Button:
 					return _stack_button(descriptor, stack, footprint)))
@@ -3762,29 +3766,19 @@ func _rebuild_pack(stacks: Array) -> void:
 
 ## One verb on one stack. EVERY ITEM SENT IS THE ONE THE SIM NAMED: `item_of_stack` rearranges the
 ## three fields out of `inventory_of` and this client never works out what it is carrying.
-## WITH THE MAKE-VERBS GONE (ASSA-86) THIS HANDLES THREE: Fuel/Smelt, Place, Frame/Mount. The two
-## locals that went with them were `count` and the stack's sentence, both only ever read by the craft
-## and make arms -- and `count` had in fact been dead since ASSA-55 took the number out of the Fuel
-## tooltip, which is the sort of thing that survives a deletion unnoticed.
+## WITH THE MAKE-VERBS GONE (ASSA-86) AND THE INSERT PAIR GONE (ASSA-331) THIS HANDLES TWO: Place and
+## Frame/Mount. The two locals that went with the make-verbs were `count` and the stack's sentence,
+## both only ever read by the craft and make arms -- and `count` had in fact been dead since ASSA-55
+## took the number out of the Fuel tooltip, which is the sort of thing that survives a deletion
+## unnoticed.
+##
+## **THE `insert` ARM IS DELETED RATHER THAN LEFT HARMLESS** (ASSA-331, Maren's ruling). It read a
+## slot out of the descriptor and sent the whole stack at whatever `_target_tile` pointed to; after her
+## ruling 8 that cursor can never be on a building, so every press could only say *nothing to insert
+## into*. An arm kept for a descriptor nothing produces is how the button comes back.
 func _stack_button(descriptor: Dictionary, stack: Dictionary, footprint: Vector2i) -> Button:
 	var label := String(descriptor.get("label", "?"))
 	match String(descriptor.get("verb", "")):
-		"insert":
-			# THE WHOLE STACK. A button cannot ask for a quantity without growing a field, and
-			# picking a smaller number for the player would be this client deciding how much fuel a
-			# fire wants -- which is a sheet reading it does not have. `Pick up` gives a building and
-			# its contents back, so nothing is spent for good.
-			#
-			# AND "THE WHOLE STACK" IS COUNTED WHEN THE BUTTON IS PRESSED, NOT WHEN IT WAS BUILT.
-			# This is the rule at the top of the file and I broke it here first: the row only
-			# rebuilds when the pack's SHAPE changes, so a count captured in the closure froze at
-			# whatever was in hand the moment the row appeared. The button-driven session caught it
-			# -- it pressed `Fuel` on a row reading 12 and inserted 2, and the fire went out
-			# mid-stack. A tooltip with a number in it would go stale the same way, so it has none.
-			var slot := String(descriptor.get("slot", ""))
-			return _button(label, func() -> void: _insert(stack, slot),
-					"put everything you are carrying of this into the %s slot of the building you "
-							% slot + "are acting on")
 		"place":
 			return _button(label, func() -> void: _act(label,
 					AssayActions.place(AssayActions.item_of_stack(stack), _target_tile())),
@@ -3980,49 +3974,51 @@ func _refresh_machine_menu() -> void:
 ## column's old pair said `Fuel` and `Smelt` with the number hidden in a tooltip.
 ##
 ## **WHICH SLOTS EXIST AND WHAT MAY GO IN THEM IS THE SIM'S ANSWER, ASKED PER STACK.**
-## `AssayHud.stack_verbs` returns an `insert` descriptor per slot for a kind a non-hand recipe eats, out
-## of the sim's own recipe table -- *"which one a species is good for (hot enough fuel, or ore that
-## melts) is a sheet reading and only the sim has it"*. So this walks the pack and groups by the slot
-## the sim named, rather than this file knowing a smelter has two slots.
+## `AssayHud.insert_slots` names the slots a kind some non-hand recipe eats may enter, out of the sim's
+## own recipe table -- *"which one a species is good for (hot enough fuel, or ore that melts) is a sheet
+## reading and only the sim has it"*. So this walks the pack and groups by the slot the sim named, rather
+## than this file knowing a smelter has two slots. **That reading used to arrive as the pack row's
+## `insert` verb descriptors and now has its own function** (ASSA-331): the buttons it fed were deleted,
+## and a menu asking `stack_verbs` for a verb no row draws would have been a dead argument away from
+## bringing them back.
 ##
 ## **NOTHING IS EVER GREYED OUT AND NOTHING IS HIDDEN FOR BEING REFUSABLE** (ruling 4, ASSA-37): a stack
 ## of 1 simply has no fractions to offer, which is a shorter row and not a disabled control.
 ##
-## **WHAT IS NOT HERE YET, SAID OUT LOUD RATHER THAN QUIETLY MISSING:** what is ALREADY in each slot,
-## the fire's heat and the craft's progress. Those are behind the binding's one `status` string
-## (`sim-godot/src/lib.rs:1392`), so a slot's fill cannot be drawn as the BAND ruling 5 asks for. The
-## sentence above the rows carries all of it as prose in the meantime.
+## **WHAT IS NOT HERE YET, SAID OUT LOUD RATHER THAN QUIETLY MISSING:** what is ALREADY in each slot
+## and how far a batch has got, as the BANDS ruling 5 asks for. **THE REASON IN THIS DOCSTRING EXPIRED
+## ON 2026-10-08** -- it said those facts were behind the binding's one `status` string, and Marlow's
+## ASSA-321 crossed them as data the same day: `slots[i].held.count` over `slots[i].cap` for a fill,
+## `work.x` over `work.y` for a batch, `nil` when nothing is in front of the machine. So the numbers are
+## one call away and the bands are simply unbuilt; the sentence above the rows carries them as prose.
 func _rebuild_machine_menu_rows(stacks: Array) -> void:
 	_clear(_menu_rows)
 	var recipes := AssaySimHost.recipes()
-	var part_kinds := AssaySimHost.part_kinds()
-	# THE SIM'S ORDER, NOT A SORT OF MINE: `AssayActions` names the two slots and `stack_verbs` offers
+	# THE SIM'S ORDER, NOT A SORT OF MINE: `AssayActions` names the two slots and `insert_slots` offers
 	# them in that order, so the rows read the same way every time whatever the pack happens to hold.
 	var slots := PackedStringArray()
 	var per_slot := {}
 	for entry in stacks:
 		var stack: Dictionary = entry
-		var footprint := AssaySimHost.footprint_of_item(String(stack.get("kind", "")),
-				int(stack.get("species", -1)), String(stack.get("grade", "C")))
-		for descriptor in AssayHud.stack_verbs(stack, recipes, part_kinds, footprint):
-			var verb: Dictionary = descriptor
-			if String(verb.get("verb", "")) != "insert":
-				continue
-			var slot := String(verb.get("slot", ""))
+		for slot in AssayHud.insert_slots(stack, recipes):
 			if not per_slot.has(slot):
 				per_slot[slot] = []
 				slots.append(slot)
 			(per_slot[slot] as Array).append(stack)
+	# **NO `Fuel slot` HEADING ABOVE THEM ANY MORE** (ASSA-331, and this is my reading of Maren's
+	# ruling rather than her sentence, so it is the thing to look at in the 1x shot). She ruled the slot
+	# into the BUTTON's label -- *"a button says what IT does, not what the heading above it does"* --
+	# and with every label naming its slot, a note above them repeating it is the same answer twice,
+	# which is her ruling 6. The grouping survives without it: the stacks of one slot are still
+	# consecutive, in the sim's slot order.
 	for slot in slots:
-		var heading := _note("%s slot" % slot)
-		_menu_rows.add_child(heading)
 		for entry in per_slot[slot] as Array:
 			var stack: Dictionary = entry
 			var count := int(stack.get("count", 0))
 			var named := String(stack.get("name", "?"))
 			var row := VBoxContainer.new()
 			row.add_theme_constant_override("separation", 2)
-			row.add_child(_button(AssayHud.insert_label(count, named),
+			row.add_child(_button(AssayHud.insert_label(count, named, slot),
 					func() -> void: _insert_into(_menu_at, stack, slot, 0),
 					"put everything you are carrying of this into the %s slot" % slot))
 			# THE FRACTIONS, AS A ROW OF QUIET BUTTONS THAT NAME WHAT YOU WILL GET. `or 1 · or 18`, never
@@ -4497,30 +4493,17 @@ func _act(what: String, command: Variant) -> void:
 	_say("%s · not submitted; join a world first" % what, AssayHud.Say.FAILED)
 
 
-## Insert needs a building, and there may not be one. THIS IS NOT A REFUSAL -- with no building there
-## is no `BuildingId` to put in the command at all, so there is nothing to send and saying so is the
-## only honest answer. Maren's "never refuse" is about commands the sim should judge.
-func _insert(stack: Dictionary, slot: String) -> void:
-	var target := _target_tile()
-	var building: Variant = _sim.tile_at(target).get("building")
-	if building == null:
-		# **THE ADVICE CHANGED WITH THE GESTURE IT NAMES** (ASSA-316). This said *"right-click a building
-		# first"*, which was the way to aim these buttons until Maren's ruling 8 gave both mouse buttons
-		# on a building to its menu. A sentence telling a player to make a gesture that now does
-		# something else is worse than no sentence: it is this client's own instruction, failing.
-		_say("nothing to insert into at %d, %d — click a building to open its menu"
-				% [target.x, target.y], AssayHud.Say.FAILED)
-		return
-	_insert_into(int((building as Dictionary).get("id", -1)), stack, slot, 0)
-
-
-## **ONE DOOR FOR EVERY INSERT, WHICHEVER SURFACE PRESSED IT** (ASSA-316). The pack row finds its
-## building through `_target_tile`; a machine menu already knows which building it is about. What they
-## share is the part that has been wrong before, so it is written once.
+## **ONE DOOR FOR EVERY INSERT, AND NOW THERE IS ONE SURFACE TO PRESS IT** (ASSA-316/331). This was
+## shared by a pack row that found its building through `_target_tile` and a menu that already knew
+## which machine it was about; **the pack row is deleted**, so the cursor path is gone with it and the
+## only caller is a menu whose building cannot be the wrong one. The `want` rules below outlived the
+## button they were learned on, which is why they stayed here rather than in `_insert`.
 ##
 ## `want` 0 MEANS THE WHOLE STACK, counted here. **AND "THE WHOLE STACK" IS COUNTED WHEN THE BUTTON IS
-## PRESSED, NOT WHEN IT WAS BUILT** -- the rule `_stack_button` carries, learned from a `Fuel` press on
-## a row reading 12 that inserted 2 and let the fire go out mid-stack. Grade is part of the question:
+## PRESSED, NOT WHEN IT WAS BUILT** -- learned from a `Fuel` press on a row reading 12 that inserted 2
+## and let the fire go out mid-stack. The menu is no safer by being newer: it rebuilds on the pack's
+## SHAPE too (`_menu_showing`), so a count captured in a closure would freeze there the same way.
+## Grade is part of the question:
 ## two grades of one ore are two stacks and two rows, and inserting the other row's count would be a
 ## number from a different row.
 ##
@@ -5408,10 +5391,12 @@ func _my_tile() -> Vector2i:
 ## whether it is legal and the movement system walks us one tile per tick. NOTHING MOVES HERE -- the
 ## player on screen moves when a bundle carrying this command comes back around.
 ##
-## RIGHT CLICK CHOOSES THE TILE THE BUTTONS ACT ON (ASSA-37). Place, Insert and Take all need a tile,
-## and ONE mechanism serving all three is what keeps the rule explainable: a placement is never a
-## second click on a button, and a click never means two things at once. Walking kept the left button
-## because it is the thing a player does most.
+## RIGHT CLICK CHOOSES THE TILE THE BUTTONS ACT ON (ASSA-37). **PLACE IS THE LAST VERB ON IT**: the
+## mechanism was built for Place, Insert and Take together, and ONE mechanism serving all three is what
+## kept the rule explainable -- then Take moved to the machine menu (ASSA-316 ruling 3) and Insert
+## followed (ASSA-331), so what is left is a placement cursor and nothing else. Still true of it: a
+## placement is never a second click on a button, and a click never means two things at once. Walking
+## kept the left button because it is the thing a player does most.
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		_track_hover(event.position)
