@@ -401,13 +401,13 @@ func test_play_solo_neither_reads_nor_wipes_a_typed_host() -> bool:
 ## this one is about two worlds disagreeing, and the suite is where that distinction is kept.
 func test_a_desync_is_reported_as_a_failure_with_both_hashes() -> bool:
 	var screen := _screen()
-	screen._client.desynced.emit(140, "aaaaaaaaaaaaaaa1", "bbbbbbbbbbbbbbb2")
+	screen._client.desynced.emit(140, "ourhash", "hosthash")
 	var said: String = screen._status.text
 	var colour: Color = _drawn_color(screen._status)
 	screen.queue_free()
 	if not said.contains("140"):
 		return _fail("a desync at tick 140 was reported as %s" % said)
-	if not said.contains("aaaaaaaaaaaaaaa1") or not said.contains("bbbbbbbbbbbbbbb2"):
+	if not said.contains("ourhash") or not said.contains("hosthash"):
 		return _fail("a desync must name both hashes, ours and the host's: %s" % said)
 	if said.to_lower().contains("connection") or said.to_lower().contains("closed the"):
 		return _fail("a desync must not read as a connection failure: %s" % said)
@@ -431,7 +431,7 @@ func test_a_desync_leaves_a_stage_the_join_button_will_serve() -> bool:
 	var joined := _joined_screen()
 	var before: int = joined._client.desyncs_seen
 	joined._client.feed_offline(
-			'{"Desync":{"tick":88,"reported":"aaaaaaaaaaaaaaa1","expected":"bbbbbbbbbbbbbbb2"}}')
+			'{"Desync":{"tick":88,"reported":"ourhash","expected":"hosthash"}}')
 	var ok := true
 	if joined._client.stage != AssayNetClient.Stage.DEAD:
 		ok = _fail(("a desync left the stage at %d: `_join_address` returns on its first line "
