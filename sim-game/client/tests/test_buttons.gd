@@ -861,6 +861,64 @@ func test_a_refused_press_reaches_the_status_line_while_the_log_is_hidden() -> b
 	return ok
 
 
+## **AND IT REACHES THAT LINE WITH THE LOG OPEN TOO, WHICH IS THE HALF NOTHING HELD** (ASSA-116 box 2
+## as the Game Director restated it on 2026-10-08: *"a refusal reaches the always-visible line whether
+## or not the log is open"*).
+##
+## `_remember_events` already says this in writing — *"NOT CONDITIONAL ON THE TOGGLE... a notice that
+## only fired while hidden would be a notice whose test passes or fails on the state of a different
+## control"* — and a comment was the whole of what held it. The arm above presses Mine with the log
+## folded away, so **nothing would have gone red if the notice had been wrapped in `if not
+## _log.visible`**: half of the box rested on a docstring. I would rather not tick a box on prose I
+## wrote myself, which is the same objection I raised against `hud_probe` never running in CI.
+##
+## THE LOG IS OPENED THROUGH ITS OWN TOGGLE, not by calling `_show_log`, because the state this claim
+## is about is the one a player can put the screen into.
+##
+## The assertions are the arm above's, for the reason given there — the relationship between the two
+## surfaces, never `status == attention_lines[-1]`, which would pass by construction — plus the one
+## this state adds: the log that was open stays open, so a refusal neither needs nor causes a fold.
+func test_a_refused_press_reaches_the_status_line_while_the_log_is_open() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var joined_said: String = screen._status.text
+	var ok := true
+	screen._log_toggle.pressed.emit()
+	if not screen._log.visible:
+		ok = _fail("pressing the log's own toggle did not open it, so this test proves nothing")
+		screen.queue_free()
+		return ok
+	var mine := _find(screen._actions, "Mine")
+	if mine == null:
+		ok = _fail("no Mine button in the `do` section")
+		screen.queue_free()
+		return ok
+	# Same premise as the hidden arm, asserted rather than assumed: spawn is not a deposit, so Mine is
+	# a refusal the sim produces and not a mining cycle.
+	var standing: Dictionary = screen._sim.tile_at(screen._my_tile())
+	if standing.get("deposit", null) != null:
+		ok = _fail("this seed spawns the player on a deposit, so Mine would succeed: %s" % standing)
+		screen.queue_free()
+		return ok
+	mine.pressed.emit()
+	_tick(screen, 2)
+	var said: String = screen._status.text
+	var log_text := _text_of(screen._log)
+	if said == joined_said:
+		ok = _fail(("the sim refused a press with the log OPEN and the always-visible line still "
+				+ "reads '%s'. A notice that only fires while the log is folded away is a notice "
+				+ "conditional on a different control") % said)
+	elif said.strip_edges() == "":
+		ok = _fail("the status line was blanked rather than written")
+	elif not log_text.contains(said):
+		ok = _fail(("the status line says '%s', which is not one of the log's own sentences: '%s'. "
+				+ "A client that words its own refusal is a second describer.") % [said, log_text])
+	elif not screen._log.visible:
+		ok = _fail("showing the player a refusal folded the log they had opened")
+	screen.queue_free()
+	return ok
+
+
 ## AND A SUCCESS DOES NOT TAKE THE LINE. The separation is the whole property: if every event were
 ## loud the always-visible line would be a one-row log, and a player learns to stop reading a surface
 ## that talks constantly. Walking is the plainest success there is -- a left click, three events, none
