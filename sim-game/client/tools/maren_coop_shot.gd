@@ -25,10 +25,12 @@ extends SceneTree
 ## the composition and nothing about the client.
 ##
 ## WHAT IT WRITES: `01-close-up-two.png` (the screen you play on), `02-whole-world-two.png` (the
-## schematic, one V press away) and `03-whole-world-two-key.png` (the same frame with the key up),
-## plus a verdict naming both players, which one the client thinks is mine, and how far apart they
-## stand in tiles. **AND `04-marks-two.json`, THE POLYGONS THE TWO BODIES WERE PAINTED FROM**
-## (ASSA-236) -- see `_write_marks_table` for why a name is not enough and what the control is.
+## schematic, one V press away), `05-whole-world-two-walking.png` (**the same schematic with both
+## bodies still walking**, ASSA-274 box 1) and `03-whole-world-two-key.png` (the same frame with the
+## key up), plus a verdict naming both players, which one the client thinks is mine, how far apart
+## they stand in tiles, and whether each body still had a `target` when the walking shot was taken.
+## **AND `04-marks-two.json`, THE POLYGONS THE TWO BODIES WERE PAINTED FROM** (ASSA-236) -- see
+## `_write_marks_table` for why a name is not enough and what the control is.
 ##
 ## **AND `play` BUILDS A FACTORY FIRST, WHICH IS WHAT ASSA-206 BOX 3 ASKS FOR AND NOTHING COULD MAKE.**
 ## That box wants one frame holding a building, TWO players and a dead-end disc, judged at 1x. The two
@@ -72,6 +74,25 @@ const JOIN_DEADLINE := 12.0
 const PEER_DEADLINE := 20.0
 const WALK_DEADLINE := 60.0
 const SETTLE_FRAMES := 4
+
+## **HOW FAR TO SEND EACH BODY FOR THE WALKING SHOT, AND HOW LONG TO LET IT RUN** (ASSA-274 box 1).
+##
+## Every whole-world shot this studio owns was taken with both bodies STANDING. The one exception is
+## `window_shot.gd`'s `12-whole-world-walking.png` (ASSA-266), which has one person in it, so the
+## faintest mark we draw -- a PARTNER's walk line, `THEIRS` at alpha 0.25, which composites to
+## 1.824:1 against `MAP_BG` -- has never been on any picture we have taken.
+##
+## 18 TILES AND 0.6 s, AND BOTH NUMBERS ARE ABOUT THE SAME THING: the shot must land while the sim
+## still holds a `target` for each player, because the line is drawn from `player.target` and nothing
+## else. A body walks one tile per tick at the relay's ten ticks a second, so 0.6 s spends about six
+## of the eighteen and leaves twelve for the line to be drawn along. The two bodies are sent OPPOSITE
+## WAYS so the frame holds both lines separately rather than one on top of the other.
+##
+## **THE REPORT SAYS WHETHER EACH TARGET WAS STILL LIVE WHEN THE SHUTTER WENT**, rather than assuming
+## it from the arithmetic: a shot with no `target` on it is a shot of an empty map with two people
+## on it, and it would be read as proof that the line is invisible.
+const WALK_SHOT_TILES := 18
+const WALK_SHOT_PAUSE := 0.6
 ## **A CEILING THAT A `play` RUN CAN REACH, and the no-play path is unaffected by the size of it.**
 ## `button_session.gd` allows 1400 relay ticks for the same chain, which is 140 s at ten a second, and
 ## this run pays a relay spawn, two joins and two walks on top. 180 s was this tool's ceiling while it
@@ -128,6 +149,9 @@ var _play_on := false
 var _play_until := 0.0
 var _play_note := ""
 var _clear_target := Vector2i.ZERO
+
+## WHAT THE WALKING SHOT SAW, kept for the report so the picture cannot be read without it.
+var _walk_note := ""
 
 
 func _initialize() -> void:
@@ -227,7 +251,17 @@ func _process(_delta: float) -> bool:
 			_settle_then(11)
 		11:
 			_shoot("02-whole-world-two.png")
+			# **THE MARKS TABLE DESCRIBES THE FRAME ABOVE AND NOT THE ONE BELOW**, which is why it
+			# is written here and not after the walk: `04-marks-two.json` is the polygons those two
+			# STANDING bodies were painted from, and the walking shot moves them.
 			_write_marks_table()
+			_step = 20
+		20:
+			_send_both_walking()
+		21:
+			_wait_a_breath()
+		22:
+			_shoot("05-whole-world-two-walking.png")
 			_step = 12
 		12:
 			# THE PRESS ITSELF AGAIN, and its VISIBILITY is recorded rather than assumed: a state a
@@ -537,6 +571,65 @@ func _wait_for_the_peer_to_arrive() -> void:
 		_step = 7
 
 
+## **BOTH BODIES SENT WALKING, OPPOSITE WAYS, AND THEN NOT WAITED FOR** (ASSA-274 box 1).
+##
+## The two existing whole-world shots are of people standing still, which is every whole-world shot
+## this studio has ever taken bar one. `05-whole-world-two-walking.png` is the first frame that can
+## contain a PARTNER's walk line, which is the quietest mark on the map at 1.824:1.
+##
+## MINE GOES THROUGH THE CLIENT AND THEIRS THROUGH A TERMINAL, which is not symmetry for its own
+## sake: it is the same pair of paths the rest of this tool uses, so neither line is drawn from a
+## command shape the shipped game does not send.
+func _send_both_walking() -> void:
+	var found: Variant = _tile_of(true)
+	if found == null:
+		_bail("no body of mine to send walking")
+		return
+	var me := Vector2i(int((found as Vector2).x), int((found as Vector2).y))
+	var size: Vector2i = _screen._sim.size_tiles()
+	# AWAY FROM THE NEARER EDGE, because a target clamped onto the wall we are already standing at is
+	# a walk of nothing, and a nothing walk draws no line at all.
+	var dx := WALK_SHOT_TILES if me.x < size.x / 2 else -WALK_SHOT_TILES
+	_my_target = Vector2i(clampi(me.x + dx, 0, size.x - 1), me.y)
+	var them: Variant = _tile_of(false)
+	var they := me + PEER_OFFSET if them == null else Vector2i(
+			int((them as Vector2).x), int((them as Vector2).y))
+	_peer_target = Vector2i(clampi(they.x - dx, 0, size.x - 1), they.y)
+	if not _screen._client.submit(AssayActions.move_to(_my_target)):
+		_bail("the client refused the walking shot's MoveTo to %s" % _my_target)
+		return
+	_peer_stdio.store_line("goto %d %d" % [_peer_target.x, _peer_target.y])
+	_peer_stdio.flush()
+	print("  walking shot: me %s -> %s, '%s' %s -> %s"
+			% [me, _my_target, _peer_name, they, _peer_target])
+	_until = _now() + WALK_SHOT_PAUSE
+	_step = 21
+
+
+## LONG ENOUGH FOR THE LINE TO HAVE SOMETHING TO DRAW, SHORT ENOUGH THAT IT IS STILL THERE.
+func _wait_a_breath() -> void:
+	_drain_relay()
+	if _now() < _until:
+		return
+	_walk_note = "  WALKING SHOT: %s\n" % _targets_now()
+	_step = 22
+
+
+## **WHETHER EACH PLAYER STILL HAD A `target` AT THE SHUTTER, read out of the sim the renderer reads.**
+## `main.gd` draws the walk line from `player.target` and from nothing else, so a frame taken a tick
+## late has no line on it and looks exactly like a frame where the line is invisible. Stating it is
+## the difference between evidence and a picture of an empty map.
+func _targets_now() -> String:
+	var parts := PackedStringArray()
+	for entry in _screen._sim.players():
+		var p: Dictionary = entry
+		var who := "me" if int(p.get("id", -1)) == int(_screen._client.player_id) else _peer_name
+		var target: Variant = p.get("target")
+		parts.append("%s at %s target=%s" % [who, p.get("pos", Vector2i.ZERO),
+				"NONE -- no line is drawn for this body" if target == null else str(target)])
+	return " | ".join(parts)
+
+
 ## A PLAYER'S TILE, as the screen already finds it, or `null` when there is no such player.
 ##
 ## NULL AND NOT `Vector2.ZERO`, because (0,0) is a real tile on this map and a sentinel that is also
@@ -586,6 +679,10 @@ func _report() -> void:
 		var apart := ((mine as Vector2) - (theirs as Vector2)).abs()
 		print("  %.0f tiles apart in x, %.0f in y" % [apart.x, apart.y])
 	print("  toggle reads: %s, close_up=%s" % [_screen._view_toggle.text, _screen._close_up])
+	if _walk_note != "":
+		print(_walk_note.strip_edges(false, true))
+	else:
+		print("  WALKING SHOT: never taken, so 05-whole-world-two-walking.png is not in this run")
 	_report_the_subject(mine, theirs)
 	print("  said: %s" % " | ".join(_said))
 	if _is_empty_pair():
