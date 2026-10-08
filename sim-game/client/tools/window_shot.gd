@@ -27,7 +27,8 @@ extends SceneTree
 ##  - `03-log.png`    the same screen with the event log open and the crafting menu folded away.
 ##  - `04-pack.png`   the fullest the pack and the crafting menu ever get in this play. NOT a state
 ##                    anyone asks for -- a moment the tool notices, for the reason below.
-##  - `05-rocks.png`  the species roster scrolled to the rocks, two whole rows in frame.
+##  - `05-rocks.png`  the species roster scrolled to the rocks: one whole sheet, and the next
+##                    species' name row under it.
 ##  - `06/07-north-*` the north-edge pair, log open and log down (ASSA-156/184).
 ##  - `08-whole-world.png` **THE OTHER VIEW, AND IT TOOK ASSA-189 TO NOTICE IT WAS MISSING.** Every
 ##                    shot above is the close-up. The whole-world schematic is how you cross 96x64
@@ -1737,10 +1738,25 @@ func _scroll_to_rocks() -> void:
 ## and call it what the player sees -- the same mistake as a byte-identity check between two
 ## surfaces that both compose from one wrong source (Marlow, ASSA-135).
 ##
-## THE VERDICT IS "AT LEAST TWO ROWS WHOLE", not "the section is on screen", because the section
-## cannot be: it is taller than the box. Two is the smallest number that can show the thing a roster
-## panel exists for -- that two rocks are described differently. A guard of "one" would pass on a
-## picture that cannot answer any comparison, and a guard of "all six" could never pass at all.
+## **THE VERDICT WAS "AT LEAST TWO ROWS WHOLE" AND MAREN RETIRED IT ON 2026-10-08, BECAUSE IT WAS
+## MEASURING SOMETHING NOBODY COULD EVER HAVE HAD.** The old reasoning was that two is the smallest
+## number that can show what a roster exists for -- that two rocks are described differently. Her
+## finding is that the premise was false from the day it was written: *"two rocks in one shot was
+## never reachable -- at 98 px you got 2.5 of six rows, so cross-species comparison always meant
+## scrolling."* A row that shows 2.5 of a species' six properties cannot be compared with anything;
+## the leg was green over frames that could not answer its own question.
+##
+## **SO THE UNIT OF MEANING IS THE SHEET, AND THE PROPERTY IS TWO CLAIMS ABOUT TWO RECTANGLES:**
+##   1. ONE species' whole table is readable without scrolling -- some row stands `whole`.
+##   2. The list VISIBLY CONTINUES -- a LATER species' name row stands whole in the same frame.
+##
+## Clause 2 is what stops clause 1 being satisfied by a roster of one. It is deliberately a NAME and
+## not a table: requiring a second whole table is the property she just retired, and a reader who can
+## see `Soumpukyte - rough` under Krerine's six knows the list goes on without needing to read it.
+##
+## **AND THE OLD CHECK COMES BACK FOR FREE, LATER, WHICH IS WHY THIS IS NOT A CLIMBDOWN** (her note):
+## after ASSA-272 deduplicates the Mineralogy headline -- 70% of played worlds print one fact twice,
+## ~90 px of this column -- 244 + ~90 = ~334 >= 306, so two full tables fit again. Re-measure then.
 ##
 ## **AND IT IS READ AT THE SHOT NOW, NOT AT REPORT TIME, BECAUSE A LATER PHASE MOVED IT** (ASSA-158).
 ## This asked the LIVE screen about a frame written six phases earlier, which was correct only while
@@ -1764,7 +1780,15 @@ func _capture_rocks() -> void:
 			var text := String((label as Label).text)
 			if text != "":
 				said.append(text)
+		# **THE NAME ROW IS CAPTURED SEPARATELY FROM THE TABLE IT HEADS** (ASSA-288). Maren's re-ruled
+		# property asks two different questions of two different rectangles -- is THIS species' whole
+		# sheet readable, and can you SEE that another species follows -- and the second is answered by
+		# a name line, not by a table. Measuring the row for both would make "the list continues" mean
+		# "a whole second table is in frame", which is the property she just retired.
+		var title := titles[0] as Control
 		rows.append({"said": " ".join(said), "rect": row.get_global_rect(),
+				"name": String((title as Label).text),
+				"name_standing": _standing_in(frame, title),
 				"standing": _standing_in(frame, row)})
 	_rocks_frame = {"frame": frame, "rows": rows}
 
@@ -1776,22 +1800,38 @@ func _rocks_report() -> Dictionary:
 	var captured: Array = _rocks_frame["rows"]
 	var whole := 0
 	var rows := captured.size()
-	for row in captured:
+	# The FIRST whole table, and the first name row that follows it. Both are indices into the
+	# captured order, which is the order the column lays the species out in.
+	var first_whole := -1
+	var continues_at := -1
+	for i in range(rows):
+		var row: Dictionary = captured[i]
 		var rect: Rect2 = row["rect"]
 		if String(row["standing"]) == "whole":
 			whole += 1
-		print("    row %-5s y %5d..%-5d  %s" % [row["standing"], rect.position.y, rect.end.y,
-				row["said"]])
-	print("  rocks: %d rows, %d whole in the frame y %d..%d" % [rows, whole, frame.position.y,
-			frame.end.y])
+			if first_whole < 0:
+				first_whole = i
+		if first_whole >= 0 and i > first_whole and continues_at < 0 \
+				and String(row["name_standing"]) == "whole":
+			continues_at = i
+		print("    row %-5s name %-5s y %5d..%-5d  %s" % [row["standing"], row["name_standing"],
+				rect.position.y, rect.end.y, row["said"]])
+	print("  rocks: %d rows, %d whole tables in the frame y %d..%d" % [rows, whole,
+			frame.position.y, frame.end.y])
 	if rows == 0:
 		# **NOT ASKED, NOT FAILED.** No roster rows at all is a screen with no world or no species
-		# panel: there is nothing to photograph, and `0 whole rows of 0` as a failure would be this
-		# leg complaining about a question nobody could put to it.
-		return _not_asked("the screen carries no roster rows, so no two rocks could be compared")
-	if whole < 2:
-		return _refused(("the roster shot shows %d whole rows of %d, so no two rocks in it can be "
-				+ "compared") % [whole, rows])
+		# panel: there is nothing to photograph, and `0 of 0` as a failure would be this leg
+		# complaining about a question nobody could put to it.
+		return _not_asked("the screen carries no roster rows, so no species sheet could be read")
+	if first_whole < 0:
+		return _refused(("not one of the %d species rows is whole in the frame, so no rock's sheet "
+				+ "can be read without scrolling") % rows)
+	if continues_at < 0:
+		return _refused(("%s's sheet is whole, but no later species' name row is in the frame: the "
+				+ "roster does not visibly continue, so the shot cannot show this is a LIST of "
+				+ "rocks rather than one rock") % String(captured[first_whole]["name"]))
+	print("  rocks: %s reads whole and %s's name row follows it in frame"
+			% [String(captured[first_whole]["name"]), String(captured[continues_at]["name"])])
 	return _passed()
 
 
@@ -2410,7 +2450,7 @@ func _report() -> void:
 	var legs := [
 		["reveal", "the press put the log's heading where it said it would", _reveal_report()],
 		["controls", "opening the log moved no control off the screen", _controls_report()],
-		["roster", "two rocks can be compared in one shot", _rocks_report()],
+		["roster", "one rock's whole sheet reads, and the list visibly continues", _rocks_report()],
 		["make", "the crafting menu's shot starts at its own heading and holds its dead-end row",
 				_make_report()],
 		["walking", "the walk stroke the map key advertises has a frame with one in it",
