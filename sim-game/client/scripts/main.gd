@@ -4424,7 +4424,11 @@ func _draw() -> void:
 	# gone in a greyscale copy. Beside a machine it was worse than invisible: it ate one of the 2 px
 	# that hold two hollow squares apart. **NOT FIXED BY PAINT ORDER**, which is the tempting one-line
 	# version: hovering a machine's own tile is the commonest useful hover and this outline must stay
-	# on top of it. The rim is drawn first and OUTWARD, so the outline keeps every pixel it had.
+	# on top of it. The rim is drawn first, and INWARD -- which is a correction to the ruling and not
+	# the ruling: outward it lands on the neighbouring tile, where a machine's own mark starts, and
+	# the smelter's band went 242 -> 28 at the shared edge on both seeds. `AssayHud.hover_mark` carries
+	# the rows. What inward does NOT fix is the outline's own pixel sitting on the machine's rim; that
+	# needs the outline moved inside its own cell, which is ASSA-284's open box and Maren's call.
 	if _hovering:
 		var hover := AssayHud.hover_mark(_hover, _cell, MARGIN)
 		draw_rect(hover["keyline_rect"], AssayHud.mark_ink(&"hover_keyline"), false,

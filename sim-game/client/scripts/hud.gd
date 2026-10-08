@@ -1143,16 +1143,38 @@ const HOVER_STROKE_PX := 1.0
 ## is the cell, so the corner is its origin, and the arithmetic looking identical to ASSA-220's bug is
 ## not a reason to change it.
 ##
-## **AND THE RIM IS GROWN OUTWARD, so the outline keeps every pixel of its own size** -- the rule the
-## building frame and both bodies keep. Godot's unfilled `draw_rect` straddles the edge it is given,
-## 0.5 px either side, so a rim at `rect.grow(HOVER_STROKE_PX)` lands exactly beside the outline's own
-## pixels with no gap and no overlap.
+## **THE RIM GOES INWARD, AND THAT IS A CORRECTION TO THE RULING, MEASURED ON TWO SEEDS.** Maren asked
+## for it OUTWARD, for the reason every other rim on this map is outward: so the mark keeps every pixel
+## of its own size. **It cannot be outward here, because this mark is a CELL and its neighbour's mark
+## starts at the same pixel.** Built outward and shot, seed 63 and 777042, the row through the hovered
+## tile beside a smelter (`shared/assay/cove-assa284/`):
+##
+## ```
+##          x=509 (machine's rim)   x=510 (machine's BAND)
+## before        28 -> 146                242
+## outward rim   28 -> 146                242 -> 28     <- a band pixel deleted, both seeds
+## ```
+##
+## So an outward rim does not make the two keylines abut: it buys the hover outline a dark neighbour
+## by taking one of the machine's two band pixels, and on dark map that is the ONLY thing it does,
+## because over `MAP_BG` a `MAP_BG` rim is correctly invisible. Inward costs nothing and still gives
+## the outline the dark neighbour it needs -- 12.48:1 against grade-A ore in GREYSCALE, which is the
+## half of the ruling about the ground.
+##
+## **WHAT INWARD DOES NOT FIX, said here because it is the other half of her finding:** the outline's
+## own pixel still lands on the machine's `MAP_BG` rim at the shared edge (28 -> 146), so the mark
+## sits against the band with no separator. Nothing a rim can do reaches that -- two marks that abut
+## edge to edge share a pixel, and only paint order or moving the outline inside its own cell can
+## settle it. She ruled out paint order; the inset is ASSA-284's open box, not a thing I shipped.
+##
+## Godot's unfilled `draw_rect` straddles the edge it is given, 0.5 px either side, so a rim at
+## `rect.grow(-HOVER_STROKE_PX)` lands exactly beside the outline's own pixels with no gap.
 static func hover_mark(tile: Vector2i, cell: float, origin: Vector2) -> Dictionary:
 	var box := Rect2(origin + Vector2(tile) * cell, Vector2(cell, cell))
 	return {
 		"tile": tile,
 		"rect": box,
-		"keyline_rect": box.grow(HOVER_STROKE_PX),
+		"keyline_rect": box.grow(-HOVER_STROKE_PX),
 		"width": HOVER_STROKE_PX,
 		"colour": HOVER,
 		"keyline": MAP_BG,

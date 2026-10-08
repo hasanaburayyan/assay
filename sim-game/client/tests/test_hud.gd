@@ -1631,14 +1631,25 @@ func test_the_hovered_tiles_outline_carries_its_own_opaque_rim() -> bool:
 			return _fail("at %.0f px a tile the hovered outline is %s, which is not tile (12, 7)'s "
 					% [cell, box] + "own cell: this mark is the cell and must cover exactly it")
 		var keyline: Rect2 = hover["keyline_rect"]
-		var out := keyline.size - box.size
+		var out := box.size - keyline.size
 		if not out.is_equal_approx(Vector2(2.0, 2.0) * AssayHud.HOVER_STROKE_PX):
-			return _fail(("at %.0f px a tile the rim grows the outline by %s, not %.1f px "
+			return _fail(("at %.0f px a tile the rim is inset from the outline by %s, not %.1f px "
 					+ "perpendicular on each side") % [cell, out, AssayHud.HOVER_STROKE_PX])
-		if not keyline.encloses(box):
-			return _fail(("the hovered tile's rim %s does not enclose the outline %s: the rim is "
-					+ "being paid for out of the mark, which leaves it touching a machine's own rim "
-					+ "exactly as before") % [keyline, box])
+		# **AND THE RIM IS INSIDE THE CELL, WHICH IS THE OPPOSITE OF EVERY OTHER RIM ON THIS MAP AND
+		# IS MEASURED RATHER THAN PREFERRED.** Grown OUTWARD -- which is what Maren ruled and what I
+		# built first -- the rim lands on the neighbouring tile, and the neighbour is where a machine's
+		# mark starts: shot on both seeds, the smelter's band went 242 -> 28 at the shared edge, so an
+		# outward rim buys this mark a dark neighbour by deleting one of the machine's two band pixels.
+		# A mark may not pay for its own legibility out of the mark next door.
+		if not box.encloses(keyline):
+			return _fail(("the hovered tile's rim %s is not inside its own cell %s. Outward, it lands "
+					+ "on the neighbouring tile and deletes a pixel of whatever mark starts there -- "
+					+ "measured at a smelter's band on two seeds, 242 -> 28 (ASSA-284)")
+					% [keyline, box])
+		if keyline.size.x <= 0.0 or keyline.size.y <= 0.0:
+			return _fail(("at %.0f px a tile the rim leaves the hovered cell no middle at all (%s): "
+					+ "the outline would be a filled square and the ore under it gone")
+					% [cell, keyline])
 		if not is_equal_approx(float(hover["width"]), AssayHud.HOVER_STROKE_PX):
 			return _fail("the hovered outline is drawn %.1f px wide and the constant says %.1f"
 					% [hover["width"], AssayHud.HOVER_STROKE_PX])
