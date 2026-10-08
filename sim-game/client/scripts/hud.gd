@@ -1115,6 +1115,48 @@ static func cost_entry_short(need: int, have: int) -> bool:
 	return have < need
 
 
+## **THE BOXES A FRAME'S SLOTS DRAW, FROM THE SIM'S LIMITS AND FROM NOTHING ELSE** (ASSA-340, for
+## `assay-build-screen` §3's take from Satisfactory: *"slots drawn as a shape, not listed as rows …
+## a list hides a limit that a drawn shape states"*).
+##
+## `slots` is `AssaySimHost.part_kinds()`'s `slots` field for one frame: one entry per `SlotLimit`,
+## `{name, min, max}`, in the catalogue's own order. This returns one entry PER BOX —
+## `{"name", "required"}` — because the shape is what states the limit: a planted frame draws five
+## boxes (one head, four hoppers) and a handle draws one, so the player can see that a fifth hopper
+## has nowhere to go without reading a number.
+##
+## **`max` BOXES, THE FIRST `min` OF THEM REQUIRED.** Both numbers come from the sim and neither is
+## interpreted: `min` is not a verdict about the design — whether a design is finished is
+## `design_readout`'s `unfinished` flag and the sim's `fault` sentence names which slot is empty —
+## it is the reason a required empty box must not look like an optional one. Four empty hopper boxes
+## drawn identically to one empty head box would say a frame needs five parts.
+##
+## **ORDER IS THE SIM'S AND IS NOT SORTED.** `PART_SPECS` lists the head slot before the hoppers,
+## and a shape that put the optional slots first would read as the design's shape rather than as the
+## catalogue's.
+##
+## **A KIND THAT IS NOT A FRAME ANSWERS `[]`, WHICH IS NOT AN ERROR**: `PartSpec::slots` says *"Only
+## a frame offers any"*, so an empty list is what a head and a hopper honestly have. The caller draws
+## no shape rather than an empty one.
+##
+## Pure, and takes the crossed array rather than reaching for a world, so a test states both forms —
+## a `min == max` slot and a real range — without a seeded save that happens to hold a frame.
+static func slot_boxes(slots: Array) -> Array:
+	var out := []
+	for entry in slots:
+		var slot: Dictionary = entry
+		var named := String(slot.get("name", ""))
+		# A SLOT WITH NO NAME OR NO ROOM IS SKIPPED RATHER THAN DRAWN BLANK. The only way here is a
+		# `libsim_godot.dylib` older than the sim it was built from, which is the case every other
+		# reader of a crossed catalogue field in this file treats as "draw nothing": a nameless box
+		# in a shape that states a limit would state the wrong limit.
+		if named == "" or int(slot.get("max", 0)) <= 0:
+			continue
+		for i in range(int(slot.get("max", 0))):
+			out.append({"name": named, "required": i < int(slot.get("min", 0))})
+	return out
+
+
 ## **HOW MUCH OF A STACK A SLOT ROW OFFERS BESIDES ALL OF IT** (ASSA-316, Maren's ruling 4).
 ##
 ## **NO STEPPER, NO FIELD, NO MAGIC 10.** Her reasons, kept where the numbers are: a stepper is two

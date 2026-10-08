@@ -2611,6 +2611,72 @@ func test_an_exact_pack_is_not_short_and_an_empty_one_is() -> bool:
 	return true
 
 
+## **A FRAME'S SLOTS BECOME BOXES, ONE PER UNIT OF ROOM** (ASSA-340, for `assay-build-screen` §3:
+## *"slots drawn as a shape, not listed as rows … a list hides a limit that a drawn shape states"*).
+##
+## **THE TWO LIMITS HERE ARE WRITTEN AS LITERALS AND MATCH THE SHIPPED CATALOGUE'S TWO FRAMES** --
+## a held frame's `head 1 1` and a planted frame's `head 1 1` + `hopper 0 4` -- because the thing
+## under test is the arithmetic from a limit to a shape, and asking the sim for them here would make
+## this test agree with whatever the binding happens to hand over. `test_actions.gd` is where the
+## CROSSED field is held against the sim; this file touches no sim at all (see its header).
+func test_a_frames_slot_limits_draw_one_box_per_unit_of_room() -> bool:
+	var handle := AssayHud.slot_boxes([{"name": "head", "min": 1, "max": 1}])
+	if handle.size() != 1:
+		return _fail("one head slot drew %d boxes" % handle.size())
+	if String((handle[0] as Dictionary).get("name", "")) != "head":
+		return _fail("the one box is not a head: %s" % [handle[0]])
+	if not bool((handle[0] as Dictionary).get("required", false)):
+		return _fail("a slot with min 1 drew a box that is not required: %s" % [handle[0]])
+
+	# THE PLANTED FRAME IS THE ONE THAT PROVES THE SHAPE SAYS SOMETHING A ROW WOULD NOT: five boxes,
+	# of which four are optional, so the limit (a fifth hopper has nowhere to go) is visible without
+	# a number -- and the four empties must not read as four things the design is waiting for.
+	var frame := AssayHud.slot_boxes([
+			{"name": "head", "min": 1, "max": 1},
+			{"name": "hopper", "min": 0, "max": 4}])
+	if frame.size() != 5:
+		return _fail("a head slot and four hopper slots drew %d boxes" % frame.size())
+	var drawn := PackedStringArray()
+	var required := 0
+	for entry in frame:
+		var box: Dictionary = entry
+		drawn.append(String(box.get("name", "")))
+		if bool(box.get("required", false)):
+			required += 1
+	# Order is the catalogue's and is not sorted: the required slot comes first because `PART_SPECS`
+	# puts it first, not because this function reordered it.
+	if "|".join(drawn) != "head|hopper|hopper|hopper|hopper":
+		return _fail("the boxes came out as %s" % [drawn])
+	if required != 1:
+		return _fail("%d of five boxes are required; only the head slot's min is above zero"
+				% required)
+	return true
+
+
+## **NOT A FRAME MEANS NO SHAPE, AND A BROKEN ROW IS SKIPPED RATHER THAN DRAWN BLANK** (ASSA-340).
+##
+## The empty list is the honest answer for a head or a hopper (`PartSpec::slots`: *"Only a frame
+## offers any"*). The other two cases are only reachable with a `libsim_godot.dylib` older than the
+## sim it was built from, and they are here because **a nameless or roomless box in a shape whose job
+## is stating a limit would state the wrong limit** -- five boxes where the frame takes four.
+func test_a_slot_with_no_name_or_no_room_draws_nothing() -> bool:
+	if not AssayHud.slot_boxes([]).is_empty():
+		return _fail("a part with no slots drew %s" % [AssayHud.slot_boxes([])])
+	var nameless := AssayHud.slot_boxes([{"min": 1, "max": 2}])
+	if not nameless.is_empty():
+		return _fail("a slot with no name drew %s" % [nameless])
+	var roomless := AssayHud.slot_boxes([{"name": "hopper", "min": 0, "max": 0}])
+	if not roomless.is_empty():
+		return _fail("a slot with no room drew %s" % [roomless])
+	# And a good slot beside a broken one still draws: the shape loses the row it cannot draw, not
+	# the frame.
+	var mixed := AssayHud.slot_boxes([{"name": "", "min": 0, "max": 3},
+			{"name": "head", "min": 1, "max": 1}])
+	if mixed.size() != 1 or String((mixed[0] as Dictionary).get("name", "")) != "head":
+		return _fail("a broken row took the good one with it: %s" % [mixed])
+	return true
+
+
 ## **THE SIM'S SENTENCE BREAKS AT THE SIM'S OWN MARK AND NOWHERE ELSE** (ASSA-332; Maren's §5.4
 ## ruling 2, and ASSA-305's "whole" as she re-read it: *"wrapping is not recomposing"*).
 ##
