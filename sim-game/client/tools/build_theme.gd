@@ -47,6 +47,19 @@ const MIN_MUTED_CONTRAST := 4.5
 ## near 1.80 -- a guard that fires on every nudge gets raised rather than obeyed.
 const MIN_INK_SEPARATION := 1.5
 
+## **THE NON-TEXT FLOOR, FOR THE ONE MARK IN THIS THEME THAT IS A FACT RATHER THAN A WORD**
+## (ASSA-288; Maren's rule 3 on ASSA-276 move 3, 2026-10-08).
+##
+## Her ruling: *"THE AXIS IS THE FACT, NOT THE CONTAINER, AND YOURS IS INVISIBLE ... Floor: track >=
+## 3:1 against the plate behind it (the non-text floor; 4.5:1 still holds for text)."* The track I
+## drew in the mock was `RAISED` on `SURFACE`, which she measured at **1.27:1** -- a floating segment
+## whose axis you cannot see is a block at an arbitrary place.
+##
+## 3.0 and not 4.5 because an axis is not text; it is the same bar WCAG sets for graphical objects.
+## It lives HERE rather than in `track.gd` so the number is refused at build time like every other
+## contrast in this file, instead of being a sentence in a docstring that a palette nudge outlives.
+const MIN_AXIS_CONTRAST := 3.0
+
 # ---------------------------------------------------------------------------
 # THE TYPE SCALE. Four sizes, and the reason there are four is that `main.gd` currently reaches for
 # 12, 13 and 19 by hand at eight separate call sites, which is how a screen ends up with no scale at
@@ -77,6 +90,27 @@ const ACCENT := Color(0.50, 0.90, 0.55)
 ## NOT TAKEN ON TRUST: it is a pair in `_contrast_problems` like every other ink-on-surface here, so
 ## the build refuses the theme if this is ever nudged under 4.5:1.
 const ON_ACCENT := SURFACE
+
+## **THE AXIS A READING IS A POSITION ON** (ASSA-288). `BORDER` itself is only **1.80:1** against
+## `SURFACE` and `RAISED` is **1.27:1**, so neither of the two greys this palette already owns can
+## carry Maren's 3:1 -- and brightening the axis past this point starts eating the one thing drawn ON
+## it, because a rough mark is `INK_MUTED` and the gap between them closes from both sides.
+##
+## DERIVED, NOT A SEVENTH GREY: `lightened` is this file's own idiom for a related surface (the
+## button's hover fill and the scrollbar's grabber are both derived the same way), so the axis moves
+## with the palette instead of pinning it. The lift is the smallest round step that clears the floor
+## with room -- **3.48:1** today against a 3.0 bar -- for the same reason `MIN_INK_SEPARATION` is not
+## held near its measured value: a guard that fires on every nudge gets raised rather than obeyed.
+##
+## A FUNCTION AND NOT A `const`, because GDScript will not fold `Color.lightened` at parse time. The
+## alternative was writing the result out as a literal `Color(0.4675, 0.4825, 0.52)`, which is the
+## seventh grey this comment says it is not: three numbers nobody can check against `BORDER` without
+## doing the arithmetic by hand. Derived at build time is the honest form.
+const AXIS_LIFT := 0.25
+
+
+static func axis() -> Color:
+	return BORDER.lightened(AXIS_LIFT)
 
 const PAD_X := 10
 const PAD_Y := 6
@@ -155,6 +189,7 @@ func _initialize() -> void:
 	_style_line_edit(theme)
 	_style_panel(theme)
 	_style_scroll(theme)
+	_style_track(theme)
 
 	if DirAccess.make_dir_recursive_absolute("res://theme") != OK:
 		_fail("cannot make res://theme")
@@ -185,7 +220,11 @@ func _contrast_problems() -> PackedStringArray:
 			# A variation added without its pair would be the one surface in the game this file
 			# cannot refuse -- which is how a check stops covering the thing it exists for.
 			["primary button label", ON_ACCENT, ACCENT, MIN_CONTRAST],
-			["quiet button label", INK_MUTED, SURFACE, MIN_MUTED_CONTRAST]]:
+			["quiet button label", INK_MUTED, SURFACE, MIN_MUTED_CONTRAST],
+			# **THE ONE PAIR HERE THAT IS NOT TEXT** (ASSA-288). An axis on the panel, at the non-text
+			# floor. It is in this list for exactly the reason the primary button's label is: a mark
+			# the build cannot refuse is a mark that drifts.
+			["reading axis", axis(), SURFACE, MIN_AXIS_CONTRAST]]:
 		var ratio := AssayHud.contrast_ratio(pair[1], pair[2])
 		if ratio < float(pair[3]):
 			problems.append("%s: %.2f:1, needs %.1f:1" % [pair[0], ratio, pair[3]])
@@ -333,6 +372,28 @@ func _style_line_edit(theme: Theme) -> void:
 func _style_panel(theme: Theme) -> void:
 	theme.set_stylebox("panel", "Panel", _box(SURFACE, BORDER))
 	theme.set_stylebox("panel", "PanelContainer", _box(SURFACE, BORDER))
+
+
+## **THE AXIS, AS A THEME ENTRY RATHER THAN A SECOND DERIVATION IN THE CONTROL** (ASSA-288).
+##
+## `AssayTrack` reads `axis_color`/`Track` with `get_theme_color`, the same way `main.gd` reads its
+## two log inks. The alternative -- `BORDER.lightened(0.25)` written again in `track.gd` -- would be
+## two places computing one colour, which is the ASSA-43/52 defect in paint: two vocabularies for one
+## fact, free to disagree. Here the value is computed once, checked once by `_contrast_problems`, and
+## looked up at the one place it is drawn.
+##
+## **A VARIATION OF `Control`, SO THE TRACK CAN NAME ITS OWN TYPE AND READ WITH NO TYPE ARGUMENT.**
+## `tab_strip.gd:159` paid for that lesson: Godot compares the `theme_type` argument against the
+## node's own class before building the type list, so a read WITH a type can silently resolve
+## something else. A registered variation plus `theme_type_variation = &"Track"` makes
+## `get_theme_color(&"axis_color")` the same lookup the engine makes when it draws.
+##
+## `Control` and not `Label`, because a track has no text and inheriting a font size would be
+## furniture it never uses.
+func _style_track(theme: Theme) -> void:
+	theme.add_type(&"Track")
+	theme.set_type_variation(&"Track", "Control")
+	theme.set_color("axis_color", "Track", axis())
 
 
 ## THE SCROLLBAR, which is the one control on this screen that is load-bearing and invisible.
