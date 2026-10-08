@@ -325,9 +325,10 @@ quit
     // the sim's phrase for the empty slot WHERE THE VERDICT WOULD BE. Checked
     // negatively too: a verdict word here would mean the screen can say SAFE
     // over a press that refuses.
-    // Found by its words, not its position: it has to be asked while the pack
-    // still holds the handle, because `sim-cli` can only name items you carry
-    // (ASSA-330, filed, not this item's).
+    // Found by its words, not its position. It is asked while the pack still
+    // holds the handle because that is where it sits in the loop; it no longer
+    // HAS to be — ASSA-330 gave `design` a catalogue path, and
+    // `tests/design_unowned.rs` asks the same question with an empty pack.
     let placing = readouts
         .iter()
         .find(|l| l.contains("needs at least 1 head"))
