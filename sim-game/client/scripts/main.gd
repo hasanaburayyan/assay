@@ -4260,6 +4260,13 @@ func _draw() -> void:
 			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
 		for band: Rect2 in AssayHud.frame_bands(shape["rect"], float(shape["stroke"])):
 			draw_rect(band, AssayHud.mark_ink_of(&"building", shape["colour"]), true)
+		# **AND A RIM INSIDE THE HOLE, BECAUSE A HOLE IS ONLY A HOLE IF IT IS DARKER THAN ITS BAND**
+		# (ASSA-278 candidate, not ruled). Drawn AFTER the frame and INSIDE it, so the frame keeps
+		# every pixel of its own size -- the same rule the outward rim keeps. The species letter is
+		# painted later still (the glyph pass below), so ASSA-213 is untouched by this: a letter on a
+		# machine's tile still lands on top of both rims.
+		for band: Rect2 in AssayHud.frame_bands(shape["hole_rect"], AssayHud.MARK_KEYLINE_PX):
+			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
 
 	# **THE SPECIES LETTER, LAST, BECAUSE A MACHINE STANDS ON THE ROCK IT WORKS** (ASSA-213, Maren's
 	# P1: "a building mark may not remove the species letter from a deposit it stands on").

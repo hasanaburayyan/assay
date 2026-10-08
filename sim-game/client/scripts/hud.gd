@@ -955,6 +955,11 @@ static func building_mark(building: Dictionary, cell: float, origin: Vector2) ->
 	return {
 		"points": rect_points(outer),
 		"hole_points": rect_points(outer.grow(-BUILDING_STROKE_PX)),
+		# **THE HOLE AS A RECT, FOR THE RIM THAT HAS TO GO INSIDE IT** (ASSA-278 candidate). The
+		# outward keyline above buys the frame's OUTER edge 11.40:1 on every ground we have shot. The
+		# inner edge had nothing, so on a grade-A deposit the hole came back at 0.627 against the
+		# band's 0.888 -- 1.39:1, and QA could not call the mark a machine at all.
+		"hole_rect": outer.grow(-BUILDING_STROKE_PX),
 		"rect": outer,
 		"stroke": BUILDING_STROKE_PX,
 		"colour": HOVER,
