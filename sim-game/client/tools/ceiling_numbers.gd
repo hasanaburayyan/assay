@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- the log panel's bound is window-derived and reads 0 px headless
 ## WHAT THE LOG PANEL'S BOUND ACTUALLY IS, on the real map and on the test window.
 ##
 ##   godot --headless --path client --script res://tools/ceiling_numbers.gd

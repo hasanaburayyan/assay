@@ -348,8 +348,15 @@ def main():
         # a stronger claim than it is -- the exact way a review sheet got believed in the
         # first place.
         if state == NOT_A_COMPOSITE:
-            print("  %s is exempt and recorded no art: %s names no shipped-art path. This pass\n"
-                  "    says nothing about whether that picture is current."
+            # THIS SENTENCE USED TO END "says nothing about whether that picture is current",
+            # and that stopped being true the day ASSA-173 landed: `design_rows.png` now carries
+            # a LAYOUT stamp and `check_review_layout.py` re-asks the probe that drew it. The old
+            # wording was right when nothing checked the other half and would have gone on
+            # telling a reader to distrust a sheet that is now held -- a green sentence outliving
+            # its reason, which is the same rot this check exists to catch in pictures.
+            print("  %s is exempt and recorded no art: %s names no shipped-art path. Whether that\n"
+                  "    picture is still the CLIENT's is a different claim, on a different key:\n"
+                  "    check_review_layout.py."
                   % (name, GENERATOR[name]))
     # THERE IS NO `elif state == EMPTY` HERE ANY MORE, and its removal is the fix rather than
     # tidying (ASSA-144 box 4). It printed "recorded an empty source list, so there is nothing

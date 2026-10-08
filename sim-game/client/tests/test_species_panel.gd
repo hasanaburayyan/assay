@@ -262,19 +262,36 @@ func test_the_boolean_facts_show_as_tags_only_where_the_sim_says_true() -> bool:
 	return ok
 
 
-## THE READINGS LINE ALONE, by name, for one species.
+## THE READINGS ALONE, by name, for one species.
 ##
 ## NOT the whole row, and the first version of this read the whole row: a band is told from an exact
 ## number by the hyphen the sim spells it with, and `[hand-minable]` has a hyphen in it. So the test
 ## called a perfectly sharpened sheet "still in bands". The row is not the measurement; the readings
-## label is.
+## are.
+##
+## **IT IS SIX VALUES NOW AND IT WAS ONE LABEL** (ASSA-288). `SPECIES_READINGS` names the three-column
+## table rather than one joined line, so this gathers each row's VALUE -- the sim's own string,
+## `26-50` or `38`.
+##
+## **VALUES ONLY, AND THE PROPERTY NAMES ARE LEFT OUT ON PURPOSE.** The hyphen rule above is why. I
+## joined `label value` first, which reads better in a failure message and quietly re-arms the exact
+## trap this docstring was written about: one property named with a hyphen and a sharpened sheet
+## reads as a band again. The names add nothing a caller tests, so they do not go in the string the
+## caller tests.
 func _readings_for(screen: Node, species: int) -> String:
 	var sheets: Array = screen._sim.species_sheets()
 	var rows := _rows(screen)
 	for i in range(mini(rows.size(), sheets.size())):
 		if int((sheets[i] as Dictionary).get("id", -1)) == species:
-			var label := rows[i].find_child(screen.SPECIES_READINGS, true, false) as Label
-			return "" if label == null else label.text
+			var table: Node = rows[i].find_child(screen.SPECIES_READINGS, true, false)
+			if table == null:
+				return ""
+			var values := PackedStringArray()
+			for child in table.get_children():
+				var reading := child as AssayReadingRow
+				if reading != null:
+					values.append(reading.value_text())
+			return " · ".join(values)
 	return ""
 
 

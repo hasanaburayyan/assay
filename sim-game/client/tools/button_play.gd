@@ -1,4 +1,5 @@
 class_name AssayButtonPlay
+## CI: library
 extends RefCounted
 ## THE WHOLE DEMO LOOP, PLAYED BY PRESSING THE SCREEN'S OWN BUTTONS AND CLICKING ITS OWN MAP.
 ##

@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- dumps the scatter plan as text for someone to check by eye
 
 ## **THE SCATTER LAYER'S PLAN, AS TEXT, SO SOMEONE ELSE CAN CHECK IT.**
 ##

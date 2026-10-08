@@ -1,7 +1,15 @@
 extends SceneTree
+## CI: local -- needs a release `sim-relay` binary and a real socket, and it causes a true
+## divergence rather than faking one. ASSA-190's end-to-end proof, not a per-push gate.
 ## **DOES A DESYNCED CLIENT GET BACK IN?** (ASSA-190 box 3.)
 ##
+##   cargo build -p sim-relay --release        # SEE BELOW: release wins, debug does not
 ##   godot --headless --path . --script res://tools/desync_probe.gd -- [seed]
+##
+## **BUILD THE RELEASE RELAY, NOT THE DEBUG ONE.** `AssaySoloRelay.find_binary()` takes the first
+## candidate that exists and `target/release/sim-relay` comes before `target/debug/sim-relay`, so a
+## stale release binary silently wins over the debug build you just made. That cost this probe its
+## first run: the relay was protocol 9 against a protocol 10 client and refused the join.
 ##
 ## ASSA-190 shipped the hang-up: a `Desync` now leaves `AssayNetClient` at DEAD with the socket
 ## closed BY US, so the join band comes back and Join is live. Five of its six boxes are met by the
@@ -236,9 +244,19 @@ func _wait_for_the_first_world() -> void:
 		_step = 3
 		_until = _now() + CHECKPOINT_DEADLINE
 		return
+	# **A REFUSAL IS A MOMENT, NOT A CONDITION, SO IT IS NOT WAITED OUT.** The first run of this probe
+	# joined a STALE `target/release/sim-relay` -- `AssaySoloRelay.find_binary()` prefers release over
+	# the debug build you just made -- and the relay said exactly what was wrong: "This host speaks
+	# protocol v9 and your client speaks v10". The probe then sat for 20s and reported a TIMEOUT with a
+	# stage number, burying the one sentence that named the cause. A deadline is the right instrument
+	# for silence and the wrong one for an answer.
+	if _screen._client.stage == AssayNetClient.Stage.DEAD:
+		_bail("the relay would not have us, so there is no session to desync: %s" % _why_we_died())
+		return
 	if _now() >= _until:
 		_bail(("no world within %ds on the first join (stage %d): the probe never got as far as the "
-				+ "question it exists to ask") % [int(JOIN_DEADLINE), _screen._client.stage])
+				+ "question it exists to ask. The client said: %s")
+				% [int(JOIN_DEADLINE), _screen._client.stage, _why_we_died()])
 
 
 ## STEP 3: **THE CONTROL.** One hash reported and ACCEPTED -- the host had our number, compared it,
@@ -493,6 +511,26 @@ func _after_a_bundle(_tick: int, _inputs: Array, _raw: String) -> void:
 		return
 	while _screen._hashes_sent > _reported.size():
 		_reported.append({"tick": _screen._sim.tick(), "hash": _screen._sim.hash_hex()})
+
+
+## **WHAT THE CLIENT ITSELF SAID, for a bail that would otherwise print a stage number.** The
+## refusal and the link failure both arrive as signals and both are already collected in `_said`;
+## the screen's own line is quoted too, because that is the sentence a person at the window reads.
+func _why_we_died() -> String:
+	var spoken := PackedStringArray()
+	for line in _said:
+		if line.begins_with("refused:") or line.begins_with("link_failed:"):
+			spoken.append(line)
+	var said := " / ".join(spoken)
+	var screen := String(_screen._status.text)
+	if spoken.is_empty():
+		return "nothing it was willing to put in words (screen: \"%s\")" % screen
+	# **THE SCREEN'S LINE ONLY WHEN IT ADDS ONE.** Measured on the refusal run that proved this path:
+	# the status line WAS the refusal, so quoting both printed one 230-character sentence twice, and a
+	# bail that repeats itself reads like two findings.
+	if said.contains(screen):
+		return said
+	return "%s (screen: \"%s\")" % [said, screen]
 
 
 func _reported_for(tick: int) -> Dictionary:

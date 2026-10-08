@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- times bundle arrivals against a live relay for 60 s; a runner's clock answers differently
 ## ASSA-179: HOW LONG DOES A *HEALTHY* SESSION EVER GO WITHOUT A BUNDLE? (Maren.)
 ##
 ##   godot --headless --path client --script res://tools/maren_bundle_gap_probe.gd -- [seed] [secs]

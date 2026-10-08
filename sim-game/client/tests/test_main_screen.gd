@@ -3701,9 +3701,19 @@ func test_a_deposit_and_its_letter_are_drawn_on_the_middle_of_the_tile_they_name
 		elif not source.contains("MARGIN + Vector2(_target) * _cell"):
 			ok = _fail("the target brackets no longer start at the tile's corner: a rect that covers a "
 					+ "cell is not a mark that names it, and ASSA-220 moved the marks, not the rects")
-		elif not source.contains("MARGIN + Vector2(_hover) * _cell"):
-			ok = _fail("the hover outline no longer starts at the tile's corner, so it no longer "
-					+ "covers the cell the readout is talking about")
+		# **THE HOVER OUTLINE'S CORNER IS NOW ASSERTED ON GEOMETRY INSTEAD OF ON A STRING** (ASSA-284).
+		# This read `source.contains("MARGIN + Vector2(_hover) * _cell")` and went red when the rect
+		# moved into `AssayHud.hover_mark` so that the outline could be given a rim -- correctly, since
+		# that string was the only thing holding the corner. The property it was standing in for is
+		# held directly by `test_hud.gd::test_the_hovered_tiles_outline_carries_its_own_opaque_rim`,
+		# which checks the rect IS tile (12, 7)'s own cell at three cell sizes. The scan stays, because
+		# ASSA-220's actual finding was two independent copies of the corner formula drifting apart:
+		# what it pins now is that `_draw` takes the rect from the shared helper rather than keeping a
+		# fourth copy of the arithmetic.
+		elif not source.contains("AssayHud.hover_mark(_hover, _cell, MARGIN)"):
+			ok = _fail("`_draw` no longer takes the hovered tile's rect from `AssayHud.hover_mark`, "
+					+ "so the corner formula has a copy in the paint loop again -- which is the shape "
+					+ "of ASSA-220's defect, and nothing headless can read a `draw_rect` back")
 	# **AND THE INSTRUMENT, BECAUSE IT CARRIED THE SAME BUG.** `window_shot.gd` recorded each disc's
 	# centre with its own third copy of `MARGIN + tile * _cell`, so it AGREED WITH THE DEFECT: every
 	# centre measured off `08-whole-world-marks.json` was the corner, and `main.gd` fixed alone would

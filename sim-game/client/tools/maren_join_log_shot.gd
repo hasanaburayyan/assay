@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- photographs the join screen in a real window
 ## WHAT THE EVENT LOG SAYS ON THE JOIN SCREEN, BEFORE THERE IS A WORLD (Maren).
 ##
 ##   godot --path client --script res://tools/maren_join_log_shot.gd -- <out_dir>

@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- times frames in ms on this Mac; a runner's timings are a fact about the runner
 ## ASSA-167: WHAT DOES THE LONG FRAME SPEND ITS TIME ON? The unit on this probe is MILLISECONDS and
 ## nothing here measures the body.
 ##
