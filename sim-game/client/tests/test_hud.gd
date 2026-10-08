@@ -1870,3 +1870,58 @@ func test_the_dead_end_label_comes_from_the_sim_and_not_from_this_client() -> bo
 	if main_src.contains("_note(\"— %s\" % dead_end)"):
 		return _fail("the dead end is still drawn in the cost clause's em-dash series")
 	return true
+
+
+## **A LETTER'S CANDIDATE TILES ARE THE SIM'S OWN DISC, AND THIS IS THE ONLY TEST THAT CAN SAY SO**
+## (ASSA-273).
+##
+## **WHY IT EXISTS: THE ASSERTION IN `test_main_screen.gd` IS VACUOUS AND I FOUND THAT BY LEVERING
+## IT.** That test checks the tile the letter actually moved to is inside its patch -- and with the
+## patch filter deleted from `glyph_yield_candidates` the whole suite still passed 404/0, because on
+## that world the nearest free tile happens to sit inside the disc either way. A check that cannot
+## fail where it matters is not a check, so the predicate is asserted here directly instead.
+##
+## **THE EXPECTATIONS ARE DERIVED BY HAND FROM `sim/src/ore.rs:23`, NOT FROM THE FUNCTION**, which is
+## the whole point -- asking `patch_contains` what it thinks and comparing it with `patch_contains`
+## is the `x == x` vacuity I have shipped twice this week. The sim's rule is
+## `dx*dx + dy*dy <= r*r`, so on a radius-2 patch: `(2,0)` is in at `4 <= 4`, `(1,1)` is in at
+## `2 <= 4`, `(2,1)` is OUT at `5 > 4`, and `(2,2)` is OUT at `8 > 4`. Twelve tiles in total -- four
+## at distance 1, four at 2, four at 4 -- which a square ring of the same reach would call
+## twenty-four.
+func test_a_letters_candidate_tiles_are_the_sims_own_disc() -> bool:
+	var centre := Vector2i(40, 20)
+	# THE PREDICATE, on the four cases that separate a disc from a square.
+	var cases := [[Vector2i(2, 0), true], [Vector2i(1, 1), true], [Vector2i(0, -2), true],
+			[Vector2i(2, 1), false], [Vector2i(2, 2), false], [Vector2i(-2, -2), false]]
+	for raw in cases:
+		var case: Array = raw
+		var step: Vector2i = case[0]
+		var want: bool = case[1]
+		var got := AssayHud.patch_contains(centre, 2, centre + step)
+		if got != want:
+			return _fail(("`patch_contains` says %s for the tile %s off a radius-2 centre and "
+					+ "`sim/src/ore.rs` says %s: %d*%d + %d*%d %s 2*2. This is the one place the "
+					+ "client can silently disagree with the world about what a patch IS.")
+					% [got, step, want, step.x, step.x, step.y, step.y, "<=" if want else ">"])
+	var candidates: Array[Vector2i] = AssayHud.glyph_yield_candidates(centre, 2)
+	if candidates.size() != 12:
+		return _fail(("a radius-2 patch offers %d candidate tiles and the sim's disc holds 12 "
+				+ "besides the centre (4 at d2=1, 4 at d2=2, 4 at d2=4). A square ring of the same "
+				+ "reach would offer 24, which is what dropping the filter does.") % candidates.size())
+	if candidates.has(centre):
+		return _fail("the centre is in its own candidate list: that is the placement the list exists "
+				+ "to replace, and offering it would let the search 'move' a letter nowhere")
+	# NEAREST FIRST, which is the one opinion in the order: the overhang grows with the distance
+	# travelled, so a search that tried far tiles first would pay more than it had to.
+	var last := 0
+	for tile in candidates:
+		var d := tile - centre
+		var d2 := d.x * d.x + d.y * d.y
+		if d2 < last:
+			return _fail(("candidate %s is at d2=%d after a tile at d2=%d: the order must be "
+					+ "nearest-first or a letter pays more overhang than the mark costs it")
+					% [tile, d2, last])
+		last = d2
+		if not AssayHud.patch_contains(centre, 2, tile):
+			return _fail("candidate %s is outside the patch it is a candidate for" % tile)
+	return true

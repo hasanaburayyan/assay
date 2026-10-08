@@ -4559,21 +4559,22 @@ func _glyph_marks(deposits: Array, font: Font, building_marks: Array = []) -> Ar
 		# every deposit would stack its glyph on tile (0,0), and `AssayHud.machines_on_letters` would
 		# then report a machine near the origin as standing on all six species at once.
 		var centre: Vector2i = deposit["center"]
-		# **THE SAME `point_of_tile` THE DISC PASS USES** (ASSA-220). These were two independent copies of
-		# the corner formula, which is why one defect sat in two places: a letter centred on `at` inherited
-		# the disc's half-tile error exactly.
-		var at := point_of_tile(centre)
 		var radius := maxf(_cell, float(int(deposit.get("radius", 1))) * _cell)
 		var size := AssayHud.glyph_size(radius)
 		if size <= 0:
 			continue
 		var disc := AssayHud.deposit_disc(deposit, radius)
-		var measured := font.get_string_size(symbol, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
-		var baseline := at + Vector2(-measured.x * 0.5, float(size) * 0.36)
+		# **THE LETTER YIELDS TO A MACHINE STANDING ON ITS OWN TILE, INSIDE ITS OWN PATCH** (ASSA-273,
+		# Maren's option 3). `_glyph_place` is where that decision is made and why it is one call: the
+		# placement has to be tried at several tiles and judged by `letter_occlusions` at each, and
+		# the loop below must not end up with two ideas of where the letter is.
+		var place := _glyph_place(centre, int(deposit.get("radius", 1)), symbol, size, font,
+				building_marks)
+		var at: Vector2 = place["at"]
 		marks.append({
 			"symbol": symbol,
 			"size": size,
-			"baseline": baseline,
+			"baseline": place["baseline"],
 			"ink": disc["ink"],
 			"bed": disc["colour"],
 			"bed_px": AssayHud.GLYPH_BED_PX,
@@ -4582,15 +4583,34 @@ func _glyph_marks(deposits: Array, font: Font, building_marks: Array = []) -> Ar
 			# ask. THE DESCENT IS LEFT OUT ON PURPOSE -- `symbol` is one capital, a generated name's
 			# initial, so there is no descender and a box that reserved room for one would say a
 			# mark lands on the letter when it lands under it.
-			"box": Rect2(baseline - Vector2(0.0, font.get_ascent(size)),
-					Vector2(measured.x, font.get_ascent(size))),
+			"box": place["box"],
 			"at": at,
 			# **THE TILE, NOT ONLY THE PIXEL** (ASSA-213 box 2). `at` is where the letter is drawn and
 			# cannot be compared with a footprint: a shot has to be able to ask the SIM whether a
 			# machine stands on the tile this letter names, because pixels alone cannot tell "no
 			# machine was on a rock today" from "one was and the map did not mark it".
 			# `AssayHud.machines_on_letters` is the comparison and `tools/window_shot.gd` the caller.
+			#
+			# **IT IS THE TILE THE LETTER NAMES, AND SINCE ASSA-273 THAT IS NO LONGER THE TILE IT IS
+			# DRAWN ON.** A letter yields to a machine on its own centre, so `drawn_tile` below is
+			# where the glyph went and this stays the deposit's `center`. The distinction matters to
+			# three readers and they want opposite halves: `machines_on_letters` wants THIS one,
+			# because "a machine is standing on a lettered rock" is still true and still the case a
+			# shot should go and photograph; `deposit_disc`'s hatch lookups in the suite are keyed by
+			# centre; and only the painter wants the other.
 			"tile": centre,
+			# WHERE THE GLYPH ACTUALLY WENT, and `moved_from` is null unless it yielded (ASSA-273).
+			# Published as a fact on the mark for `bedded`'s reason: `_draw` cannot be asked where it
+			# put a `draw_string`, so a test asks the dictionary.
+			"drawn_tile": place["tile"],
+			"moved_from": place["moved_from"],
+			# **TRUE WHEN EVERY CANDIDATE WAS COVERED AND THE LETTER STAYED HOME.** Unreachable with
+			# today's roster -- see `AssayHud.GLYPH_YIELD_RING`. A frame with this set is a frame
+			# where ASSA-273's defect is back, so it is a fact and not a silent fallback.
+			"yield_exhausted": place["yield_exhausted"],
+			# HOW MANY PX OF BUILDING MARK THE GLYPH STILL LANDS ON WHERE IT ENDED UP: 0 whenever it
+			# found a clear tile, and the reason `yield_exhausted` is not simply a failure.
+			"lap_px": place["lap_px"],
 			# **BEDDED IF A HATCH CROSSES IT, AND ALSO IF A MARK LAPS IT** (ASSA-218 box 9 as Maren
 			# AMENDED it, 13:00 EDT, after measuring my own priced alternative). Box 9 first shipped
 			# as *lapped only*, and the measurement says that keeps the bed on the one letter that
@@ -4615,9 +4635,121 @@ func _glyph_marks(deposits: Array, font: Font, building_marks: Array = []) -> Ar
 	# `case` leg reports, so the painter and the picture cannot disagree about which letter was at
 	# risk. It returns one entry per (building, letter) pair that overlaps at all, and a letter lapped
 	# by two buildings is still one letter, hence the set rather than a count.
+	#
+	# **ASSA-273 TOOK MOST OF THIS HALF'S WORK AWAY AND I AM NOT DELETING IT.** A letter that a
+	# machine laps now yields to a free tile of its own patch, so in a normal frame this loop beds
+	# nothing and the hatch decides every bed. What still reaches it: a letter whose candidates were
+	# all covered (`yield_exhausted`), and a letter lapped by a machine standing on a NEIGHBOUR tile
+	# rather than its own -- the glyph's box is wider than one cell, so a mark one tile away can
+	# still clip it and the letter does not move for that, because the tile it names is not occupied.
 	for raw in AssayHud.letter_occlusions(building_marks, marks):
 		var lap: Dictionary = raw
 		var j := int(lap["letter"])
 		if j >= 0 and j < marks.size():
 			(marks[j] as Dictionary)["bedded"] = true
+	# **A LETTER THAT MOVED IS BEDDED WHETHER OR NOT ANYTHING STILL LAPS IT** (ASSA-273, Maren: *"the
+	# moved letter is BEDDED -- it can overhang its disc by ~3.5 px at radius 2 and the bed is what
+	# pays for that"*). This is the one bed the loop above cannot decide, because its whole point is
+	# that nothing laps the letter any more: what the bed pays for here is the glyph hanging off the
+	# edge of the colour `glyph_color` picked its ink against, which is a fact about the DISC and not
+	# about any mark. Her overhang number is the cap box reaching 21.5 px from the centre against the
+	# disc's 18 px on a radius-2 patch.
+	for raw in marks:
+		var glyph: Dictionary = raw
+		if glyph["moved_from"] != null:
+			glyph["bedded"] = true
 	return marks
+
+
+## **WHERE ONE SPECIES LETTER GOES, GIVEN WHAT IS STANDING ON ITS PATCH** (ASSA-273, Maren's option 3).
+##
+## Returns the placement as `tile`, `at`, `baseline`, `box`, plus `moved_from` (null unless it
+## yielded) and `yield_exhausted`. The caller publishes all of it on the mark.
+##
+## **THE TEST FOR "A MACHINE IS ON IT" IS `letter_occlusions` AND NOT A FOOTPRINT COMPARISON**, which
+## is the whole reason this is a loop over placements rather than a lookup. What hurts the mark is the
+## glyph's INK over the mark's band, so the question is whether the cap box overlaps the frame minus
+## its hole -- exactly what `letter_occlusions` computes, and exactly what the painter's own `bedded`
+## rule asks one line later. A footprint test would also have said "no machine here" for the drill on
+## 777042 whose 62.1% of the band is this letter, because that letter's box reaches off its own tile.
+##
+## **IT IS ASKED ONE LETTER AT A TIME, WHICH `letter_occlusions` SUPPORTS AND THE BED LOOP CANNOT.**
+## A single-element list is a complete question here because a candidate is judged against BUILDINGS
+## only; two letters never move for each other (nothing in the sim puts two deposits on one tile, and
+## if it ever did, the second would be lapped by no mark and so would not move at all).
+##
+## HOME IS TRIED FIRST AND WINS WHENEVER IT IS CLEAR, so a world with no buildings -- every control
+## in the suite, and `window_shot.gd`'s bare arm -- draws exactly what it drew before this item.
+func _glyph_place(centre: Vector2i, radius: int, symbol: String, size: int, font: Font,
+		building_marks: Array) -> Dictionary:
+	var home := _glyph_box(centre, symbol, size, font)
+	var home_cost := _lap_cost(building_marks, home)
+	home["lap_px"] = home_cost
+	if home_cost <= 0.0:
+		return home
+	# THE BEST-EFFORT ARM IS CARRIED ALONGSIDE THE SEARCH, not computed afterwards, so the two can
+	# never disagree about which placement won.
+	var best := home
+	var best_cost := home_cost
+	for tile in AssayHud.glyph_yield_candidates(centre, radius):
+		var candidate := _glyph_box(tile, symbol, size, font)
+		var cost := _lap_cost(building_marks, candidate)
+		candidate["lap_px"] = cost
+		if cost <= 0.0:
+			candidate["moved_from"] = centre
+			return candidate
+		if cost < best_cost:
+			best = candidate
+			best_cost = cost
+	# **NO TILE OF THE PATCH FULLY CLEARS THE MARK: TAKE THE LEAST BAD ONE AND SAY SO.** Maren's
+	# instruction was to fall back to today's placement and state it in the constant; this falls back
+	# to the least-covered placement instead, and the difference is deliberate -- on a radius-2 patch
+	# besieged by machines, home is the WORST square on the patch (the glyph covers 100% of a mark it
+	# is concentric with), so "fall back to today" would hand back the whole defect rather than the
+	# part that is unavoidable. `yield_exhausted` is the fact either way, and `lap_px` says what it
+	# cost, so a frame where this fired is readable instead of silently wrong.
+	if best["tile"] != centre:
+		best["moved_from"] = centre
+	best["yield_exhausted"] = true
+	return best
+
+
+## One candidate placement: the glyph measured and centred on [param tile], the way ASSA-220 left it.
+##
+## **THE SAME `point_of_tile` THE DISC PASS USES** (ASSA-220). These were two independent copies of
+## the corner formula, which is why one defect sat in two places: a letter centred on `at` inherited
+## the disc's half-tile error exactly.
+##
+## `baseline` IS WHERE `draw_string` IS TOLD TO START and `box` is the CAP BOX the font measured --
+## both lifted unchanged out of `_glyph_marks`, so a candidate tile and the home tile are measured by
+## one piece of arithmetic. The descent is still left out on purpose; see the `box` key's own note.
+func _glyph_box(tile: Vector2i, symbol: String, size: int, font: Font) -> Dictionary:
+	var at := point_of_tile(tile)
+	var measured := font.get_string_size(symbol, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
+	var baseline := at + Vector2(-measured.x * 0.5, float(size) * 0.36)
+	return {
+		"tile": tile,
+		"at": at,
+		"baseline": baseline,
+		"box": Rect2(baseline - Vector2(0.0, font.get_ascent(size)),
+				Vector2(measured.x, font.get_ascent(size))),
+		"symbol": symbol,
+		"moved_from": null,
+		"yield_exhausted": false,
+	}
+
+
+## How many px of building mark [param placement]'s cap box lands on, by `letter_occlusions`' answer.
+##
+## **PIXELS AND NOT A BOOLEAN, BECAUSE RING 1 CANNOT CLEAR THE MARK** (see
+## [constant AssayHud.GLYPH_YIELD_RING]). A yes/no lap test makes every tile of a besieged patch look
+## equally bad, when the glyph covers 100% of a mark it is concentric with and 50% one tile north --
+## so the search needs to be able to rank the tiles it cannot perfect. Summed over buildings: two
+## machines lapping one letter cost more than one, which is the ordering a reader would expect.
+func _lap_cost(building_marks: Array, placement: Dictionary) -> float:
+	if building_marks.is_empty():
+		return 0.0
+	var total := 0.0
+	for raw in AssayHud.letter_occlusions(building_marks, [placement]):
+		total += float((raw as Dictionary)["covered_px"])
+	return total

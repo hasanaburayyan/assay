@@ -3465,6 +3465,11 @@ func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> b
 	return ok
 
 
+## **SINCE ASSA-273 A THIRD THING BEDS A LETTER: HAVING MOVED.** Maren ruled that a letter yields to
+## a machine on its own tile, and a yielded letter overhangs the disc that coloured it, so it is
+## bedded with nothing lapping it at all. That also changed this test's PREMISE -- one machine on a
+## letter's tile no longer laps it, it moves it -- so the lapped arm below is reached by a siege.
+##
 ## **A LETTER CARRIES THE EIGHT-STAMP BED WHEN A MARK LAPS IT OR A HATCH CROSSES IT** (ASSA-218 box
 ## 9 as Maren AMENDED it at 13:00 EDT, having measured my priced alternative rather than ruling on
 ## it). Box 9 first shipped as *lapped only*, and her measurement is that this kept the bed on the
@@ -3540,7 +3545,17 @@ func test_a_letter_is_bedded_when_a_mark_laps_it_or_a_hatch_crosses_it() -> bool
 		screen.queue_free()
 		return _fail(("premise: all %d letters in this world are hatched, so every one of them is "
 				+ "bedded by the hatch alone and planting a machine proves nothing") % bare.size())
+	# **IT TAKES A SIEGE TO LAP A LETTER NOW, AND THAT IS ASSA-273 CHANGING THIS TEST'S PREMISE.**
+	# One machine on the letter's own tile used to lap it; since the letter yields to a free tile of
+	# its own patch, one machine moves it instead and this frame then holds ZERO lapped letters --
+	# which is exactly what Maren predicted when she ruled ("expect ASSA-218's lapped half to go
+	# nearly dead") and what the premise check below caught the moment it did. The lapped half is
+	# still reachable and this is the only way left to reach it: cover the centre AND every candidate
+	# tile, so the glyph has nowhere on its patch that clears and stays where the mark is.
 	var planted := [{"pos": target["tile"], "footprint": Vector2i(1, 1), "kind": "machine"}]
+	for step in AssayHud.GLYPH_YIELD_RING:
+		planted.append({"pos": target["tile"] + step, "footprint": Vector2i(1, 1),
+				"kind": "machine"})
 	var shapes: Array = screen._building_marks(planted)
 	var marks: Array = screen._glyph_marks(deposits, font, shapes)
 	if marks.size() != bare.size():
@@ -3579,13 +3594,19 @@ func test_a_letter_is_bedded_when_a_mark_laps_it_or_a_hatch_crosses_it() -> bool
 		var glyph: Dictionary = marks[j]
 		var bedded := bool(glyph["bedded"])
 		var hatched := bool(dead_end.get(glyph["tile"], false))
-		var want := lapped.has(j) or hatched
+		# **THREE WAYS IN SINCE ASSA-273, NOT TWO.** A letter that yielded to a machine is bedded
+		# whether or not anything still laps it, because what the bed pays for there is the glyph
+		# hanging off the disc its ink was picked against -- a fact about the DISC, which no lap test
+		# can see. Leaving this as `lapped or hatched` would red-flag every moved letter.
+		var moved: bool = glyph["moved_from"] != null
+		var want := lapped.has(j) or hatched or moved
 		if bedded != want:
-			ok = _fail(("letter %d (`%s`, tile %s) reports bedded=%s; it is lapped=%s and "
-					+ "hatched=%s, so the rule says %s. A hatch and a white letter can be the same "
+			ok = _fail(("letter %d (`%s`, tile %s) reports bedded=%s; it is lapped=%s, "
+					+ "hatched=%s, moved=%s, so the rule says %s. A hatch and a white letter can be the same "
 					+ "white -- 1.00:1, no edge at all -- and the stamps are what hold them apart; "
 					+ "a plain letter sits on the disc its ink was picked against and needs none.")
-					% [j, glyph["symbol"], glyph["tile"], bedded, lapped.has(j), hatched, want])
+					% [j, glyph["symbol"], glyph["tile"], bedded, lapped.has(j), hatched, moved,
+					want])
 			break
 	# AND THE SAVING STILL EXISTS, AS A NUMBER RATHER THAN AS A CLAIM: eight stamps per bedded
 	# letter. The widening spends more than lapped-only did and must still spend less than all.
@@ -3608,6 +3629,162 @@ func test_a_letter_is_bedded_when_a_mark_laps_it_or_a_hatch_crosses_it() -> bool
 						+ "bed whether or not anything is standing on the map.")
 						% [glyph["symbol"], glyph["tile"], glyph["bedded"], hatched])
 				break
+	screen.queue_free()
+	return ok
+
+
+## **A SPECIES LETTER YIELDS TO A MACHINE STANDING ON ITS OWN TILE, INSIDE ITS OWN PATCH** (ASSA-273,
+## Maren's option 3, 23:20 EDT).
+##
+## WHAT THE DEFECT WAS, because it is not visible in this file: a drill is on the rock it mines by
+## definition, so the commonest machine on the map shares a tile with a species letter -- and of the
+## drill's 87 band pixels Maren classified 62.1% (777042) and 40.2% (63) as the letter's ink, plus
+## 26.4% on 63 as the letter's own `GLYPH_BED_PX` halo. 6.9% of the mark survived at 1.03:1, and two
+## cold readers never called it a machine. The letter is painted last (ASSA-213), so the order that
+## saved the letter spent the machine.
+##
+## **EVERY ASSERTION BELOW IS A DIFFERENT MUTATION**, which is the only reason there are six:
+## dropping the yield loop fails (b) and (c); yielding without bedding fails (f); letting a candidate
+## leave the patch fails (d); pointing `tile` at the glyph instead of the rock fails (e) and would
+## silently break `machines_on_letters`; moving letters that nothing laps fails (g); and dropping the
+## fallback fails the second arm.
+##
+## **(c) IS THE ONE THAT IS ACTUALLY THE ITEM.** Moving the letter is a means; what was asked for is
+## that no building mark laps it afterwards, and that is asked of `letter_occlusions` -- the same
+## function the painter's own `bedded` rule asks -- rather than of a footprint comparison, because a
+## letter's cap box is wider than its cell and reaches off its own tile.
+##
+## THE PREMISE IS CHECKED BEFORE ANYTHING IS ASSERTED, because this test is worthless on a world
+## where the planted machine never lapped the letter in the first place: that is arm (a), and it is
+## the positive case the question needs in order to be able to fail.
+func test_a_species_letter_yields_to_a_machine_standing_on_its_own_tile() -> bool:
+	var screen := _joined_screen()
+	screen._show_close_up(false)
+	screen._refresh()
+	if screen._close_up or not screen._sim.running() or screen._cell <= 0.0:
+		screen.queue_free()
+		return _fail(("premise: close_up %s, running %s, cell %f -- `_draw` returns before any mark")
+				% [screen._close_up, screen._sim.running(), screen._cell])
+	var font := ThemeDB.fallback_font
+	var deposits: Array = screen._sim.deposits()
+	# THE PATCH'S OWN RADIUS, OUT OF THE SIM, keyed by the tile the letter names -- so (d) compares
+	# the chosen tile against the world's disc and not against a radius this test assumed.
+	var radius_of := {}
+	for raw in deposits:
+		var deposit: Dictionary = raw
+		radius_of[deposit["center"]] = int(deposit["radius"])
+	var bare: Array = screen._glyph_marks(deposits, font)
+	if bare.is_empty():
+		screen.queue_free()
+		return _fail("premise: this world paints no species letter at all")
+	# WITH NOTHING BUILT, NOTHING MOVES. Every control in this suite and `window_shot.gd`'s bare arm
+	# take this path, so a yield rule that fired on an empty world would move every letter in the game.
+	for raw in bare:
+		var glyph: Dictionary = raw
+		if glyph["moved_from"] != null or glyph["drawn_tile"] != glyph["tile"]:
+			screen.queue_free()
+			return _fail(("with no buildings, letter `%s` moved from %s to %s. Home is clear by "
+					+ "definition when nothing is standing on it.")
+					% [glyph["symbol"], glyph["tile"], glyph["drawn_tile"]])
+	var target: Dictionary = bare[0]
+	var home: Vector2i = target["tile"]
+	var planted := [{"pos": home, "footprint": Vector2i(1, 1), "kind": "machine"}]
+	var shapes: Array = screen._building_marks(planted)
+	# (a) THE PREMISE: the machine really does lap the letter where it sits today. Without this the
+	# five assertions below all pass on a world that never had the defect.
+	if AssayHud.letter_occlusions(shapes, [target]).is_empty():
+		screen.queue_free()
+		return _fail(("premise: a 1x1 machine planted on `%s`'s own tile %s laps none of its cap "
+				+ "box, so this world cannot show the defect ASSA-273 is about")
+				% [target["symbol"], home])
+	var marks: Array = screen._glyph_marks(deposits, font, shapes)
+	if marks.size() != bare.size():
+		screen.queue_free()
+		return _fail(("passing buildings changed the letter COUNT, %d -> %d: yielding must change "
+				+ "where a letter is drawn, never whether it exists") % [bare.size(), marks.size()])
+	var moved: Dictionary = marks[0]
+	var ok := true
+	# (b) IT MOVED, AND IT SAYS SO.
+	if moved["moved_from"] != home or moved["drawn_tile"] == home:
+		ok = _fail(("letter `%s` is still drawn on %s with moved_from=%s, under a machine on that "
+				+ "same tile. Maren's ruling is that the label yields: a mark names TILES and may "
+				+ "never move, a label names a PATCH and may sit anywhere on it.")
+				% [moved["symbol"], moved["drawn_tile"], moved["moved_from"]])
+	# (c) AND THE POINT OF MOVING: no building mark laps it any more.
+	if ok and not AssayHud.letter_occlusions(shapes, [moved]).is_empty():
+		ok = _fail(("letter `%s` moved to %s and a building mark still laps it. The yield is not "
+				+ "the fix; a glyph with no mark on it is, and `letter_occlusions` is the judge "
+				+ "because a cap box is wider than one cell.") % [moved["symbol"], moved["drawn_tile"]])
+	# (d) INSIDE ITS OWN PATCH, BY THE SIM'S PREDICATE. A letter names the patch, so a tile outside
+	# it would be the label lying about which rock it is the initial of.
+	if ok:
+		var drawn: Vector2i = moved["drawn_tile"]
+		var radius := int(radius_of.get(home, 0))
+		if not AssayHud.patch_contains(home, radius, drawn):
+			ok = _fail(("letter `%s` moved to %s, which is NOT in its own radius-%d patch centred "
+					+ "on %s by `sim/src/ore.rs`'s own predicate. A label may sit anywhere on the "
+					+ "patch it names and nowhere else.") % [moved["symbol"], drawn, radius, home])
+	# (e) AND `tile` STILL NAMES THE ROCK. `machines_on_letters` compares this key, and the case it
+	# reports -- a machine standing on a lettered rock -- is still true and still worth photographing.
+	if ok and moved["tile"] != home:
+		ok = _fail(("letter `%s`'s `tile` became %s when the glyph moved. `tile` is the rock the "
+				+ "letter NAMES and `drawn_tile` is where the glyph went; swapping them makes "
+				+ "`machines_on_letters` report no machine on a rock that has one.")
+				% [moved["symbol"], moved["tile"]])
+	if ok and AssayHud.machines_on_letters(planted, marks).is_empty():
+		ok = _fail("the letter stepped aside and `machines_on_letters` now reports nothing: the "
+				+ "case a shot should go and find has become invisible to the instrument that finds it")
+	# (f) A MOVED LETTER IS BEDDED, which no lap can decide any more -- the bed pays for the glyph
+	# overhanging the disc that coloured it (~3.5 px at radius 2), not for a mark under it.
+	if ok and not bool(moved["bedded"]):
+		ok = _fail(("letter `%s` moved to %s and is not bedded. Where it lands it overhangs its own "
+				+ "disc -- 19.8 px past an 18 px disc on a radius-2 patch, measured -- and the bed "
+				+ "is what pays for that: `glyph_color` picked the ink against the disc, so past "
+				+ "the edge the ink is unjustified.")
+				% [moved["symbol"], moved["drawn_tile"]])
+	# (g) AND NOBODY ELSE MOVED. One machine on one rock is one letter's business.
+	if ok:
+		for j in range(1, marks.size()):
+			var glyph: Dictionary = marks[j]
+			if glyph["moved_from"] != null:
+				ok = _fail(("letter `%s` on tile %s yielded too, with nothing built on it: the rule "
+						+ "fires per rock, not per frame") % [glyph["symbol"], glyph["tile"]])
+				break
+	# THE FALLBACK ARM. Maren asked for it knowing it is unreachable with today's roster -- covering
+	# the centre and all eight ring tiles needs a 3x3 and the largest footprint in the game is the
+	# 2x2 smelter -- so a test is the only thing that will ever execute it, and a future 3x3 is what
+	# it is written for. It must stay home AND say that it did.
+	if ok:
+		var siege := [{"pos": home, "footprint": Vector2i(1, 1), "kind": "machine"}]
+		for step in AssayHud.GLYPH_YIELD_RING:
+			siege.append({"pos": home + step, "footprint": Vector2i(1, 1), "kind": "machine"})
+		var siege_shapes: Array = screen._building_marks(siege)
+		var besieged: Array = screen._glyph_marks(deposits, font, siege_shapes)
+		var stuck: Dictionary = besieged[0]
+		# **IT SAYS SO, AND IT TAKES THE LEAST BAD TILE RATHER THAN HOME.** Maren's instruction was
+		# to fall back to today's placement; this deliberately does not, because home is the WORST
+		# square available -- the glyph is concentric with the mark there and covers all of it -- so
+		# "fall back to today" would hand back the whole defect instead of the unavoidable part.
+		# The assertion is therefore: it admits it (`yield_exhausted`), it still costs something
+		# (`lap_px` > 0, or the siege was not a siege), and it is no worse than staying home.
+		var at_home: Dictionary = screen._glyph_place(home, int(radius_of.get(home, 0)),
+				String(stuck["symbol"]), int(stuck["size"]), font, [])
+		var home_cost: float = screen._lap_cost(siege_shapes, at_home)
+		if not bool(stuck["yield_exhausted"]):
+			ok = _fail(("with the centre and all eight ring tiles built on, letter `%s` went to %s "
+					+ "and did NOT set yield_exhausted. A placement that could not clear the mark "
+					+ "must say so: a silent fallback hides ASSA-273's defect coming back.")
+					% [stuck["symbol"], stuck["drawn_tile"]])
+		elif float(stuck["lap_px"]) <= 0.0:
+			ok = _fail(("letter `%s` set yield_exhausted and yet laps 0 px of mark at %s, so the "
+					+ "flag and the geometry disagree") % [stuck["symbol"], stuck["drawn_tile"]])
+		elif float(stuck["lap_px"]) > home_cost:
+			ok = _fail(("besieged, letter `%s` chose %s at %.1f px of mark lapped when staying home "
+					+ "would have cost %.1f. The fallback must be the least bad tile on the patch, "
+					+ "not any tile.") % [stuck["symbol"], stuck["drawn_tile"], stuck["lap_px"],
+					home_cost])
+		elif not bool(stuck["bedded"]):
+			ok = _fail("the besieged letter still has a mark under it and is not bedded")
 	screen.queue_free()
 	return ok
 

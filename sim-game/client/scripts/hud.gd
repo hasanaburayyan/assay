@@ -1189,8 +1189,16 @@ static func polygon_area(points: PackedVector2Array) -> float:
 ## a binding that stopped sending a footprint must empty the frame rather than quietly answer "no
 ## machine is on a letter" for every world, which is the answer that reads as good news.
 ##
-## [param letter_marks] is `main.gd::_glyph_marks`' own list, so the tile compared here is the tile the
-## letter is actually drawn on rather than a deposit this function picked out of the sim for itself.
+## [param letter_marks] is `main.gd::_glyph_marks`' own list, so the tile compared here is the painter's
+## own and not a deposit this function picked out of the sim for itself.
+##
+## **THAT SENTENCE SAID "THE TILE THE LETTER IS ACTUALLY DRAWN ON" AND ASSA-273 MADE IT FALSE**, so it
+## is corrected here rather than left to read as fact. A letter now yields to a machine standing on
+## its own centre, and the mark's `tile` is the tile the letter NAMES while `drawn_tile` is where the
+## glyph went. This function keeps comparing `tile`, deliberately: what it reports is *"a machine is
+## standing on a lettered rock"*, which is still true after the letter steps aside and is still the
+## case `tools/window_shot.gd` should go and photograph. It is no longer a report about a collision --
+## [method letter_occlusions] is, and it is the one that answers whether anything laps the glyph.
 static func machines_on_letters(buildings: Array, letter_marks: Array) -> Array:
 	var out := []
 	for i in buildings.size():
@@ -1251,6 +1259,118 @@ static func letter_occlusions(building_marks: Array, letter_marks: Array) -> Arr
 			out.append({"building": i, "letter": j, "symbol": String(letter["symbol"]),
 					"covered_px": covered, "share_of_box": covered / box_area,
 					"share_of_mark": covered / mark_area})
+	return out
+
+
+## **WHERE A SPECIES LETTER MAY GO WHEN A MACHINE IS STANDING ON ITS OWN TILE** (ASSA-273, Maren
+## ruled option 3 at 23:20 EDT: *"the letter yields, inside its own patch"*).
+##
+## THE RULE THAT PICKS THE GEOMETRY IS HERS AND IT IS WORTH QUOTING, because it is the reason this
+## list exists instead of a bigger frame: **a mark names TILES and may never move; a label names a
+## PATCH and may sit anywhere on it.** A species letter is one `symbol` per deposit drawn at its
+## `center` and sized from its radius -- its referent is the whole patch, so any tile of that patch
+## is a true place for it. Growing the building frame to enclose the letter instead (option 1, my
+## own pick) would have made four false tile-boundary claims round a 1x1.
+##
+## **WHY IT HAD TO MOVE AT ALL:** of the drill's 87 band pixels on the shipped frames, Maren
+## classified **62.1%** (777042) and **40.2%** (63) as the letter's own ink and another **26.4%** (63)
+## as `GLYPH_BED_PX`, the halo added to protect the letter. 6.9% of the mark survived, at 1.03:1. The
+## device that protects the letter was deleting the machine, and no colour fixes a 25 px glyph plus a
+## 2 px halo living inside a 16 px box.
+##
+## **RING 1 IS NOT ENOUGH AND THE RULING SAID RING 1. THE SPEC IS WHAT I AM CORRECTING, MEASURED.**
+## Maren's build note was *"candidates are the patch's own tiles at ring 1 in a fixed order, first one
+## no building mark laps"*, with an overhang cost of *"about 3.5 px of letter past its own colour"*.
+## Both numbers assume a one-tile move separates the glyph from the mark. **IT CANNOT, ON ANY SEED.**
+## The glyph's cap box is **23 x 27 px** on a radius-2 patch at a **9 px** cell, against a **16 px**
+## mark whose band is 112 px. Measured by `tools/glyph_yield_table.gd`, share of that band still
+## covered after a one-tile move:
+##
+## ```
+## radius 2 patch   home 100%   north 50.0%   east/west 58.9%   SOUTH 100%
+## ```
+##
+## **South is no help whatever** -- the cap box hangs above its baseline, so it reaches up 18 px and
+## down 9, and moving the letter down drags the whole box across the mark. The nearest tile that
+## clears the mark completely is **two tiles north on a radius-2 patch** and **three on a radius 3+**.
+##
+## **AND THE OVERHANG SHE PRICED IS THE COST OF NOT MOVING.** Her ~3.5 px is what the box hangs past
+## the disc AT HOME (measured: 3.4 px). At the nearest tile that actually clears, it is **19.8 px past
+## an 18 px disc** on a radius-2 patch -- the letter ends up entirely off the ore it is the initial
+## of. That is the real price of this ruling and it is hers to accept or spend differently; see
+## ASSA-273.
+##
+## So the candidate set is the WHOLE patch and not one ring. That keeps both halves of her rule --
+## the label stays on the patch it names, and the order is fixed rather than per-frame -- and it is
+## the smallest change to her ruling that can actually satisfy it.
+##
+## **NEAREST FIRST, WHICH IS THE ONLY OPINION IN THE ORDER**, by the same `dx*dx + dy*dy` the patch
+## predicate uses: the overhang she priced grows with the distance travelled, so the first tile that
+## works is the cheapest one that works. Ties break row-major (north before south, west before east)
+## and that tie-break means nothing beyond being the same on every frame and every machine -- a letter
+## that chose its own corner would jump whenever a machine was planted anywhere near it.
+##
+## This is kept as the ring-1 ring because it is the shape the ruling named and three readers will
+## come looking for it; [method glyph_yield_candidates] is what the painter actually walks.
+const GLYPH_YIELD_RING: Array[Vector2i] = [
+	Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0),
+	Vector2i(1, -1), Vector2i(1, 1), Vector2i(-1, 1), Vector2i(-1, -1),
+]
+
+
+## Whether [param tile] is part of the patch centred on [param centre] with [param radius] in tiles.
+##
+## **THIS MIRRORS `sim/src/ore.rs:23` AND THAT IS THE POINT, NOT AN ACCIDENT.** The sim's own
+## predicate is an exact Euclidean disc:
+##
+## ```rust
+## let dx = pos.x - self.center.x; let dy = pos.y - self.center.y;
+## let r = i32::from(self.radius);
+## dx * dx + dy * dy <= r * r
+## ```
+##
+## Written out here in the same integer form rather than approximated with a float distance, because
+## this is the one place the client can silently disagree with the world about what a patch IS
+## (Maren's warning when she priced her own ruling in the sim). The client needs no new binding for
+## it: `_glyph_marks` already reads `center` and `radius` off the deposit.
+static func patch_contains(centre: Vector2i, radius: int, tile: Vector2i) -> bool:
+	var dx := tile.x - centre.x
+	var dy := tile.y - centre.y
+	return dx * dx + dy * dy <= radius * radius
+
+
+## Every tile of the patch on [param centre] a letter may yield to, nearest first (see the ring above).
+##
+## **EVERY RING-1 TILE IS IN THE PATCH ON EVERY SEED, ALWAYS, AND THE FILTER STILL STAYS.**
+## `worldgen.rs:90` is `rng.range(2, 5)`, so the sim cannot roll a radius below 2 and the worst
+## ring-1 neighbour is a diagonal at `1 + 1 = 2 <= 4` (Maren, from the source). The filter is kept
+## because [method patch_contains] is the thing that must not drift from the sim: a radius-1 deposit
+## would make four of those a lie about which rock the letter names, and a future `radius` floor of 1
+## should change this function's OUTPUT, not break it.
+##
+## The centre itself is excluded because it is the placement this list exists to replace -- home is
+## tried first by the caller and wins whenever it is clear.
+static func glyph_yield_candidates(centre: Vector2i, radius: int) -> Array[Vector2i]:
+	var ranked := []
+	for dy in range(-radius, radius + 1):
+		for dx in range(-radius, radius + 1):
+			if dx == 0 and dy == 0:
+				continue
+			var tile := centre + Vector2i(dx, dy)
+			if patch_contains(centre, radius, tile):
+				ranked.append({"tile": tile, "d2": dx * dx + dy * dy, "dy": dy, "dx": dx})
+	# NEAREST FIRST, TIES ROW-MAJOR. `sort_custom` is stable enough for this only if the comparator
+	# is total, so the tie-break is spelled out rather than left to the sort: two tiles at the same
+	# distance must order the same way on every frame or a letter would flicker between them.
+	ranked.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		if int(a["d2"]) != int(b["d2"]):
+			return int(a["d2"]) < int(b["d2"])
+		if int(a["dy"]) != int(b["dy"]):
+			return int(a["dy"]) < int(b["dy"])
+		return int(a["dx"]) < int(b["dx"]))
+	var out: Array[Vector2i] = []
+	for entry in ranked:
+		out.append((entry as Dictionary)["tile"])
 	return out
 
 
