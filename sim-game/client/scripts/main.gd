@@ -75,6 +75,28 @@ var _join_button := Button.new()
 var _row := HBoxContainer.new()
 var _front_door := VBoxContainer.new()
 var _door_title := Label.new()
+
+## **THE WORLD BEHIND THE DOOR** (ASSA-292, ASSA-276 §4, Maren's ruling 2026-10-08).
+##
+## A SECOND SIM AND NOT THE SESSION'S ONE, which is the whole reason this is safe. `_sim` is the world
+## you are PLAYING; this one is scenery, it is never stepped, no command is ever submitted to it, and
+## nothing reads it except the view dictionary `_door_view` builds. The two can never be confused
+## because every input path in this file guards on `_sim.running()` (`_tile_under`), which is false
+## for the entire life of this one -- so *"the world behind the door is scenery and never responds"*
+## (her floor 4) is a property of the existing guard rather than a new rule to remember.
+##
+## **IT IS THE SEED SOLO PLAYS, BY REFERENCE.** `AssaySoloRelay.DEFAULT_SEED`, never a copy of its
+## digits, because the design is *"press the button and you walk into the field you were looking at"*
+## and that sentence is only true while the two seeds are the same one.
+var _door_sim := AssaySimHost.new()
+## Ore in the door world, computed ONCE. The live `_ore_under` re-caches on `_sim.tick()`; this world
+## never ticks, so the only thing that could move the answer is the camera, and the margin below
+## covers every tile the whole drift can reach.
+var _door_ore := {}
+var _door_ore_built := false
+## A binding with no `AssaySim` (an editor run without `make client-lib`) must fall back to the flat
+## field rather than retry `fresh_welcome_json` sixty times a second forever.
+var _door_dead := false
 ## The two travelling cells: the primary on its own line, and the host path on the next one. They
 ## are what `_refresh_join_band` hides in a world, wherever they are currently parented.
 var _solo_cell := HBoxContainer.new()
@@ -3603,7 +3625,17 @@ func _clear(box: Node) -> void:
 ## ruling about one screen, and two conditions for it is how a door and a column end up both on
 ## screen for a frame.
 func _refresh_front_door() -> void:
-	var empty: bool = _world.view.is_empty()
+	# **THE PREDICATE IS "AM I IN A WORLD I CAN SEE", AND IT USED TO BE "IS ANYTHING DRAWN"**
+	# (ASSA-292). `_world.view.is_empty()` alone was a correct proxy for exactly as long as the door
+	# was a dark rectangle; the moment the door draws a world (`_door_view`) that proxy says a stranger
+	# who has pressed nothing is playing -- it hid the front door and raised the whole HUD column over
+	# the title screen. Seventeen tests said so, which is the cheapest way I have ever been told.
+	#
+	# BOTH CLAUSES ARE LOAD-BEARING AND THE SECOND IS NOT REDUNDANT: the `_player_facts_missing`
+	# refusal in `_refresh_world` blanks the view while `_sim` is still running (box 5's decision), and
+	# that case must go back to the door exactly as it did before. `_sim.running()` alone would leave
+	# the column up over nothing.
+	var empty: bool = not _sim.running() or _world.view.is_empty()
 	_front_door.visible = empty
 	_door_backdrop.visible = empty
 	if _column != null:
@@ -3709,7 +3741,11 @@ func _players() -> Array:
 
 func _refresh_world(frame_dt := -1.0) -> void:
 	if not _sim.running():
-		_world.view = {}
+		# **THE DOOR IS NOT A DARK RECTANGLE ANY MORE** (ASSA-292). Same renderer, same sheets, a real
+		# world at the seed solo plays -- so the first screen is the game instead of a picture of a
+		# menu. `_door_view` returns `{}` if the binding cannot build one, which is exactly the empty
+		# dictionary that used to be here, so the flat field is still the fallback and never the plan.
+		_world.view = _door_view()
 		_world.me = null
 		_refresh_front_door()
 		_world.queue_redraw()
@@ -3824,6 +3860,83 @@ func _refresh_world(frame_dt := -1.0) -> void:
 ## deposit that changes what is DRAWN -- the row becomes `depleted_full` -- and `amount` appears on no
 ## sprite, which is `sim`'s own position: one number for the whole patch, so a sparser rim would be a
 ## mark for a difference the game does not have.
+## HOW MANY TILES OF ORE ARE WORKED OUT BEYOND THE DOOR CAMERA'S RESTING WINDOW. The drift reaches
+## `AssayScene.TITLE_DRIFT_TILES` (1.75) in each direction, so 3 covers it with a tile to spare and the
+## one-shot cache below can never be caught short by the camera moving.
+const DOOR_ORE_MARGIN := 3
+
+
+## THE VIEW DICTIONARY FOR THE WORLD BEHIND THE DOOR (ASSA-292), or `{}` if there is no binding to
+## build one from -- in which case the caller draws the flat field this screen had before.
+##
+## **NOBODY IS DRAWN IN IT, AND THAT IS THE DESIGN AND NOT AN OMISSION.** `players` is empty and
+## `_world.me` stays null, because the sentence this screen makes is *"press the button and you walk
+## into the field you were looking at"*. A body already standing in the field contradicts the button.
+##
+## IT ASKS `AssayScene.title_drift` FOR THE CAMERA AND NOTHING ELSE. All the judgement -- that the
+## path is a closed loop, how wide, how finely a measurement has to sample it -- is arithmetic over
+## there with three tests on it, so this function has nothing in it to get wrong.
+func _door_view() -> Dictionary:
+	if _door_dead:
+		return {}
+	if not _door_sim.running():
+		var welcome := AssaySimHost.fresh_welcome_json(AssaySoloRelay.DEFAULT_SEED, "the door")
+		if welcome == "" or not _door_sim.start(welcome):
+			_door_dead = true
+			return {}
+	if _manifest.is_empty():
+		_manifest = AssaySprites.manifest()
+	if _layout.is_empty():
+		_layout = AssayAssembly.contract()
+	var size := _door_sim.size_tiles()
+	var seconds := float(Time.get_ticks_msec()) / 1000.0
+	# THE DRIFT IS ADDED TO THE CENTRE TILE AND NOT TO THE ORIGIN, so it passes through
+	# `camera_origin`'s world-edge clamp like any other camera. Added afterwards it would be the one
+	# camera in the client allowed to show the void beside the world.
+	var centre := Vector2(_door_sim.spawn_tile()) + AssayScene.title_drift(seconds)
+	# `0.0` headroom: the north exception exists for the event log hanging over the map, and at the
+	# door there is no log and no body for it to hide (ASSA-184).
+	var origin := AssayScene.camera_origin(centre, size, _world.size, 0.0)
+	return {
+		"world_tiles": size,
+		"origin": origin,
+		"size": _world.size,
+		"spawn": _door_sim.spawn_tile(),
+		"ore": _door_ore_under(size),
+		"players": [],
+		"buildings": _door_sim.buildings(),
+		"manifest": _manifest,
+		"layout": _layout,
+		"seconds": seconds,
+	}
+
+
+## ORE IN THE DOOR WORLD, WORKED OUT ONCE AND KEPT. A separate `_door_ore_built` flag rather than
+## `_door_ore.is_empty()`: a world with no ore in frame is a legitimate answer, and an emptiness test
+## would recompute ~600 `tile_at` calls every frame forever on exactly that world.
+func _door_ore_under(size: Vector2i) -> Dictionary:
+	if _door_ore_built:
+		return _door_ore
+	var home := AssayScene.camera_origin(Vector2(_door_sim.spawn_tile()), size, _world.size, 0.0)
+	var window := AssayScene.visible_tiles(home, _world.size, size).grow(DOOR_ORE_MARGIN)
+	window = window.intersection(Rect2i(Vector2i.ZERO, size))
+	_door_ore = {}
+	for y in range(window.position.y, window.end.y):
+		for x in range(window.position.x, window.end.x):
+			var at := Vector2i(x, y)
+			var patch: Variant = (_door_sim.tile_at(at) as Dictionary).get("deposit")
+			if patch == null:
+				continue
+			var deposit: Dictionary = patch
+			_door_ore[at] = {
+				"species": int(deposit.get("species", 0)),
+				"grade": String(deposit.get("grade", "C")),
+				"depleted": bool(deposit.get("depleted", false)),
+			}
+	_door_ore_built = true
+	return _door_ore
+
+
 func _ore_under(origin: Vector2, size: Vector2i) -> Dictionary:
 	var window := AssayScene.visible_tiles(origin, _world.size, size)
 	var stamp := _ore_stamp

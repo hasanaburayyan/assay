@@ -797,15 +797,46 @@ func test_the_ore_drawn_is_the_tiles_the_sim_names_and_not_a_bounding_box() -> b
 	return true
 
 
-## WITH NO WORLD THERE IS NOTHING TO DRAW, and that must be a quiet empty rather than a frame of
-## sprites at the origin. `--selfcheck` and the join screen are both in this state.
-func test_before_a_welcome_the_scene_is_empty() -> bool:
+## **BEFORE A WELCOME THE DOOR DRAWS THE WORLD SOLO PLAYS** (ASSA-292, ASSA-276 §4).
+##
+## THIS TEST SAID THE OPPOSITE UNTIL 2026-10-08, and the old sentence is kept because the reversal IS
+## the item: *"with no world there is nothing to draw, and that must be a quiet empty rather than a
+## frame of sprites at the origin."* Maren ruled the dark field out, so the first clause is gone --
+## and **the fear behind it is what this test keeps.** A renderer that woke up at (0,0) is still a
+## bug; it just stopped being the same thing as a non-empty view.
+##
+## So the question became "is this the door world, composed" rather than "is anything drawn", and the
+## answers are: the seed solo plays, nobody standing in it, and a camera near spawn.
+func test_before_a_welcome_the_door_draws_the_world_solo_plays() -> bool:
 	var screen: Node = load("res://scenes/main.tscn").instantiate()
 	runner.root_node.add_child(screen)
 	screen._ready()
-	if not screen._world.view.is_empty():
-		return _fail("the scene has %d things to draw before any world exists"
-				% screen._world.view.size())
+	var view: Dictionary = screen._world.view
+	if view.is_empty():
+		return _fail("the door draws no world at all: either `fresh_welcome_json` failed (a stale "
+				+ "`make client-lib`?) or the dark field is back")
+	# **THE SEED IS THE DESIGN, NOT A DETAIL** (acceptance box 6). "Press the button and you walk into
+	# the field you were looking at" is true only while the door seed IS solo seed. Compared against
+	# the constant, so a copy of its digits in either place fails here.
+	if screen._door_sim.seed_text() != AssaySoloRelay.DEFAULT_SEED:
+		return _fail(("the door is showing seed %s and Play solo starts %s, so the button does not "
+				+ "open the field it stands in front of")
+				% [screen._door_sim.seed_text(), AssaySoloRelay.DEFAULT_SEED])
+	# NOBODY IS IN IT. A body already standing in the field contradicts the button offering to put one
+	# there, and `me` drives the camera, so a stray player would also move the picture.
+	if not (view.get("players") as Array).is_empty():
+		return _fail("somebody is drawn in the world behind the door, which by design has no players")
+	if screen._world.me != null:
+		return _fail("the door view has a `me`, so the title camera is following a body")
+	# A CAMERA NEAR SPAWN AND NOT AT THE ORIGIN -- the old test real worry, asserted directly now
+	# instead of implied by an empty dictionary.
+	var home := AssayScene.camera_origin(Vector2(screen._door_sim.spawn_tile()),
+			screen._door_sim.size_tiles(), screen._world.size, 0.0)
+	var away: float = (view.get("origin", Vector2.ZERO) as Vector2).distance_to(home)
+	if away > AssayScene.TITLE_DRIFT_TILES * AssayScene.TILE_PX + 1.0:
+		return _fail(("the door camera is %.0f px from the spawn-centred view, further than the "
+				+ "%.0f px the whole drift can reach: this is not the composed frame")
+				% [away, AssayScene.TITLE_DRIFT_TILES * AssayScene.TILE_PX])
 	if AssayScene.placements({}).size() != 0:
 		return _fail("an empty view produced placements")
 	if not screen._close_up:
