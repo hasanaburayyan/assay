@@ -139,6 +139,7 @@ const NORTH_WALK_TICKS := 600
 
 enum Phase { SETTLE_JOIN, SHOOT_JOIN, PLAY, SETTLE_PACK, SHOOT_PACK, SETTLE_HALT, SHOOT_HALT,
 		SETTLE_PLAY, SHOOT_PLAY,
+		OPEN_MACHINE_MENU, SETTLE_MACHINE_MENU, SHOOT_MACHINE_MENU,
 		SETTLE_FOLD, MEASURE_CONTROLS, SETTLE_MENUS, SHOOT_MENUS, SCROLL_ROCKS, SETTLE_ROCKS,
 		SHOOT_ROCKS, OPEN_MAKE, SCROLL_MAKE, SETTLE_MAKE, ANCHOR_MAKE, SHOOT_MAKE, WALK_NORTH, SETTLE_NORTH_LOG, SHOOT_NORTH_LOG, SETTLE_NORTH_CLEAR,
 		SHOOT_NORTH_CLEAR, WALK_OFF, SETTLE_WALK, SHOOT_WALK, PRESS_V, SETTLE_SCHEMATIC, SHOOT_SCHEMATIC,
@@ -507,6 +508,35 @@ func _process(_delta: float) -> bool:
 			# menu folds here, the controls are measured once that has settled, and only then does the
 			# log open.
 			_screen._show_make(false)
+			_phase = Phase.OPEN_MACHINE_MENU
+		# **THE MACHINE MENU, OPENED THE WAY A PLAYER OPENS IT** (ASSA-316). The board asked for menus you
+		# can interact with, and the one thing a test cannot answer about this surface is what it LOOKS
+		# like: which half it lands in, how wide its own rows make it, whether the ring on its machine
+		# survives beside it. So it is CLICKED -- `AssayButtonPlay._click` hands `_unhandled_input` a real
+		# press at the tile's real screen position -- and not opened by calling the function, which would
+		# photograph a state no click had produced.
+		#
+		# AFTER `02-play.png` AND BEFORE THE LOG OPENS, deliberately: this frame is the played screen plus
+		# the menu and nothing else, so the two can be read side by side.
+		Phase.OPEN_MACHINE_MENU:
+			var standing := _a_machine_tile()
+			if standing.x < 0:
+				# A LEGITIMATE OUTCOME AND NOT A FAILURE: the loop plants a design the sim may take apart,
+				# and a world with nothing standing in it cannot be photographed with a menu open. Said in
+				# the run's own output rather than swallowed, because a missing frame is a question.
+				print("note: no building stands in this world, so no machine menu was shot")
+				_phase = Phase.SETTLE_FOLD
+			else:
+				_play._click(standing, MOUSE_BUTTON_LEFT)
+				_phase = Phase.SETTLE_MACHINE_MENU
+		Phase.SETTLE_MACHINE_MENU:
+			_settle(Phase.SHOOT_MACHINE_MENU)
+		Phase.SHOOT_MACHINE_MENU:
+			# THE SUBJECT IS THE MACHINE'S OWN NAME, off the menu's heading: a shot of a screen whose menu
+			# never opened would otherwise stand as this item's evidence.
+			_shoot("14-machine-menu.png", PackedStringArray(["machine menu"]))
+			_machine_menu_report()
+			_screen._close_machine_menu()
 			_phase = Phase.SETTLE_FOLD
 		Phase.SETTLE_FOLD:
 			_settle(Phase.MEASURE_CONTROLS)
@@ -1205,7 +1235,48 @@ func _shoot(name: String, subjects: PackedStringArray, guard_repeat := true) -> 
 func _sections() -> Array:
 	return [["crafting menu", _screen._make], ["you", _screen._carrying], ["do", _screen._actions],
 			["bench", _screen._bench], ["mineralogy", _screen._species], ["cursor", _screen._cursor],
-			["event log", _screen._log_box], ["stopped", _screen._halt_box]]
+			["event log", _screen._log_box], ["stopped", _screen._halt_box],
+			# **THE MACHINE MENU IS A SECTION HERE FOR THE SUBJECT CHECK, AND THAT CHECK IS THE BOUND**
+			# (ASSA-316). Maren's ruling 1 caps the menu at half the world less two pads and says it
+			# scrolls past that; the region clips, so content that outgrew the cap would be CUT -- and
+			# `_standing` answers `CLIPPED` for exactly that, with the share of it in frame. A headless
+			# test can hold the content's minimum against the room (`test_buttons.gd`); only a real
+			# window can say the drawn panel is whole.
+			["machine menu", _screen._menu_box]]
+
+
+## A TILE WITH A BUILDING ON IT, OR (-1, -1). The sim's own list, in its own order: the first thing
+## standing is the one a player would click, and this tool may not prefer one machine over another.
+func _a_machine_tile() -> Vector2i:
+	for entry in _screen._sim.buildings():
+		var building: Dictionary = entry
+		return building.get("pos", Vector2i(-1, -1)) as Vector2i
+	return Vector2i(-1, -1)
+
+
+## **WHAT THE MENU ACTUALLY LANDED ON, MEASURED IN THE FRAME IT WAS PHOTOGRAPHED IN** (ASSA-316).
+##
+## Every number Maren's ruling 1 can be judged by, read off the laid-out nodes rather than off the
+## arithmetic that placed them: a report that recomputed `machine_menu_room` would agree with itself
+## whatever the engine did with it, which is the defect `_controls_report` shipped once already.
+func _machine_menu_report() -> void:
+	var box: Control = _screen._menu_box
+	var rect := box.get_global_rect()
+	var room: Rect2 = _screen._menu_region.get_rect()
+	var world := AssayHud.world_rect()
+	var tile: Vector2i = _screen._menu_tile
+	var middle: float = _screen.point_of_tile(tile).x
+	print("  machine menu   building %d at %s, its centre x %.0f"
+			% [_screen._menu_at, tile, middle])
+	print("    panel        %dx%d at x %d..%d, y %d..%d"
+			% [rect.size.x, rect.size.y, rect.position.x, rect.end.x, rect.position.y, rect.end.y])
+	print("    room         %dx%d at x %d..%d  (half the world less two pads)"
+			% [room.size.x, room.size.y, room.position.x, room.end.x])
+	print("    whole        %s" % ("yes" if room.encloses(rect) else "NO, the region clipped it"))
+	print("    over its own machine  %s"
+			% ("NO" if not (rect.position.x <= middle and middle <= rect.end.x) else "YES"))
+	print("    over the HUD column   %s" % ("NO" if rect.end.x <= world.end.x else "YES"))
+	print("    ring on its tile      %s" % [_screen._world.selection])
 
 
 func _section(named: String) -> Control:
