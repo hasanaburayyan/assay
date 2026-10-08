@@ -4,6 +4,29 @@ extends SceneTree
 ## so the rect is 32 x (row height) and STRETCH_KEEP_ASPECT_CENTERED scales by min(w/fw, h/fh).
 ## The stacks below are the richest pack `tools/button_session.gd -- offline` actually held (seed
 ## 777042), not stacks I typed.
+## **THE WINDOW THE PROJECT DECLARES** (ASSA-319). `--script` gives the root viewport 100x100 and
+## the engine shrinks it to **64x64 on the first frame**, so every number this probe reported used
+## to come out of a 64 px window. A pack row survived that only because its size IS its minimum —
+## icon, sentence, buttons, nothing expanding — which is luck and not design: the make list's
+## sentence is `EXPAND_FILL`, and measured the same way its five rows came back 95 px wide and 837
+## to 1361 px tall, with `min(w/fw, h/fh)` pinned by the width so the scale scored green over all
+## of it.
+##
+## SET EVERY FRAME, because the engine undoes it on frame one, and REPORTED so the Python can refuse
+## instead of scoring a window nobody will ever see. Read out of `ProjectSettings` rather than
+## typed: the day the client ships at another size, this follows it. Copied in habit, not in code,
+## from `client/tools/make_icon_layout.gd`, which had to learn all three of these first.
+const SETTINGS_W := "display/window/size/viewport_width"
+const SETTINGS_H := "display/window/size/viewport_height"
+
+## Which tab the pack list lives in since ASSA-264, and the name its own button passes.
+const PACK_TAB := "inventory"
+
+## The frame the rows are read on. The stacks go in on frame 2 and the tab is pressed there too, so
+## this is a settle after the press: a container that was hidden a frame ago has not been laid out
+## yet, and reading it one frame early would report exactly the minimums this item is about.
+const READ_AT := 10
+
 var _screen: Node = null
 var _frames := 0
 var _stacks: Array = []
@@ -99,6 +122,9 @@ func _is_frame_kind(stack: Dictionary) -> int:
 
 func _process(_d: float) -> bool:
 	_frames += 1
+	# THE WINDOW FIRST, AND ON EVERY FRAME. See `SETTINGS_W`: the engine shrinks the viewport to
+	# 64x64 on frame one, so setting it once in `_initialize` does nothing.
+	root.size = _declared_viewport()
 	if _frames == 2:
 		_stacks = [
 			{"kind": "refined", "species": 4, "grade": "B", "count": 6,
@@ -123,8 +149,17 @@ func _process(_d: float) -> bool:
 		# are about icon and plate geometry inside the column, which is a thing a player only ever
 		# sees in a world; the join screen's emptiness is a different picture and window_shot.gd's.
 		_screen._column.visible = true
+		# **AND THE TAB THE PACK LIVES IN, WHICH IS THE OTHER HALF OF ASSA-319.** Showing the
+		# column is not enough: since ASSA-264 the pack list is a TAB, and `mineralogy` is the one
+		# that opens, because Maren's ruling is that you enter a world carrying nothing. An
+		# invisible container is never laid out, so what its children keep is their own MINIMUM
+		# size -- the real size for a pack row, and a column of single words 1361 px tall for a
+		# make row. Pressed through `AssayTabStrip.select`, the call the tab's own button makes,
+		# so this cannot open a tab a player could not.
+		if not _open_pack_tab():
+			return true
 		return false
-	if _frames < 6:
+	if _frames < READ_AT:
 		return false
 	var rows: Array = []
 	for child in _screen._carrying.get_children():
@@ -187,7 +222,49 @@ func _process(_d: float) -> bool:
 	print("LAYOUT_JSON ", JSON.stringify({"rows": rows,
 			"clear_color": str(ProjectSettings.get_setting(
 				"rendering/environment/defaults/default_clear_color", "UNSET")),
+			# **THE STATES EVERY NUMBER ABOVE IS ONLY VALID IN** (ASSA-319). Each is a way for the
+			# whole run to be about a layout no player will ever see, and reporting them is what
+			# lets `ask_layout` say NO VERDICT instead of scoring one. Reported at measurement
+			# time rather than asserted at the press, so the day the tab stops sticking or the
+			# engine stops honouring `root.size`, this says so instead of going quiet.
+			"pack_tab_selected": _screen._tabs != null and _screen._tabs.selected() == PACK_TAB,
+			# **AND `is_visible_in_tree` IS REPORTED BUT NOT THE GATE, WHICH I LEARNED BY
+			# MEASURING IT.** Pressing the tab moved every row from its minimum (156-175 px wide)
+			# to its laid-out 300, and this still came back FALSE -- because this probe never
+			# joins a world, so the screen the column hangs under is not on display, which is the
+			# very thing the `_column.visible` line above is working around. A refusal keyed on
+			# this would have turned all seven checks that read this probe into NO VERDICT while
+			# the layout they measure was correct. The actionable fact is which TAB is open; this
+			# one is here so the next reader does not have to re-measure it.
+			"pack_visible_in_tree": _screen._carrying.is_visible_in_tree(),
+			# The box the rows were laid out in, so a reader can tell a real width from a
+			# minimum without knowing what either should be.
+			"pack_box": [_screen._carrying.size.x, _screen._carrying.size.y],
+			"viewport": [root.size.x, root.size.y],
+			"viewport_declared": [_declared_viewport().x, _declared_viewport().y],
 			"panel_px": _screen.PANEL, "icon_px": _screen.ICON_PX}))
+	return true
+
+
+## The window the project ships at. See `SETTINGS_W`.
+func _declared_viewport() -> Vector2i:
+	return Vector2i(int(ProjectSettings.get_setting(SETTINGS_W, 1280)),
+			int(ProjectSettings.get_setting(SETTINGS_H, 720)))
+
+
+## Press the pack's tab, through the same call its button makes. Refuses loudly: a tab that
+## silently did nothing would leave this probe measuring whatever was open instead, which is the
+## exact failure ASSA-319 is about and the one a silent fallback would reinstate.
+func _open_pack_tab() -> bool:
+	if _screen._tabs == null:
+		print("FAIL  the column has no tab strip, so there is no `%s` tab to open" % PACK_TAB)
+		quit(1)
+		return false
+	if not _screen._tabs.select(PACK_TAB):
+		print("FAIL  could not open the `%s` tab. The strip has: %s"
+				% [PACK_TAB, ", ".join(_screen._tabs.tab_names())])
+		quit(1)
+		return false
 	return true
 
 ## The icon anywhere under a row, however it is wrapped.
