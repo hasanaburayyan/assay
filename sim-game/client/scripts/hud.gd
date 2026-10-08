@@ -790,6 +790,72 @@ static func map_key_rect(key: Vector2) -> Rect2:
 	return Rect2(Vector2(world.position.x, world.end.y - key.y), key)
 
 
+## **WHERE A MACHINE'S MENU IS ALLOWED TO BE: the half of the world the machine is NOT in, inset by
+## one pad** (ASSA-316, Maren's ruling 1).
+##
+## **THE HALVES ARE THE WHOLE MECHANISM AND THAT IS WHY THE VERTICAL NEVER MOVES.** Her words: *"the
+## menu opens in the half of the world rect the machine is not in ... horizontal halves alone
+## guarantee the machine is never covered, so the vertical never has to move. One boolean, one
+## assertion, two places a player can learn."* So this returns a rect in one of exactly two places,
+## top-aligned, and the menu is never anchored to the machine -- the 2 px INK ring on the acted-on
+## tile (ASSA-276 move 4) is the tether, and anchoring would buy a link we already own at the price of
+## a learnable position.
+##
+## **IT IS THE ROOM, NOT THE MENU.** The menu's own width is DERIVED from its widest row by the engine
+## (`main.gd::_place_machine_menu`, the door card's rule in ASSA-292: no literal width anywhere), and
+## this rect is the CAP that derivation may not exceed -- half the world less two pads, and the
+## world's height less two pads. A region of this size with `clip_contents` is what makes "it never
+## covers the machine" true of the pixels rather than of the arithmetic.
+##
+## `middle` IS THE MACHINE'S CENTRE IN SCREEN PIXELS (`main.gd::point_of_tile`), not a tile: the two
+## views draw a tile at different scales and the comparison has to be made in the space the halves are
+## measured in. **THE BOUNDARY IS DECIDED RATHER THAN LEFT TO A FLOAT** (her "deterministic on the
+## exact centre"): a machine standing exactly on the world's centre line counts as being in the RIGHT
+## half -- Maren's test is `machine.centre.x < world.centre.x` and that is false there -- so the menu
+## goes LEFT, and the same machine never flickers between two answers.
+static func machine_menu_room(world: Rect2, middle: float) -> Rect2:
+	var half := world.size.x * 0.5
+	var at := world.position.x if middle >= world.position.x + half else world.position.x + half
+	return Rect2(Vector2(at, world.position.y) + MARGIN,
+			Vector2(half, world.size.y) - MARGIN * 2.0)
+
+
+## **HOW MUCH OF A STACK A SLOT ROW OFFERS BESIDES ALL OF IT** (ASSA-316, Maren's ruling 4).
+##
+## **NO STEPPER, NO FIELD, NO MAGIC 10.** Her reasons, kept where the numbers are: a stepper is two
+## gestures, a field needs a keyboard, and *"ten means nothing in this game's numbers"*. **One and
+## half are the only counts derivable from the stack itself**, so they are the only ones here.
+##
+## **ALL OF IT IS NOT IN THIS LIST** -- it is the row's own button, labelled with the result -- and
+## that is why `count` itself is dropped rather than returned: a stack of 1 gets `put all 1` and
+## nothing else, which is her clause exactly. Half is floored, and a stack of 2 or 3 therefore offers
+## `or 1` once rather than twice: the two derivations collide there, and two buttons that send the
+## same command are a choice a player has to make for no reason.
+static func insert_fractions(count: int) -> PackedInt32Array:
+	var some := PackedInt32Array()
+	for want in [1, count / 2]:
+		if want > 0 and want < count and not some.has(want):
+			some.append(want)
+	return some
+
+
+## **WHAT A SLOT BUTTON PROMISES: THE RESULT, NOT THE VERB** (ASSA-316, Maren's ruling 4: *"one button
+## per stack, label = the RESULT: `put all 37 Tonore`"*).
+##
+## The count is the one the SIM says is in the pack, read at the press by `main.gd::_insert_into` --
+## this only writes it down. A label that said `Fuel` and a tooltip that said the number is the shape
+## this replaces (`stack_verbs`), and it is the shape the board called not amazing: the column's two
+## four-letter buttons never said what pressing them would do.
+static func insert_label(count: int, name: String) -> String:
+	return "put all %d %s" % [count, name]
+
+
+## The quiet line under a slot's buttons. **A TOGGLE NAMES WHAT YOU WILL GET**, so it carries its own
+## number and not a fraction: `or 1 · or 18`, never `or half`.
+static func insert_some_label(count: int) -> String:
+	return "or %d" % count
+
+
 ## **THE SURFACE THE JOIN SCREEN GETS, WHICH IS ALL OF IT** (ASSA-231, Maren's Gap 5: "one screen,
 ## one primary action, the empty column not shown at all before a world exists").
 ##
@@ -1857,7 +1923,18 @@ static func building_line(parts: Array) -> String:
 
 ## WHAT IS UNDER THE CURSOR, as lines. A tile off the map says so: the cursor is off the map most of
 ## the time and a readout that quietly showed tile (0, 0) instead would be lying.
-static func tile_lines(tile: Dictionary) -> PackedStringArray:
+##
+## **`elsewhere` IS THE BUILDING WHOSE OWN MENU IS OPEN, AND ITS LINE LEAVES THIS READOUT** (ASSA-316,
+## Maren's ruling 6: *"with the menu open, that machine's prose leaves `where you stand` ... one fact,
+## one home, and the home is the surface that can act on it"*). The line this drops is the whole of a
+## machine's state -- `Minyte machine (B) · holding 0 of 210 · mining Minyte · mass 490 of 1095 budget
+## · speed 44 · frame(...) + hopper x4` -- so printing it in two places while one of them has buttons
+## under it is ASSA-272's defect (the same answer twice) on the screen the board called not amazing.
+##
+## **BY ID AND NOT BY TILE**, because a building is 1x1 today and will not always be: the menu is open
+## for a BUILDING, and the id is the only thing that stays true of it when it covers four tiles.
+## `-1` is "no menu is open" and is the default, so every other caller keeps its lines byte for byte.
+static func tile_lines(tile: Dictionary, elsewhere := -1) -> PackedStringArray:
 	var lines := PackedStringArray()
 	if tile.is_empty():
 		return lines
@@ -1923,7 +2000,12 @@ static func tile_lines(tile: Dictionary) -> PackedStringArray:
 	# ASSA-43 and ASSA-52 happened. `kind` is still in the dict for anything that must BRANCH on
 	# it; it is not what a player is shown.
 	var building: Variant = tile.get("building")
-	if building != null:
+	# **`elsewhere == -1` IS ASKED FIRST AND THAT IS NOT BELT AND BRACES.** A building dictionary with
+	# no `id` reads as -1, and the fallback branch below exists precisely because that happens (a stale
+	# dylib). Comparing the two -1s would drop the line for the one building this readout is the LAST
+	# surface describing, with no menu open to carry it.
+	if building != null and (elsewhere == -1
+			or int((building as Dictionary).get("id", -1)) != elsewhere):
 		var b: Dictionary = building
 		var named := String(b.get("name", ""))
 		if named == "":

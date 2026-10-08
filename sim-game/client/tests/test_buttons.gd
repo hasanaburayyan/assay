@@ -1969,3 +1969,222 @@ func test_the_close_up_is_given_the_tile_the_buttons_act_on() -> bool:
 				+ "tile even with the mark cleared")
 	screen.queue_free()
 	return ok
+
+
+## **A CLICK ON A MACHINE OPENS ITS MENU, FROM EITHER BUTTON, AND THE MENU IS NEVER OVER IT**
+## (ASSA-316; the board, 10-08: *"machines should have menus so we can interact with them"*).
+##
+## BOTH BUTTONS, BECAUSE BOTH ARE RULED (Maren 7 and 8) AND THEY ARE DIFFERENT BRANCHES: left-click
+## would otherwise walk, right-click would otherwise arm a placement the sim refuses on an occupied
+## tile. One of them passing says nothing about the other.
+func test_either_click_on_a_machine_opens_a_menu_beside_it() -> bool:
+	var screen := _joined()
+	var ok := true
+	var id := _a_placed_smelter(screen)
+	if id < 0:
+		screen.queue_free()
+		return false
+	var spot: Vector2i = screen._target_tile()
+	for button in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
+		screen._close_machine_menu()
+		_asked.clear()
+		_click(screen, spot, button)
+		if screen._menu_at != id:
+			ok = _fail("button %d on the machine at %s left the menu at %d, want %d"
+					% [button, spot, screen._menu_at, id])
+			break
+		if not _asked.is_empty():
+			ok = _fail("button %d on a machine submitted %s; opening a menu is not a command"
+					% [button, _asked])
+			break
+		if not screen._menu_box.visible:
+			ok = _fail("the menu is open at %d and its panel is not visible" % screen._menu_at)
+			break
+		# **THE RING IS THE TETHER** (ruling 8): the menu is not anchored to the machine, so the mark on
+		# the tile is the only thing joining the two.
+		if screen._world.selection != spot:
+			ok = _fail("the menu is open on %s and the selection ring is on %s"
+					% [spot, screen._world.selection])
+			break
+		# **AND IT IS IN THE HALF THE MACHINE IS NOT IN, ASKED OF THE SCREEN'S OWN GEOMETRY** (ruling 1).
+		var middle: float = screen.point_of_tile(spot).x
+		var room: Rect2 = screen._menu_region.get_rect()
+		if room.position.x <= middle and middle <= room.end.x:
+			ok = _fail("the machine at x=%.0f stands inside its own menu's region %s" % [middle, room])
+			break
+		# NEVER OVER THE HUD COLUMN (ruling 2): a menu over the log hides the only answer the sim's
+		# refusals get.
+		if not AssayHud.world_rect().encloses(room):
+			ok = _fail("the menu's region %s is not inside the world %s"
+					% [room, AssayHud.world_rect()])
+			break
+	screen.queue_free()
+	return ok
+
+
+## **THE MENU'S CONTENT STAYS INSIDE THE ROOM IT IS GIVEN** (ASSA-316). Maren's ruling 1 says the menu
+## scrolls inside itself past the room rather than growing; nothing reaches that today, so the bound is
+## this test and the `ScrollContainer` is the day it goes red.
+##
+## **IT ASSERTS THE SIZE IS NOT ZERO FIRST, WHICH IS THE WHOLE POINT.** A headless suite lays nothing
+## out, so `size <= room` would be the greenest and most worthless check in the file -- the exact shape
+## of the fold probe I had to withdraw on ASSA-247. The minimum size is the engine's answer about
+## content and is available with no window, so that is what is measured.
+func test_a_machine_menus_content_fits_the_room_it_is_given() -> bool:
+	var screen := _joined()
+	var ok := true
+	var id := _a_placed_smelter(screen)
+	if id < 0:
+		screen.queue_free()
+		return false
+	_click(screen, screen._target_tile(), MOUSE_BUTTON_LEFT)
+	var want: Vector2 = screen._menu_box.get_combined_minimum_size()
+	var room: Rect2 = screen._menu_region.get_rect()
+	if want.x <= 0.0 or want.y <= 0.0:
+		ok = _fail("the menu's content measures %s, so this check asserts nothing" % want)
+	elif want.x > room.size.x or want.y > room.size.y:
+		ok = _fail("the menu's content is %s in a room of %s: it needs the scroll box"
+				% [want, room.size])
+	screen.queue_free()
+	return ok
+
+
+## **THE TWO VERBS THAT LEFT `do` ACT ON THE MENU'S OWN MACHINE** (ASSA-316, Maren's ruling 3 and her
+## condition that they leave on the commit that makes the menu reachable).
+func test_take_and_pick_up_left_do_and_act_on_the_menus_machine() -> bool:
+	var screen := _joined()
+	var ok := true
+	var id := _a_placed_smelter(screen)
+	if id < 0:
+		screen.queue_free()
+		return false
+	var spot: Vector2i = screen._target_tile()
+	# THE COLUMN IS ASKED WHILE A MACHINE IS TARGETED, which is the state that used to grow the row.
+	if _find(screen._actions, "Take") != null or _find(screen._actions, "Pick up") != null:
+		ok = _fail("`do` still offers Take or Pick up with a machine targeted: %s"
+				% [_labels_of(screen._actions)])
+	_click(screen, spot, MOUSE_BUTTON_LEFT)
+	var take := _find(screen._menu_box, "Take")
+	if take == null:
+		ok = _fail("the machine menu offers no Take: %s" % [_labels_of(screen._menu_box)])
+	elif ok:
+		_asked.clear()
+		take.pressed.emit()
+		if _asked.size() != 1 or _asked[0] != AssayActions.take(id):
+			ok = _fail("Take in the menu for building %d asked for %s" % [id, _asked])
+	if ok and _find(screen._menu_box, "Pick up") == null:
+		ok = _fail("the machine menu offers no Pick up: %s" % [_labels_of(screen._menu_box)])
+	# **AND THE MENU CLOSES ITSELF WHEN ITS MACHINE IS GONE**, which is the common way to leave it.
+	if ok:
+		var away := _find(screen._menu_box, "Pick up")
+		away.pressed.emit()
+		_tick(screen, 8)
+		if screen._menu_at != -1:
+			ok = _fail("picked the machine up and its menu is still open at %d" % screen._menu_at)
+		elif screen._menu_box.visible:
+			ok = _fail("the menu closed at the id and left its panel on screen")
+	screen.queue_free()
+	return ok
+
+
+## **ESC CLOSES. A CLICK ON THE GROUND CLOSES AND DOES NOT WALK. A SECOND CLICK WALKS** (ASSA-316,
+## Maren's ruling 2 and ruling 7's condition).
+func test_esc_closes_a_menu_and_a_dismissing_click_does_not_walk() -> bool:
+	var screen := _joined()
+	var ok := true
+	var id := _a_placed_smelter(screen)
+	if id < 0:
+		screen.queue_free()
+		return false
+	var spot: Vector2i = screen._target_tile()
+	_click(screen, spot, MOUSE_BUTTON_LEFT)
+	var esc := InputEventKey.new()
+	esc.keycode = KEY_ESCAPE
+	esc.pressed = true
+	screen._unhandled_key_input(esc)
+	if screen._menu_at != -1:
+		ok = _fail("Esc left the menu open at %d" % screen._menu_at)
+	# THE DISMISSING CLICK: open again, then click a tile that is NOT the machine.
+	if ok:
+		_click(screen, spot, MOUSE_BUTTON_LEFT)
+		var ground: Vector2i = screen._my_tile() + Vector2i(1, 0)
+		_asked.clear()
+		_click(screen, ground, MOUSE_BUTTON_LEFT)
+		if screen._menu_at != -1:
+			ok = _fail("a click on %s left the menu open at %d" % [ground, screen._menu_at])
+		elif not _asked.is_empty():
+			ok = _fail("the click that closed the menu also asked for %s" % [_asked])
+		else:
+			# A SECOND CLICK WALKS, which is what makes the first one a dismissal and not a dead zone.
+			_click(screen, ground, MOUSE_BUTTON_LEFT)
+			if _asked.size() != 1 or _asked[0] != AssayActions.move_to(ground):
+				ok = _fail("the click after the dismissal asked for %s, not a walk to %s"
+						% [_asked, ground])
+	screen.queue_free()
+	return ok
+
+
+## **A SLOT BUTTON SENDS THE WHOLE STACK INTO THE MENU'S OWN MACHINE, COUNTED AT THE PRESS; A FRACTION
+## SENDS ITS OWN NUMBER** (ASSA-316, Maren's ruling 4).
+##
+## **THE BUILDING IS THE MENU'S AND NOT `_target_tile`'s, AND THAT IS THE ASSERTION WORTH HAVING.** The
+## pack row's `Fuel` finds its building through the placement cursor; a menu already knows which machine
+## it is about, and the two paths now share `_insert_into`. A menu that quietly used the cursor would
+## pass every other check in this file.
+func test_a_slot_button_fuels_the_menus_machine_with_the_count_at_the_press() -> bool:
+	var screen := _joined()
+	var ok := true
+	var id := _a_placed_smelter(screen)
+	if id < 0:
+		screen.queue_free()
+		return false
+	var spot: Vector2i = screen._target_tile()
+	# THE CURSOR IS MOVED OFF THE MACHINE FIRST, so a menu reading `_target_tile` cannot pass by luck.
+	_click(screen, screen._my_tile(), MOUSE_BUTTON_RIGHT)
+	_click(screen, spot, MOUSE_BUTTON_LEFT)
+	var ore := _stack_of(screen, "ore")
+	if ore.is_empty():
+		screen.queue_free()
+		return _fail("no ore in the pack to put into a slot")
+	var held := _counted(screen, ore)
+	var whole := _find(screen._menu_box,
+			AssayHud.insert_label(held, String(ore.get("name", "?"))))
+	if whole == null:
+		ok = _fail("no `%s` button in the menu: %s"
+				% [AssayHud.insert_label(held, String(ore.get("name", "?"))),
+						_labels_of(screen._menu_box)])
+	else:
+		_asked.clear()
+		whole.pressed.emit()
+		if _asked.size() != 1:
+			ok = _fail("a slot button asked for %s" % [_asked])
+		else:
+			# EITHER SLOT IS A PASS AND THE COUNT IS NOT. Which slot a species is good for is a sheet
+			# reading only the sim has (`stack_verbs`), so this harness may not decide that ore is fuel;
+			# what it must pin is the BUILDING and the COUNT, which are the two this client composes.
+			var want: Variant = AssayActions.insert(id, AssayActions.SLOT_FUEL,
+					AssayActions.item_of_stack(ore), held)
+			var other: Variant = AssayActions.insert(id, AssayActions.SLOT_INPUT,
+					AssayActions.item_of_stack(ore), held)
+			if _asked[0] != want and _asked[0] != other:
+				ok = _fail("a slot button asked for %s, not an Insert of %d into building %d"
+						% [_asked[0], held, id])
+	# THE FRACTION SENDS ITS OWN NUMBER. `or 1` is the one count every stack of two or more offers.
+	if ok and AssayHud.insert_fractions(held).size() > 0:
+		var some := _find(screen._menu_box, AssayHud.insert_some_label(1))
+		if some == null:
+			ok = _fail("a stack of %d offers no `or 1`: %s" % [held, _labels_of(screen._menu_box)])
+		else:
+			_asked.clear()
+			some.pressed.emit()
+			var one: Variant = AssayActions.insert(id, AssayActions.SLOT_FUEL,
+					AssayActions.item_of_stack(ore), 1)
+			var one_in: Variant = AssayActions.insert(id, AssayActions.SLOT_INPUT,
+					AssayActions.item_of_stack(ore), 1)
+			if _asked.size() != 1:
+				ok = _fail("`or 1` asked for %s" % [_asked])
+			elif _asked[0] != one and _asked[0] != one_in:
+				ok = _fail("`or 1` asked for %s, not an Insert of 1 into building %d"
+						% [_asked[0], id])
+	screen.queue_free()
+	return ok
