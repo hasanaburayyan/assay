@@ -1428,6 +1428,12 @@ func _show_log(shown: bool) -> void:
 ## IT STOPS THE MOUSE for the log's reason, which is a rule about this window and not about this
 ## panel: the map is clicked through `_unhandled_input`, so an `IGNORE` panel would let a click land
 ## on a tile the player cannot see and place a machine there. The region around it is `IGNORE`.
+##
+## **THE ALIGNMENT BELOW IS STATED A SECOND TIME, IN ARITHMETIC, IN `AssayHud.map_key_rect`**
+## (ASSA-281) -- the status toast has to keep off this panel, and in the headless suite no container
+## has laid out, so it cannot ask this node where it ended up. **If you change `ALIGNMENT_END` or
+## either size flag here, change that function too**; nothing will go red if you do not, because the
+## only place the two disagree is a real window.
 func _build_map_key_over_the_map(world: Rect2) -> void:
 	var region := VBoxContainer.new()
 	region.position = world.position
@@ -1460,6 +1466,11 @@ func _show_map_key(shown: bool) -> void:
 	_map_key.visible = shown and not _close_up
 	_map_key_box.visible = shown and not _close_up
 	_map_key_toggle.text = AssayHud.map_key_toggle_text(shown)
+	# THE TOAST GETS OUT OF THE WAY ON THE SAME FRAME (ASSA-281). Without this the toast only moves
+	# on the next tick bundle, so pressing K while the client is saying something covers the key's
+	# last row for up to a tenth of a second -- and a toast sitting on the row a player just opened
+	# the key to read is the defect whether it lasts one frame or a thousand.
+	_place_says_toast()
 
 
 ## SHOW OR HIDE THE DEVELOPER'S READOUT (ASSA-237, Maren's Gap 2).
@@ -2306,7 +2317,17 @@ func _place_says_toast() -> void:
 	_says_toast.visible = saying
 	if not saying:
 		return
-	var at := AssayHud.status_toast_rect(_says_toast.get_combined_minimum_size())
+	# **AND IT KEEPS OFF THE SHAPE KEY, WHICH I SPENT A MONTH COVERING** (ASSA-281). Both surfaces are
+	# pinned to the world's bottom-left; the key was there first and the toast arrived on top of it,
+	# hiding 64% of its last row's sample in every key shot taken since #327. `map_key_rect` rather
+	# than the node's own rect for the reason three lines up: no layout pass has run in the suite, so
+	# `_map_key_box.position` reads (0, 0) and a toast told to avoid THAT would avoid the wrong corner.
+	# `_map_key_box.visible` and not `_map_key_shown`: the player's intent is on even in the close-up,
+	# where no key is drawn and there is nothing to keep off.
+	var blocked := Rect2()
+	if _map_key_box.visible:
+		blocked = AssayHud.map_key_rect(_map_key_box.get_combined_minimum_size())
+	var at := AssayHud.status_toast_rect(_says_toast.get_combined_minimum_size(), blocked)
 	_says_toast.position = at.position
 	_says_toast.size = at.size
 
