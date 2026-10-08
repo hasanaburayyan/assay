@@ -4715,6 +4715,11 @@ func _draw() -> void:
 		# their own MAP_BG keyline holds the band apart. That is Maren's to rule and it is on ASSA-278.
 		for band: Rect2 in AssayHud.frame_bands(shape["hole_rect"], AssayHud.MARK_KEYLINE_PX):
 			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
+		# **THE GLYPH PASS BELOW REPEATS THESE THREE LOOPS FOR A FRAME A LETTER'S BED COVERS**
+		# (ASSA-273 box 3, DRAFT). I tried to factor them into `_paint_building_frame(shape)` first
+		# and `test_map_key.gd` is right to refuse it: its scan reads `_draw`'s OWN source, so a draw
+		# call moved into a helper is a mark the key can stop naming. The painter has one entry point
+		# on purpose, so the repetition stays here where the scan can see it.
 
 	# **THE SPECIES LETTER, LAST, BECAUSE A MACHINE STANDS ON THE ROCK IT WORKS** (ASSA-213, Maren's
 	# P1: "a building mark may not remove the species letter from a deposit it stands on").
@@ -4800,6 +4805,32 @@ func _draw() -> void:
 				draw_string(font, glyph["baseline"] + offset, glyph["symbol"],
 						HORIZONTAL_ALIGNMENT_LEFT, -1, int(glyph["size"]),
 						AssayHud.mark_ink_of(&"species_bed", glyph["bed"]))
+		# **DRAFT, ASSA-273 BOX 3: THE BED YIELDS TO THE BAND IT LAPS; THE LETTER'S INK DOES NOT.**
+		# Nothing above this line changes -- the bed is still stamped whole, because it is one glyph
+		# and a halo cannot be drawn in pieces -- and then the frames the letter laps are stroked
+		# again, so the band gets its own pixels back from its own bed while the letter's strokes go
+		# on top of everything as ASSA-213 requires.
+		#
+		# **WHY THE BED AND NOT THE LETTER.** On a real co-op frame with a drill on a deposit centre,
+		# the band keeps 13.2% of its own ink on seed 777042 and 44.4% on 63, and WHAT TOOK IT is not
+		# the letter: 65.3% of that band is bed on 777042 (the letter's own ink is 19.4%). A band is a
+		# shape, so the statistic is its longest unbroken run, and two of the four sides hold no pixel
+		# of the mark at all.
+		#
+		# **THE PRICE IS ASSA-218's FAILURE IN A SMALLER PLACE, AND IT LANDS ON THE SEED THIS HELPS.**
+		# Where a strokes crosses the restored band there is now no bed between a `GLYPH_LIGHT` letter
+		# and a 242 band -- white on near-white. The frames are the evidence either way; this is not
+		# merged and Maren rules it.
+		# **THE BAND ALONE, NOT THE WHOLE FRAME, AND THAT IS A MEASUREMENT AND NOT A PREFERENCE.**
+		# Restoring the two `MAP_BG` keylines as well costs a DARK letter a quarter of its boundary:
+		# on seed 63 the share of the letter's boundary carrying a 4.5:1 edge went 80.2% -> 54.0%,
+		# because `GLYPH_DARK` (5,5,8) against a `MAP_BG` keyline (26,28,33) is 1.3:1 where the
+		# yellow bed it replaced was an edge. The keylines hold the band apart from the marks NEXT
+		# DOOR, and the bed is not next door -- it is on top. So only the band comes back.
+		for lapped_index in glyph.get("lapped_by", []):
+			var lapped: Dictionary = shapes[int(lapped_index)]
+			for band: Rect2 in AssayHud.frame_bands(lapped["rect"], float(lapped["stroke"])):
+				draw_rect(band, AssayHud.mark_ink_of(&"building", lapped["colour"]), true)
 		draw_string(font, glyph["baseline"], glyph["symbol"], HORIZONTAL_ALIGNMENT_LEFT, -1,
 				int(glyph["size"]), AssayHud.mark_ink_of(&"species_glyph", glyph["ink"]))
 
@@ -4983,6 +5014,12 @@ func _glyph_marks(deposits: Array, font: Font, building_marks: Array = []) -> Ar
 			# The lapped half is filled in below, once every letter's box exists: `letter_occlusions`
 			# needs the whole list, so it cannot be answered one letter at a time inside this loop.
 			"bedded": bool(disc["hatch"]),
+			# **DRAFT (ASSA-273 box 3): WHICH BUILDINGS LAP THIS LETTER, not just whether any does.**
+			# `bedded` is one bit and the bed's PRICE is per-building: the bed is a halo in the disc's
+			# colour and on a dark disc it is the thing that eats the band (65.3% of it on seed
+			# 777042, measured by `shared/assay/cove-assa273/bandread.py` on a real frame). To let the
+			# band back over its own bed, the painter has to know which frame to re-stroke.
+			"lapped_by": [],
 		})
 	# **WHICH LETTERS A BUILDING ACTUALLY LAPS** -- the same `letter_occlusions` the window shot's
 	# `case` leg reports, so the painter and the picture cannot disagree about which letter was at
@@ -4993,4 +5030,5 @@ func _glyph_marks(deposits: Array, font: Font, building_marks: Array = []) -> Ar
 		var j := int(lap["letter"])
 		if j >= 0 and j < marks.size():
 			(marks[j] as Dictionary)["bedded"] = true
+			((marks[j] as Dictionary)["lapped_by"] as Array).append(int(lap["building"]))
 	return marks
