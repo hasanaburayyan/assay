@@ -3,7 +3,7 @@
 
 use sim::ladder::{
     JUDGED_AT, burn_temperature_at, carries_first_machine, hand_lit_fuel, hand_minable,
-    pair_smelts, rungs, starter_pick_speed, starter_species,
+    pair_smelts, rungs, starter_pick_speed, starter_roster_ok, starter_species,
 };
 use sim::mineral::Property;
 use sim::tuning::{
@@ -598,5 +598,83 @@ fn where_no_rung_zero_species_carries_a_machine_the_hardest_still_wins() {
     assert_eq!(
         material, w.species[1].id,
         "with no carrier to prefer, the hardest must still win"
+    );
+}
+
+/// **EVERY WORLD'S STARTER CARRIES A FIRST PLANTED MACHINE** (ASSA-170 step 2;
+/// Maren's ASSA-155 ruling: rung zero promises a first planted machine, not
+/// only "you can mine this and smelt it").
+///
+/// This is the guard the step-2 clause exists for, and it is a sweep rather
+/// than a fixture because the thing being promised is a property of the seed
+/// space. Step 1 alone leaves 9.6% of worlds with no carrier anywhere in rung
+/// zero; removing the clause from `starter_roster_ok` turns this red.
+#[test]
+fn every_worlds_starter_carries_a_first_planted_machine() {
+    for seed in 0..SEEDS {
+        let roster = species_roster(seed);
+        let (material, _) = starter_species(&roster).expect("every world has a starter");
+        assert!(
+            carries_first_machine(&roster, material, JUDGED_AT),
+            "seed {seed}: the starter species cannot carry a frame and a head, so the world \
+             cannot deliver the first planted machine rung zero promises"
+        );
+    }
+}
+
+/// And the clause is what does it: a roster that passes every OTHER condition
+/// and holds no carrier is refused.
+///
+/// **EACH OF THE OTHER FOUR CONDITIONS IS ASSERTED FIRST**, because a test that
+/// only checks the final `false` passes whenever the roster fails for some
+/// unrelated reason — which is a test that cannot tell this clause from any of
+/// the others, and would stay green if the clause were deleted tomorrow.
+#[test]
+fn a_roster_with_no_first_machine_in_rung_zero_is_refused() {
+    let mut w = world(1);
+    let sheet = |hardness| sim::Sheet {
+        density: 100, // heavy and weak: nothing here carries its own frame
+        strength: 1,
+        hardness,
+        heat_tolerance: 25, // hand-lit, and walls the fire can reach
+        reactivity: 60,
+        conductivity: 50,
+    };
+    for s in &mut w.species {
+        s.sheet = sheet(100);
+    }
+    w.species[0].sheet = sheet(10);
+    w.species[1].sheet = sheet(40);
+    w.species[2].sheet = sheet(25);
+    let roster = w.species.clone();
+    let (material, fuel) = starter_species(&roster).expect("a starter pair");
+
+    // THE PREMISE: every other clause in `starter_roster_ok` passes.
+    assert!(rungs(&roster).len() >= MIN_STARTER_RUNGS, "rungs");
+    assert!(
+        starter_pick_speed(&roster, material) > HAND_WORK_PER_TICK,
+        "the first pick must beat bare hands or this roster fails for that reason instead"
+    );
+    assert!(
+        roster.iter().filter(|s| hand_minable(s)).count() >= MIN_HAND_MINABLE_SPECIES,
+        "hand-minable count"
+    );
+    assert!(
+        pair_smelts(
+            &roster[usize::from(material.0)],
+            &roster[usize::from(fuel.0)],
+            JUDGED_AT
+        ),
+        "the pair must smelt or this roster fails for that reason instead"
+    );
+    assert!(
+        !carries_first_machine(&roster, material, JUDGED_AT),
+        "the premise is that the starter cannot carry a machine"
+    );
+
+    assert!(
+        !starter_roster_ok(&roster),
+        "a roster that passes everything else and holds no first planted machine must be \
+         rerolled, which is the whole of ASSA-170 step 2"
     );
 }

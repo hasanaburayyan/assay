@@ -1036,45 +1036,110 @@ fn the_smelter_row_says_its_walls_come_from_its_material_and_that_is_true() {
 /// enough to light it" trailed the disqualifier after a comma, where it looked
 /// exactly like the positive ", lights from cold" and followed a grade-bearing
 /// claim that had already invited the player in.
+/// **THIS TEST NAMED THREE SPECIES ON SEED 42 AND IT ROTTED TWICE IN ONE WEEK**
+/// (ASSA-170). Both worldgen steps changed which roster a seed is accepted
+/// with, and step 2 moved seed 42 outright: its new roster has no
+/// "nothing here could light it" row at all, so the pinned version could not
+/// be repaired by swapping in new names — the shape it was written for is
+/// absent from that world.
+///
+/// So the shapes are now found by the sim's own predicates (`fuel_grade`,
+/// `hand_minable`, `lighting`) across many worlds, and the wording is asserted
+/// on whatever rows match. Every arm carries a non-vacuity count, the house
+/// pattern in this file, so an arm that stopped being reachable fails loudly
+/// instead of passing on nothing. The board's seed-42 anecdote is history now
+/// rather than a fixture; the property it taught us is what is tested.
 #[test]
 fn a_fuel_nothing_can_light_reads_differently_from_one_that_lights() {
-    let w = host_world(42);
-    let table = sim::debug::species_table(&w);
-    let row = |name: &str| {
-        table
-            .lines()
-            .find(|l| l.contains(name))
-            .unwrap_or_else(|| panic!("seed 42 has no {name} row:\n{table}"))
-            .to_string()
-    };
+    use sim::ladder::Lighting;
 
-    // 1. Fuel nothing in this world can light: the claim is BOUND, so there is
-    //    no comma to read it as a separate positive tag.
-    let dead = row("Zuxite");
-    assert!(
-        dead.contains("fuel at C or better if anything here could light it"),
-        "the disqualifier must bind the fuel claim: {dead}"
-    );
-    assert!(
-        !dead.contains("or better, "),
-        "a bound claim must not also trail a clause after a comma: {dead}"
-    );
+    let (mut dead, mut live, mut hotter, mut unminable, mut not_fuel) = (0, 0, 0, 0, 0);
+    for seed in 1..200 {
+        let w = host_world(seed);
+        let table = sim::debug::species_table(&w);
+        for s in &w.species {
+            let row = table
+                .lines()
+                .find(|l| l.contains(s.name()))
+                .unwrap_or_else(|| panic!("seed {seed}: no row for {}", s.name()))
+                .to_string();
+            // A generated name could itself contain "fuel" or "light", and the
+            // silence arm below reads the whole row, so take the name out of it.
+            let notes = row.replace(s.name(), "");
 
-    // 2. Fuel that lights: positive, and a comma is right here.
-    let live = row("Souktulore");
-    assert!(
-        live.contains("fuel at C or better, lights from cold"),
-        "{live}"
-    );
+            let Some(grade) = sim::ladder::fuel_grade(s) else {
+                // Not fuel at all: silent about lighting. This is the row the
+                // window used to make indistinguishable from the first arm.
+                assert!(
+                    !notes.contains("fuel") && !notes.contains("light"),
+                    "seed {seed}: a rock the sim does not call fuel must say \
+                     nothing about lighting: {row}"
+                );
+                not_fuel += 1;
+                continue;
+            };
+            let claim = format!("fuel at {} or better", grade.letter());
 
-    // 3. Not fuel at all: silent about lighting. This is the row that used to
-    //    be indistinguishable from the first one at the window.
-    let not_fuel = row("Viomnunine");
-    assert!(
-        !not_fuel.contains("fuel") && !not_fuel.contains("light"),
-        "a rock the sim does not call fuel must say nothing about lighting: {not_fuel}"
-    );
-    assert_ne!(dead, not_fuel, "the two rows the window collapsed");
+            if !sim::ladder::hand_minable(s) {
+                // ASSA-68: on a row nothing can mine, the light slot answers
+                // the prior question instead, bound the same way.
+                assert!(
+                    notes.contains(&format!("{claim} if you could mine it")),
+                    "seed {seed}: the mining limit must bind the fuel claim: {row}"
+                );
+                assert!(
+                    !notes.contains(&format!("{claim}, ")),
+                    "seed {seed}: a bound claim must not also trail a clause \
+                     after a comma: {row}"
+                );
+                unminable += 1;
+                continue;
+            }
+
+            match sim::ladder::lighting(&w.species, s.id) {
+                // Fuel nothing in this world can light: the claim is BOUND, so
+                // there is no comma to read it as a separate positive tag.
+                Lighting::NothingBurnsHotEnough => {
+                    assert!(
+                        notes.contains(&format!("{claim} if anything here could light it")),
+                        "seed {seed}: the disqualifier must bind the fuel claim: {row}"
+                    );
+                    assert!(
+                        !notes.contains(&format!("{claim}, ")),
+                        "seed {seed}: a bound claim must not also trail a clause \
+                         after a comma: {row}"
+                    );
+                    dead += 1;
+                }
+                // Fuel that lights: positive, and a comma is right here.
+                Lighting::FromCold => {
+                    assert!(
+                        notes.contains(&format!("{claim}, lights from cold")),
+                        "seed {seed}: {row}"
+                    );
+                    live += 1;
+                }
+                // A real conditional a player can satisfy, so it keeps its
+                // comma on purpose — it is not a disqualifier.
+                Lighting::FromAHotterFire => {
+                    assert!(
+                        notes.contains(&format!("{claim}, needs a hotter fire to light")),
+                        "seed {seed}: {row}"
+                    );
+                    hotter += 1;
+                }
+            }
+        }
+    }
+    // NON-VACUITY ON EVERY ARM. Without these the whole test passes on a
+    // worldgen that stopped producing one of the shapes, which is exactly how
+    // the pinned version failed: silently correct about rows that no longer
+    // existed.
+    assert!(dead > 0, "no fuel-nothing-can-light row in 199 worlds");
+    assert!(live > 0, "no lights-from-cold row in 199 worlds");
+    assert!(hotter > 0, "no needs-a-hotter-fire row in 199 worlds");
+    assert!(unminable > 0, "no fuel-you-cannot-mine row in 199 worlds");
+    assert!(not_fuel > 0, "no non-fuel row in 199 worlds");
 }
 
 /// Both renderings of `Lighting` are total and distinct, so neither surface
