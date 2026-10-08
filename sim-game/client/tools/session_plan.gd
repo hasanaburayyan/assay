@@ -1,4 +1,5 @@
 class_name AssaySessionPlan
+## CI: library
 extends RefCounted
 ## WHAT A PROBE SHOULD DO NEXT, AS PURE FUNCTIONS OF THE WORLD IT WAS HANDED.
 ##

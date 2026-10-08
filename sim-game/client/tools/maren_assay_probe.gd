@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- answered one design question for Maren on ASSA-95 and is kept for re-asking it
 ## MAREN'S PROBE, not a shipped tool: which ticks of the demo's play have an ASSAY in the running
 ## block? Marlow (ASSA-95) ticked box 1 on the mechanism and said so: mining and crafting are driven
 ## by a test, assaying reaches the block through the same array but no shot has ever caught it. A

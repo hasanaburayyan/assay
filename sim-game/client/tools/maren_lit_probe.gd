@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- answered one design question for Maren on ASSA-137 and is kept for re-asking it
 ## MAREN'S PROBE, not a shipped tool: does `BuildingFacts.lit` EVER come back true during the
 ## demo's play? Cove (ASSA-137) shot ticks 160/280/300 and got false at all three, inside a
 ## stretch whose event log records a smelt completing every 20 ticks. This asks what the client

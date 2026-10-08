@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- photographs a diagonal walk in a real window
 ## MAREN, ASSA-201 BOX 4: WHAT A DIAGONAL `goto` LOOKS LIKE WHEN IT TURNS THE CORNER.
 ##
 ##   godot --path client --script res://tools/maren_corner_strip.gd --

@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- asks whether Enter reaches Play Solo on a REAL screen; focus needs a window
 ## **DOES ENTER PRESS PLAY SOLO ON A REAL SCREEN** (Maren's ruling 2, ASSA-113).
 ##
 ## `tests/test_main_screen.gd` can assert that the button is first in the row and that something asks

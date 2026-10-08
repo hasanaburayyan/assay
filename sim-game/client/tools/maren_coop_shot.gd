@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- photographs two players in one real window
 ## TWO PLAYERS IN ONE ASSAY WINDOW, PHOTOGRAPHED FOR THE FIRST TIME (Maren).
 ##
 ##   godot --path client --script res://tools/maren_coop_shot.gd \

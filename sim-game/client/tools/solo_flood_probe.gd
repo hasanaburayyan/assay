@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- floods a real solo world for ASSA-219; a candidate for a gate, wired to nothing today
 ## **DOES A REAL SOLO WORLD SURVIVE A REAL SESSION'S WORTH OF COMMANDS** (ASSA-219, found by Nerite).
 ##
 ##   godot --headless --path . --script res://tools/solo_flood_probe.gd -- [drained|undrained]

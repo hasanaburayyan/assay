@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- kills and restarts a real relay under a real session; a candidate for a gate, unwired
 ## **DOES PRESSING JOIN AFTER A DROP ACTUALLY RECONNECT YOU?** (ASSA-177, Maren's question.)
 ##
 ##   godot --headless --path . --script res://tools/reconnect_probe.gd -- [seed] [seconds]

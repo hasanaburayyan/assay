@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- a shot: --headless writes a blank frame and reports success
 ## A PICTURE OF THE STATUS TOAST, IN BOTH OF ITS STATES (ASSA-239).
 ##
 ##   godot --path . --script res://tools/nacre_toast_shot.gd -- <out_dir> [seed]

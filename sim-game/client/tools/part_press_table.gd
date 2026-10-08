@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- enumerates pack states as a table for a person to read, with no pass or fail
 ## **WHAT HAPPENS WHEN YOU PRESS EACH PART ROW, IN EVERY STATE THE PACK CAN BE IN** (ASSA-103 box 7).
 ##
 ##   godot --headless --path . --script res://tools/part_press_table.gd -- [seed]

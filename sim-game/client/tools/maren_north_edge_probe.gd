@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- walks to the world's north edge in a real window
 ## **A ONE-SHOT TOOL CAN RUN FOR EVER TOO, AND THIS IS THE HALF ASSA-182 DID NOT FIX FIRST TIME.**
 ## `SceneTree`'s own `_process` returns false, so a tool with no `_process` of its own does not end when
 ## `_initialize` returns -- it ends when something calls `quit()`. A runtime error inside `_initialize`

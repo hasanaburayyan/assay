@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: gated
 ## THE CLIENT'S ONE THEME, GENERATED RATHER THAN DRAWN (ASSA-116 box 1).
 ##
 ##   godot --headless --path . --script res://tools/build_theme.gd
