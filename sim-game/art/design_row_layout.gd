@@ -52,6 +52,10 @@ const MEASURE_FRAME := 8
 ## The world the column is made real with. Its contents never reach the picture -- the designs come
 ## from the dump -- so this is only ever "a world that runs", and the demo seed is as good as any.
 const DEFAULT_SEED := "14247"
+## The two labels in a bench row, named as `main.gd` names them (`BENCH_VERDICT` / `BENCH_BODY`).
+## Spelled rather than imported because `main.gd` is a scene script, not a class_name.
+const VERDICT_NAME := "BenchVerdict"
+const BODY_NAME := "BenchBody"
 
 var _screen: Node = null
 var _frames := 0
@@ -145,6 +149,23 @@ func _show_bench() -> void:
 ## **THE ONE CHECK THAT MAKES THIS DUMP EVIDENCE.** Every number below comes from a laid-out tree or
 ## from none at all, so this asks the engine for the two that cannot be anything but zero when no
 ## layout pass ran, and ends the run naming the cause. Returns true when it refused.
+## **THE INK A LABEL IS ACTUALLY DRAWN IN, WHICH IS NOT `modulate` AND HAS NOT BEEN FOR A WHILE.**
+##
+## This read `modulate` until 2026-10-07, and `modulate` is now WHITE on every bench label, so the
+## dump reported `ffffff` for SAFE, UNCERTAIN and WILL BREAK alike -- one colour for the three words
+## whose difference is the entire question Decision #38 asks of this sheet. Measured, not guessed:
+## tonight's dump came back `SAFE ffffff` while `AssayHud.verdict_color("SAFE")` is (0.55,0.82,0.60).
+##
+## The client moved deliberately and wrote down why (`main.gd::_write_design`): `modulate` MULTIPLIES
+## the theme's ink, so the word was drawn in `verdict_color` times `INK` and the colour on screen was
+## nobody's decision. It uses `add_theme_color_override(&"font_color", ...)` now. **A probe that reads
+## the field the surface it measures has abandoned does not go red -- it goes WHITE, and keeps
+## drawing.** `get_theme_color` returns a node's own override when it has one, so this follows the
+## client wherever the colour is set rather than naming a mechanism that can move again.
+func _ink_of(label: Label) -> String:
+	return label.get_theme_color("font_color").to_html(false)
+
+
 func _refuse_if_unlaid(bench: Control) -> bool:
 	if bench.size.x > 1.0 and bench.size.y > 1.0:
 		return false
@@ -177,8 +198,15 @@ func _process(_d: float) -> bool:
 		if not (child is Control):
 			continue
 		var row: Control = child
-		var verdict: Label = row.get_child(0) as Label if row.get_child_count() > 0 else null
-		var body: Label = row.get_child(1) as Label if row.get_child_count() > 1 else null
+		# **BY NAME, NOT BY CHILD INDEX, and the client learned this the expensive way first.**
+		# `main.gd::_write_design` reads these two with `find_child(BENCH_VERDICT/BENCH_BODY)` and says
+		# why in its own comment: they *were* `get_child(0)` and `get_child(1)`, and adding a sprite to
+		# a row made child 0 a `TextureRect`, so the re-text silently stopped finding its label
+		# (ASSA-117). A bench row is the next surface Maren's icon ruling reaches. This file was still
+		# counting children, so the day that icon lands this probe would not have gone red -- it would
+		# have reported the ICON's rect as the verdict's and drawn a sheet from it.
+		var verdict := row.find_child(VERDICT_NAME, true, false) as Label
+		var body := row.find_child(BODY_NAME, true, false) as Label
 		var verbs: Array = []
 		for b in _buttons_in(row):
 			verbs.append({"label": b.text, "size": [b.size.x, b.size.y],
@@ -190,7 +218,7 @@ func _process(_d: float) -> bool:
 			"verdict": {} if verdict == null else {
 				"text": verdict.text,
 				"font_size": verdict.get_theme_font_size("font_size"),
-				"color": verdict.modulate.to_html(false),
+				"color": _ink_of(verdict),
 				"size": [verdict.size.x, verdict.size.y],
 				"pos": [verdict.global_position.x - row.global_position.x,
 					verdict.global_position.y - row.global_position.y],
@@ -198,7 +226,7 @@ func _process(_d: float) -> bool:
 			"body": {} if body == null else {
 				"text": body.text,
 				"font_size": body.get_theme_font_size("font_size"),
-				"color": body.modulate.to_html(false),
+				"color": _ink_of(body),
 				"size": [body.size.x, body.size.y],
 				"pos": [body.global_position.x - row.global_position.x,
 					body.global_position.y - row.global_position.y],
