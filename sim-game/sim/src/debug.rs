@@ -2201,11 +2201,18 @@ pub fn machine_status(world: &World, b: &Building, m: &Machine) -> String {
     // assayed anything; mass and speed are read off sheets and are not.
     let capacity = range.low.capacity;
     let state = machine_state_line(world, world.machine_state(b, m));
+    // After the state, unlike the smelter's, because the three idle states have
+    // no unit in front of them at all and so no clause here: `idle: no deposit
+    // underneath` must not be followed by a progress number, and the one
+    // ordering that is right whether or not the clause exists is this one.
+    let work = work_clause(world, b)
+        .map(|c| format!(" · {c}"))
+        .unwrap_or_default();
     // Same reason as `assembly_readout`: what it is holding and what it is
     // doing come before the design it was built from, because the table line
     // is truncated in the inspector's side panel.
     format!(
-        "holding {} of {} · {state} · mass {} of {} budget · speed {} · {}",
+        "holding {} of {} · {state}{work} · mass {} of {} budget · speed {} · {}",
         m.held.map_or(0, |h| h.count),
         capacity,
         show(range.low.mass, range.high.mass),
@@ -2400,6 +2407,30 @@ pub fn machine_state_line(world: &World, state: MachineState) -> String {
     }
 }
 
+/// How far through the unit in front of it a building is, in words, or nothing
+/// when there is no unit in front of it.
+///
+/// **TWO NOUNS FOR ONE PAIR, BOTH HERE**, which is [`lighting_clause`]'s
+/// arrangement for [`lighting_tag`]'s reason. A smelter's progress is *ticks*
+/// of a recipe and a drill's is *work* against
+/// [`crate::tuning::WORK_PER_UNIT`] — not the same quantity, and a host that
+/// picked the noun would be deciding which. The drill's clause names the unit
+/// `speed` is measured in two clauses later, so `speed 44` and `44 of 100
+/// work` visibly multiply: a player can read how many ticks are left without
+/// the game asserting a number it would have to recompute every tick.
+///
+/// The decision is [`World::building_work`]'s and the words are mine — ASSA-80
+/// again. Nothing wrote these words before ASSA-321, because nothing asked.
+pub fn work_clause(world: &World, b: &Building) -> Option<String> {
+    let w = world.building_work(b)?;
+    Some(match b.kind {
+        BuildingKind::Smelter(_) => format!("{} of {} ticks into this batch", w.done, w.total),
+        BuildingKind::Machine(_) => {
+            format!("{} of {} work toward the next unit", w.done, w.total)
+        }
+    })
+}
+
 /// What any building is doing, in words, whichever kind it is.
 ///
 /// The one wording for a standing condition: `building_status` puts it after
@@ -2447,8 +2478,15 @@ pub fn building_status(world: &World, b: &Building) -> String {
     };
     let walls = world.max_temperature(b);
     let state = smelter_state_line(world.smelter_state(b));
+    // THE BATCH BEFORE THE CONDITION, because a stall is read as "what do I do
+    // about it" and the progress is what says whether fixing it resumes or
+    // restarts (`World::building_work`). Absent, not zero, when no batch is in
+    // front of it: an empty smelter saying `0 of 20` would be inviting a wait.
+    let work = work_clause(world, b)
+        .map(|c| format!("{c} · "))
+        .unwrap_or_default();
     format!(
-        "walls {walls} · in {} · fuel {} ({} burning at {}) · out {} · {state}",
+        "walls {walls} · in {} · fuel {} ({} burning at {}) · out {} · {work}{state}",
         slot(world, s.input),
         slot(world, s.fuel),
         counted(u64::from(s.burn_left), "tick", "ticks"),

@@ -329,16 +329,7 @@ impl AssaySim {
     pub fn inventory_of(&self, player: i64) -> Array<VarDictionary> {
         self.inventory_facts(player_id_of(player))
             .iter()
-            .map(|stack| {
-                vdict! {
-                    "kind" => &gstring(&stack.kind).to_variant(),
-                    "species" => stack.species,
-                    "species_name" => &gstring(&stack.species_name).to_variant(),
-                    "grade" => &gstring(&stack.grade).to_variant(),
-                    "count" => stack.count,
-                    "name" => &gstring(&stack.name).to_variant(),
-                }
-            })
+            .map(stack_dict)
             .collect()
     }
 
@@ -1390,7 +1381,52 @@ fn design_dict(design: &DesignFacts) -> VarDictionary {
 /// renderer draws) both need this. Two copies is exactly the drift this repo
 /// keeps paying for: the tile under the mouse would go on saying one thing
 /// while the list it is drawn from said another, and both would look right.
+/// The exact string `PlayerCommand::Insert` round-trips for this slot, asked of
+/// serde rather than spelt.
+///
+/// **A LITERAL HERE WOULD OUTLIVE A RENAME.** The client submits commands as
+/// JSON (`{"Insert":{"building":1,"slot":"Fuel",…}}`), so the tag has to be the
+/// wire format's and not this crate's opinion of it; a hand-typed "Fuel" would
+/// keep compiling after the variant moved and the relay would drop every
+/// insert. `the_insert_tag_a_menu_is_handed_is_the_one_the_sim_parses` holds it
+/// against a real `PlayerCommand`.
+fn insert_tag(slot: sim::Slot) -> Option<String> {
+    match serde_json::to_value(slot) {
+        Ok(serde_json::Value::String(tag)) => Some(tag),
+        // Unreachable while `Slot` is a plain enum, and reported rather than
+        // papered over if it ever stops being one: a menu with no tag offers no
+        // put control, which is wrong but visible. Silently returning "Fuel"
+        // would be wrong and invisible.
+        _ => None,
+    }
+}
+
+fn slot_facts(world: &World, building: &sim::building::Building) -> Vec<SlotFacts> {
+    world
+        .building_slots(building)
+        .into_iter()
+        .map(|(role, held, cap)| SlotFacts {
+            role: role.name().to_string(),
+            insert_tag: role.insertable().and_then(insert_tag),
+            held: held.map(|stack| StackFacts {
+                kind: stack.item.kind.name().to_string(),
+                species: stack.item.species.0 as i64,
+                species_name: world.species(stack.item.species).name().to_string(),
+                grade: stack.item.grade.letter().to_string(),
+                count: stack.count as i64,
+                name: world.item_name(stack.item),
+            }),
+            count: held.map_or(0, |s| s.count) as i64,
+            cap: cap as i64,
+        })
+        .collect()
+}
+
 fn building_fact(world: &World, building: &sim::building::Building) -> BuildingFacts {
+    let (burn_left, burn_temperature) = match &building.kind {
+        sim::building::BuildingKind::Smelter(s) => (s.burn_left as i64, s.burn_temperature as i64),
+        sim::building::BuildingKind::Machine(_) => (0, 0),
+    };
     BuildingFacts {
         id: building.id.0 as i64,
         kind: building.kind.name().to_string(),
@@ -1412,6 +1448,22 @@ fn building_fact(world: &World, building: &sim::building::Building) -> BuildingF
             sim::SmelterState::Working { .. }
         ),
         stopped: world.building_state(building).halted(),
+        slots: slot_facts(world, building),
+        state: match world.building_state(building) {
+            sim::BuildingState::Smelter(sim::SmelterState::Working { .. })
+            | sim::BuildingState::Machine(sim::MachineState::Working { .. }) => "working",
+            sim::BuildingState::Smelter(sim::SmelterState::Idle)
+            | sim::BuildingState::Machine(sim::MachineState::Idle(_)) => "idle",
+            sim::BuildingState::Smelter(sim::SmelterState::Stalled(_))
+            | sim::BuildingState::Machine(sim::MachineState::Stalled(_)) => "stalled",
+        }
+        .to_string(),
+        state_line: sim::debug::building_state_line(world, building),
+        work: world
+            .building_work(building)
+            .map(|w| (i64::from(w.done), i64::from(w.total))),
+        burn_left,
+        burn_temperature,
     }
 }
 
@@ -1432,7 +1484,60 @@ fn building_dict(building: &BuildingFacts) -> VarDictionary {
         "species" => building.species,
         "lit" => building.lit,
         "stopped" => building.stopped,
+        "slots" => &building.slots.iter().map(slot_dict)
+            .collect::<Array<VarDictionary>>().to_variant(),
+        "state" => &gstring(&building.state).to_variant(),
+        "state_line" => &gstring(&building.state_line).to_variant(),
+        // ABSENT AS `nil`, NOT AS A ZEROED PAIR, which is `designs_of`'s
+        // treatment of `durability` for the same reason: `0 of 100` on a drill
+        // standing on bare ground is a number that reads as a promise.
+        "work" => &match building.work {
+            Some((done, total)) => Vector2i::new(done as i32, total as i32).to_variant(),
+            None => Variant::nil(),
+        },
+        "burn_left" => building.burn_left,
+        "burn_temperature" => building.burn_temperature,
     }
+}
+
+/// ONE STACK, SPELLED ONCE.
+///
+/// `inventory_of` inlined these six keys and a comment two hundred lines away
+/// said why they matter: "the three item fields are spelled exactly as
+/// `inventory_of` spells them, so `AssayActions.item_of_stack` builds the input
+/// item out of an offer with no second rearranging function". A slot's contents
+/// is a stack in exactly that sense — the thing a menu's put button sends back
+/// — so it goes through the same function rather than a second copy that agrees
+/// today. ASSA-146 is what a second copy of one spelling costs.
+fn stack_dict(stack: &StackFacts) -> VarDictionary {
+    vdict! {
+        "kind" => &gstring(&stack.kind).to_variant(),
+        "species" => stack.species,
+        "species_name" => &gstring(&stack.species_name).to_variant(),
+        "grade" => &gstring(&stack.grade).to_variant(),
+        "count" => stack.count,
+        "name" => &gstring(&stack.name).to_variant(),
+    }
+}
+
+fn slot_dict(slot: &SlotFacts) -> VarDictionary {
+    let mut out = vdict! {
+        "role" => &gstring(&slot.role).to_variant(),
+        "count" => slot.count,
+        "cap" => slot.cap,
+    };
+    // SET ONLY WHEN THERE IS ONE, both of these: `held` absent means empty and
+    // `insert_tag` absent means nothing can be put here. A key carrying "" for
+    // either is a value a caller can accidentally use (`Insert` with an empty
+    // slot name is a command the relay drops), where a missing key is a
+    // mistake GDScript reports on the line that made it.
+    if let Some(tag) = &slot.insert_tag {
+        out.set("insert_tag", &gstring(tag).to_variant());
+    }
+    if let Some(held) = &slot.held {
+        out.set("held", &stack_dict(held).to_variant());
+    }
+    out
 }
 
 /// The sim's reading of a design that does not exist: [`AssaySim::design_if_built`]'s
@@ -1727,6 +1832,44 @@ pub struct BuildingFacts {
     /// RULE ON is `FireTooCool` — lit, too cool, burning nothing — which draws
     /// cold today and is the Game Director's to settle (ASSA-119 box 11).
     pub lit: bool,
+    /// Every holder it has, in the sim's order. See [`SlotFacts`].
+    pub slots: Vec<SlotFacts>,
+    /// **WHICH OF THE THREE STANDING CONDITIONS THIS IS**, for branching and
+    /// for colour: `"working"`, `"idle"` or `"stalled"`. One vocabulary across
+    /// both kinds, from `BuildingState` — a caller asking "has this stopped?"
+    /// should not have to learn two (`building.rs`'s own reason for that enum).
+    ///
+    /// `stopped` STAYS and is not this. The bool is the sim's judgement about
+    /// whether a *person* is needed, and the two deliberately disagree: a
+    /// smelter's `idle` is not a problem and a machine's always is
+    /// (`MachineState::halted`). A client that derived one from the other would
+    /// re-litigate ASSA-80's ruling in GDScript.
+    pub state: String,
+    /// That condition as the one sentence the sim writes for it
+    /// (`debug::building_state_line`) — `stalled: no fuel`,
+    /// `idle: deposit is mined out`, `mining Tonore`.
+    ///
+    /// **NOT A NEW WORDING, AND THAT IS WHY IT IS SEPARATE FROM `status`.** The
+    /// menu needs the condition on its own line, in `FAILED` when it is a stall
+    /// (Maren's ruling 5 on ASSA-316); `status` is the whole dense line the
+    /// terminal table prints. Both are the same function's output, so they
+    /// cannot say different things.
+    pub state_line: String,
+    /// How far through the unit in front of it, as `(done, total)`, or `None`
+    /// when there is none — `World::building_work`. See [`sim::WorkReading`]
+    /// for why it is a pair and never a fraction.
+    pub work: Option<(i64, i64)>,
+    /// Ticks of burn left in the unit currently in the fire, and how hot it is.
+    /// Both zero when cold, and on a machine.
+    ///
+    /// Plain numbers and NOT a gauge, because the denominator — the full burn
+    /// of a fuel unit, `reactivity * BURN_TICKS_PER_REACTIVITY` — is a rule,
+    /// and a host multiplying it out would be writing that rule in GDScript.
+    /// If the menu wants a burn band, that total becomes a sim function beside
+    /// `building_work`; it is half a day and it is asked on ASSA-316 rather
+    /// than guessed at here.
+    pub burn_left: i64,
+    pub burn_temperature: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1753,6 +1896,44 @@ pub struct TileFacts {
     pub deposit: Option<DepositFacts>,
     pub building: Option<BuildingFacts>,
     pub players_here: Vec<String>,
+}
+
+/// ONE HOLDER OF A BUILDING, as a menu row needs it (ASSA-321, under
+/// ASSA-316's machine menu).
+///
+/// Before this, the only thing that crossed about a building's contents was
+/// `status` — one prose sentence. A menu built on that would have to parse
+/// `in 3 Tonore ore (C) · fuel 0 (0 ticks burning at 0)`, which is ASSA-140's
+/// bill: `button_play` asked `status.begins_with("mining")` and mislabelled
+/// the demo's own payoff. `stopped` exists because of that incident; this is
+/// the same remedy for the rest of the sentence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SlotFacts {
+    /// `SlotRole::name` — "input", "fuel", "output", "buffer". The sim's noun,
+    /// so the window and the terminal cannot drift (ASSA-146).
+    pub role: String,
+    /// **THE STRING `PlayerCommand::Insert` DESERIALISES, OR `None`.** Taken
+    /// from serde itself rather than typed here, because a tag this crate spelt
+    /// by hand would be a second copy of the wire format: it would survive a
+    /// variant rename and send a command the relay drops.
+    ///
+    /// `None` on the output slot and a machine's buffer, which are emptied by
+    /// `Take`. A host with no tag cannot build an `Insert` for them at all, so
+    /// a menu cannot offer a put control where the rules have no target — the
+    /// refusal is structural, not remembered (ASSA-43).
+    pub insert_tag: Option<String>,
+    /// What is in it, or `None` for empty. The same `StackFacts` the pack rows
+    /// get, so one stack is drawn one way wherever it is standing.
+    pub held: Option<StackFacts>,
+    /// How many units are in it: `held`'s count, or 0. Here as well as on
+    /// `held` because a fill is `count` over `cap` whether or not the slot has
+    /// anything in it, and an empty slot still has a band to draw.
+    pub count: i64,
+    /// What the sim will accept — the tuning cap for a smelter's slots, and the
+    /// `Capacity` its parts give a machine. **A RATIO AS TWO SIM NUMBERS**
+    /// (ASSA-276 move 3): nothing here is a percentage, and no host multiplies
+    /// anything out to get the denominator.
+    pub cap: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -4801,6 +4982,335 @@ mod tests {
         assert_eq!(got, want, "frame first, then the mounted parts");
         assert_eq!(got[0], "frame", "{got:?}");
         assert_eq!(placed.parts[0].grade, "B");
+    }
+
+    // -----------------------------------------------------------------------
+    // ASSA-321: the slots, the batch and the condition, as data
+    // -----------------------------------------------------------------------
+
+    /// **THE TAG A MENU IS HANDED IS THE TAG THE SIM PARSES**, held against a
+    /// real `PlayerCommand` rather than against the string I typed.
+    ///
+    /// This is the premise every put button rests on: the client submits
+    /// commands as JSON, so a tag spelt by hand in this crate would survive a
+    /// variant rename and the relay would drop every insert. Asserting it
+    /// against my own constant is the shape that stays green while both sides
+    /// are wrong together — which my box-7 test did last week, and it is the
+    /// reason this test exists at all.
+    #[test]
+    fn the_insert_tag_a_menu_is_handed_is_the_one_the_sim_parses() {
+        for slot in [sim::Slot::Input, sim::Slot::Fuel] {
+            let tag = insert_tag(slot).expect("a slot an Insert can name has a tag");
+            let command = sim::PlayerCommand::Insert {
+                building: sim::BuildingId(1),
+                slot,
+                item: Item::new(sim::ItemKind::Ore, sim::SpeciesId(0), sim::Grade::A),
+                count: 2,
+            };
+            let wire = serde_json::to_string(&command).expect("a command serialises");
+            assert!(
+                wire.contains(&format!("\"slot\":\"{tag}\"")),
+                "the tag {tag} is not how {slot:?} appears on the wire: {wire}"
+            );
+            // And it comes back as the same slot, which is the half a `contains`
+            // cannot see.
+            let back: sim::PlayerCommand =
+                serde_json::from_str(&wire).expect("and deserialises again");
+            assert_eq!(back, command);
+        }
+    }
+
+    /// A smelter's three holders cross with their contents and the cap the SIM
+    /// will accept — and the output slot carries no tag, so a menu cannot offer
+    /// a put control for an act the rules have no target for (ASSA-43).
+    #[test]
+    fn a_smelters_slots_carry_their_contents_the_sims_caps_and_no_tag_for_the_output() {
+        let (mut sim, me) = with_a_player("nacre");
+        let rock = sim.world().species[0].id;
+        sim.world.species_mut(rock).sheet = sim::Sheet {
+            density: 50,
+            strength: 50,
+            hardness: 30,
+            heat_tolerance: 60,
+            reactivity: 1,
+            conductivity: 50,
+        };
+        let smelter = Item::new(sim::ItemKind::Smelter, rock, sim::Grade::B);
+        let ore = Item::new(sim::ItemKind::Ore, rock, sim::Grade::A);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.inventory.add(smelter, 1);
+            p.inventory.add(ore, 7);
+        }
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 1, at.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place {
+                item: smelter,
+                pos: spot,
+            },
+        )]);
+        let id = sim.world().building_at(spot).expect("placed").id;
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Insert {
+                building: id,
+                slot: sim::Slot::Input,
+                item: ore,
+                count: 7,
+            },
+        )]);
+
+        let facts = sim.building_facts();
+        let slots = &facts[0].slots;
+        let roles: Vec<&str> = slots.iter().map(|s| s.role.as_str()).collect();
+        assert_eq!(
+            roles,
+            vec!["input", "fuel", "output"],
+            "the set of rows is the sim's, in the order a player fixes things in"
+        );
+
+        let input = &slots[0];
+        assert_eq!(input.count, 7);
+        assert_eq!(
+            input.cap as u32,
+            sim::tuning::SMELTER_INPUT_CAP,
+            "the cap is what the sim accepts, so a fill needs no host arithmetic"
+        );
+        let held = input.held.as_ref().expect("seven ore are in it");
+        assert_eq!(held.count, 7);
+        assert_eq!(
+            held.name,
+            sim.world().item_name(ore),
+            "a slot's stack is named by the sim, exactly as a pack row is"
+        );
+        assert_eq!(
+            input.insert_tag.as_deref(),
+            Some("Input"),
+            "and the tag round-trips through the sim: see the test above"
+        );
+
+        assert_eq!(slots[1].count, 0, "nothing was put in the fuel slot");
+        assert!(slots[1].held.is_none(), "empty is absent, not a zero stack");
+        assert_eq!(slots[1].insert_tag.as_deref(), Some("Fuel"));
+
+        assert_eq!(
+            slots[2].insert_tag, None,
+            "NOTHING can be inserted into an output slot: `Slot` has no variant \
+             for it, so a menu is handed no way to try"
+        );
+        assert_eq!(slots[2].cap as u32, sim::tuning::SMELTER_OUTPUT_CAP);
+    }
+
+    /// **A MACHINE'S ONE HOLDER IS BOUNDED BY ITS OWN PARTS**, not by a tuning
+    /// constant — which is the rule a client listing the slots itself would
+    /// have had to know. Two drills with different hoppers have different caps,
+    /// and the fixture proves the number moves rather than trusting one world.
+    #[test]
+    fn a_machines_buffer_takes_its_cap_from_the_parts_it_was_built_from() {
+        let (mut sim, me) = with_a_player("nacre");
+        let species = sim.world().species[0].id;
+        let material = Item::new(sim::ItemKind::Refined, species, sim::Grade::B);
+        let frame = sim::assembly::Part::of(
+            sim::assembly::PartKind::Frame(sim::assembly::Mount::Planted),
+            material,
+        );
+        let head = sim::assembly::Part::of(sim::assembly::PartKind::Head, material);
+        let hopper = sim::assembly::Part::of(sim::assembly::PartKind::Hopper, material);
+        let bare = sim::assembly::Assembly::new(frame, vec![head]);
+        let hoppered = sim::assembly::Assembly::new(frame, vec![head, hopper]);
+        let roster = sim.world().species.clone();
+        let at = sim.world().player(me).expect("exists").pos;
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.assemblies
+                .push(sim::assembly::Built::new(bare.clone(), &roster));
+            p.assemblies
+                .push(sim::assembly::Built::new(hoppered.clone(), &roster));
+        }
+        // Planted one tile apart, so both are in the same fact list.
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::PlaceAssembly {
+                assembly: 1,
+                pos: sim::TilePos::new(at.x + 2, at.y),
+            },
+        )]);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::PlaceAssembly {
+                assembly: 0,
+                pos: sim::TilePos::new(at.x + 3, at.y),
+            },
+        )]);
+
+        let facts = sim.building_facts();
+        assert_eq!(facts.len(), 2, "both machines must plant: {facts:?}");
+        for machine in &facts {
+            assert_eq!(
+                machine.slots.len(),
+                1,
+                "a machine has one holder, and it is not a smelter's three"
+            );
+            assert_eq!(machine.slots[0].role, "buffer");
+            assert_eq!(
+                machine.slots[0].insert_tag, None,
+                "ore leaves a drill by Take: a machine has no insertable slot \
+                 at all (`RejectReason::NotInsertable`)"
+            );
+        }
+        let caps: Vec<i64> = facts.iter().map(|f| f.slots[0].cap).collect();
+        assert_eq!(
+            caps[0] as u32,
+            hoppered.stats(&roster).capacity,
+            "the cap is this machine's own Capacity stat"
+        );
+        assert_eq!(caps[1] as u32, bare.stats(&roster).capacity);
+        assert_ne!(
+            caps[0], caps[1],
+            "the fixture has to make the number MOVE, or a cap read off a \
+             constant would pass this test"
+        );
+    }
+
+    /// **THE TAG IS NOT `stopped` RENAMED**, and the arm that proves it is a
+    /// smelter's idle: the sim says `idle` and `stopped == false` on the same
+    /// building, because an empty smelter follows every finished batch and is
+    /// not something to fix (ASSA-80, restated on ASSA-94). A client deriving
+    /// one from the other would re-litigate that ruling in GDScript.
+    #[test]
+    fn the_state_tag_and_the_stopped_bool_are_allowed_to_disagree() {
+        let (mut sim, me) = with_a_player("nacre");
+        let rock = sim.world().species[0].id;
+        let smelter = Item::new(sim::ItemKind::Smelter, rock, sim::Grade::B);
+        sim.world
+            .player_mut(me)
+            .expect("the player exists")
+            .inventory
+            .add(smelter, 1);
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 1, at.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place {
+                item: smelter,
+                pos: spot,
+            },
+        )]);
+
+        let facts = sim.building_facts();
+        assert_eq!(facts[0].state, "idle");
+        assert!(
+            !facts[0].stopped,
+            "an empty smelter is idle and is NOT a problem: the two fields \
+             carry different questions"
+        );
+        assert_eq!(
+            facts[0].state_line,
+            sim::debug::building_state_line(sim.world(), sim.world().building_at(spot).unwrap()),
+            "the sentence is the sim's one wording, not a second copy"
+        );
+        assert_eq!(
+            facts[0].work, None,
+            "nothing is in front of it, so there is no batch to report"
+        );
+        assert_eq!((facts[0].burn_left, facts[0].burn_temperature), (0, 0));
+    }
+
+    /// The batch crosses as the pair the sim decided, and keeps crossing while
+    /// the smelter is STOPPED — the reading a player needs to know that feeding
+    /// it resumes rather than restarts.
+    #[test]
+    fn the_batch_a_smelter_is_part_way_through_crosses_as_two_numbers() {
+        let (mut sim, me) = with_a_player("nacre");
+        let rock = sim.world().species[0].id;
+        let fuel_species = sim.world().species[1].id;
+        sim.world.species_mut(rock).sheet = sim::Sheet {
+            density: 50,
+            strength: 50,
+            hardness: 30,
+            heat_tolerance: 60,
+            reactivity: 1,
+            conductivity: 50,
+        };
+        sim.world.species_mut(fuel_species).sheet = sim::Sheet {
+            density: 50,
+            strength: 50,
+            hardness: 30,
+            heat_tolerance: sim::tuning::HAND_SPARK_TEMPERATURE as u8,
+            reactivity: 60,
+            conductivity: 50,
+        };
+        let smelter = Item::new(sim::ItemKind::Smelter, rock, sim::Grade::B);
+        let ore = Item::new(sim::ItemKind::Ore, rock, sim::Grade::A);
+        let fuel = Item::new(sim::ItemKind::Ore, fuel_species, sim::Grade::A);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.inventory.add(smelter, 1);
+            p.inventory.add(ore, 5);
+            p.inventory.add(fuel, 1);
+        }
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 1, at.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place {
+                item: smelter,
+                pos: spot,
+            },
+        )]);
+        let id = sim.world().building_at(spot).expect("placed").id;
+
+        // Ore and no fuel: stalled, and the batch has not started.
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Insert {
+                building: id,
+                slot: sim::Slot::Input,
+                item: ore,
+                count: 5,
+            },
+        )]);
+        let stalled = &sim.building_facts()[0];
+        assert_eq!(stalled.state, "stalled");
+        assert_eq!(
+            stalled.work,
+            Some((0, i64::from(sim::RecipeId::Refine.recipe().ticks))),
+            "a stall does not remove the batch in front of it"
+        );
+
+        // Now light it and let it work.
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Insert {
+                building: id,
+                slot: sim::Slot::Fuel,
+                item: fuel,
+                count: 1,
+            },
+        )]);
+        for _ in 0..6 {
+            sim.step_with(&[]);
+        }
+        let working = &sim.building_facts()[0];
+        assert_eq!(working.state, "working");
+        let (done, total) = working.work.expect("a working smelter has a batch");
+        assert_eq!(total, i64::from(sim::RecipeId::Refine.recipe().ticks));
+        assert!(done > 0 && done < total, "mid-batch: {done} of {total}");
+        assert!(
+            working.burn_left > 0 && working.burn_temperature > 0,
+            "a fire is burning in it: {working:?}"
+        );
+        // THE PAIR IS THE SIM'S, not a number this crate reproduced.
+        let theirs = sim
+            .world()
+            .building_work(sim.world().building(id).expect("standing"))
+            .expect("the sim says there is a batch");
+        assert_eq!(
+            (done, total),
+            (i64::from(theirs.done), i64::from(theirs.total))
+        );
     }
 
     /// **EVERY PART OF A PLANTED MACHINE CARRIES ITS OWN MATERIAL**, which is
