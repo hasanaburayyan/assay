@@ -429,7 +429,12 @@ func _process(_delta: float) -> bool:
 		Phase.SHOOT_PACK:
 			# THE SUBJECTS ARE THE TWO PANELS THE ROWS ARE IN, which is the whole point of the shot:
 			# a fullest-pack picture whose pack is below the fold is worth nothing to ASSA-117.
-			_shoot("04-pack.png", PackedStringArray(["you", "crafting menu"]), false)
+			# **ONE SUBJECT, NOT TWO, SINCE THE PANEL BECAME TABS** (ASSA-247). This asked for `you`
+			# AND `crafting menu` in one frame, which was right while both were sections of one column
+			# and is now impossible by ruling: one system is on screen at a time. The pack keeps the
+			# shot's name; the crafting menu has `11-make.png` of its own (ASSA-158).
+			_select_tab("inventory")
+			_shoot("04-pack.png", PackedStringArray(["you"]), false)
 			_phase = Phase.PLAY
 		Phase.SETTLE_HALT:
 			_settle(Phase.SHOOT_HALT)
@@ -445,6 +450,10 @@ func _process(_delta: float) -> bool:
 			_settle(Phase.SHOOT_PLAY)
 		Phase.SHOOT_PLAY:
 			_shoot("02-play.png", PackedStringArray())
+			# THE ACCENT COUNT IS TAKEN HERE, IN THIS FRAME, for `_shoot`'s own reason: the geometry
+			# and the pixels are only true together at the moment of the shot. See
+			# `_strip_rank_report` -- this is the frame Maren read 172 accent pixels off by hand.
+			_measure_strip_rank()
 			# THE OTHER STATE, and it has to be the OPPOSITE of whatever the loop left behind.
 			# `AssayButtonPlay` folds the log away and opens the menu as it plays, so asking for
 			# that state again photographs the same screen twice.
@@ -476,6 +485,7 @@ func _process(_delta: float) -> bool:
 			# does not clip the rocks -- but a picture of the roster with a log panel across the
 			# middle of it is a picture of two things, and the one being judged is the rows.
 			_screen._show_log(false)
+			_select_tab("mineralogy")
 			_scroll_to_rocks()
 			_phase = Phase.SETTLE_ROCKS
 		Phase.SETTLE_ROCKS:
@@ -502,6 +512,7 @@ func _process(_delta: float) -> bool:
 			# `visible`, and the rects are the folded ones until the column has sorted its children.
 			_settle(Phase.SCROLL_MAKE)
 		Phase.SCROLL_MAKE:
+			_select_tab("make")
 			_make_scrolls = 0
 			_scroll_to_make()
 			_phase = Phase.SETTLE_MAKE
@@ -1137,7 +1148,7 @@ func _shoot(name: String, subjects: PackedStringArray, guard_repeat := true) -> 
 ## `hidden` for the tick-taken shots and that remains the correct and commonest reading.
 func _sections() -> Array:
 	return [["crafting menu", _screen._make], ["you", _screen._carrying], ["do", _screen._actions],
-			["bench", _screen._bench], ["rocks", _screen._species], ["cursor", _screen._cursor],
+			["bench", _screen._bench], ["mineralogy", _screen._species], ["cursor", _screen._cursor],
 			["event log", _screen._log_box], ["stopped", _screen._halt_box]]
 
 
@@ -1180,7 +1191,13 @@ func _frame_for(control: Control) -> Rect2:
 ## verdicts in this file already depend on. The docstring used to claim this answered "a person can
 ## see it"; it answers "is this node's rect inside the rect it could be seen in".
 func _standing(control: Control) -> String:
-	if not control.visible:
+	# **`is_visible_in_tree`, NOT `visible`, SINCE ASSA-247 PUT THE SECTIONS IN TABS** -- and this one
+	# word is why the subject leg printed `yes` over a frame that did not contain its subject. `select`
+	# hides a tab's BODY; the section inside it keeps `visible == true` and answered honestly about a
+	# flag nobody had changed. So `04-pack.png` photographed whichever tab happened to be open and this
+	# tool called it OK. A check that cannot fail is worse than no check. The real tree is available
+	# here because this runs in a real window, which is the thing the headless suite may not assume.
+	if not control.is_visible_in_tree():
 		return "hidden"
 	var frame := _frame_for(control)
 	var rect := control.get_global_rect()
@@ -1357,6 +1374,153 @@ func _reveal_report() -> Dictionary:
 ## So this scrolls, exactly as the roster shot does and for the same reason: a player scrolls to read
 ## a column taller than its box, and so does a picture of it. It is NOT a claim that the list fits --
 ## Nacre's density slice is the item that makes it fit.
+## **OPEN THE TAB A SHOT IS NAMED FOR, BECAUSE THE PANEL SHOWS ONE SYSTEM AT A TIME** (ASSA-247).
+##
+## Before the tabs, every section was in one column and a shot got them all whether it asked or not.
+## With the strip, a shot that does not choose photographs whichever tab the client opened on -- which
+## is how `04-pack.png`, `02-play.png` and `05-rocks.png` all came back as pictures of Mineralogy, each
+## under a name that promised something else, with this tool printing `WINDOW SHOT OK` over all three.
+##
+## REFUSALS ARE LOUD AND DO NOT STOP THE RUN: a mistyped or retired tab name should cost the set one
+## honest shot and a line saying so, not a crash that loses the other ten. The shot's own subject check
+## is what then fails, which is the right place for the verdict.
+func _select_tab(tab_name: String) -> void:
+	if _screen._tabs == null:
+		print("  tabs: no strip on this screen, so nothing was selected")
+		return
+	if not _screen._tabs.select(tab_name):
+		print("  tabs: REFUSED to select `%s`; the shot below is of `%s`"
+				% [tab_name, _screen._tabs.selected()])
+		return
+	print("  tabs: opened `%s` for the shot that is named for it" % tab_name)
+
+
+## **A PIXEL IS ACCENT-FAMILY WHEN ITS GREEN BEATS BOTH ITS OTHER CHANNELS**, counted inside one
+## rect, with the x range of what was found so a reader knows WHICH control it sat on.
+##
+## WHY THAT TEST AND NOT A COLOUR MATCH. Anti-aliased text is never the declared colour: every glyph
+## edge is a blend of the ink and the surface behind it, so `== ACCENT` would count the handful of
+## interior pixels of a bold glyph and miss a whole thin word. The blend LINE is what to test, and on
+## this theme the four colours that can appear in the HUD column separate cleanly on green dominance
+## (`g - max(r, b)`, 8-bit):
+##
+##     ACCENT    (128,229,140)   +89      <- the only positive one
+##     SURFACE    (37, 40, 48)    -8
+##     INK       (229,233,241)    -8
+##     INK_MUTED (167,176,190)   -14
+##
+## A blend of `SURFACE` and `ACCENT` crosses zero at 8% accent and the margin below at 17%, so any
+## pixel with a sixth of accent in it is caught and nothing else in the palette can be. **The margin
+## is what makes this a measurement rather than a rounding artefact**: at `>= 1` a JPEG-ish rounding
+## on a grey pixel would read as green.
+const ACCENT_MARGIN := 8
+
+
+func _accent_pixels(image: Image, rect: Rect2) -> Dictionary:
+	var count := 0
+	var x0 := 1 << 30
+	var x1 := -1
+	var left := maxi(0, int(floor(rect.position.x)))
+	var right := mini(image.get_width(), int(ceil(rect.end.x)))
+	var top := maxi(0, int(floor(rect.position.y)))
+	var bottom := mini(image.get_height(), int(ceil(rect.end.y)))
+	for y in range(top, bottom):
+		for x in range(left, right):
+			var c := image.get_pixel(x, y)
+			var green := int(round(c.g * 255.0))
+			var other := maxi(int(round(c.r * 255.0)), int(round(c.b * 255.0)))
+			if green - other >= ACCENT_MARGIN:
+				count += 1
+				x0 = mini(x0, x)
+				x1 = maxi(x1, x)
+	return {"n": count, "x0": (x0 if count > 0 else -1), "x1": x1,
+			"rect": "x %d..%d y %d..%d" % [left, right, top, bottom]}
+
+
+## THE PRIMARY ON THIS FRAME, by the variation it names rather than by its text: `Mine` is only
+## `Primary` where a hand can break the rock under you (ASSA-251), so naming the button would make
+## this control depend on where the play happened to be standing.
+func _primary_now() -> Button:
+	var stack: Array = [_screen._actions]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		var button := node as Button
+		if button != null and button.theme_type_variation == &"Primary" \
+				and button.is_visible_in_tree():
+			return button
+		for child in node.get_children():
+			stack.append(child)
+	return null
+
+
+## **TWO ACCENTS ON ONE SCREEN, READ OFF THE FRAME** — the measurement Maren took by hand on
+## 2026-10-06 and the one no test of mine could take.
+##
+## My `test_no_tab_wears_the_accent` asked for the variation NAME, got `Quiet`, and passed while the
+## strip drew 172 accent-family pixels at x 1143..1201, core `(128,229,140)`, byte-identical to
+## `Mine`'s. `Quiet` declares `font_pressed_color = ACCENT` itself — authored for LONE toggles, where
+## pressed is occasional — and a four-tab strip is the first control group in this client where
+## exactly one member is ALWAYS pressed. **The declared property was correct and the drawn pixel was
+## not, which is the fourth defect this week of exactly that shape.**
+##
+## ONE FRAME IS ENOUGH AND THAT IS A PROPERTY, NOT A SHORTCUT: the strip is pinned outside the scroll
+## box and exactly one of its buttons is pressed in every frame the column is up, so if the override
+## is ever lost, whichever tab is open draws accent in any shot. Maren's four-tab sweep found the
+## same single colour four times.
+##
+## **THE CONTROL IS WHAT STOPS THIS FROM BEING A CHECK THAT CANNOT FAIL.** "No accent pixel in the
+## strip" is also what a broken detector says, and what a screen with no accent anywhere says. So the
+## same counter is run over the frame's `Primary`, which must be FULL of accent — and if there is no
+## Primary on this frame the leg reports NOT RUN rather than green, because without the control the
+## zero means nothing.
+var _strip_rank := {}
+
+
+func _measure_strip_rank() -> void:
+	if _screen._tabs == null:
+		return
+	var image := root.get_texture().get_image()
+	if image == null:
+		return
+	var strip := _screen._tabs.names_box() as Control
+	var primary := _primary_now()
+	_strip_rank = {
+		"strip": _accent_pixels(image, strip.get_global_rect()),
+		"primary": (_accent_pixels(image, primary.get_global_rect()) if primary != null else {}),
+		"primary_name": (primary.text if primary != null else ""),
+		"open": _screen._tabs.selected(),
+	}
+
+
+func _strip_rank_report() -> Dictionary:
+	if _strip_rank.is_empty():
+		return _not_asked("no tab strip on this screen, or no frame to read it from")
+	var control: Dictionary = _strip_rank["primary"]
+	if control.is_empty():
+		return _not_asked("no `Primary` control was on screen in the played frame, so a count of "
+				+ "zero accent pixels in the strip cannot be told apart from a counter that is "
+				+ "measuring nothing")
+	if int(control["n"]) == 0:
+		return _refused(("the control failed: `%s` is the screen's `Primary` and %s holds no "
+				+ "accent-family pixel at all. The detector, not the strip, is what this run "
+				+ "measured.") % [String(_strip_rank["primary_name"]), String(control["rect"])])
+	var found: Dictionary = _strip_rank["strip"]
+	if int(found["n"]) > 0:
+		return _refused(("the tab strip draws %d accent-family pixels at x %d..%d with `%s` open. "
+				+ "ACCENT means `press this next` and a tab already open cannot mean that; "
+				+ "selection is marked by RANK (Maren, ASSA-247). The one Primary `%s` has %d.")
+				% [int(found["n"]), int(found["x0"]), int(found["x1"]),
+				String(_strip_rank["open"]), String(_strip_rank["primary_name"]),
+				int(control["n"])])
+	# **THE GREEN LINE CARRIES THE TWO NUMBERS**, for the reason `_finish` already carries the cuts
+	# (ASSA-149): a reader who sees `rank yes` must not have to re-run the tool to learn what was
+	# counted, and the zero only means something beside the control's number.
+	return {"ok": true, "ran": true,
+			"why": "0 accent px in the strip with `%s` open, %d on the one `Primary` %s"
+			% [String(_strip_rank["open"]), int(control["n"]),
+			String(_strip_rank["primary_name"])]}
+
+
 ##
 ## **IT ANCHORS ON THE `make` HEADING AND NOT ON `_make`, AND THE FIRST VERSION DID NOT** (Maren,
 ## 2026-10-06: "I cannot tick boxes 2 and 3: `11-make.png` scrolled past `make`"). `_make` is the ROWS
@@ -1365,7 +1529,7 @@ func _reveal_report() -> Dictionary:
 ## and the picture starts in the middle of a list with nothing in it saying which list. Hers started
 ## at `bench`. The heading is what a reader scrolls TO, so it is what this scrolls to.
 func _scroll_to_make() -> void:
-	var anchor := _make_anchor()
+	var anchor := _make_scroll_top()
 	if anchor == null:
 		print("  make: no heading above the crafting menu, so nothing was scrolled")
 		return
@@ -1375,8 +1539,11 @@ func _scroll_to_make() -> void:
 		return
 	var was := box.scroll_vertical
 	box.scroll_vertical = was + _make_anchor_offset()
-	print("  make: scrolled the column from %d to %d to bring the `%s` heading to the box's top"
-			% [was, box.scroll_vertical, anchor.text])
+	# NAMED BY WHAT IT IS, not by `.text`: with the tabs the thing scrolled to is the tab's BODY, a
+	# container with no text at all, and reading `.text` off it crashes the run.
+	var named: String = (anchor as Label).text if anchor is Label else String(anchor.name)
+	print("  make: scrolled the column from %d to %d to bring `%s` to the box's top"
+			% [was, box.scroll_vertical, named])
 
 
 ## THE HEADING THAT NAMES THE CRAFTING MENU, found by walking BACK from the rows to the nearest
@@ -1384,16 +1551,49 @@ func _scroll_to_make() -> void:
 ## section from one list of `[name, bodies]` pairs, so the heading is the section's structure and the
 ## word is its content: a tool that searched for the text would go quiet the day Maren renames it,
 ## and going quiet is how `11-make.png` came to hold `bench`.
-func _make_anchor() -> Label:
+## **WHAT NAMES THE CRAFTING MENU ON SCREEN — AND SINCE ASSA-247 THAT IS THE TAB BUTTON, NOT A
+## HEADING IN THE BODY.**
+##
+## Maren's requirement is unchanged and is the reason this leg exists: *"`11-make.png` scrolled past
+## `make`"* — a picture that starts in the middle of a list with nothing in it saying which list is
+## not evidence. What changed is which control answers it. The tabbed panel deliberately has NO
+## `Heading` inside a tab body: a tab's own name IS its heading, and a second copy inside would print
+## the word twice and spend a line per section doing it. So the search below finds nothing, and before
+## this fallback the leg read `heading absent` and refused a shot that is in fact correctly framed.
+##
+## **THE TAB BUTTON IS A STRICTLY STRONGER ANSWER, which is why this is a re-point and not a waiver.**
+## A heading scrolls with the body and can leave the frame; the strip sits OUTSIDE the scroll box and
+## is always on screen, and the pressed one tells you which system you are looking at. The leg still
+## fails if that button is hidden or clipped.
+func _make_anchor() -> Control:
 	var body: Control = _screen._make
 	var column := body.get_parent()
-	if column == null:
+	if column != null:
+		for i in range(body.get_index() - 1, -1, -1):
+			var label := column.get_child(i) as Label
+			if label != null and label.theme_type_variation == &"Heading":
+				return label
+	# NO HEADING: the strip names it. The PRESSED button rather than the one whose text matches, so a
+	# shot taken with another tab open cannot pass by finding a button that merely exists.
+	if _screen._tabs == null:
 		return null
-	for i in range(body.get_index() - 1, -1, -1):
-		var label := column.get_child(i) as Label
-		if label != null and label.theme_type_variation == &"Heading":
-			return label
+	for child in _screen._tabs.names_box().get_children():
+		var button := child as Button
+		if button != null and button.button_pressed and button.text == "make":
+			return button
 	return null
+
+
+## WHERE THE SHOT HAS TO START, which is a different question from what names it and was the same
+## control until the tabs arrived. The heading, when a body has one; otherwise the top of the make
+## tab's own body, because the tab button cannot be scrolled to -- it is not inside the box.
+func _make_scroll_top() -> Control:
+	var anchor := _make_anchor()
+	if anchor is Label:
+		return anchor
+	if _screen._tabs == null:
+		return null
+	return _screen._tabs.body_of("make")
 
 
 func _scroll_box_above(control: Control) -> ScrollContainer:
@@ -1410,7 +1610,7 @@ func _scroll_box_above(control: Control) -> ScrollContainer:
 ## and it is asked of the engine in the frame it is asked in, which is the point -- a scroll is a
 ## request answered on a later frame, and `0` here is the layout agreeing rather than me assuming.
 func _make_anchor_offset() -> int:
-	var anchor := _make_anchor()
+	var anchor := _make_scroll_top()
 	if anchor == null:
 		return 0
 	var box := _scroll_box_above(anchor)
@@ -1450,7 +1650,13 @@ func _capture_make() -> void:
 		"frame": frame,
 		"heading": "" if anchor == null else String(anchor.text),
 		"heading_rect": Rect2() if anchor == null else anchor.get_global_rect(),
-		"heading_standing": "absent" if anchor == null else _standing_in(frame, anchor),
+		# **JUDGED AGAINST ITS OWN CLIPPING FRAME, NOT THE LIST'S.** An in-body heading scrolls with the
+		# rows and is rightly measured against the scroll box. The tab button is OUTSIDE that box --
+		# that is the whole reason it is the better answer -- so measuring it against the box called a
+		# permanently-visible control `OFF SCREEN`. `_standing` asks `_frame_for` for the frame that
+		# actually clips the control it is given, which is the right question for both.
+		"heading_standing": "absent" if anchor == null else (
+				_standing_in(frame, anchor) if anchor is Label else _standing(anchor)),
 		"rows": rows,
 		"scrolls": _make_scrolls,
 		"offset": _make_anchor_offset(),
@@ -1474,8 +1680,17 @@ func _standing_in(frame: Rect2, control: Control) -> String:
 	return "CUT" if frame.intersects(rect) else "OFF SCREEN"
 
 
+## **IT SCROLLS TO THE TAB'S TOP, NOT TO `_species`, SINCE ASSA-247 WIRED ASSA-254 IN.** The species
+## list used to BE the top of this section, so scrolling to it was scrolling to the section. It is now
+## the evidence UNDER Mineralogy's headline and its `go here` button, and scrolling to the list carried
+## both off the top of the panel: the shot was of the Mineralogy tab with the answer that names it
+## missing, which is the one thing a reader of `05-rocks.png` would have been looking for. Caught by
+## looking at the image rather than at this tool's own report, which called the shot OK.
 func _scroll_to_rocks() -> void:
+	# THE BODY IF THERE IS ONE, falling back to the list so this still works if the tab goes away.
 	var rocks: Control = _screen._species
+	if _screen._mineralogy != null and _screen._mineralogy.is_ancestor_of(rocks):
+		rocks = _screen._mineralogy
 	var box: ScrollContainer = null
 	var node: Node = rocks.get_parent()
 	while node != null:
@@ -1599,8 +1814,17 @@ func _make_report() -> Dictionary:
 				"[DEAD END] " if row["dead_end"] else "", said])
 	if rows.is_empty():
 		return _not_asked("the crafting menu had no rows in this frame, so no series could be judged")
-	if String(_make_frame["heading_standing"]) != "whole":
-		return _refused("the make shot does not start at the `make` heading: it is %s"
+	# **TWO VOCABULARIES FOR ONE VERDICT, and they have to both be spelled out here.** `_standing_in`
+	# says `whole` of a rect wholly inside the frame it was handed; `_standing` says `on screen` of the
+	# same situation. The in-body heading goes through the first and the tab button through the second,
+	# so a check that knew only one word called a fully visible control a failure.
+	# PARENTHESISED, because `not X in Y` binds as `(not X) in Y` and silently asks a different
+	# question -- it cost this leg one run reporting a fully visible control as a failure.
+	if not (String(_make_frame["heading_standing"]) in ["whole", "on screen"]):
+		# "what names it" rather than "the heading": since ASSA-247 that is the pressed tab button, and
+		# a message naming a heading would send the next reader looking for a control that the tabbed
+		# panel deliberately does not have.
+		return _refused("the make shot does not hold the control that names the crafting menu: it is %s"
 				% _make_frame["heading_standing"])
 	if whole == 0:
 		return _refused("the make shot holds the `make` heading and not one of its %d rows: the "
@@ -2053,6 +2277,8 @@ func _report() -> void:
 				_schematic_report()],
 		["letters", "a machine standing on a species letter is in the frame, or said to be absent",
 				_letters_report()],
+		["rank", "the open tab is marked by rank, with the screen's one accent on its one primary",
+				_strip_rank_report()],
 	]
 	print("  legs:")
 	var failures := PackedStringArray()
