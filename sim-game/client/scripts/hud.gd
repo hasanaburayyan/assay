@@ -265,9 +265,12 @@ const SPAWN_PAD := Color(0.455, 0.429, 0.26)
 ## suite was run at each, 69.1% and 77.9% -- so 20 is the smallest value measured to meet it rather
 ## than a round number picked near one. Every band pixel is still dark on both edges.
 ##
-## **AND IT IS A FLOOR, NOT A FOOTPRINT READ.** On this world `_cell` is 9, so the rule gives 16 px
-## for a 1x1 and 18 px for a 2x2 -- and Maren's own item says a 2 px difference is not a separation.
-## It becomes a read only on a small world (`_cell` 18: 18 px against 36 px). Telling a smelter from a
+## **AND IT IS A FLOOR, NOT A FOOTPRINT READ.** On this world `_cell` is 9, so the rule gives 20 px
+## for a 1x1 and 20 px for a 2x2 -- and Maren's own item says a 2 px difference is not a separation,
+## which at this floor is moot: there is **no** difference, where at 16 there were 2 px. (That
+## sentence said "16 px for a 1x1 and 18 px for a 2x2" until ASSA-289; it was the old floor's output
+## and it made the floor look like it still told the two apart on this world. It does not.)
+## It becomes a read only on a small world (`_cell` 20: 20 px against 40 px). Telling a smelter from a
 ## drill is not what this view is for.
 ##
 ## **I SHIPPED 12 HERE FIRST AND IT WAS NOT A JUDGEMENT CALL I WAS ENTITLED TO** (ASSA-203): I built
@@ -280,12 +283,31 @@ const SPAWN_PAD := Color(0.455, 0.429, 0.26)
 ## SURVIVED.** Maren's finding: of the key's eleven rows six were square and the one thing on this map
 ## with a real tile FOOTPRINT was the one shape rotated off the grid it stands on. So the machine took
 ## the grid-aligned square and the people left it. What this constant still buys is the sentence above
-## -- `maxf(footprint, 16)` -- and on the shipped world that floor BITES: a 1x1 drill's footprint is
-## 9 px and its mark is 16, so the mark overstates the tile by 78% of its area. Said plainly rather
-## than filed under "footprint": it is the same exaggeration `PLAYER_MARK_PX` already makes for a
-## person, for the same reason, and it is what keeps a drill findable on a world whose cells are 4 px.
-## A 2x2 smelter is 18 px and exact. (`shared/assay/cove-assa236/`, arm B2, is the no-floor version
-## rendered: a 1x1 drill is 64 px of white frame and I could not find it at 1x.)
+## -- `maxf(footprint, s)` -- and on the shipped world that floor BITES.
+##
+## **THIS PARAGRAPH SAID 16 FOR A DAY AFTER THE CONSTANT BECAME 20, AND THAT STALE NUMBER WAS READ AS
+## FACT** (ASSA-289). #395 moved it 16 -> 20 for ASSA-278 and I did not come back here, so the prose
+## read `maxf(footprint, 16)`, "its mark is 16" and "a world whose cells are 4 px" against a constant
+## of 20 -- and the Game Director's ASSA-289 probe ran at 16 and measured a defect that no longer has
+## that shape at the shipped size. It is ASSA-174's lesson with no constant to catch it: nothing tests
+## prose. **The second error was a unit.** "Overstates the tile by 78% of its area" was the LINEAR
+## ratio 16/9 reported as an area; the area was already +216%. At 20 the numbers are:
+##
+##   1x1 drill   footprint  9 px, mark 20 px   2.2x across, 4.9x the area (+394%)
+##   2x2 smelter footprint 18 px, mark 20 px   1.1x across, 1.2x the area  (+23%)
+##
+## A 2x2 was exact at 16 and is NOT exact at 20, which is the half of the move nothing recorded. Said
+## plainly rather than filed under "footprint": it is the same exaggeration `PLAYER_MARK_PX` already
+## makes for a person, for the same reason, and it is what keeps a drill findable on a small cell.
+## (`shared/assay/cove-assa236/`, arm B2, is the no-floor version rendered: a 1x1 drill is 64 px of
+## white frame and I could not find it at 1x.)
+##
+## **AND THE FLOOR IS WHAT PUTS A MARK ON A TILE ITS MACHINE DOES NOT STAND ON** (ASSA-289 box 5,
+## Maren's to rule). Because the mark is wider than the footprint, two machines on adjacent tiles have
+## overlapping marks, and the younger one's inward rim -- painted after its own band by construction,
+## so no paint order reaches it -- takes 8 px off the older one's band on two adjacent 1x1s.
+## `tools/assa289_paint_probe.gd` is the number, through the real paint sequence rather than off a
+## rect intersection. The 2x2 case is closed by the two passes in `main.gd::_draw`; this is the rest.
 const BUILDING_MARK_PX := 20.0
 
 ## HOW THICK THE FOOTPRINT FRAME'S OWN STROKE IS, drawn INWARD from the footprint's edge (ASSA-236).
