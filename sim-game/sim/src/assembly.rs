@@ -12,8 +12,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::item::{Item, ItemKind};
-use crate::mineral::{Grade, MineralSpecies, Property, Sheet};
+use crate::command::RejectReason;
+use crate::inventory::Inventory;
+use crate::item::{Item, ItemKind, ItemStack};
+use crate::mineral::{Grade, MineralSpecies, Property, Sheet, known_species};
 use crate::rng::Rng;
 use crate::tuning;
 
@@ -468,6 +470,122 @@ impl Built {
             assembly,
             durability,
         }
+    }
+}
+
+/// What `Assemble` would do with a frame and some mounted items, worked out
+/// without doing it. See [`plan`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AssemblyPlan {
+    /// There is a design here, so it can be weighed.
+    ///
+    /// `missing` is `Some(item)` when the player does not hold the parts, and
+    /// `built` is just as valid then — **that is the point**. A build screen
+    /// has to price a design before the pack can pay for it, and the only
+    /// refusal that leaves the design itself sound is this one.
+    Weighed {
+        /// The machine these items would make, with a full durability pool.
+        built: Built,
+        /// What it would cost, tallied: two hoppers of one material are one
+        /// stack of two, never two stacks of one, because the spend is
+        /// all-or-nothing.
+        cost: Vec<ItemStack>,
+        /// The first tallied stack the player cannot cover.
+        missing: Option<Item>,
+    },
+    /// There is no design here to weigh at all.
+    Refused(RejectReason),
+}
+
+impl AssemblyPlan {
+    /// The refusal `Assemble` would emit for this, or `None` if it would
+    /// build.
+    ///
+    /// `step` asks exactly this, which is what keeps a Build button and a
+    /// preview from disagreeing about WHICH item is missing.
+    pub fn refusal(&self) -> Option<RejectReason> {
+        match self {
+            AssemblyPlan::Refused(reason) => Some(*reason),
+            AssemblyPlan::Weighed {
+                missing: Some(item),
+                ..
+            } => Some(RejectReason::MissingItems(*item)),
+            AssemblyPlan::Weighed { .. } => None,
+        }
+    }
+
+    /// The machine these items would make, whenever there is a design at all —
+    /// including one the player cannot afford yet.
+    pub fn built(&self) -> Option<&Built> {
+        match self {
+            AssemblyPlan::Weighed { built, .. } => Some(built),
+            AssemblyPlan::Refused(_) => None,
+        }
+    }
+}
+
+/// What `Assemble` would do with these items.
+///
+/// **THIS IS THE DECISION, AND `step` CALLS IT RATHER THAN KEEPING A COPY.**
+/// The refusal order is a rule: unknown species, then not-a-part (frame first,
+/// then mounted in order), then the slot check, then the tallied all-or-nothing
+/// inventory check. A preview that re-derived that chain would be a second copy
+/// of it — the defect ASSA-80, ASSA-94 and ASSA-128 all were — and the way that
+/// shows up in a player's hands is a build screen that says SAFE over a button
+/// that refuses, or that blames the wrong missing item.
+///
+/// Pure, and takes no `World`: it needs the species sheets to weigh the design
+/// and an inventory to price it, and nothing else. A host weighing a design
+/// nobody holds the parts for passes an empty [`Inventory`] and reads `built`
+/// out of the `Weighed` it still gets back.
+///
+/// **Mass is never consulted** (decision 11): the sim does not protect a player
+/// from their own design, and refusing here would make the frame budget
+/// invisible. A too-heavy design plans fine and reads `WILL BREAK`.
+pub fn plan(
+    frame: Item,
+    mounted: &[Item],
+    species: &[MineralSpecies],
+    holding: &Inventory,
+) -> AssemblyPlan {
+    if std::iter::once(&frame)
+        .chain(mounted)
+        .any(|i| !known_species(species, i.species))
+    {
+        return AssemblyPlan::Refused(RejectReason::UnknownSpecies);
+    }
+    let Some(frame_part) = Part::from_item(frame) else {
+        return AssemblyPlan::Refused(RejectReason::NotAPart(frame));
+    };
+    let mut parts = Vec::with_capacity(mounted.len());
+    for item in mounted {
+        let Some(part) = Part::from_item(*item) else {
+            return AssemblyPlan::Refused(RejectReason::NotAPart(*item));
+        };
+        parts.push(part);
+    }
+    let assembly = Assembly::new(frame_part, parts);
+    if let Err(e) = assembly.validate() {
+        return AssemblyPlan::Refused(RejectReason::BadAssembly(e));
+    }
+
+    // Tally first so duplicates (two hoppers of one material) are weighed
+    // all-or-nothing instead of one at a time.
+    let mut cost: Vec<ItemStack> = Vec::new();
+    for item in assembly.part_items() {
+        match cost.iter_mut().find(|s| s.item == item) {
+            Some(s) => s.count += 1,
+            None => cost.push(ItemStack::new(item, 1)),
+        }
+    }
+    let missing = cost
+        .iter()
+        .find(|s| !holding.has(s.item, s.count))
+        .map(|s| s.item);
+    AssemblyPlan::Weighed {
+        built: Built::new(assembly, species),
+        cost,
+        missing,
     }
 }
 

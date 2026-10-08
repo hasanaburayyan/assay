@@ -4,7 +4,7 @@
 use std::fmt::Write;
 
 use crate::assembly::{
-    Assembly, AssemblyError, BreakVerdict, Built, Mount, PART_SPECS, Part, PartKind, Source,
+    Assembly, AssemblyError, AssemblyPlan, BreakVerdict, Built, Mount, PART_SPECS, PartKind, Source,
 };
 use crate::building::{
     Building, BuildingId, BuildingKind, BuildingState, Machine, MachineIdle, MachineStall,
@@ -829,7 +829,19 @@ pub fn event_line(
                 RejectReason::NotHandCraftable => {
                     "that needs a machine to make, not bare hands".to_string()
                 }
-                RejectReason::UnknownSpecies => "no such mineral in this world".to_string(),
+                // **SAID ONCE, FOR BOTH MOMENTS** (ASSA-324). These four are
+                // the whole vocabulary `assembly::plan` refuses with, so they
+                // are worded in `plan_refusal_phrase` where a host asking
+                // BEFORE the press can reach them too. Kept as named arms
+                // rather than a catch-all so a new `RejectReason` still fails
+                // this match to compile.
+                RejectReason::UnknownSpecies
+                | RejectReason::NotAPart(_)
+                | RejectReason::BadAssembly(_)
+                | RejectReason::MissingItems(_) => {
+                    plan_refusal_phrase(world, Some(*player), *reason)
+                        .expect("every reason on this arm is one the plan can return")
+                }
                 RejectReason::AlreadyAssayed => {
                     "that species is already assayed, so its sheet already reads exact"
                         .to_string()
@@ -853,12 +865,6 @@ pub fn event_line(
                 },
                 RejectReason::NoSuchPlayer => "nobody in this world has that name".to_string(),
                 RejectReason::AlreadyGranted => "they can already rename it".to_string(),
-                RejectReason::MissingItems(item) => {
-                    let have = world
-                        .player(*player)
-                        .map_or(0, |p| p.inventory.count(*item));
-                    format!("not enough {} (you have {have})", name(item))
-                }
                 RejectReason::WrongItem => "that's the wrong kind of item for this".to_string(),
                 RejectReason::AlreadyBestGrade => best_grade_note().to_string(),
                 RejectReason::RequirementNotMet(property, min) => format!(
@@ -889,16 +895,6 @@ pub fn event_line(
                     "that slot is full or holds a different item".to_string()
                 }
                 RejectReason::NothingToTake => "it has nothing waiting to be taken".to_string(),
-                RejectReason::BadAssembly(e) => assembly_error_phrase(*e),
-                // **THE SUBJECT IS THE KIND, NOT THE ITEM.** This refusal is
-                // categorical — no ore of any species or grade is a machine
-                // part — so naming "Korvite ore (B)" would imply some other
-                // ore might work, and `item.code()` (what this said until
-                // ASSA-102's QA found it) shows a player `ore#3(B)`, an id
-                // that exists for save files. It is also the only subject a
-                // host asking *before* the press can have: it holds a pack
-                // row's kind, not a rejected `Item`. One sentence, one noun.
-                RejectReason::NotAPart(item) => not_a_part_phrase(item.kind.name()),
                 RejectReason::NoSuchAssembly => {
                     "you have not built that design".to_string()
                 }
@@ -2720,6 +2716,52 @@ pub fn swings_afforded(pool: u32) -> u32 {
     pool.div_ceil(PICK_WEAR_PER_SWING)
 }
 
+/// The sentence a refusal from [`crate::assembly::plan`] reads as.
+///
+/// **ONE WORDING, TWO MOMENTS.** The event log says this AFTER a press; the
+/// headless `design` command and a build screen say it BEFORE one, off the same
+/// plan. Until ASSA-324 the only copy lived inside [`event_line`]'s match on a
+/// `CommandRejected` that had already happened, where a host asking *before*
+/// the press could not reach it — so the second copy got written anyway, three
+/// times (`design_preview` here, `design_readout_facts` and
+/// `design_if_built_facts` in the binding), and in ASSA-90 the fourth was
+/// written in GDScript and got two verdicts out of three wrong.
+///
+/// `player` is `None` for a host with no player to ask about — a build screen
+/// weighing a design off the catalogue rather than a pack. The only reason that
+/// carries a count is `MissingItems`, and "you have 0" is the honest reading
+/// for a pack that is not there.
+///
+/// `None` for any other reason. These four are the whole vocabulary
+/// `assembly::plan` has, and a caller holding anything else got it from some
+/// other command.
+pub fn plan_refusal_phrase(
+    world: &World,
+    player: Option<PlayerId>,
+    reason: RejectReason,
+) -> Option<String> {
+    Some(match reason {
+        RejectReason::UnknownSpecies => "no such mineral in this world".to_string(),
+        // **THE SUBJECT IS THE KIND, NOT THE ITEM.** This refusal is
+        // categorical — no ore of any species or grade is a machine part — so
+        // naming "Korvite ore (B)" would imply some other ore might work, and
+        // `item.code()` (what this said until ASSA-102's QA found it) shows a
+        // player `ore#3(B)`, an id that exists for save files. It was also
+        // called "the only subject a host asking *before* the press can have",
+        // which was written when no host could ask before the press; ASSA-324
+        // made that literal rather than hypothetical.
+        RejectReason::NotAPart(item) => not_a_part_phrase(item.kind.name()),
+        RejectReason::BadAssembly(e) => assembly_error_phrase(e),
+        RejectReason::MissingItems(item) => {
+            let have = player
+                .and_then(|p| world.player(p))
+                .map_or(0, |p| p.inventory.count(item));
+            format!("not enough {} (you have {have})", world.item_name(item))
+        }
+        _ => return None,
+    })
+}
+
 /// THE PICK'S LIFE AS A PLAYER MAY READ IT: **swings used, out of the swings
 /// its class affords.** `20 of 120-180 swings used` while any species in it is
 /// rough, `20 of 144 swings used` once they are all known.
@@ -2871,11 +2913,23 @@ pub fn assembly_readout(world: &World, built: &Built) -> String {
 /// That identity is what `a_preview_is_the_line_the_built_design_gets` holds.
 ///
 /// **THE REFUSALS ARE STEP'S, IN STEP'S ORDER**, and that is most of the
-/// value: `NotAPart` on the frame, then on each mounted part, then
-/// `validate`. A preview that answered only the arithmetic would print SAFE
-/// for a design `Assemble` throws out, which is worse than no preview —
-/// the player spends the press to find out. `why` is the same phrase the
-/// `CommandRejected` event carries, not a second wording of it.
+/// value: the species roster, then `NotAPart` on the frame, then on each
+/// mounted part, then `validate`. A preview that answered only the arithmetic
+/// would print SAFE for a design `Assemble` throws out, which is worse than no
+/// preview — the player spends the press to find out. `why` is the same phrase
+/// the `CommandRejected` event carries, not a second wording of it.
+///
+/// **IT ASKS [`crate::assembly::plan`] RATHER THAN WALKING THE CHAIN ITSELF**
+/// (ASSA-324, which is why this paragraph replaced a copy of `step`'s arm).
+/// Nothing a player reads moved. What was wrong with the copy is that it had no
+/// species gate, and naming a species this world never rolled **panicked**
+/// rather than being refused — measured on main at `e27ef54`, `index out of
+/// bounds: the len is 6 but the index is 200`. No shipped caller reaches it
+/// (`sim-cli`'s `design` resolves items out of the pack, so its indices are
+/// real ones), which is exactly why it is worth saying: the gate lived in
+/// `step`'s precheck, a preview had no way to reach it, and the first host to
+/// ask this question off a client's own spelling would have found out the
+/// expensive way. `step` calls that index "a bug or an attack, not a request".
 ///
 /// **A PACK TOO THIN IS NOT A REFUSAL HERE**, which is the one place this
 /// deliberately differs from [`crate::step::step`]. `step` rejects
@@ -2889,46 +2943,41 @@ pub fn design_preview(world: &World, player: PlayerId, frame: Item, mounted: &[I
     let Some(p) = world.player(player) else {
         return "No such player.".into();
     };
-    // Step's order, step's phrases. See `PlayerCommand::Assemble` in `step.rs`.
-    let Some(frame_part) = Part::from_item(frame) else {
-        return design_refusal(&not_a_part_phrase(frame.kind.name()));
+    // Step's order, step's phrases, and step's own function: see
+    // `crate::assembly::plan`, which `PlayerCommand::Assemble` calls too.
+    let planned = crate::assembly::plan(frame, mounted, &world.species, &p.inventory);
+    let AssemblyPlan::Weighed {
+        built,
+        cost,
+        missing,
+    } = &planned
+    else {
+        let reason = planned.refusal().expect("a Refused plan has a refusal");
+        return design_refusal(
+            &plan_refusal_phrase(world, Some(player), reason)
+                .expect("`plan` refuses only in its own four words"),
+        );
     };
-    let mut parts = Vec::with_capacity(mounted.len());
-    for item in mounted {
-        let Some(part) = Part::from_item(*item) else {
-            return design_refusal(&not_a_part_phrase(item.kind.name()));
-        };
-        parts.push(part);
-    }
-    let assembly = Assembly::new(frame_part, parts);
-    if let Err(e) = assembly.validate() {
-        return design_refusal(&assembly_error_phrase(e));
-    }
-
-    let mut needed: Vec<ItemStack> = Vec::new();
-    for item in assembly.part_items() {
-        match needed.iter_mut().find(|s| s.item == item) {
-            Some(s) => s.count += 1,
-            None => needed.push(ItemStack::new(item, 1)),
-        }
-    }
-    let mut short = None;
-    let counts = needed
+    // THE TALLY IS THE PLAN'S, not a second count of the same parts: a pack
+    // column that disagreed with what the press spends is the bug this whole
+    // function exists to prevent, one row lower down.
+    let counts = cost
         .iter()
         .map(|s| {
-            let have = p.inventory.count(s.item);
-            if have < s.count && short.is_none() {
-                short = Some(s.item);
-            }
-            format!("{have}/{} {}", s.count, world.item_name(s.item))
+            format!(
+                "{}/{} {}",
+                p.inventory.count(s.item),
+                s.count,
+                world.item_name(s.item)
+            )
         })
         .collect::<Vec<_>>()
         .join(" · ");
 
-    let built = Built::new(assembly, &world.species);
-    let mut out = assembly_readout(world, &built);
+    let mut out = assembly_readout(world, built);
     let _ = write!(out, "\n      your pack: {counts}");
-    if let Some(item) = short {
+    if let Some(item) = missing {
+        let item = *item;
         // The sentence `step` would answer the press with, said before it.
         let _ = write!(
             out,
