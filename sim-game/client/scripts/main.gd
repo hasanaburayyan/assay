@@ -442,6 +442,8 @@ const BUILD_PICKER := "BuildScreenPicker"
 const BUILD_MATERIALS := "BuildScreenMaterials"
 const BUILD_DETAIL := "BuildScreenDetail"
 const BUILD_COST := "BuildScreenCost"
+const BUILD_BAR := "BuildScreenCommitBar"
+const BUILD_SAID := "BuildScreenSaid"
 const BUILD_ACT := "BuildScreenAct"
 
 ## **THE THREE COLUMNS, AS SHARES OF THE SCREEN RATHER THAN PIXEL WIDTHS** (ASSA-328). Maren's mock
@@ -456,9 +458,15 @@ const BUILD_COLUMNS := [287.0 / 863.0, 304.0 / 863.0, 240.0 / 863.0]
 ## horizontally, 91 -> 107 and 569 -> 585 vertically. One number, four places, so it is named once.
 const BUILD_GUTTER := 16
 
-## **HOW THE RIGHT COLUMN SPLITS** (ASSA-328): her block 5 (the readout) is 300 px and block 6 (cost)
-## is 146 of the 462 the columns get. Shares for `BUILD_COLUMNS`' reason.
-const BUILD_READOUT_SHARE := 300.0 / 446.0
+## **HOW THE RIGHT COLUMN SPLITS** (ASSA-328, moved by ASSA-332): her block 5 (the readout) is 300 px
+## and block 6 (cost) is **90** of the **390** the columns get once the gutter is out. Shares for
+## `BUILD_COLUMNS`' reason.
+##
+## **IT WAS 300 / 446 UNTIL THE COMMIT BAR GREW** (her §5.4): the columns used to end at y 569 and now
+## end at **y 513**, so the right column holds 300 + 16 + 90 = 406 instead of 462. The number that
+## moved is hers and the arithmetic is written out here rather than updated silently, because the only
+## way to check a share is against the rects it came from.
+const BUILD_READOUT_SHARE := 300.0 / 390.0
 
 ## The map glyph's disc in a species row. Big enough for a 12px letter to sit in, which is above the
 ## 10px floor `glyph_size` refuses to draw under.
@@ -538,6 +546,8 @@ var _build_picker: VBoxContainer = null
 var _build_materials: VBoxContainer = null
 var _build_detail: VBoxContainer = null
 var _build_cost: VBoxContainer = null
+var _build_bar: HBoxContainer = null
+var _build_said: VBoxContainer = null
 var _build_act: Button = null
 var _build_showing := UNBUILT
 
@@ -1622,7 +1632,7 @@ func _build_machine_menu_over_the_map(world: Rect2) -> void:
 	# Esc and a click outside; both are invisible, and the board's first act on a new surface is to look
 	# for the way back. QUIET, because it is furniture (ASSA-224) and the menu spends no accent at all --
 	# it offers several equal acts and must not choose for you.
-	var close := _button(AssayHud.menu_close_text(), func() -> void: _close_machine_menu(),
+	var close := _button(AssayHud.close_text(), func() -> void: _close_machine_menu(),
 			"close this menu. Esc does the same, and so does a click on the map")
 	close.theme_type_variation = &"Quiet"
 	close.alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -1664,6 +1674,24 @@ func _build_build_screen_over_the_map(world: Rect2) -> void:
 	# the paragraph above is the reason this panel has it.
 	_build_box.mouse_filter = Control.MOUSE_FILTER_STOP
 	_build_box.visible = false
+	# **PLACED AGAIN WHENEVER ITS OWN MINIMUM MOVES, AND THAT IS NOT BELT-AND-BRACES** (ASSA-332,
+	# measured in a real window by `tools/limpet_build_screen_shot.gd`).
+	#
+	# **A `Control`'S `size` IS CLAMPED UP TO ITS COMBINED MINIMUM AT THE INSTANT IT IS ASSIGNED, and
+	# right after a rebuild that minimum is briefly the whole content** -- the rows are in the tree
+	# and the `ScrollContainer`s have not yet been told they can absorb them. Measured: the box was
+	# asked for **864 x 592 and came out 864 x 1042**, hanging 450 px past the world's own control
+	# band and covering the status toast by 113 x 32 px, which is the one thing Maren's §1 forbids.
+	# One frame later the same box reports a minimum of 276 -- so neither the rect nor the content was
+	# ever wrong, and nothing re-applied the size.
+	#
+	# **THE SIGNAL AND NOT `call_deferred`, WHICH I TRIED FIRST AND MEASURED AS NO FIX AT ALL**: the
+	# minimum's own recalculation is deferred too, so a deferred placement can run BEFORE it and get
+	# clamped by the same stale number. `minimum_size_changed` fires when the minimum DROPS, which is
+	# exactly the moment the rect becomes applicable, and placing changes no minimum so it cannot
+	# loop. In the running game the next tick's refresh hid this behind ~100 ms of oversize screen; a
+	# surface that is briefly over the toast is still over the toast.
+	_build_box.minimum_size_changed.connect(_place_build_screen)
 	_build_region.add_child(_build_box)
 	var inside := VBoxContainer.new()
 	inside.add_theme_constant_override("separation", BUILD_GUTTER)
@@ -1689,7 +1717,7 @@ func _build_build_screen_over_the_map(world: Rect2) -> void:
 	# the screen Esc and *"a visible way out"* in the title bar; Esc alone is invisible, and the board's
 	# first act on a new surface is to look for the way back (ASSA-316's close got the same treatment).
 	# QUIET, because the screen spends its one accent on `Build` (her §5).
-	var leave := _button(AssayHud.menu_close_text(), func() -> void: _close_build_screen(),
+	var leave := _button(AssayHud.close_text(), func() -> void: _close_build_screen(),
 			"close this screen. Esc does the same, and nothing you have chosen is lost")
 	leave.theme_type_variation = &"Quiet"
 	crown.add_child(leave)
@@ -1715,31 +1743,74 @@ func _build_build_screen_over_the_map(world: Rect2) -> void:
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	right.size_flags_stretch_ratio = BUILD_COLUMNS[2]
 	columns.add_child(right)
-	# **BLOCK 5: WHAT THE SIM SAYS ABOUT THE CHOICE** (her block 5, x 671..911 y 107..407). In slice 1
-	# that is the sim's own sentences -- the cost line, the walls clause, the dead end -- and the output
-	# item's picture. **The RATIO fill and the SAFE / WILL BREAK verdict her §5 specifies are the
-	# ASSEMBLY readout and are slice 2/3**, behind Marlow's ASSA-324: `design_if_built` takes one
-	# species and one grade for a whole design and returns no speed, durability or capacity, so there is
-	# nothing for a recipe's screen to draw them from and I will not do the banding in GDScript.
+	# **BLOCK 5: WHAT YOU GET** (her block 5, x 671..911 y 107..407). In slice 1 that is the output
+	# item's picture and the `walls` clause. **The RATIO fill and the SAFE / WILL BREAK verdict her §5
+	# specifies are the ASSEMBLY readout and are slice 2/3**: `design_preview` is the sim's answer for a
+	# design and a recipe is not one, so there is nothing for a recipe's screen to draw them from and I
+	# will not do the banding in GDScript.
+	#
+	# **TWO SENTENCES LEFT THIS BLOCK IN ASSA-332 AND ONE STAYED, WHICH IS A SPLIT I CHOSE** (her §5.4
+	# ruling 3 is about the design readout, so slice 1 had to be mapped onto it and box 10 of ASSA-332
+	# is hers to reverse). `line` and `dead_end` went to the commit bar because both are about the act:
+	# what it spends, and that it cannot be undone. `walls` stayed because it is a property of the
+	# thing produced -- the smelter's heat figure -- and this block is what you get.
 	_build_detail = _build_section(right, BUILD_READOUT_SHARE, "what you get")
 	_build_detail.name = BUILD_DETAIL
-	# **BLOCK 6: COST, AS A COUNT** (her block 6, x 671..911 y 423..569, and her §5.3: have on the
-	# left, text, never a band).
+	# **BLOCK 6: COST, AS TWO COUNTS** (her block 6, now x 671..911 y 423..**513** since the commit bar
+	# grew; her §5.5: need first, no slash, text, never a band).
 	_build_cost = _build_section(right, 1.0 - BUILD_READOUT_SHARE, "cost")
 	_build_cost.name = BUILD_COST
-	# **BLOCK 7: THE ONE ACT, AND THE SCREEN'S ONE ACCENT** (her block 7 and §5: *"`Build` is the one
-	# ACCENT -- the only difference from the machine menu, where no act is primary"*).
+	# **BLOCK 7: THE COMMIT BAR -- THE SIM'S SENTENCE AND THE ONE ACT, IN ONE RECT** (ASSA-332; Maren's
+	# §5.4 ruling 3, which MOVED this rect after slice 1 shipped: *"block 7 becomes the COMMIT BAR,
+	# 863 x 112 at y 529..641"*, the sentence left, `Build` right-aligned and still the one accent).
+	#
+	# **THE SENTENCE IS HERE AND NOT IN THE READOUT FOR A DESIGN REASON, HERS AND MINE AGREEING.** It is
+	# the sim saying whether you are about to waste parts you cannot get back, so it belongs beside the
+	# irreversible act rather than in a side column you scan while choosing. The measurement that forced
+	# the move is `maren_readout_rows.gd`: the sim's readout is 916 px at `BODY` 13 against a 863 px
+	# screen, so it is one row at NO width here, and in block 5's 240 it was five rows with the wrap
+	# cutting a material from its grade letter.
+	#
+	# **AND THE MOVE FIXES A STALENESS I SHIPPED.** `_refresh_build_screen`'s signature is
+	# `_pack_shape`, which is deliberately "which items, in which order" and NOT their counts -- so the
+	# `line` this bar now carries, whose last clause is *"you have 8"*, was drawn once per shape change
+	# and went stale on every mining cycle while sitting in block 5. The bar is written every refresh,
+	# like the cost.
+	_build_bar = HBoxContainer.new()
+	_build_bar.name = BUILD_BAR
+	_build_bar.add_theme_constant_override("separation", BUILD_GUTTER)
+	# **THE ONE TYPED NUMBER OF THE THREE IN HER RULING** (112). The other two are derived: the columns
+	# get what is left, which puts them at y 513 exactly as she specifies, and the sentence's floor of
+	# 687 comes out of `AssayHud.commit_sentence_width`.
+	_build_bar.custom_minimum_size.y = AssayHud.BUILD_COMMIT_BAR
+	inside.add_child(_build_bar)
+	# THE SENTENCE, TOP-LEFT, GROWING DOWNWARD. Top rather than centred because it is up to six rows in
+	# the catalogue's worst case and a block that grows from its middle moves its own first row.
+	_build_said = VBoxContainer.new()
+	_build_said.name = BUILD_SAID
+	_build_said.add_theme_constant_override("separation", 2)
+	_build_said.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_build_said.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_build_bar.add_child(_build_said)
+	# **THE ONE ACT, AND THE SCREEN'S ONE ACCENT** (her §5: *"`Build` is the one ACCENT -- the only
+	# difference from the machine menu, where no act is primary"*).
 	#
 	# **IT IS NEVER DISABLED AND NEVER REFUSES**, which is the rule this whole item rests on (ASSA-5/7,
 	# ASSA-316 ruling 2): a player may always try a design and be TOLD, never refused, and the refusal
 	# is a line in the log. That is a deliberate difference from the make ROW, which disables an
 	# unaffordable press (ASSA-247) -- a row is a list where weight has to follow availability, and this
 	# is the one control on a screen the player opened on purpose to look at the cost.
+	#
+	# **`SHRINK_END` AND NO WIDTH SET**, which is `AssayHud.BUILD_ACT_WIDTH`'s docstring: the button
+	# takes its text's natural size at the right end of the bar, and a test holds that size under her
+	# 160 px ceiling rather than a `custom_minimum_size` clipping a longer word into a lie.
 	_build_act = _button(AssayHud.build_button_text(), func() -> void: _send_build(),
 			"make one batch of this, out of the material you chose")
 	_build_act.name = BUILD_ACT
 	_build_act.theme_type_variation = &"Primary"
-	inside.add_child(_build_act)
+	_build_act.size_flags_horizontal = Control.SIZE_SHRINK_END
+	_build_act.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_build_bar.add_child(_build_act)
 
 
 ## ONE OF THE SCREEN'S COLUMNS: a heading, then a scroll box for its rows. Factored because the three
@@ -3551,7 +3622,7 @@ func _make_button(offer: Dictionary) -> Button:
 	# ASSA-247's own principle, not an exception to it: a weight that does not follow availability is a
 	# lying control, and "you may look at what this costs" is available always.
 	#
-	# `cost` IS STILL READ, ON THE SCREEN, AS DATA (`AssayHud.have_need_line`), so nothing about the
+	# `cost` IS STILL READ, ON THE SCREEN, AS DATA (`AssayHud.cost_counts_line`), so nothing about the
 	# binding field or the reasoning above is withdrawn -- only the control it used to grey out.
 	return button
 
@@ -4171,6 +4242,10 @@ func _refresh_build_screen() -> void:
 	if signature != _build_showing:
 		_build_showing = signature
 		_rebuild_build_screen()
+	# **THE BAR AND THE COST ARE THE TWO THINGS WRITTEN EVERY REFRESH** (ASSA-332). Both carry a count
+	# the pack changes without changing its SHAPE, which is what `_pack_shape` deliberately leaves out,
+	# and the bar's sentence ends in `you have 8`.
+	_refresh_build_said()
 	_refresh_build_cost()
 	_place_build_screen()
 
@@ -4307,8 +4382,18 @@ func _rebuild_build_materials() -> void:
 			press.theme_type_variation = &"Quiet"
 			press.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			row.add_child(press)
-		row.add_child(_note(AssayHud.have_need_line(int(offer.get("count", 0)),
-				int(offer.get("cost", 0)))))
+		# **THE SAME TWO COUNTS AS BLOCK 6, IN THE SAME WORDS AND THE SAME ORDER** (ASSA-332): one
+		# grammar for one kind of number, wherever it is drawn. **The FAILED ink goes on the counts and
+		# not on the row's button**: a material you cannot afford is still a material you may CHOOSE,
+		# because the screen's job is showing you what it would cost, and a control painted in the
+		# status scale reads as refused (ASSA-175). Block 6's entry is the one that goes `FAILED` whole,
+		# because there the whole entry is a statement rather than a choice.
+		var counts := _note(AssayHud.cost_counts_line(int(offer.get("cost", 0)),
+				int(offer.get("count", 0))))
+		if AssayHud.cost_entry_short(int(offer.get("cost", 0)), int(offer.get("count", 0))):
+			counts.add_theme_color_override(&"font_color",
+					AssayHud.status_color(AssayHud.Say.FAILED))
+		row.add_child(counts)
 		_build_materials.add_child(row)
 
 
@@ -4321,23 +4406,21 @@ func _choose_build_material(offer: Dictionary) -> void:
 	_refresh_build_screen()
 
 
-## **BLOCK 5: WHAT THE SIM SAYS YOU GET** (ASSA-328).
+## **BLOCK 5: WHAT YOU GET** (ASSA-328, narrowed by ASSA-332 when the sentence moved to the bar).
 ##
 ## **EVERY SENTENCE HERE IS THE SIM'S, APPENDED AND NEVER COMPOSED**, which is the make row's rule
-## (ASSA-125/158) carried onto a bigger surface: `line` states the cost and what you hold, `walls` is
-## the smelter's figure as a SENTENCE because what a player may know of a heat tolerance is a band
-## until they assay, and `dead_end` is `debug::DEAD_END_LABEL` plus the sim's clause.
+## (ASSA-125/158) carried onto a bigger surface: `walls` is the smelter's figure as a SENTENCE because
+## what a player may know of a heat tolerance is a band until they assay.
 ##
-## **THE DEAD END KEEPS ITS OWN VOICE** (Maren's ASSA-158 ruling: *"a permanent dead end may not be
-## drawn in the same series as a cost"*). One of those can become true by playing and the other never
-## can, so it is not another `_note` in the same ink -- it is `FAILED`, the one colour this screen
-## takes from the status scale, and it is the sim's words either way.
+## **WHAT LEFT, AND WHY IT IS NOT A LOSS:** `line` and `dead_end` are drawn by `_refresh_build_said`
+## in the commit bar (Maren's §5.4 ruling 3), because both are about the irreversible act rather than
+## about the thing produced. One fact, one home (ASSA-316 ruling 6) -- they are not drawn twice.
 ##
 ## **AND WHAT IS NOT HERE IS SAID OUT LOUD RATHER THAN QUIETLY MISSING:** the RATIO fill of mass
 ## against budget and the SAFE / UNCERTAIN / WILL BREAK verdict her §5 specifies belong to the
-## ASSEMBLY flow, which is slice 2/3 behind Marlow's ASSA-324. A recipe is not a design: it has no
-## frame, no budget and no parts, so there is nothing for those marks to be about. Drawing them here
-## would mean inventing numbers in GDScript, which is the one rule this item says does not bend.
+## ASSEMBLY flow, which is slice 2/3. A recipe is not a design: it has no frame, no budget and no
+## parts, so there is nothing for those marks to be about. Drawing them here would mean inventing
+## numbers in GDScript, which is the one rule this item says does not bend.
 func _rebuild_build_detail() -> void:
 	for child in _build_detail.get_children():
 		child.queue_free()
@@ -4352,14 +4435,45 @@ func _rebuild_build_detail() -> void:
 	var picture := _icon_box(makes, true)
 	if picture != null:
 		_build_detail.add_child(picture)
-	var line := _note(String(offer.get("line", "")))
-	line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_build_detail.add_child(line)
 	var walls := String(offer.get("walls", ""))
 	if walls != "":
 		var said := _note("— %s" % walls)
 		said.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_build_detail.add_child(said)
+
+
+## **THE COMMIT BAR'S LEFT: THE SIM'S SENTENCE ABOUT THE ACT, BROKEN ONLY WHERE THE SIM BROKE IT**
+## (ASSA-332; Maren's §5.4).
+##
+## **ONE CLAUSE PER ROW, AND THE ROWS ARE THE SENTENCE** -- `AssayHud.sentence_clauses` splits at the
+## sim's own `·` and keeps the mark, so joining what this block draws with a single space gives the
+## sim's sentence back, character for character, in its order. That is what "whole" means after her
+## ruling that **wrapping is not recomposing** (ASSA-305), and `test_main_screen.gd` asserts the
+## re-joined text against `offer.line` rather than against a shape I typed.
+##
+## **IT IS `INK` AND NOT A `_note`, WHICH IS A WEIGHT CHANGE I MADE AND NAMED.** In block 5 this
+## sentence was small print beside a picture; in the bar it is the thing the screen is for, read in the
+## second before an irreversible press. Her ruling moved the rect and left the ink to me (box 10).
+##
+## **THE DEAD END KEEPS ITS OWN VOICE** (her ASSA-158 ruling: *"a permanent dead end may not be drawn
+## in the same series as a cost"*). One of those can become true by playing and the other never can, so
+## it is `FAILED`, the one colour this screen takes from the status scale -- and it is the sim's words
+## either way, `debug::DEAD_END_LABEL` plus the sim's clause.
+##
+## **EMPTY WHEN THE SIM OFFERS NOTHING, AND THAT IS NOT A MISSING STATE.** The sentence is the sim's;
+## with no offer there is no sentence, and block 5 already says the sim no longer offers this. Saying
+## it twice is the two-homes-for-one-fact defect she ruled against on ASSA-316.
+func _refresh_build_said() -> void:
+	for child in _build_said.get_children():
+		child.queue_free()
+	var offer := _chosen_offer()
+	if offer.is_empty():
+		return
+	for clause in AssayHud.sentence_clauses(String(offer.get("line", ""))):
+		var said := Label.new()
+		said.text = clause
+		said.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_build_said.add_child(said)
 	var dead_end := String(offer.get("dead_end", ""))
 	if dead_end != "":
 		var warned := Label.new()
@@ -4367,16 +4481,33 @@ func _rebuild_build_detail() -> void:
 		warned.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		warned.add_theme_color_override(&"font_color",
 				AssayHud.status_color(AssayHud.Say.FAILED))
-		_build_detail.add_child(warned)
+		_build_said.add_child(warned)
 
 
-## **BLOCK 6: COST, RE-READ EVERY REFRESH** (ASSA-328, Maren's §5.3: a COUNT, so it is text, have on
-## the left, and never a band).
+## **BLOCK 6: COST AS AN ENTRY OF TWO ROWS, RE-READ EVERY REFRESH** (ASSA-332; Maren's §5.5, which
+## replaces the §5.3 shape slice 1 shipped).
 ##
-## **THIS IS THE ONE PART THAT MOVES ON THE TICK CLOCK**, which is why it is not in
-## `_rebuild_build_screen`: `count` is what the pack holds AT THIS TICK and climbs every mining cycle,
-## so a cost drawn once would be stale on the surface whose whole job is telling you whether you can
-## afford something. It is Labels only, and a Label's text is idempotent and free.
+## **TWO ROWS, NAME THEN COUNTS, ALWAYS** -- her measurement, not a preference:
+## `Abcdefghijklmnopqrst hopper (A)   need 4 · have 2` is **312 px at block 6's 240**, and even the
+## terse `2/4` form is 239 px, one row with 1 px spare. No wording fits a worst-case entry on one row
+## at this width, so the counts go under the name every time: *"a column you scan, not a wrap that
+## happens sometimes"*.
+##
+## **THE COUNTS ARE RIGHT-ALIGNED FOR THAT SAME REASON** -- a column of ragged-left numbers is not one
+## you can scan down.
+##
+## **THE NAME IS THE SIM'S `name` ON THE PACK STACK, WITHOUT ITS COUNT.** `stack_line` would print
+## `8 × Tonore refined (A)`, which puts `have` on both rows of a two-row entry; the field is the
+## sim-written wording either way (`inventory_of`), so nothing here words an item (ASSA-43/52).
+##
+## **THE WHOLE ENTRY GOES `FAILED` WHEN YOU ARE SHORT** (her §5.5), through
+## `AssayHud.cost_entry_short` -- see that function for why reading the sim's two numbers is not this
+## client deciding affordability.
+##
+## **THIS IS THE ONE PART THAT MOVES ON THE TICK CLOCK** -- with the bar, since ASSA-332 -- which is
+## why it is not in `_rebuild_build_screen`: `count` is what the pack holds AT THIS TICK and climbs
+## every mining cycle, so a cost drawn once would be stale on the surface whose whole job is telling
+## you whether you can afford something. It is Labels only, and a Label's text is idempotent and free.
 func _refresh_build_cost() -> void:
 	for child in _build_cost.get_children():
 		child.queue_free()
@@ -4384,13 +4515,39 @@ func _refresh_build_cost() -> void:
 	if offer.is_empty():
 		_build_cost.add_child(_note("nothing chosen to cost"))
 		return
+	var mine := _pack_stack_of(offer)
+	var named := String(mine.get("name", "")) if not mine.is_empty() \
+			else String(offer.get("line", ""))
+	_build_cost.add_child(_cost_entry(named, int(offer.get("cost", 0)),
+			int(offer.get("count", 0))))
+
+
+## **ONE COST ENTRY: THE NAME, THEN THE TWO COUNTS** (ASSA-332).
+##
+## **SPLIT OUT SO A TEST CAN DRIVE THE DRAWING WITHOUT A WORLD**, which is `_refresh_halt`'s reason in
+## this file and here it is the only way to see both branches. `_chosen_offer` re-reads `make_offers`
+## at every refresh and matches on the sim's own `verb`/`tag` (ASSA-55), so an offer a test file
+## invents never reaches the block above -- and whether a seeded fixture's pack happens to be short of
+## the recipe it opens is worldgen's business. **A `FAILED` branch only a lucky fixture reaches is a
+## state green for free**, so the two counts arrive here as plain `int`s and a test states them.
+func _cost_entry(named: String, need: int, have: int) -> VBoxContainer:
+	var entry := VBoxContainer.new()
+	entry.add_theme_constant_override("separation", 2)
+	entry.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var name_row := Label.new()
+	name_row.text = named
+	name_row.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	entry.add_child(name_row)
 	var counted := Label.new()
-	counted.theme_type_variation = &"Display"
-	counted.text = AssayHud.have_need_line(int(offer.get("count", 0)), int(offer.get("cost", 0)))
-	_build_cost.add_child(counted)
-	# WHICH NUMBER IS WHICH, ONCE, UNDER THEM. `12 / 20` is unreadable without it the first time and
-	# obvious forever after, which is what a `Small` note under a `Display` figure is for.
-	_build_cost.add_child(_note("you have / one batch needs"))
+	counted.text = AssayHud.cost_counts_line(need, have)
+	counted.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	counted.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	entry.add_child(counted)
+	if AssayHud.cost_entry_short(need, have):
+		for row in [name_row, counted]:
+			(row as Label).add_theme_color_override(&"font_color",
+					AssayHud.status_color(AssayHud.Say.FAILED))
+	return entry
 
 
 ## **PRESS `Build`: THE SAME COMMAND THE ROW USED TO SEND** (ASSA-328).

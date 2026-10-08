@@ -226,6 +226,18 @@ func test_the_session_tool_can_press_a_pack_row() -> bool:
 						% _text_of(screen._make))
 			elif _asked.size() != 1:
 				ok = _fail("the tool's menu press submitted %s, not one command" % [_asked])
+			# **AND THE CHAIN LEAVES NO SCREEN STANDING OVER THE MAP.** `Build` does not close the
+			# build screen -- deliberately, so a person can make a second batch -- and this driver
+			# makes six parts and then hands the window to a SHOT. Between #432 and this assertion
+			# every whole-world frame taken after a played chain was a picture of the make screen:
+			# ASSA-273's re-shoot came back with ZERO pixels of any map mark on either seed, and
+			# nothing failed, because a chain that reports FINISHED is the only thing we check.
+			# Pressing is not enough to assert here; what matters is the state the window is left in.
+			elif screen._build_screen_open() or screen._build_box.visible:
+				ok = _fail(("the session tool left the build screen open after `%s`, so every "
+						+ "picture taken after a played chain is of that screen and not of the map "
+						+ "(open=%s visible=%s)") % [AssayHud.build_button_text(),
+						screen._build_screen_open(), screen._build_box.visible])
 	screen.queue_free()
 	return ok
 
@@ -2045,15 +2057,21 @@ func test_a_row_you_cannot_afford_is_not_pressable_and_the_last_batch_is() -> bo
 	return ok
 
 
-## **THE TWO COUNTS, FROM A REAL WORLD AND A REAL CATALOGUE** (ASSA-328; Maren's §5.3: *"Cost is
-## COUNTS, so it is text: `12 / 20`, have on the left"*, and §3's Factorio borrowing -- affordability
+## **THE TWO COUNTS, FROM A REAL WORLD AND A REAL CATALOGUE** (ASSA-332; Maren's §5.5: *"`need 1 ·
+## have 2`: no slash, need first, both numbers always"*, and §3's Factorio borrowing -- affordability
 ## is READ, never computed by the player in their head).
 ##
 ## **THE NUMBERS COME OUT OF `make_offers` AND ARE COMPARED TO THE SCREEN, which is the only pairing
 ## worth asserting here.** A literal would prove nothing: the fixture mines a seeded world, so how
 ## much ore is in the pack at this tick is the sim's business and not a number this file may know.
-## What it may require is that the two numbers on the screen are the sim's `count` and `cost` for the
+## What it may require is that the two numbers on the screen are the sim's `cost` and `count` for the
 ## row that was pressed, in that order.
+##
+## **THE GRAMMAR IS SPELLED OUT HERE AND NOT ASKED OF THE FUNCTION UNDER TEST.** This read
+## `AssayHud.have_need_line(...)` and compared it to the screen, which is a function compared with
+## itself -- the exact shape that let a wrong constructor through my ASSA-325 refusal test the same
+## day. A swapped pair of `int`s or a slash coming back now reddens this, because the format string
+## lives in the test.
 ##
 ## **AND A MATERIAL ROW PER MATERIAL, which is the column Maren's mock does not have** (I gave the
 ## middle column to materials in slice 1; it is on ASSA-328 for her to reverse). Asserted as "one row
@@ -2073,32 +2091,48 @@ func test_the_build_screen_costs_a_real_offer_in_the_sims_own_two_numbers() -> b
 			if offer.is_empty():
 				ok = _fail("the screen opened from a real row and points at no offer")
 			else:
-				var want := AssayHud.have_need_line(int(offer.get("count", 0)),
-						int(offer.get("cost", 0)))
+				var want := "need %d · have %d" % [int(offer.get("cost", 0)),
+						int(offer.get("count", 0))]
 				var said := _text_of(screen._build_cost)
 				if not said.contains(want):
-					ok = _fail(("the sim says you have %d and one batch needs %d, so the cost block "
-							+ "should carry `%s`; it says `%s`") % [int(offer.get("count", 0)),
-							int(offer.get("cost", 0)), want, said])
-				# THE DETAIL IS THE SIM'S OWN SENTENCE AND NOT A RE-WORDING OF IT (ASSA-88).
-				elif not _text_of(screen._build_detail).contains(String(offer.get("line", ""))):
-					ok = _fail(("the detail column says `%s` and the sim's sentence for this row is "
+					ok = _fail(("the sim says one batch needs %d and you have %d, so the cost block "
+							+ "should carry `%s`; it says `%s`") % [int(offer.get("cost", 0)),
+							int(offer.get("count", 0)), want, said])
+				elif said.contains("/"):
+					# **§5.5 TOOK THE SLASH AWAY AND SAID WHY**: a slash is a ratio's mark and a ratio
+					# needs left <= right, so the surplus case -- the normal one on a stocked pack -- read
+					# as 200% of something. Asserted as an ABSENCE, because the old grammar coming back
+					# anywhere on this block is the defect and not only in one function's output.
+					ok = _fail("the cost block says `%s`; §5.5 took the slash away" % said)
+				# THE BAR IS THE SIM'S OWN SENTENCE AND NOT A RE-WORDING OF IT (ASSA-88), and since
+				# ASSA-332 that sentence lives in the commit bar rather than the detail column.
+				elif not _text_of(screen._build_said).contains(String(offer.get("line", ""))):
+					ok = _fail(("the commit bar says `%s` and the sim's sentence for this row is "
 							+ "`%s`; a client that re-words one is ASSA-43's defect")
-							% [_text_of(screen._build_detail), String(offer.get("line", ""))])
+							% [_text_of(screen._build_said), String(offer.get("line", ""))])
 				else:
 					var materials: int = screen._build_materials.get_child_count()
-					var offers: int = screen._offers_for_open_row().size()
-					if materials != offers:
+					var offers: Array = screen._offers_for_open_row()
+					if materials != offers.size():
 						ok = _fail(("the sim offers this recipe in %d materials and the picker draws "
-								+ "%d rows") % [offers, materials])
-					# **AND EVERY ONE OF THEM STATES ITS OWN TWO COUNTS**, which is the half that makes
-					# it a choice: a picker that costed only the chosen row would send the player back
-					# to pressing each material to find out what it costs.
-					for row in screen._build_materials.get_children():
-						if not _text_of(row).contains(" / "):
-							ok = _fail("a material row says `%s` and states no have/need"
-									% _text_of(row))
-							break
+									+ "%d rows") % [offers.size(), materials])
+					# **AND EVERY ONE OF THEM STATES ITS OWN TWO COUNTS, IN THE SAME GRAMMAR**, which is
+					# the half that makes it a choice: a picker that costed only the chosen row would send
+					# the player back to pressing each material to find out what it costs.
+					#
+					# **ZIPPED AGAINST THE SIM'S OFFERS IN ORDER, NOT SCANNED FOR A MARK** (ASSA-332): a row
+					# carrying some OTHER row's two numbers is the defect a `contains("·")` cannot see, and
+					# these rows are built from this same array in this same order.
+					else:
+						for i in range(materials):
+							var each: Dictionary = offers[i]
+							var owed := "need %d · have %d" % [int(each.get("cost", 0)),
+									int(each.get("count", 0))]
+							var row: Node = screen._build_materials.get_child(i)
+							if not _text_of(row).contains(owed):
+								ok = _fail("material row %d says `%s`; the sim's counts are `%s`"
+										% [i, _text_of(row), owed])
+								break
 	screen.queue_free()
 	return ok
 
@@ -2487,5 +2521,55 @@ func test_a_slot_button_fuels_the_menus_machine_with_the_count_at_the_press() ->
 			elif _asked[0] != one and _asked[0] != one_in:
 				ok = _fail("`or 1` asked for %s, not an Insert of 1 into building %d"
 						% [_asked[0], id])
+	screen.queue_free()
+	return ok
+
+
+## **BOTH BRANCHES OF A COST ENTRY, STATED RATHER THAN MINED FOR** (ASSA-332; Maren's §5.5: two
+## rows, name then counts right-aligned, and the WHOLE entry in `FAILED` when have < need).
+##
+## **DRIVEN THROUGH `_cost_entry` WITH TWO PAIRS OF `int`s**, for the reason on that function: an
+## offer this file invents never survives `_chosen_offer`, and whether a seeded fixture's pack happens
+## to be short of the recipe it opens is worldgen's business. A `FAILED` branch that only a lucky
+## fixture reaches is my own written-down hole -- a state green for free.
+func test_a_cost_entry_is_two_rows_and_goes_failed_whole_when_short() -> bool:
+	var screen := _joined()
+	var ok := true
+	var lacking: Node = screen._cost_entry("Bokase refined (B)", 3, 1)
+	var plenty: Node = screen._cost_entry("Bokase refined (B)", 1, 2)
+	var failed := AssayHud.status_color(AssayHud.Say.FAILED)
+	for entry in [lacking, plenty]:
+		if ok and (entry as Node).get_child_count() != 2:
+			ok = _fail("a cost entry drew %d rows; §5.5 says name then counts, always"
+					% (entry as Node).get_child_count())
+	if ok:
+		var named := lacking.get_child(0) as Label
+		var counts := lacking.get_child(1) as Label
+		if named.text != "Bokase refined (B)":
+			ok = _fail("the name row says `%s`; it is the sim's `name` on the pack stack" % named.text)
+		elif counts.text != "need 3 · have 1":
+			ok = _fail("the counts row says `%s`" % counts.text)
+		elif counts.horizontal_alignment != HORIZONTAL_ALIGNMENT_RIGHT:
+			ok = _fail("the counts are not right-aligned, so block 6 is not a column you can scan")
+		elif not named.has_theme_color_override(&"font_color") \
+				or not counts.has_theme_color_override(&"font_color"):
+			ok = _fail("a short entry left a row in the ordinary ink; §5.5 says the WHOLE entry")
+		elif named.get_theme_color(&"font_color") != failed:
+			ok = _fail("a short entry's name is drawn %s and FAILED is %s"
+					% [named.get_theme_color(&"font_color"), failed])
+	if ok:
+		# **AND THE ENTRY YOU CAN AFFORD TAKES NO STATUS INK AT ALL** -- the half a lucky fixture would
+		# never have shown. `FAILED` on every entry is as wrong as on none, and this is the mutation my
+		# own rule asks for: make the comparison matter in both directions.
+		for row in plenty.get_children():
+			if (row as Label).has_theme_color_override(&"font_color"):
+				ok = _fail("an affordable entry's `%s` is painted in the status scale"
+						% (row as Label).text)
+				break
+	# NEITHER ENTRY WAS EVER PARENTED, so freeing the screen does not take them with it,
+	# and `free()` rather than `queue_free()` because this suite runs inside
+	# `SceneTree._initialize`: a queued free may never reach an idle frame.
+	lacking.free()
+	plenty.free()
 	screen.queue_free()
 	return ok

@@ -142,6 +142,37 @@ func _measure() -> void:
 		return
 	var screen_rect := Rect2(_screen._build_box.global_position, _screen._build_box.size)
 	print("SCREEN   %s  (%.0f x %.0f)" % [screen_rect, screen_rect.size.x, screen_rect.size.y])
+	# **WHAT THE SCREEN WAS ASKED TO BE, BESIDE WHAT IT IS** (ASSA-332). A `Control` cannot be smaller
+	# than its combined minimum, so a box whose content demands more height than
+	# `build_screen_rect` allows GROWS -- and grows down, over the band Maren's §1 protects. The rect
+	# is arithmetic the suite already holds; this is the only place the two can be compared.
+	var room := AssayHud.world_rect()
+	var reached := room.end.y
+	for control in [_screen._view_toggle, _screen._map_key_toggle, _screen._says_toast]:
+		var node := control as Control
+		if node != null and node.visible and node.size.y > 0.0:
+			reached = minf(reached, node.global_position.y)
+	var asked := AssayHud.build_screen_rect(room, reached)
+	print("ASKED    %s  (%.0f x %.0f); the box's own minimum is %s"
+			% [asked, asked.size.x, asked.size.y, _screen._build_box.get_combined_minimum_size()])
+	print("VIEWPORT root %s, window %s" % [root.size, DisplayServer.window_get_size()])
+	# **AND IF THE BOX IS NOT THE SIZE IT WAS ASKED FOR, WHERE THE HEIGHT CAME FROM** -- the chain of
+	# minimums from each named part up to the box, because the answer is a sum and only the chain
+	# shows which node is paying it. Printed ONLY when there is something to explain: this found a
+	# 450 px overshoot (ASSA-332) and would be five lines of noise on every other run.
+	if screen_rect.size.y > asked.size.y + 1.0 or screen_rect.size.x > asked.size.x + 1.0:
+		_faults.append("the box is %.0f x %.0f and `build_screen_rect` asked for %.0f x %.0f"
+				% [screen_rect.size.x, screen_rect.size.y, asked.size.x, asked.size.y])
+		for leaf in [_screen._build_picker, _screen._build_materials, _screen._build_detail,
+				_screen._build_cost, _screen._build_said]:
+			var node := leaf as Control
+			var trail := PackedStringArray()
+			while node != null and node != _screen._build_box:
+				trail.append("%s min %.0fx%.0f size %.0fx%.0f" % [node.name,
+						node.get_combined_minimum_size().x, node.get_combined_minimum_size().y,
+						node.size.x, node.size.y])
+				node = node.get_parent() as Control
+			print("    %s" % " <- ".join(trail))
 	var column := AssayHud.VIEW.x - AssayHud.PANEL
 	if screen_rect.end.x > column:
 		_faults.append("the screen reaches x %.0f and the HUD column starts at %.0f"
@@ -190,6 +221,62 @@ func _measure() -> void:
 		_faults.append(("WORLD_CONTROLS_BAND is %.0f and the real band is %.0f px tall, so the "
 				+ "headless answer would put the screen over a control")
 				% [AssayHud.WORLD_CONTROLS_BAND, world.end.y - top])
+	_measure_commit_bar(screen_rect)
+
+
+## **THE COMMIT BAR, IN A LAID-OUT WINDOW** (ASSA-332; Maren's §5.4 ruling 3: *"the COMMIT BAR,
+## 863 x 112 at y 529..641"*, `Build` ≤ 160 px, the sentence ≥ 687, blocks 2/4/6 ending at y 513).
+##
+## **EVERY ABSOLUTE NUMBER IS PRINTED AND NONE OF THEM IS A FAULT, which is deliberate.** Her rects
+## are measured on a 1280x720 window whose control band is where it was the day she measured it; the
+## screen's own top and bottom come from `build_screen_rect` reading the LIVE band, so a toast that is
+## one pixel taller moves all four numbers and none of that is a defect. **So the numbers go to her
+## and the RELATIONS are the faults**: the bar is her height, `Build` is inside her ceiling and at the
+## bar's right end, and the sentence gets at least the width the wrap was measured at. That is the
+## rule I keep writing down -- hand over the picture and the numbers, never the verdict.
+func _measure_commit_bar(screen_rect: Rect2) -> void:
+	var bar := _screen._build_bar as Control
+	var act := _screen._build_act as Control
+	var said := _screen._build_said as Control
+	if bar == null or act == null or said == null:
+		_faults.append("the screen has no commit bar, sentence or `Build` to measure")
+		return
+	var bar_rect := Rect2(bar.global_position, bar.size)
+	var act_rect := Rect2(act.global_position, act.size)
+	var said_rect := Rect2(said.global_position, said.size)
+	print("BAR      %s  (%.0f x %.0f)  y %.0f..%.0f"
+			% [bar_rect, bar_rect.size.x, bar_rect.size.y, bar_rect.position.y, bar_rect.end.y])
+	print("         her rect is 863 x 112 at y 529..641, on the band she measured")
+	print("BUILD    %s  width %.0f  right edge %.0f (bar's is %.0f)"
+			% [act_rect, act_rect.size.x, act_rect.end.x, bar_rect.end.x])
+	var owed := AssayHud.commit_sentence_width(bar_rect.size.x, float(_screen.BUILD_GUTTER))
+	print("SENTENCE %s  width %.0f, floor %.0f (bar %.0f - Build's %.0f ceiling - gutter %d)"
+			% [said_rect, said_rect.size.x, owed, bar_rect.size.x, AssayHud.BUILD_ACT_WIDTH,
+			_screen.BUILD_GUTTER])
+	var block6 := (_screen._build_cost as Control).get_parent() as Control
+	if block6 != null:
+		print("BLOCK 6  bottom %.0f, bar top %.0f, gap %.0f (her blocks end at y 513)"
+				% [block6.global_position.y + block6.size.y, bar_rect.position.y,
+				bar_rect.position.y - (block6.global_position.y + block6.size.y)])
+	if absf(bar_rect.size.y - AssayHud.BUILD_COMMIT_BAR) > 1.0:
+		_faults.append("the bar is %.0f px tall and `BUILD_COMMIT_BAR` asks for %.0f"
+				% [bar_rect.size.y, AssayHud.BUILD_COMMIT_BAR])
+	if act_rect.size.x > AssayHud.BUILD_ACT_WIDTH:
+		_faults.append(("`Build` is %.0f px wide and her ceiling is %.0f, so the sentence is below "
+				+ "the width the wrap was measured at")
+				% [act_rect.size.x, AssayHud.BUILD_ACT_WIDTH])
+	if absf(act_rect.end.x - bar_rect.end.x) > 1.0:
+		_faults.append("`Build` ends at x %.0f and the bar ends at x %.0f: it is not right-aligned"
+				% [act_rect.end.x, bar_rect.end.x])
+	if said_rect.size.x + 1.0 < owed:
+		_faults.append("the sentence gets %.0f px of the bar and is owed %.0f"
+				% [said_rect.size.x, owed])
+	# **AND THE BAR IS INSIDE THE SCREEN IT IS A BLOCK OF**, which is the one absolute that IS a fault:
+	# a 112 px bar on a screen too short for it would hang past the world's control band, and the whole
+	# of `build_screen_rect` is about not covering that.
+	if bar_rect.end.y > screen_rect.end.y + 1.0:
+		_faults.append("the bar's bottom is %.0f and the screen ends at %.0f"
+				% [bar_rect.end.y, screen_rect.end.y])
 
 
 func _write() -> void:

@@ -738,6 +738,10 @@ impl AssaySim {
             "capacity_low" => facts.capacity_low,
             "capacity_high" => facts.capacity_high,
             "held" => facts.held,
+            // ASSA-329: the third state. `verdict` non-empty is a machine,
+            // this is a design still being placed (numbers real, `fault`
+            // naming the empty slot), and neither is a refusal.
+            "unfinished" => facts.unfinished,
         }
     }
 
@@ -1652,6 +1656,19 @@ pub struct DesignReadout {
     pub capacity_high: i64,
     /// True for a tool, false for a machine you plant. `Assembly::mount()`.
     pub held: bool,
+    /// **THE THIRD STATE: a design with a slot still empty** (ASSA-329).
+    ///
+    /// `verdict` is empty and `fault` carries the sim's phrase for what is
+    /// still missing, exactly as on a refusal — **and every number is REAL**,
+    /// which is the whole difference. A build screen draws the bars moving as
+    /// parts go in and puts `fault` where the verdict word goes; it decides
+    /// nothing, which is why this is a flag from the sim and not a test on
+    /// `fault`'s text in GDScript.
+    ///
+    /// Three states, so a host needs all three: `verdict` non-empty is a
+    /// machine, this flag is a design being placed, and neither is a selection
+    /// the rules throw out.
+    pub unfinished: bool,
 }
 
 impl DesignReadout {
@@ -1678,6 +1695,7 @@ impl DesignReadout {
             capacity_low: 0,
             capacity_high: 0,
             held: false,
+            unfinished: false,
         }
     }
 }
@@ -1693,32 +1711,60 @@ pub fn design_readout_facts(world: &World, frame: &str, mounted: &[String]) -> D
     let Some(frame_item) = read(frame) else {
         return DesignReadout::refused(format!("{frame} is not an item"));
     };
-    // STEP'S REFUSALS IN STEP'S ORDER (`PlayerCommand::Assemble`): the frame's
-    // kind, then each mounted kind, then the slot rules. A readout that
-    // answered only the arithmetic would hand back numbers for a design
-    // `Assemble` throws out.
-    let Some(frame_part) = sim::assembly::Part::from_item(frame_item) else {
-        return DesignReadout::refused(sim::debug::not_a_part_phrase(frame_item.kind.name()));
-    };
-    let mut parts = Vec::with_capacity(mounted.len());
+    let mut items = Vec::with_capacity(mounted.len());
     for text in mounted {
         let Some(item) = read(text) else {
             return DesignReadout::refused(format!("{text} is not an item"));
         };
-        let Some(part) = sim::assembly::Part::from_item(item) else {
-            return DesignReadout::refused(sim::debug::not_a_part_phrase(item.kind.name()));
-        };
-        parts.push(part);
+        items.push(item);
     }
-    let assembly = Assembly::new(frame_part, parts);
-    if let Err(e) = assembly.validate() {
-        return DesignReadout::refused(sim::debug::assembly_error_phrase(e));
-    }
-
+    // STEP'S REFUSALS IN STEP'S ORDER, AND STEP'S OWN FUNCTION (ASSA-324):
+    // `sim::assembly::plan` is what `PlayerCommand::Assemble` asks, so a
+    // readout and the Build button cannot drift apart about which design is
+    // legal. A readout that answered only the arithmetic would hand back
+    // numbers for a design `Assemble` throws out.
+    //
+    // **THE EMPTY PACK IS THE POINT, not a shortcut.** This entry point has no
+    // player and prices nothing — §5.2 is five bars, and have/need is block 6's
+    // job (`debug::design_preview`). `plan` weighs an unaffordable design
+    // anyway (the Game Director's ASSA-324 ruling), so the bars are the same
+    // whatever the pack holds, and `MissingItems` is dropped on the floor by
+    // reading `built` rather than `refusal`.
+    //
+    // It also closes a hole: this walked the chain itself with no species gate,
+    // and `stat_range` indexes the roster raw, so `design_readout` on a
+    // made-up index **panicked** — measured on main `e27ef54`, `index out of
+    // bounds: the len is 6 but the index is 200`. Nothing in `client/` calls it
+    // yet, and `item_json` will spell species 200 for anyone who asks.
+    let empty = sim::inventory::Inventory::new();
+    let planned = sim::assembly::plan(frame_item, &items, &world.species, &empty);
+    // THREE STATES, AND THE SIM PICKS WHICH (ASSA-329). `design` gives the
+    // arithmetic whether or not these parts are a machine yet; `built` says no
+    // for a design still being placed, so the verdict word cannot leak onto
+    // one. A build screen reads `unfinished` rather than testing `fault`'s
+    // text, because deciding what a sentence means is the sim's job.
+    let Some(design) = planned.design() else {
+        let reason = planned.refusal().expect("a plan with no design refuses");
+        return DesignReadout::refused(
+            sim::debug::plan_refusal_phrase(world, None, reason)
+                .expect("`plan` refuses only in its own four words"),
+        );
+    };
+    let unfinished = planned.unfinished();
+    let assembly = &design.assembly;
     let range = assembly.stat_range(&world.species);
     DesignReadout {
-        verdict: range.verdict().label().to_string(),
-        fault: String::new(),
+        // A HALF-BUILT DESIGN GETS NO VERDICT WORD AND NEVER A FOURTH ONE: the
+        // sim's phrase for the empty slot goes in `fault`, where the refusal's
+        // does, and the screen puts it where the verdict would have been.
+        verdict: match unfinished {
+            Some(_) => String::new(),
+            None => range.verdict().label().to_string(),
+        },
+        fault: match unfinished {
+            Some(e) => sim::debug::assembly_error_phrase(e),
+            None => String::new(),
+        },
         mass_low: range.low.mass as i64,
         mass_high: range.high.mass as i64,
         budget_low: range.low.budget as i64,
@@ -1731,6 +1777,7 @@ pub fn design_readout_facts(world: &World, frame: &str, mounted: &[String]) -> D
         capacity_low: range.low.capacity as i64,
         capacity_high: range.high.capacity as i64,
         held: assembly.mount() == Some(Mount::Held),
+        unfinished: unfinished.is_some(),
     }
 }
 
@@ -5984,6 +6031,36 @@ mod tests {
                 vec![head.clone(), head.clone()],
             ),
             ("not an item at all", "{}".to_string(), vec![head.clone()]),
+            // ADDED BY ASSA-324, AND IT PANICKED HERE UNTIL `plan` GATED IT.
+            // This entry point's refusal chain was its own copy of `step`'s,
+            // minus the first link: the species roster is checked in `step`'s
+            // precheck, where a readout could not reach it, and
+            // `stat_range` indexes `world.species` raw. Measured on main
+            // `e27ef54`: `index out of bounds: the len is 6 but the index is
+            // 200`, from `assembly.rs:684`. Nothing in `client/` calls
+            // `design_readout` yet and `item_json` will spell species 200 for
+            // anyone who asks, so this is the hole that was waiting rather
+            // than the crash that happened. Kept in THIS loop rather than a
+            // parallel test: a refused design says one thing, whatever
+            // refused it.
+            (
+                "a species this world never rolled",
+                item_of(
+                    ItemKind::Part(sim::PartKind::Frame(Mount::Held)),
+                    sim::SpeciesId(200),
+                    sim::Grade::A,
+                ),
+                vec![head.clone()],
+            ),
+            (
+                "a made-up species on a mounted part, not the frame",
+                handle.clone(),
+                vec![item_of(
+                    ItemKind::Part(sim::PartKind::Head),
+                    sim::SpeciesId(200),
+                    sim::Grade::A,
+                )],
+            ),
         ] {
             let got = design_readout_facts(sim.world(), &frame, &mounted);
             assert!(!got.fault.is_empty(), "{what} should have a fault: {got:?}");
@@ -6011,6 +6088,14 @@ mod tests {
                     capacity_low: 0,
                     capacity_high: 0,
                     held: false,
+                    // ASSA-329 decided here, because this literal made it a
+                    // compile error: **false, and that is a claim, not a
+                    // zero.** None of the cases above is a design a later
+                    // press could rescue — `TooFew` is the only recoverable
+                    // fault and it is not in this loop, deliberately, because
+                    // its numbers are REAL. See
+                    // `a_design_being_placed_crosses_its_numbers_and_no_verdict`.
+                    unfinished: false,
                 },
                 "{what}: a refusal must carry the fault and NOTHING else: {got:?}"
             );
@@ -6024,6 +6109,78 @@ mod tests {
         ]);
         let fine = design_readout_facts(sim.world(), &frame, &mounted);
         assert!(fine.fault.is_empty() && fine.mass_low > 0, "{fine:?}");
+    }
+
+    /// **A DESIGN STILL BEING PLACED CROSSES ITS NUMBERS AND NO VERDICT**
+    /// (ASSA-329). The third state, which this readout was built for: the
+    /// build screen's bars have to move as parts go in, and before this a held
+    /// frame's only two states were "empty" and "done".
+    ///
+    /// The sibling of `a_refused_design_crosses_no_numbers_at_all` and
+    /// deliberately not a case inside it: a refusal's numbers are all zero and
+    /// this one's are real, so one loop cannot ask both questions.
+    #[test]
+    fn a_design_being_placed_crosses_its_numbers_and_no_verdict() {
+        let (mut sim, _me) = with_a_player("marlow");
+        sim.world.species[0].assayed = true;
+        let rock = sim.world().species[0].id;
+        let handle = item_of(
+            ItemKind::Part(sim::PartKind::Frame(Mount::Held)),
+            rock,
+            sim::Grade::A,
+        );
+        let head = item_of(ItemKind::Part(sim::PartKind::Head), rock, sim::Grade::A);
+
+        let placing = design_readout_facts(sim.world(), &handle, &[]);
+        assert!(
+            placing.unfinished,
+            "a handle with its one slot empty is a design you are still \
+             placing, not one the rules threw out: {placing:?}"
+        );
+        assert!(
+            placing.verdict.is_empty(),
+            "SAFE is a sentence about a machine that exists: {placing:?}"
+        );
+        // THE SIM'S PHRASE, NOT THIS CRATE'S. Compared against the sim's own
+        // function rather than a string spelled here, so a reworded slot fault
+        // cannot drift between the log and the screen.
+        assert_eq!(
+            placing.fault,
+            sim::debug::assembly_error_phrase(sim::AssemblyError::TooFew {
+                kind: sim::PartKind::Head,
+                have: 0,
+                min: 1,
+            }),
+            "{placing:?}"
+        );
+        // AND THE NUMBERS ARE REAL, which is the entire difference from a
+        // refusal. The frame's budget is what the mass is a fraction of, and
+        // it exists before any head does.
+        assert!(
+            placing.budget_high > 0 && placing.mass_high > 0 && placing.hand_speed > 0,
+            "a half-built design has a mass and a budget: {placing:?}"
+        );
+        assert!(placing.held, "a handle is a held frame: {placing:?}");
+
+        // THE PREMISE: filling the slot turns the same design into a machine,
+        // so `unfinished` is reporting the slot and not a constant.
+        let done = design_readout_facts(sim.world(), &handle, &[head]);
+        assert!(
+            !done.unfinished && !done.verdict.is_empty() && done.fault.is_empty(),
+            "a head finishes it: {done:?}"
+        );
+        // And the budget did not move: it is the FRAME's, so the bar the
+        // player watches fill has a fixed end.
+        assert_eq!(
+            (placing.budget_low, placing.budget_high),
+            (done.budget_low, done.budget_high),
+            "the budget is the frame's, so it must not move as parts go in"
+        );
+        assert!(
+            done.mass_high > placing.mass_high,
+            "and the mass must have MOVED, or there was nothing live to watch: \
+             {placing:?} then {done:?}"
+        );
     }
 
     /// **DURABILITY CROSSES AS SWINGS AND THE POOL NEVER CROSSES AT ALL**

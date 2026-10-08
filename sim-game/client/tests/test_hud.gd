@@ -509,6 +509,72 @@ func test_machine_rims_then_players_then_bands() -> bool:
 	return true
 
 
+## **EVERY MACHINE MARK IS ONE INK, WHICH IS THE WHOLE REASON TWO ADJACENT BANDS DELETE NOTHING**
+## (ASSA-289, Maren's condition of 2026-10-08: *"if a machine mark ever gains an owner or kind tint,
+## band-on-band is a deletion again and this finding reopens"*).
+##
+## **THE ITEM'S HEADLINE NUMBERS -- her 28.1% and my 27.8% -- WERE RECT INTERSECTIONS REPORTED AS
+## PAINT.** White over white deletes nothing, so the overlap costs a neighbour's band nothing, and
+## that is what closed the item rather than any geometry. **But it is a property of the PALETTE, not
+## of the paint order**, and nothing tested it: two conditions carry it, both of them one edit away
+## from false, and a comment is what we had.
+##
+## 1. **ONE INK.** `building_mark` returns `"colour": HOVER` whatever the building is -- it reads
+##    `pos` and `footprint` and nothing else -- and `sim/src/building.rs` has no owner. An owner tint
+##    for co-op or a tint per machine kind is a reasonable thing for someone to want; this is the test
+##    that tells them what it costs on the schematic before they ship it.
+## 2. **OPAQUE.** The band's painted ink is `mark_ink_of(&"building", colour)`, which takes the
+##    table's alpha. At alpha 1 a second coat of the same ink is a no-op; at anything less, two coats
+##    of ONE ink still differ from one coat, so the probe's 144/144 would stop being true with the
+##    palette untouched. I did not notice that until I wrote this test.
+##
+## It asks `building_mark` for marks across everything a caller can vary, including keys a future
+## caller might carry (`kind`, `owner`, `material`), and requires one ink for all of them.
+func test_every_machine_mark_is_one_ink_so_a_neighbours_band_deletes_nothing() -> bool:
+	var cell := 9.0
+	var origin := AssayHud.MARGIN
+	var cases: Array[Dictionary] = [
+		{"pos": Vector2i(54, 56), "footprint": Vector2i(1, 1)},
+		{"pos": Vector2i(55, 56), "footprint": Vector2i(1, 1)},
+		{"pos": Vector2i(54, 56), "footprint": Vector2i(2, 2)},
+		{"pos": Vector2i(12, 7), "footprint": Vector2i(3, 2)},
+		# The keys a future caller might hand it. A tint keyed on any of these is the change this
+		# test exists to catch, and it has to be caught at `building_mark` rather than at the paint.
+		{"pos": Vector2i(20, 20), "footprint": Vector2i(1, 1), "kind": "smelter", "owner": 0},
+		{"pos": Vector2i(21, 20), "footprint": Vector2i(1, 1), "kind": "machine", "owner": 1,
+				"material": {"species": 3, "grade": "A"}},
+	]
+	var inks := {}
+	var spans := {}
+	for case in cases:
+		var mark := AssayHud.building_mark(case, cell, origin)
+		var ink: Color = mark["colour"]
+		var rect: Rect2 = mark["rect"]
+		inks[ink.to_html()] = int(inks.get(ink.to_html(), 0)) + 1
+		spans[rect.size] = true
+	# NON-VACUITY FIRST: if every case produced the same mark, one ink would be free. The cases must
+	# differ in geometry for "and yet one ink" to mean anything.
+	if spans.size() < 2:
+		return _fail("every case produced the same mark, so this test asserts nothing: %s" % [spans])
+	if inks.size() != 1:
+		return _fail(("machine marks come in %d inks now (%s). ASSA-289 closed on there being ONE: "
+				+ "two adjacent marks overlap by construction at a 20 px mark on a 9 px cell, and "
+				+ "white over white deletes nothing only while both are the same white. With a "
+				+ "second ink the younger machine takes a side off the older one's band again -- "
+				+ "re-open ASSA-289 and re-run `tools/assa289_paint_probe.gd` before shipping it.")
+				% [inks.size(), inks])
+	var ink_seen: Color = AssayHud.building_mark(cases[0], cell, origin)["colour"]
+	if ink_seen != AssayHud.HOVER:
+		return _fail("a machine mark is painted in %s, not the map's own mark ink" % [ink_seen])
+	# AND THE SECOND HALF, WHICH IS THE TABLE'S: two coats of a TRANSLUCENT ink are not one coat.
+	var painted := AssayHud.mark_ink_of(&"building", AssayHud.HOVER)
+	if not is_equal_approx(painted.a, 1.0):
+		return _fail(("the `building` row paints at alpha %f, so a neighbour's band laid over this "
+				+ "one composites to a different value and the 144/144 of ASSA-289 is stale even "
+				+ "with one ink. The row's alpha is part of that finding.") % painted.a)
+	return true
+
+
 ## **`MIN_DEPOSIT_RADIUS_TILES` IS A SIM FACT LIVING IN A CLIENT CONSTANT, SO IT IS CHECKED AGAINST
 ## THE SIM** (ASSA-293). The held letter's whole justification is that it fits the narrowest patch
 ## `worldgen` can roll; `sim/src/worldgen.rs` rolls `rng.range(2, 5)` and there is no named constant
@@ -2581,4 +2647,101 @@ func test_the_build_screen_gives_back_whatever_the_control_band_takes() -> bool:
 	if free.end.y > world.end.y - AssayHud.MARGIN.y:
 		return _fail("with no band in the way the screen reaches %.0f and the world's pad ends at %.0f"
 				% [free.end.y, world.end.y - AssayHud.MARGIN.y])
+	return true
+
+
+## **THE COST GRAMMAR, AS A LITERAL** (ASSA-332; Maren's §5.5: *"`need 1 · have 2`. Both numbers
+## always, no slash, need first"*, reversing her own §5.3 after seeing what slice 1 drew).
+##
+## **THE EXPECTED STRING IS WRITTEN OUT HERE AND NOT ASKED OF THE FUNCTION UNDER TEST.** My ASSA-325
+## refusal test asserted a value against the constructor that built it and stayed green with a 7 in
+## it; the same day, `test_buttons.gd`'s cost check asked `have_need_line` what it should say. **A
+## literal is the only form in which a swapped pair of `int`s can fail**, and a swap is invisible in
+## GDScript: both arguments are `int` and the screen would read `need 8 · have 2`.
+func test_a_cost_entry_states_the_need_first_and_carries_no_slash() -> bool:
+	if AssayHud.cost_counts_line(1, 2) != "need 1 · have 2":
+		return _fail("needing 1 of 2 held reads `%s`" % AssayHud.cost_counts_line(1, 2))
+	# **THE SHORT ROW HAS TO READ AS AN INSTRUCTION**, which is her reason for putting need first.
+	if AssayHud.cost_counts_line(4, 0) != "need 4 · have 0":
+		return _fail("needing 4 and holding none reads `%s`" % AssayHud.cost_counts_line(4, 0))
+	# **AND THE SLASH MAY NOT COME BACK ANYWHERE IN IT** (her §5.5: a slash is a ratio's mark, a ratio
+	# needs left <= right, and the surplus case is the normal one on a stocked pack).
+	if AssayHud.cost_counts_line(20, 12).contains("/"):
+		return _fail("the slash is back: `%s`" % AssayHud.cost_counts_line(20, 12))
+	return true
+
+
+## **SHORT IS `have < need`, AND THE BOUNDARY IS THE LAST BATCH YOU OWN** (ASSA-332; Maren's §5.5:
+## *"the whole entry in `FAILED` when have < need"*).
+##
+## `<` and `<=` both read fine in prose and only one of them lets a player spend the last batch they
+## hold. **It is ASSA-247's boundary and it is the sim's behaviour being previewed**, not a taste: the
+## sim spends an exact pack happily, so an exact pack painted in `FAILED` would be the screen calling
+## a press that works a failure.
+func test_an_exact_pack_is_not_short_and_an_empty_one_is() -> bool:
+	if AssayHud.cost_entry_short(1, 1):
+		return _fail("holding exactly the one batch it needs reads as short")
+	if AssayHud.cost_entry_short(1, 2):
+		return _fail("holding two of a one-batch cost reads as short")
+	if not AssayHud.cost_entry_short(3, 1):
+		return _fail("holding 1 of a cost of 3 does not read as short")
+	if not AssayHud.cost_entry_short(4, 0):
+		return _fail("holding none of a cost of 4 does not read as short")
+	return true
+
+
+## **THE SIM'S SENTENCE BREAKS AT THE SIM'S OWN MARK AND NOWHERE ELSE** (ASSA-332; Maren's §5.4
+## ruling 2, and ASSA-305's "whole" as she re-read it: *"wrapping is not recomposing"*).
+##
+## **THE PROPERTY THAT MATTERS IS NOT THE SPLIT, IT IS THAT NOTHING IS LOST** -- so the clauses are
+## joined back up and compared to the sentence, character for character. A split that dropped the `·`
+## or ellipsised a clause would pass a size check and fail this one.
+##
+## **AND THE `+` INSIDE THE PARTS CLAUSE IS NOT A BREAK POINT** (her ruling): the fixture's widest
+## clause is a parts list with a `+` in the middle of it and it has to come back whole, because a
+## break there is what put `head(Bokase` on one row and `B 1-25)` on the next -- a material separated
+## from its own grade letter.
+func test_the_sims_sentence_breaks_only_at_the_sims_own_mark() -> bool:
+	var sentence := "SAFE · handle(Bokase B 2-50) + head(Bokase B 1-25) · 3 of 8 mass"
+	var clauses := AssayHud.sentence_clauses(sentence)
+	if clauses.size() != 3:
+		return _fail("a sentence with two `·` broke into %d rows: %s" % [clauses.size(), clauses])
+	if clauses[0] != "SAFE ·":
+		return _fail("the first clause is `%s`" % clauses[0])
+	if clauses[1] != "handle(Bokase B 2-50) + head(Bokase B 1-25) ·":
+		return _fail("the parts clause came back as `%s`" % clauses[1])
+	if clauses[2] != "3 of 8 mass":
+		return _fail("the last clause is `%s`" % clauses[2])
+	if " ".join(clauses) != sentence:
+		return _fail("the rows join back to `%s` and the sim said `%s`"
+				% [" ".join(clauses), sentence])
+	# A SENTENCE WITH NO MARK IS ONE ROW, which is every make row's `line` today.
+	var one := AssayHud.sentence_clauses("2 Tonore refined (A), you have 8")
+	if one.size() != 1 or one[0] != "2 Tonore refined (A), you have 8":
+		return _fail("a sentence with no `·` came back as %s" % [one])
+	# AND NOTHING IS INVENTED FOR A SENTENCE THE SIM DID NOT SAY: no offer, no row.
+	if not AssayHud.sentence_clauses("").is_empty():
+		return _fail("an empty sentence drew %s" % [AssayHud.sentence_clauses("")])
+	return true
+
+
+## **THE SENTENCE'S WIDTH IS THE BAR LESS THE BUTTON'S CEILING LESS THE GUTTER** (ASSA-332; Maren's
+## §5.4: *"Build's box is ≤ 160 px, so the sentence gets ≥ 687 px, the width the wrap was measured
+## at"*).
+##
+## **687 IS NOT WRITTEN DOWN IN THE CLIENT AND IS ASSERTED HERE**, which is the ASSA-320 shape: a
+## number living in prose beside a constant agrees today and drifts the day either moves. The screen's
+## own width going into it is checked in `test_main_screen.gd`, against the real `BUILD_GUTTER`.
+func test_the_commit_bar_leaves_the_sentence_the_width_it_was_measured_at() -> bool:
+	if not is_equal_approx(AssayHud.commit_sentence_width(863.0, 16.0), 687.0):
+		return _fail("her 863 px bar leaves the sentence %.0f px, not 687"
+				% AssayHud.commit_sentence_width(863.0, 16.0))
+	# IT MOVES WITH THE BAR, so a wider screen is not a wider BUTTON.
+	if not is_equal_approx(AssayHud.commit_sentence_width(1000.0, 16.0), 824.0):
+		return _fail("a 1000 px bar leaves the sentence %.0f px, not 824"
+				% AssayHud.commit_sentence_width(1000.0, 16.0))
+	# AND A BAR WITH NO ROOM LEAVES NO SENTENCE RATHER THAN A NEGATIVE ONE (`build_screen_rect`'s rule).
+	if AssayHud.commit_sentence_width(100.0, 16.0) != 0.0:
+		return _fail("a 100 px bar left the sentence %.0f px"
+				% AssayHud.commit_sentence_width(100.0, 16.0))
 	return true
