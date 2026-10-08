@@ -1717,7 +1717,7 @@ func _build_build_screen_over_the_map(world: Rect2) -> void:
 	# the screen Esc and *"a visible way out"* in the title bar; Esc alone is invisible, and the board's
 	# first act on a new surface is to look for the way back (ASSA-316's close got the same treatment).
 	# QUIET, because the screen spends its one accent on `Build` (her §5).
-	var leave := _button("close (Esc)", func() -> void: _close_build_screen(),
+	var leave := _button(AssayHud.build_close_text(), func() -> void: _close_build_screen(),
 			"close this screen. Esc does the same, and nothing you have chosen is lost")
 	leave.theme_type_variation = &"Quiet"
 	crown.add_child(leave)
