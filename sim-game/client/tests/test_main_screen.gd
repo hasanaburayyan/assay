@@ -2869,15 +2869,28 @@ func test_the_schematic_is_handed_every_building_the_sim_reports() -> bool:
 						+ "drawn off the world is the same news as one not drawn")
 						% [building["kind"], building["pos"], at, map])
 				break
-			# **NOT THE PLAYER'S SHAPE AT THE PLAYER'S SIZE, ON THE REAL CELL** (Maren's box 4). At
-			# this screen's own tile size, the mark must leave empty the corner a 16px player square
-			# fills -- which is the greyscale claim as geometry rather than as a hue.
+			# **NOT THE PLAYER'S SHAPE, ON THE REAL CELL** (Maren's box 4, re-asked as ASSA-236).
+			# The claim it holds is reversed and still the same claim: the two must differ in SHAPE,
+			# which is the half that survives a greyscale copy. A machine's mark fills the corner of
+			# its own box -- it is the footprint -- and is empty at its CENTRE, where a person
+			# standing on it is solid. Asserting both is what stops the swap being a rename.
 			var span: Vector2 = mark["span"]
 			var corner := at + span * 0.5 - (span.normalized() * 0.5)
-			if Geometry2D.is_point_in_polygon(corner, mark["points"] as PackedVector2Array):
-				ok = _fail(("the %s's mark fills its own corner %s at %.1fpx a tile, so it is a "
-						+ "filled rect like the player's %.0fpx mark") % [building["kind"], corner,
-						screen._cell, AssayHud.PLAYER_MARK_PX])
+			var points := mark["points"] as PackedVector2Array
+			if not Geometry2D.is_point_in_polygon(corner, points):
+				ok = _fail(("the %s's mark misses its own corner %s at %.1fpx a tile, so it is a "
+						+ "point shape and not the footprint it stands on")
+						% [building["kind"], corner, screen._cell])
+				break
+			if Geometry2D.is_point_in_polygon(at, mark["hole_points"] as PackedVector2Array) == false:
+				ok = _fail(("the %s's mark is solid at %s, its own centre: a person standing on this "
+						+ "machine is painted out by it (ASSA-203 measured 0.0%% surviving)")
+						% [building["kind"], at])
+				break
+			if not Geometry2D.is_point_in_polygon(at,
+					AssayHud.player_mark(at, false)["points"] as PackedVector2Array):
+				ok = _fail("a partner's own mark is hollow at its centre too, so the two no longer "
+						+ "differ in the way this test says they do")
 				break
 	# **THE TWO KEYS IT READS WITHOUT A DEFAULT ARE DECLARED AT THE BOUNDARY.** `building_mark` reads
 	# `pos` and `footprint` with `[]`, so a binding that stopped sending either empties the frame
@@ -3169,23 +3182,45 @@ func test_the_hatch_is_painted_before_the_species_letter() -> bool:
 ## scan is about this file and not about the engine. The picture is `tools/window_shot.gd`'s
 ## whole-world shot; this is what notices if the call goes away.
 func test_both_player_marks_carry_the_maps_own_keyline() -> bool:
-	var body := Rect2(Vector2(100.0, 200.0), Vector2(AssayHud.PLAYER_MARK_PX, AssayHud.PLAYER_MARK_PX))
-	var rim := AssayHud.mark_keyline_rect(body)
-	if absf(rim.size.x - body.size.x - 2.0 * AssayHud.MARK_KEYLINE_PX) > 1e-4 \
-			or absf(rim.size.y - body.size.y - 2.0 * AssayHud.MARK_KEYLINE_PX) > 1e-4:
-		return _fail(("a %.0fpx body gets a %s keyline rect; %.0fpx of rim on every side makes it %.0f "
-				+ "square") % [body.size.x, rim.size, AssayHud.MARK_KEYLINE_PX,
-				body.size.x + 2.0 * AssayHud.MARK_KEYLINE_PX])
-	if not rim.encloses(body):
-		return _fail(("the keyline rect %s does not enclose the body %s, so the rim is being paid for "
-				+ "out of a size Maren set from a measurement") % [rim, body])
-	# CLEAR OF YOUR OWN RING, which is 1.6x the body drawn hollow at 2px -- its inner edge is 11.8px
-	# from the centre against the rim's 10. Two marks that met would read as one thick frame.
-	var ring_inner := AssayHud.PLAYER_MARK_PX * 0.8 - 1.0
-	if AssayHud.PLAYER_MARK_PX * 0.5 + AssayHud.MARK_KEYLINE_PX >= ring_inner:
+	# **BOTH BODIES, AND THEY ARE TWO SHAPES SINCE ASSA-236**, so the rim is measured on each rather
+	# than on one rect that used to serve both. The claim is the same one: every point of the body is
+	# inside its own rim, and the rim is `MARK_KEYLINE_PX` thick PERPENDICULAR -- which on the
+	# diamond means a diagonal grown by `2t*sqrt(2)` and on the cross means every edge moved by `t`.
+	var at := Vector2(100.0, 200.0)
+	for mine: bool in [true, false]:
+		var person: Dictionary = AssayHud.player_mark(at, mine)
+		var points: PackedVector2Array = person["points"]
+		var rim: PackedVector2Array = person["keyline_points"]
+		if rim.size() != points.size():
+			return _fail("a %s body is a %d-gon and its rim a %d-gon, so the rim is not its shape"
+					% ["player" if mine else "partner", points.size(), rim.size()])
+		for point: Vector2 in points:
+			if not Geometry2D.is_point_in_polygon(point, rim):
+				return _fail(("a %s body reaches %s, outside its own keyline: the rim is being paid "
+						+ "for out of a size Maren set from a measurement")
+						% ["player" if mine else "partner", point])
+		# **THE THICKNESS, OFF THE POLYGON AND NOT OFF THE CONSTANT -- AND THE TWO SHAPES CONVERT
+		# DIFFERENTLY, WHICH IS THE WHOLE POINT OF MEASURING IT.** The gap at the top vertex is the
+		# diagonal's growth on a diamond, so the PERPENDICULAR rim is that over sqrt(2); on the
+		# cross every edge is axis-aligned and the gap is the rim. Writing the diamond's number as
+		# if it were the rim is the `span + 4` mistake ASSA-193 caught, one shape along.
+		# (The gap is read on the Y axis, not as a distance between the two first vertices: on the
+		# cross that vertex is a CORNER of the top arm and moves diagonally, so a distance there
+		# reports 2.83 for a 2px rim. The edge it sits on moves by exactly the rim.)
+		var vertex_gap := absf(points[0].y - rim[0].y)
+		var gap := vertex_gap / sqrt(2.0) if mine else vertex_gap
+		if absf(gap - AssayHud.MARK_KEYLINE_PX) > 0.01:
+			return _fail(("a %s body's rim is %.2fpx thick where it should be %.2f")
+					% ["player" if mine else "partner", gap, AssayHud.MARK_KEYLINE_PX])
+	# CLEAR OF YOUR OWN RING, which is 1.6x the body drawn hollow at 2px. Both are diamonds now, so
+	# the distance that matters is to the EDGE and not to the point: the ring's edge sits at
+	# 12.8/sqrt(2) = 9.05px from the centre and the rim's at 7.66. Two marks that met would read as
+	# one thick frame, and on the old square ring this margin was 1.8px rather than 1.4.
+	var ring_inner := AssayHud.PLAYER_MARK_PX * 0.8 / sqrt(2.0) - 1.0
+	var rim_edge := (AssayHud.PLAYER_MARK_PX * 0.5 + AssayHud.MARK_KEYLINE_PX * sqrt(2.0)) / sqrt(2.0)
+	if rim_edge >= ring_inner:
 		return _fail(("the keyline reaches %.1fpx from a player's centre and your own ring's inner "
-				+ "edge is at %.1fpx: they would meet and read as one frame")
-				% [AssayHud.PLAYER_MARK_PX * 0.5 + AssayHud.MARK_KEYLINE_PX, ring_inner])
+				+ "edge is at %.1fpx: they would meet and read as one frame") % [rim_edge, ring_inner])
 	var source := FileAccess.get_file_as_string("res://scripts/main.gd")
 	if source == "":
 		return _fail("could not read res://scripts/main.gd, so nothing was scanned")
@@ -3195,17 +3230,20 @@ func test_both_player_marks_carry_the_maps_own_keyline() -> bool:
 	if AssayHud.mark_ink(&"player_keyline") != AssayHud.MAP_BG:
 		return _fail("a player's keyline is no longer the map's own ink: %s"
 				% AssayHud.mark_ink(&"player_keyline"))
+	if AssayHud.mark_ink(&"partner_keyline") != AssayHud.MAP_BG:
+		return _fail("a partner's keyline is no longer the map's own ink: %s"
+				% AssayHud.mark_ink(&"partner_keyline"))
 	var call_at := source.find(
-			"draw_rect(AssayHud.mark_keyline_rect(body), AssayHud.mark_ink(&\"player_keyline\"), true)")
+			"AssayHud.mark_ink(&\"player_keyline\" if mine else &\"partner_keyline\"))")
 	if call_at < 0:
-		return _fail("no player mark in main.gd draws `AssayHud.mark_keyline_rect` in MAP_BG, so a "
+		return _fail("no player mark in main.gd draws `player_mark`'s keyline polygon in MAP_BG, so a "
 				+ "partner on a light species letter still fuses with it (Maren's ASSA-189 ruling 2)")
-	# **UNDER THE BODY AND NOT OVER IT.** Both bodies: one `draw_rect(body, colour, true)` serves
-	# MINE and THEIRS, so the rim is on the partner by construction rather than by a second call.
+	# **UNDER THE BODY AND NOT OVER IT.** Both bodies: one `draw_colored_polygon` serves MINE and
+	# THEIRS, so the rim is on the partner by construction rather than by a second call.
 	var body_at := source.find(
-			"draw_rect(body, AssayHud.mark_ink_of(&\"player_mine\" if mine else &\"player_theirs\", colour),")
+			"AssayHud.mark_ink_of(&\"player_mine\" if mine else &\"player_theirs\", colour))")
 	if body_at < 0:
-		return _fail("main.gd no longer paints a player body as one `draw_rect` of the mark's own ink, so "
+		return _fail("main.gd no longer paints a player body as one polygon of the mark's own ink, so "
 				+ "this scan cannot say whether the keyline is under it")
 	if call_at > body_at:
 		return _fail("main.gd draws the player keyline AFTER the body, which is a dark frame ON the "
@@ -3257,39 +3295,44 @@ func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> b
 	var tile: Vector2i = glyph["tile"]
 	var planted := [{"pos": tile, "footprint": Vector2i(1, 1), "kind": "machine"}]
 	var mark: Dictionary = (screen._building_marks(planted)[0] as Dictionary)
-	var diamond: PackedVector2Array = mark["points"]
+	var outline: PackedVector2Array = mark["points"]
+	var hole: PackedVector2Array = mark["hole_points"]
 	var box: Rect2 = glyph["box"]
-	# SAMPLED ON A 1px GRID, NOT REASONED, AND THE FRACTION IS THE DIAMOND'S AND NOT THE BOX'S. The
+	# SAMPLED ON A 1px GRID, NOT REASONED, AND THE FRACTION IS THE MARK'S AND NOT THE BOX'S. The
 	# box is the font's whole line box -- ascent, descent and advance -- so the share of IT a 16px
-	# diamond covers is small however completely the letter is destroyed. What the defect is about is
-	# where the diamond lands: all of it, on the middle of the letter.
-	var diamond_px := 0
+	# mark covers is small however completely the letter is destroyed. What the defect is about is
+	# where the mark lands: all of it, on the middle of the letter.
+	#
+	# **THE SAMPLE IS THE FRAME AND NOT ITS BOX SINCE ASSA-236.** The mark is hollow, so counting its
+	# bounding box would report ink that is not painted -- and the hole is most of it.
+	var mark_px := 0
 	var on_letter := 0
-	var bounds := Rect2(diamond[0], Vector2.ZERO)
-	for point in diamond:
+	var bounds := Rect2(outline[0], Vector2.ZERO)
+	for point in outline:
 		bounds = bounds.expand(point)
 	var y := bounds.position.y
 	while y <= bounds.end.y:
 		var x := bounds.position.x
 		while x <= bounds.end.x:
 			var point := Vector2(x, y)
-			if Geometry2D.is_point_in_polygon(point, diamond):
-				diamond_px += 1
+			if Geometry2D.is_point_in_polygon(point, outline) \
+					and not Geometry2D.is_point_in_polygon(point, hole):
+				mark_px += 1
 				if box.has_point(point):
 					on_letter += 1
 			x += 1.0
 		y += 1.0
-	var covered := float(on_letter) / float(maxi(diamond_px, 1))
+	var covered := float(on_letter) / float(maxi(mark_px, 1))
 	if covered < 0.8:
-		ok = _fail(("a machine on the deposit's own centre tile %s puts %.1f%% of its diamond (%d of "
+		ok = _fail(("a machine on the deposit's own centre tile %s puts %.1f%% of its frame (%d of "
 				+ "%d sampled px) inside the letter's box %s: the case this item is about is not in "
-				+ "this test") % [tile, covered * 100.0, on_letter, diamond_px, box])
+				+ "this test") % [tile, covered * 100.0, on_letter, mark_px, box])
 	# **THE ORDER.** The one assertion that fails on the code this item was filed against: the letter
 	# was painted in the deposit loop, four passes before the factories.
 	if ok:
 		var source := FileAccess.get_file_as_string("res://scripts/main.gd")
 		var glyph_at := source.find("AssayHud.mark_ink_of(&\"species_glyph\", glyph[\"ink\"]))")
-		var building_at := source.find("AssayHud.mark_ink_of(&\"building\", shape[\"colour\"]))")
+		var building_at := source.find("AssayHud.mark_ink_of(&\"building\", shape[\"colour\"])")
 		if source == "" or glyph_at < 0 or building_at < 0:
 			ok = _fail(("main.gd does not paint both the species letter (%d) and a building mark "
 					+ "(%d) through the map's table, so this scan says nothing")

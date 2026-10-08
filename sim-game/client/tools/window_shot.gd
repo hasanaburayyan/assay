@@ -2073,8 +2073,14 @@ func _schematic_report() -> Dictionary:
 ##
 ## **IT CARRIES THE PLAYER MARKS AS THE CONTROL.** The claim is not "a building is visible", it is "a
 ## building is not the player's shape", and a measurement with only one class in it cannot say that.
-## The players are the filled rects the diamond has to differ from, in the same frame and the same
-## greyscale.
+## The players are the other two shapes the machine's mark has to differ from, in the same frame and
+## the same greyscale.
+##
+## **THE `shape` FIELD WAS A STRING TYPED HERE AND IT WENT FALSE THE HOUR THE MARKS CHANGED**
+## (ASSA-236). It said `diamond` for a machine and `rect` for a person -- which is what the key's own
+## table says they are NOT, as of this item -- in the one file QA and the director read to check a
+## picture against. It comes off `AssayHud.MAP_MARKS` now, so the record cannot drift from the painter
+## without the key drifting too.
 func _write_marks_table() -> void:
 	var buildings: Array = _shot_buildings
 	var rows := []
@@ -2084,7 +2090,8 @@ func _write_marks_table() -> void:
 		var span: Vector2 = mark["span"]
 		var building: Dictionary = buildings[i] if i < buildings.size() else {}
 		rows.append({"kind": String(building.get("kind", "?")), "x": at.x, "y": at.y,
-				"w": span.x, "h": span.y, "shape": "diamond"})
+				"w": span.x, "h": span.y,
+				"shape": String(AssayHud.mark_entry(&"building")["shape"])})
 	var people := []
 	for entry in _screen._sim.players():
 		var player: Dictionary = entry
@@ -2093,7 +2100,10 @@ func _write_marks_table() -> void:
 		# beside a wrong one is part of what made the wrong one look deliberate.
 		var at: Vector2 = _screen.point_of_tile(player["pos"] as Vector2i)
 		people.append({"id": int(player["id"]), "x": at.x, "y": at.y,
-				"w": AssayHud.PLAYER_MARK_PX, "h": AssayHud.PLAYER_MARK_PX, "shape": "rect"})
+				"w": AssayHud.PLAYER_MARK_PX, "h": AssayHud.PLAYER_MARK_PX,
+				"shape": String(AssayHud.mark_entry(
+						&"player_mine" if int(player["id"]) == _screen._client.player_id
+						else &"player_theirs")["shape"])})
 	# **AND THE SPECIES LETTERS, BECAUSE ASSA-213 IS ONE MARK COVERING ANOTHER.** The box, the ink and
 	# the bed come out of `main.gd::_glyph_marks` in the frame that was shot, for the reason at the top
 	# of this function: a script can then count glyph-ink pixels inside the rectangle the painter used,

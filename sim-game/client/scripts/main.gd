@@ -4156,7 +4156,11 @@ func _draw() -> void:
 	# real shot: 324 px of an 864x576 view, 0.065% of it, smaller than all eleven deposits and twelve
 	# times smaller than one pink patch. `AssayHud.PLAYER_MARK_PX` now says how big a person is on any
 	# world, and yours carries a ring so two players at the same size are still told apart.
-	var mark := Vector2(AssayHud.PLAYER_MARK_PX, AssayHud.PLAYER_MARK_PX)
+	#
+	# **THE SIZE IS STILL HERS AND THE SHAPE IS NOT A RECT ANY MORE** (ASSA-236). The box held a
+	# `Vector2` of that constant to build two `draw_rect`s from; the geometry is `AssayHud.player_mark`
+	# now, for `building_mark`'s reason -- a suite cannot read a polygon back off a canvas, and the
+	# three marks a co-op player separates at a glance are exactly what QA got backwards.
 	for entry in _players():
 		var player: Dictionary = entry
 		# THROUGH `point_of_tile` TOO, AND THIS ONE MOVES NOTHING (ASSA-220). It spelled
@@ -4180,14 +4184,26 @@ func _draw() -> void:
 		# deposit with a light species letter fuses with that letter into one blob -- Cove found it
 		# hunting for a control for their own keyline-0 diamond, which failed the same way. Drawn
 		# UNDER the body and growing outwards, so the 16 px Maren set from a measurement is untouched
-		# in pixels and the rim is not paid for out of the body. See `AssayHud.mark_keyline_rect`.
-		var body := Rect2(at - mark * 0.5, mark)
-		draw_rect(AssayHud.mark_keyline_rect(body), AssayHud.mark_ink(&"player_keyline"), true)
-		draw_rect(body, AssayHud.mark_ink_of(&"player_mine" if mine else &"player_theirs", colour),
-				true)
+		# in pixels and the rim is not paid for out of the body.
+		#
+		# **A PERSON IS NO LONGER A FILLED RECT** (ASSA-236, Maren: "a point (you) gets the footprint
+		# shape"). You are a diamond carrying your ring, a partner is a cross, and the square they both
+		# were belongs to the one thing on this map with a tile footprint. The rim is the same device at
+		# the same 2 px on both bodies, which is why it stays one call -- `AssayHud.player_mark` picks the
+		# shape and the keyline's id follows it, so the table can still say which body each rim is under.
+		var person := AssayHud.player_mark(at, mine)
+		draw_colored_polygon(person["keyline_points"],
+				AssayHud.mark_ink(&"player_keyline" if mine else &"partner_keyline"))
+		draw_colored_polygon(person["points"],
+				AssayHud.mark_ink_of(&"player_mine" if mine else &"player_theirs", colour))
 		if mine:
-			draw_rect(Rect2(at - mark * 0.8, mark * 1.6),
-					AssayHud.mark_ink_of(&"mine_ring", colour), false, 2.0)
+			# YOUR RING IS A DIAMOND RING NOW, for the same reason the body changed: a yellow 25.6 px
+			# SQUARE outline round you, on a map where a hollow square is what a machine's footprint
+			# looks like, would put this item's own defect back one line below its fix. A closed
+			# polyline, so the stroke straddles its path exactly as `draw_rect(..., false, 2.0)` did.
+			var ring := person["ring_points"] as PackedVector2Array
+			ring.append(ring[0])
+			draw_polyline(ring, AssayHud.mark_ink_of(&"mine_ring", colour), 2.0)
 
 	# EVERY FACTORY, WHICH THIS VIEW DID NOT DRAW AT ALL UNTIL ASSA-189.
 	#
@@ -4220,6 +4236,14 @@ func _draw() -> void:
 	# untouched at any footprint. A filled rect on top, Maren's banned shape, really would hide the
 	# person, which is why "buildings last" is only an option on the shape Cove picked.
 	#
+	# **SINCE ASSA-236 THE ORDER COSTS NOTHING, AND THAT IS THE ITEM'S REAL FINDING.** 92.4% against
+	# 0.0% was never a fact about the order: it was what two FILLED marks on one tile do to each other,
+	# and the diamond was a way of losing less. The mark is a hollow footprint frame now, so the
+	# machine keeps 100% of it either way and the person under it keeps everything but the tips their
+	# own shape pokes through the bands. Measured at the shipped sizes on the replica in
+	# `shared/assay/cove-assa236/`: a partner standing on a drill keeps 25.3% of their mark today and
+	# 70.4% with the frame. The order below is unchanged -- there is no longer anything to trade.
+	#
 	# THE DECISION IS `AssayHud.building_mark`'S, like the disc's above, and this loop only paints what
 	# `_building_marks` hands it -- see that function for why a test can read it and this cannot.
 	# HELD IN A LOCAL AND NOT CALLED TWICE: the glyph pass below asks `letter_occlusions` which of
@@ -4228,11 +4252,14 @@ func _draw() -> void:
 	var shapes := _building_marks(_sim.buildings())
 	for shape_entry in shapes:
 		var shape: Dictionary = shape_entry
-		# TWO POLYGONS, NOT A STROKE. The rim is a bigger diamond UNDER the mark, so the mark keeps
-		# every pixel of its own size; a 2 px stroke on the mark's edge would spend one of them.
-		draw_colored_polygon(shape["keyline_points"],
-				AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]))
-		draw_colored_polygon(shape["points"], AssayHud.mark_ink_of(&"building", shape["colour"]))
+		# **FOUR BANDS AND FOUR BANDS, NOT A STROKE** (ASSA-236). The rim is drawn OUTSIDE the frame so
+		# the frame keeps every pixel of its own size -- the same rule the diamond's two polygons kept --
+		# and the frame itself is four filled rects because an unfilled `draw_rect` straddles the edge it
+		# is given, which on this mark would put white on the tile next door at every machine on the map.
+		for band: Rect2 in AssayHud.frame_bands(shape["keyline_rect"], AssayHud.MARK_KEYLINE_PX):
+			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
+		for band: Rect2 in AssayHud.frame_bands(shape["rect"], float(shape["stroke"])):
+			draw_rect(band, AssayHud.mark_ink_of(&"building", shape["colour"]), true)
 
 	# **THE SPECIES LETTER, LAST, BECAUSE A MACHINE STANDS ON THE ROCK IT WORKS** (ASSA-213, Maren's
 	# P1: "a building mark may not remove the species letter from a deposit it stands on").
