@@ -129,9 +129,23 @@ func _paint_sample(row: Dictionary, box: Rect2, font: Font, font_px: int) -> voi
 			draw_line(Vector2(box.position.x + 2.0, box.end.y - 4.0),
 					Vector2(box.end.x - 2.0, box.position.y + 4.0), colour, 1.0)
 		&"ring":
-			draw_rect(_body(middle).grow(3.0), colour, false, 2.0)
+			# A DIAMOND RING SINCE ASSA-236, because your body is a diamond: the sample promises the
+			# shape, and a square ring here would promise the one shape this item took away from people.
+			var loop := AssayHud.diamond(middle, AssayHud.PLAYER_MARK_PX * 0.7 + 6.0)
+			loop.append(loop[0])
+			draw_polyline(loop, colour, 2.0)
 		&"diamond":
-			draw_colored_polygon(AssayHud.diamond(middle, AssayHud.BUILDING_MARK_PX * 0.75), colour)
+			draw_colored_polygon(AssayHud.diamond(middle, AssayHud.PLAYER_MARK_PX * 0.7), colour)
+		&"cross":
+			draw_colored_polygon(AssayHud.cross(middle, AssayHud.PLAYER_MARK_PX * 0.7,
+					AssayHud.PARTNER_CROSS_ARM_PX * 0.7), colour)
+		&"footprint":
+			# **THE ONE SAMPLE THAT IS A SIZE AND NOT A SHAPE.** A machine's mark is its footprint, so
+			# there is no one size to show: this draws the 2x2 case at the shipped 9px tile, which is the
+			# only footprint on this map whose mark is exactly its tiles. The label carries the rest.
+			for band: Rect2 in AssayHud.frame_bands(Rect2(middle - Vector2(9.0, 9.0),
+					Vector2(18.0, 18.0)), AssayHud.BUILDING_STROKE_PX):
+				draw_rect(band, colour, true)
 		&"brackets":
 			var tile := Rect2(middle - Vector2(7.0, 7.0), Vector2(14.0, 14.0))
 			var reach := 4.0

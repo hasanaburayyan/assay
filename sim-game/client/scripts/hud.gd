@@ -107,7 +107,43 @@ const SPAWN_PAD := Color(0.35, 0.33, 0.20)
 ## the item. The old constant argued the floor must stay BELOW the player's 16 "so a one-tile machine
 ## is not drawn bigger than a person", which is a real concern and is answered by equality, not by
 ## being smaller: the same box, two shapes.
+##
+## **THE TWO SHAPES ARE THE OTHER WAY ROUND SINCE ASSA-236, AND THE FLOOR IS THE HALF OF THIS THAT
+## SURVIVED.** Maren's finding: of the key's eleven rows six were square and the one thing on this map
+## with a real tile FOOTPRINT was the one shape rotated off the grid it stands on. So the machine took
+## the grid-aligned square and the people left it. What this constant still buys is the sentence above
+## -- `maxf(footprint, 16)` -- and on the shipped world that floor BITES: a 1x1 drill's footprint is
+## 9 px and its mark is 16, so the mark overstates the tile by 78% of its area. Said plainly rather
+## than filed under "footprint": it is the same exaggeration `PLAYER_MARK_PX` already makes for a
+## person, for the same reason, and it is what keeps a drill findable on a world whose cells are 4 px.
+## A 2x2 smelter is 18 px and exact. (`shared/assay/cove-assa236/`, arm B2, is the no-floor version
+## rendered: a 1x1 drill is 64 px of white frame and I could not find it at 1x.)
 const BUILDING_MARK_PX := 16.0
+
+## HOW THICK THE FOOTPRINT FRAME'S OWN STROKE IS, drawn INWARD from the footprint's edge (ASSA-236).
+##
+## **IT IS THE SAME 2 px AS THE KEYLINE AND IT IS NOT THE SAME THING**, which is why it is its own
+## constant: `MARK_KEYLINE_PX` is a rim of the map's ground colour grown OUTWARD so the mark it
+## separates keeps every pixel, and this is the mark itself. They are equal today because 2 px is
+## what reads at 1x on both counts; a reader who assumed one constant would be re-tuning the rim every
+## time the frame got heavier.
+##
+## **WHY THE FRAME IS HOLLOW AT ALL, AND IT IS THE FINDING OF ASSA-236 RATHER THAN A STYLE.** Two
+## filled marks on one tile cannot both survive: Maren's ASSA-203 measurement is 92.4% of a machine
+## with buildings painted after players and 0.0% with them painted before, and the choice between
+## those is a choice about which of two things the player is allowed to see. A hollow mark removes the
+## choice -- the machine keeps 100% of its frame and the person under it keeps everything but their
+## four tips. Measured on the replica in `shared/assay/cove-assa236/` at the shipped sizes: a partner
+## standing on a drill keeps 25.3% of their mark today and 70.4% with the frame.
+const BUILDING_STROKE_PX := 2.0
+
+## HOW THICK THE BAR OF A PARTNER'S CROSS IS, in screen pixels, inside `PLAYER_MARK_PX` (ASSA-236).
+##
+## 6 of 16, which is 156 px of ink against a diamond's 128 and a filled rect's 256. It is the shape
+## that answers Maren's box 3 -- *you and your partner told apart by SHAPE, not by hue alone plus a
+## ring* -- without stating a FACING the sim does not have, which is what ruled out a chevron for the
+## building mark on ASSA-193 and rules out a triangle here for the same reason.
+const PARTNER_CROSS_ARM_PX := 6.0
 
 ## THE KEYLINE ON A MAP MARK, in screen pixels, PERPENDICULAR to the edge it rims.
 ##
@@ -304,17 +340,22 @@ const MAP_MARKS: Array[Dictionary] = [
 			"label": "where a player is walking to"},
 	{"id": &"walk_theirs", "shape": &"line", "ink": THEIRS, "alpha": 0.25, "in_key": false,
 			"keyed_by": &"walk_mine", "label": "where a player is walking to"},
-	{"id": &"player_keyline", "shape": &"rect", "ink": MAP_BG, "in_key": false,
+	# **TWO KEYLINE ENTRIES SINCE ASSA-236, BECAUSE THE TWO PEOPLE ARE TWO SHAPES.** One entry could
+	# only name one of them, and a table whose `shape` is a guess about which body it is under is the
+	# kind of prose nothing goes red on. Both still point at the row that speaks for them.
+	{"id": &"player_keyline", "shape": &"diamond", "ink": MAP_BG, "in_key": false,
 			"keyed_by": &"player_mine", "label": "the map's own ink, so a body never fuses with a letter"},
-	{"id": &"player_mine", "shape": &"rect", "ink": MINE, "in_key": true, "label": "you"},
-	{"id": &"player_theirs", "shape": &"rect", "ink": THEIRS, "in_key": true,
+	{"id": &"partner_keyline", "shape": &"cross", "ink": MAP_BG, "in_key": false,
+			"keyed_by": &"player_theirs", "label": "the map's own ink, so a body never fuses with a letter"},
+	{"id": &"player_mine", "shape": &"diamond", "ink": MINE, "in_key": true, "label": "you"},
+	{"id": &"player_theirs", "shape": &"cross", "ink": THEIRS, "in_key": true,
 			"label": "another player"},
 	{"id": &"mine_ring", "shape": &"ring", "ink": MINE, "in_key": true,
 			"label": "the ring is on your own body"},
-	{"id": &"building_keyline", "shape": &"diamond", "ink": MAP_BG, "in_key": false,
+	{"id": &"building_keyline", "shape": &"footprint", "ink": MAP_BG, "in_key": false,
 			"keyed_by": &"building", "label": "the map's own ink, under a machine's mark"},
-	{"id": &"building", "shape": &"diamond", "ink": HOVER, "data_ink": true, "in_key": true,
-			"label": "a machine someone built"},
+	{"id": &"building", "shape": &"footprint", "ink": HOVER, "data_ink": true, "in_key": true,
+			"label": "a machine someone built, on the tiles it covers"},
 	# **AFTER THE BUILDING, AND THE TABLE'S ORDER IS THE PAINT ORDER** (ASSA-213). The letter used to
 	# sit between the hatch and the walk lines, which is where it was painted, which is why a machine
 	# standing on a deposit erased it. `tests/test_map_key.gd` now holds this list against the order
@@ -883,24 +924,119 @@ static func hatch_segments(at: Vector2, radius: float) -> PackedVector2Array:
 ## either must empty the frame rather than draw every factory in the world on top of each other at
 ## the corner. `tests/test_main_screen.gd` is what notices. Cove's hand-off sketches these with
 ## `get(..., Vector2i.ONE)`; that is the one line of it I did not take, and the reason is that rule.
+## **IT IS A HOLLOW GRID-ALIGNED FRAME SINCE ASSA-236, AND THE DIAMOND ABOVE IS WHY** (Maren: "a point
+## (you) gets the footprint shape; a footprint gets the point shape"). The three sentences that change:
+##
+## - **The shape is the footprint's own rect**, axis-aligned, centred on the tiles the sim says this
+##   machine covers, so a 2x2's edges lie on its four tiles' outer edges. The diamond was a square
+##   rotated 45 degrees off the only grid on the screen.
+## - **It is hollow**, which is what lets the paint order stop being a choice -- see
+##   [constant BUILDING_STROKE_PX]. The stroke is drawn INWARD from the footprint's edge, so the frame
+##   never claims a tile the machine does not stand on.
+## - **The floor still applies** and on a 1x1 it overstates the tile; [constant BUILDING_MARK_PX]
+##   carries that admission rather than this function.
+##
+## `hole_points` IS NOT DECORATION: [method letter_occlusions] subtracts it, because a frame that
+## reported its whole bounding box as covering a letter would say a machine lands on a letter it is
+## merely standing around. A hole is the one thing a single polygon cannot say.
 static func building_mark(building: Dictionary, cell: float, origin: Vector2) -> Dictionary:
 	var pos: Vector2i = building["pos"]
 	var foot: Vector2i = building["footprint"]
 	# SQUARE, off the LONGER side, and not per-axis: Cove's rule is one `s`. A per-axis floor turns a
 	# footprint that is not square into a rhombus, which states a facing the sim does not have -- the
-	# reason their chevron candidate lost.
+	# reason their chevron candidate lost. (It is a rect now and a per-axis span would be truer to a
+	# 3x2; it stays one `s` because the floor is a findability rule, and a floor applied per axis
+	# would stretch a small footprint into a bar that states a facing just the same.)
 	var span := maxf(float(maxi(foot.x, foot.y)) * cell, BUILDING_MARK_PX)
 	# The footprint's CENTRE, from its top-left corner tile plus half its extent in tiles, so a 2x2
 	# sits on the join of its four tiles and a 1x1 in the middle of its one.
 	var at := origin + (Vector2(pos) + Vector2(foot) * 0.5) * cell
+	var outer := Rect2(at - Vector2(span, span) * 0.5, Vector2(span, span))
 	return {
-		"points": diamond(at, span),
+		"points": rect_points(outer),
+		"hole_points": rect_points(outer.grow(-BUILDING_STROKE_PX)),
+		"rect": outer,
+		"stroke": BUILDING_STROKE_PX,
 		"colour": HOVER,
-		"keyline_points": diamond(at, span + 2.0 * MARK_KEYLINE_PX * sqrt(2.0)),
+		"keyline_points": rect_points(outer.grow(MARK_KEYLINE_PX)),
+		"keyline_rect": outer.grow(MARK_KEYLINE_PX),
 		"keyline": MAP_BG,
 		"at": at,
 		"span": Vector2(span, span),
 	}
+
+
+## A rect as a polygon, clockwise from its top-left, so a rect and a diamond answer the same questions.
+static func rect_points(box: Rect2) -> PackedVector2Array:
+	return PackedVector2Array([box.position, Vector2(box.end.x, box.position.y), box.end,
+			Vector2(box.position.x, box.end.y)])
+
+
+## THE FOUR BANDS OF A FRAME: [param outer] minus its [param thickness] inset, as rects to fill.
+##
+## Four `draw_rect` calls and not one `draw_rect(..., false, thickness)`, because an unfilled rect's
+## stroke straddles the edge it is given -- half in, half out -- and this mark's inner edge is a
+## statement about which tiles are covered. Straddling would put a pixel of white on the tile next
+## door at every machine on the map.
+static func frame_bands(outer: Rect2, thickness: float) -> Array[Rect2]:
+	var t := minf(thickness, minf(outer.size.x, outer.size.y) * 0.5)
+	return [
+		Rect2(outer.position, Vector2(outer.size.x, t)),
+		Rect2(Vector2(outer.position.x, outer.end.y - t), Vector2(outer.size.x, t)),
+		Rect2(Vector2(outer.position.x, outer.position.y + t), Vector2(t, outer.size.y - 2.0 * t)),
+		Rect2(Vector2(outer.end.x - t, outer.position.y + t), Vector2(t, outer.size.y - 2.0 * t)),
+	]
+
+
+## A CROSS of [param span] across and [param arm] thick about [param at], as one 12-point polygon.
+##
+## Non-convex, which `draw_colored_polygon` handles (the server triangulates) and which two
+## `draw_rect` calls would also draw -- but two rects cannot be asked their area, their overlap with a
+## letter's box or how much of them a machine's frame covers, and those three questions are the whole
+## of why the geometry on this map lives here and not in the paint loop.
+##
+## **GROWING IT BY `t` ON EVERY SIDE IS `span + 2t, arm + 2t`**, which is the keyline, and unlike the
+## diamond's `sqrt(2)` the obvious arithmetic is the right one here: every edge is axis-aligned, so a
+## perpendicular rim of `t` moves each edge by exactly `t`. The six concave corners get a mitre
+## slightly thicker than `t` on the diagonal; that is a rim being generous at a notch, not the mark
+## paying for it.
+static func cross(at: Vector2, span: float, arm: float) -> PackedVector2Array:
+	var h := span * 0.5
+	var a := minf(arm, span) * 0.5
+	return PackedVector2Array([
+		at + Vector2(-a, -h), at + Vector2(a, -h), at + Vector2(a, -a), at + Vector2(h, -a),
+		at + Vector2(h, a), at + Vector2(a, a), at + Vector2(a, h), at + Vector2(-a, h),
+		at + Vector2(-a, a), at + Vector2(-h, a), at + Vector2(-h, -a), at + Vector2(-a, -a)])
+
+
+## **WHAT ONE PERSON IS ON THE SCHEMATIC** (ASSA-236), as geometry a headless test can read, for
+## [method building_mark]'s reason: nothing in a suite can read a `draw_colored_polygon` back off a
+## canvas, and the three marks a co-op player must separate at a glance are exactly what went wrong.
+##
+## **A DIAMOND FOR YOU AND A CROSS FOR A PARTNER, AND THE RING IS WHY ROUND THAT WAY.** Both are
+## filled, both are the same 16 px box, neither states a facing. The ring is yours (ASSA-189) and a
+## ring reads as a ring only round a convex body -- a hollow cross at 1.6x is a tangle at 1x -- so the
+## convex shape goes to the mark that wears one. It is not "the brighter one for me".
+##
+## **THE RING IS A DIAMOND NOW AND IT HAD TO BE**: a 25.6 px yellow SQUARE outline round your body, on
+## a map where a hollow square is what a machine's footprint looks like, is the defect this item is
+## about, reintroduced one line below the fix.
+static func player_mark(at: Vector2, mine: bool) -> Dictionary:
+	var mark := {"at": at, "span": Vector2(PLAYER_MARK_PX, PLAYER_MARK_PX),
+			"colour": MINE if mine else THEIRS, "keyline": MAP_BG}
+	if mine:
+		mark["shape"] = &"diamond"
+		mark["points"] = diamond(at, PLAYER_MARK_PX)
+		# A diamond's edge sits `h/sqrt(2)` from its centre: growing the DIAGONAL by `2t*sqrt(2)`
+		# grows the rim by `t`. The same arithmetic the building mark used to carry.
+		mark["keyline_points"] = diamond(at, PLAYER_MARK_PX + 2.0 * MARK_KEYLINE_PX * sqrt(2.0))
+		mark["ring_points"] = diamond(at, PLAYER_MARK_PX * 1.6)
+	else:
+		mark["shape"] = &"cross"
+		mark["points"] = cross(at, PLAYER_MARK_PX, PARTNER_CROSS_ARM_PX)
+		mark["keyline_points"] = cross(at, PLAYER_MARK_PX + 2.0 * MARK_KEYLINE_PX,
+				PARTNER_CROSS_ARM_PX + 2.0 * MARK_KEYLINE_PX)
+	return mark
 
 
 ## A diamond of diagonal [param span] about [param at]: points at the edge midpoints, corners empty.
@@ -973,23 +1109,30 @@ static func machines_on_letters(buildings: Array, letter_marks: Array) -> Array:
 ## and called the case absent; the diamond's own share was 99.3%. **Both are reported here**, named,
 ## for that reason: `share_of_box` is how much of the letter is at risk, `share_of_mark` is how much of
 ## the mark is spent on it, and only the first is a number about the letter.
+## **AND SINCE ASSA-236 THE MARK HAS A HOLE, WHICH IS SUBTRACTED HERE AND NOT APPROXIMATED.** A frame
+## standing AROUND a letter covers only the ink its four bands land on; reporting its bounding box
+## would say a machine lands on a letter it leaves alone, which is this function's one job reported
+## backwards. `hole_points` is empty for a solid mark, so the subtraction is a no-op for anything that
+## is not a frame.
 static func letter_occlusions(building_marks: Array, letter_marks: Array) -> Array:
 	var out := []
 	for i in building_marks.size():
 		var mark: Dictionary = building_marks[i]
 		var points: PackedVector2Array = mark["points"]
-		var mark_area := polygon_area(points)
+		var hole: PackedVector2Array = mark.get("hole_points", PackedVector2Array())
+		var mark_area := polygon_area(points) - polygon_area(hole)
 		for j in letter_marks.size():
 			var letter: Dictionary = letter_marks[j]
 			var box: Rect2 = letter["box"]
 			var box_area := box.size.x * box.size.y
 			if box_area <= 0.0 or mark_area <= 0.0:
 				continue
+			var box_points := rect_points(box)
 			var covered := 0.0
-			for piece in Geometry2D.intersect_polygons(points, PackedVector2Array([box.position,
-					Vector2(box.end.x, box.position.y), box.end,
-					Vector2(box.position.x, box.end.y)])):
+			for piece in Geometry2D.intersect_polygons(points, box_points):
 				covered += polygon_area(piece as PackedVector2Array)
+			for piece in Geometry2D.intersect_polygons(hole, box_points):
+				covered -= polygon_area(piece as PackedVector2Array)
 			if covered <= 0.0:
 				continue
 			out.append({"building": i, "letter": j, "symbol": String(letter["symbol"]),
