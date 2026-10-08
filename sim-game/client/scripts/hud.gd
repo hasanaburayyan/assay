@@ -490,8 +490,13 @@ const MAP_MARKS: Array[Dictionary] = [
 			"label": "the world, out to its edge"},
 	{"id": &"spawn", "shape": &"rect", "ink": SPAWN_PAD, "in_key": true,
 			"label": "where a joining player appears"},
+	# **"AS WIDE AS THE PATCH" IS ASSA-293's RULING, AND IT IS THE ROW SAYING WHAT SIZE MEANS.** The
+	# label said only "ore you can work", so the one channel two cold readers decoded wrong (size)
+	# was the one the key was silent about. Maren's words, in the table's own voice: the FACT, not
+	# the shape. It is not the widest row and does not move the panel -- `letter_size_spread.gd`
+	# prints both widths, because "it should cost no width" was a prediction in the ruling.
 	{"id": &"deposit", "shape": &"disc", "ink": MAP_BG, "data_ink": true, "in_key": true,
-			"label": "ore you can work"},
+			"label": "ore you can work · as wide as the patch"},
 	# `data_ink` SINCE ASSA-209: the hatch is near-black on a light disc and WHITE on a dark one, so
 	# the table's `MAP_BG` is an example and not the colour. `mark_ink_of` is what `_draw` calls.
 	{"id": &"dead_end", "shape": &"hatch", "ink": MAP_BG, "data_ink": true, "in_key": true,
@@ -1005,6 +1010,38 @@ static func glyph_color(on: Color) -> Color:
 static func glyph_size(drawn_radius: float) -> int:
 	var size := int(floorf(drawn_radius * 1.4))
 	return 0 if size < 10 else mini(size, 32)
+
+
+## **THE SMALLEST PATCH `worldgen` CAN ROLL, IN TILES** (`sim/src/worldgen.rs`: `rng.range(2, 5)`,
+## commented `2..=4`). It is a SIM fact living in a client constant, which is a thing to be uneasy
+## about -- there is no named constant on the Rust side to ask and nothing crosses the binding -- so
+## `test_hud.gd` checks it against the real roster of a dozen seeds rather than taking it on trust.
+## If worldgen ever rolls a one-tile patch, the test reddens and says the held letter no longer fits
+## the smallest patch, which is the only claim this number carries.
+const MIN_DEPOSIT_RADIUS_TILES := 2
+
+
+## **ONE SIZE FOR EVERY SPECIES LETTER IN A FRAME, AND IT MEANS NOTHING** (ASSA-293, Maren's ruling
+## 11.35). A letter's size used to be `glyph_size(radius x cell)`, i.e. a copy of the channel the
+## disc UNDERNEATH it already carries -- and a lossy one: `glyph_size` clamps at 32, so at the
+## shipped cell of 9 a radius-3 and a radius-4 patch drew the identical letter, and over ten seeds
+## **62.6% of deposits wore a size that distinguished nothing** (`tools/letter_size_spread.gd`).
+## Two cold readers each decoded the surviving difference WRONG and in different directions -- Nacre
+## read size as quantity, Limpet read it as hover -- so the channel was not merely redundant, it was
+## actively misleading.
+##
+## **WHY THE SMALLEST PATCH AND NOT THE AVERAGE ONE:** `glyph_size`'s own rule one function up is
+## that a letter must fit inside its own patch, because one that does not reads as a label for the
+## tile next door. Sized for a radius-2 disc, a letter fits every patch the sim can generate, so
+## that rule is satisfied by construction and never has to be re-checked per deposit.
+##
+## **WHAT IT COSTS, AND IT IS NOT NOTHING.** Held at the smallest patch, the 10 px floor now decides
+## for EVERY letter at once: on a world wide enough that the cell falls under 4 px no letter draws at
+## all, where today the wide patches would still get one. Today's world is 96 tiles wide at cell 9;
+## the flip is past about 228 tiles (`letter_size_spread.gd` prints the sweep). Drawing them all
+## under the floor instead would break the rule the floor is there for.
+static func glyph_size_held(cell: float) -> int:
+	return glyph_size(float(MIN_DEPOSIT_RADIUS_TILES) * cell)
 
 
 ## **WHAT ONE SCHEMATIC DISC IS, INCLUDING WHETHER THE ROCK IS WORTH THE WALK** (ASSA-187, Maren's

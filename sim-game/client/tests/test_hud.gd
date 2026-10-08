@@ -403,6 +403,54 @@ func test_a_letter_too_big_for_its_patch_is_not_drawn() -> bool:
 	return true
 
 
+## **`MIN_DEPOSIT_RADIUS_TILES` IS A SIM FACT LIVING IN A CLIENT CONSTANT, SO IT IS CHECKED AGAINST
+## THE SIM** (ASSA-293). The held letter's whole justification is that it fits the narrowest patch
+## `worldgen` can roll; `sim/src/worldgen.rs` rolls `rng.range(2, 5)` and there is no named constant
+## on the Rust side to ask and nothing that crosses the GDExtension. So this asks the real roster:
+## twelve seeds of real deposits, and none of them may be narrower than the number the letter is
+## sized for. A one-tile patch would mean every letter on the map overflows its own rock, and the
+## only thing that notices is this.
+##
+## **AND THE SPREAD, which is the other half.** If worldgen ever rolled ONE radius, ASSA-293 would be
+## a defect about nothing and `test_main_screen.gd`'s frame assertion would pass by accident. Over a
+## dozen seeds there must be at least two.
+func test_the_held_letter_fits_the_smallest_patch_the_sim_rolls() -> bool:
+	var host := AssaySimHost.new()
+	var radii := {}
+	var worlds := 0
+	var smallest := 99
+	for seed_text: String in ["63", "777042", "1", "7", "42", "100", "2026", "31337", "555",
+			"90210", "8", "12345"]:
+		var welcome := AssaySimHost.fresh_welcome_json(seed_text, "cove")
+		if welcome == "" or not host.start(welcome):
+			continue
+		worlds += 1
+		for entry in host.deposits():
+			var deposit: Dictionary = entry
+			var radius := int(deposit.get("radius", 1))
+			radii[radius] = int(radii.get(radius, 0)) + 1
+			smallest = mini(smallest, radius)
+	if worlds < 6:
+		return _fail(("premise: only %d of twelve seeds built a world, so this says nothing about "
+				+ "what worldgen rolls (is the GDExtension loaded?)") % [worlds])
+	if smallest < AssayHud.MIN_DEPOSIT_RADIUS_TILES:
+		return _fail(("worldgen rolled a radius-%d patch over %d seeds and the species letter is held "
+				+ "at the size that fits radius %d (%d px at cell 9). Every letter on the map now "
+				+ "overflows that rock and reads as a label for the tile next door -- `glyph_size`'s "
+				+ "own rule. Lower MIN_DEPOSIT_RADIUS_TILES to %d or ask the sim why it shrank.")
+				% [smallest, worlds, AssayHud.MIN_DEPOSIT_RADIUS_TILES,
+				AssayHud.glyph_size_held(9.0), smallest])
+	if radii.size() < 2:
+		return _fail(("worldgen rolls one deposit radius (%s) over %d seeds, so holding the letter "
+				+ "constant is a fix for a channel that never varied, and the frame test in "
+				+ "test_main_screen.gd passes by accident") % [radii.keys(), worlds])
+	# The held size must clear the legible floor at the cell the schematic actually uses, or the map
+	# draws no letters at all and three other tests are about nothing.
+	if AssayHud.glyph_size_held(9.0) <= 0:
+		return _fail("the held letter is not drawn at all at the shipped cell of 9 px")
+	return true
+
+
 ## THE MAP MUST NOT RUN UNDER THE HUD. The panel's width comes out of the map's width term, so the map
 ## shrinks (Maren's ruling). Checked at several world sizes, including one far too big to fit.
 func test_the_map_always_stops_short_of_the_hud_column() -> bool:
