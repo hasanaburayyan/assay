@@ -1065,20 +1065,6 @@ static func build_button_text() -> String:
 	return "Build"
 
 
-## **THE WAY OUT, AND IT IS A FUNCTION BECAUSE A TOOL HAS TO PRESS IT** (ASSA-328). `Build` does not
-## close the screen -- by design, so a player can make a second batch -- so whatever OPENS this screen
-## owns shutting it, and the only honest way for a driver to shut it is the control a person uses.
-##
-## **IT IS A FUNCTION RATHER THAN A LITERAL IN TWO PLACES BECAUSE A LITERAL IN TWO PLACES IS WHAT
-## ASSA-62 WAS.** `tools/button_play.gd` found its row by a label that had moved and silently pressed
-## nothing for days; a tool matching `"close (Esc)"` by hand would rot exactly the same way, and the
-## rot is invisible -- it does not fail a run, it leaves a screen standing over the map and every
-## picture taken afterwards is of the screen. (That happened: every `play` whole-world shot between
-## #432 landing and this, mine included.)
-static func build_close_text() -> String:
-	return "close (Esc)"
-
-
 ## **COST AS TWO COUNTS, NEED FIRST AND NO SLASH** (ASSA-332; Maren's §5.5, which reverses her own
 ## §5.3 twenty minutes after slice 1 shipped it).
 ##
@@ -1149,14 +1135,45 @@ static func insert_fractions(count: int) -> PackedInt32Array:
 ## this only writes it down. A label that said `Fuel` and a tooltip that said the number is the shape
 ## this replaces (`stack_verbs`), and it is the shape the board called not amazing: the column's two
 ## four-letter buttons never said what pressing them would do.
-static func insert_label(count: int, name: String) -> String:
-	return "put all %d %s" % [count, name]
+##
+## **AND THE SLOT IS IN THE LABEL** (ASSA-331, Maren: *"a button says what IT does, not what the
+## heading above it does"*). A stack the sim will take as either fuel or input drew TWO buttons
+## reading `put all 2 Tonore refined (A)`, told apart by a heading -- one label twice. The slot is the
+## only thing that differs between them, so it is the thing that has to be said. The heading went with
+## it: with the slot in every label, a `Fuel slot` note above them is the same answer twice, which is
+## ruling 6's own rule.
+static func insert_label(count: int, name: String, slot: String) -> String:
+	return "put all %d %s in the %s slot" % [count, name, slot]
 
 
 ## The quiet line under a slot's buttons. **A TOGGLE NAMES WHAT YOU WILL GET**, so it carries its own
 ## number and not a fraction: `or 1 · or 18`, never `or half`.
 static func insert_some_label(count: int) -> String:
 	return "or %d" % count
+
+
+## **THE WAY OUT OF A SURFACE THAT OPENED OVER THE WORLD** -- the build screen's and the machine
+## menu's, which are the same words because they are the same promise (Maren: "a guest with a key and
+## a way out").
+##
+## **THE WAY OUT, AND IT IS A FUNCTION BECAUSE A TOOL HAS TO PRESS IT** (Cove, ASSA-328). `Build` does
+## not close the screen -- by design, so a player can make a second batch -- so whatever OPENS a
+## surface owns shutting it, and the only honest way for a driver to shut it is the control a person
+## uses.
+##
+## **IT IS A FUNCTION RATHER THAN A LITERAL IN TWO PLACES BECAUSE A LITERAL IN TWO PLACES IS WHAT
+## ASSA-62 WAS.** `tools/button_play.gd` found its row by a label that had moved and silently pressed
+## nothing for days; a tool matching `"close (Esc)"` by hand would rot exactly the same way, and the
+## rot is invisible -- it does not fail a run, it leaves a screen standing over the map and every
+## picture taken afterwards is of the screen. (That happened: every `play` whole-world shot between
+## #432 landing and Cove's fix, theirs and mine included.)
+##
+## **IT WAS `close_text` FOR ABOUT TEN MINUTES AND IS NOW BOTH SURFACES' (ASSA-331).** Cove and I
+## wrote the same function for the same string within minutes of each other, theirs for the build
+## screen and mine for the machine menu -- which is the duplication both of our docstrings argue
+## against, arriving by merge instead of by typing. One name, and the docstring above is Cove's.
+static func close_text() -> String:
+	return "close (Esc)"
 
 
 ## **THE SURFACE THE JOIN SCREEN GETS, WHICH IS ALL OF IT** (ASSA-231, Maren's Gap 5: "one screen,
@@ -2053,15 +2070,25 @@ static func empty_map_line() -> String:
 ## EVERY VERB A STACK AFFORDS, as descriptors for the row's buttons: `{label, verb, ...}`.
 ##
 ## **WHAT YOU HAVE AND WHERE IT CAN GO -- NEVER WHAT IT MAKES** (ASSA-86, Maren's ruling). A row
-## keeps the verbs that MOVE an item: Fuel, Smelt, Place, Frame/Mount. Two or three, never seven.
+## keeps the verbs that MOVE an item: Place, Frame/Mount. One or two, never seven.
 ## Everything that MAKES something is in the crafting menu (ASSA-88), because a make-verb belongs to
 ## a RECIPE and a stack cannot say which species a shared label would make.
 ##
-## WHAT A PLAYER CAN DO WITH A THING IS THE SIM'S LIST, NOT MINE. `recipes` and `part_kinds` are
-## `AssaySim`'s own catalogues, so a Craft button exists because some hand recipe eats this kind of
-## item and for no other reason. The alternative was four kind names written into this client, which
-## would make it the one file that still had to be edited when `PART_SPECS` or `RECIPES` grew -- and
-## ADR 0003's whole point is that a new part kind needs no new code.
+## **AND THE INSERT PAIR IS GONE FROM HERE** (ASSA-331, Maren's ruling on the verb her ruling 8
+## orphaned). `Fuel` and `Smelt` needed a building under the placement cursor, and once both mouse
+## buttons on a building opened its menu, the cursor could never be put on one: the two buttons could
+## only ever say *nothing to insert into*. **The sheet reading they were built on did not go with
+## them** -- it is `insert_slots` below, asked by the machine menu, which belongs to a machine by
+## construction and so can never be aimed at a deposit. Ruling 3's own words are why: two homes for
+## one verb is the defect, and this was the home that refused.
+##
+## WHAT A PLAYER CAN DO WITH A THING IS THE SIM'S LIST, NOT MINE. `part_kinds` is `AssaySim`'s own
+## catalogue, so a Frame button exists because the sim has that part kind and for no other reason.
+## The alternative was four kind names written into this client, which would make it the one file that
+## still had to be edited when `PART_SPECS` grew -- and ADR 0003's whole point is that a new part kind
+## needs no new code. **`recipes` LEFT THE SIGNATURE WITH THE PAIR**, because it was read for nothing
+## else: a parameter nobody reads is an invitation to start reading it again (ASSA-103's own lesson,
+## one function above where it was learned).
 ##
 ## THIS DECIDES NOTHING ABOUT LEGALITY. Not whether the batch is affordable, not whether the species
 ## is hard enough, not whether a smelter is in reach. `sim::step` validates every command on every
@@ -2074,35 +2101,9 @@ static func empty_map_line() -> String:
 ## from `is_frame` now, so the argument is gone rather than ignored: a parameter nobody reads is an
 ## invitation to start reading it again.
 ## `footprint` is `AssaySimHost.footprint_of_item`, so "is this placeable" is also the sim's answer.
-static func stack_verbs(stack: Dictionary, recipes: Array, part_kinds: Array,
-		footprint: Vector2i) -> Array:
+static func stack_verbs(stack: Dictionary, part_kinds: Array, footprint: Vector2i) -> Array:
 	var kind := String(stack.get("kind", ""))
 	var verbs := []
-	for entry in recipes:
-		var recipe: Dictionary = entry
-		if String(recipe.get("input", "")) != kind:
-			continue
-		# A HAND RECIPE IS NOT THIS ROW'S BUSINESS ANY MORE (ASSA-86, Maren's ruling). `Craft <name>`
-		# used to be appended here, which is how an ore row grew four verbs and a refined row seven
-		# inside a 320px column -- and worse, how a pack holding two species drew TWO buttons both
-		# labelled exactly `Craft smelter`, building smelters with different walls. A make-verb
-		# belongs to a RECIPE, so putting it on a stack duplicates it per species and the label
-		# cannot say which. It lives in the crafting menu now (ASSA-88), where a row names what it
-		# makes by species and grade.
-		#
-		# THE LOOP STAYS, because the NON-hand half of it is how this file knows a smelter eats this
-		# kind of item at all. That is a sheet reading and only the sim has it.
-		if bool(recipe.get("hand", false)):
-			continue
-		if not _has_verb(verbs, "insert"):
-			# A recipe that is NOT hand-work happens inside a building, so this kind is something a
-			# smelter eats -- both slots, because which one a species is good for (hot enough fuel, or
-			# ore that melts) is a sheet reading and only the sim has it.
-			# SHORT LABELS, DETAIL IN THE TOOLTIP. Two buttons and a stack line have to fit a 320px
-			# panel, and "Insert all 12 into the Fuel slot" is a sentence, not a label. `main.gd`
-			# composes that sentence as the hint, with the count in it.
-			verbs.append({"label": "Fuel", "verb": "insert", "slot": AssayActions.SLOT_FUEL})
-			verbs.append({"label": "Smelt", "verb": "insert", "slot": AssayActions.SLOT_INPUT})
 	if footprint.x > 0 and footprint.y > 0:
 		verbs.append({"label": "Place", "verb": "place"})
 	for entry in part_kinds:
@@ -2150,15 +2151,37 @@ static func design_verbs(design: Dictionary) -> Array:
 	return [{"label": "Equip", "verb": "equip"}]
 
 
-static func _has_verb(verbs: Array, verb: String) -> bool:
-	for entry in verbs:
-		if String((entry as Dictionary).get("verb", "")) == verb:
-			return true
-	return false
+## **WHICH OF A MACHINE'S SLOTS A STACK MAY ENTER, in the sim's own order** (ASSA-331). This is the
+## reading `stack_verbs` used to turn into the pack row's `Fuel` and `Smelt`; the buttons went and the
+## reading stayed, because it was never the part that was wrong.
+##
+## A recipe that is NOT hand-work happens inside a building, so a kind some non-hand recipe eats is a
+## kind a smelter eats -- **both slots, because which one a species is good for (hot enough fuel, or
+## ore that melts) is a sheet reading and only the sim has it.** This client may not choose for the
+## player and `sim::step` judges the Insert either way.
+##
+## ONE PAIR AND NOT ONE PER RECIPE: `Refine` and `Resmelt` both eat ore-ish things, and two identical
+## rows beside each other is a menu that looks broken. Empty for a kind nothing smelts, which is how
+## the menu shows no slot row rather than an empty heading.
+static func insert_slots(stack: Dictionary, recipes: Array) -> PackedStringArray:
+	var kind := String(stack.get("kind", ""))
+	for entry in recipes:
+		var recipe: Dictionary = entry
+		if String(recipe.get("input", "")) != kind:
+			continue
+		if bool(recipe.get("hand", false)):
+			continue
+		return PackedStringArray([AssayActions.SLOT_FUEL, AssayActions.SLOT_INPUT])
+	return PackedStringArray()
 
 
 ## WHERE A BUTTON ACTS, said out loud. A target that is only drawn is a target a player has to infer,
-## and Place, Insert and Take all land on it -- so the one sentence names the tile and what is on it.
+## and Place lands on it -- so the one sentence names the tile and what is on it.
+##
+## **IT USED TO SAY "Place, Insert and Take all land on it" AND BY TODAY THAT WAS ONE VERB IN THREE.**
+## Take left for the machine menu with ruling 3 (ASSA-316) and Insert with ASSA-331; a cursor on a
+## building is not even reachable any more, since both buttons there open its menu. Nothing tests
+## prose, so a line like that goes on reading as fact to whoever greps for how Insert finds a building.
 ##
 ## "where you stand" until the map is right-clicked, which is not a placeholder: your own tile is the
 ## one tile every player has, and planting beside yourself is the common case.

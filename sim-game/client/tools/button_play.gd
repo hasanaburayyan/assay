@@ -333,19 +333,23 @@ func _placing() -> void:
 
 ## THE MATERIAL ORE GOES IN FIRST, WHICH IS NOT THE PROBE'S ORDER, AND THE REASON IS A BUTTON.
 ##
-## `Smelt` and `Fuel` each put in the WHOLE stack, because a button cannot ask for a quantity without
-## growing a field and picking a smaller number for the player would be this client deciding how much
-## fuel a fire wants. When the starter material and the starter fuel are THE SAME SPECIES -- which
-## nothing in the sim forbids -- that is one stack, so inserting fuel first would leave nothing to
-## refine. Loading the ore first only costs a stalled fire until the fuel lands, which is slower and
-## not wrong, and it works whether the two species are the same or not.
+## A slot's `put all` sends the WHOLE stack, because the fractions beside it are the only smaller
+## counts offered and picking one for the player would be this client deciding how much fuel a fire
+## wants. When the starter material and the starter fuel are THE SAME SPECIES -- which nothing in the
+## sim forbids -- that is one stack, so inserting fuel first would leave nothing to refine. Loading the
+## ore first only costs a stalled fire until the fuel lands, which is slower and not wrong, and it
+## works whether the two species are the same or not.
+##
+## **IT WAS THE PACK ROW'S `Smelt` UNTIL ASSA-331 AND IS NOW THE MACHINE'S MENU.** Maren deleted the
+## pack-row pair because her ruling 8 had made it unaimable; this loop is the player proxy, so the
+## press it makes has to be the one a player has left.
 func _loading_ore() -> void:
 	if _smelter_holds_input():
 		step = Step.MINING_FUEL
 		return
-	_press_on_stack_once("ore in", "ore", _material, "Smelt")
+	_press_insert_once("ore in", "ore", _material, AssayActions.SLOT_INPUT)
 	if _quiet > 200:
-		_stop(false, "pressed Smelt on the ore and the smelter's input slot is still empty")
+		_stop(false, "put the ore in the input slot and the smelter's input slot is still empty")
 
 
 func _mining_fuel() -> void:
@@ -362,9 +366,15 @@ func _mining_fuel() -> void:
 	step = Step.LOADING_FUEL
 
 
+## **THE STAGE ENDS WHEN ITS PRESS HAPPENED, NOT ON THE TICK IT WAS ATTEMPTED** (ASSA-331). It used to
+## set `SMELTING` unconditionally, which was survivable while the fuel went in through a pack row that
+## is always on screen; the insert is two gestures now, so a stage that walked on regardless would leave
+## the fire unlit and the failure would surface 2000 ticks later as "the smelter has been busy".
+## `_press_insert_once` carries its own 60-tick bound and names the menu it was looking at.
 func _loading_fuel() -> void:
-	_press_on_stack_once("fuel in", "ore", _fuel, "Fuel")
-	step = Step.SMELTING
+	_press_insert_once("fuel in", "ore", _fuel, AssayActions.SLOT_FUEL)
+	if _done.has("fuel in"):
+		step = Step.SMELTING
 
 
 ## WAIT FOR THE FIRE TO GO OUT, THEN TAKE. The smelter's OWN SENTENCE says when it is done
@@ -750,13 +760,13 @@ func _press_on_offer(verb: String, tag: Variant, species: int) -> bool:
 		# seeds of ASSA-273's re-shoot came back as a full-screen `make` panel holding zero pixels of
 		# any map mark, and nothing failed: the chain reported FINISHED and the picture was a lie.
 		# Same shape as `_goto` below, which restores the view it changed for the same reason.
-		var leave := _find_button(screen._build_box, AssayHud.build_close_text())
+		var leave := _find_button(screen._build_box, AssayHud.close_text())
 		if leave == null:
 			_stop(false, ("the build screen has no `%s` control, so this chain cannot shut what it "
 					+ "opened and every picture taken after it is of the screen")
-					% AssayHud.build_close_text())
+					% AssayHud.close_text())
 			return false
-		pressed.append("%s on `%s` @%d" % [AssayHud.build_close_text(),
+		pressed.append("%s on `%s` @%d" % [AssayHud.close_text(),
 				String(offer.get("line", "?")), _world().tick()])
 		leave.pressed.emit()
 		return true
@@ -790,16 +800,46 @@ func _press_on_design(row_index: int, label: String) -> bool:
 	return true
 
 
-## The same one-shot rule for a button on a pack row. A stage that has already pressed is waiting,
-## not idle, so pressing again is never the right answer.
-func _press_on_stack_once(key: String, kind: String, species: int, label: String) -> void:
+## **PUT A WHOLE STACK INTO ONE SLOT OF THE SMELTER, THROUGH THE MACHINE'S OWN MENU** (ASSA-331).
+##
+## **TWO GESTURES, BOTH REAL, for the same reason as `_press_on_offer` since ASSA-328:** a click on the
+## machine opens its menu and the slot button sends. This tool may not call `_open_machine_menu` itself
+## -- a click that opens nothing, or opens the wrong machine's menu, is exactly the defect it is the
+## last line of defence against. The click is harmless when the menu is already up: a tile carrying a
+## building answers both buttons with ITS menu, before the dismissal (`main.gd::_unhandled_input`).
+##
+## **THE LABEL IS BUILT FROM THE SIM'S OWN STACK, NOT TYPED HERE.** It carries the count and the slot
+## (`AssayHud.insert_label`), so a wording change moves this tool with it rather than rotting it -- the
+## ASSA-62 failure, where `tools/` kept pressing a row that had moved while every test passed. The slot
+## in the label is also what makes this unambiguous: the starter material and the starter fuel may be
+## ONE species, and before ASSA-331's labels the fuel and input buttons for that stack read alike.
+func _press_insert_once(key: String, kind: String, species: int, slot: String) -> void:
 	if _done.has(key):
 		return
-	if _press_on_stack(kind, species, label):
-		_done[key] = true
-		return
+	var stack := AssayDemoPlan.best_stack(_world().inventory_of(_me()), kind, species)
+	var label := "" if stack.is_empty() else AssayHud.insert_label(int(stack.get("count", 0)),
+			String(stack.get("name", "?")), slot)
+	if not stack.is_empty() and _click(_smelter_at, MOUSE_BUTTON_LEFT):
+		var button := _find_button(screen._menu_box, label)
+		if button != null:
+			pressed.append("%s @%d" % [label, _world().tick()])
+			_quiet = 0
+			button.pressed.emit()
+			_done[key] = true
+			# **AND THE MENU IS SHUT BY ITS OWN CONTROL, WHICH IS NOT TIDINESS BUT A DEBT THIS LOOP
+			# WOULD OTHERWISE PAY LATER.** The next stage walks (`_walk_to`), and a dismissing LEFT
+			# click is consumed by the dismissal (Maren's ruling 7) -- `_walk_to` clicks once per tile
+			# and then waits, so that click would be swallowed and the walk would hang for 240 ticks
+			# before reporting a stall it had no cause for. The menu's own close is a real control a
+			# player uses, so the loop stays a proxy for a person rather than reaching into the screen
+			# -- and its words come from `AssayHud`, not from this file (ASSA-62's lesson again).
+			var shut := _find_button(screen._menu_box, AssayHud.close_text())
+			if shut != null:
+				shut.pressed.emit()
+			return
 	if _quiet > 60:
-		_stop(false, "no `%s` button on a %s row after 60 ticks of looking" % [label, kind])
+		_stop(false, ("no `%s` button in the machine menu after 60 ticks of looking · menu on %d · %s"
+				% [label, screen._menu_at, _smelter_status()]))
 
 
 func _press_once(key: String, label: String) -> void:

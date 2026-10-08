@@ -735,6 +735,12 @@ func test_no_row_asks_for_more_width_than_the_panel_that_clips_it() -> bool:
 ## close-up now marks the acted-on tile — and its last box is this standing property, which nothing
 ## held.
 ##
+## **TWO OF ITS THREE VERBS NO LONGER EXIST ON A PACK ROW** (ASSA-331, Maren's ruling): `Fuel` and
+## `Smelt` are deleted, because her ASSA-316 ruling 8 made the cursor they aimed at unreachable on a
+## machine. `Place` is the only verb left on the pack that acts on a tile at a distance, so it is the
+## only one this can be built on -- and the premise below is what makes that visible rather than quietly
+## reducing the test to nothing.
+##
 ## **IT IS SCOPED TO THE PACK ON PURPOSE AND THAT IS NOT A LOOPHOLE.** There are exactly two
 ## `.disabled` writes in the whole client: a crafting row you cannot afford — Maren's own LATER
 ## ASSA-247 ruling, held by `test_buttons.gd::test_a_row_you_cannot_afford_is_not_pressable_...` —
@@ -748,8 +754,8 @@ func test_no_row_asks_for_more_width_than_the_panel_that_clips_it() -> bool:
 ## read as coverage until its author checked.
 func test_no_verb_that_acts_on_a_tile_is_disabled() -> bool:
 	var screen := _screen()
-	# ORE for Fuel/Smelt, a SMELTER for Place: the three verbs ASSA-96 was filed about all land on
-	# `_target_tile()`, and no single stack offers all three.
+	# THE ORE ROW IS STILL HERE THOUGH IT CARRIES NO VERB NOW: the pack is what you HAVE, so a row with
+	# nothing to press is the shape to walk over, and walking over it is part of what is checked.
 	screen._rebuild_pack([
 		{"kind": "ore", "species": 4, "grade": "B", "count": 22, "name": "Minyte ore (B)"},
 		{"kind": "smelter", "species": 4, "grade": "B", "count": 1, "name": "Minyte smelter (B)"},
@@ -760,13 +766,13 @@ func test_no_verb_that_acts_on_a_tile_is_disabled() -> bool:
 	for found in screen._carrying.find_children("*", "Button", true, false):
 		var button := found as Button
 		seen.append(button.text)
-		if button.text in [AssayActions.SLOT_FUEL, "Smelt", "Place"]:
+		if button.text == "Place":
 			acting += 1
 		if button.disabled:
 			ok = _fail(("the pack offers `%s` as a DISABLED button, so the client decided the sim "
 					+ "would refuse a press nobody made (ASSA-37)") % button.text)
 	if ok and acting == 0:
-		ok = _fail(("no Fuel, Smelt or Place button is on this pack, so nothing here acts on a tile "
+		ok = _fail(("no Place button is on this pack, so nothing here acts on a tile at a distance "
 				+ "and this proves nothing. What the rows offered: %s") % ", ".join(seen))
 	screen.queue_free()
 	return ok

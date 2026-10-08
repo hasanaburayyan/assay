@@ -201,22 +201,20 @@ func test_a_left_click_walks_and_a_right_click_chooses_the_target() -> bool:
 func test_the_session_tool_can_press_a_pack_row() -> bool:
 	var screen := _joined()
 	_tick(screen, 2)
-	var ok := _mine_some_ore(screen)
+	var stack := _a_smelter_in_the_pack(screen)
+	var ok := not stack.is_empty()
 	if ok:
-		var stack: Dictionary = screen._sim.inventory_of(screen._client.player_id)[0]
 		var play := AssayButtonPlay.new(screen, 0)
 		_asked.clear()
-		# A MOVE VERB, because `Craft smelter` is not on a pack row any more (ASSA-86): the pack is
-		# what you have and where it can go. `Fuel` is the one every ore row carries whatever the
-		# sheet says (Maren, ASSA-37), so it is the honest thing to look for here.
+		# **`Place` ON A SMELTER, BECAUSE `Fuel` IS THE ROW THAT NO LONGER EXISTS** (ASSA-331). This
+		# pressed `Fuel` -- "the one every ore row carries whatever the sheet says" -- until Maren ruled
+		# the insert pair off the pack. `Place` is now the only verb a fresh world's pack can offer, which
+		# makes it the only thing this witness can be built on; the tool's INSERT path is a menu press and
+		# is witnessed by `test_the_session_tool_can_put_ore_in_a_machine_through_its_menu`.
 		if not play._press_on_stack(String(stack.get("kind", "")),
-				int(stack.get("species", -1)), "Fuel"):
-			ok = _fail("AssayButtonPlay found no `Fuel` on the row reading `%s`; the pack "
+				int(stack.get("species", -1)), "Place"):
+			ok = _fail("AssayButtonPlay found no `Place` on the row reading `%s`; the pack "
 					% AssayHud.stack_line(stack) + "shows %s" % _text_of(screen._carrying))
-		# NO COMMAND IS ASSERTED FOR THE PACK HALF, and that is the honest reading: `Insert` carries
-		# a building id, so with nothing right-clicked the client cannot form the command at all and
-		# says so on the status line. What ASSA-62 broke was the tool's ability to FIND and press a
-		# row, which is what this asserts. The menu half below does submit.
 		elif play.pressed.is_empty():
 			ok = _fail("the tool pressed a pack row and recorded nothing")
 		else:
@@ -244,6 +242,47 @@ func test_the_session_tool_can_press_a_pack_row() -> bool:
 	return ok
 
 
+## **THE SESSION TOOL'S INSERT, WHICH IS NOW TWO GESTURES AND A LABEL IT DOES NOT OWN** (ASSA-331).
+##
+## SAME WITNESS AS THE TEST ABOVE AND THE SAME REASON (ASSA-62): nothing in CI runs the session, so a
+## tool that can no longer play the game fails nowhere. Deleting the pack row's `Fuel` moved the loop's
+## two insert beats onto the machine menu, which means a CLICK that must open the right machine's menu
+## and a button whose label carries a count and a slot -- three things that can rot independently.
+##
+## IT ASSERTS THE COMMAND AND THE CLEAN-UP. The command, because a tool that pressed something harmless
+## would look identical; the clean-up, because the loop's next stage walks, and a dismissing left click
+## is consumed (ruling 7) -- so a menu the tool left open costs the walk its click.
+func test_the_session_tool_can_put_ore_in_a_machine_through_its_menu() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var at := _a_placed_smelter(screen)
+	if at < 0:
+		screen.queue_free()
+		return false
+	var ok := true
+	var ore := _stack_of(screen, "ore")
+	var held := _counted(screen, ore)
+	var play := AssayButtonPlay.new(screen, 0)
+	# THE TOOL'S OWN FIELD FOR WHERE ITS SMELTER IS, set the way its own `_placing` stage sets it.
+	play._smelter_at = screen._target_tile()
+	_asked.clear()
+	play._press_insert_once("ore in", "ore", int(ore.get("species", -1)), AssayActions.SLOT_INPUT)
+	var want: Variant = AssayActions.insert(at, AssayActions.SLOT_INPUT,
+			AssayActions.item_of_stack(ore), held)
+	if _asked.size() != 1:
+		ok = _fail("AssayButtonPlay's insert submitted %s, not one Insert; it pressed %s"
+				% [_asked, play.pressed])
+	elif _asked[0] != want:
+		ok = _fail("AssayButtonPlay's insert submitted %s, not %s" % [_asked[0], want])
+	elif play.pressed.is_empty():
+		ok = _fail("the tool inserted and recorded no press")
+	elif screen._menu_at != -1:
+		ok = _fail("the tool left the menu on %d open, so the next walk loses its click"
+				% screen._menu_at)
+	screen.queue_free()
+	return ok
+
+
 ## NO PACK ROW OFFERS A VERB THAT MAKES SOMETHING (ASSA-86, Maren's ruling: the pack is what you
 ## HAVE and where it can GO).
 ##
@@ -257,10 +296,17 @@ func test_the_session_tool_can_press_a_pack_row() -> bool:
 ##
 ## That a row's buttons act on THAT row's stack is `test_an_insert_submits_the_count_it_read_at_the_press`
 ## with a real building in reach; this is about which verbs are there at all.
+##
+## **A SMELTER IS CRAFTED FIRST SINCE ASSA-331, AND THE REASON IS THIS TEST'S OWN CONTROL.** With the
+## insert pair deleted, two ore rows carry no buttons between them -- so every press this walk makes
+## would be zero presses, and `presses == 0` below would (rightly) call that measuring nothing. The
+## smelter item is the one stack a fresh pack can hold that still has a verb.
 func test_no_pack_row_offers_a_verb_that_makes_something() -> bool:
 	var screen := _joined()
 	_tick(screen, 2)
 	var ok := _mine_two_species(screen)
+	if ok and _a_smelter_in_the_pack(screen).is_empty():
+		ok = false
 	var presses := 0
 	if ok:
 		for row in screen._carrying.get_children():
@@ -388,40 +434,62 @@ func test_equip_carries_the_sims_index_and_the_tool_in_hand_offers_unequip() -> 
 	return ok
 
 
-## WITH NO BUILDING TARGETED THERE IS NOTHING TO SUBMIT, AND SAYING SO IS THE ANSWER. `_insert`'s
-## early return: with no building there is no `BuildingId` to put in the command at all, so the
-## sentence is honest rather than a swallowed press. (Maren's "never refuse" is about commands the sim
-## should judge; this one cannot be built.)
+## **NO PRESS ON A PACK ROW IS ANSWERED BY THIS CLIENT SAYING IT CANNOT BUILD THE COMMAND** (ASSA-331,
+## Maren's ruling: the insert verbs are deleted, not re-targeted).
 ##
-## THIS TEST USED TO CLAIM MORE THAN IT PROVED, and Nerite caught it by mutation (ASSA-55). It was
-## named for the stale-count rule, and its comment said the refusal sentence "names the number it was
-## about to insert". It does not: the early return happens BEFORE any count is read, so putting the
-## captured `stack.count` back left this green and the suite at 111/0. The rule it was named for is
-## tested next door against a smelter that really stands in the world. What is left here is the
-## branch this actually covers -- and the "no building" precondition is now ASSERTED rather than
-## assumed, because that is the only thing keeping it in this branch.
-func test_an_insert_with_no_building_targeted_submits_nothing_and_says_so() -> bool:
+## **THIS REPLACES A TEST OF THE DEFECT ITSELF**, which asserted that `Fuel` with no building under the
+## placement cursor submitted nothing and said *"nothing to insert into"*. That was honest behaviour for
+## a button that could be aimed; ruling 8 gave both mouse buttons on a building to its menu, so the
+## cursor can no longer be put on one and every press of that button was the refusal. A test of a
+## sentence a control only ever says is a test that the control is useless.
+##
+## **THE INVARIANT IS THE GESTURE AND NOT THE LAYOUT:** on the rows where the pair used to live -- the
+## ones holding something the SIM says a building eats -- every button is pressed, and a press must
+## either submit a command or choose a part. A press whose whole effect is a sentence is the defect.
+##
+## BOUNDED: the row has to EXIST or this measured nothing, and it is the ore row, which is the one row
+## the deleted buttons were drawn on. The loop is deliberately restricted to those rows rather than the
+## whole pack: `Mount` on a part with no frame chosen is refused by `AssayAssembly`'s own reading
+## (ASSA-102) and would fail this rule for a reason that is not this item's.
+func test_no_pack_row_press_is_answered_by_the_client_refusing_to_aim() -> bool:
 	var screen := _joined()
 	_tick(screen, 2)
-	var ok := _mine_some_ore(screen)
-	if ok:
-		var stack := _stack_of(screen, "ore")
+	var ok := true
+	var at := _a_placed_smelter(screen)
+	if at < 0:
+		screen.queue_free()
+		return false
+	# A REAL PLAYER'S CURSOR, MOVED BY A REAL GESTURE: a right click on my own tile, which is where the
+	# target starts and the one tile every player has. The smelter it just placed is off the cursor now,
+	# which is the state every press below is made in.
+	_click(screen, screen._my_tile(), MOUSE_BUTTON_RIGHT)
+	var recipes := AssaySimHost.recipes()
+	var rows := 0
+	for entry in screen._sim.inventory_of(screen._client.player_id):
+		var stack: Dictionary = entry
+		if AssayHud.insert_slots(stack, recipes).is_empty():
+			continue
 		var row := _row_for(screen, AssayHud.stack_line(stack))
-		var button: Button = null if row == null else _find(row, "Fuel")
-		if button == null:
-			ok = _fail("no `Fuel` button on an ore row: %s" % _labels_of(row if row != null
-					else screen._carrying))
-		elif screen._sim.tile_at(screen._target_tile()).get("building") != null:
-			ok = _fail("a building stands on %s, so this is not the early-return branch"
-					% screen._target_tile())
-		else:
+		if row == null:
+			ok = _fail("the sim says a building eats `%s` and the pack draws no row for it"
+					% AssayHud.stack_line(stack))
+			break
+		rows += 1
+		for button in _buttons_under(row):
+			var pressable: Button = button
 			_asked.clear()
-			button.pressed.emit()
-			var said: String = screen._status.text
-			if not _asked.is_empty():
-				ok = _fail("Insert with no building targeted submitted %s" % [_asked])
-			elif not said.contains("nothing to insert into"):
-				ok = _fail("pressing Fuel with no building targeted said: %s" % said)
+			var chosen: int = screen._building.size()
+			pressable.pressed.emit()
+			if not _asked.is_empty() or screen._building.size() != chosen:
+				continue
+			ok = _fail(("`%s` on the row reading `%s` submitted nothing and chose nothing, with the "
+					+ "cursor on %s: its whole effect was the sentence `%s`")
+					% [pressable.text, AssayHud.stack_line(stack), screen._target_tile(),
+							screen._status.text])
+			break
+	if ok and rows == 0:
+		ok = _fail("no pack row holds anything a building eats, so nothing here was measured: %s"
+				% _labels_of(screen._carrying))
 	screen.queue_free()
 	return ok
 
@@ -429,17 +497,22 @@ func test_an_insert_with_no_building_targeted_submits_nothing_and_says_so() -> b
 ## NO BUTTON MAY CARRY A COUNT IT READ EARLIER, AND THE PROOF HAS TO REACH THE SUBMITTED COMMAND
 ## (ASSA-55).
 ##
-## The pack only rebuilds when its SHAPE changes, so a stack's count climbs under a row that is never
-## rebuilt -- and `Fuel`/`Smelt` insert the WHOLE stack. The first version of `_insert` captured the
-## count in the closure: the button-driven session pressed `Fuel` on a row reading 12 and inserted 2,
-## and the fire went out mid-stack.
+## A menu only rebuilds when the PACK'S SHAPE changes (`_menu_showing`), so a stack's count climbs under
+## a slot button that is never rebuilt -- and `put all N` sends the whole stack. The first version of
+## this path captured the count in the closure: the button-driven session pressed `Fuel` on a row
+## reading 12 and inserted 2, and the fire went out mid-stack.
 ##
-## So this needs all three at once, which is why it builds a smelter: a targeted building (or
-## `_insert` returns early and nothing is sent), a count that has MOVED since the button was made,
-## and the SAME button object still on screen.
+## **IT WAS A PACK ROW'S `Fuel` UNTIL ASSA-331 AND IS NOW A MENU'S SLOT BUTTON.** Maren deleted the
+## pack-row pair; the rule did not go with it, because the surface it moved to caches rows the same way.
+## The staleness is now VISIBLE in the evidence rather than inferred: the count is written on the
+## button, so finding the button under its OLD label is how this test knows the menu did not rebuild,
+## and the submitted number still has to be the one the sim says NOW.
+##
+## So this needs all three at once, which is why it builds a smelter: an open menu on a real machine, a
+## count that has MOVED since the button was made, and the SAME button object still on screen.
 ##
 ## THE EXPECTED NUMBER IS READ OFF THE SIM, NOT THROUGH `AssayInventory.held`. That function is
-## what `_insert` itself calls, and a test that computes its expectation with the code under test
+## what `_insert_into` itself calls, and a test that computes its expectation with the code under test
 ## agrees with its bugs -- a grade filter that stopped filtering would be invisible to both. `_counted`
 ## sums the sim's own `count` fields instead.
 func test_an_insert_submits_the_count_it_read_at_the_press() -> bool:
@@ -450,18 +523,26 @@ func test_an_insert_submits_the_count_it_read_at_the_press() -> bool:
 	if at < 0:
 		ok = false
 	else:
+		# THE MENU IS OPENED BY A REAL CLICK ON THE MACHINE, which is Maren's ruling 7 and the only way
+		# in: `_a_placed_smelter` leaves the cursor on the smelter it just placed.
+		var spot: Vector2i = screen._target_tile()
+		_click(screen, spot, MOUSE_BUTTON_LEFT)
 		var stack := _stack_of(screen, "ore")
-		var row := _row_for(screen, AssayHud.stack_line(stack))
-		var button: Button = null if row == null else _find(row, "Fuel")
+		var before := _counted(screen, stack)
+		var label := AssayHud.insert_label(before, String(stack.get("name", "?")),
+				AssayActions.SLOT_FUEL)
+		var button := _find(screen._menu_box, label)
 		var mine := _find(screen._actions, "Mine")
-		if button == null:
-			ok = _fail("no `Fuel` button on the ore row after placing a smelter: %s"
-					% _labels_of(screen._carrying))
+		if screen._menu_at != at:
+			ok = _fail("a left click on %s opened a menu on %d, not the smelter %d"
+					% [spot, screen._menu_at, at])
+		elif button == null:
+			ok = _fail("no `%s` button in the menu on the smelter: %s"
+					% [label, _labels_of(screen._menu_box)])
 		elif mine == null:
 			ok = _fail("no `Mine` button to start the count climbing again")
 		else:
-			var before := _counted(screen, stack)
-			# Mining again under a row that is NOT rebuilt: crafting the smelter took the activity, so
+			# Mining again under a menu that is NOT rebuilt: crafting the smelter took the activity, so
 			# the swinging has to be asked for a second time.
 			mine.pressed.emit()
 			_tick(screen, 40)
@@ -469,22 +550,22 @@ func test_an_insert_submits_the_count_it_read_at_the_press() -> bool:
 			if now <= before:
 				ok = _fail("mined 40 more ticks and hold %d of the ore, was %d; nothing stale to catch"
 						% [now, before])
-			elif _find(row, "Fuel") != button:
-				ok = _fail("the ore row rebuilt, so a stale count could not have survived on it")
+			elif _find(screen._menu_box, label) != button:
+				ok = _fail(("the menu rebuilt -- `%s` is no longer the button it was -- so a stale count "
+						+ "could not have survived on it") % label)
 			else:
 				_asked.clear()
 				button.pressed.emit()
 				var want: Variant = AssayActions.insert(at, AssayActions.SLOT_FUEL,
 						AssayActions.item_of_stack(stack), now)
 				if _asked.size() != 1:
-					ok = _fail("`Fuel` on a targeted smelter submitted %s, not one Insert" % [_asked])
+					ok = _fail("`%s` on the menu's smelter submitted %s, not one Insert" % [label, _asked])
 				elif _asked[0] != want:
-					# The stale number is whatever the ROW was built with, which is lower still than
-					# `before` -- this test only took hold of the button afterwards. So report both
-					# honestly rather than naming `before` as the closure's value.
-					ok = _fail(("`Fuel` submitted %s, not %s: a count read EARLIER. The sim said %d "
-							+ "when this test took the button, and says %d now.")
-							% [_asked[0], want, before, now])
+					# The stale number is the one WRITTEN ON THE BUTTON, which this test read as `before`
+					# -- so for once the closure's value is knowable and is named in the failure.
+					ok = _fail(("`%s` submitted %s, not %s: the count on the label, read when the menu "
+							+ "was built. The sim said %d then and says %d now.")
+							% [label, _asked[0], want, before, now])
 				elif AssaySimHost.command_echo(_asked[0]) == "":
 					ok = _fail("Insert submitted %s, which serde refuses" % [_asked[0]])
 				# **THE "NUMBER TOLD" CLAUSE IS GONE BECAUSE THE SENTENCE IS** (ASSA-239). It read
@@ -506,43 +587,15 @@ func test_an_insert_submits_the_count_it_read_at_the_press() -> bool:
 ## A SMELTER THAT REALLY STANDS IN THE WORLD, MADE THE WAY A PLAYER MAKES ONE, and targeted. Returns
 ## its `BuildingId`, or -1 having already failed the run.
 ##
-## BUILT, NOT PLANTED. `_insert` reads its building out of `tile_at`, so a world with a building
-## written into it by the harness would be testing the harness. Every stage here is a press or a
-## click: mine, `Craft smelter`, right-click a free 2x2, `Place`. The right-click that chooses where
-## it goes is also what targets it afterwards -- Place, Insert and Take share one mechanism (ASSA-37),
-## which is the whole reason that is worth leaning on here.
+## BUILT, NOT PLANTED. The menu reads its machine out of `tile_at` like everything else, so a world
+## with a building written into it by the harness would be testing the harness. Every stage here is a
+## press or a click: mine, `Craft smelter`, right-click a free 2x2, `Place`. The right-click that
+## chooses where it goes is also what targets it afterwards -- which is worth leaning on here, and is
+## **all that is left of the mechanism ASSA-37 gave to Place, Insert and Take together**: Take went to
+## the machine menu with ASSA-316's ruling 3 and Insert with ASSA-331, so Place is the last verb on it.
 func _a_placed_smelter(screen: Node) -> int:
-	if not _mine_some_ore(screen):
-		return -1
-	var ore := _stack_of(screen, "ore")
-	if ore.is_empty():
-		_fail("mined and hold no ore stack to craft from")
-		return -1
-	# ENOUGH THAT THE ORE ROW SURVIVES THE CRAFT. Five ore go into the smelter; if that empties the
-	# row, the pack's shape changes, every button on it is freed, and there is no stale count to have.
-	var want := AssayDemoPlan.SMELTER_ORE + 4
-	for _i in range(12):
-		if _counted(screen, ore) >= want:
-			break
-		_tick(screen, 20)
-	if _counted(screen, ore) < want:
-		_fail("mined and hold %d of %s, want %d before crafting a smelter"
-				% [_counted(screen, ore), AssayHud.stack_line(ore), want])
-		return -1
-	# FROM THE CRAFTING MENU SINCE ASSA-86: the pack row carries only the verbs that MOVE an item.
-	var craft := _build_button_for(screen, "smelter")
-	if craft == null:
-		_fail("no menu row offers a smelter: %s" % _text_of(screen._make))
-		return -1
-	craft.pressed.emit()
-	for _i in range(6):
-		if not _stack_of(screen, "smelter").is_empty():
-			break
-		_tick(screen, AssayDemoPlan.CRAFT_TICKS)
-	var smelter := _stack_of(screen, "smelter")
+	var smelter := _a_smelter_in_the_pack(screen)
 	if smelter.is_empty():
-		_fail("pressed `Craft smelter` and no smelter arrived in %d ticks"
-				% (6 * AssayDemoPlan.CRAFT_TICKS))
 		return -1
 	var me: Vector2i = screen._my_tile()
 	var spot := AssayDemoPlan.smelter_spot(me, screen._sim.size_tiles(), _buildings_near(screen, me))
@@ -563,6 +616,62 @@ func _a_placed_smelter(screen: Node) -> int:
 		_fail("placed a smelter at %s and the buttons act on %s" % [spot, screen._target_tile()])
 		return -1
 	return int((building as Dictionary).get("id", -1))
+
+
+## A SMELTER IN THE PACK, crafted through the real buttons, or {} having already failed the run.
+##
+## **SPLIT OUT OF `_a_placed_smelter` BY ASSA-331**, because two tests now need a pack row that still
+## carries a verb at all: with the insert pair deleted, an ore row has NO buttons, so a test that
+## presses every button on every row would press nothing -- and both of those tests have a control that
+## catches exactly that. A smelter item is the one thing a fresh world can carry with a verb on it.
+func _a_smelter_in_the_pack(screen: Node) -> Dictionary:
+	if not _mine_some_ore(screen):
+		return {}
+	# **THE STACK UNDER YOUR FEET, NOT THE PACK'S FIRST ONE.** `Mine` acts on the tile you STAND on
+	# (`step.rs:124`, `NotOnDeposit`), so the count that climbs below is the species of the deposit
+	# beneath us -- and after `_mine_two_species` that is not `_stack_of(screen, "ore")`. Reading the
+	# first stack cost me a red suite: it sat at 5 while twelve batches of mining filled the other one.
+	var standing: Variant = screen._sim.tile_at(screen._my_tile()).get("deposit")
+	var here := -1 if standing == null else int((standing as Dictionary).get("species", -1))
+	var ore := _stack_of(screen, "ore")
+	for entry in screen._sim.inventory_of(screen._client.player_id):
+		var stack: Dictionary = entry
+		if String(stack.get("kind", "")) == "ore" and int(stack.get("species", -1)) == here:
+			ore = stack
+			break
+	if ore.is_empty():
+		_fail("mined and hold no ore stack to craft from")
+		return {}
+	# ENOUGH THAT THE ORE ROW SURVIVES THE CRAFT. Five ore go into the smelter; if that empties the
+	# row, the pack's shape changes, every button on it is freed, and there is no stale count to have.
+	#
+	# **AND ENOUGH FOR A SECOND BATCH TO STILL BE OFFERED** (ASSA-331): `test_the_session_tool_can_press
+	# _a_pack_row` now crafts a smelter before pressing `Place` on it, and then goes on to press the
+	# crafting menu's own `Smelter` row -- which is a row about ore the first craft had already spent.
+	var want := AssayDemoPlan.SMELTER_ORE * 2 + 4
+	for _i in range(12):
+		if _counted(screen, ore) >= want:
+			break
+		_tick(screen, 20)
+	if _counted(screen, ore) < want:
+		_fail("mined and hold %d of %s, want %d before crafting a smelter"
+				% [_counted(screen, ore), AssayHud.stack_line(ore), want])
+		return {}
+	# FROM THE CRAFTING MENU SINCE ASSA-86: the pack row carries only the verbs that MOVE an item.
+	var craft := _build_button_for(screen, "smelter")
+	if craft == null:
+		_fail("no menu row offers a smelter: %s" % _text_of(screen._make))
+		return {}
+	craft.pressed.emit()
+	for _i in range(6):
+		if not _stack_of(screen, "smelter").is_empty():
+			break
+		_tick(screen, AssayDemoPlan.CRAFT_TICKS)
+	var smelter := _stack_of(screen, "smelter")
+	if smelter.is_empty():
+		_fail("pressed `Craft smelter` and no smelter arrived in %d ticks"
+				% (6 * AssayDemoPlan.CRAFT_TICKS))
+	return smelter
 
 
 ## The first stack of a kind the SIM says is in the pack, or {}.
@@ -2347,9 +2456,15 @@ func test_esc_closes_a_menu_and_a_dismissing_click_does_not_walk() -> bool:
 ## SENDS ITS OWN NUMBER** (ASSA-316, Maren's ruling 4).
 ##
 ## **THE BUILDING IS THE MENU'S AND NOT `_target_tile`'s, AND THAT IS THE ASSERTION WORTH HAVING.** The
-## pack row's `Fuel` finds its building through the placement cursor; a menu already knows which machine
-## it is about, and the two paths now share `_insert_into`. A menu that quietly used the cursor would
-## pass every other check in this file.
+## pack row's `Fuel` found its building through the placement cursor; a menu already knows which machine
+## it is about. **That row is deleted (ASSA-331) and `_insert_into` has one caller now**, so a menu that
+## quietly used the cursor would pass every other check in this file.
+##
+## **AND THE SLOT IS PINNED EXACTLY, WHICH IT COULD NOT BE YESTERDAY.** This read *"either slot is a
+## pass and the count is not"*, because the button's label named neither and the harness may not decide
+## that ore is fuel. Maren's ASSA-331 label ruling put the slot IN the label, so the press can be aimed
+## at the fuel slot and the command checked against it -- the hedge was a cost of the wording, not a
+## principle. Which slots exist is still asked of the sim (`insert_slots`), never assumed.
 func test_a_slot_button_fuels_the_menus_machine_with_the_count_at_the_press() -> bool:
 	var screen := _joined()
 	var ok := true
@@ -2366,29 +2481,30 @@ func test_a_slot_button_fuels_the_menus_machine_with_the_count_at_the_press() ->
 		screen.queue_free()
 		return _fail("no ore in the pack to put into a slot")
 	var held := _counted(screen, ore)
-	var whole := _find(screen._menu_box,
-			AssayHud.insert_label(held, String(ore.get("name", "?"))))
+	if not Array(AssayHud.insert_slots(ore, AssaySimHost.recipes())).has(AssayActions.SLOT_FUEL):
+		screen.queue_free()
+		return _fail("the sim offers ore no fuel slot, so this test is aimed at a button that cannot "
+				+ "exist")
+	var label := AssayHud.insert_label(held, String(ore.get("name", "?")), AssayActions.SLOT_FUEL)
+	var whole := _find(screen._menu_box, label)
 	if whole == null:
-		ok = _fail("no `%s` button in the menu: %s"
-				% [AssayHud.insert_label(held, String(ore.get("name", "?"))),
-						_labels_of(screen._menu_box)])
+		ok = _fail("no `%s` button in the menu: %s" % [label, _labels_of(screen._menu_box)])
 	else:
 		_asked.clear()
 		whole.pressed.emit()
+		var want: Variant = AssayActions.insert(id, AssayActions.SLOT_FUEL,
+				AssayActions.item_of_stack(ore), held)
 		if _asked.size() != 1:
 			ok = _fail("a slot button asked for %s" % [_asked])
-		else:
-			# EITHER SLOT IS A PASS AND THE COUNT IS NOT. Which slot a species is good for is a sheet
-			# reading only the sim has (`stack_verbs`), so this harness may not decide that ore is fuel;
-			# what it must pin is the BUILDING and the COUNT, which are the two this client composes.
-			var want: Variant = AssayActions.insert(id, AssayActions.SLOT_FUEL,
-					AssayActions.item_of_stack(ore), held)
-			var other: Variant = AssayActions.insert(id, AssayActions.SLOT_INPUT,
-					AssayActions.item_of_stack(ore), held)
-			if _asked[0] != want and _asked[0] != other:
-				ok = _fail("a slot button asked for %s, not an Insert of %d into building %d"
-						% [_asked[0], held, id])
+		elif _asked[0] != want:
+			ok = _fail("`%s` asked for %s, not %s" % [label, _asked[0], want])
 	# THE FRACTION SENDS ITS OWN NUMBER. `or 1` is the one count every stack of two or more offers.
+	#
+	# **THE FRACTIONS STILL DO NOT NAME THEIR SLOT, SO THIS HALF KEEPS THE HEDGE ON PURPOSE** -- the two
+	# `or 1` buttons under the two slot rows read alike, and the one found here is whichever the sim's
+	# slot order put first. That is the open half of Maren's ASSA-331 label ruling: a fraction is a
+	# continuation of the button above it, and naming the slot in each would make it the longest row in
+	# the menu. Filed for her; if she rules the slot in, this hedge is what should tighten.
 	if ok and AssayHud.insert_fractions(held).size() > 0:
 		var some := _find(screen._menu_box, AssayHud.insert_some_label(1))
 		if some == null:
