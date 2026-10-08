@@ -90,12 +90,19 @@ var _door_title := Label.new()
 ## and that sentence is only true while the two seeds are the same one.
 ## **THE PLATE THE WORDS STAND ON** (ASSA-292, Maren: *"THE PLATE IS APPROVED, with floors"*).
 ##
-## **IT IS THE SIZE OF THE TEXT, NOT THE SIZE OF THE DOOR, AND THAT IS FLOOR 2 OBEYED RATHER THAN
-## QUOTED.** Her warning: *"a scrim may help and may not be the whole answer. Dimming the world until
-## text passes is how a title screen becomes a flat field with extra steps."* The arithmetic agrees:
-## to lift `INK_MUTED` to 4.5:1 against the worst pixel the lit world actually puts behind a word --
-## (244,154,81), an ore deposit -- a FULL-DOOR scrim needs alpha 0.73. A plate the size of the words
-## needs the same alpha over about a tenth of the door and leaves the rest of the world alone.
+## **IT IS A BAND, AND I SHOULD SAY SO RATHER THAN CALL IT WHAT I MEANT TO BUILD.** I wrote that this
+## would be "the size of the words, about a tenth of the door". It is not: the door's children are
+## full-width containers with their content centred inside them, so the union of what they occupy is
+## **912 x 261 -- 36% of the door**, a horizontal band and not a card. The words sit well on it and
+## the world reads above and below, but the claim and the rectangle were two different things and the
+## shot is what told me. **The composition is Maren's to rule on; the number is mine and it is real.**
+##
+## WHAT IS STILL TRUE AND IS THE REASON FOR A PLATE AT ALL: her floor 2 -- *"a scrim may help and may
+## not be the whole answer. Dimming the world until text passes is how a title screen becomes a flat
+## field with extra steps."* To lift `INK_MUTED` to 4.5:1 against the worst pixel the lit world
+## actually puts behind a word -- (244,154,81), an ore deposit -- a scrim over the WHOLE door needs
+## alpha 0.73. This band is opaque where it is and absent everywhere else, which is why 64% of the
+## picture is still the picture.
 var _door_plate := ColorRect.new()
 var _door_sim := AssaySimHost.new()
 ## Ore in the door world, computed ONCE. The live `_ore_under` re-caches on `_sim.tick()`; this world
@@ -3687,7 +3694,11 @@ func _place_door_plate(showing: bool) -> void:
 		found = true
 	if not found:
 		return
-	var plate := AssayHud.door_plate_rect(AssayHud.join_rect(), content)
+	# **CLIPPED TO THE WORLD, NOT TO THE DOOR, and the shot is what corrected this.** `join_rect()`
+	# is the whole window (ASSA-231) while the world is 912 px of it, so clipping to the door put a
+	# 344 px tongue of plate out over the bare margin beside the world -- scrim where there is nothing
+	# to scrim, and a visible seam for it. A plate exists to stand between the words and the PICTURE.
+	var plate := AssayHud.door_plate_rect(AssayHud.world_rect(), content)
 	# A sliver is not a plate. Below one pad in either direction the words are not standing on
 	# anything, and drawing it would be a dark line across the world for no legibility at all.
 	if plate.size.x < AssayHud.DOOR_PLATE_PAD or plate.size.y < AssayHud.DOOR_PLATE_PAD:

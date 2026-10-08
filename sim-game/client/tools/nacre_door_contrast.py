@@ -121,14 +121,21 @@ DILATE = 3
 ## bright. A button sitting near a sentence is not the surface the sentence stands on -- and its own
 ## legibility is already held by `build_theme.gd`, which REFUSES to write a theme whose ink pairs
 ## fall under 4.5:1. That is a better guard than this script, so this script stays out of its way.
+## **ONLY THE BRIGHT ONES, AND LEAVING RAISED IN HERE COST A RUN.** The reported number is the
+## BRIGHTEST pixel of the surface, so a dark control can never be it and excluding one buys nothing --
+## while `RAISED` (53,57,67) is within tolerance of what the plate itself composites to over grass
+## (~48,53,55), so listing it made the script skip the plate and report an empty ring. A filter that
+## removes the thing being measured is the same mistake as a mask that counts a glyph fringe as
+## background; it is just quieter about it.
 FURNITURE = {
     "ACCENT": (128, 229, 140),
-    "RAISED": (53, 57, 67),
-    "BORDER": (74, 79, 92),
+    "HOVER": (242, 242, 242),
 }
 FURNITURE_TOLERANCE = 24
 ## Above this the pixel is the lit world, below it the plate (or the old flat field).
 PLATE_MAX_LUMA = 0.06
+## The shortest contiguous dark run that can be a plate. No scatter prop in this world is this wide.
+PLATE_MIN_RUN = 200
 ## How deep the measured ring of plate is, inside DOOR_PLATE_PAD = 24 so it holds no text.
 RING = 16
 # The door's own rectangle, `AssayHud.join_rect()`: x 24..936, y 24..696. Keeps the HUD column and
@@ -170,12 +177,25 @@ def main():
         # brighter. On the flat field there is no plate and the whole door is dark, so the bounding
         # box becomes the door -- which is the right answer there and is what keeps the control honest
         # rather than needing a second code path.
+        # **A PLATE IS A SOLID RUN, NOT SCATTERED DARK PIXELS, and the first version of this did not
+        # say so.** The lit world is full of dark specks -- scatter props, ore outlines, the spawn
+        # pad -- so a bounding box over every dark pixel spans the whole map and measures nothing.
+        # Requiring a contiguous horizontal run of PLATE_MIN_RUN excludes all of them: no prop in
+        # this world is 200 px wide.
         dark = None
         for y in range(y0, y1):
-            for x in range(x0, x1):
-                if luminance(pixel(rows, channels, x, y)) < PLATE_MAX_LUMA:
-                    dark = (min(dark[0], x), min(dark[1], y), max(dark[2], x), max(dark[3], y)) \
-                        if dark else (x, y, x, y)
+            run_start = None
+            for x in range(x0, x1 + 1):
+                is_dark = x < x1 and luminance(pixel(rows, channels, x, y)) < PLATE_MAX_LUMA
+                if is_dark:
+                    if run_start is None:
+                        run_start = x
+                    continue
+                if run_start is not None and x - run_start >= PLATE_MIN_RUN:
+                    lo, hi = run_start, x - 1
+                    dark = (min(dark[0], lo), min(dark[1], y), max(dark[2], hi), max(dark[3], y)) \
+                        if dark else (lo, y, hi, y)
+                run_start = None
         if dark is None:
             print("  no plate and no dark field found: nothing to measure")
             continue
