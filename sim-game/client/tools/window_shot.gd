@@ -2,7 +2,14 @@ extends SceneTree
 ## CI: local -- a shot: --headless writes a BLANK frame and reports success, the worst kind of green
 ## A PICTURE OF THE REAL WINDOW, at 1:1, with no hands (ASSA-116 box 5).
 ##
-##   godot --path . --script res://tools/window_shot.gd -- <out_dir> [seed] [ticks] [hoppers]
+##   godot --path . --script res://tools/window_shot.gd -- <out_dir> [seed] [ticks] [hoppers] \
+##       [row=N] [blind]
+##
+## **`blind` IS FOR A COLD READ AND CHANGES ONLY WHERE THINGS LAND** (ASSA-294): pictures go to
+## `<out_dir>/frames/`, and everything that NAMES what is in them -- the marks JSON, the hover JSON,
+## the art provenance -- goes to `<out_dir>/key/`. So `send the frames directory` is safe by
+## construction instead of safe by the asker remembering. Without it the layout is exactly what it
+## has always been, and the run says out loud that the directory is not safe to hand over.
 ##
 ## `hoppers` is for ASSA-138 and is the one thing about the played world a caller may change: how
 ## many hoppers the loop MOUNTS on the drill it plants (default: every one it makes, which is what
@@ -144,6 +151,12 @@ var _screen: Node
 var _play: AssayButtonPlay
 var _asked: Array = []
 var _out := ""
+## **WHERE THE PICTURES GO AND WHERE THE ANSWER KEY GOES, WHICH ARE THE SAME PLACE UNTIL `blind`**
+## (ASSA-294). Default behaviour is unchanged on purpose: every caller, every path quoted in an item
+## and every frame already sitting in `shared/` still resolves. `blind` is what splits them.
+var _blind := false
+var _frames := ""
+var _key := ""
 var _seed := DEFAULT_SEED
 var _ticks := PLAY_TICKS
 var _phase: Phase = Phase.SETTLE_JOIN
@@ -296,18 +309,37 @@ func _initialize() -> void:
 		var arg := String(raw)
 		if arg.begins_with("row="):
 			_north_row = int(arg.substr(4))
+		elif arg == "blind":
+			_blind = true
 		else:
 			positional.append(arg)
 	_out = String(positional[0]) if not positional.is_empty() else ""
 	if _out == "":
-		_finish(false, "usage: -- <out_dir> [seed] [ticks] [hoppers] [row=N]")
+		_finish(false, "usage: -- <out_dir> [seed] [ticks] [hoppers] [row=N] [blind]")
 		return
 	_seed = String(positional[1]) if positional.size() > 1 else DEFAULT_SEED
 	_ticks = int(positional[2]) if positional.size() > 2 else PLAY_TICKS
 	_left = _ticks
-	if DirAccess.make_dir_recursive_absolute(_out) != OK:
-		_finish(false, "cannot write to %s" % _out)
-		return
+	# **A COLD READ IS THE ONE MEASUREMENT WE CANNOT RE-RUN ON THE SAME PERSON** (ASSA-294, Maren).
+	# Contamination invalidates a pass and never a fail (ASSA-206), so a frame handed over with this
+	# tool's own report beside it is not a small loss -- it spends a whole person's attention. Nacre
+	# was handed the walk's endpoints, `(58,59) -> (67,59)`, printed by this very script, and said so:
+	# *"I read it as a grey scratch and only called it the walk because I was told to."*
+	#
+	# So under `blind` the pictures and everything that NAMES what is in them get different
+	# directories, and `send the frames directory` is safe by construction rather than by the asker
+	# remembering on a tired wake-up. The report is not withheld and not weakened -- it is one level
+	# up, which is the half of this that keeps the builder's own evidence intact.
+	if _blind:
+		_frames = "%s/frames" % _out
+		_key = "%s/key" % _out
+	else:
+		_frames = _out
+		_key = _out
+	for dir in [_frames, _key]:
+		if DirAccess.make_dir_recursive_absolute(dir) != OK:
+			_finish(false, "cannot write to %s" % dir)
+			return
 
 	_screen = load("res://scenes/main.tscn").instantiate()
 	root.add_child(_screen)
@@ -389,7 +421,7 @@ func _write_art_provenance() -> void:
 		# decides whether a shot is evidence. Nerite's case is this line reading "DIFFERS: player.png".
 		lines.insert(0, "art: %s" % ("every sheet matches HEAD" if differs.is_empty()
 				else "DIFFERS from HEAD: %s" % ", ".join(differs)))
-	var path := "%s/00-art-provenance.txt" % _out
+	var path := "%s/00-art-provenance.txt" % _key
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file == null:
 		print("  art provenance  CANNOT WRITE %s" % path)
@@ -1076,7 +1108,9 @@ func _shoot(name: String, subjects: PackedStringArray, guard_repeat := true) -> 
 					+ "not two")
 			return
 		_taken[fingerprint] = name
-	var path := "%s/%s" % [_out, name]
+	# ASSA-294: a shot whose name advertises a key goes with the report, not with the pictures.
+	var into := _key if _blind and _names_marks(name) else _frames
+	var path := "%s/%s" % [into, name]
 	if image.save_png(path) != OK:
 		_finish(false, "cannot write %s" % path)
 		return
@@ -2253,7 +2287,7 @@ func _write_marks_table() -> void:
 		"deposits": discs,
 		"case": {"on_letters": on_letters, "overlaps": overlaps},
 	}
-	var path := "%s/08-whole-world-marks.json" % _out
+	var path := "%s/08-whole-world-marks.json" % _key
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file == null:
 		_finish(false, "cannot write %s" % path)
@@ -2333,8 +2367,8 @@ func _hover_report() -> void:
 	var mark_rects := AssayHud.hover_mark(_hover_tile, cell, AssayHud.MARGIN)
 	var hover_box: Rect2 = mark_rects["cell_rect"]
 	var box := hover_box.grow(1.0)
-	var before := Image.load_from_file("%s/08-whole-world.png" % _out)
-	var after := Image.load_from_file("%s/13-whole-world-hover.png" % _out)
+	var before := Image.load_from_file("%s/08-whole-world.png" % _frames)
+	var after := Image.load_from_file("%s/13-whole-world-hover.png" % _frames)
 	if before == null or after == null:
 		_finish(false, "13-whole-world-hover.png: cannot reload the pair to compare them")
 		return
@@ -2398,7 +2432,7 @@ func _hover_report() -> void:
 		"machines": rows,
 		"pixels_changed_in_the_hovered_tile": moved,
 	}
-	var path := "%s/13-whole-world-hover.json" % _out
+	var path := "%s/13-whole-world-hover.json" % _key
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file == null:
 		_finish(false, "cannot write %s" % path)
@@ -2546,6 +2580,45 @@ func _subject_report() -> Dictionary:
 	return _refused("; ".join(said))
 
 
+## **A PICTURE CAN BE AN ANSWER KEY TOO, AND MY FIRST SWEEP WALKED PAST ONE** (ASSA-294).
+##
+## The sweep below started out refusing non-pictures in the frames directory, and
+## `09-whole-world-key.png` sailed straight through: it IS a picture, and it is the MAP KEY -- the
+## one frame whose entire job is to say what the marks mean. I had tested the file EXTENSION and
+## called it testing the property, which is the way I get this wrong more than any other.
+##
+## So a shot whose own name advertises a key or a mark list is key material, wherever it came from,
+## and under `blind` it is filed with the report instead of the frames.
+##
+## **WHETHER THE IN-GAME MAP KEY COUNTS AS CONTAMINATION IS MAREN'S CALL, NOT MINE** -- a player can
+## open that panel, so it is arguably part of the product rather than an answer. I have routed it to
+## `key/` because that is the conservative default and it is one line to reverse.
+func _names_marks(shot_name: String) -> bool:
+	var lower := shot_name.to_lower()
+	return lower.contains("-key.") or lower.contains("marks")
+
+
+## **THE REFUSAL THAT MAKES `blind` A MODE AND NOT A CONVENTION** (ASSA-294 box 3).
+##
+## Maren: a rule that depends on the asker remembering fails on the wake-up somebody is tired. So
+## the GREEN LINE carries this, because the next thing that happens to a green shot run is somebody
+## sending the directory. Anything in the frames directory that is not a picture earns a red.
+##
+## The commonest way to earn it is a caller redirecting its own stdout into the frames directory
+## (`> .../frames/shot.log`) -- which is precisely the contamination this item is about, and the
+## shell creates that file before this script starts, so the sweep sees it.
+func _unblind_offenders() -> PackedStringArray:
+	var offenders := PackedStringArray()
+	if not _blind:
+		return offenders
+	for entry in DirAccess.get_files_at(_frames):
+		var found := String(entry)
+		if not found.to_lower().ends_with(".png") or _names_marks(found):
+			offenders.append(found)
+	offenders.sort()
+	return offenders
+
+
 func _finish(ok: bool, why: String) -> void:
 	if _done:
 		return
@@ -2557,6 +2630,23 @@ func _finish(ok: bool, why: String) -> void:
 		# not have to go back up the output to learn that a subject was only partly in frame. This
 		# is the half that stops "clipped no longer fails" from becoming "clipped is no longer
 		# said" -- which is the version of this change that would have been worth refusing.
+		# ASSA-294: EARNED BEFORE THE GREEN LINE, never printed beside it as a note. A blind run whose
+		# frames directory is not purely pictures is not a usable blind run.
+		var leaked := _unblind_offenders()
+		if not leaked.is_empty():
+			var said := "FAIL  blind run: %s holds %d file(s) that are not pictures" % [_frames,
+					leaked.size()]
+			said += ", so handing this directory to a cold reader hands them the answer too: "
+			said += ", ".join(leaked)
+			said += ". Move them under %s, which is where this run put its own report." % _key
+			print(said)
+			return
+		if not _blind:
+			# THE DEFAULT IS UNCHANGED AND THEREFORE UNSAFE, SO IT SAYS SO. This is the whole of what
+			# the asker used to have to remember, moved into the run that produced the frames.
+			print(("  NOT BLIND: %s holds the marks JSON and the art provenance beside the pictures, "
+					+ "so it names what a cold reader would be asked to find. Re-run with `blind` "
+					+ "for a frames/ directory that is safe to hand over as-is.") % _out)
 		var cut := PackedStringArray()
 		for shot_name in _clipped:
 			cut.append("%s: %s" % [shot_name, ", ".join(_clipped[shot_name] as PackedStringArray)])
