@@ -907,6 +907,92 @@ static func build_screen_rect(world: Rect2, band_top: float) -> Rect2:
 	return Rect2(top, Vector2(world.size.x - MARGIN.x * 2.0, maxf(0.0, bottom - top.y)))
 
 
+## **HOW TALL THE COMMIT BAR IS** (ASSA-332; Maren's §5.4: *"block 7 becomes the COMMIT BAR, 863 x 112
+## at y 529..641"*, which is the rect her §7 said she expected to move).
+##
+## **IT IS 112 BECAUSE OF A MEASUREMENT, NOT A TASTE.** `client/tools/maren_readout_rows.gd` measured
+## the sim's own sentence in the shipped body font: the held-tool readout is **916 px at `BODY` 13**
+## and this screen is **863 px wide**, so there is no width anywhere on it at which that sentence is
+## one row. At the bar's ≥ 687 px it is 2 rows today and 4 rows + 2 note rows in the worst case the
+## catalogue can make — 108 px inside 112.
+##
+## **AND THE REASON IT IS IN THIS RECT RATHER THAN THE READOUT'S IS A DESIGN REASON.** The sentence is
+## the sim saying whether you are about to waste parts you cannot get back, so it belongs beside the
+## irreversible act and not in a side column you scan while placing. One green thing, one irreversible
+## act, same place.
+const BUILD_COMMIT_BAR := 112.0
+
+## **HOW WIDE `Build`'S BOX MAY BE** (ASSA-332; her §5.4: *"Build's box is ≤ 160 px, so the sentence
+## gets ≥ 687 px, the width the wrap was measured at"*).
+##
+## **IT IS A CEILING THE LAYOUT DOES NOT ENFORCE, AND THAT IS DELIBERATE.** A `Button` in a container
+## takes its text's natural width, and clamping it with `custom_minimum_size` would CLIP a longer word
+## instead of reporting it — a control whose label is cut is the ASSA-175 lying control with the lie in
+## the middle. So the bar lets the button be its natural size and `test_main_screen.gd` asserts the
+## laid-out width against this number: the day `Build` becomes a longer word, a test says so and the
+## sentence's floor below is what it says it is.
+const BUILD_ACT_WIDTH := 160.0
+
+## **HOW MUCH OF THE BAR THE SIM'S SENTENCE IS OWED, DERIVED AND NEVER TYPED** (ASSA-332).
+##
+## Maren's 687 is `863 - 160 - 16`: the bar less `Build`'s ceiling less the gutter between them. **The
+## 687 is not written down anywhere in this project**, because a second typed number is exactly
+## ASSA-320's defect — prose and a constant agreeing today and drifting the day the bar or the button
+## moves. A test asserts the laid-out sentence is at least what this returns.
+##
+## **AND THE SCREEN IS 864 PX WIDE, NOT HER 863** (measured, ASSA-332): `world_rect()` is 912 wide and
+## the pad takes 24 from each side. Her 863 is `911 - 48`, an **exclusive end written as a width** —
+## x 48..911 is 864 pixels if 911 is the last one. **Neither number is wrong and the pixel is not a
+## defect**, which is why the check that holds this is ONE-SIDED: the sentence may never get less than
+## the width the wrap was measured at. An equality against 687 would have been red forever over a
+## pixel no one can see, and that red would have taught the next person to delete the check.
+##
+## **THE GUTTER IS AN ARGUMENT FOR `build_screen_rect`'S REASON**: it is `main.gd`'s `BUILD_GUTTER`,
+## the same constant the containers are given, so this function cannot disagree with the layout it
+## describes.
+static func commit_sentence_width(bar_width: float, gutter: float) -> float:
+	return maxf(0.0, bar_width - BUILD_ACT_WIDTH - gutter)
+
+
+## **THE SIM'S OWN BREAK POINT, AND THE ONLY ONE THIS CLIENT MAY WRAP A SIM SENTENCE AT** (ASSA-332;
+## Maren's §5.4 ruling 2). The sentence's clauses are joined by this mark by the sim itself; the `+`
+## inside the parts clause is **not** a break point.
+const SIM_CLAUSE_MARK := "·"
+
+## **THE SIM'S SENTENCE, BROKEN ONLY WHERE THE SIM BROKE IT** (ASSA-332; Maren's §5.4).
+##
+## **"WHOLE" MEANS EVERY CHARACTER IN THE SIM'S ORDER, AND WRAPPING IS NOT RECOMPOSING** — her ruling,
+## said explicitly because at `BODY` 13 the other reading of ASSA-305 is impossible to obey anywhere
+## on this screen, and a rule nobody can obey gets quietly dropped instead of argued with.
+##
+## **WHY NOT FREE WORD WRAP:** it orphans a grade letter onto its own row. At block 5's width the
+## engine's own wrap cut `head(Bokase` / `B 1-25)` — a material separated from its own grade letter,
+## which is ASSA-272 box 7's defect in a new place: a break inside a clause puts a number and the
+## thing it is about on different rows.
+##
+## **THE MARK STAYS AT THE END OF THE CLAUSE IT FOLLOWS**, so no character is deleted and the order is
+## the sim's. The one character a break consumes is the single space at it, which is what every text
+## engine does at a wrap and is the reason this is a wrap rather than an edit: `" ".join(clauses)` is
+## the sentence back, and `test_hud.gd` holds exactly that.
+##
+## **A CLAUSE WIDER THAN THE BAR STILL WRAPS**, in the engine, inside that clause. That is not a
+## loophole in the ruling: the only other option is deleting characters, which ASSA-305 forbids
+## outright, and today's widest clause is 280 px against the bar's 687.
+static func sentence_clauses(sentence: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	var rest := sentence
+	while true:
+		var at := rest.find(SIM_CLAUSE_MARK)
+		if at < 0:
+			break
+		out.append(rest.substr(0, at + SIM_CLAUSE_MARK.length()).strip_edges())
+		rest = rest.substr(at + SIM_CLAUSE_MARK.length())
+	var last := rest.strip_edges()
+	if last != "":
+		out.append(last)
+	return out
+
+
 ## **THE WORD ON A MAKE ROW'S ONE CONTROL, NOW THAT IT OPENS A SCREEN INSTEAD OF MAKING SOMETHING**
 ## (ASSA-328; Maren's §2: *"a row's button becomes `Make…` and opens this screen with that recipe
 ## already chosen"*).
@@ -932,19 +1018,48 @@ static func build_button_text() -> String:
 	return "Build"
 
 
-## **COST AS A COUNT, HAVE ON THE LEFT** (ASSA-328; Maren's §5.3: *"Cost (block 6) is COUNTS, so it is
-## text: `12 / 20`, have on the left. A count is not a reading and must not be given a band"*).
+## **COST AS TWO COUNTS, NEED FIRST AND NO SLASH** (ASSA-332; Maren's §5.5, which reverses her own
+## §5.3 twenty minutes after slice 1 shipped it).
 ##
 ## **FACTORIO'S ONE BORROWING, AND THE REASON IT IS WORTH A FUNCTION** (her §3): have/need beside an
 ## ingredient means affordability is READ, never computed by the player in their head. The row this
 ## replaces printed the sim's sentence — *"2 Tonore refined (A), you have 8"* — which says the same
 ## thing in prose, and prose is what the board called a debug dump.
 ##
+## **`2/1` IS NOT A RATIO, WHICH IS WHY THE SLASH IS GONE.** Her ruling with her reason: a slash is a
+## ratio's mark and a ratio needs left ≤ right, so `12 / 20` reads as progress and `2/1` reads as 200%
+## of something — and **on any stocked pack the surplus case is the normal case**, so most rows on a
+## working screen were broken ratios. I built §5.3 literally, said on the item I was not sure it read
+## right, and the thing that settled it was this screen printing `2/1 Bokase head (B)` on my own save.
+##
+## **NEED FIRST, BOTH NUMBERS ALWAYS.** The question block 6 answers is *is the need met*, and a short
+## row then reads as an instruction: `need 1 · have 0`.
+##
 ## **IT NAMES NO ITEM AND SO IT IS NOT A SECOND COPY OF A SIM SENTENCE** (ASSA-43/52's defect). The
 ## two numbers are `offer.count` and `offer.cost`, both crossed as data by `make_offers` for exactly
-## this (ASSA-256), and the thing they are about is named once, by the sim, elsewhere on the screen.
-static func have_need_line(have: int, need: int) -> String:
-	return "%d / %d" % [have, need]
+## this (ASSA-256), and the thing they are about is named once, by the sim, on the row above.
+##
+## **THE OLD NAME IS DELETED RATHER THAN REORDERED** (`have_need_line`, ASSA-328): GDScript takes a
+## swapped pair of `int`s without a word, and would print `need 8 · have 2` on the one surface whose
+## whole job is affordability. A static function that no longer exists is a compile error, which
+## `tools/check_every_script.sh` runs on every script in the project.
+static func cost_counts_line(need: int, have: int) -> String:
+	return "need %d · have %d" % [need, have]
+
+
+## **WHETHER A COST ENTRY IS SHORT, so the WHOLE entry can be drawn in `FAILED`** (ASSA-332; Maren's
+## §5.5: *"the whole entry in `FAILED` when have < need"*, and `need 1 · have 0` reads as an
+## instruction).
+##
+## **THIS IS NOT THE CLIENT DECIDING AFFORDABILITY, AND THE DISTINCTION IS WORTH THE FUNCTION.** Her
+## §3 rule stands — affordability is READ, never computed — and what is read here is the comparison
+## she specified, between the sim's own two crossed numbers: `cost` is what the sim says a batch
+## spends and `count` is what the sim says the pack holds. ASSA-247 is where that comparison was
+## ruled in and `cost` crossed the binding for it. **What a client may never do is reach the verdict
+## out of `line`'s prose or invent a threshold of its own**, and a named predicate with one call site
+## is how the one comparison on this screen stays findable.
+static func cost_entry_short(need: int, have: int) -> bool:
+	return have < need
 
 
 ## **HOW MUCH OF A STACK A SLOT ROW OFFERS BESIDES ALL OF IT** (ASSA-316, Maren's ruling 4).
