@@ -252,17 +252,80 @@ func test_a_strip_does_not_open_on_a_placeholder() -> bool:
 
 ## NO REFUSAL IS SILENT, and no refusal half-happens. A name that is not a tab must leave the panel
 ## exactly as it was rather than blanking it.
+##
+## **AND "NOTHING" INCLUDES THE SCROLL OFFSET**, which this test did not look at while claiming the
+## whole word. `select()` returns before it touches the box, so the property holds today; the point
+## of asserting it is that the reset below is now a thing someone might move, and the move that put
+## it ABOVE the two refusals would be silent in every other assertion here.
 func test_selecting_a_tab_that_does_not_exist_changes_nothing() -> bool:
 	var strip := _strip_of(["make", "bench"])
 	strip.select("bench")
+	var box := strip.scroll_box()
+	var offset := _scroll_to(box, 240)
+	if offset == 0:
+		return _fail("the fixture could not hold a scroll offset, so the clause about it asks nothing")
 	if strip.select("rocks"):
 		return _fail("selecting a tab that does not exist reported success")
 	if strip.selected() != "bench":
 		return _fail("a refused selection moved the panel to '%s'" % strip.selected())
+	if box.scroll_vertical != offset:
+		return _fail("a refused selection moved the scroll from %d to %d: the refusal had a side "
+				% [offset, box.scroll_vertical] + "effect the player can see")
 	var seen := _visible_bodies(strip)
 	if seen.size() != 1 or seen[0] != "bench":
 		return _fail("a refused selection left these visible: %s" % ", ".join(seen))
 	return true
+
+
+## **A TAB OPENS AT ITS OWN BEGINNING, AND NOTHING HELD IT TO THAT UNTIL NOW** (ASSA-277, and the
+## idea is Limpet's rather than mine).
+##
+## `select()` writes `scroll_box().scroll_vertical = 0`. `tools/nacre_tab_budget_probe.gd` prints an
+## `off top` column that is zero on every one of 516 ticks BECAUSE OF THAT LINE — the probe selects
+## every tick, so the zero was guaranteed before the first tick ran, and I quoted it as evidence for
+## a day before withdrawing it. Limpet's reading is the better half: the reset is a real promise —
+## *selecting a tab shows you the top of it* — and this file had nine tests and no mention of
+## `scroll`. If the reset ever went, a player would open `make` at whatever offset Mineralogy's
+## 826 px index was left on and meet the middle of a list. The column now rests on this rather than
+## on an accident.
+##
+## **THE GUARD IN THE MIDDLE IS THE WHOLE TEST.** A `ScrollContainer` that never laid out has a
+## scrollbar whose `max_value` is 0, so `scroll_vertical = 240` CLAMPS STRAIGHT BACK TO 0 and the
+## last assertion would read `0 == 0` and pass with the reset deleted. `_scroll_to` gives the bar a
+## range and returns what actually stuck, and a 0 here fails the test instead of flattering it.
+func test_selecting_a_tab_shows_you_the_top_of_it() -> bool:
+	var strip := _strip_of(["make", "bench", "rocks"])
+	var box := strip.scroll_box()
+	var offset := _scroll_to(box, 240)
+	if offset == 0:
+		return _fail("the fixture could not hold a scroll offset (scroll_vertical stayed 0 after "
+				+ "being set to 240), so this test would pass with the reset deleted. It asks nothing.")
+	if not strip.select("rocks"):
+		return _fail("selecting a real tab was refused")
+	if box.scroll_vertical != 0:
+		return _fail("the box was scrolled to %d and opening another tab left it at %d: a tab opens "
+				% [offset, box.scroll_vertical] + "at the offset the last list was left on")
+	# AND AGAIN FOR THE TAB ALREADY OPEN, which is the case a `return` on `tab_name == _selected`
+	# would quietly break: pressing the name you are on is how a player gets back to the top.
+	offset = _scroll_to(box, 180)
+	if offset == 0:
+		return _fail("the fixture would not hold the second offset, so the re-select clause is mute")
+	if not strip.select("rocks"):
+		return _fail("re-selecting the open tab was refused")
+	if box.scroll_vertical != 0:
+		return _fail("pressing the open tab's own name left the box at %d" % box.scroll_vertical)
+	return true
+
+
+## SCROLL A BOX THAT HAS NEVER LAID OUT, and report what actually stuck rather than what was asked
+## for. Without the bar's range, `ScrollContainer` clamps every write to 0 and any test built on it
+## asserts nothing — see the test above, which fails on a 0 from here instead of passing.
+func _scroll_to(box: ScrollContainer, want: int) -> int:
+	var bar := box.get_v_scroll_bar()
+	bar.max_value = 1000.0
+	bar.page = 400.0
+	box.scroll_vertical = want
+	return box.scroll_vertical
 
 
 ## THE STRIP'S BUTTONS AGREE WITH WHAT IS ON SCREEN. `toggle_mode` buttons keep their own pressed
