@@ -4830,3 +4830,59 @@ func test_nothing_in_the_column_asks_for_more_width_than_the_panel() -> bool:
 				(worst as Label).text if worst is Label else "not a Label"])
 	screen.queue_free()
 	return ok
+
+
+## **THE FIRST SCREEN SAYS WHAT THE GAME IS CALLED** (ASSA-116 box 4; Maren's finding 2 on that item,
+## 2026-10-03: a developer telemetry line had the best seat on the screen "including the game's name,
+## which appears nowhere at all. A build that opens without saying what it is reads as a tool").
+##
+## **THE TITLE IS THE PROJECT'S OWN NAME AND NOT A TYPED COPY OF IT**, and the second half of that
+## is asserted by renaming the project under a second screen -- because `text == the project name` is
+## satisfied by a literal "Assay" for exactly as long as the game is called Assay. A literal here
+## would survive the game being renamed and the first screen would then be the one place still using
+## the old name. `project.godot` is also what names the exported `Assay.app`, so this ties the
+## window's title to its bundle.
+##
+## Nothing here pins the SENTENCE under it. `test_the_empty_map_names_which_kind_of_empty_it_is`
+## asserts the note is `AssayHud.empty_map_line()`, and the wording inside that function is the Game
+## Director's to re-rule -- a test that froze her words would turn her next ruling into a red suite,
+## which is the same reason `sim/tests/proximity.rs` refuses to pin a headline.
+func test_the_join_screen_names_the_game() -> bool:
+	var screen := _screen()
+	var ok := true
+	var title: Label = screen._door_title
+	var want := String(ProjectSettings.get_setting("application/config/name", ""))
+	if want.strip_edges() == "":
+		ok = _fail("premise: project.godot declares no application/config/name, so there is no name "
+				+ "for the first screen to carry")
+	elif title == null:
+		ok = _fail("the join screen has no title at all")
+	elif not _on_screen(title):
+		ok = _fail("the join screen has a title that is not on it")
+	elif title.text != want:
+		ok = _fail("the title says '%s' and the project is called '%s'" % [title.text, want])
+	elif screen._front_door == null or not screen._front_door.is_ancestor_of(title):
+		ok = _fail("the title is not part of the front door, so the composition it heads is not its")
+	else:
+		# AND IT HEADS THE DOOR: above the sentence that names the two ways in, by the door's own
+		# order rather than by a y coordinate, which a layout change may legitimately move.
+		var order: Array = screen._front_door.get_children()
+		if order.find(title) > order.find(screen._map_note):
+			ok = _fail("the title is below the sentence, so the screen explains itself before it "
+					+ "says what it is")
+		# **AND IT FOLLOWS THE NAME RATHER THAN COPYING IT, which everything above fails to hold.**
+		# `title.text == want` is satisfied by a literal "Assay" for exactly as long as the game is
+		# called Assay, so without this the docstring above would claim a property the test does not
+		# have -- which is the defect shape this suite keeps finding in other people's checks. So the
+		# project is renamed, a second screen is stood up, and the name is put back BEFORE anything is
+		# asserted, so a failure here cannot leave the setting broken for the tests after it.
+		ProjectSettings.set_setting("application/config/name", "Nominal")
+		var renamed := _screen()
+		var carried := String((renamed._door_title as Label).text)
+		ProjectSettings.set_setting("application/config/name", want)
+		renamed.queue_free()
+		if carried != "Nominal":
+			ok = _fail(("the title reads '%s' on a project renamed to 'Nominal', so it is a typed "
+					+ "copy of the name and would outlive the game being renamed") % carried)
+	screen.queue_free()
+	return ok
