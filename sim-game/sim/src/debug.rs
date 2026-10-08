@@ -1635,15 +1635,18 @@ fn empty_answer(world: &World, q: Question) -> String {
 ///
 /// **THE ONE-QUESTION CASE IS TODAY'S BYTES BY CONSTRUCTION, NOT BY CARE.**
 /// There is no second sentence builder to keep in step: a single-question call
-/// walks the same `format!` and the same two loops, each of which runs once.
-/// That is what makes ASSA-272 box 4 (every unmerged world byte-identical) a
-/// property of the code rather than a thing I measured once.
+/// walks the same `format!` and the same loop, which runs once. That is what
+/// makes ASSA-272 box 4 (every unmerged world byte-identical) a property of the
+/// code rather than a thing I measured once.
 ///
 /// **THE MERGED LINE OPENS EXACTLY AS AN UNMERGED ONE DOES**, species, grade
 /// and place first, because that is the half a player acts on and the end of a
-/// line is what a narrow panel cuts (my own ASSA-242 note). Then both readings
-/// side by side, then both tags: nothing is dropped and nothing is reordered
-/// within a question.
+/// line is what a narrow panel cuts (my own ASSA-242 note). Then each question
+/// in turn, its reading beside the verdict that reading earns: nothing is
+/// dropped and nothing is reordered within a question, so the tail of a merged
+/// line is the tail of one unmerged line followed by the tail of the other
+/// (ASSA-272 box 7, held by
+/// `a_merged_tail_keeps_each_reading_beside_the_verdict_it_earns`).
 fn answer_about(world: &World, qs: &[Question], near: &NearestDeposit) -> String {
     let d = world
         .deposit(near.deposit)
@@ -1669,16 +1672,20 @@ fn answer_about(world: &World, qs: &[Question], near: &NearestDeposit) -> String
         near.tile.x,
         near.tile.y,
     );
-    // THE DECIDING PROPERTY OF EACH QUESTION, through `reading`, which is what
-    // keeps a rough species rough on a merged line too.
-    for &q in qs {
-        let _ = write!(
-            line,
-            " · {} {}",
-            q.property().name(),
-            reading(s, q.property())
-        );
-    }
+    // **ONE QUESTION AT A TIME, READING THEN VERDICT** (ASSA-272 box 7, the
+    // Game Director's ruling of 10-08). This walked `qs` twice — every reading,
+    // then every tag — which on a merged line put `· reactivity · hardness ·
+    // fuel at B · hand-minable` in front of a player: four facts in a row,
+    // where the whole point of the merge is TWO ROLES. Interleaved, a merged
+    // line is exactly the two unmerged lines with the shared head said once,
+    // which is the promise the last paragraph of this docstring makes about
+    // reordering, now true of the reader's eye and not only of the bytes.
+    // Measured at 1002 px either way on seed 5 and 1073 on 13, with identical
+    // wrapped row counts: the grammar costs nothing.
+    //
+    // THE DECIDING PROPERTY GOES THROUGH `reading`, which is what keeps a rough
+    // species rough on a merged line too.
+    //
     // **THE TRAILING CLAUSE ANSWERS THE QUESTION ASKED, and my first version
     // did not.** It appended the fuel claim to every headline, so the real
     // output read `what near me is hard enough: Tonore (A) ... · hardness 26-50
@@ -1695,6 +1702,12 @@ fn answer_about(world: &World, qs: &[Question], near: &NearestDeposit) -> String
     // `lighting_clause`, and `mining_note` for ASSA-135), so the line still
     // cannot phrase a fact differently from the row it points at.
     for &q in qs {
+        let _ = write!(
+            line,
+            " · {} {}",
+            q.property().name(),
+            reading(s, q.property())
+        );
         match q {
             Question::Burns => {
                 if let Some(grade) = crate::ladder::fuel_grade(s) {
