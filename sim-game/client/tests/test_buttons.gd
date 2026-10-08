@@ -773,6 +773,27 @@ func _text_of(node: Node) -> String:
 	return " · ".join(out)
 
 
+## **RE-TEXT EVERY STRING IN A LIVE MENU WITH THE WIDEST ONE THE SIM COULD PUT THERE** (ASSA-334), so
+## a width measurement is about the bound rather than about the seed the test happened to roll.
+##
+## **IT MATCHES BY NODE NAME AND BY CLASS, NEVER BY THE WORDS ON SCREEN.** A walker that recognised a
+## slot row by the word `fuel` would quietly stretch nothing the day a slot is renamed, and this test
+## would then pass by measuring the menu it was handed -- a check that cannot fail. `ROW_WORDS` and
+## `MENU_STATE` are names `main.gd` writes for exactly this kind of reach, and a put button is the only
+## `Button` in the box whose label the sim's own strings reach into.
+func _stretch(screen: Node, node: Node, button: String, words: String) -> void:
+	for child in node.get_children():
+		if child.name == screen.ROW_WORDS and child is Label:
+			(child as Label).text = words
+		elif child.name == screen.MENU_STATE and child is Label:
+			# THE LONGEST SENTENCE `debug::smelter_state_line` CAN WRITE, with the widest numbers
+			# `stall_reason`'s `FireTooCool` arm can carry.
+			(child as Label).text = "stalled: fire 9999 too cool for ore needing 9999"
+		elif child is Button and (child as Button).text.begins_with("put all"):
+			(child as Button).text = button
+		_stretch(screen, child, button, words)
+
+
 func _labels_of(node: Node) -> PackedStringArray:
 	var out := PackedStringArray()
 	for child in node.get_children():
@@ -2312,37 +2333,63 @@ func test_either_click_on_a_machine_opens_a_menu_beside_it() -> bool:
 		if not screen._menu_box.visible:
 			ok = _fail("the menu is open at %d and its panel is not visible" % screen._menu_at)
 			break
-		# **THE RING IS THE TETHER** (ruling 8): the menu is not anchored to the machine, so the mark on
-		# the tile is the only thing joining the two.
-		if screen._world.selection != spot:
-			ok = _fail("the menu is open on %s and the selection ring is on %s"
-					% [spot, screen._world.selection])
+		# **THE POSITION IS THE TETHER SINCE ASSA-334** (Maren reversing ruling 1), SO THE RING IS NOT.
+		# Ruling 8 gave the menu's machine the mark ASSA-276 move 4 had put on the acted-on tile; with
+		# the panel beside its machine, the ring goes back. Nothing here right-clicked, so `_targeted` is
+		# false and the honest answer is NO ring at all -- a menu that still claimed one would be the
+		# two-subjects-one-mark defect this item exists to undo.
+		if screen._world.selection != null:
+			ok = _fail(("the menu is open on %s and the ring is on %s: opening a menu does not aim "
+					+ "anything") % [spot, screen._world.selection])
 			break
-		# **AND IT IS IN THE HALF THE MACHINE IS NOT IN, ASKED OF THE SCREEN'S OWN GEOMETRY** (ruling 1).
-		var middle: float = screen.point_of_tile(spot).x
-		var room: Rect2 = screen._menu_region.get_rect()
-		if room.position.x <= middle and middle <= room.end.x:
-			ok = _fail("the machine at x=%.0f stands inside its own menu's region %s" % [middle, room])
+		# **AND THE PANEL IS BESIDE ITS MACHINE, ASKED OF THE SCREEN'S OWN GEOMETRY** -- the box's rect
+		# and not the region's, which is the whole world now and exists to clip.
+		var footprint: Rect2 = screen._footprint_rect()
+		# THE REGION'S OWN POSITION PLUS THE BOX'S, AND NOT `global_position`: this screen is not in a
+		# window, so the only positions that mean anything are the ones `_place_machine_menu` WROTE.
+		var box := Rect2(screen._menu_region.position + screen._menu_box.position,
+				screen._menu_box.size)
+		if box.intersects(footprint):
+			ok = _fail("the menu %s is drawn over its own machine's footprint %s" % [box, footprint])
+			break
+		if box.size.x <= 0.0 or box.size.y <= 0.0:
+			ok = _fail("the menu measures %s, so the check above asserts nothing" % box.size)
+			break
+		# IT TOUCHES ITS MACHINE, which is the half "never over it" does not say: a panel parked in the
+		# far corner also never covers anything. One gap either side is the most it may be away.
+		var gap: float = minf(absf(box.position.x - footprint.end.x),
+				absf(footprint.position.x - box.end.x))
+		if gap > AssayHud.MENU_ANCHOR_GAP + 0.01:
+			ok = _fail("the menu %s stands %.0f px from its machine %s, not beside it"
+					% [box, gap, footprint])
 			break
 		# NEVER OVER THE HUD COLUMN (ruling 2): a menu over the log hides the only answer the sim's
 		# refusals get.
-		if not AssayHud.world_rect().encloses(room):
-			ok = _fail("the menu's region %s is not inside the world %s"
-					% [room, AssayHud.world_rect()])
+		if not AssayHud.world_rect().encloses(box):
+			ok = _fail("the menu's box %s is not inside the world %s"
+					% [box, AssayHud.world_rect()])
 			break
 	screen.queue_free()
 	return ok
 
 
-## **THE MENU'S CONTENT STAYS INSIDE THE ROOM IT IS GIVEN** (ASSA-316). Maren's ruling 1 says the menu
-## scrolls inside itself past the room rather than growing; nothing reaches that today, so the bound is
-## this test and the `ScrollContainer` is the day it goes red.
+## **NOTHING IN THE MENU WRAPS AND NOTHING OVERFLOWS IT, ON THE WORST STRINGS THE SIM CAN HAND IT**
+## (ASSA-334 §6; Maren's floor and cap). Her rule is that past its room it SCROLLS; nothing reaches
+## that today, so the bound is this test and the `ScrollContainer` is the day it goes red.
 ##
 ## **IT ASSERTS THE SIZE IS NOT ZERO FIRST, WHICH IS THE WHOLE POINT.** A headless suite lays nothing
 ## out, so `size <= room` would be the greenest and most worthless check in the file -- the exact shape
 ## of the fold probe I had to withdraw on ASSA-247. The minimum size is the engine's answer about
 ## content and is available with no window, so that is what is measured.
-func test_a_machine_menus_content_fits_the_room_it_is_given() -> bool:
+##
+## **AND THE WORST CASE IS CONSTRUCTED, NOT PLAYED.** A seed's menu is narrow -- short species names, a
+## two-digit cap -- so a measurement of the real one passes and says nothing. Every string the sim can
+## hand this menu is re-texted here at its bound: a 20-char species (`sim::tuning::SPECIES_NAME_MAX`,
+## which is a COPY of a sim constant and the one thing in this test that could go stale; the binding
+## does not publish it and the ask is on ASSA-334), the longest item kind, and the longest stall
+## sentence the sim writes. **If that fails, the floor is wrong and the number goes to Maren** -- her
+## §6 budgeted 343 px of content for exactly this row.
+func test_nothing_in_a_machine_menu_wraps_at_the_worst_strings_the_sim_can_write() -> bool:
 	var screen := _joined()
 	var ok := true
 	var id := _a_placed_smelter(screen)
@@ -2351,12 +2398,27 @@ func test_a_machine_menus_content_fits_the_room_it_is_given() -> bool:
 		return false
 	_click(screen, screen._target_tile(), MOUSE_BUTTON_LEFT)
 	var want: Vector2 = screen._menu_box.get_combined_minimum_size()
-	var room: Rect2 = screen._menu_region.get_rect()
 	if want.x <= 0.0 or want.y <= 0.0:
 		ok = _fail("the menu's content measures %s, so this check asserts nothing" % want)
-	elif want.x > room.size.x or want.y > room.size.y:
-		ok = _fail("the menu's content is %s in a room of %s: it needs the scroll box"
-				% [want, room.size])
+	# **THE REAL MENU FIRST, THEN THE WORST ONE**, so a failure says which of the two it was.
+	elif want.x > AssayHud.MENU_CAP_PX:
+		ok = _fail("the menu a real smelter draws is %.0f px wide and the cap is %.0f"
+				% [want.x, AssayHud.MENU_CAP_PX])
+	if ok:
+		# THE SIM'S OWN BOUNDS, STRETCHED IN PLACE: `SPECIES_NAME_MAX` of species, the longest item
+		# kind, a grade letter, a four-digit count, and the longest stall sentence the sim writes. The
+		# controls are the REAL ones, so the button's and the panel's own padding are in the answer --
+		# the half a measurement of bare strings would miss.
+		var worst := "%s smelter (A)" % "W".repeat(20)
+		_stretch(screen, screen._menu_box, AssayHud.insert_label(9999, worst,
+				AssayActions.SLOT_FUEL), "output · %s" % worst)
+		var stretched: Vector2 = screen._menu_box.get_combined_minimum_size()
+		print("menu width: real %.0f px, worst case %.0f px, floor %.0f, cap %.0f"
+				% [want.x, stretched.x, AssayHud.MENU_FLOOR_PX, AssayHud.MENU_CAP_PX])
+		if stretched.x > AssayHud.MENU_CAP_PX:
+			ok = _fail(("on the worst strings the sim can write the menu wants %.0f px and Maren's cap "
+					+ "is %.0f: the floor is wrong and the number is hers, not mine")
+					% [stretched.x, AssayHud.MENU_CAP_PX])
 	screen.queue_free()
 	return ok
 

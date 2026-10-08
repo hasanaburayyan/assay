@@ -1254,29 +1254,42 @@ func _a_machine_tile() -> Vector2i:
 	return Vector2i(-1, -1)
 
 
-## **WHAT THE MENU ACTUALLY LANDED ON, MEASURED IN THE FRAME IT WAS PHOTOGRAPHED IN** (ASSA-316).
+## **WHAT THE MENU ACTUALLY LANDED ON, MEASURED IN THE FRAME IT WAS PHOTOGRAPHED IN** (ASSA-316,
+## ASSA-334).
 ##
-## Every number Maren's ruling 1 can be judged by, read off the laid-out nodes rather than off the
-## arithmetic that placed them: a report that recomputed `machine_menu_room` would agree with itself
+## Every number Maren's anchor ruling can be judged by, read off the laid-out nodes rather than off the
+## arithmetic that placed them: a report that recomputed `machine_menu_rect` would agree with itself
 ## whatever the engine did with it, which is the defect `_controls_report` shipped once already.
+##
+## **IT IS THE FOOTPRINT AND NOT THE TILE'S CENTRE SINCE ASSA-334.** Under the two halves the question
+## was which side of one x the panel was on; anchoring asks whether it touches a RECTANGLE, and a 2x2
+## smelter's rectangle is the whole of what "beside it" means.
 func _machine_menu_report() -> void:
 	var box: Control = _screen._menu_box
 	var rect := box.get_global_rect()
-	var room: Rect2 = _screen._menu_region.get_rect()
 	var world := AssayHud.world_rect()
 	var tile: Vector2i = _screen._menu_tile
-	var middle: float = _screen.point_of_tile(tile).x
-	print("  machine menu   building %d at %s, its centre x %.0f"
-			% [_screen._menu_at, tile, middle])
-	print("    panel        %dx%d at x %d..%d, y %d..%d"
-			% [rect.size.x, rect.size.y, rect.position.x, rect.end.x, rect.position.y, rect.end.y])
-	print("    room         %dx%d at x %d..%d  (half the world less two pads)"
-			% [room.size.x, room.size.y, room.position.x, room.end.x])
-	print("    whole        %s" % ("yes" if room.encloses(rect) else "NO, the region clipped it"))
-	print("    over its own machine  %s"
-			% ("NO" if not (rect.position.x <= middle and middle <= rect.end.x) else "YES"))
+	var footprint: Rect2 = _screen._footprint_rect()
+	print("  machine menu   building %d at %s, footprint %dx%d at x %d..%d, y %d..%d"
+			% [_screen._menu_at, tile, footprint.size.x, footprint.size.y, footprint.position.x,
+			footprint.end.x, footprint.position.y, footprint.end.y])
+	print("    panel        %dx%d at x %d..%d, y %d..%d  (floor %d, cap %d)"
+			% [rect.size.x, rect.size.y, rect.position.x, rect.end.x, rect.position.y, rect.end.y,
+			AssayHud.MENU_FLOOR_PX, AssayHud.MENU_CAP_PX])
+	print("    whole        %s"
+			% ("yes" if world.encloses(rect) else "NO, the region clipped it"))
+	print("    gap to its machine    %.0f px on the %s  (anchor gap %d)"
+			% [absf(rect.position.x - footprint.end.x) if rect.position.x > footprint.position.x \
+			else absf(footprint.position.x - rect.end.x),
+			"right" if rect.position.x > footprint.position.x else "left",
+			AssayHud.MENU_ANCHOR_GAP])
+	print("    over its own machine  %s" % ("NO" if not rect.intersects(footprint) else "YES"))
 	print("    over the HUD column   %s" % ("NO" if rect.end.x <= world.end.x else "YES"))
-	print("    ring on its tile      %s" % [_screen._world.selection])
+	# **THE RING IS NOT THE MENU'S ANY MORE** (ASSA-334): it belongs to the acted-on tile, so what this
+	# line reports is whether the two subjects in the frame are marked DIFFERENTLY -- the whole point of
+	# giving it back. `null` is honest when nothing has been aimed.
+	print("    ring (the acted-on tile, not this menu's machine)  %s"
+			% [_screen._world.selection])
 
 
 func _section(named: String) -> Control:
