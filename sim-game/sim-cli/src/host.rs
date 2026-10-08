@@ -58,7 +58,9 @@ Player
   design <frame> <part>...    read what a design WOULD be before you build it:
                               its verdict, mass against budget and what the
                               parts give it, plus have/need for your pack.
-                              Same words as `assemble`; nothing is spent
+                              Same words as `assemble`; nothing is spent, so
+                              you may name a part you do not own if you write
+                              it in full: design handle:kel:a head:kel:a
   assemble <frame> <part>...  build a machine; the first part is the frame.
                               A handle is held (a pick), a frame is planted
                               (a drill): assemble handle:kel head:kel
@@ -768,14 +770,22 @@ impl Host {
             // different design. The sentence is the sim's, not composed here,
             // so this and the Godot build screen cannot drift on a line a
             // player reads (ASSA-90).
+            //
+            // **THE ONE DIFFERENCE, AND IT IS ABOUT THE PACK, NOT THE WORDS**
+            // (ASSA-330): this arm resolves through
+            // [`resolve_design_item`], which falls back to the catalogue, so
+            // a design may name a part nobody in this world has made yet.
+            // `assemble` on the line below still resolves against what you
+            // carry, because it spends it.
             "design" | "preview" => {
-                let usage = "Usage: design <frame> <part>..., e.g. design handle:kel head:kel. The same words as `assemble`; nothing is built. `inv` lists your parts.";
+                let usage = "Usage: design <frame> <part>..., e.g. design handle:kel head:kel. The same words as `assemble`; nothing is built. A part you do not own needs its full kind:species:grade. `inv` lists your parts.";
                 if args.len() < 2 {
                     return Err(format!("Missing the frame.\n{usage}"));
                 }
                 let mut items = Vec::new();
                 for arg in args.rest(1) {
-                    items.push(resolve_item(s, Some(*arg), None)?);
+                    let inv = &s.me()?.inventory;
+                    items.push(resolve_design_item(&s.world, inv, Some(*arg))?);
                 }
                 let (frame, mounted) = items.split_first().expect("checked above");
                 let me = s.me()?.id;
@@ -1124,10 +1134,18 @@ pub fn describe_inventory(world: &World, inv: &sim::Inventory) -> String {
 
 /// A species by name prefix (player or generated name) or by id.
 fn resolve_species(s: &Session, text: Option<&str>) -> Result<SpeciesId, String> {
+    resolve_species_in(&s.world, text)
+}
+
+/// The same lookup over a bare world, because `design`'s catalogue path
+/// (ASSA-330) has to ask it about a species it holds nothing of, and the unit
+/// tests have no `Session`. **One function, so an ambiguous species prefix is
+/// refused in one wording** — and that wording names every hit, which is the
+/// whole of ASSA-330's box 4.
+fn resolve_species_in(world: &World, text: Option<&str>) -> Result<SpeciesId, String> {
     let text = text.ok_or("Missing species. `species` lists them.")?;
     let lower = text.to_ascii_lowercase();
-    let hits: Vec<&sim::MineralSpecies> = s
-        .world
+    let hits: Vec<&sim::MineralSpecies> = world
         .species
         .iter()
         .filter(|sp| {
@@ -1151,12 +1169,30 @@ fn resolve_species(s: &Session, text: Option<&str>) -> Result<SpeciesId, String>
     }
 }
 
-/// Find the one stack in your inventory that `spec` means. `spec` is
-/// `kind[:species[:grade]]`; the kind may be left off when the command
-/// already says which kind it needs (`want`).
-fn resolve_item(s: &Session, spec: Option<&str>, want: Option<ItemKind>) -> Result<Item, String> {
-    let me = s.me()?;
-    let parts: Vec<&str> = spec.map_or_else(Vec::new, |t| t.split(':').collect());
+/// What a player typed for an item: `kind[:species[:grade]]`, split into its
+/// three questions and looked up nowhere yet.
+///
+/// Split out of `resolve_item` for ASSA-330, because **looking a part up and
+/// owning a part are two questions and one function was answering both**
+/// (the Game Director's words on the item). The spelling rules live here; what
+/// a spec is allowed to mean lives in the callers below.
+struct ItemSpecWords<'a> {
+    kind: ItemKind,
+    /// A species name prefix or id, if they said one.
+    species: Option<&'a str>,
+    grade: Option<Grade>,
+    /// What they typed, for the sentences. The kind's own name when they
+    /// typed nothing and the command supplied `want`.
+    typed: &'a str,
+}
+
+/// Split `spec`; `want` is the kind the command already knows it needs, which
+/// is what lets `insert 0 fuel kel` leave the kind off.
+fn parse_item_spec<'a>(
+    spec: Option<&'a str>,
+    want: Option<ItemKind>,
+) -> Result<ItemSpecWords<'a>, String> {
+    let parts: Vec<&'a str> = spec.map_or_else(Vec::new, |t| t.split(':').collect());
     let (kind, rest) = match parts.first().and_then(|p| ItemKind::parse(p)) {
         Some(k) => (Some(k), &parts[1..]),
         None => (want, &parts[..]),
@@ -1180,35 +1216,120 @@ fn resolve_item(s: &Session, spec: Option<&str>, want: Option<ItemKind>) -> Resu
         Some(g) => Some(Grade::parse(g).ok_or(format!("`{g}` is not a grade (A, B or C)."))?),
         None => None,
     };
+    Ok(ItemSpecWords {
+        kind,
+        species,
+        grade,
+        typed: spec.unwrap_or(kind.name()),
+    })
+}
+
+/// Every stack in `inv` that `words` could mean, in inventory order.
+fn pack_matches(world: &World, inv: &sim::Inventory, words: &ItemSpecWords) -> Vec<Item> {
     let species_matches = |item: &Item| {
-        species.is_none_or(|t| {
-            let name = s.world.species(item.species).name().to_ascii_lowercase();
+        words.species.is_none_or(|t| {
+            let name = world.species(item.species).name().to_ascii_lowercase();
             t.parse::<u8>().ok() == Some(item.species.0)
                 || name.starts_with(&t.to_ascii_lowercase())
         })
     };
-    let candidates: Vec<Item> = me
-        .inventory
-        .stacks()
+    inv.stacks()
         .iter()
         .map(|st| st.item)
-        .filter(|i| i.kind == kind && species_matches(i) && grade.is_none_or(|g| i.grade == g))
-        .collect();
-    match candidates.as_slice() {
+        .filter(|i| {
+            i.kind == words.kind && species_matches(i) && words.grade.is_none_or(|g| i.grade == g)
+        })
+        .collect()
+}
+
+fn ambiguous_in_pack(world: &World, many: &[Item]) -> String {
+    format!(
+        "Be more specific. You carry: {}",
+        many.iter()
+            .map(|i| item_spec(world, *i))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// Find the one stack in your inventory that `spec` means. `spec` is
+/// `kind[:species[:grade]]`; the kind may be left off when the command
+/// already says which kind it needs (`want`).
+///
+/// **THE PACK IS THE RIGHT CANDIDATE LIST FOR EVERY COMMAND THAT SPENDS
+/// SOMETHING**, which is all of them but one: `place`, `insert`, `craft`,
+/// `make` and `assemble` all take the thing away from you, so a spec that
+/// matches nothing you carry is an error however well it is spelled. `design`
+/// spends nothing and uses [`resolve_design_item`] instead (ASSA-330).
+fn resolve_item(s: &Session, spec: Option<&str>, want: Option<ItemKind>) -> Result<Item, String> {
+    let me = s.me()?;
+    let words = parse_item_spec(spec, want)?;
+    match pack_matches(&s.world, &me.inventory, &words).as_slice() {
         [one] => Ok(*one),
         [] => Err(format!(
             "You have no {} matching `{}`. `inv` lists what you carry.",
-            kind.name(),
-            spec.unwrap_or(kind.name())
+            words.kind.name(),
+            words.typed
         )),
-        many => Err(format!(
-            "Be more specific. You carry: {}",
-            many.iter()
-                .map(|i| item_spec(&s.world, *i))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
+        many => Err(ambiguous_in_pack(&s.world, many)),
     }
+}
+
+/// `design` only: the item `spec` means, **owned or not** (ASSA-330).
+///
+/// The sim goes out of its way to weigh a design the pack cannot pay for —
+/// `assembly::plan` returns `Weighed { missing }` rather than a refusal, and
+/// `design_preview` prints have/need beside it (the Game Director's §5.3,
+/// ratified on ASSA-324 box 6). Until this existed the terminal could not
+/// TYPE one, so the reference client could not ask a question the Godot build
+/// screen asks on every click, which is CLAUDE.md's second principle
+/// inverted: a view may not ask what the reference client cannot.
+///
+/// **THE PACK IS STILL ASKED FIRST**, and that is deliberate rather than
+/// cheap. `design head:kel` has to keep meaning the head in your hand,
+/// `design head` with two heads in the pack has to stay ambiguous, and both
+/// of those are questions about what you own. Only when the pack has nothing
+/// to say does the catalogue answer — and then only for an item named in
+/// full, because a half-spec has no stack to be disambiguated against and
+/// would otherwise silently pick a grade for you.
+fn resolve_design_item(
+    world: &World,
+    inv: &sim::Inventory,
+    spec: Option<&str>,
+) -> Result<Item, String> {
+    let words = parse_item_spec(spec, None)?;
+    match pack_matches(world, inv, &words).as_slice() {
+        [one] => return Ok(*one),
+        [] => {}
+        many => return Err(ambiguous_in_pack(world, many)),
+    }
+    // NOTHING IN THE PACK, so say which part of the spec is missing rather
+    // than "you have no": the player who types this is asking about a part
+    // they know they do not own, and being told they do not own it is not an
+    // answer. Left to right, species before grade, because that is the order
+    // they typed them in.
+    let Some(species) = words.species else {
+        return Err(format!(
+            "`{}` does not say which species, and a {} you are not carrying has to be named \
+             in full: {}:<species>:<grade>. `species` lists this world's minerals, `inv` what \
+             you carry.",
+            words.typed,
+            words.kind.name(),
+            words.kind.name()
+        ));
+    };
+    let species = resolve_species_in(world, Some(species))?;
+    let Some(grade) = words.grade else {
+        return Err(format!(
+            "`{}` does not say which grade, and a {} you are not carrying has to be named in \
+             full: {}:{}:<grade> — A, B or C.",
+            words.typed,
+            words.kind.name(),
+            words.kind.name(),
+            world.species(species).name().to_ascii_lowercase()
+        ));
+    };
+    Ok(Item::new(words.kind, species, grade))
 }
 
 fn off_map(world: &World, pos: TilePos) -> String {
@@ -1337,7 +1458,124 @@ fn optional_arg<T: std::str::FromStr>(
 
 #[cfg(test)]
 mod tests {
-    use super::Args;
+    use super::{Args, Item, ItemKind, World, WorldConfig, resolve_design_item};
+    use sim::{Grade, Inventory};
+
+    /// A world for the resolver tests. `WorldConfig::default()`'s 8x8 is a
+    /// different shape from the one the CLI's `new` builds and that does not
+    /// matter to anything below: no test here reads a tile, only the species
+    /// roster, which is a pure function of the seed.
+    fn roster_world() -> World {
+        World::new(WorldConfig::default())
+    }
+
+    /// Spelled the way a player types it, so the test cannot pass with a kind
+    /// no command can name.
+    fn head() -> ItemKind {
+        ItemKind::parse("head").expect("`head` is a part kind")
+    }
+
+    /// ASSA-330: **`design` MAY NAME THE PART YOU ARE SAVING UP FOR.** The sim
+    /// has weighed an unaffordable design since ASSA-324 and the terminal
+    /// could not type one, which is CLAUDE.md's second principle inverted.
+    #[test]
+    fn a_full_spec_resolves_against_the_catalogue_when_the_pack_is_empty() {
+        let world = roster_world();
+        let species = world.species[0].id;
+        let name = world.species[0].name().to_ascii_lowercase();
+        let pack = Inventory::new();
+        // THE PREMISE, asserted rather than assumed: with anything of this
+        // kind in the pack the pack path would answer and this test would be
+        // measuring the old behaviour.
+        assert!(pack.is_empty(), "the point is a part nobody has made");
+
+        let got = resolve_design_item(&world, &pack, Some(&format!("head:{name}:a")))
+            .expect("a part named in full needs no stack behind it");
+        assert_eq!(got, Item::new(head(), species, Grade::A));
+    }
+
+    /// AND THE PACK IS STILL ASKED FIRST. The first of these is the lever: a
+    /// resolver that went to the catalogue first would refuse a bare `head`
+    /// for want of a species while one sat in the player's hand.
+    #[test]
+    fn the_pack_answers_first_and_an_ambiguous_bare_word_is_still_ambiguous() {
+        let world = roster_world();
+        let (first, second) = (world.species[0].id, world.species[1].id);
+        let mut pack = Inventory::new();
+        let mine = Item::new(head(), first, Grade::C);
+        pack.add(mine, 1);
+        assert_eq!(
+            resolve_design_item(&world, &pack, Some("head")).expect("the head in my hand"),
+            mine,
+            "a bare word still means what you carry"
+        );
+
+        pack.add(Item::new(head(), second, Grade::C), 1);
+        let said = resolve_design_item(&world, &pack, Some("head"))
+            .expect_err("two heads in the pack is still a question");
+        assert!(said.contains("Be more specific"), "{said}");
+    }
+
+    /// A HALF-SPEC SAYS WHICH PART OF ITSELF IS MISSING, and never "you have
+    /// no": the player typing this already knows they do not own it, so being
+    /// told so is not an answer (the Game Director's wording note on ASSA-330).
+    #[test]
+    fn a_partial_spec_names_the_part_of_the_spec_that_is_missing() {
+        let world = roster_world();
+        let name = world.species[0].name().to_ascii_lowercase();
+        let pack = Inventory::new();
+
+        let said = resolve_design_item(&world, &pack, Some("head"))
+            .expect_err("no species, nothing in the pack");
+        assert!(
+            said.contains("does not say which species") && !said.contains("You have no"),
+            "{said}"
+        );
+
+        let said = resolve_design_item(&world, &pack, Some(&format!("head:{name}")))
+            .expect_err("no grade, nothing in the pack");
+        assert!(
+            said.contains("does not say which grade") && said.contains(&name),
+            "{said}"
+        );
+
+        // A species that is not in this world is still the species' refusal,
+        // not a grade complaint: left to right, in the order they typed.
+        let said = resolve_design_item(&world, &pack, Some("head:nosuchrock"))
+            .expect_err("no such species");
+        assert!(said.contains("No species matches"), "{said}");
+    }
+
+    /// AN AMBIGUOUS SPECIES PREFIX NEEDS A RENAME, and that is a fact about
+    /// the roster rather than about this resolver: `worldgen::roll_roster`
+    /// gives every generated name a DISTINCT INITIAL (so the ASCII map can
+    /// show one letter per species), so **no prefix of a generated roster can
+    /// ever match two species**. A player who renames a species they
+    /// discovered can collide with another's initial, and `rename` is a
+    /// `PlayerCommand`, so this state is one a real session reaches.
+    #[test]
+    fn an_ambiguous_species_is_refused_and_names_every_candidate() {
+        let mut world = roster_world();
+        let letter = world.species[0]
+            .name()
+            .chars()
+            .next()
+            .expect("a species name")
+            .to_ascii_lowercase();
+        world.species[1].player_name = Some(format!("{letter}-two"));
+        let (one, two) = (
+            world.species[0].name().to_string(),
+            world.species[1].name().to_string(),
+        );
+
+        let said =
+            resolve_design_item(&world, &Inventory::new(), Some(&format!("head:{letter}:a")))
+                .expect_err("one letter, two species");
+        assert!(
+            said.contains(&one) && said.contains(&two),
+            "both candidates have to be named: {said}"
+        );
+    }
 
     /// **THE BOOKKEEPING, BECAUSE A MUTATION FOUND THE PLACE THE PROMPT CANNOT
     /// REACH** (ASSA-79). `surplus_arguments.rs` drives the real binary, which
