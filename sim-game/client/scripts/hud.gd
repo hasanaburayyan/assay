@@ -34,6 +34,32 @@ const VIEW := Vector2(1280.0, 720.0)
 const MARGIN := Vector2(24.0, 24.0)
 const PANEL := 320.0
 
+## **THE WORLD MAY NOT SHRINK. A RATCHET, NOT A TARGET** (ASSA-287, Maren's ruling on ASSA-239).
+##
+## **THE HOLE THIS FILLS IS MEASURED, AND IT WAS MINE.** `world_rect()` below takes the world's
+## height from `MARGIN.y`, and mutating that constant 24 -> 96 restores the exact 912x600 strip-era
+## geometry ASSA-239 deleted. The headless suite returned **392 passed, 0 failed -- unchanged**. The
+## only floor in the client was `size.y < 600.0` inside a test about something else, and
+## `720 - 24 - 96` is **exactly 600**, so it sat on the boundary and reddened only at 97. Seventy-two
+## pixels of the gameplay view could be taken back without one test noticing.
+##
+## **A SHARE AND NOT A PIXEL COUNT, WHICH IS THE WHOLE OF THE RULING.** Maren: *"An absolute 600
+## cannot catch that at any other window size, and 672 would retroactively condemn a layout the board
+## has already seen and liked... A number that says 'the world may not shrink' is a design statement;
+## '600' is a coincidence of 720 minus the chrome we currently have."* So this is what the shipped
+## screen IS, written as a fraction of the window, and the test's only job is that it never gets
+## smaller again.
+##
+## **THE ARITHMETIC, so nobody has to re-derive it:** today `VIEW.y - MARGIN.y - 24.0` is
+## `720 - 24 - 24 = 672`, and `672 / 720` is **0.9333**.
+##
+## **AND THE MARGIN IS A JUDGEMENT, STATED RATHER THAN BURIED.** A pure ratchet at 0.9333 goes red on
+## any pixel of new chrome, including an honest one someone meant. 0.92 is about **10 px** of room:
+## enough that a small deliberate change is a code change, little enough that anything like the 72 px
+## above is a conversation instead of an accident. It is a floor to be RAISED as the screen improves,
+## never lowered to match a regression -- lowering it is the thing it exists to catch.
+const WORLD_HEIGHT_FLOOR_SHARE := 0.92
+
 ## WHERE THE HUD COLUMN STARTS, AND IT IS `MARGIN.y` AGAIN (ASSA-239).
 ##
 ## **IT WAS 8, AND THE REASON IT WAS 8 HAS BEEN DELETED RATHER THAN OVERRULED.** ASSA-133 set this
