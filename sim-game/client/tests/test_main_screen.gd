@@ -4197,6 +4197,12 @@ func test_no_control_is_drawn_above_the_world_in_a_played_screen() -> bool:
 ## and the suite was 392/0, unchanged: the only floor was an absolute 600 sitting exactly on that
 ## mutation's own result. A share of the window cannot sit on a coincidence of one window size.
 ##
+## **THE FLOOR IS TODAY'S VALUE WITH NO SLACK, which is Maren overruling my 0.92** (2026-10-08): a
+## floor below today's value says "this much of the world may be spent without anyone being told".
+## So the failure has to earn its keep in one read -- it names the share AND the floor, says how many
+## pixels went, and says what to do if the shrink was meant. Her condition: *"a ratchet whose failure
+## reads `assertion failed` costs more than the pixels it protects."*
+##
 ## IT READS `world_rect()` AND NOT THE NODE, deliberately and the opposite way round from the sweep
 ## above: that one asks whether the layout HONOURED the rule, which has to come off the screen; this
 ## asks whether the rule itself has been weakened, which is a fact about the arithmetic and is true
@@ -4206,11 +4212,15 @@ func test_the_world_may_never_shrink_as_a_share_of_the_window() -> bool:
 	var world := AssayHud.world_rect()
 	var share := world.size.y / AssayHud.VIEW.y
 	if share < AssayHud.WORLD_HEIGHT_FLOOR_SHARE:
-		return _fail(("the world is %.0f px of a %.0f px window -- %.4f, under the ratcheted floor "
-				+ "of %.4f. Chrome has taken the gameplay view back. Raising this floor as the "
-				+ "screen improves is the point; lowering it to match a regression is the thing it "
-				+ "exists to catch") % [world.size.y, AssayHud.VIEW.y, share,
-				AssayHud.WORLD_HEIGHT_FLOOR_SHARE])
+		return _fail(("the world is %.0f of a %.0f px window = %.4f, floor %.4f. Chrome has taken "
+				+ "%.0f px of the gameplay view back. IF THIS SHRINK IS DELIBERATE, change "
+				+ "AssayHud.WORLD_HEIGHT_FLOOR_SHARE to %.4f in the same commit and say why in the "
+				+ "message; if it is not, the chrome you just added is the bug. Raising this floor "
+				+ "as the screen improves is free; lowering it to match a regression is the thing "
+				+ "it exists to catch") % [world.size.y, AssayHud.VIEW.y, share,
+				AssayHud.WORLD_HEIGHT_FLOOR_SHARE,
+				AssayHud.VIEW.y * AssayHud.WORLD_HEIGHT_FLOOR_SHARE - world.size.y,
+				floorf(share * 10000.0) / 10000.0])
 	return true
 
 
