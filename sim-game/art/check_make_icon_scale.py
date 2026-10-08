@@ -59,7 +59,12 @@ import sys
 
 ART = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(ART)
-PROBE = os.path.join(ROOT, "client", "tools", "make_icon_layout.gd")
+# ONE LITERAL `client/tools/...`, NOT THREE JOINED COMPONENTS, and that is not style:
+# `check_tools_declare_ci.py` decides a tool is gated by looking for exactly this path in the
+# scripts the workflow names, because a bare filename is satisfied by prose about the tool
+# (ASSA-282). Spelled as components, this probe reads as declared-gated-and-wired-to-nothing --
+# which is what that check told me on its first run, correctly.
+PROBE = os.path.join(ROOT, "client/tools/make_icon_layout.gd")
 
 sys.path.insert(0, ART)
 from ask_layout import CannotCheck, ask_the_engine  # noqa: E402
@@ -72,57 +77,80 @@ WHY_THE_ENGINE = ("a crafting row's drawn size has never been measured, and the 
 EPS = 1e-4
 
 
-def rows_with_art(layout, key):
-    return [r for r in layout.get(key, []) if r.get("icon")]
+def drawn(rows):
+    return [r for r in rows if r.get("icon")]
+
+
+def moment_named(layout, label):
+    """The one moment with this label, or a refusal naming what the probe could not find.
+
+    A claim whose moment never occurred has to arrive here as a refusal and not as silence:
+    the mutation that passed did so because a claim was scored over rows that could not
+    disagree with it, which reads exactly like a claim that held.
+    """
+    for m in layout.get("moments", []):
+        if m.get("label") == label:
+            return m
+    raise CannotCheck(
+        "the play never reached a `%s` moment, so the claim measured there was not measured\n"
+        "at all. The probe reports %s as unfindable on seed %s. A claim with no moment is a\n"
+        "pass over nothing, which is what this exit code exists to say instead."
+        % (label, list(layout.get("unmeasured", [])) or "nothing", layout.get("seed")))
 
 
 def main():
     print(__doc__.splitlines()[0])
     layout = ask_the_engine(WHY_THE_ENGINE, probe=PROBE)
 
-    # THE STATES THE MEASUREMENT IS ONLY VALID IN. Each of these is a way for every number
-    # below to be about a layout no player will ever see, and the probe REPORTS them rather
-    # than setting them so that a regression in any one says NO VERDICT instead of passing.
-    for flag, what in (
-            ("make_visible_in_tree", "the crafting menu's rows were not visible in the tree"),
-            ("pack_visible_in_tree", "the pack's rows were not visible in the tree"),
-            ("make_shown", "the crafting menu was FOLDED (`_show_make(false)`)"),
-            ("column_visible", "the HUD column was hidden (ASSA-231 Gap 5)")):
-        if not layout.get(flag):
-            raise CannotCheck(
-                "%s, so every rect below is a minimum and not a drawn size. The probe opens\n"
-                "each tab itself, so this is a change in the client, not a missing step." % what)
+    # THE STATES EVERY NUMBER BELOW IS ONLY VALID IN, per moment. Each is a way for the whole
+    # run to be about a layout no player will ever see, and the probe REPORTS them rather than
+    # setting them, so a regression in any one says NO VERDICT instead of passing.
+    for m in layout.get("moments", []):
+        for flag, what in (
+                ("make_visible_in_tree", "the crafting menu's rows were not visible in the tree"),
+                ("pack_visible_in_tree", "the pack's rows were not visible in the tree"),
+                ("make_shown", "the crafting menu was FOLDED (`_show_make(false)`)"),
+                ("column_visible", "the HUD column was hidden (ASSA-231 Gap 5)")):
+            if not m.get(flag):
+                raise CannotCheck(
+                    "at the `%s` moment (tick %s) %s, so every rect there is a minimum and not a\n"
+                    "drawn size. TWO CAUSES AND THEY ARE DIFFERENT FIXES: the probe opens each tab\n"
+                    "itself, so either that step was lost from `make_icon_layout.gd` (look at its\n"
+                    "`_open` phases) or the client changed what showing a tab does. Check the probe\n"
+                    "first -- it is the cheaper of the two to be wrong about."
+                    % (m.get("label"), m.get("tick"), what))
     if layout.get("viewport") != layout.get("viewport_declared"):
         raise CannotCheck(
             "the window was %s and the project declares %s. Headless shrinks the root\n"
             "viewport to 64x64 on the first frame, in which every row is its own minimum."
             % (layout.get("viewport"), layout.get("viewport_declared")))
 
-    make = rows_with_art(layout, "make_rows")
-    pack = rows_with_art(layout, "pack_rows")
+    # **CLAIMS 1-3 ARE SCORED AT THE `falsifiable` MOMENT AND NOWHERE ELSE**, because it is the
+    # only one where a vertically FILLing icon shows up: a row that carries art AND is taller
+    # than the icon box. At the fullest moment every drawn row is exactly ICON_BOX_PX tall, so
+    # `min(w/fw, h/fh)` cannot move and the bug is invisible. See the probe's `_initialize`.
+    sharp = moment_named(layout, "falsifiable")
+    make = drawn(sharp.get("make_rows", []))
+    pack = drawn(sharp.get("pack_rows", []))
     if not make:
         raise CannotCheck(
-            "not one crafting row had an icon, so the half of box 3 this file exists for was\n"
-            "not measured. The loop reached %d rows at tick %s; either the sheets stopped\n"
-            "loading or `_icon_box` stopped returning art for every kind the menu offers."
-            % (layout.get("rows_now", 0), layout.get("tick")))
+            "the `falsifiable` moment (tick %s) held no crafting row with art, so the half of\n"
+            "box 3 this file exists for was not measured. Either the sheets stopped loading or\n"
+            "`_icon_box` stopped returning art for the kinds the menu offers." % sharp.get("tick"))
     if not pack:
         raise CannotCheck(
-            "not one pack row had an icon, so claim 2 ('one box wherever it sits') had only\n"
-            "one list to compare and would have passed on it alone.")
+            "the `falsifiable` moment (tick %s) held no pack row with art, so claim 2 ('one box\n"
+            "wherever it sits') had one list to compare and would have passed on it alone."
+            % sharp.get("tick"))
 
-    print("\n  %-6s %-34s %-7s %-9s %-11s %-7s %s"
-          % ("list", "row", "row h", "icon rect", "drawn", "scale", "verbs"))
+    print("\n  %-11s %-6s %-30s %-7s %-9s %-11s %-7s %s"
+          % ("moment", "list", "row", "row h", "icon rect", "drawn", "scale", "verbs"))
     for r in make + pack:
         icon = r["icon"]
-        print("  %-6s %-34s %-7.1f %-9s %-11s %-7s %s"
-              % (r["kind"], r["line"][:34], r["row_size"][1],
+        print("  %-11s %-6s %-30s %-7.1f %-9s %-11s %-7s %s"
+              % (sharp["label"], r["kind"], r["line"][:30], r["row_size"][1],
                  "%gx%g" % tuple(icon["rect"]), "%gx%g" % tuple(icon["drawn"]),
                  "%.6g" % icon["scale"], ",".join(r.get("verbs", [])) or "-"))
-    reserved = [r for r in layout.get("make_rows", []) if r.get("reserved")]
-    for r in reserved:
-        print("  %-6s %-34s %-7.1f %-9s  (reserved, no sheet for this kind)"
-              % (r["kind"], r["line"][:34], r["row_size"][1], "%gx%g" % tuple(r["reserved"])))
 
     bad = []
 
@@ -143,35 +171,54 @@ def main():
     # CLAIM 2: ONE BOX, ACROSS BOTH LISTS. The pack check can only ask this within one list.
     boxes = {}
     for r in make + pack:
-        boxes.setdefault(tuple(r["icon"]["rect"]), []).append("%s/%s" % (r["kind"], r["line"]))
+        # THE SCALE TRAVELS WITH THE ROW NAME, because this is the clause that fires when the
+        # RECT follows the row and `min(w/fw, h/fh)` does not -- a 32-wide box pins the scale
+        # at 1/2 however tall the rect gets, so the number a reader needs is the pair.
+        boxes.setdefault(tuple(r["icon"]["rect"]), []).append(
+            "%s/%s at %.6g" % (r["kind"], r["line"], r["icon"]["scale"]))
     if len(boxes) > 1:
         bad.append("an item is not the same size wherever it sits: %s. A row's shape is "
-                   "deciding how its art is scaled."
+                   "deciding how its art is scaled -- and note the scale can be right while "
+                   "the box is wrong, because the width pins it."
                    % {"%gx%g" % box: rows for box, rows in sorted(boxes.items())})
 
-    # CLAIM 4: a reserved box is the same box as a drawn one (ASSA-240).
-    if reserved:
-        drawn = sorted(boxes)[0]
-        for r in reserved:
-            if tuple(r["reserved"]) != drawn:
-                bad.append(
-                    "the reserved box on `%s` is %gx%g and a drawn icon is %gx%g, so that row's\n"
-                    "      sentence starts somewhere no other sentence does (ASSA-240)."
-                    % ((r["line"],) + tuple(r["reserved"]) + drawn))
-
-    # CLAIM 3: the anti-vacuity check, in THIS list's own variable. See the docstring.
-    heights = {round(r["row_size"][1], 3) for r in layout.get("make_rows", [])}
+    # CLAIM 3: the anti-vacuity check, in THIS list's own variable. See the docstring. Asked of
+    # the DRAWN rows only: a tall row with no icon is what made the fullest moment look sharp.
+    heights = {round(r["row_size"][1], 3) for r in make}
     if len(heights) < 2:
         raise CannotCheck(
-            "every crafting row is %s px tall, so 'the scale does not follow the row' had\n"
-            "nothing to be invariant against in this list -- and the pack check's variable\n"
-            "(differing verb sets) is a constant here, because every make row says `Make`.\n"
-            "This check would pass with the bug present, so it reports no verdict instead."
+            "every crafting row WITH ART at the `falsifiable` moment is %s px tall, so 'the\n"
+            "scale does not follow the row' had nothing to be invariant against -- and the pack\n"
+            "check's variable (differing verb sets) is a constant here, because every make row\n"
+            "says `Make`. This check would pass with the bug present, so it reports no verdict."
             % sorted(heights))
 
-    print("\n  tick %s, %d crafting row(s) with art + %d reserved, %d pack row(s) with art,"
-          % (layout.get("tick"), len(make), len(reserved), len(pack)))
-    print("  at crafting row heights %s in a %s window" % (sorted(heights), layout.get("viewport")))
+    # **CLAIM 4 IS SCORED AT THE `fullest` MOMENT**, which is the only one that has a reserved
+    # row: the kind with no sheet turns up late in the loop, and no tick of this seed's play
+    # carries a reserved row and a tall drawn row at once.
+    full = moment_named(layout, "fullest")
+    reserved = [r for r in full.get("make_rows", []) if r.get("reserved")]
+    full_drawn = drawn(full.get("make_rows", []))
+    if not reserved or not full_drawn:
+        raise CannotCheck(
+            "the `fullest` moment (tick %s) held %d reserved row(s) and %d drawn row(s), so\n"
+            "ASSA-240's claim -- a reserved box is the same box as a drawn one -- had nothing\n"
+            "to compare." % (full.get("tick"), len(reserved), len(full_drawn)))
+    box = tuple(full_drawn[0]["icon"]["rect"])
+    for r in reserved:
+        print("  %-11s %-6s %-30s %-7.1f %-9s  (reserved, no sheet for this kind)"
+              % (full["label"], r["kind"], r["line"][:30], r["row_size"][1],
+                 "%gx%g" % tuple(r["reserved"])))
+        if tuple(r["reserved"]) != box:
+            bad.append(
+                "the reserved box on `%s` is %gx%g and a drawn icon in the same list is %gx%g,\n"
+                "      so that row's sentence starts somewhere no other sentence does (ASSA-240)."
+                % ((r["line"],) + tuple(r["reserved"]) + box))
+
+    print("\n  seed %s in a %s window. `falsifiable` tick %s: %d crafting row(s) with art at"
+          % (layout.get("seed"), layout.get("viewport"), sharp.get("tick"), len(make)))
+    print("  heights %s, %d pack row(s) with art. `fullest` tick %s: %d reserved row(s)."
+          % (sorted(heights), len(pack), full.get("tick"), len(reserved)))
     if bad:
         print("\nVERDICT: FAIL (exit 1)")
         for line in bad:
@@ -181,8 +228,8 @@ def main():
               "  them and the art fills it. If one of those moved, this is what it cost.")
         return 1
     print("\nVERDICT: PASS (exit 0). A crafting row's icon is drawn at a whole-number\n"
-          "  reciprocal in the same box a pack row's is, across %d crafting row heights."
-          % len(heights))
+          "  reciprocal in the same box a pack row's is, across %d crafting row heights,\n"
+          "  and a row with no sheet reserves that same box." % len(heights))
     return 0
 
 

@@ -54,6 +54,9 @@ const PLAY_TICKS := 4000
 ## Frames to let layout settle before reading a rect. `pack_icon_layout.gd` uses the same count for
 ## the same reason: the first frames are the engine still deciding.
 const SETTLE_FRAMES := 6
+## How much a row that can FALSIFY the claim is worth against one that merely exists. Bigger than
+## any row count this loop reaches, so it is a priority and not a thumb on the scale. See `_rows_now`.
+const FALSIFIABLE_WEIGHT := 1000
 ## **THE WINDOW THE PROJECT DECLARES**, so the column is its real width while the rows are measured.
 ## `--script` gives the root viewport 100x100 and the engine shrinks it to **64x64 on the first
 ## frame**, in which a make row is 95 px wide and its sentence wraps to 1361 px of height -- a layout
@@ -72,68 +75,92 @@ const SETTINGS_W := "display/window/size/viewport_width"
 const SETTINGS_H := "display/window/size/viewport_height"
 
 var _screen: Node = null
+var _seed := SEED
 var _frames := 0
 var _quitting := false
-## The tick the first pass found the panels fullest on, and the count it saw there. See `_initialize`.
-var _best_tick := -1
-var _best_rows := 0
+## The best score seen so far and the tick it was seen on, per question. See `_find_the_moments`.
+var _best: Dictionary = {}
+## `[{"label": ..., "tick": ...}, ...]`, in play order. See `_find_the_moments`.
+var _moments: Array = []
+var _moment := 0
 
 
-## TWO PASSES, AND THE SECOND ONE CHECKS THE FIRST.
+## **THE MOMENT WORTH MEASURING IS NOT THE END OF THE PLAY, AND IT IS NOT THE FULLEST ONE EITHER.**
 ##
-## **THE MOMENT WORTH MEASURING IS NOT THE END OF THE PLAY.** The loop spends what it makes: at tick
-## 481 this player holds nothing and the menu says "nothing you are carrying can be worked", so a
-## probe that measured the final state would measure no crafting rows at all. The fullest the two
-## panels ever get lasts about four ticks in the middle -- `window_shot.gd` has the same problem and
-## the same answer for `04-pack.png`: *a moment the tool notices, found by the play and not chosen
-## by me*.
+## The loop spends what it makes: at tick 481 this player holds nothing and the menu says "nothing
+## you are carrying can be worked", so a probe that measured the final state would measure no
+## crafting rows at all. `window_shot.gd` has the same problem and the same answer for
+## `04-pack.png`: *a moment the tool notices, found by the play and not chosen by me*.
 ##
-## You cannot know a high-water mark has been reached until it stops rising, so pass one plays the
-## whole loop to find the tick and pass two replays and stops there. **The replay then asserts it
-## found the same count at the same tick**, which is what turns "the loop is deterministic" from
-## something I believe into something this probe reports -- and if the plan ever stops being a pure
-## function of the world, this says so instead of measuring a different moment than it names.
+## **THEN THE FULLEST MOMENT TURNED OUT NOT TO BE ABLE TO FAIL, AND I FOUND THAT THE RIGHT WAY -- BY
+## MUTATING THE CLIENT AND WATCHING THE CHECK STAY GREEN.** Tick 462 is five crafting rows, four of
+## them drawn, and taking `SIZE_SHRINK_CENTER` off the slot so the icon FILLS its row changed nothing
+## there: on that tick every row carrying art is exactly `ICON_BOX_PX` tall, because the icon is the
+## tallest thing in it. The one taller row was the gear, which has no art. A moment where the bug is
+## invisible is a green that costs more than no check.
 ##
-## The count is read off the SIM (`make_offers` + `inventory_of`), never off the panels, for
-## `window_shot.gd`'s reason: the panels are the thing under test, so asking them how many rows they
-## have is asking the thing under test.
+## So two moments, each the best the play offers for one question, and the check scores each claim
+## where that claim could fail:
+##
+##  - `falsifiable`: a row that carries art AND is taller than the icon box, which is what a walls or
+##    dead-end clause does. This is the moment the SCALE claim is measured on.
+##  - `fullest`: the most rows the two panels ever hold at once. The moment the RESERVED box
+##    (ASSA-240) is measured on -- the gear row only exists late, and no tick of this seed's loop
+##    carries a reserved row and a tall drawn row at the same time. I scanned every tick to find that
+##    out rather than assuming it.
+##
+## **YOU CANNOT KNOW A HIGH-WATER MARK HAS BEEN REACHED UNTIL IT STOPS RISING**, so one pass plays
+## the whole loop to find the ticks and the frame loop replays to each. **Every replay asserts it saw
+## the same score at the same tick**, which turns "the loop is deterministic" from something I
+## believe into something this probe reports: if the plan ever stops being a pure function of the
+## world, this says so instead of measuring a different moment than it names.
+##
+## Every score is read off the SIM (`make_offers`, `inventory_of`, `AssaySprites.icon_for`), never
+## off the panels, for `window_shot.gd`'s reason: the panels are the thing under test, so asking them
+## how many rows they have is asking the thing under test.
 func _initialize() -> void:
 	var argv := OS.get_cmdline_user_args()
-	var seed_text := String(argv[0]) if argv.size() > 0 else SEED
-	if not _play_offline(seed_text, -1):
+	_seed = String(argv[0]) if argv.size() > 0 else SEED
+	if not _play_offline(-1):
 		_quitting = true
 		quit(1)
 		return
-	if _best_tick < 0:
-		print("FAIL  no tick of the play had a crafting row on it, so there is nothing to measure. "
-				+ "The loop on seed %s never held anything workable." % seed_text)
+	_find_the_moments()
+	if _moments.is_empty():
+		print(("FAIL  no tick of the play had a crafting row on it, so there is nothing to measure. "
+				+ "The loop on seed %s never held anything workable.") % _seed)
 		_quitting = true
 		quit(1)
-		return
-	var wanted := _best_rows
-	var at := _best_tick
-	_best_rows = 0
-	_best_tick = -1
-	if not _play_offline(seed_text, at):
-		_quitting = true
-		quit(1)
-		return
-	if _screen._sim.tick() != at or _best_rows != wanted:
-		print(("FAIL  the replay is not the same play: pass 1 saw %d rows at tick %d, pass 2 saw %d "
-				+ "at tick %d. The demo plan has stopped being a pure function of the world, so this "
-				+ "probe can no longer name the moment it measured.")
-				% [wanted, at, _best_rows, _screen._sim.tick()])
-		_quitting = true
-		quit(1)
+
+
+## The two ticks worth replaying to, in play order, each with the score that named it. A question
+## whose score never rose above zero contributes no moment: the check is told which questions were
+## measured and refuses the ones that were not, rather than being handed a moment that cannot answer.
+func _find_the_moments() -> void:
+	var found: Array = []
+	for label in SCORES:
+		var seen: Dictionary = _best.get(label, {})
+		if int(seen.get("score", 0)) <= 0:
+			continue
+		found.append({"label": label, "tick": int(seen["tick"]), "score": int(seen["score"])})
+	found.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["tick"] < b["tick"])
+	_moments = found
 
 
 ## PLAY THE LOOP, OFFLINE: this script is the relay. Lifted from `button_session.gd::_run_offline`,
 ## including the thing I would have got wrong -- A BUNDLE IS NUMBERED WITH THE TICK WE ARE AT, not
 ## the one it produces.
 ##
-## `stop_at` of -1 plays to the end and only records the high-water tick; any other value plays until
-## the world is at that tick and leaves the screen standing there.
-func _play_offline(seed_text: String, stop_at: int) -> bool:
+## `stop_at` of -1 plays to the end and only records the high-water ticks; any other value plays
+## until the world is at that tick and leaves the screen standing there.
+##
+## A FRESH SCREEN EVERY TIME, AND THE OLD ONE IS FREED. A replay against a screen that has already
+## been welcomed into a world is not the same play, and two live `main.tscn` under one root would
+## both be laid out -- the measurement would then be of whichever one `_screen` happened to name.
+func _play_offline(stop_at: int) -> bool:
+	if _screen != null:
+		_screen.queue_free()
+		root.remove_child(_screen)
 	_screen = load("res://scenes/main.tscn").instantiate()
 	root.add_child(_screen)
 	# `_ready` BY HAND, as `button_session.gd` and `tests/test_main_screen.gd` do it: a `--script` run
@@ -143,9 +170,9 @@ func _play_offline(seed_text: String, stop_at: int) -> bool:
 	var asked: Array = []
 	_screen._client.asked.connect(func(command: Variant) -> void: asked.append(command))
 	var play := AssayButtonPlay.new(_screen, 0)
-	var welcome := AssaySimHost.fresh_welcome_json(seed_text, "marlow")
+	var welcome := AssaySimHost.fresh_welcome_json(_seed, "marlow")
 	if welcome == "":
-		print("FAIL  could not make a world on seed %s" % seed_text)
+		print("FAIL  could not make a world on seed %s" % _seed)
 		return false
 	_screen._client.play_offline()
 	_screen._client.feed_offline(welcome)
@@ -153,14 +180,20 @@ func _play_offline(seed_text: String, stop_at: int) -> bool:
 		print("FAIL  the offline welcome did not start a sim: %s" % _screen._sim.fail_reason)
 		return false
 	for _i in range(PLAY_TICKS):
+		# **THE BAIL IS HERE AND IT IS NON-ZERO, rather than a `return false` the caller turns into
+		# one.** `test_tool_ceilings.gd` caught exactly that and was right: a bail that unwinds
+		# through two frames of someone else's code is one refactor away from exiting 0, and CI
+		# reads a 0 as a pass. Measured by the suite, not by me reading it.
 		if Time.get_unix_time_from_system() > _ceiling:
 			print("FAIL  make_icon_layout.gd ran past its %ds ceiling inside the play loop"
 					% int(RUN_CEILING))
+			_quitting = true
+			quit(1)
 			return false
-		var rows := _rows_now()
-		if rows > _best_rows:
-			_best_rows = rows
-			_best_tick = _screen._sim.tick()
+		for label in SCORES:
+			var score := _score(label)
+			if score > int((_best.get(label, {}) as Dictionary).get("score", 0)):
+				_best[label] = {"score": score, "tick": _screen._sim.tick()}
 		if stop_at >= 0 and _screen._sim.tick() >= stop_at:
 			return true
 		play.advance()
@@ -192,14 +225,52 @@ func _declared_viewport() -> Vector2i:
 			int(ProjectSettings.get_setting(SETTINGS_H, 720)))
 
 
-## HOW MANY ROWS THE TWO PANELS ARE ABOUT TO HAVE, asked of the sim. See `_initialize`.
-func _rows_now() -> int:
+## HOW GOOD THIS TICK IS FOR EACH QUESTION, keyed by the name the report uses. See `_initialize` for
+## why there are two and why the obvious one is not enough.
+##
+## Every score is zero when the panel cannot answer its question at all -- a tick with no crafting
+## offers scores zero however full the pack is -- so `_find_the_moments` can tell "the best moment"
+## from "no moment", and the check is refused rather than passed in the second case.
+##
+## `AssaySprites.icon_for` is the same call `_icon_box` makes, so "will this row carry art" follows
+## what the client can draw instead of asserting a roster of kinds with sheets.
+const SCORES := ["falsifiable", "fullest"]
+
+
+func _score(label: String) -> int:
 	var player: int = _screen._client.player_id
 	var offers: Array = _screen._sim.make_offers(player)
-	var stacks: Array = _screen._sim.inventory_of(player)
-	# A CRAFTING ROW IS THE POINT, so a moment with a huge pack and no offers is not an improvement
-	# on one with both. Zero offers scores zero however full the pack is.
-	return 0 if offers.is_empty() else offers.size() + stacks.size()
+	if offers.is_empty():
+		return 0
+	match label:
+		# A ROW THAT CARRIES ART AND IS TALLER THAN THE ICON BOX: the only shape in which a
+		# vertically FILLing icon shows up as a wrong scale. A walls clause (ASSA-125) or a dead-end
+		# clause (ASSA-158) is what adds the line. Row count breaks ties and nothing more.
+		"falsifiable":
+			var tall := 0
+			for entry in offers:
+				var offer: Dictionary = entry
+				if AssaySprites.icon_for(offer.get("makes", {}) as Dictionary) == null:
+					continue
+				if String(offer.get("dead_end", "")) != "" or String(offer.get("walls", "")) != "":
+					tall += 1
+			if tall == 0:
+				return 0
+			return FALSIFIABLE_WEIGHT * tall + offers.size()
+		# THE MOST ROWS THE TWO PANELS EVER HOLD AT ONCE, which is where the reserved box lives: a
+		# kind with no sheet (ASSA-240). Scores zero until one of this tick's offers really has none,
+		# so "fullest" cannot be chosen for a frame that could not answer the question it is for.
+		"fullest":
+			var reserved := 0
+			for entry in offers:
+				var offer: Dictionary = entry
+				if AssaySprites.icon_for(offer.get("makes", {}) as Dictionary) == null:
+					reserved += 1
+			if reserved == 0:
+				return 0
+			var stacks: Array = _screen._sim.inventory_of(player)
+			return offers.size() + stacks.size()
+	return 0
 
 
 ## **ONE TAB AT A TIME, BECAUSE A HIDDEN TAB IS NOT LAID OUT -- AND THAT IS THE FINDING UNDER
@@ -221,11 +292,15 @@ func _rows_now() -> int:
 ## So each list is measured with its own tab OPEN, through `AssayTabStrip.select` -- the function the
 ## tab's own button calls -- and `visible_in_tree` is reported per list so the Python can refuse
 ## rather than score a collapsed one.
-enum Phase { SIZE, MAKE_TAB, MAKE_READ, PACK_TAB, PACK_READ }
+## THE REPLAY IS IN THE FRAME LOOP AND NOT IN `_initialize`, because a measurement needs frames: a
+## moment is replayed to, then its two tabs are opened and read a settle apart, and only then is the
+## next moment replayed to. Each replay re-checks the score it was sent for (see `_replay`).
+enum Phase { REPLAY, SIZE, MAKE_TAB, MAKE_READ, PACK_TAB, PACK_READ }
 
-var _phase: Phase = Phase.SIZE
+var _phase: Phase = Phase.REPLAY
 var _settling := 0
-var _measured: Dictionary = {}
+var _measured: Dictionary = {"moments": []}
+var _here: Dictionary = {}
 
 
 func _process(_delta: float) -> bool:
@@ -239,9 +314,13 @@ func _process(_delta: float) -> bool:
 		return true
 	_frames += 1
 	# THE WINDOW FIRST. See `SETTINGS_W`: the engine shrinks the viewport to 64x64 on frame one, so
-	# this is undone on every frame of the sizing phase.
+	# this is undone on every frame rather than once.
 	root.size = _declared_viewport()
 	match _phase:
+		Phase.REPLAY:
+			if not _replay():
+				return true
+			_phase = Phase.SIZE
 		Phase.SIZE:
 			if _settle():
 				_phase = Phase.MAKE_TAB
@@ -251,9 +330,9 @@ func _process(_delta: float) -> bool:
 			_phase = Phase.MAKE_READ
 		Phase.MAKE_READ:
 			if _settle():
-				_measured["make_rows"] = _rows_of(_screen._make, "make")
-				_measured["make_visible_in_tree"] = _screen._make.is_visible_in_tree()
-				_measured["make_shown"] = _screen._make_shown
+				_here["make_rows"] = _rows_of(_screen._make, "make")
+				_here["make_visible_in_tree"] = _screen._make.is_visible_in_tree()
+				_here["make_shown"] = _screen._make_shown
 				_phase = Phase.PACK_TAB
 		Phase.PACK_TAB:
 			if not _open("inventory"):
@@ -261,11 +340,43 @@ func _process(_delta: float) -> bool:
 			_phase = Phase.PACK_READ
 		Phase.PACK_READ:
 			if _settle():
-				_measured["pack_rows"] = _rows_of(_screen._carrying, "pack")
-				_measured["pack_visible_in_tree"] = _screen._carrying.is_visible_in_tree()
-				_report()
-				return true
+				_here["pack_rows"] = _rows_of(_screen._carrying, "pack")
+				_here["pack_visible_in_tree"] = _screen._carrying.is_visible_in_tree()
+				_here["column_visible"] = _screen._column != null and _screen._column.visible
+				_measured["moments"].append(_here)
+				_moment += 1
+				if _moment >= _moments.size():
+					_report()
+					return true
+				_phase = Phase.REPLAY
 	return false
+
+
+## REPLAY TO THE NEXT MOMENT, and check that it is the moment it was sent for.
+##
+## **THIS IS WHERE "THE LOOP IS DETERMINISTIC" STOPS BEING SOMETHING I BELIEVE.** The ticks were
+## found in a first play and these are fresh worlds; if the demo plan ever stops being a pure
+## function of the world, the replay lands on a different state at the same tick and the probe would
+## otherwise report a measurement under a label that no longer describes it.
+func _replay() -> bool:
+	var moment: Dictionary = _moments[_moment]
+	var label := String(moment["label"])
+	var at := int(moment["tick"])
+	if not _play_offline(at):
+		_quitting = true
+		quit(1)
+		return false
+	var here := _score(label)
+	if _screen._sim.tick() != at or here != int(moment["score"]):
+		print(("FAIL  the replay is not the same play: the first pass scored %d for `%s` at tick %d, "
+				+ "the replay scores %d at tick %d. The demo plan has stopped being a pure function "
+				+ "of the world, so this probe can no longer name the moment it measured.")
+				% [int(moment["score"]), label, at, here, _screen._sim.tick()])
+		_quitting = true
+		quit(1)
+		return false
+	_here = {"label": label, "tick": at, "score": here}
+	return true
 
 
 ## SETTLE_FRAMES of nothing, then true once. Each phase gets its own count: a tab that has just been
@@ -297,9 +408,16 @@ func _open(tab_name: String) -> bool:
 
 
 func _report() -> void:
-	_measured["column_visible"] = _screen._column != null and _screen._column.visible
-	_measured["tick"] = _screen._sim.tick()
-	_measured["rows_now"] = _best_rows
+	_measured["seed"] = _seed
+	# WHICH QUESTIONS THIS RUN COULD NOT FIND A MOMENT FOR, by name. A claim whose moment never
+	# occurred must reach the check as a refusal and not as silence: that is the difference between
+	# "measured and fine" and "not measured", and the second one looked exactly like the first until
+	# the mutation that passed.
+	var unmeasured := PackedStringArray()
+	for label in SCORES:
+		if int((_best.get(label, {}) as Dictionary).get("score", 0)) <= 0:
+			unmeasured.append(String(label))
+	_measured["unmeasured"] = unmeasured
 	_measured["viewport"] = [root.size.x, root.size.y]
 	_measured["viewport_declared"] = [_declared_viewport().x, _declared_viewport().y]
 	_measured["icon_box_px"] = [_screen.ICON_BOX_PX.x, _screen.ICON_BOX_PX.y]

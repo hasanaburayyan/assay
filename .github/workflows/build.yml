@@ -655,6 +655,31 @@ jobs:
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
             python3 art/check_pack_icon_scale.py
+      # AND SO IS A CRAFTING ROW'S, WHICH NOTHING ASKED UNTIL ASSA-306. ASSA-116 box 3
+      # is "pack AND CRAFTING rows show icons at their drawn size" and only the pack
+      # half had a measurement: the crafting half rested on the menu calling the same
+      # `_icon_box` -- the by-construction argument the step above rejects in its own
+      # docstring -- and on a suite assertion that reads `custom_minimum_size` back
+      # before any layout pass. ASSA-65's defect was a CONTAINER defect, and a make row
+      # is a different container from a pack row (ASSA-247).
+      #
+      # It drives `client/tools/make_icon_layout.gd`, which PLAYS THE REAL LOOP offline
+      # and opens each tab. Both of those are load-bearing and both were found the
+      # expensive way: ASSA-264 put the column in tabs, so `MakeBody` is invisible until
+      # pressed and an invisible container keeps nothing but its children's minimum
+      # sizes -- measured in a hidden tab the rows came back 95px wide and up to 1361px
+      # tall and scored green. And the moment it measures is not the fullest one: on the
+      # fullest tick every drawn row is exactly the icon's box tall, so taking
+      # SIZE_SHRINK_CENTER off the slot changed nothing and the mutation PASSED. The
+      # probe now scores the tick where a drawn row is TALLER than the box.
+      #
+      # Measured by mutation: the slot losing SIZE_SHRINK_CENTER reds naming 32x59
+      # against 32x48, and the probe losing its tab press exits 2 rather than scoring a
+      # collapsed layout. Same three-valued exits as the step above.
+      - name: A crafting row's icon is drawn at a scale someone chose
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
+            python3 art/check_make_icon_scale.py
       # THE SLOT PLATE IS STILL THE GROUND'S OWN COLOUR (ASSA-71, Maren's ruling).
       # The plate is not "a colour that tested well": it is ground.png's median, so a
       # stack in the pack row and a rock on the map are the same object. A hex that
