@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- a replica that prices one ruling; its table is read on the item, never asserted
 ## **WHAT A SPECIES LETTER STILL COVERS OF A MACHINE'S MARK, TILE BY TILE** (ASSA-273).
 ##
 ##   $GODOT --headless --path client --script res://tools/glyph_yield_table.gd
