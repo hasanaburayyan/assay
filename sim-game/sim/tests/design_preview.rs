@@ -433,12 +433,8 @@ fn a_design_that_is_not_a_design_is_refused_in_the_same_words_both_times() {
         .expect("refused");
     let after = debug::event_line(&world, Some(me), rejected, debug::Audience::Typed);
 
-    let phrase = debug::plan_refusal_phrase(
-        &world,
-        me,
-        planned.refusal().expect("it was refused"),
-    )
-    .expect("`plan` refuses only in its own vocabulary");
+    let phrase = debug::plan_refusal_phrase(&world, me, planned.refusal().expect("it was refused"))
+        .expect("`plan` refuses only in its own vocabulary");
     assert!(
         line.contains(&phrase),
         "the preview must use the phrase: {line}"

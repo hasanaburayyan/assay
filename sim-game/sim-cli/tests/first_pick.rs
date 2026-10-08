@@ -9,7 +9,9 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use sim::tuning::{FRAME_BUDGET_PER_STRENGTH, HEAD_SIZE, HELD_FRAME_SIZE, PLANTED_FRAME_SIZE};
+use sim::tuning::{
+    FRAME_BUDGET_PER_STRENGTH, HEAD_SIZE, HELD_FRAME_SIZE, HOPPER_SIZE, PLANTED_FRAME_SIZE,
+};
 use sim::worldgen::STARTER_CHUNKS;
 use sim::{ChunkPos, OreDeposit, Property, TilePos, World};
 
@@ -84,7 +86,10 @@ fn fresh_world_to_a_pick_in_hand_and_a_drill_on_the_ground() {
     let handle = format!("handle:{name}:{grade}");
     let head = format!("head:{name}:{grade}");
     let frame = format!("frame:{name}:{grade}");
-    let needed = HELD_FRAME_SIZE + PLANTED_FRAME_SIZE + 2 * HEAD_SIZE;
+    // One hopper more than the two designs need: `design` weighs a DRILL WITH
+    // TWO of them against a pack holding one, which is the tallied-duplicate
+    // case (ASSA-324) and the one an untallied check would wave through.
+    let needed = HELD_FRAME_SIZE + PLANTED_FRAME_SIZE + 2 * HEAD_SIZE + HOPPER_SIZE;
 
     let script = format!(
         "new {seed}
@@ -112,7 +117,13 @@ make head {refined} 2
 tick 1
 make {frame_kind} {refined} 1
 tick 1
+make hopper {refined} 1
+tick 1
 inv
+help
+design {handle} {head}
+design {frame} {head} {hopper} {hopper}
+design {handle} {head} {hopper}
 assemble {handle} {head}
 tick 1
 built
@@ -142,6 +153,7 @@ quit
         to_fuel = walk(material.center, fuel.center).max(25),
         ore_in = needed + 2,
         smelting = (needed + 2) * 25 + 50,
+        hopper = format!("hopper:{name}:{grade}"),
         handle_kind = "handle",
         frame_kind = "frame",
         // West of the player: `place smelter` already took the tiles to the east.
@@ -292,5 +304,70 @@ quit
     assert!(
         !carrying.contains("handle") && !carrying.contains("frame"),
         "both frames should have been consumed: {carrying}\n{transcript}"
+    );
+
+    // -----------------------------------------------------------------
+    // `design`: the same answer, bought with nothing (ASSA-324)
+    // -----------------------------------------------------------------
+
+    // **THE PREVIEW IS THE SENTENCE THE PRESS GIVES BACK.** `design` printed
+    // this before a single part was spent and `assemble` prints it again
+    // afterwards, so the two are compared here across the press rather than
+    // against a string written in this file. The day a preview stops being
+    // `assembly_readout` of the plan's own `Built`, the earlier copy stops
+    // existing and this fails.
+    let assembled = stdout
+        .lines()
+        .find_map(|l| l.split_once("you assembled a tool: "))
+        .map(|(_, readout)| readout.trim().to_string())
+        .unwrap_or_else(|| panic!("the pick was never assembled\n{transcript}"));
+    let previewed_at = stdout
+        .find(&assembled)
+        .unwrap_or_else(|| panic!("readout missing entirely\n{transcript}"));
+    let pressed_at = stdout
+        .find(&format!("you assembled a tool: {assembled}"))
+        .expect("just found it");
+    assert!(
+        previewed_at < pressed_at,
+        "`design` must print the readout BEFORE the press, not a summary of it.\n\
+         readout: {assembled}\n{transcript}"
+    );
+    assert!(
+        stdout.contains("design <frame> <part>..."),
+        "`design` must be in `help`, or headless players cannot find it\n{transcript}"
+    );
+    assert!(
+        stdout.contains("your pack covers it"),
+        "a design the pack can pay for says so\n{transcript}"
+    );
+    // THE TALLIED DUPLICATE, END TO END: two hoppers asked of a pack holding
+    // one. An untallied check passes this, because one hopper satisfies
+    // `has(hopper, 1)` twice.
+    assert!(
+        stdout.contains(&format!("not enough {m} hopper ({g}) (you have 1)")),
+        "the drill wanting two hoppers must name the hopper\n{transcript}"
+    );
+    // ...and the design it could not afford was WEIGHED anyway, which is the
+    // whole reason a build screen can exist.
+    let short_line = stdout
+        .lines()
+        .position(|l| l.contains(&format!("not enough {m} hopper ({g})")))
+        .expect("just asserted it");
+    let weighed = stdout.lines().nth(short_line - 1).expect("a line above it");
+    assert!(
+        weighed.contains("hopper(") && weighed.contains("budget"),
+        "an unaffordable design is still weighed: {weighed}\n{transcript}"
+    );
+    // A design that is no design at all refuses in the sim's own words, and
+    // submits nothing -- the `rejected` assertion above covers the second half.
+    assert!(
+        stdout.contains("no design: "),
+        "an illegal design says why\n{transcript}"
+    );
+    // AND NONE OF IT COST ANYTHING: the hopper `design` weighed twice is still
+    // in the pack at the end.
+    assert!(
+        carrying.contains(&format!("1 {m} hopper ({g})")),
+        "weighing a design must not spend it: {carrying}\n{transcript}"
     );
 }
