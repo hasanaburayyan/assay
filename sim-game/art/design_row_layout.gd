@@ -3,7 +3,23 @@ extends SceneTree
 ##
 ##   godot [--headless] --path client --script "$PWD/art/design_row_layout.gd" -- designs.json [seed]
 ##
-## **THE CAUSE IS A HIDDEN SUBTREE, AND IT IS THE ONLY CAUSE. `--headless` IS FINE.**
+## **THE CAUSE IS A HIDDEN SUBTREE. `--headless` IS FINE *FOR WHAT THIS FILE MEASURES*, AND THAT
+## QUALIFIER IS LOAD-BEARING — I LEFT IT OUT ONCE AND IT WAS THE SAME MISTAKE AGAIN.**
+##
+## The rule is not "headless lays out" or "headless does not". It is **where a size COMES FROM**:
+##
+##   - **CONTENT-DERIVED sizes survive headless.** A `VBoxContainer` sizes itself from its children's
+##     minimums and a `Label` wraps against the width it is given, so the bench's `[300, 141]` and
+##     `line_count 4` are the same windowed or not. Everything this file reports is of that kind.
+##   - **WINDOW-DERIVED sizes do NOT.** Headless there is no window -- this script prints
+##     `window (0, 0)` -- so anything measured off the viewport reads 0. Run
+##     `tools/nacre_tab_budget_probe.gd --headless` and its CLIP comes back **0 px at every tick**,
+##     so every tab reads "BELOW THE FOLD" and it exits 1. Its header says headless has no layout
+##     pass; the mechanism in that sentence is wrong and **its conclusion is right for that tool**,
+##     because the clip is the scroll box's share of the window.
+##
+## So: this probe may be re-asked headless, which is what CI can run. A probe measuring the fold may
+## not. Do not carry either verdict across to the other.
 ##
 ## I got this wrong in the first version of this header and in #361's own title, so the correction is
 ## here rather than in a commit nobody re-reads. What I saw was real: the bench reported `size [0,0]`,
@@ -187,9 +203,11 @@ func _refuse_if_unlaid(bench: Control) -> bool:
 	print("         (main.gd `_column.visible = false`), so `_begin_offline` must have succeeded.")
 	print("      2. a tab's body is hidden unless it is the selected one -- select `bench`.")
 	print("      3. the bench itself is empty, so there is nothing to lay out.")
-	print("      NOT a cause: `--headless`. Godot lays out fine headless, and this was measured")
-	print("      byte-identical both ways once a world was up. The first version of this list said")
-	print("      otherwise and it was wrong.")
+	print("      NOT a cause: `--headless`. Everything this probe reports is CONTENT-derived, and")
+	print("      that was measured byte-identical both ways once a world was up. (A WINDOW-derived")
+	print("      size is the other story: headless there is no window, so a fold/clip measurement")
+	print("      reads 0 -- see nacre_tab_budget_probe.) The first version of this list blamed")
+	print("      headless outright and was wrong.")
 	print("      column visible: %s" % (_screen._column.visible if "_column" in _screen else "?"))
 	quit(1)
 	return true
