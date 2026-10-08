@@ -4490,6 +4490,41 @@ func _refresh_world(frame_dt := -1.0) -> void:
 ## one-shot cache below can never be caught short by the camera moving.
 const DOOR_ORE_MARGIN := 3
 
+## **WHERE THE TITLE SCREEN'S CAMERA LOOKS, AND IT IS NOT SPAWN** (ASSA-311, Maren).
+##
+## ASSA-292 pointed this camera at `spawn_tile()`, and the card is centred on the window, so the two
+## were the same place: the words sat on the patch you start on. Her measurement over the whole
+## 128-frame drift loop -- **46.7% of the card's area was world showing through, 14,214 px of it
+## pink**, the hero patch cut at its widest row, while the 258 px strip below the card (25.8% of the
+## first screen) was **100.0% grass**.
+##
+## **AND IT WAS NOT THIS SEED'S BAD LUCK.** ADR 0001 guarantees the two chunks beside spawn hold the
+## starter material, so a camera centred on spawn is centred on ore *by construction*, in every seed.
+## Framing is the only lever, and it is free: the contrast spread across the loop is 0.15 / 0.09, so
+## what the words read at does not depend on what the camera sees.
+##
+## **DERIVED FROM THE DEPOSIT TABLE, NOT NUDGED UNTIL A SCREENSHOT LOOKED RIGHT.** Her
+## `workspaces/maren/probes/door_lookat.py` scores every half-tile look-at in the world at nine
+## phases of the drift ellipse, against the sim's own deposits and the card's measured rect. 86 hold
+## her bar -- nothing under the card at any phase, something below it -- and this is the best of them:
+##
+## ```
+## look-at        under card  whole in frame  clipped  above/below  spawn pad
+## (56,40) spawn    1 always        2            2        0 / 0      under the card
+## (72.5,29.5)      0 EVERY phase  >=3          <=2       1 / 1      below it in 6 of 9 phases
+## ```
+##
+## Her deposit table is controlled: `08-whole-world-marks.json` from a real 1x window shot of the
+## same seed lists the same 13 deposits, tile and radius identical.
+##
+## **IT IS A LOOK-AT AND NOT A SEED.** The door world is still the world solo plays at tick 0
+## (ASSA-292 box 6 asserts the seed by reference), because *"press the button and you walk into the
+## field you were looking at"* has to stay true. We moved the camera, not the world.
+##
+## **HALF-TILES ARE ALLOWED AND MEANT:** the camera takes a float centre, and the drift already moves
+## it in fractions of a tile every frame, so rounding to a whole tile would only coarsen the search.
+const DOOR_LOOK_AT := Vector2(72.5, 29.5)
+
 
 ## THE VIEW DICTIONARY FOR THE WORLD BEHIND THE DOOR (ASSA-292), or `{}` if there is no binding to
 ## build one from -- in which case the caller draws the flat field this screen had before.
@@ -4518,7 +4553,7 @@ func _door_view() -> Dictionary:
 	# THE DRIFT IS ADDED TO THE CENTRE TILE AND NOT TO THE ORIGIN, so it passes through
 	# `camera_origin`'s world-edge clamp like any other camera. Added afterwards it would be the one
 	# camera in the client allowed to show the void beside the world.
-	var centre := Vector2(_door_sim.spawn_tile()) + AssayScene.title_drift(seconds)
+	var centre := DOOR_LOOK_AT + AssayScene.title_drift(seconds)
 	# `0.0` headroom: the north exception exists for the event log hanging over the map, and at the
 	# door there is no log and no body for it to hide (ASSA-184).
 	var origin := AssayScene.camera_origin(centre, size, _world.size, 0.0)
@@ -4542,7 +4577,12 @@ func _door_view() -> Dictionary:
 func _door_ore_under(size: Vector2i) -> Dictionary:
 	if _door_ore_built:
 		return _door_ore
-	var home := AssayScene.camera_origin(Vector2(_door_sim.spawn_tile()), size, _world.size, 0.0)
+	# **THE SAME `DOOR_LOOK_AT` THE CAMERA USES, AND THAT IS THE WHOLE POINT OF THE CONSTANT**
+	# (ASSA-311). This window is built ONCE and kept, so a look-at that moved the camera and not this
+	# would hand the drawing code a camera pointing somewhere the ore was never gathered -- a title
+	# screen of empty grass, with every unit test still green. `test_the_door_gathers_its_ore_where_
+	# its_camera_is_pointing` asserts the two agree; swapping this line back to spawn reddens it.
+	var home := AssayScene.camera_origin(DOOR_LOOK_AT, size, _world.size, 0.0)
 	var window := AssayScene.visible_tiles(home, _world.size, size).grow(DOOR_ORE_MARGIN)
 	window = window.intersection(Rect2i(Vector2i.ZERO, size))
 	_door_ore = {}

@@ -147,6 +147,136 @@ def near(rgb, want, tolerance=TOLERANCE):
     return all(abs(rgb[i] - want[i]) <= tolerance for i in range(3))
 
 
+## **THE RECTANGLE THE WORDS STAND ON -- AND THE VERSION THIS REPLACES UNIONED EVERY ROW'S RUN.**
+##
+## That defect was mine and it is worth writing down, because it made the instrument blame the thing
+## it was built to defend. `dark` grew by `min`/`max` over every row holding a long dark run, so ONE
+## row reaching a single pixel further left than the plate moved `px0` for ALL of them -- and the ring
+## then sampled that column down all 233 rows of the card, where it is not plate at all but lit
+## grass. On ASSA-311's sweep that read **1.83:1** and failed Maren's floor on 8 of 128 frames. The
+## card had not moved a pixel; my box had.
+##
+## **A PLATE IS A RECTANGLE, SO ASK THE ROWS WHAT THEY AGREE ON.** The span the most rows report
+## EXACTLY is the plate's own; a stray row beside it, an anti-aliased edge pixel, or a dark world band
+## of some other width is one row each and loses. **Exactness is the whole point** -- an off-by-one
+## edge pixel is precisely the thing that must not be absorbed, which is why these are not clustered
+## within a tolerance. A tolerance here would re-create the bug with extra steps.
+##
+## The y extent is read off the rows that match that span and nothing else, so a dark band elsewhere
+## in the world cannot stretch the box vertically either.
+##
+## **IT REPORTS THE UNION IT DID NOT USE.** A disagreement between the union and the agreed span is
+## real information -- something dark is touching the plate -- and a detector that quietly picked the
+## better of two answers would be the same class of check as the one it replaces.
+##
+## Returns `(rect, union, rows_agreeing, rows_dark)`, or None when no row holds a plate-wide run.
+def plate_rect(rows, channels, door):
+    x0, y0, x1, y1 = door
+    spans = {}
+    for y in range(y0, y1):
+        run_start = None
+        for x in range(x0, x1 + 1):
+            is_dark = x < x1 and luminance(pixel(rows, channels, x, y)) < PLATE_MAX_LUMA
+            if is_dark:
+                if run_start is None:
+                    run_start = x
+                continue
+            if run_start is not None and x - run_start >= PLATE_MIN_RUN:
+                spans.setdefault((run_start, x - 1), []).append(y)
+            run_start = None
+    if not spans:
+        return None
+    # Most rows wins; a tie goes to the wider span, because the plate is the widest thing in this
+    # picture that is dark and a tie broken by dict order would make the answer depend on scan order.
+    (lo, hi), ys = max(spans.items(), key=lambda kv: (len(kv[1]), kv[0][1] - kv[0][0]))
+    union = (min(span[0] for span in spans),
+             min(min(rows_at) for rows_at in spans.values()),
+             max(span[1] for span in spans),
+             max(max(rows_at) for rows_at in spans.values()))
+    return (lo, min(ys), hi, max(ys)), union, len(ys), sum(len(v) for v in spans.values())
+
+
+def write_png(path, width, height, fill, rects):
+    """A PNG writer that exists ONLY for `selftest`, so the control needs no screenshot to run."""
+    pixels = [[fill] * width for _ in range(height)]
+    for rx0, ry0, rx1, ry1, colour in rects:
+        for y in range(ry0, ry1 + 1):
+            for x in range(rx0, rx1 + 1):
+                pixels[y][x] = colour
+    raw = bytearray()
+    for row in pixels:
+        raw.append(0)
+        for rgb in row:
+            raw.extend(rgb)
+
+    def chunk(tag, body):
+        return (struct.pack(">I", len(body)) + tag + body
+                + struct.pack(">I", zlib.crc32(tag + body) & 0xFFFFFFFF))
+
+    head = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    with open(path, "wb") as handle:
+        handle.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", head)
+                     + chunk(b"IDAT", zlib.compress(bytes(raw))) + chunk(b"IEND", b""))
+
+
+def selftest():
+    """**THE CONTROL FOR THE DETECTOR, ON PICTURES THIS FILE DRAWS ITSELF.**
+
+    The script's other control -- Maren's 14.0:1 and 7.79:1 on the flat field -- is the better one
+    because she measured it independently, and it stays. It cannot catch THIS defect: the flat field
+    has no plate to mis-detect, so the union and the agreed span are the same rectangle there and the
+    bug passed that control for as long as it existed.
+
+    So the plate-finding gets a control of its own, on synthetic frames with a rectangle at a known
+    place. Case A is the exact shape of the bug and fails loudly on the old code; case B is the flat
+    field, which must still come back as the whole door; case C is a frame with no plate at all,
+    which must stay unreadable rather than quietly returning something.
+    """
+    import os
+    import tempfile
+    grass = (92, 120, 74)
+    plate = (48, 53, 55)
+    map_bg = (26, 28, 33)
+    # ASSA-292's card, as Maren measured it: 565x233 at x 357..921, y 229..461.
+    card = (357, 229, 921, 461)
+    out = tempfile.mkdtemp(prefix="nacre-plate-control-")
+    failures = []
+
+    def check(name, got, want):
+        print("  %-34s %s\n%s%s" % (name, "PASS" if got == want else "FAILS",
+                                    " " * 37, "got %s want %s" % (got, want)))
+        if got != want:
+            failures.append(name)
+
+    # CASE A: THE BUG. The card, plus ONE stray plate-wide dark run beside it starting a single pixel
+    # further left. The union answer is x 356.., which is what read 1.83:1 off a grass column.
+    path_a = os.path.join(out, "a-stray-run-beside-the-card.png")
+    write_png(path_a, 1280, 720, grass,
+              [(card[0], card[1], card[2], card[3], plate), (356, 200, 596, 200, plate)])
+    width, height, channels, rows = read_png(path_a)
+    rect, union, agree, total = plate_rect(rows, channels, DOOR)
+    check("A card found, not the union", rect, card)
+    check("A union is reported, not hidden", union, (356, 200, 921, 461))
+    check("A the stray row is one row", total - agree, 1)
+
+    # CASE B: the flat field. Every row of the door is one plate-wide run, so the answer is the door.
+    path_b = os.path.join(out, "b-flat-field.png")
+    write_png(path_b, 1280, 720, map_bg, [])
+    width, height, channels, rows = read_png(path_b)
+    rect, union, agree, total = plate_rect(rows, channels, DOOR)
+    check("B flat field is the whole door", rect, (DOOR[0], DOOR[1], DOOR[2] - 1, DOOR[3] - 1))
+    check("B union agrees on the flat field", union, rect)
+
+    # CASE C: no plate. Must stay unreadable; `summarise` turns that into a non-zero exit.
+    path_c = os.path.join(out, "c-no-plate.png")
+    write_png(path_c, 1280, 720, grass, [])
+    width, height, channels, rows = read_png(path_c)
+    check("C no plate reads as nothing", plate_rect(rows, channels, DOOR), None)
+
+    print("\n=== DETECTOR CONTROL: %s ===" % ("PASS" if not failures else "FAILED " + str(failures)))
+    raise SystemExit(1 if failures else 0)
+
+
 def main():
     """**MEASURE THE SURFACE, NEVER THE GLYPHS.**
 
@@ -167,6 +297,10 @@ def main():
     """
     if len(sys.argv) < 2:
         raise SystemExit(__doc__)
+    ## THE DETECTOR'S OWN CONTROL, which needs no window and no shot: `--selftest`. Run it after any
+    ## change to `plate_rect`; it fails on the union bug this file used to have.
+    if sys.argv[1] == "--selftest":
+        selftest()
     ## ONE READING PER FILE, kept so a set of files can be reduced to its worst member. See the
     ## summary at the bottom: this is how box 2's "the worst frame of the drift" is answered, and the
     ## per-file numbers above are unchanged by it.
@@ -187,27 +321,18 @@ def main():
         # pad -- so a bounding box over every dark pixel spans the whole map and measures nothing.
         # Requiring a contiguous horizontal run of PLATE_MIN_RUN excludes all of them: no prop in
         # this world is 200 px wide.
-        dark = None
-        for y in range(y0, y1):
-            run_start = None
-            for x in range(x0, x1 + 1):
-                is_dark = x < x1 and luminance(pixel(rows, channels, x, y)) < PLATE_MAX_LUMA
-                if is_dark:
-                    if run_start is None:
-                        run_start = x
-                    continue
-                if run_start is not None and x - run_start >= PLATE_MIN_RUN:
-                    lo, hi = run_start, x - 1
-                    dark = (min(dark[0], lo), min(dark[1], y), max(dark[2], hi), max(dark[3], y)) \
-                        if dark else (lo, y, hi, y)
-                run_start = None
-        if dark is None:
+        found = plate_rect(rows, channels, (x0, y0, x1, y1))
+        if found is None:
             print("  no plate and no dark field found: nothing to measure")
             unreadable.append(path)
             continue
-        px0, py0, px1, py1 = dark
-        print("  surface x %d..%d  y %d..%d  (%dx%d)"
-              % (px0, px1, py0, py1, px1 - px0 + 1, py1 - py0 + 1))
+        (px0, py0, px1, py1), union, agree, total = found
+        print("  surface x %d..%d  y %d..%d  (%dx%d)  %d of %d dark rows agree on that span"
+              % (px0, px1, py0, py1, px1 - px0 + 1, py1 - py0 + 1, agree, total))
+        if union != (px0, py0, px1, py1):
+            print("  NOTE the union of every dark row is x %d..%d y %d..%d: something dark touches "
+                  "the plate. Measuring the AGREED span, which is the plate."
+                  % (union[0], union[2], union[1], union[3]))
         # THE RING: the outer band of that rectangle. Provably text-free -- the plate is built with a
         # full pad of air on every side -- and inside it, so it is the same composite the words sit on.
         worst = None

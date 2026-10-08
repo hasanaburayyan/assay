@@ -828,13 +828,20 @@ func test_before_a_welcome_the_door_draws_the_world_solo_plays() -> bool:
 		return _fail("somebody is drawn in the world behind the door, which by design has no players")
 	if screen._world.me != null:
 		return _fail("the door view has a `me`, so the title camera is following a body")
-	# A CAMERA NEAR SPAWN AND NOT AT THE ORIGIN -- the old test real worry, asserted directly now
+	# A CAMERA NEAR ITS HOME AND NOT AT THE ORIGIN -- the old test's real worry, asserted directly now
 	# instead of implied by an empty dictionary.
-	var home := AssayScene.camera_origin(Vector2(screen._door_sim.spawn_tile()),
+	#
+	# **THE HOME WAS `spawn_tile()` UNTIL ASSA-311 AND IS NOW `DOOR_LOOK_AT`** -- the one clause of
+	# this test that moved, and it is not the promise. Spawn stopped being the camera's home because
+	# ADR 0001 guarantees ore beside spawn in every seed, so the title card sat on a deposit by
+	# construction (Maren measured 14,214 pink px through the card at every phase of the loop). The
+	# claim here is unchanged -- *the composed door frame, within one drift of where it is aimed* --
+	# and the seed clause above, which is what box 6 actually promises, is untouched.
+	var home := AssayScene.camera_origin(screen.DOOR_LOOK_AT,
 			screen._door_sim.size_tiles(), screen._world.size, 0.0)
 	var away: float = (view.get("origin", Vector2.ZERO) as Vector2).distance_to(home)
 	if away > AssayScene.TITLE_DRIFT_TILES * AssayScene.TILE_PX + 1.0:
-		return _fail(("the door camera is %.0f px from the spawn-centred view, further than the "
+		return _fail(("the door camera is %.0f px from the DOOR_LOOK_AT view, further than the "
 				+ "%.0f px the whole drift can reach: this is not the composed frame")
 				% [away, AssayScene.TITLE_DRIFT_TILES * AssayScene.TILE_PX])
 	if AssayScene.placements({}).size() != 0:
