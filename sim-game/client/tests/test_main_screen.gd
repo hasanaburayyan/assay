@@ -749,24 +749,66 @@ func test_the_chrome_blocks_take_no_space_when_they_have_nothing_to_say() -> boo
 ## its place in the order a later edit would have to respect.
 ##
 ## THE LIST IS ONE SHORTER SINCE ASSA-147: `event log` was last and is now a panel over the map, so
-## it is checked by the two tests below instead. The rest of Maren's order is untouched, and this
-## test now also says the log is not back in the column -- "the log left the column" is the fix, and
-## a fix that only lives in a docstring is one somebody re-adds a section to.
-func test_the_column_reads_you_do_make_bench_rocks_cursor() -> bool:
+## it is checked by the two tests below instead.
+##
+## **AND SINCE ASSA-247 THE ORDER IS NOT A COLUMN OF SIX HEADINGS AT ALL**, so this test is rewritten
+## rather than retired. The board's shape (Rainy, via Wren's ruling) is ONE tabbed panel: `do` always
+## on, then `make` / `inventory` / `bench` / `mineralogy` as tabs, one visible at a time. Maren's ASSA-133
+## ruling 2 -- a section may not sit above the section it is derived from -- is not weakened by that;
+## it is retired, because `make` and the pack are no longer in one box where either can push the
+## other. **What this test holds now is the thing a later edit could quietly undo: that the pack and
+## the make list are NOT siblings in one scrolling column again.**
+func test_the_panel_is_do_always_on_then_four_tabs() -> bool:
 	var screen := _screen()
 	var ok := true
-	var want := ["you", "do", "make", "bench", "rocks", "cursor"]
-	var column: Node = screen._carrying.get_parent()
-	var seen := PackedStringArray()
-	for child in column.get_children():
-		if child is Label and (child as Label).theme_type_variation == &"Heading":
-			seen.append((child as Label).text)
-	if Array(seen) != want:
-		ok = _fail(("the column reads %s; Maren ruled %s. A list derived from your pack may not sit "
-				+ "above it.") % [seen, want])
-	elif column.get_children().has(screen._log):
+	# **`mineralogy`, NOT `rocks`** (Maren, ASSA-241): the fourth tab is this column's `rocks` section
+	# wearing Rainy's word for it, not a fifth tab beside it. The variable it renders is still
+	# `_species`, which is why only the NAME moved here.
+	var want := ["make", "inventory", "bench", "mineralogy"]
+	var seen := Array(screen._tabs.tab_names())
+	if seen != want:
+		ok = _fail(("the tab strip reads %s; the board's structure and Wren's ruling are %s")
+				% [seen, want])
+	elif screen._actions.get_parent() != screen._tabs.get_parent():
+		ok = _fail("`do` is not a sibling of the tab strip, so what you can do HERE is behind a tab: "
+				+ "Wren ruled it the one always-on section")
+	elif _scroll_enclosing(screen._actions) != null:
+		ok = _fail("`do` is inside the scroll box, so the one always-on section can be scrolled away")
+	elif screen._carrying.get_parent() == screen._make.get_parent():
+		ok = _fail("the pack and the make list are siblings in one box again, which is ASSA-133 "
+				+ "ruling 2: a list derived from your pack grows faster than it and pushes it off")
+	elif screen._tabs.get_parent().get_children().has(screen._log):
 		ok = _fail("the event log is back in the HUD column, which is ASSA-147: it is unbounded and "
 				+ "every other section is not, so in one scroll box it wins against the controls")
+	screen.queue_free()
+	return ok
+
+
+## **EVERY TAB'S NAME IS ON SCREEN EVEN WHEN ITS BODY IS NOT** (ASSA-247), which is the whole reason
+## the board's structure is a strip and not a set of keyboard summons -- Maren's reason, kept where
+## the mechanism is: a tab strip is a VISIBLE affordance and a key is an invisible one, and a
+## five-minute player cannot summon what they do not know exists.
+##
+## So: exactly one body visible, and all four names present and pressable.
+func test_one_system_is_visible_and_all_four_names_are() -> bool:
+	var screen := _screen()
+	var ok := true
+	var shown := PackedStringArray()
+	for named in screen._tabs.tab_names():
+		if (screen._tabs.body_of(named) as Control).visible:
+			shown.append(named)
+	var names := PackedStringArray()
+	for child in screen._tabs.names_box().get_children():
+		if child is Button:
+			names.append((child as Button).text)
+	if shown.size() != 1:
+		ok = _fail("%d tab bodies are visible at once; the ruling is one system at a time" % shown.size())
+	elif Array(names) != Array(screen._tabs.tab_names()):
+		ok = _fail("the strip draws %s for tabs %s: a tab a player cannot press is not a tab"
+				% [names, screen._tabs.tab_names()])
+	elif _scroll_enclosing(screen._tabs.names_box()) != null:
+		ok = _fail("the tab names are inside the scroll box, so scrolling a long list can carry away "
+				+ "the way back to the other systems")
 	screen.queue_free()
 	return ok
 
@@ -790,11 +832,16 @@ func test_the_event_log_is_outside_the_box_that_scrolls_the_controls() -> bool:
 	if scroll != null:
 		ok = _fail("the event log is inside the ScrollContainer the controls are in, so revealing "
 				+ "it scrolls them off the top: ASSA-147 exactly")
-	elif _scroll_enclosing(screen._actions) == null:
+	elif _scroll_enclosing(screen._carrying) == null:
 		# THE OTHER HALF, OR THIS PASSES FOR THE WRONG REASON. "The log is not in the scroll box" is
-		# also true of a screen with no scroll box at all, and of one where the controls left instead.
-		ok = _fail("the `do` controls are not in a scroll box any more, so this test is green about "
-				+ "a column that no longer exists rather than about the log leaving it")
+		# also true of a screen with no scroll box at all, and of one where the content left instead.
+		#
+		# **THE WITNESS IS THE PACK AND NO LONGER `do`** (ASSA-247). `do` is pinned always-on now, so
+		# asking whether IT scrolls would fail on the current design while saying nothing about the
+		# log. The pack is a tab body inside the strip's own scroll box, which is the box this test is
+		# about: the one the log must not be in.
+		ok = _fail("the pack is not in a scroll box any more, so this test is green about a column "
+				+ "that no longer exists rather than about the log leaving it")
 	elif _scroll_enclosing(screen._log_box) != null:
 		ok = _fail("the log's panel is inside a scroll box, so its own surface can be scrolled away")
 	screen.queue_free()
@@ -927,12 +974,31 @@ func _lone_note(section: Node) -> String:
 ##
 ## RESTORED AFTERWARDS, because a test that leaves the screen in a state it invented is the next
 ## test's wrong premise.
+## **AND SINCE ASSA-247 IT OPENS THE SECTION'S TAB TOO, for the same reason and with the same
+## restore.** One system is on screen at a time now, so `_on_screen` is false for three of the four
+## tab bodies at any moment -- and these tests are about the WORDS a section says when it is empty,
+## which it says whether or not its tab is the open one. Without this they fail on their own premise,
+## which is honest of them and useless.
+##
+## **WHAT IT DOES NOT PAPER OVER:** that a tab's body is hidden until pressed is asserted as a
+## property of its own by `test_one_system_is_visible_and_all_four_names_are`, and that selecting a
+## tab is what brings its section back is asserted in a world by
+## `test_the_hud_column_is_not_on_the_join_screen_and_comes_back_with_a_world`. This helper is the
+## instrument for the wording tests; it is not where the structure is checked.
 func _lone_note_in_the_column(screen: Node, section: Node) -> String:
 	var column: Panel = screen._column
 	var was: bool = column != null and column.visible
 	if column != null:
 		column.visible = true
+	var open_was: String = screen._tabs.selected() if screen._tabs != null else ""
+	for named in (screen._tabs.tab_names() if screen._tabs != null else PackedStringArray()):
+		var body: Control = screen._tabs.body_of(named)
+		if body != null and (body == section or body.is_ancestor_of(section)):
+			screen._tabs.select(named)
+			break
 	var said := _lone_note(section)
+	if screen._tabs != null and open_was != "":
+		screen._tabs.select(open_was)
 	if column != null:
 		column.visible = was
 	return said
@@ -1051,11 +1117,11 @@ func test_the_empty_sections_say_the_in_world_kind_once_a_world_arrives() -> boo
 				+ "these sections are not empty") % [screen._sim.designs_of(id).size(),
 				screen._sim.make_offers(id).size(), screen._events.size()])
 	var ok := true
-	ok = _reads_in_world(screen._bench, "bench",
+	ok = _reads_in_world(screen, screen._bench, "bench",
 			"nothing built yet — mine, smelt and make parts first") and ok
-	ok = _reads_in_world(screen._make, "crafting menu",
+	ok = _reads_in_world(screen, screen._make, "crafting menu",
 			"nothing you are carrying can be worked by hand — mine some rock first") and ok
-	ok = _reads_in_world(screen._log, "event log", "nothing has happened yet") and ok
+	ok = _reads_in_world(screen, screen._log, "event log", "nothing has happened yet") and ok
 	screen.queue_free()
 	return ok
 
@@ -1123,8 +1189,13 @@ func test_the_schematic_has_the_minability_of_every_disc_it_draws() -> bool:
 
 
 ## ONE SECTION'S IN-WORLD SENTENCE, named in the failure so three sections do not report as one.
-func _reads_in_world(section: Node, named: String, want: String) -> bool:
-	var said := _lone_note(section)
+## **THROUGH `_lone_note_in_the_column` SINCE ASSA-247, so the reading opens the section's own tab.**
+## The bench is a tab body now and `make` is the tab that happens to be open on entering a world, so
+## reading these three with the bare `_lone_note` would compare the bench's sentence against the
+## empty string and call it a wording change. What is under test is the words; which tab is open is
+## asserted where it belongs.
+func _reads_in_world(screen: Node, section: Node, named: String, want: String) -> bool:
+	var said := _lone_note_in_the_column(screen, section)
 	if said == want:
 		return true
 	return _fail(("in a world the %s reads '%s'. Before ASSA-186 it read '%s', and that sentence is "
@@ -1827,6 +1898,17 @@ func test_an_empty_log_says_nothing_has_happened_rather_than_nothing() -> bool:
 ## has stopped, one line each, worst-placed first in placement order"; this block may not sort,
 ## re-word or count them. The total on the heading is the sim's own sentence and not this block's
 ## arithmetic over the rows -- see the test below, which is what holds that apart.
+##
+## **WHAT IS PINNED IS NOW THE CONDITION AND NOT THE LIST** (ASSA-247, Maren's ruling 17:22 UTC
+## 2026-10-06, amending her own ASSA-89/94). `_halt` was the one UNBOUNDED thing in the pinned
+## chrome -- one line per stalled machine, growing with the factory, and 161 px of the worst-case
+## clip. Her words: *"a stall is a condition, not a moment was about never losing the fact -- it
+## never said every stalled machine must sit above the fold forever."* So the count stays pinned and
+## the machines go to the `bench` tab, where machines live.
+##
+## **BOTH HALVES ARE ASSERTED HERE, because either alone is the ruling half-built**: a pinned block
+## that still holds the list did not return the pixels, and a list in the bench tab with nothing
+## pinned loses the fact that something has stopped.
 func test_what_has_stopped_is_pinned_outside_the_scroll_and_reads_verbatim() -> bool:
 	var screen := _screen()
 	var ok := true
@@ -1844,8 +1926,16 @@ func test_what_has_stopped_is_pinned_outside_the_scroll_and_reads_verbatim() -> 
 		])
 		screen._rebuild_halt(planted)
 		var rows: Array = screen._halt_lines.find_children("*", "Label", true, false)
+		var bench: Control = screen._tabs.body_of("bench")
 		if not screen._halt_box.visible:
 			ok = _fail("two buildings have stopped and the block is still hidden")
+		elif not bench.is_ancestor_of(screen._halt_lines):
+			ok = _fail("the stalled machines are not in the `bench` tab, so the one unbounded list in "
+					+ "the pinned chrome still grows with the factory: Maren's 17:22 ruling")
+		elif not screen._halt.find_children("*", "Label", true, false).size() == 1:
+			ok = _fail(("the pinned block holds %d labels; it is the condition and its size, one line, "
+					+ "and the machines are a press away in `bench`")
+					% screen._halt.find_children("*", "Label", true, false).size())
 		elif rows.size() != planted.size():
 			ok = _fail("%d lines went in and %d came out" % [planted.size(), rows.size()])
 		else:
@@ -2306,25 +2396,38 @@ func test_the_maps_note_is_shown_exactly_when_the_map_is_empty() -> bool:
 func test_the_hud_column_is_not_on_the_join_screen_and_comes_back_with_a_world() -> bool:
 	var screen := _screen()
 	var ok := true
-	var sections := {"you": screen._carrying, "do": screen._actions, "make": screen._make,
-			"bench": screen._bench, "rocks": screen._species, "cursor": screen._cursor,
-			"the log's toggle": screen._log_toggle, "the painted surface": screen._column}
-	for named: String in sections:
-		if _on_screen(sections[named]):
+	# **SPLIT IN TWO SINCE ASSA-247, AND THE JOIN-SCREEN HALF IS UNCHANGED BY THE SPLIT**: nothing in
+	# this column is on screen before a world, tabbed or not. What the tabs change is the OTHER half
+	# -- "comes back with a world" cannot mean "all four systems are visible at once", because one
+	# system at a time is the ruling. So a tab's body comes back when its own name is pressed, which
+	# is a stronger statement than the old sweep made: it says the strip actually reveals the section.
+	var always_on := {"do": screen._actions, "the log's toggle": screen._log_toggle,
+			"the painted surface": screen._column, "the tab strip": screen._tabs.names_box(),
+			"the cursor readout": screen._cursor}
+	var tabbed := {"make": screen._make, "inventory": screen._carrying,
+			"bench": screen._bench, "mineralogy": screen._species}
+	for named: String in always_on:
+		if _on_screen(always_on[named]):
 			ok = _fail(("%s is on the join screen, where it has nothing to say: Gap 5 is that the "
 					+ "empty column is not shown at all before a world exists") % named)
+	for named: String in tabbed:
+		if _on_screen(tabbed[named]):
+			ok = _fail(("the %s tab's body is on the join screen, where it has nothing to say: Gap 5 "
+					+ "is that the empty column is not shown at all before a world exists") % named)
 	# THE HEADINGS TOO, which are Labels in the column rather than fields on the screen, so they are
 	# found the way the sweeps find them: by the variation that MAKES a heading a heading here.
+	# SEARCHED THROUGH THE WHOLE COLUMN rather than one parent's children, because a heading is inside
+	# a tab body now and a sweep over one level would find only `do` and report six as one.
 	var headings := 0
-	for child in screen._make.get_parent().get_children():
+	for child in screen._column.find_children("*", "Label", true, false):
 		var label := child as Label
 		if label != null and label.theme_type_variation == &"Heading":
 			headings += 1
 			if _on_screen(label):
 				ok = _fail("the `%s` heading is on the join screen with no world under it"
 						% label.text)
-	if headings < 6:
-		ok = _fail("found %d headings in the column, so this sweep could not fail" % headings)
+	if headings < 1:
+		ok = _fail("found no headings in the column, so this sweep could not fail")
 	var welcome := AssaySimHost.fresh_welcome_json("14247", "limpet")
 	screen._client.play_offline()
 	screen._client.feed_offline(welcome)
@@ -2332,9 +2435,14 @@ func test_the_hud_column_is_not_on_the_join_screen_and_comes_back_with_a_world()
 	if not screen._sim.running():
 		ok = _fail("premise: nothing is being simulated, so the in-world half asks nothing")
 	else:
-		for named: String in sections:
-			if not _on_screen(sections[named]):
+		for named: String in always_on:
+			if not _on_screen(always_on[named]):
 				ok = _fail("%s did not come back when the world did" % named)
+		for named: String in tabbed:
+			if not screen._tabs.select(named):
+				ok = _fail("the %s tab cannot be selected in a world" % named)
+			elif not _on_screen(tabbed[named]):
+				ok = _fail("%s did not come back when its own tab was opened in a world" % named)
 	screen.queue_free()
 	return ok
 
@@ -2761,15 +2869,28 @@ func test_the_schematic_is_handed_every_building_the_sim_reports() -> bool:
 						+ "drawn off the world is the same news as one not drawn")
 						% [building["kind"], building["pos"], at, map])
 				break
-			# **NOT THE PLAYER'S SHAPE AT THE PLAYER'S SIZE, ON THE REAL CELL** (Maren's box 4). At
-			# this screen's own tile size, the mark must leave empty the corner a 16px player square
-			# fills -- which is the greyscale claim as geometry rather than as a hue.
+			# **NOT THE PLAYER'S SHAPE, ON THE REAL CELL** (Maren's box 4, re-asked as ASSA-236).
+			# The claim it holds is reversed and still the same claim: the two must differ in SHAPE,
+			# which is the half that survives a greyscale copy. A machine's mark fills the corner of
+			# its own box -- it is the footprint -- and is empty at its CENTRE, where a person
+			# standing on it is solid. Asserting both is what stops the swap being a rename.
 			var span: Vector2 = mark["span"]
 			var corner := at + span * 0.5 - (span.normalized() * 0.5)
-			if Geometry2D.is_point_in_polygon(corner, mark["points"] as PackedVector2Array):
-				ok = _fail(("the %s's mark fills its own corner %s at %.1fpx a tile, so it is a "
-						+ "filled rect like the player's %.0fpx mark") % [building["kind"], corner,
-						screen._cell, AssayHud.PLAYER_MARK_PX])
+			var points := mark["points"] as PackedVector2Array
+			if not Geometry2D.is_point_in_polygon(corner, points):
+				ok = _fail(("the %s's mark misses its own corner %s at %.1fpx a tile, so it is a "
+						+ "point shape and not the footprint it stands on")
+						% [building["kind"], corner, screen._cell])
+				break
+			if Geometry2D.is_point_in_polygon(at, mark["hole_points"] as PackedVector2Array) == false:
+				ok = _fail(("the %s's mark is solid at %s, its own centre: a person standing on this "
+						+ "machine is painted out by it (ASSA-203 measured 0.0%% surviving)")
+						% [building["kind"], at])
+				break
+			if not Geometry2D.is_point_in_polygon(at,
+					AssayHud.player_mark(at, false)["points"] as PackedVector2Array):
+				ok = _fail("a partner's own mark is hollow at its centre too, so the two no longer "
+						+ "differ in the way this test says they do")
 				break
 	# **THE TWO KEYS IT READS WITHOUT A DEFAULT ARE DECLARED AT THE BOUNDARY.** `building_mark` reads
 	# `pos` and `footprint` with `[]`, so a binding that stopped sending either empties the frame
@@ -3061,23 +3182,45 @@ func test_the_hatch_is_painted_before_the_species_letter() -> bool:
 ## scan is about this file and not about the engine. The picture is `tools/window_shot.gd`'s
 ## whole-world shot; this is what notices if the call goes away.
 func test_both_player_marks_carry_the_maps_own_keyline() -> bool:
-	var body := Rect2(Vector2(100.0, 200.0), Vector2(AssayHud.PLAYER_MARK_PX, AssayHud.PLAYER_MARK_PX))
-	var rim := AssayHud.mark_keyline_rect(body)
-	if absf(rim.size.x - body.size.x - 2.0 * AssayHud.MARK_KEYLINE_PX) > 1e-4 \
-			or absf(rim.size.y - body.size.y - 2.0 * AssayHud.MARK_KEYLINE_PX) > 1e-4:
-		return _fail(("a %.0fpx body gets a %s keyline rect; %.0fpx of rim on every side makes it %.0f "
-				+ "square") % [body.size.x, rim.size, AssayHud.MARK_KEYLINE_PX,
-				body.size.x + 2.0 * AssayHud.MARK_KEYLINE_PX])
-	if not rim.encloses(body):
-		return _fail(("the keyline rect %s does not enclose the body %s, so the rim is being paid for "
-				+ "out of a size Maren set from a measurement") % [rim, body])
-	# CLEAR OF YOUR OWN RING, which is 1.6x the body drawn hollow at 2px -- its inner edge is 11.8px
-	# from the centre against the rim's 10. Two marks that met would read as one thick frame.
-	var ring_inner := AssayHud.PLAYER_MARK_PX * 0.8 - 1.0
-	if AssayHud.PLAYER_MARK_PX * 0.5 + AssayHud.MARK_KEYLINE_PX >= ring_inner:
+	# **BOTH BODIES, AND THEY ARE TWO SHAPES SINCE ASSA-236**, so the rim is measured on each rather
+	# than on one rect that used to serve both. The claim is the same one: every point of the body is
+	# inside its own rim, and the rim is `MARK_KEYLINE_PX` thick PERPENDICULAR -- which on the
+	# diamond means a diagonal grown by `2t*sqrt(2)` and on the cross means every edge moved by `t`.
+	var at := Vector2(100.0, 200.0)
+	for mine: bool in [true, false]:
+		var person: Dictionary = AssayHud.player_mark(at, mine)
+		var points: PackedVector2Array = person["points"]
+		var rim: PackedVector2Array = person["keyline_points"]
+		if rim.size() != points.size():
+			return _fail("a %s body is a %d-gon and its rim a %d-gon, so the rim is not its shape"
+					% ["player" if mine else "partner", points.size(), rim.size()])
+		for point: Vector2 in points:
+			if not Geometry2D.is_point_in_polygon(point, rim):
+				return _fail(("a %s body reaches %s, outside its own keyline: the rim is being paid "
+						+ "for out of a size Maren set from a measurement")
+						% ["player" if mine else "partner", point])
+		# **THE THICKNESS, OFF THE POLYGON AND NOT OFF THE CONSTANT -- AND THE TWO SHAPES CONVERT
+		# DIFFERENTLY, WHICH IS THE WHOLE POINT OF MEASURING IT.** The gap at the top vertex is the
+		# diagonal's growth on a diamond, so the PERPENDICULAR rim is that over sqrt(2); on the
+		# cross every edge is axis-aligned and the gap is the rim. Writing the diamond's number as
+		# if it were the rim is the `span + 4` mistake ASSA-193 caught, one shape along.
+		# (The gap is read on the Y axis, not as a distance between the two first vertices: on the
+		# cross that vertex is a CORNER of the top arm and moves diagonally, so a distance there
+		# reports 2.83 for a 2px rim. The edge it sits on moves by exactly the rim.)
+		var vertex_gap := absf(points[0].y - rim[0].y)
+		var gap := vertex_gap / sqrt(2.0) if mine else vertex_gap
+		if absf(gap - AssayHud.MARK_KEYLINE_PX) > 0.01:
+			return _fail(("a %s body's rim is %.2fpx thick where it should be %.2f")
+					% ["player" if mine else "partner", gap, AssayHud.MARK_KEYLINE_PX])
+	# CLEAR OF YOUR OWN RING, which is 1.6x the body drawn hollow at 2px. Both are diamonds now, so
+	# the distance that matters is to the EDGE and not to the point: the ring's edge sits at
+	# 12.8/sqrt(2) = 9.05px from the centre and the rim's at 7.66. Two marks that met would read as
+	# one thick frame, and on the old square ring this margin was 1.8px rather than 1.4.
+	var ring_inner := AssayHud.PLAYER_MARK_PX * 0.8 / sqrt(2.0) - 1.0
+	var rim_edge := (AssayHud.PLAYER_MARK_PX * 0.5 + AssayHud.MARK_KEYLINE_PX * sqrt(2.0)) / sqrt(2.0)
+	if rim_edge >= ring_inner:
 		return _fail(("the keyline reaches %.1fpx from a player's centre and your own ring's inner "
-				+ "edge is at %.1fpx: they would meet and read as one frame")
-				% [AssayHud.PLAYER_MARK_PX * 0.5 + AssayHud.MARK_KEYLINE_PX, ring_inner])
+				+ "edge is at %.1fpx: they would meet and read as one frame") % [rim_edge, ring_inner])
 	var source := FileAccess.get_file_as_string("res://scripts/main.gd")
 	if source == "":
 		return _fail("could not read res://scripts/main.gd, so nothing was scanned")
@@ -3087,17 +3230,20 @@ func test_both_player_marks_carry_the_maps_own_keyline() -> bool:
 	if AssayHud.mark_ink(&"player_keyline") != AssayHud.MAP_BG:
 		return _fail("a player's keyline is no longer the map's own ink: %s"
 				% AssayHud.mark_ink(&"player_keyline"))
+	if AssayHud.mark_ink(&"partner_keyline") != AssayHud.MAP_BG:
+		return _fail("a partner's keyline is no longer the map's own ink: %s"
+				% AssayHud.mark_ink(&"partner_keyline"))
 	var call_at := source.find(
-			"draw_rect(AssayHud.mark_keyline_rect(body), AssayHud.mark_ink(&\"player_keyline\"), true)")
+			"AssayHud.mark_ink(&\"player_keyline\" if mine else &\"partner_keyline\"))")
 	if call_at < 0:
-		return _fail("no player mark in main.gd draws `AssayHud.mark_keyline_rect` in MAP_BG, so a "
+		return _fail("no player mark in main.gd draws `player_mark`'s keyline polygon in MAP_BG, so a "
 				+ "partner on a light species letter still fuses with it (Maren's ASSA-189 ruling 2)")
-	# **UNDER THE BODY AND NOT OVER IT.** Both bodies: one `draw_rect(body, colour, true)` serves
-	# MINE and THEIRS, so the rim is on the partner by construction rather than by a second call.
+	# **UNDER THE BODY AND NOT OVER IT.** Both bodies: one `draw_colored_polygon` serves MINE and
+	# THEIRS, so the rim is on the partner by construction rather than by a second call.
 	var body_at := source.find(
-			"draw_rect(body, AssayHud.mark_ink_of(&\"player_mine\" if mine else &\"player_theirs\", colour),")
+			"AssayHud.mark_ink_of(&\"player_mine\" if mine else &\"player_theirs\", colour))")
 	if body_at < 0:
-		return _fail("main.gd no longer paints a player body as one `draw_rect` of the mark's own ink, so "
+		return _fail("main.gd no longer paints a player body as one polygon of the mark's own ink, so "
 				+ "this scan cannot say whether the keyline is under it")
 	if call_at > body_at:
 		return _fail("main.gd draws the player keyline AFTER the body, which is a dark frame ON the "
@@ -3149,39 +3295,44 @@ func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> b
 	var tile: Vector2i = glyph["tile"]
 	var planted := [{"pos": tile, "footprint": Vector2i(1, 1), "kind": "machine"}]
 	var mark: Dictionary = (screen._building_marks(planted)[0] as Dictionary)
-	var diamond: PackedVector2Array = mark["points"]
+	var outline: PackedVector2Array = mark["points"]
+	var hole: PackedVector2Array = mark["hole_points"]
 	var box: Rect2 = glyph["box"]
-	# SAMPLED ON A 1px GRID, NOT REASONED, AND THE FRACTION IS THE DIAMOND'S AND NOT THE BOX'S. The
+	# SAMPLED ON A 1px GRID, NOT REASONED, AND THE FRACTION IS THE MARK'S AND NOT THE BOX'S. The
 	# box is the font's whole line box -- ascent, descent and advance -- so the share of IT a 16px
-	# diamond covers is small however completely the letter is destroyed. What the defect is about is
-	# where the diamond lands: all of it, on the middle of the letter.
-	var diamond_px := 0
+	# mark covers is small however completely the letter is destroyed. What the defect is about is
+	# where the mark lands: all of it, on the middle of the letter.
+	#
+	# **THE SAMPLE IS THE FRAME AND NOT ITS BOX SINCE ASSA-236.** The mark is hollow, so counting its
+	# bounding box would report ink that is not painted -- and the hole is most of it.
+	var mark_px := 0
 	var on_letter := 0
-	var bounds := Rect2(diamond[0], Vector2.ZERO)
-	for point in diamond:
+	var bounds := Rect2(outline[0], Vector2.ZERO)
+	for point in outline:
 		bounds = bounds.expand(point)
 	var y := bounds.position.y
 	while y <= bounds.end.y:
 		var x := bounds.position.x
 		while x <= bounds.end.x:
 			var point := Vector2(x, y)
-			if Geometry2D.is_point_in_polygon(point, diamond):
-				diamond_px += 1
+			if Geometry2D.is_point_in_polygon(point, outline) \
+					and not Geometry2D.is_point_in_polygon(point, hole):
+				mark_px += 1
 				if box.has_point(point):
 					on_letter += 1
 			x += 1.0
 		y += 1.0
-	var covered := float(on_letter) / float(maxi(diamond_px, 1))
+	var covered := float(on_letter) / float(maxi(mark_px, 1))
 	if covered < 0.8:
-		ok = _fail(("a machine on the deposit's own centre tile %s puts %.1f%% of its diamond (%d of "
+		ok = _fail(("a machine on the deposit's own centre tile %s puts %.1f%% of its frame (%d of "
 				+ "%d sampled px) inside the letter's box %s: the case this item is about is not in "
-				+ "this test") % [tile, covered * 100.0, on_letter, diamond_px, box])
+				+ "this test") % [tile, covered * 100.0, on_letter, mark_px, box])
 	# **THE ORDER.** The one assertion that fails on the code this item was filed against: the letter
 	# was painted in the deposit loop, four passes before the factories.
 	if ok:
 		var source := FileAccess.get_file_as_string("res://scripts/main.gd")
 		var glyph_at := source.find("AssayHud.mark_ink_of(&\"species_glyph\", glyph[\"ink\"]))")
-		var building_at := source.find("AssayHud.mark_ink_of(&\"building\", shape[\"colour\"]))")
+		var building_at := source.find("AssayHud.mark_ink_of(&\"building\", shape[\"colour\"])")
 		if source == "" or glyph_at < 0 or building_at < 0:
 			ok = _fail(("main.gd does not paint both the species letter (%d) and a building mark "
 					+ "(%d) through the map's table, so this scan says nothing")
@@ -4230,6 +4381,101 @@ func test_the_theme_poke_is_load_bearing_and_the_sweeps_coincidence_is_declared(
 	return ok
 
 
+## **THE MINERALOGY TAB IS THE SIM'S ANSWER WITH THE ROCKS LIST AS ITS EVIDENCE** (ASSA-241's ruling,
+## wiring Limpet's ASSA-254 body into ASSA-247's strip).
+##
+## `test_mineralogy.gd` owns the body in isolation and cannot see this: every one of its tests builds
+## `AssayMineralogy.new()` directly, so a `main.gd` that never put the body in the strip, or that left
+## `_species` hanging beside it as a fifth section, passes all six of them. What this asks is the
+## COMPOSITION -- that the one object in the tab is his body and the list is INSIDE his evidence box.
+##
+## **AND THE CONTROL ORDER, WHICH IS MAREN'S RULING AND WREN'S FOLD RULE IN ONE ASSERTION**: `go here`
+## is the tab's only control and the evidence list is unbounded (my own measurement: ~651 px of rows
+## against a 313 px worst-case budget), so a control UNDER it is below the fold by construction. Asked
+## as child order and not as a `position`, because this suite has no layout pass and every rect in it
+## reads 0.0 -- the geometry belongs to `tools/nacre_tab_budget_probe.gd`.
+func test_the_mineralogy_tab_is_the_answer_with_the_rocks_list_as_its_evidence() -> bool:
+	var screen := _screen()
+	var ok := true
+	var body: Control = screen._tabs.body_of("mineralogy")
+	if body == null:
+		screen.queue_free()
+		return _fail("there is no `mineralogy` tab, so Rainy's index has nowhere to open")
+	# THE BODY HOLDS HIS OBJECT, found by type rather than by index: the strip wraps every entry in a
+	# `VBoxContainer`, so this walks down to the thing that matters instead of guessing the depth.
+	var found: Array = body.find_children("*", "AssayMineralogy", true, false)
+	if found.size() != 1:
+		ok = _fail(("the mineralogy tab holds %d `AssayMineralogy` bodies, want exactly 1: ASSA-254's "
+				+ "body is the tab, not a decoration beside it") % found.size())
+	elif found[0] != screen._mineralogy:
+		ok = _fail("the tab holds a DIFFERENT AssayMineralogy than the screen refreshes, so the one on "
+				+ "screen would never be updated")
+	elif not screen._mineralogy.evidence.is_ancestor_of(screen._species):
+		ok = _fail(("the rocks list is not inside the answer's evidence box (its parent is `%s`): "
+				+ "Mineralogy IS this column's `rocks` with the headline on top, not a tab beside it")
+				% screen._species.get_parent())
+	else:
+		# CONTROLS ABOVE THE LIST. Both are children of his body, so this is one index comparison.
+		var kids: Array = screen._mineralogy.get_children()
+		if kids.find(screen._mineralogy.go_here) > kids.find(screen._mineralogy.evidence):
+			ok = _fail("`go here` sits below the evidence list, which is unbounded: Wren's rule is that "
+					+ "no control is ever below the fold, and a list may scroll only because it has none")
+		if kids.find(screen._mineralogy.headline) != 0:
+			ok = _fail("the headline is not the first thing in the tab: child 0 is `%s`"
+					% kids[0].name)
+	screen.queue_free()
+	return ok
+
+
+## **THE HEADLINE IS REWRITTEN ON EVERY REFRESH, NOT CACHED BEHIND THE SPECIES SHEETS** (ASSA-254
+## wired into ASSA-247), and this is the test for the mistake I was one line away from making.
+##
+## `_refresh_species` returns early unless the species SHEETS changed, which is right for the rows: a
+## sheet moves about twice a session. The headline is not like the rows -- it carries a distance and a
+## heading from where the player is STANDING, so calling `show_answer` inside that guard would freeze
+## the sentence the moment the player started walking toward the rock it named, and every test that
+## only reads it once after a join would still pass.
+##
+## **SO THE SHEETS ARE HELD STILL AND THE LABEL IS POISONED.** A refresh that routes through the
+## species cache cannot repair it; one that asks the binding every time can. That is the mutation this
+## catches, asserted without needing the player to walk a tile.
+##
+## It also pins the half `test_mineralogy.gd` cannot reach: that the text on the REAL screen is the
+## binding's own `headline`, with `main.gd` adding nothing to it.
+func test_the_mineralogy_headline_is_rewritten_on_every_refresh_not_behind_the_species_cache() -> bool:
+	var screen := _joined_screen("14247")
+	screen._refresh()
+	var ok := true
+	var id: int = screen._client.player_id
+	if not screen._sim.running() or id < 0:
+		screen.queue_free()
+		return _fail("premise: nothing is being simulated, so there is no answer to render")
+	var answers: Array = screen._sim.proximity_answers(id)
+	if answers.is_empty():
+		screen.queue_free()
+		return _fail("premise: the binding answered nothing for a player who is in the world")
+	var expected := String((answers[0] as Dictionary).get("headline", ""))
+	if expected == "":
+		screen.queue_free()
+		return _fail("premise: the binding sent an empty headline, which the sim never produces")
+	if screen._mineralogy.headline.text != expected:
+		ok = _fail("the tab reads `%s` and the binding says `%s`"
+				% [screen._mineralogy.headline.text, expected])
+	# NOW HOLD THE SHEETS STILL AND BREAK THE LABEL. `_species_showing` is the species cache's own
+	# signature; leaving it untouched is what makes this a test of the OTHER path.
+	var cached_before: String = screen._species_showing
+	screen._mineralogy.headline.text = "a sentence no sim ever produced"
+	screen._refresh()
+	if screen._species_showing != cached_before:
+		ok = _fail("the species cache changed during the refresh, so this test did not hold the sheets "
+				+ "still and proves nothing about the headline's own path")
+	elif screen._mineralogy.headline.text != expected:
+		ok = _fail(("a refresh left the headline reading `%s`: the answer is cached behind the species "
+				+ "sheets, so it would freeze as soon as the player walked") % screen._mineralogy.headline.text)
+	screen.queue_free()
+	return ok
+
+
 ## **THE STATUS PALETTE IS REACHABLE BY A TEST AT ALL, WHICH IT WAS NOT** (ASSA-251 box 4, Maren).
 ##
 ## `AssayHud.status_color` returns four raw `Color` literals in `hud.gd`, OUTSIDE the theme's named
@@ -4346,4 +4592,74 @@ func test_a_dropped_screen_has_one_primary_and_it_is_the_way_back_in() -> bool:
 	if after.has("Mine"):
 		ok = _fail("`Mine` is still green with the link dead, where pressing it can only refuse")
 	joined.queue_free()
+	return ok
+
+
+## **NOTHING ANYWHERE IN THE COLUMN MAY ASK FOR MORE WIDTH THAN THE COLUMN HAS** (ASSA-247), which
+## is the test that would have caught the defect a 1x shot caught instead.
+##
+## **WHAT HAPPENED, because the shape of the hole is the point.** The cursor readout is a `Label` and
+## it was added through `AssayTabStrip.add_footer`, which is not `add_tab`, so it missed the autowrap
+## every tab body gets in `_build_ui`. An unwrapped Label's minimum width is its longest line --
+## **434 px against a 320 px panel**. A container sizes its child to `max(available, minimum)` and a
+## `ScrollContainer` with horizontal scrolling DISABLED folds its content's minimum into its own, so
+## that one Label pushed the scroll box to 438 px and dragged every ancestor out with it. On the shot
+## the column's ink ran to the window's last pixel on **77 rows**, and `_log_toggle` -- which is in the
+## chrome and not in any tab -- was pulled out too.
+##
+## **THE EXISTING WIDTH TEST COULD NOT SEE IT AND STILL CANNOT**, which is why this is a second one
+## rather than an edit: `test_no_row_asks_for_more_width_than_the_panel_that_clips_it` walks the direct
+## children of four named sections. The offender was a child of the strip's bodies box, in no section
+## at all, and the containers that carried the damage are not rows. So this sweeps EVERY `Control`
+## under the painted surface, containers included, and names the deepest one -- an ancestor is only
+## reporting what a child demanded.
+##
+## Minimum width is content-derived and needs no layout pass, which is the one geometry question this
+## headless suite may honestly ask (every `position` and `size` here reads 0.0).
+func test_nothing_in_the_column_asks_for_more_width_than_the_panel() -> bool:
+	var screen := _joined_screen("14247")
+	screen._refresh()
+	var ok := true
+	if not screen._sim.running():
+		screen.queue_free()
+		return _fail("premise: no world, so the tab bodies hold empty notes and cannot ask for width")
+	# WITH A PACK IN IT, because an empty section cannot overflow and the demo's richest row is the
+	# one that historically did (ASSA-98's 358 px pack row).
+	screen._rebuild_pack([
+		{"kind": "refined", "species": 4, "grade": "B", "count": 6, "name": "Minyte refined (B)"},
+		{"kind": "ore", "species": 4, "grade": "B", "count": 22, "name": "Minyte ore (B)"},
+	])
+	var worst: Control = null
+	var worst_w := 0.0
+	var worst_path := ""
+	var checked := 0
+	var stack: Array = [[screen._column, "", 0]]
+	var deepest := -1
+	while not stack.is_empty():
+		var entry: Array = stack.pop_back()
+		var node: Node = entry[0]
+		var path: String = entry[1]
+		var depth: int = entry[2]
+		var control := node as Control
+		if control != null:
+			checked += 1
+			var want := control.get_combined_minimum_size().x
+			# THE DEEPEST OFFENDER WINS, not the widest: the widest is usually the outermost container
+			# passing the demand upward, and fixing that one would only hide the child that made it.
+			if want > AssayHud.PANEL and depth > deepest:
+				deepest = depth
+				worst = control
+				worst_w = want
+				worst_path = path
+		for child in node.get_children():
+			stack.append([child, "%s/%s" % [path, child.name], depth + 1])
+	if checked < 10:
+		ok = _fail("only %d controls were measured under the column, so this sweep proves nothing"
+				% checked)
+	elif worst != null:
+		ok = _fail(("`%s` (%s) asks for %.0f px inside a %.0f px panel that clips and does not scroll "
+				+ "sideways, so its right-hand end is off the window: %s")
+				% [worst_path, worst.get_class(), worst_w, AssayHud.PANEL,
+				(worst as Label).text if worst is Label else "not a Label"])
+	screen.queue_free()
 	return ok

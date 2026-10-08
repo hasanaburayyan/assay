@@ -1776,6 +1776,88 @@ func test_every_menu_row_carries_what_one_batch_spends() -> bool:
 	return ok
 
 
+## **A ROW YOU CANNOT AFFORD DOES NOT OFFER A PRESSABLE BUTTON** (ASSA-247; Maren 17:22 UTC: *"when a
+## recipe is unavailable, the line says what you LACK"*, and ASSA-224's rule that a control which
+## does not follow availability is a lying control).
+##
+## **DRIVEN THROUGH `_rebuild_make` WITH OFFERS THIS TEST WRITES, and that is the opposite choice to
+## the test above on purpose.** A real world's pack is affordable or not according to how the fixture
+## happens to mine, so a real-world version of this test would pass on a menu that never disables
+## anything and I would not know. Three rows, one of each case, is the only shape that can fail for
+## the right reason:
+##
+## - short (cost 3, holding 1): disabled.
+## - exact (cost 1, holding 1): pressable -- the boundary, because `<` and `<=` both read fine in
+##   prose and only one of them lets you spend the last batch you own.
+## - no `cost` key at all: pressable, which is ASSA-141's rule. A binding that stopped sending the
+##   field leaves the menu exactly as it was before this slice rather than disabling every row.
+func test_a_row_you_cannot_afford_is_not_pressable_and_the_last_batch_is() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var made := {"kind": "ore", "species": 0, "grade": "B", "count": 1, "name": "ore"}
+	screen._rebuild_make([
+		{"makes": made, "line": "short of it", "verb": "craft", "tag": 0, "cost": 3, "count": 1},
+		{"makes": made, "line": "your last batch", "verb": "craft", "tag": 0, "cost": 1, "count": 1},
+		{"makes": made, "line": "no cost crossed", "verb": "craft", "tag": 0, "count": 1},
+	])
+	var ok := true
+	var want := [true, false, false]
+	var rows: Array = screen._make.get_children()
+	if rows.size() != want.size():
+		screen.queue_free()
+		return _fail("the builder made %d rows from %d offers" % [rows.size(), want.size()])
+	for i in range(rows.size()):
+		var button := _find(rows[i], AssayHud.make_button_text())
+		var line := (rows[i] as Node).find_child(screen.MAKE_LINE, true, false) as Label
+		if button == null:
+			ok = _fail("row %d has no make button at all" % i)
+		elif button.disabled != want[i]:
+			ok = _fail(("the row reading `%s` is %s; it should be %s") % [
+					"?" if line == null else line.text,
+					"disabled" if button.disabled else "pressable",
+					"disabled" if want[i] else "pressable"])
+	screen.queue_free()
+	return ok
+
+
+## **THE SENTENCE AND ITS ONE CONTROL SHARE A LINE** (ASSA-247, Maren's Gap 3), which is where this
+## slice's density came from: a make row measured 73 px with the verb below the sentence, and the
+## section needs 500 px of reachable button against a budget of about 313.
+##
+## **ASSERTED AS A SHARED PARENT, NOT AS PIXELS, and this file's own warning is why**: the suite runs
+## inside `SceneTree._initialize`, so every `position` and `size.y` in here reads 0.0 and a height
+## assertion would pass on any layout at all. The pixel claim belongs to
+## `tools/nacre_tab_budget_probe.gd` in a real window; what is observable headless is the structure
+## that produces it -- the button and the `MakeLine` label have the same parent, and that parent is an
+## `HBoxContainer`.
+func test_a_make_rows_verb_sits_on_the_sentences_own_line() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var made := {"kind": "ore", "species": 0, "grade": "B", "count": 1, "name": "ore"}
+	screen._rebuild_make([
+		{"makes": made, "line": "a rock you can carry", "verb": "craft", "tag": 0,
+				"cost": 1, "count": 4},
+	])
+	var ok := true
+	var row: Node = screen._make.get_child(0)
+	var line := row.find_child(screen.MAKE_LINE, true, false) as Label
+	var button := _find(row, AssayHud.make_button_text())
+	if line == null or button == null:
+		ok = _fail("the row has no sentence or no button")
+	elif button.get_parent().get_parent() != line.get_parent():
+		ok = _fail(("the verb is not on the sentence's line: the sentence sits in a %s and the "
+				+ "button's row in a %s") % [line.get_parent().get_class(),
+				button.get_parent().get_parent().get_class()])
+	elif not (line.get_parent() is HBoxContainer):
+		ok = _fail("the sentence and the verb share a %s, which stacks them rather than pairing them"
+				% line.get_parent().get_class())
+	elif line.size_flags_horizontal != Control.SIZE_EXPAND_FILL:
+		ok = _fail("the sentence does not expand, so the button is beside the text instead of hard "
+				+ "right and the row's width is whatever the sim's sentence happens to be")
+	screen.queue_free()
+	return ok
+
+
 ## THE COLOUR THE STATUS LINE IS ACTUALLY DRAWN IN (ASSA-251). `font_color` TIMES `modulate`: the
 ## defect this guards was `modulate = status_color(...)` multiplying the theme's INK, so a test that
 ## read either factor alone would have passed over it.

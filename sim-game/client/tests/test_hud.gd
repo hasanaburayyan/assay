@@ -1366,12 +1366,16 @@ func test_a_log_with_no_measured_room_keeps_every_line() -> bool:
 ## mark separated by hue fails her ruling no matter how good the hue is, so the checkable form of the
 ## box is: a point the OTHER shape contains and this one does not. Two of those:
 ##
-## - the footprint rect's CORNER, which a filled rect contains and a diamond leaves empty;
-## - the 45-degree point at 0.6 of the radius, which an inscribed CIRCLE contains (0.849r) and a
-##   diamond does not (|x| + |y| = 1.2r against a limit of r).
+## **THE SHAPE IT ASKS FOR IS THE OTHER ONE SINCE ASSA-236** (Maren: "a point (you) gets the
+## footprint shape; a footprint gets the point shape"). What the mark must now be:
 ##
-## Plus the area, which pins it exactly: a diamond is half of its own bounding box, where a rect is
-## all of it and an inscribed circle is pi/4 of it (78.5%). Three different numbers, one measurement.
+## - the footprint's own axis-aligned RECT, so its corners are the corners of the tiles it covers --
+##   the assertion that used to forbid exactly this, turned round, so the two cannot both be green;
+## - HOLLOW: a point at its centre is outside it, which is what lets a person stand on a machine
+##   without either mark being a choice (`BUILDING_STROKE_PX`);
+## - of the footprint's SIZE where the floor does not bite: a 2x2 at 9px a tile is 18px exactly, on
+##   the tiles the sim gave it, and the 1x1 case is the floor's and is asserted below rather than
+##   here.
 ##
 ## **AND IT IS AT THE TILE THE SIM GAVE IT** (box 2). `pos` is the top-left of the footprint, so the
 ## centre is `pos + footprint / 2` in tiles -- the 2x2 case is the one worth a test, because taking
@@ -1382,7 +1386,7 @@ func test_a_log_with_no_measured_room_keeps_every_line() -> bool:
 ## `test_main_screen.gd::test_the_schematic_is_handed_every_building_the_sim_reports` holds the
 ## wiring, and the picture is `tools/window_shot.gd`'s whole-world shot. A painter that computed its
 ## own diamond and ignored this function would leave this test green.
-func test_a_building_on_the_schematic_is_neither_a_disc_nor_a_rect() -> bool:
+func test_a_building_on_the_schematic_is_the_footprint_it_stands_on() -> bool:
 	var origin := Vector2(24.0, 96.0)
 	for case in [{"foot": Vector2i(2, 2), "cell": 9.0}, {"foot": Vector2i(1, 1), "cell": 9.0},
 			{"foot": Vector2i(2, 2), "cell": 18.0}, {"foot": Vector2i(3, 2), "cell": 32.0}]:
@@ -1408,35 +1412,45 @@ func test_a_building_on_the_schematic_is_neither_a_disc_nor_a_rect() -> bool:
 					+ "draws a smelter a tile up and left of itself.") % [foot, pos, cell, at, want])
 		var span: Vector2 = mark["span"]
 		var box := Rect2(at - span * 0.5, span)
-		# BOX 3, HALF ONE: NOT A FILLED RECT. The bounding box's own corner is outside the mark.
+		# **BOX 2, HALF ONE: IT IS THE FOOTPRINT'S RECT, CORNERS AND ALL.** This is the assertion
+		# that said the opposite until ASSA-236 ("contains its own bounding-box corner, so it is a
+		# filled rect"), because the shape was Maren's answer to a question she has since re-asked.
 		for corner: Vector2 in [box.position, box.position + Vector2(box.size.x, 0.0),
 				box.position + Vector2(0.0, box.size.y), box.end]:
 			var inset := corner + (at - corner).normalized() * 0.5
-			if Geometry2D.is_point_in_polygon(inset, points):
-				return _fail(("a %s building's mark contains its own bounding-box corner %s, so it "
-						+ "is a filled rect: at %.0fpx a tile that is the player's shape at the "
-						+ "player's size (%.0fpx) separated only by hue, on the one view co-op "
-						+ "exists for.") % [foot, corner, cell, AssayHud.PLAYER_MARK_PX])
-		# BOX 3, HALF TWO: NOT A DISC. A point an inscribed circle contains, 0.849 of the way out.
-		var radius := minf(span.x, span.y) * 0.5
-		var diagonal := at + Vector2(1.0, 1.0).normalized() * radius * 0.849
-		if Geometry2D.is_point_in_polygon(diagonal, points):
-			return _fail(("a %s building's mark contains %s, which is inside an inscribed circle of "
-					+ "radius %.1f. A disc is the deposit's shape and deposits are 18-36px of "
-					+ "radius on this view.") % [foot, diagonal, radius])
-		# AND THE AREA PINS WHICH SHAPE IT IS: half the box, against a rect's 100% and a circle's
-		# 78.5%. Shoelace, so a mark that grew a fifth point is measured rather than assumed.
-		var area := 0.0
+			if not Geometry2D.is_point_in_polygon(inset, points):
+				return _fail(("a %s building's mark misses its own bounding-box corner %s, so it is "
+						+ "a point shape and not a footprint: the only thing on this map with a "
+						+ "tile footprint would again be the one mark rotated off the grid it "
+						+ "stands on.") % [foot, corner])
+		# **BOX 2, HALF TWO: AXIS-ALIGNED.** Every edge is horizontal or vertical, which is what
+		# "aligned to the grid it stands on" is in arithmetic. A diamond fails all four.
 		for i in points.size():
 			var a := points[i]
 			var b := points[(i + 1) % points.size()]
-			area += a.x * b.y - b.x * a.y
-		area = absf(area) * 0.5
-		var ratio := area / (span.x * span.y)
-		if absf(ratio - 0.5) > 0.01:
-			return _fail(("a %s building's mark covers %.1f%% of its bounding box. A diamond is "
-					+ "50%%, a filled rect 100%% and an inscribed circle 78.5%%; this is the number "
-					+ "that says which of the three it is.") % [foot, ratio * 100.0])
+			if absf(a.x - b.x) > 1e-4 and absf(a.y - b.y) > 1e-4:
+				return _fail(("a %s building's mark has the edge %s-%s, which is neither horizontal "
+						+ "nor vertical: it is not aligned to the grid it stands on") % [foot, a, b])
+		# **AND IT IS HOLLOW, WHICH IS THE HALF THE SHAPE IS FOR.** Two filled marks on one tile
+		# cannot both survive -- ASSA-203 measured 92.4% against 0.0% and called it an order
+		# question. A hole is not a style: it is what makes the order cost nothing.
+		var hole: PackedVector2Array = mark["hole_points"]
+		if not Geometry2D.is_point_in_polygon(at, hole):
+			return _fail(("a %s building's mark is solid at its own centre %s: a person standing on "
+					+ "this machine is painted out by it") % [foot, at])
+		var ring_area := AssayHud.polygon_area(points) - AssayHud.polygon_area(hole)
+		var want_ring := span.x * span.y - maxf(span.x - 2.0 * AssayHud.BUILDING_STROKE_PX, 0.0) \
+				* maxf(span.y - 2.0 * AssayHud.BUILDING_STROKE_PX, 0.0)
+		if absf(ring_area - want_ring) > 0.01:
+			return _fail(("a %s building's frame is %.1fpx of ink where a %.0fpx stroke on a %s box "
+					+ "is %.1f: the band is not the thickness it says it is")
+					% [foot, ring_area, AssayHud.BUILDING_STROKE_PX, span, want_ring])
+		# **AND THE FOOTPRINT IS THE SIZE WHERE THE FLOOR DOES NOT BITE.** A 2x2 at 9px is 18px on
+		# its own four tiles; the floor's case is the next test's and is an admitted overstatement.
+		var reach := float(maxi(foot.x, foot.y)) * cell
+		if reach >= AssayHud.BUILDING_MARK_PX and absf(span.x - reach) > 1e-4:
+			return _fail(("a %s building at %.0fpx a tile is drawn %.1fpx across where its footprint "
+					+ "is %.1f: the mark is not the tiles it covers") % [foot, cell, span.x, reach])
 		# **THE APPROVED COLOUR, AND IT SPENDS NO NEW HUE** (Cove's ASSA-193, Maren at 17:25). `HOVER`
 		# with a `MAP_BG` rim. I shipped a green of my own here (ASSA-203) -- a 22nd literal on a map
 		# whose named set exists to stop exactly that.
@@ -1446,22 +1460,19 @@ func test_a_building_on_the_schematic_is_neither_a_disc_nor_a_rect() -> bool:
 					% [foot, mark["colour"]])
 		if mark["keyline"] != AssayHud.MAP_BG:
 			return _fail("the mark's keyline is %s and not MAP_BG" % mark["keyline"])
-		# **THE RIM IS 2 px PERPENDICULAR, WHICH IS NOT `span + 4`.** A diamond's edge sits
-		# `h/sqrt(2)` from its centre, so growing the DIAGONAL by `d` grows the rim by `d/(2*sqrt(2))`:
-		# the obvious `span + 2*MARK_KEYLINE_PX` gives a 1.41 px rim, and Cove's note in the hand-off
-		# is the only reason I did not write it. Measured off the polygon the painter is handed, so
-		# the arithmetic is checked rather than restated.
+		# **THE RIM IS 2 px PERPENDICULAR, AND ON THIS SHAPE THE OBVIOUS ARITHMETIC IS THE RIGHT
+		# ONE** -- every edge is axis-aligned, so `grow(t)` moves each one by exactly `t`. It was not
+		# on the diamond (a diagonal grown by `d` gives a rim of `d/(2*sqrt(2))`), which is why this
+		# is measured off the polygon the painter is handed rather than restated.
 		var rim: PackedVector2Array = mark["keyline_points"]
 		if rim.size() != points.size():
 			return _fail("the mark is a %d-gon and its keyline a %d-gon, so the rim is not its shape"
 					% [points.size(), rim.size()])
-		var outer := rim[1].x - rim[3].x
-		var gap := (outer - span.x) / (2.0 * sqrt(2.0))
-		if absf(gap - AssayHud.MARK_KEYLINE_PX) > 0.01:
-			return _fail(("a %s building's keyline is %.2fpx thick perpendicular, not %.2f: its "
-					+ "diagonal is %.2f against the mark's %.2f. Growing the diagonal by 2t gives a "
-					+ "rim of t/sqrt(2), not t.")
-					% [foot, gap, AssayHud.MARK_KEYLINE_PX, outer, span.x])
+		var gap := points[0].x - rim[0].x
+		if absf(gap - AssayHud.MARK_KEYLINE_PX) > 0.01 \
+				or absf((points[0].y - rim[0].y) - AssayHud.MARK_KEYLINE_PX) > 0.01:
+			return _fail(("a %s building's keyline is %.2fpx thick perpendicular, not %.2f")
+					% [foot, gap, AssayHud.MARK_KEYLINE_PX])
 		# AND IT IS OUTSIDE THE MARK, not a stroke straddling its edge: every point of the mark is
 		# inside the rim, so the mark keeps all 16px of the size Cove sized it at.
 		for point: Vector2 in points:
@@ -1622,7 +1633,7 @@ func test_a_machine_on_a_letter_is_told_apart_from_a_machine_beside_one() -> boo
 		# got wrong.
 		var laps: Array = AssayHud.letter_occlusions([mark], letters)
 		if want and laps.is_empty():
-			return _fail(("premise: a %s %s at %s is on the letter's own tile and its diamond (span "
+			return _fail(("premise: a %s %s at %s is on the letter's own tile and its frame (span "
 					+ "%s at %s) touches no letter box. The fixture is not the case.")
 					% [case["foot"], case["kind"], case["pos"], mark["span"], mark["at"]])
 		for entry in laps:
@@ -1640,7 +1651,11 @@ func test_a_machine_on_a_letter_is_told_apart_from_a_machine_beside_one() -> boo
 				return _fail(("share_of_box %.4f x the box's %.1fpx is not the %.1fpx covered: the "
 						+ "letter's share is being divided by something else")
 						% [lap["share_of_box"], box.size.x * box.size.y, covered])
-			var mark_area := AssayHud.polygon_area(mark["points"] as PackedVector2Array)
+			# **THE MARK'S AREA IS ITS FRAME, NOT ITS BOX** (ASSA-236): the mark is a hollow
+			# footprint now, so its denominator is the four bands and the hole comes off it. Taking
+			# the bounding box would make `share_of_mark` smaller than it is and read as good news.
+			var mark_area := AssayHud.polygon_area(mark["points"] as PackedVector2Array) \
+					- AssayHud.polygon_area(mark["hole_points"] as PackedVector2Array)
 			if absf(float(lap["share_of_mark"]) * mark_area - covered) > 1e-3:
 				return _fail("share_of_mark %.4f x the mark's %.1fpx is not the %.1fpx covered"
 						% [lap["share_of_mark"], mark_area, covered])

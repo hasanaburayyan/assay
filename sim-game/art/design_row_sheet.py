@@ -1,11 +1,18 @@
 #!/usr/bin/env -S uv run --quiet --with pillow python
 """THE BENCH AS THE ENGINE LAID IT OUT, at 1:1, so Decision #38 can be looked at. (ASSA-83)
 
-    godot --headless --path client --script "$PWD/art/bench_read.gd" \
-      -- localhost:7803 hasanaburayyan | sed -n 's/^DESIGNS_JSON //p' > /tmp/designs.json
-    godot --headless --path client --script "$PWD/art/design_row_layout.gd" \
+    godot --headless --path client --script "$PWD/client/tools/button_session.gd" \
+      -- offline 14247 designs=/tmp/designs.json
+    godot --path client --script "$PWD/art/design_row_layout.gd" \
       -- /tmp/designs.json | sed -n 's/^DESIGN_LAYOUT_JSON //p' > /tmp/layout.json
     uv run --with pillow python art/design_row_sheet.py /tmp/layout.json
+
+THE SECOND LINE HAS NO `--headless` AND THE OMISSION IS LOAD-BEARING (ASSA-173). Headless there is
+no layout pass, so the probe reported 98 drawn lines for a four-line paragraph and the refusal below
+fired on every attempt -- which is why this sheet had not been redrawn since 2026-10-03. The first
+line keeps its `--headless` because `button_session.gd` draws nothing; it builds the world offline.
+The old recipe read the designs off a live relay on port 7803, which no current client can join
+(ASSA-178); `button_session.gd designs=` writes the same shape from a seed (#357).
 
 Decision #38 asks whether the part menu reads as A DESIGN or as A DEBUG STRIP. Until this existed
 the only ways to answer were reading `hud.gd` and playing the text client, and neither is the thing
@@ -15,8 +22,10 @@ EVERY NUMBER THAT DECIDES GEOMETRY COMES FROM THE LAYOUT JSON -- the laid-out re
 and button, the font sizes, the verdict colours, the panel width and the viewport's clear colour,
 all read back off the nodes the real `main.tscn` built. Nothing here recomputes a position.
 
-THE ONE THING IT CANNOT ASK THE ENGINE FOR IS GLYPHS. Headless Godot has no renderer, so the
-letterforms below are this script's font at the engine's font SIZE, not Godot's. Which means line
+THE ONE THING IT CANNOT ASK THE ENGINE FOR IS GLYPHS. The probe hands this script JSON and not an
+image, so the letterforms below are this script's font at the engine's font SIZE, not Godot's. (That
+reason used to read "headless Godot has no renderer", which stopped being the reason the day the
+probe moved into a real window -- ASSA-173. The limit is the same; the cause was not.) Which means line
 lengths here are approximate even though every box around them is exact -- so each text line is
 drawn with a tick at the width THE ENGINE measured it to be, in the Label's own font. If a line were
 ever going to overflow the panel, that tick is where it would cross, and it is the engine's opinion
