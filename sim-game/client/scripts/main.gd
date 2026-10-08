@@ -4531,8 +4531,13 @@ func _draw() -> void:
 	# on top of it. The rim is drawn first, and INWARD -- which is a correction to the ruling and not
 	# the ruling: outward it lands on the neighbouring tile, where a machine's own mark starts, and
 	# the smelter's band went 242 -> 28 at the shared edge on both seeds. `AssayHud.hover_mark` carries
-	# the rows. What inward does NOT fix is the outline's own pixel sitting on the machine's rim; that
-	# needs the outline moved inside its own cell, which is ASSA-284's open box and Maren's call.
+	# the rows.
+	#
+	# **AND THE OUTLINE IS NOW INSET INSIDE ITS OWN CELL** (ASSA-284 box 7; this paragraph said the
+	# inset "is ASSA-284's open box and Maren's call" and she called it at 05:55 EDT). Both rects are
+	# half-stroke insets, so every pixel either stroke paints belongs to the hovered tile -- it used to
+	# paint x=500 for a cell starting at 501. A mark that IS a cell has no size to hide behind, which
+	# is ASSA-213's rule about position with nothing left over.
 	if _hovering:
 		var hover := AssayHud.hover_mark(_hover, _cell, MARGIN)
 		draw_rect(hover["keyline_rect"], AssayHud.mark_ink(&"hover_keyline"), false,

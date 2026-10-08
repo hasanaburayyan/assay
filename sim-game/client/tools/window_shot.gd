@@ -1294,6 +1294,13 @@ func _fold_report() -> void:
 ## 04-pack is legitimately clipped, so anything behind it was measured on no run at all), which is why
 ## the fix is not a swap: both orders lose a verdict, because an early return is the wrong shape for a
 ## tool with four independent questions.
+## A [Rect2] as the four numbers a JSON table carries, so a reader never has to parse Godot's own
+## `Rect2(...)` spelling out of a string.
+static func _rect_numbers(rect: Variant) -> Array:
+	var box: Rect2 = rect
+	return [box.position.x, box.position.y, box.size.x, box.size.y]
+
+
 static func _passed() -> Dictionary:
 	return {"ok": true, "ran": true, "why": ""}
 
@@ -2316,7 +2323,14 @@ func _hover_report() -> void:
 	if _done:
 		return
 	var cell: float = _screen._cell
-	var hover_box := Rect2(AssayHud.MARGIN + Vector2(_hover_tile) * cell, Vector2(cell, cell))
+	# **THE PAINTER'S OWN RECTS, NOT A SECOND COPY OF THE ARITHMETIC** (ASSA-284 box 7). This built
+	# `Rect2(MARGIN + tile * cell, cell)` by hand, which was the cell and WAS the outline's rect until
+	# the outline was inset half a stroke inside it; a table that recomputes a mark's geometry reports
+	# what the tool believes instead of what drew, and the whole question on box 7 is which pixels the
+	# stroke lands on. `cell_rect` is the promise (the tile's own pixels), `rect` and `keyline_rect`
+	# are what `_draw` strokes.
+	var mark_rects := AssayHud.hover_mark(_hover_tile, cell, AssayHud.MARGIN)
+	var hover_box: Rect2 = mark_rects["cell_rect"]
 	var box := hover_box.grow(1.0)
 	var before := Image.load_from_file("%s/08-whole-world.png" % _out)
 	var after := Image.load_from_file("%s/13-whole-world-hover.png" % _out)
@@ -2324,6 +2338,26 @@ func _hover_report() -> void:
 		_finish(false, "13-whole-world-hover.png: cannot reload the pair to compare them")
 		return
 	var moved := 0
+	# **AND SEPARATELY, EVERY CHANGED PIXEL THAT IS NOT THE HOVERED TILE'S** (ASSA-284 box 7: "the
+	# outline may paint only pixels of the cell it names"). Counted on a 3 px ring outside the cell,
+	# by DIFFERENCE against this run's own control, so it is what the hover actually moved rather than
+	# what the geometry predicts. Before the inset this was non-zero on both seeds: the outline's own
+	# stroke straddled the boundary and painted a column of the neighbouring tile, which on seed 63
+	# was the smelter's rim.
+	var outside := 0
+	var outside_px := []
+	var ring := hover_box.grow(3.0)
+	for y in range(int(ring.position.y), int(ring.end.y)):
+		for x in range(int(ring.position.x), int(ring.end.x)):
+			if x < 0 or y < 0 or x >= after.get_width() or y >= after.get_height():
+				continue
+			if before.get_pixel(x, y) == after.get_pixel(x, y):
+				continue
+			if hover_box.has_point(Vector2(x, y)):
+				continue
+			outside += 1
+			if outside_px.size() < 24:
+				outside_px.append([x, y])
 	for y in range(int(box.position.y), int(box.end.y)):
 		for x in range(int(box.position.x), int(box.end.x)):
 			if x < 0 or y < 0 or x >= after.get_width() or y >= after.get_height():
@@ -2352,8 +2386,13 @@ func _hover_report() -> void:
 		"note": _hover_note,
 		"hover": {"tile": [_hover_tile.x, _hover_tile.y],
 				"beside": [_hover_beside.x, _hover_beside.y],
-				"rect": [hover_box.position.x, hover_box.position.y, cell, cell],
-				"stroke": 1.0, "alpha": AssayHud.mark_ink(&"hover_tile").a},
+				"cell_rect": _rect_numbers(hover_box),
+				"rect": _rect_numbers(mark_rects["rect"]),
+				"keyline_rect": _rect_numbers(mark_rects["keyline_rect"]),
+				"stroke": float(mark_rects["width"]),
+				"alpha": AssayHud.mark_ink(&"hover_tile").a},
+		"changed_outside_the_hovered_cell": outside,
+		"changed_outside_the_hovered_cell_at": outside_px,
 		"ink": [AssayHud.HOVER.r, AssayHud.HOVER.g, AssayHud.HOVER.b],
 		"machines": rows,
 		"pixels_changed_in_the_hovered_tile": moved,
@@ -2365,8 +2404,8 @@ func _hover_report() -> void:
 		return
 	file.store_string(JSON.stringify(table, "  "))
 	file.close()
-	_shots.append("    hover        %s, %d px changed in its own tile -> %s"
-			% [_hover_note, moved, path.get_file()])
+	_shots.append("    hover        %s, %d px changed in its own tile, %d outside it -> %s"
+			% [_hover_note, moved, outside, path.get_file()])
 
 
 ## **DOES THIS SHOT CONTAIN THE ASSA-213 CASE: A MACHINE STANDING ON A SPECIES LETTER** (box 2, "today's
