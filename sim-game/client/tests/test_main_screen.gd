@@ -4176,11 +4176,42 @@ func test_no_control_is_drawn_above_the_world_in_a_played_screen() -> bool:
 		ok = _fail("%d control(s) are drawn above the world's top edge (y=%.0f), which is the header "
 				% [above.size(), top] + "strip coming back: %s" % ", ".join(above))
 	# AND THE WORLD ACTUALLY TOOK THE ROOM, read off the node rather than off the constant.
-	if joined._world.position.y > top + 0.01 or joined._world.size.y < 600.0:
+	#
+	# **THE ABSOLUTE 600 THAT USED TO BE HERE IS GONE AND IS NOT REPLACED BY A SECOND OPINION**
+	# (ASSA-287). It could not fail: `720 - 24 - 96` is exactly 600, so the strip could come all the
+	# way back and this clause would sit on its boundary. The height floor is now a share of the
+	# window, ratcheted, and it is `test_the_world_may_never_shrink_as_a_share_of_the_window`'s only
+	# job -- this test is about controls drawn above the world, and a second unrelated assertion
+	# inside it is how a test ends up with a name that no longer describes it.
+	if joined._world.position.y > top + 0.01:
 		ok = _fail("the world layer is %s at %s, so the room the strip gave up went nowhere"
 				% [joined._world.size, joined._world.position])
 	joined.queue_free()
 	return ok
+
+
+## **THE WORLD MAY NEVER SHRINK** (ASSA-287, Maren's ruling on ASSA-239: *"ratchet it, do not raise
+## it"*). The constant and the whole reasoning are `AssayHud.WORLD_HEIGHT_FLOOR_SHARE`'s docstring.
+##
+## **THIS IS THE TEST THE 72 PIXELS GOT PAST.** `MARGIN.y` 24 -> 96 restores the strip-era 912x600
+## and the suite was 392/0, unchanged: the only floor was an absolute 600 sitting exactly on that
+## mutation's own result. A share of the window cannot sit on a coincidence of one window size.
+##
+## IT READS `world_rect()` AND NOT THE NODE, deliberately and the opposite way round from the sweep
+## above: that one asks whether the layout HONOURED the rule, which has to come off the screen; this
+## asks whether the rule itself has been weakened, which is a fact about the arithmetic and is true
+## before anything is drawn. A regression here is a constant someone edited, not a layout that
+## drifted.
+func test_the_world_may_never_shrink_as_a_share_of_the_window() -> bool:
+	var world := AssayHud.world_rect()
+	var share := world.size.y / AssayHud.VIEW.y
+	if share < AssayHud.WORLD_HEIGHT_FLOOR_SHARE:
+		return _fail(("the world is %.0f px of a %.0f px window -- %.4f, under the ratcheted floor "
+				+ "of %.4f. Chrome has taken the gameplay view back. Raising this floor as the "
+				+ "screen improves is the point; lowering it to match a regression is the thing it "
+				+ "exists to catch") % [world.size.y, AssayHud.VIEW.y, share,
+				AssayHud.WORLD_HEIGHT_FLOOR_SHARE])
+	return true
 
 
 ## Summed up the ancestor chain, for the same reason `_left_edge_of` is: the suite runs before any
