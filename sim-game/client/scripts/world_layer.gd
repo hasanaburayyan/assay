@@ -52,6 +52,15 @@ var me: Variant = null
 ## can move a body.
 var destination: Variant = null
 
+## **THE TILE THE BUTTONS ACT ON, OR null** (ASSA-276 move 4). A `Vector2i`, set by `main.gd` from
+## `_target` whenever a tile is actually targeted.
+##
+## SEPARATE FROM `destination` BECAUSE THEY ARE DIFFERENT FACTS AND CAN BE THE SAME TILE: one is
+## "where I asked to walk", alive for a quarter of a second; this is "what the buttons will do
+## something to", and it stays until the player picks another. A single field would make the mark
+## flicker to the other meaning every time somebody walked.
+var selection: Variant = null
+
 ## **THE RECTANGLES THIS FUNCTION ACTUALLY BLITTED LAST FRAME, for the probes only** (ASSA-197).
 ## Map pixels. Nothing here reads them and no decision depends on them; `_draw` writes them on its
 ## way past.
@@ -80,6 +89,12 @@ var drawn_foot := Rect2()
 ## brackets were not painted in.
 var drawn_destination := Rect2()
 
+## **THE TILE THE SELECTION OUTLINE WAS ACTUALLY PAINTED ON LAST FRAME, for the probes only**
+## (ASSA-276 move 4), in map pixels, `Rect2()` when nothing was painted. Same contract and same
+## reason as `drawn_destination`: set inside `_draw` after the `draw_rect` calls, so it cannot be
+## true of a frame the outline was not painted in.
+var drawn_selection := Rect2()
+
 
 func _init() -> void:
 	clip_contents = true
@@ -94,6 +109,7 @@ func _draw() -> void:
 	drawn_body = Rect2()
 	drawn_foot = Rect2()
 	drawn_destination = Rect2()
+	drawn_selection = Rect2()
 	if view.is_empty():
 		return
 	var all := AssayScene.placements(view)
@@ -139,6 +155,29 @@ func _draw() -> void:
 	for place in all:
 		if int(place.get("layer", AssayScene.FLOOR)) == AssayScene.STANDING:
 			_blit(place)
+	# **WHAT THE BUTTONS ACT ON (ASSA-276 move 4), AND IT IS DRAWN LAST, WHICH IS THE OPPOSITE OF
+	# THE DESTINATION ABOVE.** That one goes under the standing layer because it marks the GROUND a
+	# body is walking to. This one marks the SUBJECT of the next button press, and the commonest
+	# subject is a machine or a rock that stands on its tile -- under the sprites it would be
+	# invisible exactly when it matters. It can sit on top without hiding anything because it is a
+	# 2 px outline inset inside the tile: the middle, which is the thing selected, is untouched.
+	if selection != null:
+		var at: Vector2i = selection
+		var from: Vector2 = view.get("origin", Vector2.ZERO)
+		# EVERY KEYLINE FIRST, THEN EVERY BAR, for `destination`'s reason one block up: the sides of
+		# the outline meet at the corners, so a per-bar rim would lay MAP_BG over the ink beside it.
+		#
+		# **`edge`/`halo` AND NOT `bar`/`rim`, WHICH IS NOT A STYLE CHOICE.** `test_click_echo.gd`
+		# proves the destination's ink by scanning this function for a line beginning `draw_rect(bar`
+		# -- and a second one of those, added here, silently became the line it inspected. The first
+		# run of this change turned that test red, which is the scan doing its job. Two source scans
+		# over one function need two names, or the newer mark quietly answers for the older one.
+		for halo in AssayScene.selection_keyline(at, from):
+			draw_rect(halo, AssayHud.MAP_BG, true)
+		for edge in AssayScene.selection_mark(at, from):
+			draw_rect(edge, AssayHud.mark_ink(&"target"), true)
+		drawn_selection = Rect2(Vector2(at) * AssayScene.TILE_PX - from,
+				Vector2(AssayScene.TILE_PX, AssayScene.TILE_PX))
 
 
 ## ONE SPRITE. Nothing is decided here; `src`, `dest` and `tint` all arrive worked out.

@@ -1865,3 +1865,49 @@ func _drawn_status(screen) -> Color:
 	var c: Color = screen._status.get_theme_color(&"font_color")
 	var m: Color = screen._status.modulate
 	return Color(c.r * m.r, c.g * m.g, c.b * m.b, c.a * m.a)
+
+
+## **THE CLOSE-UP IS TOLD WHICH TILE THE BUTTONS ACT ON** (ASSA-276 move 4).
+##
+## The geometry of the mark is `tests/test_selection_mark.gd`'s. This is the wiring: a right click
+## is the one gesture that chooses a tile (`_unhandled_input`, ASSA-37), and until this item nothing
+## downstream of it reached the view a player is actually looking at. Asserted through the real
+## click path rather than by setting `_targeted`, so what is held is the thing a player can do.
+##
+## **AND THE THIRD CLAUSE IS A BUG THAT PREDATES THE MARK.** `_targeted` was set by a right click and
+## cleared nowhere, so after a session died and the player pressed Join, `_target_tile()` still
+## answered a tile chosen in the PREVIOUS world -- and Mine, Assay, Place and Pick up all read it.
+## Invisible while nothing drew it; move 4 would have drawn it. The mark is why it was found, and the
+## fix belongs with the mark.
+func test_the_close_up_is_given_the_tile_the_buttons_act_on() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := true
+	if screen._world.selection != null:
+		ok = _fail(("a fresh screen already has a selection (%s): with nothing chosen the buttons "
+				+ "act on your own feet, which the foot mark already shows")
+				% screen._world.selection)
+	var spawn: Vector2i = screen._sim.spawn_tile()
+	var chosen := spawn + Vector2i(2, -1)
+	_click(screen, chosen, MOUSE_BUTTON_RIGHT)
+	_tick(screen, 1)
+	if screen._world.selection == null:
+		ok = _fail("a right click chose %s and the close-up was told nothing: the only thing on "
+				% chosen + "screen naming the subject of the next press is a line of text")
+	elif (screen._world.selection as Vector2i) != chosen:
+		ok = _fail("a right click on %s marked %s instead" % [chosen, screen._world.selection])
+	elif screen._target_tile() != (screen._world.selection as Vector2i):
+		ok = _fail(("the mark is on %s and the buttons act on %s. A mark that names a different "
+				+ "tile from the one the verb uses is worse than no mark")
+				% [screen._world.selection, screen._target_tile()])
+	# THE SESSION DIES. The selection was made in a world that is gone.
+	screen._session_ended()
+	if screen._world.selection != null:
+		ok = _fail(("the selection survived the session that made it (%s): press Join and the "
+				+ "buttons act on a tile chosen in another world")
+				% screen._world.selection)
+	if screen._targeted:
+		ok = _fail("`_targeted` survived the session, so `_target_tile()` still answers a stale "
+				+ "tile even with the mark cleared")
+	screen.queue_free()
+	return ok

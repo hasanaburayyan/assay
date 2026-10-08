@@ -1168,6 +1168,61 @@ static func destination_keyline(tile: Vector2i, origin: Vector2) -> Array[Rect2]
 	return out
 
 
+## **THE TILE THE BUTTONS ACT ON, IN THE CLOSE-UP** (ASSA-276 move 4, Maren's and Wren's).
+##
+## **THE DEFECT IS AN ABSENCE AND THAT IS WHY IT SURVIVED.** `_target` decides what Mine, Assay,
+## Place and Pick up do -- `main.gd::_target_tile` -- and the schematic has marked it since ASSA-119
+## box 6. The CLOSE-UP, which is where a player spends the session, has never drawn it at all: the
+## only thing that says which tile the buttons will act on is a line of text in the column, `acting
+## on (57, 59)`. Nothing was wrong; something was missing, and nothing goes red for that.
+##
+## **A FULL-TILE OUTLINE, AND THE SHAPE IS FORCED BY WHAT IS ALREADY TAKEN ON THIS SURFACE.** The
+## close-up draws exactly two marks of its own and both are `MINE`: four corner brackets for the
+## walk echo (ASSA-215) and the foot ellipse under your own body (ASSA-119). **Brackets were not
+## available** -- the same shape in a second colour, on the same surface, able to land on the same
+## tile, is the "two of something" failure Maren corrected on ASSA-119 one surface along. A ring was
+## already refused for this surface (`mine_ring` means "which body is yours"), and a fill would
+## cover the rock or machine the selection is ABOUT. A square outline is unused here, it is what the
+## genre uses, and it leaves the middle of the tile alone.
+##
+## **IT IS THE NEUTRAL INK AND NOT `MINE`, WHICH IS MAREN'S COLOUR RULING** (*"a selection is a
+## STATE, so INK, not ACCENT"*): `MINE` on this surface means yours -- your body, your foot, your
+## walk -- and a selection is not a possession. `world_layer` paints it in `mark_ink(&"target")`,
+## **the same token the schematic already uses for this same fact**, so one fact has one ink on both
+## surfaces rather than a 22nd literal.
+##
+## INSET AND KEYLINED FOR ASSA-215'S TWO REASONS, unchanged and not re-argued: an outline centred on
+## the tile boundary straddles two tiles and is ambiguous by one tile, and a bare light ink on world
+## art measured 1.55-1.64:1, which is a mark you can look straight at and miss. `MAP_BG` under it
+## makes the contrast a fact about two inks we own rather than about whichever species the world
+## rolled.
+const SELECTION_THICK_PX := 2.0
+const SELECTION_INSET_PX := 1.0
+const SELECTION_KEYLINE_PX := 1.0
+
+
+static func selection_mark(tile: Vector2i, origin: Vector2) -> Array[Rect2]:
+	var side := TILE_PX - SELECTION_INSET_PX * 2.0
+	var box := Rect2(Vector2(tile) * TILE_PX - origin + Vector2.ONE * SELECTION_INSET_PX,
+			Vector2(side, side))
+	var thick := minf(SELECTION_THICK_PX, side * 0.5)
+	return [
+		Rect2(box.position, Vector2(side, thick)),
+		Rect2(Vector2(box.position.x, box.end.y - thick), Vector2(side, thick)),
+		Rect2(box.position, Vector2(thick, side)),
+		Rect2(Vector2(box.end.x - thick, box.position.y), Vector2(thick, side)),
+	] as Array[Rect2]
+
+
+## THE SAME FOUR BARS, ONE PIXEL BIGGER ALL ROUND, to be painted in `MAP_BG` underneath them.
+## Separate from the mark for `destination_keyline`'s reason: `world_layer.gd` holds no geometry.
+static func selection_keyline(tile: Vector2i, origin: Vector2) -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	for bar in selection_mark(tile, origin):
+		out.append(bar.grow(SELECTION_KEYLINE_PX))
+	return out
+
+
 ## WHICH TILE THE CLICK ECHO IS ON AFTER ONE FRAME OF SIM FACTS, or `{}` for no mark (ASSA-215).
 ##
 ## `echo` is `{}` or `{"tile": Vector2i, "confirmed": bool}`; the caller sets it from its own click

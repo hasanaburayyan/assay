@@ -1819,6 +1819,22 @@ func _on_refused(reason: String) -> void:
 ## desync IS, and it is not this item's to answer.
 func _session_ended() -> void:
 	_forget_click()
+	# **AND THE SELECTION GOES WITH THE WORLD IT WAS MADE IN, WHICH IS A BUG THAT PREDATES THIS
+	# LINE** (found building ASSA-276 move 4). `_targeted` is set by a right-click and was never set
+	# back to `false` anywhere, so after a session died and the player pressed Join, `_target_tile()`
+	# still answered a tile picked in the PREVIOUS world -- and Mine, Assay, Place and Pick up all
+	# read it. That is not cosmetic: it is the buttons acting on somewhere the player never chose.
+	#
+	# **I AM FIXING IT HERE RATHER THAN FILING IT because move 4 draws this state**, and shipping a
+	# mark that paints a stale tile in a fresh world would turn an invisible wrong answer into a
+	# visible one and call it a feature. The schematic has had the same stale mark since ASSA-119
+	# and nobody saw it, which is the whole argument of ASSA-198 in one variable.
+	#
+	# IT COSTS A RECONNECTING PLAYER THEIR SELECTION. A rejoin lands in the same slot (ASSA-177), so
+	# this clears something that would sometimes still have been right -- one right-click to remake,
+	# against a button that acts on the wrong tile. Say so rather than pretend the trade is free.
+	_targeted = false
+	_world.selection = null
 	_refresh_actions()
 
 
@@ -3749,6 +3765,16 @@ func _refresh_world(frame_dt := -1.0) -> void:
 	# refusal that killed it, on the one surface whose whole job this frame is answering the click.
 	_walk_echo = AssayScene.walk_echo(_walk_echo, my_target, my_pos, false)
 	_world.destination = _walk_echo.get("tile")
+	# **AND WHAT THE BUTTONS ACT ON** (ASSA-276 move 4). `_targeted` and not `_target_tile()`: with
+	# nothing targeted the buttons act on your own feet, and the foot mark already says where those
+	# are -- an outline permanently wrapped round your own body would be a second mark for a fact
+	# this surface already carries, which is the 22nd-literal mistake in shape form.
+	#
+	# RE-READ EVERY REFRESH RATHER THAN PUSHED FROM THE INPUT HANDLER, which is the opposite choice
+	# to `destination` one line up and deliberately so: a click echo is an unanswered input that
+	# only the player's own click knows about, while `_target` is state this screen already owns.
+	# Pushing it would give the same fact two writers and a way to go stale.
+	_world.selection = _target if _targeted else null
 	_refresh_front_door()
 	_world.queue_redraw()
 
