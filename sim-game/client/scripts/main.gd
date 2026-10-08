@@ -1754,7 +1754,20 @@ func _build_build_screen_over_the_map(world: Rect2) -> void:
 	# is hers to reverse). `line` and `dead_end` went to the commit bar because both are about the act:
 	# what it spends, and that it cannot be undone. `walls` stayed because it is a property of the
 	# thing produced -- the smelter's heat figure -- and this block is what you get.
-	_build_detail = _build_section(right, BUILD_READOUT_SHARE, "what you get")
+	#
+	# **AND IT SHRINKS TO WHAT IS IN IT, SO THE COLUMN'S SLACK FALLS UNDER `cost` AND NOT ABOVE IT**
+	# (ASSA-343; Maren's ASSA-328 ruling: *"let the air collect at the BOTTOM of a block, never between
+	# a thing and its label … Air at the bottom of the block — under `cost`, not above it"*). She
+	# measured ~200 px of air between the two things a player compares, and the cause is this share:
+	# an `EXPAND_FILL` section took 300 px whatever stood in it, which on slice 1 is a 32 px picture
+	# and one clause. `cost` keeps its own `EXPAND_FILL`, so the leftover lands inside the LAST block
+	# -- which is also what keeps her overflow guarantee (§5.4: *"blocks 4 and 6 scroll … six distinct
+	# cost entries are reachable"*): the entries still scroll inside a box that now has room.
+	#
+	# **THE WIDTHS DO NOT MOVE, AND THAT IS HER SENTENCE TOO**: *"the blocks keep their widths — sized
+	# by the worst case a player is handed (§11.41), which this state is not."* `BUILD_COLUMNS` is
+	# untouched; `BUILD_READOUT_SHARE` now only decides how tall this block may GROW to.
+	_build_detail = _build_section(right, BUILD_READOUT_SHARE, "what you get", false)
 	_build_detail.name = BUILD_DETAIL
 	# **BLOCK 6: COST, AS TWO COUNTS** (her block 6, now x 671..911 y 423..**513** since the commit bar
 	# grew; her §5.5: need first, no slash, text, never a band).
@@ -1832,10 +1845,28 @@ func _build_column(into: HBoxContainer, share: float, heading: String) -> VBoxCo
 
 ## A heading over a scrolling list of rows, returning the list. The heading is this file's word for a
 ## section of its own screen and is not a second copy of anything the sim says.
-func _build_section(into: BoxContainer, share: float, heading: String) -> VBoxContainer:
+##
+## **`fill` IS WHERE THE SLACK GOES, WHICH IS A DESIGN RULING AND NOT A FLAG I FANCIED** (ASSA-343;
+## Maren: *"let the air collect at the BOTTOM of a block, never between a thing and its label"*). A
+## filling section takes its whole share whatever stands in it, so a block with a 32 px picture in a
+## 300 px share puts 250 px of air between itself and the block below. `false` sizes the section to
+## its content and leaves the column's leftover to whichever section still fills -- the last one, by
+## construction, because a column's blocks are added top to bottom.
+##
+## **A SHRINKING SECTION GIVES UP ITS OWN SCROLLING, AND THAT IS NOT A DETAIL I CAN LEAVE OUT.** A
+## `ScrollContainer`'s minimum size on a scrolling axis is ZERO -- that is what makes it a scroll box
+## -- so a `SHRINK_BEGIN` holder around one collapses to the heading alone instead of sizing to its
+## content. So the shrinking kind disables vertical scrolling, which makes the scroll box's minimum
+## its content's height. The cost is named rather than discovered: this section can now GROW, and a
+## column whose blocks ask for more than it has squeezes the FILLING ones first -- so an overlong
+## shrinking block takes room from `cost`, which scrolls, before anything reaches the column's edge.
+## Bounded today by what block 5 holds (one `ICON_PX` picture and one clause); the slice that fills it
+## with the design readout re-reads this.
+func _build_section(into: BoxContainer, share: float, heading: String,
+		fill := true) -> VBoxContainer:
 	var holder := VBoxContainer.new()
 	holder.add_theme_constant_override("separation", 6)
-	holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	holder.size_flags_vertical = Control.SIZE_EXPAND_FILL if fill else Control.SIZE_SHRINK_BEGIN
 	holder.size_flags_stretch_ratio = share
 	into.add_child(holder)
 	var title := Label.new()
@@ -1845,6 +1876,8 @@ func _build_section(into: BoxContainer, share: float, heading: String) -> VBoxCo
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	if not fill:
+		scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	holder.add_child(scroll)
 	var rows := VBoxContainer.new()
 	rows.add_theme_constant_override("separation", 6)
@@ -4306,6 +4339,7 @@ func _rebuild_build_picker() -> void:
 	for child in _build_picker.get_children():
 		child.queue_free()
 	var seen := {}
+	var group := ButtonGroup.new()
 	var chosen := JSON.stringify(_build_tag)
 	for entry in (_sim.make_offers(_client.player_id) if _client != null else []):
 		var offer: Dictionary = entry
@@ -4315,20 +4349,56 @@ func _rebuild_build_picker() -> void:
 			continue
 		seen[key] = true
 		var named := _catalogue_name(verb, offer.get("tag"))
-		# **THE ROW YOU ARE ON IS A LABEL, NOT A PRESSABLE BUTTON THAT DOES NOTHING** (ASSA-175's rule:
-		# a control that cannot do anything reads as available). Pressing the open row would re-point
-		# the screen at where it already is, so that row states which it is and offers no press.
-		if key == "%s/%s" % [_build_verb, chosen]:
-			var here := Label.new()
-			here.text = named
-			here.theme_type_variation = &"Heading"
-			_build_picker.add_child(here)
-			continue
-		var row := _button(named, func() -> void: _choose_build_row(offer),
-				"make %s instead" % named)
-		row.theme_type_variation = &"Quiet"
-		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		_build_picker.add_child(row)
+		_build_picker.add_child(_pick_row(named, func() -> void: _choose_build_row(offer),
+				key == "%s/%s" % [_build_verb, chosen], group, "make %s instead" % named))
+
+
+## **ONE ROW OF A PICKER: ONE OBJECT IN TWO STATES, NEVER TWO OBJECTS** (ASSA-343; Maren's ASSA-328
+## ruling 3: *"A selected and an unselected member of one list must be one object in two states, never
+## two objects — otherwise the state reads as a difference in kind"*).
+##
+## **IT IS A TOGGLE BUTTON IN A `ButtonGroup`, WHICH IS THE ENGINE'S OWN RADIO GROUP.** The chosen row
+## is the same `Button` as every other row with `button_pressed` true, so the theme's own `Quiet`
+## `pressed` stylebox and `font_pressed_color` draw the state -- no second control type, no colour
+## invented here, and "exactly one is chosen" is structural rather than something each rebuild has to
+## remember. `smelter` and `sort` read as two states of one list because they are.
+##
+## **WHAT THIS REVERSES OF MINE, AND THE TENSION IS REAL RATHER THAN A SLIP.** The chosen row was a
+## `Label` on ASSA-175's rule -- a control that cannot do anything reads as available -- and pressing
+## the open row does nothing but re-point the screen at where it already is. Her 20:22 clause is the
+## tie-break: *"a control that cannot be pressed should not look pressable"*. A pressed toggle in a
+## group **is** a control that cannot be un-pressed, and it does not look like an idle one; that is the
+## difference from the dead button ASSA-175 was about, which looked exactly like its live neighbours.
+##
+## **THE PRESS IS STILL CONNECTED ON THE CHOSEN ROW**, deliberately: `ButtonGroup` keeps it pressed, so
+## the callback re-points the screen at itself and the rebuild is idempotent. The alternative -- a
+## disconnected button -- is the dead control again.
+func _pick_row(label: String, on_press: Callable, chosen: bool, group: ButtonGroup,
+		hint: String) -> Button:
+	var row := _button(label, on_press, hint)
+	row.theme_type_variation = &"Quiet"
+	row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	row.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	row.toggle_mode = true
+	row.button_group = group
+	row.button_pressed = chosen
+	return row
+
+
+## **A MATERIAL ROW'S LABEL: THE MATERIAL, IN THE SIM'S WORDS, WITHOUT ITS COUNT** (ASSA-343).
+##
+## `mine` is the pack stack this offer eats, so `name` is the sim-written wording (`inventory_of`) and
+## nothing here words an item. **The empty case is the one Maren declined to call a defect and handed
+## to me:** `_pack_stack_of` returns `{}` only when the pack does not hold what the offer eats, and
+## every `MakeOffer` comes from a stack you hold (`make_offers` walks `p.inventory.stacks()`), so it is
+## unreachable. It falls back to the sim's whole sentence -- a second grammar, which is why it may not
+## pass silently: a `push_error` makes the unreachable state say so in the log the day it is reached,
+## rather than the row quietly reading differently depending on your pack.
+func _material_label(offer: Dictionary, mine: Dictionary) -> String:
+	if mine.is_empty():
+		push_error("a make offer names no pack stack: %s" % [offer.get("line", offer)])
+		return String(offer.get("line", ""))
+	return String(mine.get("name", ""))
 
 
 ## **MOVE THE SCREEN TO ANOTHER CATALOGUE ROW WITHOUT CLOSING IT** (ASSA-328). The material goes with
@@ -4347,11 +4417,22 @@ func _choose_build_row(offer: Dictionary) -> void:
 ## **BLOCKS 3+4: THE MATERIAL PICKER -- ONI's, WHICH IS MAREN'S CLOSEST REFERENCE** (§3: *"you pick the
 ## material and the card's numbers move ... ONI proves a player will happily shop by consequence"*).
 ##
-## **ONE ROW PER MATERIAL THE SIM OFFERS THIS RECIPE, AND THE WORDS ARE THE PACK'S.** A material row
-## names its stack with `AssayHud.stack_line` over the SIM-written `name` on that pack stack -- the
-## same words the pack tab prints -- because `make_offers` crosses an offer's input as three fields
-## and no name, and spelling "Tonore refined (A)" out of kind, species and grade here would be this
-## client wording an item (ASSA-43/52, and `make_offers`' own docstring forbids it).
+## **ONE ROW PER MATERIAL THE SIM OFFERS THIS RECIPE, AND THE WORDS ARE THE SIM'S.** The label is the
+## `name` the sim wrote on that pack stack -- `Tonore refined (A)` -- because `make_offers` crosses an
+## offer's input as three fields and no name, and spelling that out of kind, species and grade here
+## would be this client wording an item (ASSA-43/52, and `make_offers`' own docstring forbids it).
+##
+## **IT IS THE MATERIAL AND NOT THE STACK, WHICH IS MAREN'S ASSA-343 RULING AND MY OWN DOCSTRING'S
+## CONTRACT.** This printed `AssayHud.stack_line(mine)` = `8 × Tonore refined (A)`, one row above a
+## `need · have` that is about that very count. `have_need_line`'s rule was *"it names no item and so
+## it is not a second copy of a sim sentence … the thing they are about is named once, by the sim,
+## elsewhere on the screen"* -- written for a name row that does not count, and handed one that does.
+## `stack_line` is untouched in the pack list, so ASSA-90 holds: the pack's wording stays the pack's.
+##
+## **THE COUNTS THEMSELVES STAY, AND THAT IS THE HALF SHE REVERSED HERSELF ON** (§5.5, 20:51): *"the
+## material row is the picker; its counts are what make the choice"*. Strip them and comparing two
+## materials means selecting each and reading block 6 -- affordability computed across two gestures,
+## the exact thing §3 took from Factorio in order to refuse.
 ##
 ## **HAVE / NEED UNDER EACH ONE, WHICH IS WHAT MAKES THIS A CHOICE AND NOT A LIST** (her §3, Factorio):
 ## affordability is read rather than computed in the player's head, on every material at once.
@@ -4362,26 +4443,18 @@ func _rebuild_build_materials() -> void:
 	if offers.is_empty():
 		_build_materials.add_child(_note("nothing you are carrying can be worked into this"))
 		return
+	var group := ButtonGroup.new()
 	for entry in offers:
 		var offer: Dictionary = entry
 		var mine := _pack_stack_of(offer)
 		var row := VBoxContainer.new()
 		row.add_theme_constant_override("separation", 2)
-		var named := AssayHud.stack_line(mine) if not mine.is_empty() else String(offer.get("line", ""))
 		var chosen := int(offer.get("species", -1)) == _build_species \
 				and String(offer.get("grade", "")) == _build_grade
-		if chosen:
-			var here := Label.new()
-			here.text = named
-			here.theme_type_variation = &"Heading"
-			here.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			row.add_child(here)
-		else:
-			var press := _button(named, func() -> void: _choose_build_material(offer),
-					"make it out of this instead")
-			press.theme_type_variation = &"Quiet"
-			press.alignment = HORIZONTAL_ALIGNMENT_LEFT
-			row.add_child(press)
+		var press := _pick_row(_material_label(offer, mine),
+				func() -> void: _choose_build_material(offer), chosen, group,
+				"make it out of this instead")
+		row.add_child(press)
 		# **THE SAME TWO COUNTS AS BLOCK 6, IN THE SAME WORDS AND THE SAME ORDER** (ASSA-332): one
 		# grammar for one kind of number, wherever it is drawn. **The FAILED ink goes on the counts and
 		# not on the row's button**: a material you cannot afford is still a material you may CHOOSE,
@@ -4434,10 +4507,33 @@ func _rebuild_build_detail() -> void:
 	var makes: Dictionary = offer.get("makes", {}) as Dictionary
 	var picture := _icon_box(makes, true)
 	if picture != null:
+		# **A PLATE IS SIZED BY WHAT STANDS ON IT, NOT BY THE COLUMN IT SITS IN** (ASSA-343; Maren's
+		# ASSA-328 ruling 2, confirmed off the shot: *"a pale olive band the full width of the column
+		# with a 32 px icon lost in the middle: it reads as a progress bar, not a picture"*).
+		#
+		# **THE CAUSE WAS A DEFAULT, NOT A WIDTH I CHOSE.** `_icon_box` hands back a `Panel` carrying
+		# `ICON_BOX_PX`; in a pack ROW an HBox gives it that minimum and it stays 32 px wide, but a
+		# `VBoxContainer` child FILLS horizontally by default, so the same plate stretched to the
+		# column's 304 px while staying 48 px tall. `SHRINK_BEGIN` is the whole fix, and it also
+		# left-aligns it, which is the rest of her sentence.
+		#
+		# **AND IT IS SQUARE AT THE SPRITE'S OWN WIDTH, WHICH IS THE ONE NUMBER I MAY NOT MOVE.**
+		# `ICON_BOX_PX` is `(ICON_PX, 48)` -- 48 to match a pack row's height, which this is not. The
+		# box becomes `ICON_PX` square: the WIDTH is unchanged, so the `KEEP_ASPECT_CENTERED` scale
+		# ASSA-65 made exact (1/2 for an item, 1/4 for a part) is untouched and
+		# `check_pack_icon_scale.py` still measures what it always did -- it reads the pack, and
+		# nothing here reaches the pack.
+		picture.custom_minimum_size = Vector2(ICON_PX, ICON_PX)
+		picture.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		_build_detail.add_child(picture)
 	var walls := String(offer.get("walls", ""))
 	if walls != "":
-		var said := _note("— %s" % walls)
+		# **NO EM-DASH: `— walls 44` READ AS A FRAGMENT OF A SENTENCE THAT ENDED TWO LINES EARLIER**
+		# (ASSA-343; Maren's ASSA-328 ruling 5). The dash was mine, not the sim's, and it was a
+		# continuation mark from when this block sat under the sim's own sentence -- which moved to
+		# the commit bar in ASSA-332. The figure itself stays here: it is her ASSA-332 box 10 ruling,
+		# *"the one number on slice 1 that MOVES when you change your pick"*.
+		var said := _note(walls)
 		said.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_build_detail.add_child(said)
 
