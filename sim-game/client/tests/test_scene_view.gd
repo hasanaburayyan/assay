@@ -3206,3 +3206,97 @@ func _poisoned_plan_problem() -> String:
 			return ("after the plan cache was cleared the layer drew a prop at %s where the tile "
 					+ "hash puts one at %s") % [after[k], honest[k]]
 	return ""
+
+
+# ---------------------------------------------------------------------------
+# THE TITLE SCREEN'S CAMERA (ASSA-292, ASSA-276 §4). Three properties, because Maren's floor 3 --
+# *"bound the drift so a worst frame exists"* -- is three separate claims wearing one sentence, and a
+# single "it drifts nicely" test would pass on a camera that violated any one of them.
+
+
+## **PERIODIC: THE LOOP COMES BACK. This is the one that separates a loop from a wander**, and it is
+## the whole of why a contrast number measured on this screen keeps being true tomorrow.
+##
+## A wander's worst frame is its worst frame SO FAR. Sampled at `TITLE_DRIFT_SAMPLES` it would agree
+## with the first loop and disagree with the fortieth, so the test walks SIX loops and demands the
+## picture be identical at the same phase in each -- `t`, `t + P`, `t + 5P`. An accumulating camera
+## (`_phase += dt`, a noise term, a random target) fails on loop two.
+func test_the_title_camera_is_a_loop_and_not_a_wander() -> bool:
+	var period := AssayScene.TITLE_DRIFT_PERIOD
+	for i in range(AssayScene.TITLE_DRIFT_SAMPLES):
+		var t := period * float(i) / float(AssayScene.TITLE_DRIFT_SAMPLES)
+		var home := AssayScene.title_drift(t)
+		for loop in [1.0, 2.0, 5.0]:
+			var later := AssayScene.title_drift(t + period * (loop as float))
+			if home.distance_to(later) > 0.0001:
+				return _fail(("the title camera is at %s after %.1fs and %s one whole loop later "
+						+ "(%.1fs): the drift is accumulating, not looping, so it has no worst "
+						+ "frame to measure a contrast promise at -- only a worst frame so far")
+						% [home, t, later, t + period * (loop as float)])
+	# AND IT CLOSES, which is the same property at the seam. A path that is periodic in phase can
+	# still jump here if the radius is a function of the loop count.
+	if AssayScene.title_drift(0.0).distance_to(AssayScene.title_drift(period)) > 0.0001:
+		return _fail("the title camera does not return to where it started after one whole period")
+	return true
+
+
+## **BOUNDED: THE CAMERA NEVER LEAVES ITS ROOM.** Swept finely rather than at the sample points,
+## because the sample points are exactly where a hand-tuned ellipse is guaranteed to look fine.
+##
+## THE BOUND IS PER AXIS AND NOT ON THE LENGTH, deliberately: the shape is an ellipse, so a length
+## bound of `TITLE_DRIFT_TILES` is satisfied by a circle of that radius too, and the y half-axis
+## being the smaller one is the thing that keeps the vertical travel from showing the world's edge.
+func test_the_title_camera_stays_inside_its_stated_radius() -> bool:
+	var worst := 0.0
+	for i in range(2000):
+		var t := AssayScene.TITLE_DRIFT_PERIOD * float(i) / 2000.0
+		var at := AssayScene.title_drift(t)
+		worst = maxf(worst, maxf(absf(at.x) / AssayScene.TITLE_DRIFT_TILES,
+				absf(at.y) / (AssayScene.TITLE_DRIFT_TILES * 0.5)))
+		if absf(at.x) > AssayScene.TITLE_DRIFT_TILES + 0.0001:
+			return _fail(("the title camera is %.3f tiles across at %.2fs, outside the %.3f it is "
+					+ "allowed: a drift this wide can walk a deposit out of the frame the title "
+					+ "was composed over") % [absf(at.x), t, AssayScene.TITLE_DRIFT_TILES])
+		if absf(at.y) > AssayScene.TITLE_DRIFT_TILES * 0.5 + 0.0001:
+			return _fail(("the title camera is %.3f tiles down at %.2fs, outside the %.3f it is "
+					+ "allowed (half the across radius, because the world is wider than tall)")
+					% [absf(at.y), t, AssayScene.TITLE_DRIFT_TILES * 0.5])
+	# A BOUND NOTHING REACHES IS NOT A BOUND, it is a number that cannot fail. The ellipse touches
+	# both half-axes once per loop, so a fine sweep must get close to 1.0 of its allowance.
+	if worst < 0.99:
+		return _fail(("the title camera's widest excursion is %.4f of its stated radius: the bound "
+				+ "is not describing this camera, so it would not catch one that grew") % worst)
+	return true
+
+
+## **CONTINUOUS, AND THE SAMPLE GAP IS WHAT A WORST-FRAME CLAIM RESTS ON** (`TITLE_DRIFT_SAMPLES`).
+##
+## Two jobs in one sweep because they are one fact. The picture may not SNAP -- a sawtooth is periodic
+## and bounded and passes both tests above while jumping 112 px at the seam. And the step between two
+## neighbouring samples has to be the number `title_drift_gap_px()` advertises, because every
+## "measured at the worst frame" sentence this screen ever gets is really "within that gap of it".
+func test_the_title_camera_never_snaps_and_its_sample_gap_is_what_it_claims() -> bool:
+	var claimed := AssayScene.title_drift_gap_px()
+	var worst := 0.0
+	var at_t := 0.0
+	for i in range(AssayScene.TITLE_DRIFT_SAMPLES):
+		var t := AssayScene.TITLE_DRIFT_PERIOD * float(i) / float(AssayScene.TITLE_DRIFT_SAMPLES)
+		var next := AssayScene.TITLE_DRIFT_PERIOD * float(i + 1) / float(AssayScene.TITLE_DRIFT_SAMPLES)
+		var step := (AssayScene.title_drift(next) - AssayScene.title_drift(t)).length() \
+				* AssayScene.TILE_PX
+		if step > worst:
+			worst = step
+			at_t = t
+	if worst > claimed + 0.001:
+		return _fail(("the title camera moves %.2f px between two of its %d samples at %.2fs, more "
+				+ "than the %.2f px title_drift_gap_px() advertises. Either the picture snaps, or "
+				+ "every 'measured at the worst frame' number taken off this screen is out by more "
+				+ "than it says") % [worst, AssayScene.TITLE_DRIFT_SAMPLES, at_t, claimed])
+	# THE OTHER SIDE: a gap bound far above the real step is a tolerance, not a measurement, and a
+	# measuring tool would quote it as the error on its answer. The chord of an arc this short is
+	# within a few percent of the arc, so the advertised number must be nearly tight.
+	if worst < claimed * 0.9:
+		return _fail(("title_drift_gap_px() advertises %.2f px but the camera's worst step is only "
+				+ "%.2f px: the bound is loose enough to hide a real snap and would be quoted as "
+				+ "the error on a contrast number it does not describe") % [claimed, worst])
+	return true
