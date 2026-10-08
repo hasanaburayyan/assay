@@ -403,6 +403,80 @@ func test_a_letter_too_big_for_its_patch_is_not_drawn() -> bool:
 	return true
 
 
+## **TWO MACHINES SIDE BY SIDE: THE YOUNGER ONE'S KEYLINE LANDS ON THE OLDER ONE'S BAND, AND WHAT
+## SETTLES IT IS THE PAINT ORDER** (ASSA-289, under Maren's rule 11.39: *where two marks overlap, the
+## keyline yields and the ink does not*).
+##
+## **BOX 1 AS WRITTEN CANNOT PASS AND I SAY SO RATHER THAN RE-WORD IT QUIETLY.** It asks for a test on
+## `building_mark` alone that fails before the change and passes after — which presumes the *inward
+## keyline* mechanism, where the geometry stops overlapping. Two passes do not move a pixel of
+## geometry: the overlap is still there, and the band is simply painted after every keyline. So this
+## test holds BOTH halves, and only the second one can change:
+##
+## 1. **The overlap is real and is measured here**, not taken from the item. Two legal adjacent 2x2
+##    footprints at cell 9 (no occupancy conflict — the normal thing anyone building a factory does).
+##    If it ever stops overlapping, this fails as a stale test rather than passing vacuously.
+## 2. **`_draw` paints every machine's outward keyline before any machine's band** — two loops over
+##    `shapes`, not one. Nothing headless can read a `draw_rect` back off a canvas, so the order is a
+##    source scan, which is exactly the cost Maren named for this mechanism: *"makes paint order
+##    load-bearing for a correctness property, which is the kind of thing that dies in a refactor
+##    with no test."* This is the test.
+func test_two_adjacent_machines_paint_every_keyline_before_any_band() -> bool:
+	var cell := 9.0
+	var origin := AssayHud.MARGIN
+	# Maren's own case, from her probe: 2x2 at (54,56) and (56,56).
+	var older := AssayHud.building_mark({"pos": Vector2i(54, 56), "footprint": Vector2i(2, 2)},
+			cell, origin)
+	var younger := AssayHud.building_mark({"pos": Vector2i(56, 56), "footprint": Vector2i(2, 2)},
+			cell, origin)
+	var bands: Array[Rect2] = AssayHud.frame_bands(older["rect"], float(older["stroke"]))
+	var rims: Array[Rect2] = AssayHud.frame_bands(younger["keyline_rect"], AssayHud.MARK_KEYLINE_PX)
+	var band_px := 0
+	var eaten := 0
+	for band in bands:
+		var y := band.position.y + 0.5
+		while y < band.end.y:
+			var x := band.position.x + 0.5
+			while x < band.end.x:
+				band_px += 1
+				for rim in rims:
+					if rim.has_point(Vector2(x, y)):
+						eaten += 1
+						break
+				x += 1.0
+			y += 1.0
+	if band_px <= 0:
+		return _fail("the older machine's frame has no band pixels at all, so this test is vacuous")
+	if eaten <= 0:
+		return _fail(("two adjacent 2x2 machines no longer overlap: the younger one's keyline covers "
+				+ "none of the older one's %d band px. If the geometry changed on purpose, this test "
+				+ "is stale and the paint-order scan below is guarding nothing.") % [band_px])
+	# **THE ORDER, AND IT IS THE ONLY HALF A CHANGE CAN BREAK.**
+	var source := FileAccess.get_file_as_string("res://scripts/main.gd")
+	if source == "":
+		return _fail("main.gd could not be read, so the order scan says nothing")
+	var first_loop := source.find("for shape_entry in shapes:")
+	var second_loop := source.find("for shape_entry in shapes:", first_loop + 1)
+	var rim_at := source.find("AssayHud.mark_ink_of(&\"building_keyline\", shape[\"keyline\"])")
+	var band_at := source.find("AssayHud.mark_ink_of(&\"building\", shape[\"colour\"])")
+	if first_loop < 0 or rim_at < 0 or band_at < 0:
+		return _fail(("`_draw` no longer paints a machine's keyline (%d) and band (%d) out of a loop "
+				+ "over `shapes` (%d) through the map's table, so this scan says nothing")
+				% [rim_at, band_at, first_loop])
+	if second_loop < 0:
+		return _fail(("`_draw` paints machine keylines and bands in ONE loop over `shapes`, so a "
+				+ "younger machine's keyline is painted over an older machine's band: %d of its %d "
+				+ "band px (%.1f%%) on two legal adjacent 2x2 footprints. Rule 11.39 says the "
+				+ "keyline yields and the ink does not, so every keyline goes in a first pass and "
+				+ "every band in a second.") % [eaten, band_px, 100.0 * float(eaten) / float(band_px)])
+	if not (first_loop < rim_at and rim_at < second_loop and second_loop < band_at):
+		return _fail(("the two building passes are out of order: first loop@%d, keyline@%d, second "
+				+ "loop@%d, band@%d. The outward keyline belongs to the FIRST pass and the band to "
+				+ "the SECOND, or a neighbour's rim eats a band again (%d of %d px).")
+				% [first_loop, rim_at, second_loop, band_at, eaten, band_px])
+	return true
+
+
 ## **`MIN_DEPOSIT_RADIUS_TILES` IS A SIM FACT LIVING IN A CLIENT CONSTANT, SO IT IS CHECKED AGAINST
 ## THE SIM** (ASSA-293). The held letter's whole justification is that it fits the narrowest patch
 ## `worldgen` can roll; `sim/src/worldgen.rs` rolls `rng.range(2, 5)` and there is no named constant
