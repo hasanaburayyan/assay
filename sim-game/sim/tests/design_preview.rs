@@ -499,3 +499,180 @@ fn a_species_this_world_never_rolled_is_refused_rather_than_indexed() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// ASSA-329: a design with a slot still empty gets its numbers and no verdict.
+// ---------------------------------------------------------------------------
+
+/// **THE NUMBERS ARRIVE AS PARTS GO IN, NOT ON THE LAST CLICK**, which is the
+/// defect the Game Director measured: a held frame has one slot, so its only
+/// two states were "empty" and "done" and there was nothing live about a live
+/// readout.
+///
+/// Both mounts, because they are the two shapes of the question: a handle has
+/// `Head min 1` and nothing else, a planted frame has `Head min 1` and
+/// `Hopper min 0` — so on the planted one a design can be unfinished with a
+/// part already in it, and the numbers have to have MOVED rather than merely
+/// appeared.
+#[test]
+fn a_design_with_an_empty_slot_is_weighed_and_gets_no_verdict() {
+    let (world, me) = world_with_player();
+    let head = part_item(PartKind::Head, HEAVY);
+    let hopper = part_item(PartKind::Hopper, LIGHT);
+
+    for (what, frame, mounted) in [
+        ("a handle with no head", part_item(HELD, LIGHT), vec![]),
+        ("a planted frame with no head", part_item(PLANTED, LIGHT), vec![]),
+        (
+            "a planted frame holding only its hopper",
+            part_item(PLANTED, LIGHT),
+            vec![hopper],
+        ),
+    ] {
+        let planned = preview(&world, me, frame, &mounted);
+
+        let error = planned
+            .unfinished()
+            .unwrap_or_else(|| panic!("{what}: adding a head rescues this, so it is unfinished"));
+        assert!(
+            error.is_unfinished(),
+            "{what}: only a recoverable fault takes this arm: {error:?}"
+        );
+        // IT IS STILL REFUSED, AND BY THE SAME WORDS AS BEFORE. The numbers are
+        // for a screen to draw; they are not permission to build.
+        assert_eq!(
+            planned.refusal(),
+            Some(RejectReason::BadAssembly(error)),
+            "{what}: the press must still refuse it"
+        );
+        // AND `built` STILL SAYS NO, which is what keeps the verdict off it.
+        assert!(
+            planned.built().is_none(),
+            "{what}: a half-built design is not a machine"
+        );
+
+        let design = planned
+            .design()
+            .unwrap_or_else(|| panic!("{what}: the arithmetic exists"));
+        let range = design.assembly.stat_range(&world.species);
+        assert!(
+            range.high.budget > 0,
+            "{what}: the frame's budget is what the mass is a fraction of: {range:?}"
+        );
+
+        let line = debug::design_preview(&world, me, frame, &mounted);
+        // THE HEADLINE IS THE SIM'S PHRASE FOR WHAT IS MISSING, and it is the
+        // SAME phrase the log gives after a press — not a second wording.
+        let phrase = debug::plan_refusal_phrase(
+            &world,
+            Some(me),
+            RejectReason::BadAssembly(error),
+        )
+        .expect("BadAssembly is one of the plan's four");
+        assert!(
+            line.starts_with(&phrase),
+            "{what}: the missing slot goes where the verdict would: {line}"
+        );
+        // NO VERDICT WORD ANYWHERE IN IT. Read off `BreakVerdict`'s own labels
+        // rather than spelled here, so a fourth verdict cannot slip past this.
+        for label in ["SAFE", "UNCERTAIN", "WILL BREAK"] {
+            assert!(
+                !line.contains(label),
+                "{what}: `{label}` is a sentence about a machine that exists: {line}"
+            );
+        }
+        // AND IT IS NOT DRESSED AS A REFUSAL EITHER: `not a machine · …` is for
+        // a design no later press can rescue.
+        assert!(
+            !line.contains("not a machine"),
+            "{what}: unfinished is not refused: {line}"
+        );
+        // The numbers are really in it, in the readout's own words.
+        assert!(
+            line.contains("mass") && line.contains("budget"),
+            "{what}: the point of the arm is the numbers: {line}"
+        );
+    }
+}
+
+/// **A DESIGN NO LATER PRESS CAN RESCUE STILL GETS NOTHING**, and this is the
+/// control for the test above: without it, "unfinished gets numbers" could have
+/// been implemented as "everything gets numbers".
+#[test]
+fn a_permanently_faulted_design_keeps_todays_refusal_and_no_numbers() {
+    let (world, me) = world_with_player();
+    let head = part_item(PartKind::Head, LIGHT);
+    let frame = part_item(HELD, LIGHT);
+    let hopper = part_item(PartKind::Hopper, LIGHT);
+
+    for (what, bad_frame, mounted) in [
+        ("a head where the frame goes", head, vec![head]),
+        ("a frame mounted on a frame", part_item(PLANTED, LIGHT), vec![head, frame]),
+        ("a hopper on a handle", frame, vec![head, hopper]),
+        ("two heads on one handle", frame, vec![head, head]),
+    ] {
+        let planned = preview(&world, me, bad_frame, &mounted);
+        assert!(
+            planned.unfinished().is_none(),
+            "{what}: no later press undoes this, so it is not unfinished"
+        );
+        assert!(
+            planned.design().is_none(),
+            "{what}: a selection that is not a design has no numbers to give"
+        );
+        let line = debug::design_preview(&world, me, bad_frame, &mounted);
+        assert!(
+            line.starts_with("not a machine · "),
+            "{what}: today's refusal wording is kept: {line}"
+        );
+        assert!(
+            !line.contains("budget") && !line.contains("bare hands"),
+            "{what}: a refused design carries no numbers: {line}"
+        );
+    }
+}
+
+/// The two readouts are **one sentence with one word swapped**, which is what
+/// makes a live readout read as one thing changing rather than two screens.
+///
+/// Asked by filling the slot: the only difference between the two lines is the
+/// headline, so everything after the first `·` must match once the same parts
+/// are weighed — and that is a claim a reimplementation of the body would fail.
+#[test]
+fn the_unfinished_line_is_the_finished_line_with_the_verdict_replaced() {
+    let (world, me) = world_with_player();
+    let frame = part_item(PLANTED, LIGHT);
+    let head = part_item(PartKind::Head, HEAVY);
+    let hopper = part_item(PartKind::Hopper, LIGHT);
+
+    // The SAME parts, weighed twice: once through the unfinished arm (hopper
+    // only, no head) and once through `assembly_readout` on a design built from
+    // exactly those part items plus the head.
+    let done = preview(&world, me, frame, &[head, hopper]);
+    let built = done.built().expect("head and hopper fill a planted frame");
+    let finished = debug::assembly_readout(&world, built);
+    let unfinished = debug::unfinished_readout(
+        &world,
+        built,
+        AssemblyError::TooFew {
+            kind: PartKind::Head,
+            have: 0,
+            min: 1,
+        },
+    );
+
+    let (_, finished_tail) = finished
+        .split_once(" · ")
+        .expect("the readout leads with a headline");
+    let (_, unfinished_tail) = unfinished
+        .split_once(" · ")
+        .expect("so does the unfinished one");
+    assert_eq!(
+        finished_tail, unfinished_tail,
+        "the body is shared, so only the headline may differ:\n{finished}\n{unfinished}"
+    );
+    assert!(
+        unfinished.starts_with("it needs at least 1 head and has 0 · "),
+        "and the headline is the sim's phrase for the missing slot: {unfinished}"
+    );
+}

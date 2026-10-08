@@ -2827,6 +2827,38 @@ pub fn durability_readout(world: &World, built: &Built) -> String {
 /// *class* while it is not. See the held branch for why a number there was a
 /// leak.
 pub fn assembly_readout(world: &World, built: &Built) -> String {
+    let verdict = built.assembly.stat_range(&world.species).verdict();
+    readout_after(world, built, verdict.label())
+}
+
+/// **THE SAME READOUT, FOR A DESIGN WITH A SLOT STILL EMPTY** (ASSA-329, the
+/// Game Director's §6.4). Every number [`assembly_readout`] prints, with the
+/// verdict word replaced by the sim's own phrase for what is still missing.
+///
+/// `SAFE` / `UNCERTAIN` / `WILL BREAK` is a sentence about a machine that
+/// exists, and a half-built design is not one — but it is not refused either,
+/// so `design_refusal`'s `not a machine · …` is the wrong answer too. What goes
+/// in the headline's place is [`assembly_error_phrase`], which is what
+/// `event_line` already says after the press: **`it needs at least 1 head and
+/// has 0 · mass 3 of 240-360 budget · …`**. One wording, and a build screen
+/// composes nothing.
+///
+/// The arrangement is deliberate, not a shortcut: the two lines share one body
+/// so a column added to the readout cannot appear on a finished design and go
+/// missing on the design being placed — which is the whole of what makes a live
+/// readout readable as one thing changing.
+pub fn unfinished_readout(world: &World, design: &Built, error: AssemblyError) -> String {
+    debug_assert!(
+        error.is_unfinished(),
+        "only a recoverable fault gets the numbers; `assembly::plan` is the gate"
+    );
+    readout_after(world, design, &assembly_error_phrase(error))
+}
+
+/// [`assembly_readout`] under a caller's headline. Private: the headline is the
+/// one thing in this sentence that is a judgement, and the two callers above
+/// are the only two judgements there are.
+fn readout_after(world: &World, built: &Built, headline: &str) -> String {
     let a = &built.assembly;
     let range = a.stat_range(&world.species);
     let show = |low: u32, high: u32| {
@@ -2840,8 +2872,7 @@ pub fn assembly_readout(world: &World, built: &Built) -> String {
     // panel is narrow and the line gets truncated, so the thing the player
     // needs before spending parts must not be the thing that is cut.
     let mut out = format!(
-        "{} · mass {} of {} budget",
-        range.verdict().label(),
+        "{headline} · mass {} of {} budget",
         show(range.low.mass, range.high.mass),
         show(range.low.budget, range.high.budget),
     );
@@ -2946,17 +2977,27 @@ pub fn design_preview(world: &World, player: PlayerId, frame: Item, mounted: &[I
     // Step's order, step's phrases, and step's own function: see
     // `crate::assembly::plan`, which `PlayerCommand::Assemble` calls too.
     let planned = crate::assembly::plan(frame, mounted, &world.species, &p.inventory);
-    let AssemblyPlan::Weighed {
-        built,
-        cost,
-        missing,
-    } = &planned
-    else {
-        let reason = planned.refusal().expect("a Refused plan has a refusal");
-        return design_refusal(
-            &plan_refusal_phrase(world, Some(player), reason)
-                .expect("`plan` refuses only in its own four words"),
-        );
+    // THREE STATES AND NOT TWO (ASSA-329): a machine, a design still being
+    // placed, and a selection that is not a design at all. The middle one gets
+    // every number and no verdict.
+    let (built, cost, missing, unfinished) = match &planned {
+        AssemblyPlan::Weighed {
+            built,
+            cost,
+            missing,
+        } => (built, cost, missing, None),
+        AssemblyPlan::Unfinished {
+            design,
+            cost,
+            missing,
+            error,
+        } => (design, cost, missing, Some(*error)),
+        AssemblyPlan::Refused(reason) => {
+            return design_refusal(
+                &plan_refusal_phrase(world, Some(player), *reason)
+                    .expect("`plan` refuses only in its own four words"),
+            );
+        }
     };
     // THE TALLY IS THE PLAN'S, not a second count of the same parts: a pack
     // column that disagreed with what the press spends is the bug this whole
@@ -2974,7 +3015,10 @@ pub fn design_preview(world: &World, player: PlayerId, frame: Item, mounted: &[I
         .collect::<Vec<_>>()
         .join(" · ");
 
-    let mut out = assembly_readout(world, built);
+    let mut out = match unfinished {
+        Some(error) => unfinished_readout(world, built, error),
+        None => assembly_readout(world, built),
+    };
     let _ = write!(out, "\n      your pack: {counts}");
     if let Some(item) = missing {
         let item = *item;
