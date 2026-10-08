@@ -1,34 +1,43 @@
 extends SceneTree
 ## WHAT DOES A DESIGN ROW REALLY LOOK LIKE, laid out by the real screen? (ASSA-83, ASSA-173)
 ##
-##   godot --path client --script "$PWD/art/design_row_layout.gd" -- /tmp/designs.json [seed]
+##   godot [--headless] --path client --script "$PWD/art/design_row_layout.gd" -- designs.json [seed]
 ##
-## **NOT `--headless`, AND THAT IS WHAT CHANGED HERE** (ASSA-173). This script ran headless from the
-## day it was written, and headless there is no layout pass: the bench reports `size [0, 0]`, a row
-## reports `[1, 18]`, and `Label.get_line_count()` answers **98 drawn lines for a four-line
-## paragraph**, because a Label with no width wraps after every word. `design_row_sheet.py` refuses
-## that dump by name -- rightly, since it would draw the paragraph broken where the client does not
-## break it -- so for as long as this ran headless NOBODY could redraw `design_rows.png`, with or
-## without the live relay the old header blamed for it. The font widths below were the only honest
-## numbers in the dump, because font measurement works headless and layout does not.
+## **THE CAUSE IS A HIDDEN SUBTREE, AND IT IS THE ONLY CAUSE. `--headless` IS FINE.**
 ##
-## `window_shot.gd` and `tools/nacre_tab_budget_probe.gd` both carry a warning about this trap in
-## their headers. This file is the third, and a header is where the last one was.
+## I got this wrong in the first version of this header and in #361's own title, so the correction is
+## here rather than in a commit nobody re-reads. What I saw was real: the bench reported `size [0,0]`,
+## a row `[1, 18]`, and `Label.get_line_count()` answered **98 drawn lines for a four-line
+## paragraph**, because a label with no width wraps after every word. `design_row_sheet.py` refuses
+## that dump by name, rightly. **I attributed it to `--headless` and to the hidden column both, and
+## the two were confounded in every run I had: the column is hidden until a world runs, so I never
+## once measured headless WITH a world up.**
 ##
-## **SO THE TRAP IS A REFUSAL NOW, NOT A WARNING.** A measurement taken off a tree that never laid
-## out is not a worse number; it is a different kind of thing, and it reads as data to everything
-## downstream. `_refuse_if_unlaid` ends the run and names the cause, so the next person meets a
-## sentence instead of a dump that looks fine.
+## Measured since, same script, same world started, the only difference the flag:
 ##
-## **AND LEAVING `--headless` WAS NOT ENOUGH, WHICH THE REFUSAL IS HOW I FOUND OUT.** The first real
-## window run still reported the bench at **1 x 900 px**, because `main.gd:1004` builds the whole HUD
-## column hidden (`_column.visible = false`) and only shows it once a world is running -- the same
-## rule ASSA-231 holds the join screen to. This script used to push designs into a bench that was
-## inside a hidden column, so there was a SECOND reason every number in the dump was fiction, and it
-## would have survived the move to a window untouched. So a world is started here before anything is
-## measured, offline, with no socket and no relay (`_begin_offline`, lifted from
-## `tools/maren_tab_shots.gd`). The designs still come from the dump and not from that world: the
-## world exists to make the column real, and `_rebuild_bench` then puts the dump's designs in it.
+##     windowed    bench [300, 141]   line_count 4   body [300, 81]
+##     --headless  bench [300, 141]   line_count 4   body [300, 81]     byte-identical
+##
+## So Godot lays out headless perfectly well. The real and sufficient cause was that `main.gd` builds
+## the whole HUD column hidden (`_column.visible = false`) and shows it only once a world is running
+## -- the same rule ASSA-231 holds the join screen to -- and since the tabbed panel landed, a tab's
+## body is hidden too unless it is the selected one. A hidden control has no width, which produces
+## every symptom above. **One cause, three doors into it.**
+##
+## This matters beyond tidiness: `art/ask_layout.py::ask_the_engine` re-asks a probe with
+## `--headless`, because that is what CI can run. A probe that genuinely needed a window could never
+## be re-asked, and I nearly wrote that impossibility down as a fact about this one.
+##
+## So a world is started here before anything is measured, offline, with no socket and no relay
+## (`_begin_offline`), and the bench's tab is selected. The designs still come from the dump and not
+## from that world: the world exists to make the column real, and `_rebuild_bench` puts the dump's
+## designs into it.
+##
+## **AND THE TRAP IS A REFUSAL, NOT A WARNING.** A measurement taken off a tree that never laid out is
+## not a worse number; it is a different kind of thing, and it reads as data to everything
+## downstream. `_refuse_if_unlaid` ends the run and names the causes, so the next person meets a
+## sentence instead of a dump that looks fine. `window_shot.gd` and `tools/nacre_tab_budget_probe.gd`
+## carry this as a warning in their headers; a warning is what the last two were.
 ##
 ## THE DESIGNS ARE THE WORLD'S, NOT MINE. `client/tools/button_session.gd -- offline <seed>
 ## designs=<path>` writes this file's input from the offline loop (ASSA-173 slice 1, #357); the older
@@ -172,11 +181,15 @@ func _refuse_if_unlaid(bench: Control) -> bool:
 	print("FAIL  the bench laid out %.0f x %.0f px, so nothing in it has a real width."
 			% [bench.size.x, bench.size.y])
 	print("      Every wrap count and every rect in this dump would be a fact about an unlaid tree,")
-	print("      and it would read as data to the sheet. The known causes, in the order they bit:")
-	print("      1. `--headless`: no layout pass runs at all. Run this WITHOUT it.")
-	print("      2. the HUD column is hidden until a world runs (main.gd `_column.visible = false`),")
-	print("         so a visible window is not enough -- `_begin_offline` must have succeeded.")
-	print("      3. after the tabbed panel lands, the bench is also hidden unless its tab is open.")
+	print("      and it would read as data to the sheet. ONE CAUSE, THREE DOORS INTO IT: a control")
+	print("      that is HIDDEN has no width, and a label with no width wraps after every word.")
+	print("      1. the HUD column is built hidden and shown only once a world runs")
+	print("         (main.gd `_column.visible = false`), so `_begin_offline` must have succeeded.")
+	print("      2. a tab's body is hidden unless it is the selected one -- select `bench`.")
+	print("      3. the bench itself is empty, so there is nothing to lay out.")
+	print("      NOT a cause: `--headless`. Godot lays out fine headless, and this was measured")
+	print("      byte-identical both ways once a world was up. The first version of this list said")
+	print("      otherwise and it was wrong.")
 	print("      column visible: %s" % (_screen._column.visible if "_column" in _screen else "?"))
 	quit(1)
 	return true
