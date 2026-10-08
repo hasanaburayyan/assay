@@ -5489,3 +5489,76 @@ func test_the_join_screen_names_the_game() -> bool:
 					+ "copy of the name and would outlive the game being renamed") % carried)
 	screen.queue_free()
 	return ok
+
+
+## **THE COMMIT BAR IS ONE RECT HOLDING TWO THINGS, THE SENTENCE LEFT AND `Build` RIGHT** (ASSA-332;
+## Maren's §5.4 ruling 3, which moved this rect after slice 1 had shipped it as a 56 px strip).
+##
+## **THE PIXELS ARE NOT CHECKABLE HERE AND THE STRUCTURE IS.** Nothing in this suite has a size
+## (`_place_build_screen`'s docstring: a node's rect is `(0,0,0,0)` until a window lays it out), so
+## `tools/limpet_build_screen_shot.gd` is what measures y 529..641 and Build's 160 px ceiling on a
+## real window. What this holds is the half that would silently come apart in a refactor: `Build`
+## back in the screen's own column, or the sentence drawn under the button instead of beside it.
+func test_the_commit_bar_holds_the_sentence_left_and_build_right() -> bool:
+	var screen := _screen()
+	var ok := true
+	var bar: Control = screen._build_bar
+	if bar == null:
+		ok = _fail("the screen has no commit bar at all")
+	elif screen._build_said.get_parent() != bar or screen._build_act.get_parent() != bar:
+		ok = _fail("the sentence and `Build` are not both in the bar, so they are not one rect")
+	elif bar.get_child(0) != screen._build_said or bar.get_child(1) != screen._build_act:
+		ok = _fail("the bar holds %s; §5.4 puts the sentence left and `Build` right"
+				% [bar.get_children()])
+	elif screen._build_act.size_flags_horizontal != Control.SIZE_SHRINK_END:
+		ok = _fail("`Build` is not pinned to the bar's right end (flags %d), so the sentence's floor "
+				% screen._build_act.size_flags_horizontal + "is not the width it was measured at")
+	elif not is_equal_approx(bar.custom_minimum_size.y, AssayHud.BUILD_COMMIT_BAR):
+		ok = _fail("the bar asks for %.0f px of height and her rect is %.0f"
+				% [bar.custom_minimum_size.y, AssayHud.BUILD_COMMIT_BAR])
+	elif bar.get_parent() != screen._build_title.get_parent().get_parent():
+		ok = _fail("the bar is not a block of the screen beside the title row; it is under %s"
+				% bar.get_parent())
+	if ok:
+		# **AND THE SENTENCE'S FLOOR IS DERIVED FROM THE REAL SCREEN AND THE REAL GUTTER** (box 5): the
+		# 687 Maren measured the wrap at is written down nowhere in the client, so it is asserted here
+		# out of `build_screen_rect`'s own width and `BUILD_GUTTER` itself. Moving either moves this.
+		var world := AssayHud.world_rect()
+		var band := world.end.y - AssayHud.WORLD_CONTROLS_BAND
+		var wide: float = AssayHud.build_screen_rect(world, band).size.x
+		var owed: float = AssayHud.commit_sentence_width(wide, float(screen.BUILD_GUTTER))
+		if owed < 687.0:
+			ok = _fail(("the screen is %.0f px wide with a %d px gutter, so the sentence's floor is "
+					+ "%.0f px, under the 687 Maren measured the wrap at") % [wide, screen.BUILD_GUTTER, owed])
+	screen.queue_free()
+	return ok
+## **THE BUILD SCREEN IS PLACED AGAIN WHEN ITS OWN MINIMUM MOVES, AND A REAL WINDOW IS WHY** (ASSA-332).
+##
+## **WHAT WAS MEASURED, because nothing in this suite can see it.** A `Control`'s `size` is clamped up
+## to its combined minimum at the instant it is assigned, and right after a rebuild that minimum is
+## briefly the whole content -- the rows are in the tree before the `ScrollContainer`s have been told
+## they can absorb them. `tools/limpet_build_screen_shot.gd` in a 1280x720 window: the box was asked
+## for **864 x 592 and came out 864 x 1042**, hanging 450 px past the world's own control band and
+## **covering the status toast by 113 x 32 px** -- the one thing Maren's §1 forbids. One frame later
+## the same box reports a minimum of 276, so neither the rect nor the content was ever wrong.
+##
+## **THIS SUITE LAYS NOTHING OUT**, so every rect here is `(0,0,0,0)` and the pixels are the shot
+## tool's job (it now faults on box-bigger-than-asked, and prints the chain of minimums that pays for
+## the height). What a headless test CAN hold is the connection itself, because the way this defect
+## comes back is somebody deleting a line whose comment they do not believe.
+##
+## **AND IT IS `minimum_size_changed` RATHER THAN `call_deferred`, WHICH I MEASURED AS NO FIX**: the
+## minimum's own recalculation is deferred too, so a deferred placement can run before it and be
+## clamped by the same stale number.
+func test_the_build_screen_is_replaced_when_its_own_minimum_moves() -> bool:
+	var screen := _screen()
+	var ok := true
+	var box: Control = screen._build_box
+	if box == null:
+		ok = _fail("the screen has no build box at all")
+	elif not box.minimum_size_changed.is_connected(screen._place_build_screen):
+		ok = _fail("nothing re-places the build screen when its minimum drops, so the size assigned "
+				+ "while the minimum was stale is the size it keeps -- measured at 864x1042 against a "
+				+ "rect of 864x592, over the status toast")
+	screen.queue_free()
+	return ok
