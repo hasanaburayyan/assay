@@ -1727,6 +1727,75 @@ func test_the_hovered_outline_paints_no_pixel_of_a_tile_it_does_not_name() -> bo
 	return true
 
 
+## **A PERSON STANDING ON A MACHINE KEEPS THEIR BODY** (ASSA-278 box 7, Maren's size ruling at 06:49
+## UTC: `BUILDING_MARK_PX` 16 -> 20, *"the smallest value that meets the bar I set -- 85.3 / 69.2,
+## hole 12x12, rim untouched"*).
+##
+## **THIS IS THE BAR AS A TEST, AND IT IS THE ONE THING ASSA-278 NEVER HAD.** The inward rim shipped
+## on 1d8b6af because every band pixel got a dark neighbour, which was true and cost a partner on a
+## 1x1 **69.2% of their cross down to 38.5%** -- a number that existed only in a tool nobody runs in
+## CI. ASSA-236's whole case for the hollow frame was that it ENDED that trade, and nothing in the
+## suite noticed it coming back. So the share is asserted here, at the painter's own geometry.
+##
+## **WHY A SHARE AND NOT A GEOMETRIC CONTAINMENT.** At 20 the clear hole is 12x12 and a body's diamond
+## reaches 8 px from the centre on each axis, so four tips still poke into the band -- the hole does
+## NOT enclose the body, and asserting that it did would fail a design Maren has ruled correct. What
+## changed at 20 is WHICH band takes those tips: at 16 the rim took them on top of what the band
+## already took (47.1% / 38.5%), and at 20 the rim sits inside the body's own reach and takes exactly
+## what the band took before it existed (85.3% / 69.2%). The share is the only honest statement of it.
+##
+## WHAT IT CANNOT SEE: ink, antialiasing, or whether `_draw` paints these lists. It is an area count
+## over the painter's rects, the same method as `tools/person_under_machine.gd`, which is where the
+## sweep that found 20 lives.
+func test_a_person_standing_on_a_machine_keeps_their_body() -> bool:
+	var cell := 9.0
+	var origin := Vector2(24.0, 24.0)
+	var tile := Vector2i(12, 7)
+	# The tile's MIDDLE: both marks are built about the same point, because the play loop plants on
+	# the tile you are STANDING on, so this is the normal case and not a contrived one.
+	var at := origin + (Vector2(tile) + Vector2(0.5, 0.5)) * cell
+	var mark := AssayHud.building_mark({"pos": tile, "footprint": Vector2i(1, 1)}, cell, origin)
+	# THE THREE LISTS `_draw` PAINTS FOR ONE MACHINE, in its order and from the same functions.
+	var ink: Array[Rect2] = AssayHud.frame_bands(mark["keyline_rect"], AssayHud.MARK_KEYLINE_PX)
+	ink.append_array(AssayHud.frame_bands(mark["rect"], float(mark["stroke"])))
+	ink.append_array(AssayHud.frame_bands(mark["hole_rect"], AssayHud.MARK_KEYLINE_PX))
+	# Maren's bar, as the shares she wrote. A floor and not an equality: a change that leaves MORE of
+	# a person is not a defect, and `is_equal_approx` on a sampled area would be a trap.
+	for case in [{"mine": true, "who": "you", "floor": 0.85}, {"mine": false, "who": "a partner",
+			"floor": 0.69}]:
+		var body: PackedVector2Array = AssayHud.player_mark(at, bool(case["mine"]))["points"]
+		var total := 0
+		var kept := 0
+		# Sampled at a quarter pixel, not a pixel centre: a 1x1's mark sits on half-pixels at cell 9
+		# and on integers at cell 32, and a sample that lands on an edge is a coin toss.
+		var box := Rect2(body[0], Vector2.ZERO)
+		for point in body:
+			box = box.expand(point)
+		var y := floorf(box.position.y) + 0.25
+		while y <= box.end.y:
+			var x := floorf(box.position.x) + 0.25
+			while x <= box.end.x:
+				var point := Vector2(x, y)
+				if Geometry2D.is_point_in_polygon(point, body):
+					total += 1
+					if not _in_any(ink, point):
+						kept += 1
+				x += 1.0
+			y += 1.0
+		if total == 0:
+			return _fail("%s has a body of 0 sampled pixels, so this test looked at nothing"
+					% case["who"])
+		var share := float(kept) / float(total)
+		if share < float(case["floor"]):
+			return _fail(("%s standing on a 1x1 machine keeps %.1f%% of their body (%d of %d px) and "
+					+ "Maren's bar is %.0f%%. A machine's mark may take space from the GROUND for "
+					+ "free and never from a person (11.14): at `BUILDING_MARK_PX` 16 the inward rim "
+					+ "took a partner from 69.2%% to 38.5%%, which is the trade ASSA-236's hollow "
+					+ "frame was filed to END (ASSA-278)")
+					% [case["who"], 100.0 * share, kept, total, 100.0 * float(case["floor"])])
+	return true
+
+
 ## True when [param point] is inside any of [param rects]; the painter's bands as drawn, so a gap
 ## between two of them is a gap here too.
 func _in_any(rects: Array[Rect2], point: Vector2) -> bool:
@@ -1937,21 +2006,41 @@ func test_a_machine_on_a_letter_is_told_apart_from_a_machine_beside_one() -> boo
 ## twice as wide, 2px where `map_cell` floors. So the footprint sets the size and `BUILDING_MARK_PX`
 ## is the floor.
 ##
-## **IT IS THE SAME NUMBER AS `PLAYER_MARK_PX`, AND THE EARLIER VERSION OF THIS TEST DEMANDED IT BE
-## SMALLER** (ASSA-203). I had written `BUILDING_MARK_MIN_PX 12` and a test asserting
-## `floor < PLAYER_MARK_PX`, reasoning a one-tile machine must not be drawn bigger than a person.
-## Cove's answer is equality, not inequality: the same box, so the SHAPE does all the telling, which
-## is the half that survives greyscale. Their rendered sizes are the evidence -- at 14 the diamond
-## reads lighter than a player, at 20 it outweighs one. **So the assertion is now `==`, and a mutation
-## that drifts either constant alone reddens it.**
+## **THIS TEST DEMANDED THE TWO CONSTANTS BE EQUAL AND MAREN SPENT THAT EQUALITY ON 2026-10-08.**
+## Its history, because the assertion has now been all three things:
 ##
-## WHAT THIS CANNOT SEE: whether 16 is the right number. That is a judgement on a picture and it is
-## Maren's, made at 1x on `shared/assay/cove-assa193/assa-193-diamond-sizes-1x.png`.
-func test_a_building_mark_has_a_floor_and_it_is_the_players_own_size() -> bool:
-	if absf(AssayHud.BUILDING_MARK_PX - AssayHud.PLAYER_MARK_PX) > 1e-4:
-		return _fail(("the building floor is %.0fpx and a player is %.0fpx. Cove sized these EQUAL so "
-				+ "a building and a person occupy the same box and the shape does the telling; one of "
-				+ "them has moved alone.") % [AssayHud.BUILDING_MARK_PX, AssayHud.PLAYER_MARK_PX])
+## - ASSA-203: `floor < PLAYER_MARK_PX`, mine, reasoning a one-tile machine must not be drawn bigger
+##   than a person.
+## - ASSA-193: `==`. Cove's answer was equality, not inequality -- the same box, so the SHAPE does all
+##   the telling, which is the half that survives greyscale. *"At 14 the diamond reads lighter than a
+##   player, at 20 it outweighs one."*
+## - **ASSA-278, today: `>`, by Maren's ruling, `BUILDING_MARK_PX` 20 against a person's 16.** Two
+##   constants at the same value turned out to be a COLLISION and not a harmony: at 16 a person's body
+##   is exactly inscribed in a 1x1's frame, so the inward rim ASSA-278 needed had nowhere to go but
+##   onto whoever was standing there -- a partner's cross from 69.2% to 38.5%. 20 is the smallest
+##   value at which the rim costs a person nothing the band was not already costing them.
+##
+## **AND THE SENTENCE HER RULING OVERRULES WAS EVIDENCE OF MINE, NOT TASTE, SO IT GETS AN ANSWER:** "at 20 it
+## outweighs one" was measured on a FILLED DIAMOND and this mark has been a hollow frame since
+## ASSA-236. Re-measured in mark pixels at cell 9: the frame is 112 px at 16 and 144 px at 20, against
+## a body's 136 px and a partner's 156 px. So the machine does now outweigh YOU, by 6% -- my old
+## claim was right about the direction. It is a price her ruling spends, and the number is written
+## here so that it is spent knowingly rather than discovered by a reader later.
+##
+## The relationship is still asserted rather than left to drift: a mutation moving either constant
+## alone reddens this, and `test_a_person_standing_on_a_machine_keeps_their_body` holds the share that
+## is the whole reason for the gap.
+##
+## WHAT THIS CANNOT SEE: whether 20 is the right number at 1x. That is a judgement on a picture and it
+## is Maren's, against `shared/assay/cove-assa193/assa-193-diamond-sizes-1x.png` and the person
+## shares in `tools/person_under_machine.gd`.
+func test_a_building_mark_has_a_floor_and_it_clears_a_persons_own_box() -> bool:
+	if AssayHud.BUILDING_MARK_PX <= AssayHud.PLAYER_MARK_PX:
+		return _fail(("the building floor is %.0fpx and a person is %.0fpx. These were EQUAL until "
+				+ "ASSA-278, and equality is what made them collide: a body exactly inscribed in a "
+				+ "1x1's frame leaves the inward rim nowhere to go but onto the person standing "
+				+ "there (a partner 69.2%% -> 38.5%%). The floor must now CLEAR a person's box.")
+				% [AssayHud.BUILDING_MARK_PX, AssayHud.PLAYER_MARK_PX])
 	for cell: float in [2.0, 4.5, 9.0]:
 		var span: Vector2 = AssayHud.building_mark({"pos": Vector2i(1, 1),
 				"footprint": Vector2i(1, 1)}, cell, Vector2.ZERO)["span"]
