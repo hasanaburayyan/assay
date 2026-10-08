@@ -27,11 +27,17 @@ UNGATED -- the probe this whole item was found while building -- because the gat
 `sim-game/tools/hud_in_a_gate.sh` and the shell script runs the probe. A tool is gated when it is
 reachable from a non-comment workflow line, through however many named scripts it takes.
 
-**AND COMMENTS DO NOT COUNT, which is the other half of the same mistake.** `window_shot.gd` is
-named in `build.yml` -- inside a comment explaining why nothing runs it. A check satisfied by a
-line other than the one it is about is a check that is strongest where the bug is least likely.
-YAML comment lines are stripped before anything is searched, and `client/tools/` is the one
-directory this reads: a tool named in a comment reads as not run, which is the truth.
+**AND PROSE DOES NOT COUNT, which is the other half of the same mistake, found three times on
+one tool.** `window_shot.gd` is named in `build.yml` inside a comment explaining why nothing runs
+it; it is named in THIS file's docstring for the same reason; and the long way round, a real step
+runs `art/window_alpha.py --selftest`, whose MODULE DOCSTRING calls `art/shoot_window_alpha.sh`
+"the documented shoot script" -- and that script really does run `res://tools/window_shot.gd`. So
+a two-hop chain of prose ending in one true invocation reported the tool as gated. A check
+satisfied by a line other than the one it is about is strongest where the bug is least likely.
+Hence: YAML comment lines go, `#` lines in every followed script go, and **Python docstrings go**
+(`without_docstrings`). Ordinary string literals STAY, because `subprocess.run(["art/build.py"])`
+is an invocation and dropping it would invent the opposite error -- a tool that CI really runs
+reading as local.
 
 THREE CLASSES, because two would force a false declaration on three files:
 
@@ -47,15 +53,22 @@ That last column is the point. A free-text reason nobody checks is a comment; ev
 here carries at least one claim this script can measure against the file itself, so a wrong
 declaration is caught by machine and only the WORDING rests on the author.
 
+**`gated` MEANS A GATE RUNS IT, NOT THAT CI TOUCHES THE FILE.** Every one of these 45 is
+*compiled* in CI by `tools/check_every_script.sh`, which finds them with a glob -- so it names no
+tool by path and `reaches` is right to ignore it. Compiling a probe proves it parses, not that
+anybody ever asked it a question.
+
 WHAT IT DOES NOT COVER, said out loud. It cannot tell a tool that is wired and BROKEN from one
 that is wired and working -- that is the job of the gate step itself -- and like its `art/`
 counterpart it cannot survive a commit that removes a tool, its step and this check's own step
-together. What it closes is the likelier half: a declaration and the wiring drifting apart in
+together. A `.sh` heredoc is not stripped, so a tool named inside one reads as run; none is
+today. What it closes is the likelier half: a declaration and the wiring drifting apart in
 either direction.
 
 Exit codes match the other checks: 0 green, 1 the tree and the declarations disagree, 2 NO
 VERDICT (something it needs is not where it expects), which fails the job rather than passing.
 """
+import ast
 import re
 import sys
 from pathlib import Path
@@ -64,6 +77,13 @@ TOOLS = Path(__file__).resolve().parent
 ROOT = TOOLS.parent.parent.parent
 WORKFLOW = ROOT / ".github/workflows/build.yml"
 SIM_GAME = TOOLS.parent.parent
+CLIENT = TOOLS.parent
+# WHERE A RELATIVE PATH IN A STEP IS ROOTED. A step writes `tools/check_every_script.sh` and sets
+# `working-directory: sim-game/client`, so the repo root and `sim-game/` both miss it and that
+# script's body was never read. Three bases, every one that resolves gets followed: guessing the
+# `working-directory` per step would be a YAML parser, and reading one file too many is the safe
+# direction once prose is stripped.
+BASES = (ROOT, SIM_GAME, CLIENT)
 
 GATED, LOCAL, LIBRARY = "gated", "local", "library"
 # The declaration, anywhere in a tool's header. `--` separates the class from its reason because
@@ -87,6 +107,43 @@ def uncommented(text):
     return "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
 
 
+def without_docstrings(source):
+    """Python source with its module/class/function docstrings blanked out.
+
+    THE PROSE A `#` STRIP CANNOT SEE. `art/window_alpha.py` is run by a real step, and its module
+    docstring names the shoot script that runs `window_shot.gd` -- not to call it, to tell a
+    reader where to look. Blanked rather than deleted so line numbers still match the file if
+    this ever has to be debugged.
+
+    Unparseable source is returned whole: dropping nothing risks a false `gated`, which this
+    script reports and a human then reads, where dropping everything would risk a silent `local`.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return source
+    prose = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = getattr(node, "body", None)
+        if not body:
+            continue
+        first = body[0]
+        if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)):
+            prose.update(range(first.lineno, (first.end_lineno or first.lineno) + 1))
+    return "\n".join("" if n in prose else line
+                     for n, line in enumerate(source.splitlines(), 1))
+
+
+def executable_text(rel, text):
+    """One followed file, with everything that is talk rather than execution removed."""
+    if rel.endswith(".py"):
+        text = without_docstrings(text)
+    return uncommented(text)
+
+
 def gate_text():
     """Everything a gate actually executes: the workflow, plus the scripts it names, transitively.
 
@@ -96,23 +153,26 @@ def gate_text():
         return None
     # SELF IS SKIPPED, and not as tidiness: build.yml names this file, so without it this
     # script's own prose about which tools are local would read as the gate running them.
-    seen, pending, out = {"client/tools/%s" % SELF}, [uncommented(WORKFLOW.read_text())], []
+    seen = {"client/tools/%s" % SELF}
+    pending, out = [(".yml", uncommented(WORKFLOW.read_text()))], []
     while pending:
-        text = pending.pop()
-        out.append(uncommented(text))
+        rel, text = pending.pop()
+        text = executable_text(rel, text)
+        out.append(text)
         # ONLY WHAT A STEP ACTUALLY INVOKES, and only by the path it was written with. Resolving
         # a bare filename with `rglob` was the first cut and it dragged in every script in the
         # tree that any followed file happened to mention, so `rules_refusal_check.sh` -- which
         # no workflow names -- became "the gate" and took `join_probe.gd` with it. A reference
-        # with no directory in it is prose.
-        for rel in re.findall(r"[\w.-]+/[\w./-]+\.(?:sh|py)", uncommented(text)):
-            if rel in seen:
+        # with no directory in it is prose. So is one in a comment or a docstring, which is why
+        # the search below runs on the stripped text and not on the raw file.
+        for found in re.findall(r"[\w.-]+/[\w./-]+\.(?:sh|py)", text):
+            if found in seen:
                 continue
-            seen.add(rel)
-            for base in (ROOT, SIM_GAME):
-                found = base / rel
-                if found.is_file():
-                    pending.append(found.read_text())
+            seen.add(found)
+            for base in BASES:
+                path = base / found
+                if path.is_file():
+                    pending.append((found, path.read_text()))
                     break
     return "\n".join(out)
 
