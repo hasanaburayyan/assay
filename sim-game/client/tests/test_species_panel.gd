@@ -270,6 +270,71 @@ func test_a_species_row_answers_before_it_reports() -> bool:
 	return ok
 
 
+## **THE VERDICT IS INDENTED TO ITS OWN NAME** (ASSA-264, Maren's ruling of 2026-10-08 11:02Z, the
+## second half of ORDER BEFORE RANK).
+##
+## Order alone left the verdict flush with the readings TABLE: measured at 1x, its ink started at
+## x947 and the property labels under it at x946, while the name it answers for started at x970. Her
+## reason for wanting the move is also her reason for still refusing a third ink: flush AND same-grey
+## are two signals both saying *same kind of fact*.
+##
+## **NOTHING IS TYPED HERE, WHICH IS THE WHOLE POINT.** The expected inset is rebuilt from the two
+## numbers that put the NAME where it is -- the disc's own box and the head's own gap -- read off the
+## row the panel really built. A literal 24 in this file would agree with a literal 24 in `main.gd`
+## forever, including the day the disc grows and both are wrong together. So this test passes
+## unchanged if `GLYPH_BOX_PX` is retuned, and reddens the moment the verdict stops tracking it.
+##
+## **BY NAME AND BY COMPLEMENT, NEVER BY INDEX** (ASSA-117): the head is found through the name label
+## it holds, and the disc is "the head's other child". `get_theme_constant` with no type argument is
+## honest for the one reason ASSA-312 left standing -- that separation is an OVERRIDE on that node,
+## and an override is consulted before the type chain.
+##
+## **WHAT THIS TEST DOES NOT CLAIM.** That the TABLE did not move with it is a pixel fact and it is
+## measured on the 1x shot, not here; the guard in the suite is
+## `test_a_species_row_answers_before_it_reports`, which reddens if the readings stop being a direct
+## child of the row -- which is what wrapping them in a margin would do.
+func test_a_species_verdict_is_indented_to_its_own_name() -> bool:
+	var screen := _joined()
+	var ok := true
+	var judged := 0
+	for row in _rows(screen):
+		var verdict := row.find_child(screen.SPECIES_TAGS, true, false) as Label
+		if verdict == null:
+			continue
+		var name_line := row.find_child(screen.SPECIES_LINE, true, false) as Label
+		var head := name_line.get_parent() as Control
+		var disc: Control = null
+		for child in head.get_children():
+			if child != name_line:
+				disc = child as Control
+		if disc == null:
+			ok = _fail("%s has no disc beside its name, so there is no offset to indent to"
+					% _title_of(screen, row))
+			break
+		var want: float = disc.custom_minimum_size.x + float(head.get_theme_constant(&"separation"))
+		# THE BOUND ON THIS DETECTOR: a row whose name sits at the row's own left edge has nothing to
+		# indent to, and comparing 0 against 0 would call an unindented verdict correct.
+		if want <= 0.0:
+			ok = _fail(("%s puts its name %.1f px from the row's edge, so this test would pass a "
+					+ "verdict that was never indented") % [_title_of(screen, row), want])
+			break
+		var box := verdict.get_theme_stylebox(&"normal", &"Label")
+		if box == null:
+			ok = _fail("%s's verdict has no `normal` stylebox to carry an inset" % _title_of(screen, row))
+			break
+		if absf(box.content_margin_left - want) > 0.01:
+			ok = _fail(("%s's verdict starts %.1f px into the row where its own name starts at %.1f: "
+					+ "the answer is aligned to the table instead of to the thing it is about")
+					% [_title_of(screen, row), box.content_margin_left, want])
+			break
+		judged += 1
+	if ok and judged == 0:
+		ok = _fail(("not one of the %d species rows carries a verdict line, so this test asserted "
+				+ "nothing about the indent") % _rows(screen).size())
+	screen.queue_free()
+	return ok
+
+
 ## THE TWO FACTS SHOW AS TAGS, NOT AS SENTENCES (ruling 1), and a tag only appears for a species the
 ## sim says it is true of -- the client never negates and never ranks.
 func test_the_boolean_facts_show_as_tags_only_where_the_sim_says_true() -> bool:

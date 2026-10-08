@@ -2760,9 +2760,42 @@ func _species_row(species: Dictionary) -> Control:
 	if not tags.is_empty():
 		var verdict := _note("[%s]" % "] [".join(tags))
 		verdict.name = SPECIES_TAGS
+		_indent_under_the_name(verdict, head, disc)
 		row.add_child(verdict)
 	row.add_child(_readings_table(species))
 	return row
+
+
+## **THE VERDICT STARTS WHERE ITS NAME STARTS** (ASSA-264, Maren's ruling of 2026-10-08 11:02Z, the
+## second half of ORDER BEFORE RANK).
+##
+## Moving the verdict under the name fixed the 80 px but left it **flush with the readings table**:
+## measured on a 1x real window, the verdict's ink began at x947 and the property labels under it at
+## x946, while the name it belongs to began at x970 -- 24 px right, because the name sits past its
+## 18 px map disc. So the line read as the table's first row rather than as the name's answer.
+##
+## **THE REASON IS HERS AND IT IS WHY THERE IS STILL NO THIRD INK.** A verdict that can never change
+## and a reading that will are different kinds of fact; flush and same-grey are two signals both
+## saying *same kind*. Alignment is the second free signal, spent before a colour.
+##
+## **THE NUMBER IS READ OFF THE ROW, NEVER TYPED.** The disc's own box plus the head's own gap are
+## what put the name where it is, so they are what put the verdict there too: change `GLYPH_BOX_PX`
+## or the gap and this follows, with nothing to remember. A typed 24 would be correct today and a
+## silent lie the first time the disc grew.
+##
+## The no-type-argument `get_theme_constant` read is honest for the one reason ASSA-246 leaves open:
+## this separation is an OVERRIDE on this very node, and an override is consulted before the type
+## chain, so there is no unpoked variation to resolve through (Limpet, ASSA-312).
+##
+## **AND NOTHING ELSE MOVES** -- in particular the readings table is not shifted to meet it, because
+## ASSA-288's axis geometry is measured and 24 px would re-derive it. The inset narrows the verdict's
+## own wrap width by exactly those 24 px, which is the cost of an indent and not a bug: a shift
+## without the narrowing would push the longest verdict off the column's right edge (ASSA-98).
+func _indent_under_the_name(line: Label, head: HBoxContainer, disc: Control) -> void:
+	var inset := disc.custom_minimum_size.x + float(head.get_theme_constant(&"separation"))
+	var pad := line.get_theme_stylebox(&"normal", &"Label").duplicate() as StyleBox
+	pad.content_margin_left = inset
+	line.add_theme_stylebox_override(&"normal", pad)
 
 
 ## **THE SIX READINGS AS A TABLE WITH AN AXIS, WHERE THEY WERE ONE WRAPPED SENTENCE** (ASSA-288,
