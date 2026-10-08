@@ -1,4 +1,9 @@
 extends RefCounted
+
+#: THE SUITE'S ONE THEME-POKE SITE (ASSA-312). A project-themed control resolves the PLAIN
+#: type's entries until it gets `NOTIFICATION_THEME_CHANGED`, which frames do not deliver, so
+#: every headless theme read in here goes through this.
+const Poke := preload("res://tests/theme_poke.gd")
 ## THE SCREEN ITSELF, INSTANTIATED. `test_hud.gd` checks the words and colours; this checks that they
 ## are wired to anything at all.
 ##
@@ -1446,33 +1451,35 @@ func _panel_surface() -> Color:
 ## blind to every heading in the window while staying green. One poke here fixes every caller at
 ## once, and no caller has to remember.
 func _drawn_color(label: Label) -> Color:
-	_poke_theme(label)
-	var c := label.get_theme_color(&"font_color")
-	var m := label.modulate
-	return Color(c.r * m.r, c.g * m.g, c.b * m.b, c.a * m.a)
+	return Poke.drawn_color(label)
 
 
-## THE ONE PLACE THIS HARNESS POKES A CONTROL, AND IT IS ONE PLACE SO THAT DELETING IT HAS A LEVER.
+## **THE POKE ITSELF MOVED OUT OF THIS FILE (ASSA-312), AND THESE THREE ARE NOW NAMES FOR IT.**
 ##
 ## ASSA-246 shipped the poke inside `_drawn_color` and disclosed that nothing could catch its
 ## removal: every `Label` variation's ink coincides with plain `Label`'s, so a colour assertion is
 ## blind to it, and the one test that reads a property where the two types DO differ -- `font_size`,
 ## `Heading` 15 against `Label` 13 -- poked its own probe by hand. So it proved that poking works,
-## not that the helper does it. Three hand-rolled pokes and a removal that stayed green.
+## not that the helper does it. ASSA-252 fixed that by routing the size read through the helper.
 ##
-## Now every read goes through here, and the `font_size` assertion goes through `_drawn_font_size`,
-## so deleting the `notification()` below reddens by name on today's build with nothing retuned.
+## **WHAT MOVED IT OUT WAS A SECOND FILE NEEDING IT.** ASSA-267 removed the override that was the
+## only thing propping up `test_tab_strip.gd`'s theme read, and 12 assertions went red against a
+## theme that was already correct. Two sites is where "a shared helper rather than call sites each
+## remembering" -- ASSA-246's own words -- stops being theoretical.
+##
+## These three wrappers stay because ~30 call sites in this file use them and renaming those would
+## be a diff nobody could review for the thing it is actually about. The poke lives in
+## `tests/theme_poke.gd`, `check_one_theme_poke.py` fails if it reappears anywhere else in
+## `tests/`, and deleting it from the helper still reddens by name on the `font_size` lever.
 func _poke_theme(control: Control) -> Control:
-	control.notification(Control.NOTIFICATION_THEME_CHANGED)
-	return control
+	return Poke.poke(control)
 
 
 ## The font size a label DRAWS, which is not what a headless read reports until it is poked. Same
 ## helper as `_drawn_color`, so the two cannot drift apart, and this is the read that gives the poke
 ## a lever: `Heading` declares 15 and plain `Label` 13, so an un-poked `Heading` is off by 2px.
 func _drawn_font_size(label: Label) -> int:
-	_poke_theme(label)
-	return label.get_theme_font_size(&"font_size")
+	return Poke.drawn_font_size(label)
 
 
 ## THE SURFACE ACTUALLY BEHIND A LABEL, ASKED OF THE BUILT TREE (ASSA-152, Maren's amended box 3).
@@ -3438,7 +3445,17 @@ func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> b
 			x += 1.0
 		y += 1.0
 	var covered := float(on_letter) / float(maxi(mark_px, 1))
-	if covered < 0.8:
+	# **THIS FLOOR WAS 0.8 AND ASSA-293 MOVED THE GEOMETRY UNDER IT, so the number is amended rather
+	# than the premise quietly dropped.** Holding the letter at the size that fits the smallest patch
+	# takes this deposit's letter from 32 px to 25, and its line box from 25x35 to 23x27 -- so a 20 px
+	# frame on the same tile now lands 72.4% inside the box instead of clearing 80%. The collision is
+	# not smaller in kind (the mark is still on the middle of the letter, which is what the paint
+	# order below is about); the BOX shrank around it, and most of a hollow frame's ink is on its
+	# perimeter, which is exactly where a smaller box cuts. The floor goes to 0.65: still high enough
+	# that a letter and a mark drifting apart fails here, and not pinned to 72.4, because the box's
+	# height is a font metric (`get_ascent`) and a font change would move it without moving anything
+	# this test is about.
+	if covered < 0.65:
 		ok = _fail(("a machine on the deposit's own centre tile %s puts %.1f%% of its frame (%d of "
 				+ "%d sampled px) inside the letter's box %s: the case this item is about is not in "
 				+ "this test") % [tile, covered * 100.0, on_letter, mark_px, box])
@@ -3793,6 +3810,88 @@ func test_a_deposit_and_its_letter_are_drawn_on_the_middle_of_the_tile_they_name
 			ok = _fail("the shot's disc table no longer takes its centre from the screen, so a "
 					+ "measurement off its JSON can be half a tile from what was painted")
 	screen.queue_free()
+	return ok
+
+
+## **EVERY SPECIES LETTER IN A FRAME IS THE SAME SIZE, AND IT IS THE SIZE THAT FITS THE SMALLEST
+## PATCH THE SIM CAN ROLL** (ASSA-293, Maren's ruling 11.35: *"the letter's size means nothing and is
+## held constant"*).
+##
+## **WHY A TEST AND NOT A CONSTANT:** the defect was not a wrong number, it was a letter COPYING the
+## disc's channel. `glyph_size(radius x cell)` clamps at 32, so at cell 9 a radius-3 and a radius-4
+## patch drew the identical letter while a radius-2 one drew 25 -- three facts, two states, 63.6% of
+## deposits over ten seeds wearing a size that distinguished nothing (`tools/letter_size_spread.gd`).
+## Two cold readers decoded the surviving difference in two different wrong directions (Nacre:
+## quantity; Limpet: hover). So what has to hold is a property over a WHOLE FRAME, which a unit test
+## on `glyph_size` cannot state: no two letters on one map differ.
+##
+## **TWO SEEDS AND TWO CELL SIZES.** One seed could happen to roll a single radius; `test_hud.gd::
+## test_the_held_letter_fits_the_smallest_patch_the_sim_rolls` is what holds the radii spread itself.
+## Two cells, because "one size" must not mean "a constant 25" -- the held size is a function of the
+## cell, and a hard-coded 25 would pass this at cell 9 and lie at every other zoom.
+##
+## WHAT IT CANNOT SEE: whether 25 px is legible, or whether a letter that no longer grows with its
+## patch still reads as belonging to it. Both are 1x window questions and live on ASSA-273's figures.
+func test_every_species_letter_on_one_map_is_drawn_at_one_size() -> bool:
+	var font := ThemeDB.fallback_font
+	var ok := true
+	var checked := 0
+	for seed_text: String in ["777042", "63"]:
+		if not ok:
+			break
+		var screen := _joined_screen(seed_text)
+		screen._show_close_up(false)
+		screen._refresh()
+		if screen._close_up or not screen._sim.running():
+			screen.queue_free()
+			return _fail(("premise: close_up %s, running %s on seed %s -- `_draw` returns before any "
+					+ "letter on either") % [screen._close_up, screen._sim.running(), seed_text])
+		var deposits: Array = screen._sim.deposits()
+		for cell: float in [9.0, 23.0]:
+			screen._cell = cell
+			var want := AssayHud.glyph_size_held(cell)
+			var sizes := {}
+			var radii := {}
+			for entry in screen._glyph_marks(deposits, font):
+				var mark: Dictionary = entry
+				sizes[int(mark["size"])] = true
+				checked += 1
+			for raw in deposits:
+				var deposit: Dictionary = raw
+				if int(deposit.get("amount", 0)) > 0:
+					radii[int(deposit.get("radius", 1))] = true
+			if sizes.is_empty():
+				ok = _fail(("premise: seed %s paints no species letter at %.0fpx a tile, so there is "
+						+ "nothing to measure") % [seed_text, cell])
+				break
+			if sizes.size() > 1:
+				var found := sizes.keys()
+				found.sort()
+				ok = _fail(("seed %s paints %d different letter sizes on one map at %.0fpx a tile "
+						+ "(%s). A letter's size means nothing (ASSA-293), so two letters that differ "
+						+ "are a channel a player will try to decode -- and the two cold readers on "
+						+ "file decoded it as quantity and as hover, both wrong.")
+						% [seed_text, sizes.size(), cell, found])
+				break
+			if int(sizes.keys()[0]) != want:
+				ok = _fail(("seed %s draws its letters at %d px and the size that fits the smallest "
+						+ "patch the sim can roll is %d px at %.0fpx a tile. Sized for anything bigger, "
+						+ "a letter overflows the narrowest patch and reads as a label for the tile "
+						+ "next door, which is `glyph_size`' own rule.")
+						% [seed_text, int(sizes.keys()[0]), want, cell])
+				break
+			# **THE PREMISE THAT MAKES THE ASSERTION ABOVE WORTH ANYTHING**, and it is the half a
+			# "sizes.size() == 1" check silently drops: if every deposit in frame happens to share one
+			# radius, one size proves nothing at all.
+			if radii.size() < 2:
+				ok = _fail(("premise: seed %s rolls only %d distinct deposit radius at %.0fpx a tile, "
+						+ "so one letter size could be an accident of the world rather than the rule")
+						% [seed_text, radii.size(), cell])
+				break
+		screen.queue_free()
+	if ok and checked < 8:
+		ok = _fail(("only %d letters were measured over two seeds and two cell sizes, too few for a "
+				+ "claim about a whole frame") % [checked])
 	return ok
 
 
