@@ -15,6 +15,20 @@ use crate::types::PlayerId;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SpeciesId(pub u8);
 
+/// Whether a species index names a species of this world.
+///
+/// ONE GATE, NAMED ONCE (ASSA-43's lesson, applied before it bit). `step`
+/// prechecks every command that carries a species index, and
+/// [`crate::assembly::plan`] has to ask the same question before it weighs
+/// anything, because both index `World::species` directly afterwards. Those
+/// were going to be two `>=` comparisons that merely happened to agree.
+///
+/// Never trust a client's index: an item naming species 300 is a bug or an
+/// attack, not a request.
+pub fn known_species(species: &[MineralSpecies], id: SpeciesId) -> bool {
+    usize::from(id.0) < species.len()
+}
+
 /// The six numbers that describe a species. Every one of them is on
 /// [`SHEET_SCALE`], which is the pair a surface drawing one as a bar reads
 /// (`debug::reading_scale`) — this line used to say "All 1–100", which was
