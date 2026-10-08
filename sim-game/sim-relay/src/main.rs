@@ -403,11 +403,23 @@ impl Relay {
                 if let Some(&(_, expected)) = ours
                     && expected != hash
                 {
+                    // THE SAME TWO STRINGS GO TO THE LOG AND DOWN THE WIRE
+                    // (ASSA-190). The host has always known both hashes and
+                    // sent neither, so a peer could say only "we diverged" and
+                    // never show the evidence. Formatted once by
+                    // `sim_net::hash_hex` so the log a host reads and the band
+                    // a player reads cannot spell one hash two ways.
+                    let reported = sim_net::hash_hex(hash);
+                    let expected = sim_net::hash_hex(expected);
                     self.log(format!(
-                        "DESYNC: {} reported {hash:016x} for tick {tick}, host has {expected:016x}",
+                        "DESYNC: {} reported {reported} for tick {tick}, host has {expected}",
                         j.name
                     ));
-                    let _ = conn.out.send(ServerMsg::Desync { tick });
+                    let _ = conn.out.send(ServerMsg::Desync {
+                        tick,
+                        reported,
+                        expected,
+                    });
                 }
             }
         }

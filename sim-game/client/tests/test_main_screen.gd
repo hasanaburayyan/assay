@@ -389,18 +389,66 @@ func test_play_solo_neither_reads_nor_wipes_a_typed_host() -> bool:
 	return ok
 
 
-## A desync is unrecoverable in the demo, so it is a failure, not narration.
-func test_a_desync_is_reported_as_a_failure() -> bool:
+## A desync is a failure and not narration -- the session really did end.
+##
+## **AND IT CARRIES ITS EVIDENCE NOW** (ASSA-190, protocol 10): the tick and BOTH hashes. The
+## host's hash did not exist on this client until the message grew it, so a desync could only ever
+## say "we diverged", which is indistinguishable from a bad connection. A determinism bug that reads
+## as a network problem is the one class of bug this game cannot afford to mistake, so the two
+## numbers are asserted on the screen rather than trusted to the signal.
+##
+## **IT MUST NOT READ AS A DROPPED CABLE EITHER.** `_on_link_failed`'s sentences are about a socket;
+## this one is about two worlds disagreeing, and the suite is where that distinction is kept.
+func test_a_desync_is_reported_as_a_failure_with_both_hashes() -> bool:
 	var screen := _screen()
-	screen._client.desynced.emit(140)
+	screen._client.desynced.emit(140, "aaaaaaaaaaaaaaa1", "bbbbbbbbbbbbbbb2")
 	var said: String = screen._status.text
 	var colour: Color = _drawn_color(screen._status)
 	screen.queue_free()
 	if not said.contains("140"):
 		return _fail("a desync at tick 140 was reported as %s" % said)
+	if not said.contains("aaaaaaaaaaaaaaa1") or not said.contains("bbbbbbbbbbbbbbb2"):
+		return _fail("a desync must name both hashes, ours and the host's: %s" % said)
+	if said.to_lower().contains("connection") or said.to_lower().contains("closed the"):
+		return _fail("a desync must not read as a connection failure: %s" % said)
 	if colour != AssayHud.status_color(AssayHud.Say.FAILED):
 		return _fail("a desync is coloured %s, not the failed colour" % colour)
 	return true
+
+
+## **THE DEFECT ASSA-190 IS ABOUT: A DESYNC USED TO LEAVE THE ONE STATE THIS WINDOW CANNOT LEAVE.**
+##
+## `_join_address` returns on its first line at JOINED, so a peer told its world had drifted sat in
+## that world with the Join button refusing and no exit but restarting the application. The cure is a
+## fresh `Welcome`, which a rejoin already delivers into the same slot (ASSA-177, measured) -- so the
+## client hangs up on a desync and DEAD becomes honest, because we ended the link ourselves.
+##
+## **ASSERTED ON THE STAGE AND ON THE BAND, not on the socket.** The stage is what `_join_address`
+## reads and the band is what a player sees, and ASSA-231 is the reminder that those two can
+## disagree. The count is here too: a client that quietly re-welcomed itself on every desync would
+## hide a determinism bug, so the number has to exist for anything to report it.
+func test_a_desync_leaves_a_stage_the_join_button_will_serve() -> bool:
+	var joined := _joined_screen()
+	var before: int = joined._client.desyncs_seen
+	joined._client.feed_offline(
+			'{"Desync":{"tick":88,"reported":"aaaaaaaaaaaaaaa1","expected":"bbbbbbbbbbbbbbb2"}}')
+	var ok := true
+	if joined._client.stage != AssayNetClient.Stage.DEAD:
+		ok = _fail(("a desync left the stage at %d: `_join_address` returns on its first line "
+				+ "unless the stage is IDLE or DEAD, so that is a world with no way out of it")
+				% joined._client.stage)
+	elif joined._client.desyncs_seen != before + 1:
+		ok = _fail("the desync was not counted (%d), so nothing can report a repeat"
+				% joined._client.desyncs_seen)
+	else:
+		# THE STAGE IS WHAT `_join_address` READS AND THE BAND IS WHAT A PLAYER SEES, and ASSA-231 is
+		# the reminder that those two can disagree. Both, or this proves half of it.
+		joined._process(0.016)
+		if not _on_screen(joined._join_button):
+			ok = _fail("the Join button is not on screen after a desync, so the way back exists "
+					+ "only in the stage machine")
+	joined.queue_free()
+	return ok
 
 
 ## Before a Welcome there is no world and no player id, and the HUD must ask for neither. This is the

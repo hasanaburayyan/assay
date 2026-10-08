@@ -67,9 +67,23 @@ pub fn spawn_receiver(stream: TcpStream, host: Arc<Mutex<Host>>, print: Sender<S
                         let _ = print.send(format!("  {line}"));
                     }
                 }
-                Ok(ServerMsg::Desync { tick }) => {
+                Ok(ServerMsg::Desync {
+                    tick,
+                    reported,
+                    expected,
+                }) => {
+                    // **THE EVIDENCE, AND THE HONEST STATEMENT THAT THIS
+                    // CLIENT HAS NO WAY BACK** (ASSA-190 box 6). The Godot
+                    // client closes its socket on a desync and offers Join;
+                    // `sim-cli` has no reconnect and this item does not give
+                    // it one, so the sentence says restart and means it. The
+                    // two hashes are here because a drop with no evidence is
+                    // the shape that lets a determinism bug pass as a bad
+                    // connection.
                     let _ = print.send(format!(
-                        "  WARNING: desync at tick {tick}. Your world no longer matches the host's. Restart the client to rejoin."
+                        "  WARNING: desync at tick {tick}: we hashed {reported}, the host has \
+                         {expected}. Your world no longer matches the host's and this client \
+                         cannot rejoin without restarting."
                     ));
                 }
                 Ok(ServerMsg::Welcome { .. } | ServerMsg::Refused { .. }) => {}
