@@ -22,11 +22,9 @@
 use godot::prelude::*;
 use sim::assembly::{Assembly, Built, Mount, PartKind};
 use sim::command::{Event, Input};
-use sim::debug::{proximity_headline, question_asked};
 use sim::hash::fnv64;
 use sim::item::{Item, ItemKind};
 use sim::mineral::{Property, SpeciesId};
-use sim::proximity::Question;
 use sim::types::{PlayerId, TilePos};
 use sim::world::{CHUNK_SIZE, World, WorldConfig};
 use sim_net::{ClientMsg, HASH_EVERY, PROTOCOL_VERSION, TickBundle};
@@ -2401,6 +2399,12 @@ impl AssaySim {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // **THE BINDING ITSELF NO LONGER ASKS ONE QUESTION AT A TIME** (ASSA-272):
+    // `proximity_facts` takes the sim's whole answer list, so these two are
+    // needed only here -- by the test that checks a merged line against the two
+    // single-question sentences it replaces.
+    use sim::debug::proximity_headline;
+    use sim::proximity::Question;
 
     /// **THE LABEL THIS BINDING HANDS THE WINDOW IS THE SIM'S CONSTANT, NOT A
     /// COPY OF IT** (ASSA-158).
