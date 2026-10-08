@@ -946,6 +946,22 @@ static func build_button_text() -> String:
 	return "Build"
 
 
+## **THE WAY OUT, AND IT IS A FUNCTION BECAUSE A TOOL HAS TO PRESS IT** (ASSA-328). `Build` does not
+## close the screen -- by design, so a player can make a second batch -- so whatever OPENS this screen
+## owns shutting it, and the only honest way for a driver to shut it is the control a person uses.
+##
+## **IT IS A FUNCTION RATHER THAN A LITERAL IN TWO PLACES BECAUSE A LITERAL IN TWO PLACES IS WHAT
+## ASSA-62 WAS.** `tools/button_play.gd` found its row by a label that had moved and silently pressed
+## nothing for days; a tool matching `"close (Esc)"` by hand would rot exactly the same way, and the
+## rot is invisible -- it does not fail a run, it leaves a screen standing over the map and every
+## picture taken afterwards is of the screen. (That happened: every `play` whole-world shot between
+## #432 landing and this, mine included.)
+static func build_close_text() -> String:
+	return "close (Esc)"
+
+
+
+
 ## **COST AS A COUNT, HAVE ON THE LEFT** (ASSA-328; Maren's §5.3: *"Cost (block 6) is COUNTS, so it is
 ## text: `12 / 20`, have on the left. A count is not a reading and must not be given a band"*).
 ##

@@ -228,6 +228,18 @@ func test_the_session_tool_can_press_a_pack_row() -> bool:
 						% _text_of(screen._make))
 			elif _asked.size() != 1:
 				ok = _fail("the tool's menu press submitted %s, not one command" % [_asked])
+			# **AND THE CHAIN LEAVES NO SCREEN STANDING OVER THE MAP.** `Build` does not close the
+			# build screen -- deliberately, so a person can make a second batch -- and this driver
+			# makes six parts and then hands the window to a SHOT. Between #432 and this assertion
+			# every whole-world frame taken after a played chain was a picture of the make screen:
+			# ASSA-273's re-shoot came back with ZERO pixels of any map mark on either seed, and
+			# nothing failed, because a chain that reports FINISHED is the only thing we check.
+			# Pressing is not enough to assert here; what matters is the state the window is left in.
+			elif screen._build_screen_open() or screen._build_box.visible:
+				ok = _fail(("the session tool left the build screen open after `%s`, so every "
+						+ "picture taken after a played chain is of that screen and not of the map "
+						+ "(open=%s visible=%s)") % [AssayHud.build_button_text(),
+						screen._build_screen_open(), screen._build_box.visible])
 	screen.queue_free()
 	return ok
 

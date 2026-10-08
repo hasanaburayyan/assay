@@ -742,6 +742,23 @@ func _press_on_offer(verb: String, tag: Variant, species: int) -> bool:
 				String(offer.get("line", "?")), _world().tick()])
 		_quiet = 0
 		button.pressed.emit()
+		# **AND A THIRD GESTURE: THE SCREEN IS SHUT AGAIN, BECAUSE WHOEVER OPENS IT OWNS IT.**
+		# `_send_build` deliberately leaves the screen up so a player can make a second batch
+		# (`main.gd`), which is right for a person and wrong for a driver: this chain makes six parts
+		# in a row and then hands the window to a SHOT. **From #432 until this line, every whole-world
+		# frame taken after a played chain photographed the make screen instead of the map** -- both
+		# seeds of ASSA-273's re-shoot came back as a full-screen `make` panel holding zero pixels of
+		# any map mark, and nothing failed: the chain reported FINISHED and the picture was a lie.
+		# Same shape as `_goto` below, which restores the view it changed for the same reason.
+		var leave := _find_button(screen._build_box, AssayHud.build_close_text())
+		if leave == null:
+			_stop(false, ("the build screen has no `%s` control, so this chain cannot shut what it "
+					+ "opened and every picture taken after it is of the screen")
+					% AssayHud.build_close_text())
+			return false
+		pressed.append("%s on `%s` @%d" % [AssayHud.build_close_text(),
+				String(offer.get("line", "?")), _world().tick()])
+		leave.pressed.emit()
 		return true
 	return false
 
