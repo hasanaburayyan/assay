@@ -1,5 +1,7 @@
-# CI: local
 extends SceneTree
+## CI: local -- a real window, and focus is the whole subject. Headless is not a weaker version of
+## this run, it is a blind one: inside `_initialize` there is no viewport with focus to give.
+##
 ## **DOES A CLICK LEAVE FOCUS ON `Mine`, THE MOST-PRESSED BUTTON IN THE GAME?** (ASSA-304 box 5,
 ## Maren: *"Press it, shoot it, measure it: that is box 5, and it decides whether this is one
 ## screen or the most-pressed button in the game."*)
