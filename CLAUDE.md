@@ -263,8 +263,24 @@ up (losing nothing). Nobody built this; it falls out of the relay's account map
 (`sim-game/tools/rejoin_check.sh`) plus a `Welcome` carrying current state, and
 `main.gd` has always let a join through at stage `DEAD`. Still true, and still
 worth saying: `sim-cli` has no reconnect (it tells you to restart, and nothing
-here measured otherwise), and a DESYNC is not a drop — it leaves the Godot
-client joined, so Join is refused and restarting really is the only way back.
+here measured otherwise).
+
+**A DESYNC USED TO BE THE EXCEPTION TO THAT PARAGRAPH AND IS NOT ANY MORE**
+(ASSA-190, 2026-10-07). This said "a DESYNC is not a drop — it leaves the Godot
+client joined, so Join is refused and restarting really is the only way back",
+which was true for one day after protocol 10 landed and wrong from then on. The
+client now HANGS UP on a `Desync`: the socket is closed by us, so stage `DEAD`
+is honest, the join band comes back, and the band names the tick and BOTH
+hashes (the host's hash did not exist on the client before protocol 10 carried
+it, as hex text). Measured end to end by
+`sim-game/client/tools/desync_probe.gd`, which causes a real divergence rather
+than faking a hash — it hands the live client one tick bundle the relay never
+sent, carrying one extra `MoveTo` — and then presses the real Join button: back
+in **one press, same `PlayerId`, the world rebuilt from the fresh `Welcome`,
+and the host accepting two further hash checkpoints with no second desync**.
+That last clause is the point: a rejoin that did not repair the divergence
+would hide a determinism bug instead of curing it. `sim-cli` still has no
+reconnect of any kind, desync included.
 **A silent drop is noticed too, as of ASSA-179, and it was not when the
 paragraph above was written.** Every case the first probe covered closes the
 socket, so the client sees the status change; a host that is stopped rather than

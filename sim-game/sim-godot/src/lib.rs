@@ -22,11 +22,9 @@
 use godot::prelude::*;
 use sim::assembly::{Assembly, Built, Mount, PartKind};
 use sim::command::{Event, Input};
-use sim::debug::{proximity_headline, question_asked};
 use sim::hash::fnv64;
 use sim::item::{Item, ItemKind};
 use sim::mineral::{Property, SpeciesId};
-use sim::proximity::Question;
 use sim::types::{PlayerId, TilePos};
 use sim::world::{CHUNK_SIZE, World, WorldConfig};
 use sim_net::{ClientMsg, HASH_EVERY, PROTOCOL_VERSION, TickBundle};
@@ -509,11 +507,15 @@ impl AssaySim {
     /// direction doc names elsewhere. If a surface ever needs the number apart
     /// from the words, it should arrive with the reason written here.
     ///
-    /// ONE ENTRY PER `Question::ALL`, in the sim's order, because the headline
-    /// is a selector rather than a fuel string: `Burns` is what the tab asks
-    /// today and `HardEnough` exists so the second question costs nothing.
-    /// `asked` is the sim's label for a selector to show; it is also the prefix
-    /// of `headline`, so a body that renders both would say it twice.
+    /// ONE ENTRY PER ANSWER, in the sim's order — **not one per question**
+    /// (ASSA-272). `Burns` and `HardEnough` normally give two entries; when one
+    /// patch is the nearest answer to both there is ONE, labelled "what near me
+    /// burns and is hard enough", carrying both readings and both tags. The
+    /// count is the sim's to decide and a renderer must not assume it: a body
+    /// that drew `Question::ALL.len()` blocks would draw an empty one here, and
+    /// a body that merged two entries itself would be inventing wording.
+    /// `asked` is the sim's label; it is also the prefix of `headline`, so a
+    /// body that renders both would say it twice.
     /// **A THIN WRAPPER OVER `proximity_facts`, AND THAT SPLIT IS NOT STYLE.**
     /// Godot types cannot be built in a `cargo test` -- `GString::from` aborts
     /// with "Godot engine not available" -- so a `#[func]` that held the logic
@@ -2197,9 +2199,11 @@ impl AssaySim {
     /// Every species as the players know it. THE BANDS ARE THE SIM'S
     /// (`sim::debug::reading`): a rough sheet is a 25-wide interval and a client
     /// that printed a single number from it would be inventing certainty.
-    /// WHAT NEAR THIS PLAYER ANSWERS EACH QUESTION, one entry per
-    /// `Question::ALL` in the sim's order (ASSA-254, the client leg of
-    /// ASSA-241).
+    /// WHAT NEAR THIS PLAYER ANSWERS THE QUESTIONS — **one entry per ANSWER,
+    /// which is not one per question** (ASSA-272, on top of ASSA-254 and the
+    /// client leg of ASSA-241). When the same patch is the nearest answer to
+    /// both questions, the sim returns a single entry whose label names both,
+    /// so a panel that renders every entry in order renders the merge for free.
     ///
     /// **THE SENTENCE IS THE SIM'S, VERBATIM.** The Game Director's ruling is
     /// that the tab opens on one line answering the question, with the species
@@ -2222,31 +2226,21 @@ impl AssaySim {
         let Some(id) = player else {
             return Vec::new();
         };
-        let Some(me) = self.world.player(id) else {
-            return Vec::new();
-        };
-        let from = me.pos;
-        Question::ALL
-            .iter()
-            .map(|&q| {
-                // ONE SEARCH, READ TWICE. `tile` and `underfoot` are two facts
-                // about the SAME answer, and asking the sim twice would let a
-                // future non-deterministic search hand a host a tile from one
-                // call and a walk from another.
-                let near = self.world.nearest_answering(q, from);
-                ProximityFacts {
-                    asked: question_asked(q).to_string(),
-                    headline: proximity_headline(&self.world, id, q),
-                    tile: near.map(|n| (n.tile.x, n.tile.y)),
-                    // **THE SAME FIELD THE SENTENCE MATCHES ON, NOT A SECOND
-                    // COPY OF ITS TEST.** `proximity_headline` branches on
-                    // `near.heading` being `None`; this reads that `Option`.
-                    // Naming a predicate for it in `proximity.rs` would have
-                    // moved `RULES_ID` (`rules_walk::NOT_RULES` is only
-                    // `debug.rs`) and made `check_join` refuse every older peer
-                    // -- for a readout that changes no rule.
-                    underfoot: near.is_some_and(|n| n.heading.is_none()),
-                }
+        // **THE WHOLE ANSWER SET COMES FROM THE SIM NOW, INCLUDING HOW MANY
+        // ANSWERS THERE ARE** (ASSA-272). This method used to loop
+        // `Question::ALL` and build one entry each -- which is precisely the
+        // shape that cannot express "one patch answers both", because nothing
+        // inside a per-question call knows what the other question picked. The
+        // search, the grouping, the sentence, the tile and the walk now all
+        // come off one `debug::proximity_headlines` call, so this host cannot
+        // disagree with the terminal about any of them.
+        sim::debug::proximity_headlines(&self.world, id)
+            .into_iter()
+            .map(|answer| ProximityFacts {
+                asked: answer.asked,
+                headline: answer.line,
+                tile: answer.tile.map(|t| (t.x, t.y)),
+                underfoot: answer.underfoot,
             })
             .collect()
     }
@@ -2405,6 +2399,12 @@ impl AssaySim {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // **THE BINDING ITSELF NO LONGER ASKS ONE QUESTION AT A TIME** (ASSA-272):
+    // `proximity_facts` takes the sim's whole answer list, so these two are
+    // needed only here -- by the test that checks a merged line against the two
+    // single-question sentences it replaces.
+    use sim::debug::proximity_headline;
+    use sim::proximity::Question;
 
     /// **THE LABEL THIS BINDING HANDS THE WINDOW IS THE SIM'S CONSTANT, NOT A
     /// COPY OF IT** (ASSA-158).
@@ -2734,7 +2734,7 @@ mod tests {
         /// `debug::proximity_headline`'s words for the no-walk case, quoted
         /// deliberately: this test exists to catch the two drifting apart.
         const STANDING_ON_IT: &str = "right where you are standing";
-        let (mut answered, mut empty, mut standing) = (0, 0, 0);
+        let (mut answered, mut empty, mut standing, mut merged) = (0, 0, 0, 0);
         for seed in 1..40 {
             let mut sim = AssaySim::from_world(sim_net::fresh_world(seed));
             sim.step_with(&[Input::System(sim::SystemCommand::AddPlayer {
@@ -2742,17 +2742,34 @@ mod tests {
             })]);
             let id = sim.world().players.first().expect("a player was added").id;
             let rows = sim.proximity_facts(Some(id));
+            // **ONE ROW PER ANSWER, AND THE SIM SAYS HOW MANY THAT IS**
+            // (ASSA-272). This asserted `Question::ALL.len()` until one patch
+            // answering both questions became one row; the claim that survived
+            // the merge is the one worth making anyway -- the binding passes
+            // the sim's list through, neither dropping nor splitting an entry.
+            let answers = sim::debug::proximity_headlines(sim.world(), id);
             assert_eq!(
                 rows.len(),
-                Question::ALL.len(),
-                "seed {seed}: one row per question, in the sim's order"
+                answers.len(),
+                "seed {seed}: the binding sent {} rows for the sim's {} answers",
+                rows.len(),
+                answers.len()
             );
+            // AND EVERY QUESTION IS ANSWERED EXACTLY ONCE, merged or not: a
+            // merge that lost a question would be a shorter list that still
+            // matched the line above.
+            for &q in Question::ALL.iter() {
+                let covered = answers.iter().filter(|a| a.questions.contains(&q)).count();
+                assert_eq!(
+                    covered, 1,
+                    "seed {seed}: {q:?} is answered by {covered} of the sim's answers, not 1"
+                );
+            }
             let me = sim.world().player(id).expect("the player we added").pos;
-            for (row, &q) in rows.iter().zip(Question::ALL.iter()) {
+            for (row, answer) in rows.iter().zip(answers.iter()) {
                 // THE SIM'S SENTENCE, NOT A SENTENCE LIKE IT.
                 assert_eq!(
-                    row.headline,
-                    proximity_headline(sim.world(), id, q),
+                    row.headline, answer.line,
                     "seed {seed}: the binding re-worded the headline"
                 );
                 assert!(
@@ -2760,57 +2777,80 @@ mod tests {
                     "seed {seed}: `asked` must be the headline's own prefix, so a body \
                      rendering both would say it twice"
                 );
-                // AND THE TILE AGREES WITH THE SEARCH ABOUT WHETHER THERE IS ONE.
-                match sim.world().nearest_answering(q, me) {
-                    Some(n) => {
-                        answered += 1;
-                        assert_eq!(
-                            row.tile,
-                            Some((n.tile.x, n.tile.y)),
-                            "seed {seed}: the tile is not the one the sim named"
-                        );
-                        // AND WHETHER THERE IS A WALK IN IT AGREES WITH THE
-                        // SENTENCE THE PLAYER READS.
-                        assert_eq!(
-                            row.underfoot,
-                            row.headline.contains(STANDING_ON_IT),
-                            "seed {seed}: `underfoot` is {} and the sim's sentence says \
-                             otherwise -- `{}`",
-                            row.underfoot,
-                            row.headline
-                        );
-                        if row.underfoot {
-                            standing += 1;
-                            // **THIS IS WHAT MADE THE CONTROL DEAD**: the tile
-                            // the answer is about is the tile the player is on,
-                            // so `go here` would walk them nowhere.
-                            assert_eq!(
-                                row.tile,
-                                Some((me.x, me.y)),
-                                "seed {seed}: the answer is underfoot but names a tile that is \
-                                 not the player's own"
+                // **A MERGED ROW KEEPS EVERY CLAUSE OF BOTH ANSWERS IT
+                // REPLACES** (ASSA-272 box 3), measured against the sentences
+                // it replaced rather than against a literal I typed: each
+                // single-question headline's reading and trailing clause must
+                // still be in the merged line.
+                if answer.questions.len() > 1 {
+                    merged += 1;
+                    for &q in &answer.questions {
+                        let alone = proximity_headline(sim.world(), id, q);
+                        let (_, clauses) = alone
+                            .split_once(": ")
+                            .expect("a headline is `label: answer`");
+                        for clause in clauses.split(" · ").skip(1) {
+                            assert!(
+                                row.headline.contains(clause),
+                                "seed {seed}: the merged line dropped `{clause}` from \
+                                 `{alone}`"
                             );
                         }
                     }
-                    None => {
-                        empty += 1;
-                        assert!(
-                            row.tile.is_none(),
-                            "seed {seed}: nothing answers, so there must be no tile rather \
+                }
+                for &q in &answer.questions {
+                    // AND THE TILE AGREES WITH THE SEARCH ABOUT WHETHER THERE IS ONE.
+                    match sim.world().nearest_answering(q, me) {
+                        Some(n) => {
+                            answered += 1;
+                            assert_eq!(
+                                row.tile,
+                                Some((n.tile.x, n.tile.y)),
+                                "seed {seed}: the tile is not the one the sim named"
+                            );
+                            // AND WHETHER THERE IS A WALK IN IT AGREES WITH THE
+                            // SENTENCE THE PLAYER READS.
+                            assert_eq!(
+                                row.underfoot,
+                                row.headline.contains(STANDING_ON_IT),
+                                "seed {seed}: `underfoot` is {} and the sim's sentence says \
+                             otherwise -- `{}`",
+                                row.underfoot,
+                                row.headline
+                            );
+                            if row.underfoot {
+                                standing += 1;
+                                // **THIS IS WHAT MADE THE CONTROL DEAD**: the tile
+                                // the answer is about is the tile the player is on,
+                                // so `go here` would walk them nowhere.
+                                assert_eq!(
+                                    row.tile,
+                                    Some((me.x, me.y)),
+                                    "seed {seed}: the answer is underfoot but names a tile that is \
+                                 not the player's own"
+                                );
+                            }
+                        }
+                        None => {
+                            empty += 1;
+                            assert!(
+                                row.tile.is_none(),
+                                "seed {seed}: nothing answers, so there must be no tile rather \
                              than a corner of the world the sim never offered"
-                        );
-                        assert!(
-                            !row.underfoot,
-                            "seed {seed}: nothing answers, so nothing is underfoot either"
-                        );
+                            );
+                            assert!(
+                                !row.underfoot,
+                                "seed {seed}: nothing answers, so nothing is underfoot either"
+                            );
+                        }
                     }
                 }
             }
         }
         assert!(
-            answered > 0 && empty > 0 && standing > 0,
+            answered > 0 && empty > 0 && standing > 0 && merged > 0,
             "an answer state never came up, so its arm never ran: \
-             answered {answered}, empty {empty}, underfoot {standing}"
+             answered {answered}, empty {empty}, underfoot {standing}, merged {merged}"
         );
     }
 

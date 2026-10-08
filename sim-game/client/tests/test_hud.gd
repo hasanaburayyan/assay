@@ -1580,6 +1580,153 @@ func test_a_machines_band_has_a_dark_neighbour_on_both_of_its_edges() -> bool:
 	return true
 
 
+## **THE HOVERED TILE'S OUTLINE HAS A RIM OF ITS OWN, AND THE RIM IS OPAQUE WHERE THE MARK IS NOT**
+## (ASSA-284, Maren's finding on ASSA-275 box 5).
+##
+## **THE ASYMMETRY IS THE WHOLE FACT, so it is what this asserts.** `hover_tile` is `HOVER` at alpha
+## 0.55, which means it has no value of its own -- only the ground's, lifted. On seed 63's grade-A ore
+## that lift is `234,234,47` -> `239,239,154`: 5/255 in R and G and nearly all of it in BLUE, so **in a
+## greyscale copy the mark is gone**, and this map's rule is that a mark survives a greyscale copy. A
+## translucent mark therefore needs an OPAQUE rim, or the rim inherits the same ore and separates
+## nothing. A rim at alpha 0.55 would satisfy "it has a keyline" and fix nothing at all.
+##
+## **AND IT IS GROWN OUTWARD.** Beside a machine the outline was eating one of the 2 px of `MAP_BG`
+## that hold two hollow squares apart (Maren's row at x=707 and x=509: the machine's rim read
+## 145,146,148 while hovered). A rim paid for out of the mark would shrink the outline instead, and
+## then the two marks would still touch -- so "inside the rim" is asserted on the real rects.
+##
+## WHAT THIS CANNOT SEE: whether `_draw` paints the rim, or what it looks like at 1x.
+## `test_map_key.gd` holds the table-against-`_draw` wiring in both directions, and the 1x judgement
+## is Maren's on the window shot (ASSA-284 box 6).
+func test_the_hovered_tiles_outline_carries_its_own_opaque_rim() -> bool:
+	var origin := Vector2(24.0, 96.0)
+	var entry := AssayHud.mark_entry(&"hover_keyline")
+	if entry.is_empty():
+		return _fail("AssayHud.MAP_MARKS carries no `hover_keyline`: the hovered tile's outline is "
+				+ "the one mark on this map with no rim, which on grade-A ore leaves it a hue change "
+				+ "and no value change at all (ASSA-284)")
+	if StringName(entry.get("keyed_by", &"")) != &"hover_tile":
+		return _fail("`hover_keyline` is keyed by `%s` and not by `hover_tile`, so the key would "
+				+ "either grow a row for a rim or explain it as something else" % entry.get("keyed_by", "<nothing>"))
+	var rim := AssayHud.mark_ink(&"hover_keyline")
+	var mark := AssayHud.mark_ink(&"hover_tile")
+	if rim != AssayHud.MAP_BG:
+		return _fail("the hovered tile's rim is %s and not MAP_BG: a rim in any other colour is a "
+				% rim + "22nd literal on this map and a new meaning for it")
+	if not is_equal_approx(rim.a, 1.0):
+		return _fail(("the hovered tile's rim is at alpha %.2f. The mark it rims is itself at %.2f, "
+				+ "which is why it has no value of its own on a bright disc; a translucent rim "
+				+ "inherits the same ore and separates nothing (ASSA-284)") % [rim.a, mark.a])
+	if is_equal_approx(mark.a, 1.0):
+		return _fail(("the hovered tile's outline is opaque now (alpha %.2f). If that is deliberate "
+				+ "the reasoning on this test is stale: the rim was ruled BECAUSE the mark is "
+				+ "translucent and borrows the ground's value") % [mark.a])
+	for cell: float in [9.0, 18.0, 32.0]:
+		var hover := AssayHud.hover_mark(Vector2i(12, 7), cell, origin)
+		var box: Rect2 = hover["cell_rect"]
+		# THE CELL ITSELF, FROM ITS CORNER: the one mark on this map that is a cell rather than a
+		# thing standing on one (ASSA-220's rule, and this is its documented exception).
+		#
+		# **THIS READ `hover["rect"]` UNTIL ASSA-284 BOX 7 AND THAT WAS THE DEFECT, NOT THE GUARD.**
+		# A rect whose edges sit ON the cell boundary paints half a pixel outside it, so "covers
+		# exactly the cell" as a RECT meant "paints a column of tile 52" as PIXELS. The cell is now
+		# `cell_rect` and the stroked rect is inset half a stroke inside it; the pixels are asserted
+		# by `test_the_hovered_outline_paints_no_pixel_of_a_tile_it_does_not_name`.
+		if not box.position.is_equal_approx(origin + Vector2(12.0, 7.0) * cell) \
+				or not box.size.is_equal_approx(Vector2(cell, cell)):
+			return _fail("at %.0f px a tile the hovered outline is %s, which is not tile (12, 7)'s "
+					% [cell, box] + "own cell: this mark is the cell and must cover exactly it")
+		var keyline: Rect2 = hover["keyline_rect"]
+		var out := box.size - keyline.size
+		if not out.is_equal_approx(Vector2(3.0, 3.0) * AssayHud.HOVER_STROKE_PX):
+			return _fail(("at %.0f px a tile the rim is inset from the cell by %s, not %.1f px "
+					+ "perpendicular on each side (half a stroke for the outline's own centring plus "
+					+ "a whole one to clear the column it paints)")
+					% [cell, out, 1.5 * AssayHud.HOVER_STROKE_PX])
+		# **AND THE RIM IS INSIDE THE CELL, WHICH IS THE OPPOSITE OF EVERY OTHER RIM ON THIS MAP AND
+		# IS MEASURED RATHER THAN PREFERRED.** Grown OUTWARD -- which is what Maren ruled and what I
+		# built first -- the rim lands on the neighbouring tile, and the neighbour is where a machine's
+		# mark starts: shot on both seeds, the smelter's band went 242 -> 28 at the shared edge, so an
+		# outward rim buys this mark a dark neighbour by deleting one of the machine's two band pixels.
+		# A mark may not pay for its own legibility out of the mark next door.
+		if not box.encloses(keyline):
+			return _fail(("the hovered tile's rim %s is not inside its own cell %s. Outward, it lands "
+					+ "on the neighbouring tile and deletes a pixel of whatever mark starts there -- "
+					+ "measured at a smelter's band on two seeds, 242 -> 28 (ASSA-284)")
+					% [keyline, box])
+		if keyline.size.x <= 0.0 or keyline.size.y <= 0.0:
+			return _fail(("at %.0f px a tile the rim leaves the hovered cell no middle at all (%s): "
+					+ "the outline would be a filled square and the ore under it gone")
+					% [cell, keyline])
+		if not is_equal_approx(float(hover["width"]), AssayHud.HOVER_STROKE_PX):
+			return _fail("the hovered outline is drawn %.1f px wide and the constant says %.1f"
+					% [hover["width"], AssayHud.HOVER_STROKE_PX])
+	return true
+
+
+## **THE HOVERED TILE'S OUTLINE MAY PAINT ONLY PIXELS OF THE CELL IT NAMES** (ASSA-284 box 7, Maren:
+## "ASSA-213 lets a mark lie about SIZE and never about POSITION, and this is the one mark that *is* a
+## cell, so it has no size to hide behind").
+##
+## The defect this catches shipped for a day and no rect-level guard could see it. `hover_mark`'s rect
+## was the cell exactly -- tile 53 at x=501, span 9 -- which is the right RECT and the wrong PIXELS:
+## Godot's unfilled `draw_rect` centres its stroke on the edge it is given, so a 1 px edge at x=501
+## covers 500.5-501.5 and lands in tile 52's column. Shot on seed 63, the outline's own pixel sat on
+## the smelter's `MAP_BG` rim at the shared edge.
+##
+## So this asserts PIXEL COLUMNS, not rects, for the outline AND its rim, over three cell sizes and
+## both parities of origin: every column and row either stroke paints must belong to the hovered cell.
+## It is the pixel half of [method test_the_hovered_tiles_outline_carries_its_own_opaque_rim], which
+## keeps the rect-level facts (the rim's colour, its alpha, that it is inside the cell).
+##
+## WHAT IT CANNOT SEE: the rasteriser. The span arithmetic here is Godot's documented centring, and
+## the frame that confirms it is `shared/assay/cove-assa284/` -- the hover shot's own changed-pixel
+## columns against `cell_rect`, which is why that rect is now in the shot table.
+func test_the_hovered_outline_paints_no_pixel_of_a_tile_it_does_not_name() -> bool:
+	for origin: Vector2 in [Vector2(24.0, 24.0), Vector2(24.0, 96.0), Vector2(25.0, 97.0)]:
+		for cell: float in [9.0, 18.0, 32.0]:
+			var tile := Vector2i(53, 56)
+			var hover := AssayHud.hover_mark(tile, cell, origin)
+			var cell_rect: Rect2 = hover["cell_rect"]
+			var width := float(hover["width"])
+			var painted := {}
+			for part: String in ["rect", "keyline_rect"]:
+				var stroked: Rect2 = hover[part]
+				for axis: int in [0, 1]:
+					# The stroke straddles each edge by half its width; a pixel index `i` covers
+					# [i, i+1), so the painted columns run floor(lo) .. ceil(hi) - 1.
+					var lo: float = stroked.position[axis] - 0.5 * width
+					var hi: float = stroked.position[axis] + stroked.size[axis] + 0.5 * width
+					var first := int(floor(lo))
+					var last := int(ceil(hi)) - 1
+					var own_first := int(floor(cell_rect.position[axis]))
+					var own_last := int(ceil(cell_rect.position[axis] + cell_rect.size[axis])) - 1
+					if first < own_first or last > own_last:
+						return _fail(("at %.0f px a tile, origin %s: the hovered outline's `%s` "
+								+ "paints %s %d..%d and tile (53, 56) owns only %d..%d. This mark IS "
+								+ "the cell, so a pixel outside it is the mark naming its "
+								+ "neighbour (ASSA-284 box 7, ASSA-213)")
+								% [cell, origin, part, "columns" if axis == 0 else "rows",
+								first, last, own_first, own_last])
+					# **AND THE RIM MAY NOT PAINT THE OUTLINE'S OWN COLUMNS**, which is the other way
+					# a half-pixel edge goes wrong: a rim centred one whole stroke in from a
+					# boundary-straddling edge overlaps the mark it is meant to separate, and since
+					# the rim is drawn FIRST and opaque the outline survives -- but at 1 px wide,
+					# any rim pixel that lands on the mark is a rim that shrank it. Paired
+					# half-stroke insets is what makes the two abut instead.
+					var key := "%d:%d" % [axis, first]
+					var far := "%d:%d" % [axis, last]
+					if part == "rect":
+						painted[key] = true
+						painted[far] = true
+					elif painted.has(key) or painted.has(far):
+						return _fail(("at %.0f px a tile, origin %s: the rim paints %s %d and %d, "
+								+ "and the outline already paints one of them. A rim that lands on "
+								+ "the mark it separates is paid for out of the mark (ASSA-284)")
+								% [cell, origin, "columns" if axis == 0 else "rows", first, last])
+	return true
+
+
 ## True when [param point] is inside any of [param rects]; the painter's bands as drawn, so a gap
 ## between two of them is a gap here too.
 func _in_any(rects: Array[Rect2], point: Vector2) -> bool:

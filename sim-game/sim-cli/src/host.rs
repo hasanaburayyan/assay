@@ -528,8 +528,14 @@ impl Host {
             "species" | "minerals" => {
                 if let Ok(me) = s.me() {
                     let at = me.pos;
-                    for q in sim::Question::ALL {
-                        out!("{}", debug::proximity_headline(&s.world, s.me, q));
+                    // **ONE LINE PER ANSWER, NOT PER QUESTION** (ASSA-272). The
+                    // sim decides how many there are, because when one patch is
+                    // the nearest answer to both questions it says so once --
+                    // and a terminal that looped the questions itself could not
+                    // print that, which would leave the reference client saying
+                    // something the window does not.
+                    for answer in debug::proximity_headlines(&s.world, s.me) {
+                        out!("{}", answer.line);
                     }
                     out!("  (asked from where you stand, ({}, {}))", at.x, at.y);
                 }

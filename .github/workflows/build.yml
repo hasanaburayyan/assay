@@ -767,6 +767,18 @@ jobs:
       # Lever: REVIEW_LAYOUT_FAKE_MOVE=1 must turn it red naming both sheets. Proved red
       # for real too, by moving `ICON_PX` 32 -> 34 in the client with the sheets left
       # alone, and restoring it.
+      #
+      # A SECOND PROBE SINCE ASSA-173, AND IT IS WHY THIS STEP GOT SLOWER. `design_rows.png`
+      # was the last sheet that could declare nothing; it now carries a layout stamp, which
+      # means this step re-asks `art/design_row_layout.gd` as well. That one costs THREE
+      # Godot runs rather than one -- two offline demo runs (the bench shows one design per
+      # run, so SAFE and UNCERTAIN are two runs of the same seed) and the probe over the
+      # merge. The whole chain is `art/design_row_dump.py`, which the generator also draws
+      # from, so the digest here and the digest on the sheet come from one piece of code.
+      #
+      # Everything it needs is already standing in this job: the binding is built above and
+      # `button_session.gd` is the same script the demo-loop step runs. The lever covers it
+      # too -- FAKE_MOVE reddens FOUR sheets now, not three.
       - name: A review sheet is still a picture of the client it drew
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
