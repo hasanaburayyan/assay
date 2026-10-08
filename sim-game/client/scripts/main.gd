@@ -3488,9 +3488,9 @@ func _note(line: String) -> Label:
 ## ASSA-117 box 8).
 ##
 ## **THE SIM AUTHORED THESE LINES TO BE TRUNCATED AND THIS CLIENT WAS WRAPPING THEM.**
-## `sim/src/debug.rs:1785` says so in writing: *"Verdict first, then the numbers, then the parts.
-## Deliberate: a side panel is narrow and the line gets truncated, so the thing the player needs
-## before spending parts must not be the thing that is cut."* A design verdict became SIX rows here,
+## `sim::debug::assembly_readout` says so in writing: *"Verdict first, then the numbers, then
+## the parts. Deliberate: a side panel is narrow and the line gets truncated, so the thing the player
+## needs before spending parts must not be the thing that is cut."* A design verdict became SIX rows,
 ## so the ordering that exists to survive a cut bought nothing and the log inherited a panel per
 ## event: Maren measured entries 1, 4, 4, 5 and 6 rows tall, 682px of them in a 566px box.
 ##
