@@ -41,24 +41,87 @@ func _initialize() -> void:
 		print("  INWARD RIM %.0f px%s" % [rim, "   <- main before ASSA-278" if rim == 0.0 else
 				("   <- MARK_KEYLINE_PX, what #368 ships" if rim == AssayHud.MARK_KEYLINE_PX else "")])
 		for mine: bool in [true, false]:
-			var person := AssayHud.player_mark(at, mine)
-			var body: PackedVector2Array = person["points"]
-			var total := 0
-			var kept := 0
-			for point in _grid(_bounds(body)):
-				if not Geometry2D.is_point_in_polygon(point, body):
-					continue
-				total += 1
-				if not _covered(ink, point):
-					kept += 1
-			print("    %-8s body %3d px, keeps %3d px = %5.1f%%"
-					% ["you" if mine else "partner", total, kept,
-					100.0 * float(kept) / float(maxi(total, 1))])
+			_person_row("you" if mine else "partner", AssayHud.player_mark(at, mine), ink)
 		# AND THE HOLE ITSELF, which is what the ore under the machine shows through.
 		var hole := _clear_hole(mark, rim)
 		print("    hole      %.0f x %.0f px clear of ink" % [hole.x, hole.y])
+	_two_paint_orders(mark, at)
 	_band_neighbours(mark, at)
 	quit()
+
+
+## **A PERSON IS TWO SHAPES AND THIS TOOL USED TO REPORT ONE NUMBER FOR BOTH. THAT CONFLATION COST
+## THE DIRECTOR A LAW, SO THE FIX BELONGS HERE AND NOT IN A COMMENT ON THE ITEM.**
+##
+## Until 2026-10-08 this printed *"`you` body 136 px, keeps 116 px = 85.3%"* over `player_mark`'s
+## `points` alone. `points` is the FILL; `keyline_points` is the fill grown outward by
+## `MARK_KEYLINE_PX` (ASSA-189: a person's rim grows OUTWARDS so the body keeps every pixel), so the
+## rim is the difference of the two and the old line was silent about it. I read my own number as
+## *a partner on a machine is mostly gone*, wrote that into ASSA-278, into `BUILDING_MARK_PX`'s
+## constant and into Maren's inbox, and she built §11.14 — *a mark may never take space from a
+## person* — on it. She caught it by splitting the number herself (ASSA-278, 13:20Z) and withdrew
+## the reading; **the two columns below are so nobody has to split it again.**
+##
+## **WHAT EACH COLUMN MEANS, because they are not the same kind of loss** (Maren's §11.39, the same
+## night: *where two marks overlap, the KEYLINE yields and the INK does not*): FILL lost is ink
+## destroyed — a person's own pixels gone. KEYLINE lost is a SEPARATOR gone, and §11.1 says a keyline
+## buys independence from the GROUND, so a keyline covered by a machine the person is standing on was
+## doing no work there. One is a cost; the other mostly is not.
+func _person_row(who: String, person: Dictionary, ink: Array[Rect2]) -> void:
+	var split := _split_loss(person, ink)
+	print("    %-8s FILL loses %5.1f%%   KEYLINE loses %5.1f%%   (FILL kept %5.1f%%, the column"
+			% [who, split.x, split.y, 100.0 - split.x])
+	print("             every ASSA-278 number was ruled on)")
+
+
+## **THE TWO PAINT ORDERS AT THE SHIPPED SIZE, EACH SPLIT INTO FILL AND KEYLINE — the table the
+## #392 decision turned on, which until now did not exist anywhere.**
+##
+## Main paints the WHOLE mark after the players, so a person meets band + both rims. Option 3
+## (PR #392, closed 2026-10-08 on Maren's §11.39) painted the two rims under the player pass, so a
+## person met only the BAND. Nobody can rule between them from a single "keeps N%" figure, because
+## the two orders differ in WHICH of a person's two shapes pays — which is exactly §11.39's question.
+func _two_paint_orders(mark: Dictionary, at: Vector2) -> void:
+	var whole := _machine_ink(mark, AssayHud.MARK_KEYLINE_PX)
+	var band_only: Array[Rect2] = AssayHud.frame_bands(mark["rect"], float(mark["stroke"]))
+	print("")
+	print("  THE TWO PAINT ORDERS AT BUILDING_MARK_PX %.0f, SPLIT" % AssayHud.BUILDING_MARK_PX)
+	print("                            FILL lost      KEYLINE lost")
+	for named: Array in [["main (whole mark on top)", whole], ["#392 (rims under, band on top)",
+			band_only]]:
+		var ink: Array[Rect2] = named[1]
+		var you := _split_loss(AssayHud.player_mark(at, true), ink)
+		var them := _split_loss(AssayHud.player_mark(at, false), ink)
+		print("    %-31s %5.1f%% / %5.1f%%  %5.1f%% / %5.1f%%   (you / partner)"
+				% [named[0], you.x, them.x, you.y, them.y])
+	print("    §11.39: the KEYLINE may yield, the INK may not. FILL is ink.")
+
+
+## The share of a person's FILL and of their KEYLINE RING that [param ink] covers, as percentages.
+##
+## **ONE GRID OVER THE OUTER SHAPE, CLASSIFIED PER POINT**, so the two columns cannot disagree about
+## where the boundary between them is: two separate sweeps would sample that edge twice and round it
+## differently, which is how a 1 px ring turns into a few per cent of nothing.
+func _split_loss(person: Dictionary, ink: Array[Rect2]) -> Vector2:
+	var fill: PackedVector2Array = person["points"]
+	var rimmed: PackedVector2Array = person["keyline_points"]
+	var fill_px := 0
+	var fill_lost := 0
+	var rim_px := 0
+	var rim_lost := 0
+	for point in _grid(_bounds(rimmed)):
+		var inside_fill := Geometry2D.is_point_in_polygon(point, fill)
+		if not inside_fill and not Geometry2D.is_point_in_polygon(point, rimmed):
+			continue
+		var lost := _covered(ink, point)
+		if inside_fill:
+			fill_px += 1
+			fill_lost += 1 if lost else 0
+		else:
+			rim_px += 1
+			rim_lost += 1 if lost else 0
+	return Vector2(100.0 * float(fill_lost) / float(maxi(fill_px, 1)),
+			100.0 * float(rim_lost) / float(maxi(rim_px, 1)))
 
 
 ## **BOX 7: WHAT THE BAND'S INNER NEIGHBOUR ACTUALLY IS WHEN A PERSON IS STANDING THERE** (ASSA-278,
@@ -154,7 +217,8 @@ func _band_neighbours(mark: Dictionary, at: Vector2) -> void:
 func _mass_sweep(at: Vector2) -> void:
 	print("")
 	print("  THE MASS LEVER (BUILDING_MARK_PX's floor on a 1x1), rim 2 px AFTER the player pass:")
-	print("    floor  hole  you keep  partner keep  band px w/ bright inner nbr (you/partner)")
+	print("    floor  hole  you FILL  partner FILL   KEYLINE lost     band px w/ bright inner nbr")
+	print("                 kept      kept           you / partner    (you / partner)")
 	var tile := Vector2i(12, 7)
 	var origin := Vector2(24.0, 24.0)
 	for floor_px: float in [16.0, 20.0, 22.0, 24.0, 26.0, 28.0]:
@@ -166,23 +230,17 @@ func _mass_sweep(at: Vector2) -> void:
 				"stroke": AssayHud.BUILDING_STROKE_PX}
 		var ink := _machine_ink(mark, AssayHud.MARK_KEYLINE_PX)
 		var kept: Array[float] = []
+		var rims: Array[float] = []
 		var lit: Array[String] = []
 		for mine: bool in [true, false]:
 			var person := AssayHud.player_mark(at, mine)
-			var body: PackedVector2Array = person["points"]
-			var total := 0
-			var alive := 0
-			for point in _grid(_bounds(body)):
-				if not Geometry2D.is_point_in_polygon(point, body):
-					continue
-				total += 1
-				if not _covered(ink, point):
-					alive += 1
-			kept.append(100.0 * float(alive) / float(maxi(total, 1)))
+			var split := _split_loss(person, ink)
+			kept.append(100.0 - split.x)
+			rims.append(split.y)
 			lit.append(_bright_inner(mark, person, true))
-		print("    %5.0f %5.0f %8.1f%% %12.1f%%  %s / %s"
+		print("    %5.0f %5.0f %8.1f%% %12.1f%%   %5.1f%% / %5.1f%%  %s / %s"
 				% [floor_px, (mark["hole_rect"] as Rect2).grow(-AssayHud.MARK_KEYLINE_PX).size.x,
-				kept[0], kept[1], lit[0], lit[1]])
+				kept[0], kept[1], rims[0], rims[1], lit[0], lit[1]])
 	print("    (hole = px clear of ink; the body's diamond is 16 px across and its tips are what")
 	print("     reach the band, so the body stops touching it once the clear hole passes 16.)")
 
