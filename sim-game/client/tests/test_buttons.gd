@@ -2120,6 +2120,22 @@ func test_esc_closes_a_menu_and_a_dismissing_click_does_not_walk() -> bool:
 			if _asked.size() != 1 or _asked[0] != AssayActions.move_to(ground):
 				ok = _fail("the click after the dismissal asked for %s, not a walk to %s"
 						% [_asked, ground])
+	# **AND THE RIGHT BUTTON CLOSES AND STILL TARGETS** (Maren's ruling 8: an empty tile keeps today's
+	# split exactly). This is the case that broke the demo loop when I consumed both buttons: open a
+	# menu to Take, right-click a free tile to aim the next placement, and the aim was swallowed -- so
+	# Place landed on the stale target and the sim refused it.
+	if ok:
+		_click(screen, spot, MOUSE_BUTTON_LEFT)
+		var aim: Vector2i = screen._my_tile() + Vector2i(0, 1)
+		_asked.clear()
+		_click(screen, aim, MOUSE_BUTTON_RIGHT)
+		if screen._menu_at != -1:
+			ok = _fail("a right click on %s left the menu open at %d" % [aim, screen._menu_at])
+		elif not _asked.is_empty():
+			ok = _fail("the right click that closed the menu asked for %s" % [_asked])
+		elif screen._target_tile() != aim:
+			ok = _fail("a right click that closed a menu left the target at %s, not %s"
+					% [screen._target_tile(), aim])
 	screen.queue_free()
 	return ok
 

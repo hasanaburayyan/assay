@@ -3880,7 +3880,11 @@ func _insert(stack: Dictionary, slot: String) -> void:
 	var target := _target_tile()
 	var building: Variant = _sim.tile_at(target).get("building")
 	if building == null:
-		_say("nothing to insert into at %d, %d — right-click a building first"
+		# **THE ADVICE CHANGED WITH THE GESTURE IT NAMES** (ASSA-316). This said *"right-click a building
+		# first"*, which was the way to aim these buttons until Maren's ruling 8 gave both mouse buttons
+		# on a building to its menu. A sentence telling a player to make a gesture that now does
+		# something else is worse than no sentence: it is this client's own instruction, failing.
+		_say("nothing to insert into at %d, %d — click a building to open its menu"
 				% [target.x, target.y], AssayHud.Say.FAILED)
 		return
 	_insert_into(int((building as Dictionary).get("id", -1)), stack, slot, 0)
@@ -4768,13 +4772,25 @@ func _unhandled_input(event: InputEvent) -> void:
 		if standing != null:
 			_open_machine_menu(tile, int((standing as Dictionary).get("id", -1)))
 			return
-	# **THE DISMISSING CLICK IS CONSUMED: IT CLOSES AND DOES NOT WALK. A SECOND CLICK WALKS** (ruling 7's
-	# condition). A gesture that both shut a panel and sent the player across the map would be two
-	# meanings on one press, and the player who wanted the walk still gets it -- from the next click,
+	# **THE DISMISSING LEFT CLICK IS CONSUMED: IT CLOSES AND DOES NOT WALK. A SECOND CLICK WALKS**
+	# (ruling 7's condition). A gesture that both shut a panel and sent the player across the map would
+	# be two meanings on one press, and the player who wanted the walk still gets it from the next click,
 	# with the menu already out of the way.
+	#
+	# **THE RIGHT BUTTON CLOSES AND STILL TARGETS, AND THAT IS MEASURED RATHER THAN PREFERRED.** I
+	# consumed both buttons first, and `window_shot.gd`'s own demo loop then failed on the next beat: it
+	# opens a machine's menu to Take, then right-clicks a free tile to aim the next placement, and that
+	# press was swallowed -- so `Place` landed on the STALE target, which was the smelter, and the sim
+	# refused with *"another building is in the way"*. The loop is a player proxy, so that is a player
+	# losing a gesture they can see no reason for.
+	#
+	# Maren's ruling 8 is the authority for the fix rather than my taste: *"an empty tile keeps today's
+	# split EXACTLY"*. A cursor is not travel -- the whole reason the walk is consumed is that it sends
+	# you somewhere -- so moving it costs nothing and surprises nobody. Hers to reverse in one line.
 	if _menu_at != -1:
 		_close_machine_menu()
-		return
+		if event.button_index != MOUSE_BUTTON_RIGHT:
+			return
 	if event.button_index == MOUSE_BUTTON_RIGHT:
 		_target = tile
 		_targeted = true
