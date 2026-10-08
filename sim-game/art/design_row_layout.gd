@@ -306,15 +306,53 @@ func _process(_d: float) -> bool:
 		print("      design; pair them by something other than order before drawing a sheet.")
 		quit(1)
 		return true
+	var ground := _ground_behind(bench)
 	print("DESIGN_LAYOUT_JSON ", JSON.stringify({
 		"rows": rows,
 		"panel_px": _screen.PANEL,
 		"bench_size": [bench.size.x, bench.size.y],
 		"clear_color": str(ProjectSettings.get_setting(
 			"rendering/environment/defaults/default_clear_color", "UNSET")),
+		"ground": ground["colour"],
+		"ground_from": ground["from"],
 	}))
 	print("DESIGN LAYOUT OK")
 	return true
+
+
+## **THE COLOUR ACTUALLY BEHIND THE ROW, ASKED OF THE BUILT TREE** (ASSA-308; same shape as
+## ASSA-152's "the surface actually behind a label").
+##
+## **WHAT THIS REPLACES AND WHY IT WAS WRONG.** The sheet used to paint its ground from this dump's
+## `clear_color` — the VIEWPORT's clear colour, Godot's default 0.3 grey, `(76,76,76)`. That is what
+## sits behind *everything*, and in the shipped client it is COVERED: a bench row lives inside a
+## panel whose `StyleBoxFlat` fills `SURFACE` `(37,40,48)`. So the sheet painted the layer furthest
+## back instead of the one under the text, and Maren caught it by measuring the PNG:
+## **`INK_MUTED` ships at 6.74:1 and read 3.92:1 on the sheet** — under the 4.5:1 floor
+## `build_theme.gd` refuses to ship. A reviewer judging legibility off that sheet judges a screen we
+## do not ship, and judges it WORSE than it is, which invites a retune of a palette that was fine.
+##
+## Note the shape of the original defect: it was not a typed literal, it was a DERIVATION POINTED
+## ONE LAYER TOO DEEP. The fix is to aim it, not to replace it with `(37,40,48)` — a literal here
+## would be a colour nobody chose (ASSA-233) and would not follow a retune.
+##
+## **IT RETURNS WHERE IT GOT THE ANSWER, AND THE SHEET PRINTS THAT.** A fallback that quietly hands
+## back the clear colour is exactly how the wrong ground shipped for days, so `from` is part of the
+## answer rather than a detail: the sheet says on its face which layer it painted.
+func _ground_behind(node: Control) -> Dictionary:
+	var at: Node = node
+	while at != null:
+		# `Panel` and `PanelContainer` are the two that FILL in this client. A plain container draws
+		# nothing, so walking past it is correct rather than lossy.
+		if at is Panel or at is PanelContainer:
+			var box := (at as Control).get_theme_stylebox("panel") as StyleBoxFlat
+			if box != null:
+				return {"colour": str(box.bg_color),
+						"from": "%s/panel bg_color" % (at as Node).name}
+		at = at.get_parent()
+	return {"colour": str(ProjectSettings.get_setting(
+			"rendering/environment/defaults/default_clear_color", "UNSET")),
+			"from": "NO PANEL ANCESTOR -- the viewport clear colour, which the client covers"}
 
 
 ## Each written line's width IN THE LABEL'S OWN FONT, which is the only authority on whether a line

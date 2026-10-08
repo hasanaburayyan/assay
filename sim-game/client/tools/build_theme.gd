@@ -62,9 +62,23 @@ const MIN_INK_SEPARATION := 1.5
 const MIN_AXIS_CONTRAST := 3.0
 
 # ---------------------------------------------------------------------------
-# THE TYPE SCALE. Four sizes, and the reason there are four is that `main.gd` currently reaches for
-# 12, 13 and 19 by hand at eight separate call sites, which is how a screen ends up with no scale at
-# all. Named here, they can be used by name.
+# THE TYPE SCALE. Four sizes in the game and a fifth that exists on exactly one surface, and the
+# reason they are named here is that `main.gd` once reached for 12, 13 and 19 by hand at eight
+# separate call sites, which is how a screen ends up with no scale at all.
+#
+## **THE GAME NAME, ON THE TITLE SCREEN AND NOWHERE ELSE** (ASSA-292, ASSA-276 §4).
+##
+## MEASURED, NOT CHOSEN. Maren on `after/01-join.png`: *"the wordmark is 56 x 19 px = 1,064 px =
+## 0.12% of the screen... The game name is 0.12% of its own title screen. On a flat field 14:1
+## carries it; on a lit green world a 19 px wordmark is gone. The title grows with the picture --
+## one move, not two."*
+##
+## **A FIFTH SIZE RATHER THAN A `font_size` POKED INTO ONE LABEL**, which is what the old comment in
+## `main.gd` said this would have to be: *"a bigger title means a fifth size in build_theme.gd, which
+## is a type-scale ruling and hers"*. She ruled it, so here it is by name, and the scale stays the one
+## place sizes live. It is deliberately NOT reachable as a general heading -- `Display` is still the
+## top of the scale for anything inside the game. This is a wordmark, a size for a proper noun.
+const WORDMARK := 56
 const DISPLAY := 20  # the bench verdict, SAFE / UNCERTAIN / WILL BREAK -- the one word to read first
 const HEADING := 15  # section headings: make, you, do, bench, rocks, cursor, last tick
 const BODY := 13  # readouts and rows
@@ -242,8 +256,8 @@ func _style_label(theme: Theme) -> void:
 	# Heading, which is INK_MUTED: the structure of the column is dimmer than its contents." A
 	# heading that is quieter than the paragraph under it inverts the one job a heading has. The
 	# muted ink keeps its own name, `Muted`, for the lines that really are secondary.
-	for variation in [["Display", DISPLAY, INK], ["Heading", HEADING, INK],
-			["Muted", SMALL, INK_MUTED]]:
+	for variation in [["Wordmark", WORDMARK, INK], ["Display", DISPLAY, INK],
+			["Heading", HEADING, INK], ["Muted", SMALL, INK_MUTED]]:
 		var name := StringName(variation[0])
 		theme.add_type(name)
 		theme.set_type_variation(name, "Label")
@@ -258,6 +272,13 @@ func _style_button(theme: Theme) -> void:
 	theme.set_font_size("font_size", "Button", SMALL)
 	theme.set_color("font_color", "Button", INK)
 	theme.set_color("font_hover_color", "Button", Color.WHITE)
+	# **CHECKED BY ASSA-267 AND DELIBERATELY LEFT ALONE, which is the box most likely to be "tidied"
+	# by whoever reads the Quiet comment above and assumes the accent is simply banned from a pressed
+	# state.** It is not. An ordinary button -- Mine, Stop, Assay -- is pressed for the frame a finger
+	# is down and then is not: that is FEEDBACK, momentary and self-cancelling, and it is the one case
+	# where the accent's meaning survives being used on something already pressed. ASSA-267's bar is
+	# about controls that are pressed AND STAY pressed; Maren amended the item in place to say so,
+	# because the first wording would have failed any shot that caught a button mid-press.
 	theme.set_color("font_pressed_color", "Button", ACCENT)
 	theme.set_color("font_disabled_color", "Button", INK_MUTED.darkened(0.25))
 	theme.set_stylebox("normal", "Button", _box(RAISED, BORDER))
@@ -333,7 +354,24 @@ func _style_quiet_button(theme: Theme) -> void:
 	theme.set_font_size("font_size", name, SMALL)
 	theme.set_color("font_color", name, INK_MUTED)
 	theme.set_color("font_hover_color", name, INK)
-	theme.set_color("font_pressed_color", name, ACCENT)
+	# **A CONTROL THAT STAYS PRESSED CANNOT MEAN `PRESS THIS NEXT`** (ASSA-267, Maren's ASSA-224
+	# one-accent rule). This declared `ACCENT`, and nobody saw it for two days because `Quiet` was
+	# authored for LONE toggles -- `_log_toggle`, `_make_toggle` -- where pressed is occasional and
+	# self-cancelling. A four-tab strip is the first control group here where exactly one member is
+	# ALWAYS pressed, so what used to flash under a finger became a second accent sitting on screen:
+	# Maren counted 172 px of `(128,229,140)` at x 1143..1201 on a real 1x shot, byte-identical to
+	# `Mine`'s core.
+	#
+	# **RANK, NOT HUE.** `INK` over the resting `INK_MUTED` is 1.80:1, already in the palette, and no
+	# new literal anywhere. `tab_strip.gd` proved it on main before this landed.
+	theme.set_color("font_pressed_color", name, INK)
+	# **AND THE SAME STATE UNDER A POINTER, WHICH IS THE HALF THAT WOULD HAVE ROTTED SILENTLY.**
+	# `Quiet` declared no `font_hover_pressed_color`, so a pressed-and-hovered quiet control fell
+	# through to plain `Button`'s -- which is still `ACCENT` and deliberately so (see `_style_button`).
+	# ASSA-247's local override set BOTH keys; removing that override without declaring this one would
+	# have taken the accent out of the open tab and handed it straight back the moment a pointer
+	# crossed it, with every shot of an un-hovered strip looking fixed.
+	theme.set_color("font_hover_pressed_color", name, INK)
 	theme.set_color("font_disabled_color", name, INK_MUTED.darkened(0.25))
 	# **AN EDGE AT REST, AT LOWER ALPHA** (ASSA-233, Maren's 18:40Z ruling, which is her third on this
 	# clause and the only one carrying a measurement -- see `QUIET_EDGE`). A dim centred line across

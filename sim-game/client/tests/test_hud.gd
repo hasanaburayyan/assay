@@ -2106,3 +2106,94 @@ func test_the_dead_end_label_comes_from_the_sim_and_not_from_this_client() -> bo
 	if main_src.contains("_note(\"— %s\" % dead_end)"):
 		return _fail("the dead end is still drawn in the cost clause's em-dash series")
 	return true
+
+
+## **THE DOOR PLATE CAN NEVER BE BIGGER THAN THE DOOR** (ASSA-292).
+##
+## THIS TEST EXISTS BECAUSE THE FIRST PLATE WAS 565x1452 INSIDE A 912x672 DOOR -- taller than the
+## whole window -- and I could not explain it from the scene, so I withdrew it rather than patch it.
+## The cause is reachable from `main.gd`'s own note one caller away: `autowrap_mode` does not lower a
+## Label's reported minimum, so the door sentence can be measured at a width it will never be drawn
+## at and its height balloons. **The fix is not to chase that number but to make it unable to reach
+## the screen**, and that is one `intersection`.
+##
+## The pathological case is a real measurement and not an invented one, which is the difference
+## between a regression test and a test that agrees with me.
+func test_the_door_plate_is_always_inside_the_door() -> bool:
+	var door := AssayHud.join_rect()
+	var pad := AssayHud.DOOR_PLATE_PAD
+	# 1. THE ORDINARY CASE: a block of words near the middle of the door is padded on every side.
+	var words := Rect2(door.position + Vector2(200.0, 250.0), Vector2(500.0, 210.0))
+	var plate := AssayHud.door_plate_rect(door, words)
+	if not door.encloses(plate):
+		return _fail("an ordinary block of words produced a plate %s outside the door %s"
+				% [plate, door])
+	if not plate.encloses(words):
+		return _fail("the plate %s does not contain the words %s it is supposed to carry"
+				% [plate, words])
+	if absf(plate.size.x - (words.size.x + pad * 2.0)) > 0.01 \
+			or absf(plate.size.y - (words.size.y + pad * 2.0)) > 0.01:
+		return _fail("the plate is %s for words %s: that is not one pad of air on each side"
+				% [plate.size, words.size])
+	# 2. **THE REGRESSION, WITH THE NUMBER THAT ACTUALLY HAPPENED.** A 1404 px tall content rect is
+	# what a mid-layout autowrap Label reported on the night this was withdrawn.
+	var ballooned := Rect2(door.position, Vector2(517.0, 1404.0))
+	plate = AssayHud.door_plate_rect(door, ballooned)
+	if not door.encloses(plate):
+		return _fail(("content %s (the real mid-layout measurement) produced a plate %s outside the "
+				+ "door %s: the clip is gone and a Label's minimum can paint over the window again")
+				% [ballooned.size, plate, door])
+	if plate.size.y > door.size.y:
+		return _fail("the plate is %.0f px tall in a %.0f px door" % [plate.size.y, door.size.y])
+	# 3. CONTENT NOWHERE NEAR THE DOOR IS AN EMPTY PLATE, not a plate somewhere else. The caller
+	# reads this as "nothing to stand on yet" and draws nothing.
+	var elsewhere := Rect2(door.end + Vector2(500.0, 500.0), Vector2(100.0, 100.0))
+	plate = AssayHud.door_plate_rect(door, elsewhere)
+	if plate.size.x > 0.0 and plate.size.y > 0.0:
+		return _fail("words %s are off the door entirely and still produced a plate %s"
+				% [elsewhere, plate])
+	return true
+
+
+## **A CENTRED LABEL IS MOSTLY NOT WORDS** (ASSA-292, Maren's card ruling). `AssayHud.label_ink_rect`
+## carries the reasoning; this is the arithmetic, on the numbers that actually caused the defect.
+##
+## THE WORDMARK'S NUMBERS ARE MAREN'S OWN MEASUREMENT off the 1x frame -- **152x53 of ink** in a
+## centred Label as wide as the door -- so case 1 is this screen's real case and not a shape I chose
+## to pass.
+func test_a_centred_label_is_asked_for_its_ink_and_not_its_width() -> bool:
+	# 1. THE WORDMARK. 1280 px of control, 152 px of word, and the ink is centred in it.
+	var band := Rect2(Vector2(0.0, 229.0), Vector2(1280.0, 64.0))
+	var ink := AssayHud.label_ink_rect(band, Vector2(152.0, 53.0), HORIZONTAL_ALIGNMENT_CENTER)
+	if absf(ink.size.x - 152.0) > 0.01:
+		return _fail("a 152 px wordmark in a 1280 px Label measured %.0f px wide: a plate fitted to "
+				% ink.size.x + "this is still a band across the whole door")
+	if absf(ink.get_center().x - band.get_center().x) > 0.01:
+		return _fail("the ink is centred in the Label on screen and this puts it at x=%.1f against "
+				% ink.get_center().x + "the Label's centre %.1f" % band.get_center().x)
+	# **THE HEIGHT IS THE CONTROL'S AND NOT THE MEASUREMENT'S**, deliberately: a `VBoxContainer`
+	# already gives a Label its content height, and a measured height here would be a second opinion
+	# about line spacing -- which shows up as one clipped descender, not as a test failure.
+	if absf(ink.size.y - band.size.y) > 0.01:
+		return _fail("the ink rect is %.0f px tall and the Label is %.0f: the height is the "
+				% [ink.size.y, band.size.y] + "container's answer and must come across untouched")
+	if not band.encloses(ink):
+		return _fail("the ink %s is not inside the Label %s that holds it" % [ink, band])
+	# 2. **INK WIDER THAN ITS CONTROL IS THE MEASUREMENT TO DISTRUST, NOT THE CONTROL.** This is the
+	# mid-layout autowrap case that produced a 1452 px plate in a 672 px door last night, in its
+	# horizontal form: clamped, so it can never widen a card past the thing it was measured in.
+	var narrow := Rect2(Vector2(100.0, 100.0), Vector2(200.0, 40.0))
+	ink = AssayHud.label_ink_rect(narrow, Vector2(900.0, 40.0), HORIZONTAL_ALIGNMENT_CENTER)
+	if not narrow.encloses(ink):
+		return _fail("a 900 px measurement in a 200 px Label produced %s, outside it" % ink)
+	# 3. LEFT AND RIGHT, because the two Labels that move into the toast in a world keep their own
+	# alignment and this function has to be right for all three.
+	ink = AssayHud.label_ink_rect(band, Vector2(300.0, 20.0), HORIZONTAL_ALIGNMENT_LEFT)
+	if absf(ink.position.x - band.position.x) > 0.01:
+		return _fail("left-aligned ink starts at x=%.1f and the Label at %.1f"
+				% [ink.position.x, band.position.x])
+	ink = AssayHud.label_ink_rect(band, Vector2(300.0, 20.0), HORIZONTAL_ALIGNMENT_RIGHT)
+	if absf(ink.end.x - band.end.x) > 0.01:
+		return _fail("right-aligned ink ends at x=%.1f and the Label at %.1f"
+				% [ink.end.x, band.end.x])
+	return true

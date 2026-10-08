@@ -215,6 +215,61 @@ func test_the_panel_sharpens_from_bands_to_numbers_when_you_assay() -> bool:
 	return ok
 
 
+## **THE ROW ANSWERS BEFORE IT REPORTS** (ASSA-264, Maren's ruling of 2026-10-08: ORDER BEFORE RANK).
+##
+## Her measurement off the shipped tab: the verdict `[too hard for anything you can build]` sat **80
+## px below the name it belongs to**, under six readings that do not matter if it says that. The
+## ruling is order and not a third ink, so the thing to assert is ORDER.
+##
+## **CHILD ORDER AND NOT A y COORDINATE, AND NOT BECAUSE THE SUITE IS HEADLESS.** A y comparison
+## would pass on the old row too the moment some future container reversed itself, and it would read
+## as a fact about pixels while actually asserting the `VBoxContainer`'s arithmetic. The row is a
+## vertical box: in it, "above" IS child order, so order is the primitive and the pixels follow from
+## it. (It is also the one reading a 0-height headless layout cannot fake -- see ASSA-247.)
+##
+## **BY NAME, WHICH IS THE HALF MAREN ASKED FOR WHILE RULING THE MOVE.** `SPECIES_READINGS` had a
+## node name and the tag line did not, so every test of this row found the verdict by counting
+## children -- and a test that counts children cannot tell this move from the bug it fixes.
+##
+## IT IS ASSERTED ON EVERY ROW THAT HAS A VERDICT, not on row 0: `species_tags` returns an empty list
+## for a rock the sim says nothing about, and a test that stopped at the first row would be satisfied
+## by one species in a roster of six.
+func test_a_species_row_answers_before_it_reports() -> bool:
+	var screen := _joined()
+	var ok := true
+	var rows := _rows(screen)
+	var judged := 0
+	for row in rows:
+		var verdict: Node = row.find_child(screen.SPECIES_TAGS, true, false)
+		var readings: Node = row.find_child(screen.SPECIES_READINGS, true, false)
+		if readings == null:
+			ok = _fail("%s has no `%s` node, so this row reports nothing to order"
+					% [_title_of(screen, row), screen.SPECIES_READINGS])
+			break
+		if verdict == null:
+			continue
+		judged += 1
+		var order: Array = row.get_children()
+		# The slot DIRECTLY above the readings, derived from where the readings are rather than typed
+		# as 1: the name row is one node today and a future head of two would move it.
+		var want := order.find(readings) - 1
+		if order.find(verdict) > order.find(readings):
+			ok = _fail(("%s says `%s` BELOW its six readings: the row reports before it answers, "
+					+ "which is the defect ASSA-264 measured at 80 px")
+					% [_title_of(screen, row), (verdict as Label).text])
+			break
+		if order.find(verdict) != want:
+			ok = _fail(("%s has its verdict `%s` at child %d where the slot under the name is %d: "
+					+ "Maren's ruling is DIRECTLY under the name") % [_title_of(screen, row),
+					(verdict as Label).text, order.find(verdict), want])
+			break
+	if ok and judged == 0:
+		ok = _fail(("not one of the %d species rows carries a verdict line, so this test asserted "
+				+ "nothing about order") % rows.size())
+	screen.queue_free()
+	return ok
+
+
 ## THE TWO FACTS SHOW AS TAGS, NOT AS SENTENCES (ruling 1), and a tag only appears for a species the
 ## sim says it is true of -- the client never negates and never ranks.
 func test_the_boolean_facts_show_as_tags_only_where_the_sim_says_true() -> bool:

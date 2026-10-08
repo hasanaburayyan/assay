@@ -1,4 +1,9 @@
 extends RefCounted
+
+#: THE SUITE'S ONE THEME-POKE SITE (ASSA-312). A project-themed control resolves the PLAIN
+#: type's entries until it gets `NOTIFICATION_THEME_CHANGED`, which frames do not deliver, so
+#: every headless theme read in here goes through this.
+const Poke := preload("res://tests/theme_poke.gd")
 ## THE SCREEN ITSELF, INSTANTIATED. `test_hud.gd` checks the words and colours; this checks that they
 ## are wired to anything at all.
 ##
@@ -659,6 +664,18 @@ func test_the_l_key_toggles_the_log_and_cannot_eat_a_typed_l() -> bool:
 ## BOTH SHAPES, because only one of them ever was wrong: a stack row has an icon beside its body and
 ## a bench row is the full panel with nothing beside it. A fix that just subtracted 38 everywhere
 ## would have broken the bench and passed a test that only looked at the pack.
+##
+## **AND THE CRAFTING MENU, WHICH WAS NOT IN THIS LIST UNTIL ASSA-116 BOX 3 MADE ME READ IT.** The
+## box is *"pack AND CRAFTING rows ... no clipping in the 320px panel"*, and the four sections swept
+## here were pack, bench, species and `do`. A make row is the newest surface to get the icon column
+## (ASSA-240) and the one whose own comment names a budget — `main.gd` measures its sentence "against
+## a budget of about 313" with "the row's floor is the icon box's 48 px" — so it is the shape where
+## 48 px beside a flowing body is most likely to push the total past the box. That is ASSA-98's
+## defect exactly, and the one section it was never asked about.
+##
+## `_rebuild_make` is driven with the real builder and the sim's own offer shape, one row with art and
+## one without, because the icon column and the reserved gap are different children and both have to
+## fit.
 func test_no_row_asks_for_more_width_than_the_panel_that_clips_it() -> bool:
 	var screen := _screen()
 	var ok := true
@@ -668,8 +685,19 @@ func test_no_row_asks_for_more_width_than_the_panel_that_clips_it() -> bool:
 		{"kind": "ore", "species": 4, "grade": "B", "count": 22, "name": "Minyte ore (B)"},
 		{"kind": "head", "species": 4, "grade": "B", "count": 2, "name": "Minyte head (B)"},
 	])
+	# A LONG SENTENCE ON PURPOSE: the widest make line the sim can be asked to draw, shaped like
+	# `make_offers`' own (a named species, a grade, a count and what one batch spends). A short
+	# `line` would fit whatever the icon column did and the arm would prove nothing.
+	screen._rebuild_make([
+		{"makes": {"kind": "ore", "species": 4, "grade": "B", "count": 1, "name": "Minyte ore (B)"},
+			"line": "sort 3 Minyte ore (B) into 1 Minyte ore (A) · you have 22 · spends 3",
+			"verb": "craft", "tag": 0},
+		{"makes": {"kind": "gear", "species": 4, "grade": "B", "count": 1, "name": "Minyte gear (B)"},
+			"line": "make 1 Minyte gear (B) from 2 Minyte refined (B) · you have 6 · spends 2",
+			"verb": "make", "tag": 0},
+	])
 	var checked := 0
-	for section in [screen._carrying, screen._bench, screen._species, screen._actions]:
+	for section in [screen._carrying, screen._bench, screen._species, screen._actions, screen._make]:
 		for child in section.get_children():
 			if not (child is Control):
 				continue
@@ -685,6 +713,50 @@ func test_no_row_asks_for_more_width_than_the_panel_that_clips_it() -> bool:
 			break
 	if ok and checked == 0:
 		ok = _fail("no rows were measured, so this proves nothing")
+	screen.queue_free()
+	return ok
+
+
+## **NO VERB THAT ACTS ON A TILE IS DISABLED** (ASSA-37's rule, held for ASSA-96 box 3).
+##
+## ASSA-96 asked whether Fuel, Smelt and Place read clearly when the tile they land on is named two
+## sections up the column. The Game Director closed it as no change needed on 2026-10-08 — the
+## close-up now marks the acted-on tile — and its last box is this standing property, which nothing
+## held.
+##
+## **IT IS SCOPED TO THE PACK ON PURPOSE AND THAT IS NOT A LOOPHOLE.** There are exactly two
+## `.disabled` writes in the whole client: a crafting row you cannot afford — Maren's own LATER
+## ASSA-247 ruling, held by `test_buttons.gd::test_a_row_you_cannot_afford_is_not_pressable_...` —
+## and a placeholder tab in `tab_strip.gd`. So the blanket form of "nothing is disabled" is no longer
+## the design, and a test asserting it would redden her ruling. What ASSA-37 is about is the verbs
+## that act at a DISTANCE: pressing one submits and lets the sim answer, instead of the client
+## deciding in advance that a press it never made would be refused.
+##
+## THE PREMISE IS ASSERTED: one of these verbs has to be on screen, or a pack that offered none would
+## pass this silently — the shape that made `test_every_make_row_starts_its_sentence_at_the_same_x`
+## read as coverage until its author checked.
+func test_no_verb_that_acts_on_a_tile_is_disabled() -> bool:
+	var screen := _screen()
+	# ORE for Fuel/Smelt, a SMELTER for Place: the three verbs ASSA-96 was filed about all land on
+	# `_target_tile()`, and no single stack offers all three.
+	screen._rebuild_pack([
+		{"kind": "ore", "species": 4, "grade": "B", "count": 22, "name": "Minyte ore (B)"},
+		{"kind": "smelter", "species": 4, "grade": "B", "count": 1, "name": "Minyte smelter (B)"},
+	])
+	var ok := true
+	var acting := 0
+	var seen := PackedStringArray()
+	for found in screen._carrying.find_children("*", "Button", true, false):
+		var button := found as Button
+		seen.append(button.text)
+		if button.text in [AssayActions.SLOT_FUEL, "Smelt", "Place"]:
+			acting += 1
+		if button.disabled:
+			ok = _fail(("the pack offers `%s` as a DISABLED button, so the client decided the sim "
+					+ "would refuse a press nobody made (ASSA-37)") % button.text)
+	if ok and acting == 0:
+		ok = _fail(("no Fuel, Smelt or Place button is on this pack, so nothing here acts on a tile "
+				+ "and this proves nothing. What the rows offered: %s") % ", ".join(seen))
 	screen.queue_free()
 	return ok
 
@@ -1379,33 +1451,35 @@ func _panel_surface() -> Color:
 ## blind to every heading in the window while staying green. One poke here fixes every caller at
 ## once, and no caller has to remember.
 func _drawn_color(label: Label) -> Color:
-	_poke_theme(label)
-	var c := label.get_theme_color(&"font_color")
-	var m := label.modulate
-	return Color(c.r * m.r, c.g * m.g, c.b * m.b, c.a * m.a)
+	return Poke.drawn_color(label)
 
 
-## THE ONE PLACE THIS HARNESS POKES A CONTROL, AND IT IS ONE PLACE SO THAT DELETING IT HAS A LEVER.
+## **THE POKE ITSELF MOVED OUT OF THIS FILE (ASSA-312), AND THESE THREE ARE NOW NAMES FOR IT.**
 ##
 ## ASSA-246 shipped the poke inside `_drawn_color` and disclosed that nothing could catch its
 ## removal: every `Label` variation's ink coincides with plain `Label`'s, so a colour assertion is
 ## blind to it, and the one test that reads a property where the two types DO differ -- `font_size`,
 ## `Heading` 15 against `Label` 13 -- poked its own probe by hand. So it proved that poking works,
-## not that the helper does it. Three hand-rolled pokes and a removal that stayed green.
+## not that the helper does it. ASSA-252 fixed that by routing the size read through the helper.
 ##
-## Now every read goes through here, and the `font_size` assertion goes through `_drawn_font_size`,
-## so deleting the `notification()` below reddens by name on today's build with nothing retuned.
+## **WHAT MOVED IT OUT WAS A SECOND FILE NEEDING IT.** ASSA-267 removed the override that was the
+## only thing propping up `test_tab_strip.gd`'s theme read, and 12 assertions went red against a
+## theme that was already correct. Two sites is where "a shared helper rather than call sites each
+## remembering" -- ASSA-246's own words -- stops being theoretical.
+##
+## These three wrappers stay because ~30 call sites in this file use them and renaming those would
+## be a diff nobody could review for the thing it is actually about. The poke lives in
+## `tests/theme_poke.gd`, `check_one_theme_poke.py` fails if it reappears anywhere else in
+## `tests/`, and deleting it from the helper still reddens by name on the `font_size` lever.
 func _poke_theme(control: Control) -> Control:
-	control.notification(Control.NOTIFICATION_THEME_CHANGED)
-	return control
+	return Poke.poke(control)
 
 
 ## The font size a label DRAWS, which is not what a headless read reports until it is poked. Same
 ## helper as `_drawn_color`, so the two cannot drift apart, and this is the read that gives the poke
 ## a lever: `Heading` declares 15 and plain `Label` 13, so an un-poked `Heading` is off by 2px.
 func _drawn_font_size(label: Label) -> int:
-	_poke_theme(label)
-	return label.get_theme_font_size(&"font_size")
+	return Poke.drawn_font_size(label)
 
 
 ## THE SURFACE ACTUALLY BEHIND A LABEL, ASKED OF THE BUILT TREE (ASSA-152, Maren's amended box 3).
@@ -4227,6 +4301,71 @@ func test_no_control_is_drawn_above_the_world_in_a_played_screen() -> bool:
 	return ok
 
 
+## **NO PIXEL OF THE TITLE SCREEN IS BARE WINDOW** (ASSA-292, Maren's rectangle ruling of
+## 2026-10-08). The reasoning and her measurement are in `AssayHud.world_layer_rect`'s docstring; what
+## this owns is that the client actually asks it, in both states and in the right order.
+##
+## **IT IS THE WIRING AND NOT THE ARITHMETIC, AND THAT DISTINCTION IS THIS WEEK'S LESSON** (ASSA-292
+## box 3): three tests of `AssayScene.title_drift` passed for a whole night while nothing on the
+## screen called it. So the first clause reads the LAYER, the second reads the view the door actually
+## composed -- which is the half a rect assertion cannot see, since `_door_view` reads `_world.size`
+## while it works out the camera -- and the third blanks both and demands one `_refresh_world` put
+## them back.
+##
+## THE TWO STATES ARE ONE TEST because they are one claim with a sign: the door takes the whole
+## window, a world gives the column back. Split in two, a `world_layer_rect` that returned the same
+## rectangle either way would redden exactly one of them and read like a local failure.
+func test_the_door_world_fills_the_window_and_a_world_gives_the_column_back() -> bool:
+	var ok := true
+	var door := _screen()
+	var want := AssayHud.join_rect()
+	if not _same_rect(door._world.get_rect(), want):
+		ok = _fail(("the door's world layer is %s and the door is %s: %.0f px of bare window beside "
+				+ "a lit world is Maren's 26.9%% column (ASSA-292)")
+				% [door._world.get_rect(), want, want.size.x - door._world.get_rect().size.x])
+	# **THE CAMERA AGREES WITH THE RECTANGLE IT IS DRAWN IN.** `_door_view` reads `_world.size` twice,
+	# so a layer resized AFTER the view was composed draws a 912-wide camera stretched over a
+	# 1280-wide door -- a picture, not a crash, and nothing else here could see it.
+	var view: Dictionary = door._world.view
+	if view.is_empty():
+		ok = _fail("the door drew no world at all, so this test asked nothing (stale client-lib?)")
+	elif (view.get("size", Vector2.ZERO) as Vector2) != door._world.size:
+		ok = _fail(("the door camera was composed for a %s layer and the layer is %s: the resize "
+				+ "happens after the view") % [view.get("size"), door._world.size])
+	# **THE CALL, NOT THE STATE.** Both of the above are also true of a screen that was placed once in
+	# `_build_ui` and never again -- which is the state a session ENDING leaves. Blank them and demand
+	# one refresh rebuild both.
+	door._world.size = AssayHud.world_rect().size
+	door._world.view = {}
+	door._refresh_world()
+	if not _same_rect(door._world.get_rect(), want):
+		ok = _fail(("one refresh at the door left the layer at %s instead of %s: the rectangle is "
+				+ "set at build time and never restored") % [door._world.get_rect(), want])
+	if (door._world.view.get("size", Vector2.ZERO) as Vector2) != want.size:
+		ok = _fail(("one refresh at the door composed a camera for %s instead of %s")
+				% [door._world.view.get("size"), want.size])
+	door.queue_free()
+	# AND THE OTHER SIGN: in a world the column is standing there and the map must not be under it.
+	var joined := _joined_screen()
+	joined._process(0.016)
+	joined._refresh()
+	if not joined._sim.running():
+		joined.queue_free()
+		return _fail("the fixture never simulated, so the in-world half asked nothing")
+	if not _same_rect(joined._world.get_rect(), AssayHud.world_rect()):
+		ok = _fail(("in a world the layer is %s and `world_rect()` is %s: the door's full-window "
+				+ "rectangle is being drawn under the HUD column")
+				% [joined._world.get_rect(), AssayHud.world_rect()])
+	joined.queue_free()
+	return ok
+
+
+## Rect2 equality with one pixel-hundredth of slack, so a test about a 344 px column cannot fail on a
+## float.
+func _same_rect(a: Rect2, b: Rect2) -> bool:
+	return a.position.distance_to(b.position) < 0.01 and a.size.distance_to(b.size) < 0.01
+
+
 ## **THE WORLD MAY NEVER SHRINK** (ASSA-287, Maren's ruling on ASSA-239: *"ratchet it, do not raise
 ## it"*). The constant and the whole reasoning are `AssayHud.WORLD_HEIGHT_FLOOR_SHARE`'s docstring.
 ##
@@ -4857,6 +4996,37 @@ func test_nothing_in_the_column_asks_for_more_width_than_the_panel() -> bool:
 				(worst as Label).text if worst is Label else "not a Label"])
 	screen.queue_free()
 	return ok
+
+
+## **THE DOOR KEEPS REFRESHING ITSELF WITH NO SESSION** (ASSA-292), which is a claim about a CALL and
+## not about arithmetic.
+##
+## THIS TEST EXISTS BECAUSE THREE GREEN TESTS DID NOT CATCH A DEAD SCREEN. `AssayScene.title_drift` is
+## asserted three ways -- periodic, bounded, continuous -- and every one of them passed while the
+## title camera never moved a pixel, because `_process` refreshed the world only
+## `if _close_up and _sim.running()` and there is no session at the door. The arithmetic was right and
+## nothing called it; a unit test on a pure function cannot tell those apart. The same guard also hid
+## the door plate, which is sized from laid-out children and so can only be computed after a layout
+## pass -- it ran once inside `_ready()`, found every child 0x0, and hid itself for good.
+##
+## So this asserts the only thing that would have gone red: that a frame at the door rebuilds the
+## view. It blanks `_world.view` by hand and demands `_process` put it back.
+func test_the_door_keeps_refreshing_itself_with_no_session() -> bool:
+	var screen: Node = load("res://scenes/main.tscn").instantiate()
+	runner.root_node.add_child(screen)
+	screen._ready()
+	if screen._sim.running():
+		screen.queue_free()
+		return _fail("this test is about the doorless case and the scene came up with a session")
+	screen._world.view = {}
+	screen._process(0.016)
+	var after: Dictionary = screen._world.view
+	screen.queue_free()
+	if after.is_empty():
+		return _fail("a frame at the door left the view empty: nothing is driving the title world, "
+				+ "so the camera cannot drift and the plate can never be sized. The guard in "
+				+ "_process is asking for a session that the door does not have")
+	return true
 
 
 ## **THE FIRST SCREEN SAYS WHAT THE GAME IS CALLED** (ASSA-116 box 4; Maren's finding 2 on that item,

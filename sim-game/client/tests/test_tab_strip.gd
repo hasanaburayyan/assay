@@ -1,4 +1,9 @@
 extends RefCounted
+
+#: THE SUITE'S ONE THEME-POKE SITE (ASSA-312). A project-themed control resolves the PLAIN
+#: type's entries until it gets `NOTIFICATION_THEME_CHANGED`, which frames do not deliver, so
+#: every headless theme read in here goes through this.
+const Poke := preload("res://tests/theme_poke.gd")
 ## THE TABBED SYSTEMS PANEL'S MECHANISM (ASSA-247), tested for the properties the rulings name.
 ##
 ## **NOT ONE PIXEL IS ASSERTED HERE, DELIBERATELY.** The suite runs inside `SceneTree._initialize`:
@@ -173,6 +178,20 @@ func test_the_open_tab_is_marked_by_rank_and_not_by_the_accent() -> bool:
 		# `get_theme_color(&"font_color", &"Button")` on a `Quiet` Button resolves the VARIATION and
 		# returns `INK_MUTED`. That is the bug this test caught in my first fix: the strip marked its
 		# open tab in the same colour as its closed ones, and "no accent" was perfectly true of it.
+		#
+		# **AND THE POKE, WHICH THIS TEST DID NOT NEED UNTIL ASSA-267 AND WOULD HAVE LIED WITHOUT.**
+		# The sentence above -- *an override is consulted FIRST and bypasses the type chain* -- was
+		# true, and it was the only reason this read was honest. ASSA-267 took the override out, so the
+		# read falls down the VARIATION chain, and a project-themed control resolves the PLAIN type's
+		# entries until it gets `NOTIFICATION_THEME_CHANGED` (ASSA-246; `_process` frames do not
+		# deliver it). Un-poked, every tab reported plain `Button`'s `ACCENT` for pressed and `WHITE`
+		# for hover-pressed: 12 failures against a theme that was already correct. **This is ASSA-246's
+		# exposure arriving on a real change rather than in a disclosure.**
+		#
+		# Second poke site in the suite -- `test_main_screen.gd::_poke_theme` is the other. ASSA-246's
+		# own "what I would do" called for one shared helper instead of call sites remembering; it is
+		# filed, not done, and two sites is where that stops being theoretical.
+		Poke.poke(button)
 		for state in [&"font_pressed_color", &"font_hover_pressed_color"]:
 			var drawn: Color = button.get_theme_color(state)
 			if drawn.is_equal_approx(accent):
@@ -195,10 +214,14 @@ func test_the_open_tab_is_marked_by_rank_and_not_by_the_accent() -> bool:
 	if separation <= 0.0:
 		ok = _fail(("the open tab's ink %s is not brighter than a closed tab's %s, so selection is "
 				+ "marked by nothing a player can see") % [ink, muted])
-	# CLAUSE 3: the declared coincidence, which is ASSA-267's to end.
+	# CLAUSE 3: the declared coincidence, **WHICH ASSA-267 ENDED, so this branch is dead today** --
+	# `Quiet/font_pressed_color` is `INK` and no longer the accent. Left standing rather than deleted
+	# because it is the guard for the retune that would bring the defect back, and poked for the same
+	# reason as the read above: a branch revived in a year must not come back un-poked and silent.
 	var declared := theme.get_color(&"font_pressed_color", &"Quiet")
 	if declared.is_equal_approx(accent):
 		var probe := _button_for(strip, "make")
+		Poke.poke(probe)
 		if probe.get_theme_color(&"font_pressed_color").is_equal_approx(declared):
 			ok = _fail(("`Quiet` still declares the accent for its pressed state and the strip is "
 					+ "not overriding it: a tab inherits %s. If ASSA-267 has landed, the theme is "
