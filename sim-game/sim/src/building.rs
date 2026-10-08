@@ -63,6 +63,53 @@ pub enum Slot {
     Fuel,
 }
 
+/// Every holder a building has, including the ones nothing can be inserted
+/// into — which is the difference between this and [`Slot`].
+///
+/// **`Slot` IS THE SET OF TARGETS A COMMAND MAY NAME; THIS IS THE SET OF ROWS
+/// A MENU HAS.** They are not the same set and conflating them is how a
+/// surface comes to offer an act the rules refuse: ore leaves a smelter's
+/// output and a drill's buffer by `Take` (decision 9), so neither is a `Slot`,
+/// and a menu that drew a "put something here" control on them would be
+/// inviting the impossible (ASSA-43).
+///
+/// It exists so that every host says "buffer" with the same word. `hud.gd`
+/// spelling its own noun is ASSA-146 exactly: the cursor line called a tile
+/// empty above the smelter standing on it, because three surfaces each held
+/// their own copy of one word.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SlotRole {
+    Input,
+    Fuel,
+    /// Refined material waiting to be taken out of a smelter.
+    Output,
+    /// Ore a planted machine has mined and not yet handed over. Bounded by the
+    /// `Capacity` its parts give it, not by a tuning constant.
+    Buffer,
+}
+
+impl SlotRole {
+    pub const fn name(self) -> &'static str {
+        match self {
+            SlotRole::Input => "input",
+            SlotRole::Fuel => "fuel",
+            SlotRole::Output => "output",
+            SlotRole::Buffer => "buffer",
+        }
+    }
+
+    /// The `Slot` an `Insert` would name, or `None` when nothing can be put
+    /// here. **A HOST WITH NO TAG CANNOT BUILD THE COMMAND**, which is the
+    /// point: the refusal is structural rather than remembered.
+    pub const fn insertable(self) -> Option<Slot> {
+        match self {
+            SlotRole::Input => Some(Slot::Input),
+            SlotRole::Fuel => Some(Slot::Fuel),
+            SlotRole::Output | SlotRole::Buffer => None,
+        }
+    }
+}
+
 /// Burns reactive material to turn ore into refined material. Fixed 2×2.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Smelter {

@@ -56,7 +56,7 @@ pub use assembly::{
 };
 pub use building::{
     Building, BuildingId, BuildingKind, BuildingState, Machine, MachineIdle, MachineStall,
-    MachineState, Slot, Smelter, SmelterStall, SmelterState, WorkReading,
+    MachineState, Slot, SlotRole, Smelter, SmelterStall, SmelterState, WorkReading,
 };
 pub use command::{Event, Input, PlayerCommand, RejectReason, StopReason, SystemCommand};
 pub use inventory::Inventory;

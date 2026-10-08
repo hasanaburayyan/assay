@@ -2,10 +2,10 @@
 
 use crate::building::{
     Building, BuildingId, BuildingKind, BuildingState, Machine, MachineIdle, MachineStall,
-    MachineState, Smelter, SmelterStall, SmelterState, WorkReading,
+    MachineState, SlotRole, Smelter, SmelterStall, SmelterState, WorkReading,
 };
 use crate::hash::fnv64;
-use crate::item::Item;
+use crate::item::{Item, ItemStack};
 use crate::mineral::{MineralSpecies, SpeciesId};
 use crate::ore::OreDeposit;
 use crate::player::Player;
@@ -345,6 +345,34 @@ impl World {
         match &b.kind {
             BuildingKind::Smelter(_) => BuildingState::Smelter(self.smelter_state(b)),
             BuildingKind::Machine(m) => BuildingState::Machine(self.machine_state(b, m)),
+        }
+    }
+
+    /// Every holder this building has: what it is for, what is in it, and how
+    /// much it takes. In the order a player fixes things in, which is
+    /// `building_status`' order and `smelter_state`'s.
+    ///
+    /// **THE SET OF ROWS IS THE SIM'S, NOT A MENU'S.** A host that listed the
+    /// slots itself would have to know that a smelter has three and a machine
+    /// has one, that the third takes no inserts, and that the machine's cap is
+    /// its parts' `Capacity` rather than a tuning constant — four rules, in
+    /// GDScript, that a new building kind would silently leave behind. Adding a
+    /// `BuildingKind` fails to compile here instead.
+    ///
+    /// The cap is what the *sim* will accept, so a fill is two sim numbers and
+    /// no host divides anything it had to derive first (ASSA-276 move 3).
+    pub fn building_slots(&self, b: &Building) -> Vec<(SlotRole, Option<ItemStack>, u32)> {
+        match &b.kind {
+            BuildingKind::Smelter(s) => vec![
+                (SlotRole::Input, s.input, tuning::SMELTER_INPUT_CAP),
+                (SlotRole::Fuel, s.fuel, tuning::SMELTER_FUEL_CAP),
+                (SlotRole::Output, s.output, tuning::SMELTER_OUTPUT_CAP),
+            ],
+            BuildingKind::Machine(m) => vec![(
+                SlotRole::Buffer,
+                m.held,
+                m.assembly.stats(&self.species).capacity,
+            )],
         }
     }
 
