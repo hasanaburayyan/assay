@@ -31,6 +31,16 @@ const DEFAULT_TICKS := 60
 ## Ticks between handing the frame back, so containers lay out before anything is measured.
 const TICKS_PER_FRAME := 10
 
+## **THE WALL CLOCK THIS RUN MAY NOT OUTLIVE** (ASSA-182's guard, `tests/test_tool_ceilings.gd`).
+##
+## **I SHIPPED THIS TOOL WITHOUT ONE AND CI CAUGHT IT, which is the guard doing exactly its job.**
+## A looping `_process` that dies on a runtime error inside `_initialize` never reaches `_finish`,
+## so it holds the machine until a person notices -- and the night this Mac hit load 151 is what
+## that costs. 120 s is four times the longest this has taken (the play is 60 ticks and the shot is
+## one frame), so reaching it means something stopped advancing rather than that the world was slow.
+const RUN_CEILING := 120.0
+var _ceiling := Time.get_unix_time_from_system() + RUN_CEILING
+
 var _screen: Node = null
 var _play: RefCounted = null
 var _asked: Array = []
@@ -66,6 +76,11 @@ func _initialize() -> void:
 
 func _process(_delta: float) -> bool:
 	if _done:
+		return true
+	if Time.get_unix_time_from_system() > _ceiling:
+		print("FAIL  limpet_build_screen_shot.gd ran past its %ds ceiling: nothing advanced it"
+				% int(RUN_CEILING))
+		quit(1)
 		return true
 	if not _started:
 		var welcome := AssaySimHost.fresh_welcome_json(_seed, "limpet")
