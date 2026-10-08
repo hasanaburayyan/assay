@@ -712,6 +712,50 @@ func test_no_row_asks_for_more_width_than_the_panel_that_clips_it() -> bool:
 	return ok
 
 
+## **NO VERB THAT ACTS ON A TILE IS DISABLED** (ASSA-37's rule, held for ASSA-96 box 3).
+##
+## ASSA-96 asked whether Fuel, Smelt and Place read clearly when the tile they land on is named two
+## sections up the column. The Game Director closed it as no change needed on 2026-10-08 — the
+## close-up now marks the acted-on tile — and its last box is this standing property, which nothing
+## held.
+##
+## **IT IS SCOPED TO THE PACK ON PURPOSE AND THAT IS NOT A LOOPHOLE.** There are exactly two
+## `.disabled` writes in the whole client: a crafting row you cannot afford — Maren's own LATER
+## ASSA-247 ruling, held by `test_buttons.gd::test_a_row_you_cannot_afford_is_not_pressable_...` —
+## and a placeholder tab in `tab_strip.gd`. So the blanket form of "nothing is disabled" is no longer
+## the design, and a test asserting it would redden her ruling. What ASSA-37 is about is the verbs
+## that act at a DISTANCE: pressing one submits and lets the sim answer, instead of the client
+## deciding in advance that a press it never made would be refused.
+##
+## THE PREMISE IS ASSERTED: one of these verbs has to be on screen, or a pack that offered none would
+## pass this silently — the shape that made `test_every_make_row_starts_its_sentence_at_the_same_x`
+## read as coverage until its author checked.
+func test_no_verb_that_acts_on_a_tile_is_disabled() -> bool:
+	var screen := _screen()
+	# ORE for Fuel/Smelt, a SMELTER for Place: the three verbs ASSA-96 was filed about all land on
+	# `_target_tile()`, and no single stack offers all three.
+	screen._rebuild_pack([
+		{"kind": "ore", "species": 4, "grade": "B", "count": 22, "name": "Minyte ore (B)"},
+		{"kind": "smelter", "species": 4, "grade": "B", "count": 1, "name": "Minyte smelter (B)"},
+	])
+	var ok := true
+	var acting := 0
+	var seen := PackedStringArray()
+	for found in screen._carrying.find_children("*", "Button", true, false):
+		var button := found as Button
+		seen.append(button.text)
+		if button.text in [AssayActions.SLOT_FUEL, "Smelt", "Place"]:
+			acting += 1
+		if button.disabled:
+			ok = _fail(("the pack offers `%s` as a DISABLED button, so the client decided the sim "
+					+ "would refuse a press nobody made (ASSA-37)") % button.text)
+	if ok and acting == 0:
+		ok = _fail(("no Fuel, Smelt or Place button is on this pack, so nothing here acts on a tile "
+				+ "and this proves nothing. What the rows offered: %s") % ", ".join(seen))
+	screen.queue_free()
+	return ok
+
+
 ## Whatever text a row carries, for a failure message that names the row rather than its index.
 func _text_in(node: Node) -> String:
 	if node is Label:
