@@ -493,6 +493,44 @@ pub enum AssemblyPlan {
         /// The first tallied stack the player cannot cover.
         missing: Option<Item>,
     },
+    /// **A DESIGN WITH A SLOT STILL EMPTY: numbers yes, verdict no** (ASSA-329,
+    /// the Game Director's §6.4).
+    ///
+    /// `Assemble` refuses this exactly as before — [`AssemblyPlan::refusal`]
+    /// hands back the same `BadAssembly` it always did — so `step` is
+    /// unmoved. What changes is that a host drawing a build screen can now
+    /// read the mass and the totals of a design the player is halfway through
+    /// placing. Before this arm, a held frame's only two states were "empty"
+    /// and "done", so the numbers appeared once, on the last click, and there
+    /// was nothing live about a live readout.
+    ///
+    /// **A SEPARATE ARM AND NOT A FLAG ON `Weighed`**, because the mistake to
+    /// make impossible is a host printing SAFE over a half-built design: a new
+    /// variant fails an exhaustive `match` to compile until its author decides
+    /// what an unfinished design says, and a new field does not. **That is
+    /// weaker than it sounds and I would rather write it down than let it read
+    /// as a guarantee:** `step`'s arm destructures with `let … else`, which a
+    /// new variant does not disturb at all. It is right here only because it
+    /// asks [`AssemblyPlan::refusal`] first, and
+    /// `a_preview_and_the_press_agree_on_every_refusal` is what actually holds
+    /// that — a test, not the type.
+    /// [`AssemblyPlan::built`] still answers `None` here for the same reason —
+    /// `debug::assembly_readout` leads with the verdict, so handing a `Built`
+    /// to a caller who asked for "the machine" is how the verdict leaks.
+    /// [`AssemblyPlan::design`] is the accessor for the arithmetic.
+    Unfinished {
+        /// The arithmetic so far. Not a machine: ask [`AssemblyPlan::design`]
+        /// for it, never `built`.
+        design: Built,
+        /// What it would cost if it were finished, tallied as in `Weighed`.
+        cost: Vec<ItemStack>,
+        /// The first tallied stack the player cannot cover, of what is
+        /// selected so far.
+        missing: Option<Item>,
+        /// Always an [`AssemblyError`] whose `is_unfinished` is true. The sim
+        /// decides which faults are recoverable (ASSA-86) and a host may not.
+        error: AssemblyError,
+    },
     /// There is no design here to weigh at all.
     Refused(RejectReason),
 }
@@ -506,6 +544,11 @@ impl AssemblyPlan {
     pub fn refusal(&self) -> Option<RejectReason> {
         match self {
             AssemblyPlan::Refused(reason) => Some(*reason),
+            // **THE SLOT FAULT BEFORE THE PACK**, which is `step`'s order and
+            // the reason this arm sits above the one below: a design that is
+            // both unfinished and unaffordable is refused for the slot, and a
+            // test holds that ordering.
+            AssemblyPlan::Unfinished { error, .. } => Some(RejectReason::BadAssembly(*error)),
             AssemblyPlan::Weighed {
                 missing: Some(item),
                 ..
@@ -514,12 +557,46 @@ impl AssemblyPlan {
         }
     }
 
-    /// The machine these items would make, whenever there is a design at all —
-    /// including one the player cannot afford yet.
+    /// **THE MACHINE these items would make**, or `None` if they do not make
+    /// one yet — including one the player cannot afford, which is a machine
+    /// they cannot pay for rather than a thing that is not a machine.
+    ///
+    /// `None` for `Unfinished` **on purpose** (ASSA-329):
+    /// `debug::assembly_readout` leads with SAFE / UNCERTAIN / WILL BREAK, and
+    /// a verdict is a sentence about a machine that exists. A caller asking
+    /// "what machine is this" and getting a half-built one back is how that
+    /// word reaches a screen it has no business on. Ask [`Self::design`] for
+    /// the arithmetic.
     pub fn built(&self) -> Option<&Built> {
         match self {
             AssemblyPlan::Weighed { built, .. } => Some(built),
+            AssemblyPlan::Unfinished { .. } | AssemblyPlan::Refused(_) => None,
+        }
+    }
+
+    /// **THE ARITHMETIC, whether or not these items are a machine yet** — the
+    /// mass, the budget and the totals a build screen watches move as parts go
+    /// in (ASSA-329).
+    ///
+    /// `Assembly::stat_range` never needed `validate`, so these numbers always
+    /// existed; nothing could ask for them. `None` only for `Refused`, where
+    /// there is no design to weigh: a frame that is not a frame has no budget
+    /// to be a fraction of.
+    pub fn design(&self) -> Option<&Built> {
+        match self {
+            AssemblyPlan::Weighed { built, .. } => Some(built),
+            AssemblyPlan::Unfinished { design, .. } => Some(design),
             AssemblyPlan::Refused(_) => None,
+        }
+    }
+
+    /// The recoverable fault, when these items are a design someone is still
+    /// placing parts into. `None` once it is a machine, and `None` for a
+    /// design no later press can rescue.
+    pub fn unfinished(&self) -> Option<AssemblyError> {
+        match self {
+            AssemblyPlan::Unfinished { error, .. } => Some(*error),
+            AssemblyPlan::Weighed { .. } | AssemblyPlan::Refused(_) => None,
         }
     }
 }
@@ -565,9 +642,20 @@ pub fn plan(
         parts.push(part);
     }
     let assembly = Assembly::new(frame_part, parts);
-    if let Err(e) = assembly.validate() {
-        return AssemblyPlan::Refused(RejectReason::BadAssembly(e));
-    }
+    // **UNFINISHED IS NOT REFUSED, AND THE SIM DRAWS THAT LINE** (ASSA-329,
+    // the Game Director's §6.4). `AssemblyError::is_unfinished` already said
+    // which faults a later press can undo — it was written for exactly this
+    // question in ASSA-86 and `part_press_refusal` has honoured it since — so
+    // until now the sim answered "the press is fine" and "not a machine" about
+    // one and the same state. Those cannot both be right.
+    //
+    // A permanently faulted design still gets nothing: a frame that is not a
+    // frame has no budget for a mass to be a fraction of.
+    let unfinished = match assembly.validate() {
+        Ok(()) => None,
+        Err(e) if e.is_unfinished() => Some(e),
+        Err(e) => return AssemblyPlan::Refused(RejectReason::BadAssembly(e)),
+    };
 
     // Tally first so duplicates (two hoppers of one material) are weighed
     // all-or-nothing instead of one at a time.
@@ -582,10 +670,19 @@ pub fn plan(
         .iter()
         .find(|s| !holding.has(s.item, s.count))
         .map(|s| s.item);
-    AssemblyPlan::Weighed {
-        built: Built::new(assembly, species),
-        cost,
-        missing,
+    let built = Built::new(assembly, species);
+    match unfinished {
+        Some(error) => AssemblyPlan::Unfinished {
+            design: built,
+            cost,
+            missing,
+            error,
+        },
+        None => AssemblyPlan::Weighed {
+            built,
+            cost,
+            missing,
+        },
     }
 }
 
