@@ -712,6 +712,35 @@ impl AssaySim {
         }
     }
 
+    /// EVERY NUMBER THE BUILD SCREEN'S READOUT DRAWS, for a design built out of
+    /// the parts a pack actually holds — one item per slot, each with its own
+    /// species and grade (ASSA-325).
+    ///
+    /// `design_if_built` above stays the question for a uniform design and its
+    /// caller is untouched; see [`DesignReadout`] for why this is not three more
+    /// fields on that one, and why durability crosses as SWINGS.
+    #[func]
+    pub fn design_readout(&self, frame: GString, mounted: PackedStringArray) -> VarDictionary {
+        let mounted: Vec<String> = mounted.as_slice().iter().map(ToString::to_string).collect();
+        let facts = design_readout_facts(&self.world, &frame.to_string(), &mounted);
+        vdict! {
+            "verdict" => &gstring(&facts.verdict).to_variant(),
+            "fault" => &gstring(&facts.fault).to_variant(),
+            "mass_low" => facts.mass_low,
+            "mass_high" => facts.mass_high,
+            "budget_low" => facts.budget_low,
+            "budget_high" => facts.budget_high,
+            "speed_low" => facts.speed_low,
+            "speed_high" => facts.speed_high,
+            "hand_speed" => facts.hand_speed,
+            "swings_low" => facts.swings_low,
+            "swings_high" => facts.swings_high,
+            "capacity_low" => facts.capacity_low,
+            "capacity_high" => facts.capacity_high,
+            "held" => facts.held,
+        }
+    }
+
     /// **A COUNT AND ITS NOUN, AGREEING**, from the sim (ASSA-145).
     ///
     /// `sim::debug::counted` and not a GDScript twin, so the window and
@@ -1568,6 +1597,140 @@ impl DesignIfBuilt {
             budget_low: 0,
             budget_high: 0,
         }
+    }
+}
+
+/// EVERY NUMBER THE BUILD SCREEN'S READOUT DRAWS, for a design that is not
+/// built and whose parts came out of a pack one click at a time (ASSA-325, for
+/// ASSA-317 / `assay-build-screen` §5.2).
+///
+/// **WHY THIS IS NOT THREE MORE FIELDS ON [`DesignIfBuilt`]**, which is where I
+/// started. That question takes ONE species and ONE grade for the whole design,
+/// and `only_the_frames_grade_moves_a_single_species_drill` says in its own
+/// docstring why that is sound: *"IT IS THE FOUR NUMBERS AND NOT THE WHOLE
+/// `StatRange`… the head contributes SPEED from hardness and DURABILITY from
+/// strength, both of which DO scale"*. Mass and budget do not move with a
+/// mounted part's grade; speed, durability and capacity do. Three fields on
+/// that signature would be exact only for a uniform-grade design, and
+/// `button_play.gd` asks it with one stack's grade. It is also the wrong shape
+/// for the screen: §4's model is clicking parts **out of your pack**, and pack
+/// rows carry their own species and grade.
+///
+/// **DURABILITY CROSSES AS SWINGS, NEVER AS THE POOL** — `debug::swings_afforded`
+/// and no arithmetic here. See that function: an exact pool is the head's
+/// effective strength, so a bar drawn off the pool would make a pick a free
+/// assay (ADR 0003 amendment A10).
+///
+/// **`held` AND `hand_speed` ARE HERE SO THE CLIENT DECIDES NOTHING.** Which of
+/// durability and capacity a design even has is the Game Director's display
+/// ruling on ASSA-5 (drill wear is parked, so a planted design showing a pool
+/// teaches a mechanic that does not exist), and the bare-hands baseline is her
+/// ruling 5 on ASSA-6 — without it, `speed 23` looks like a tool and is in fact
+/// slower than the hands that built it, which is a measured defect and not a
+/// nicety. Both are the sim's facts and neither may be a GDScript constant.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DesignReadout {
+    /// "SAFE" / "UNCERTAIN" / "WILL BREAK", or EMPTY when the rules refuse the
+    /// design — in which case `fault` says why and EVERY number below is zero.
+    pub verdict: String,
+    /// The sim's own phrase for why not. Never this crate's wording.
+    pub fault: String,
+    pub mass_low: i64,
+    pub mass_high: i64,
+    pub budget_low: i64,
+    pub budget_high: i64,
+    pub speed_low: i64,
+    pub speed_high: i64,
+    /// What bare hands do, from `tuning::HAND_WORK_PER_TICK`. The baseline
+    /// `speed` is only legible against. Zero on a refusal like everything else.
+    pub hand_speed: i64,
+    /// Swings, not the pool. Meaningless unless `held`.
+    pub swings_low: i64,
+    pub swings_high: i64,
+    /// What a planted design buffers. Meaningless when `held`.
+    pub capacity_low: i64,
+    pub capacity_high: i64,
+    /// True for a tool, false for a machine you plant. `Assembly::mount()`.
+    pub held: bool,
+}
+
+impl DesignReadout {
+    /// A design the rules throw out: the fault and **nothing else**.
+    ///
+    /// Every number zero and `held` false, deliberately exhaustive rather than
+    /// `..Default::default()`: a new field that forgot to be zeroed here is a
+    /// client drawing a bar for a design that cannot exist, and the test
+    /// `a_refused_design_crosses_no_numbers_at_all` reads the struct field by
+    /// field so adding one without thinking about it goes red.
+    fn refused(fault: String) -> Self {
+        Self {
+            verdict: String::new(),
+            fault,
+            mass_low: 0,
+            mass_high: 0,
+            budget_low: 0,
+            budget_high: 0,
+            speed_low: 0,
+            speed_high: 0,
+            hand_speed: 0,
+            swings_low: 0,
+            swings_high: 0,
+            capacity_low: 0,
+            capacity_high: 0,
+            held: false,
+        }
+    }
+}
+
+/// [`DesignReadout`] for the parts a pack row names, each with its own
+/// material. `frame` and every entry of `mounted` is an item as
+/// [`item_text`] spells one.
+///
+/// Engine-free so `cargo test` pins the numbers against `Assembly::stat_range`
+/// — see `AssaySim::design_readout`.
+pub fn design_readout_facts(world: &World, frame: &str, mounted: &[String]) -> DesignReadout {
+    let read = |text: &str| serde_json::from_str::<Item>(text).ok();
+    let Some(frame_item) = read(frame) else {
+        return DesignReadout::refused(format!("{frame} is not an item"));
+    };
+    // STEP'S REFUSALS IN STEP'S ORDER (`PlayerCommand::Assemble`): the frame's
+    // kind, then each mounted kind, then the slot rules. A readout that
+    // answered only the arithmetic would hand back numbers for a design
+    // `Assemble` throws out.
+    let Some(frame_part) = sim::assembly::Part::from_item(frame_item) else {
+        return DesignReadout::refused(sim::debug::not_a_part_phrase(frame_item.kind.name()));
+    };
+    let mut parts = Vec::with_capacity(mounted.len());
+    for text in mounted {
+        let Some(item) = read(text) else {
+            return DesignReadout::refused(format!("{text} is not an item"));
+        };
+        let Some(part) = sim::assembly::Part::from_item(item) else {
+            return DesignReadout::refused(sim::debug::not_a_part_phrase(item.kind.name()));
+        };
+        parts.push(part);
+    }
+    let assembly = Assembly::new(frame_part, parts);
+    if let Err(e) = assembly.validate() {
+        return DesignReadout::refused(sim::debug::assembly_error_phrase(e));
+    }
+
+    let range = assembly.stat_range(&world.species);
+    DesignReadout {
+        verdict: range.verdict().label().to_string(),
+        fault: String::new(),
+        mass_low: range.low.mass as i64,
+        mass_high: range.high.mass as i64,
+        budget_low: range.low.budget as i64,
+        budget_high: range.high.budget as i64,
+        speed_low: range.low.speed as i64,
+        speed_high: range.high.speed as i64,
+        hand_speed: i64::from(sim::tuning::HAND_WORK_PER_TICK),
+        swings_low: i64::from(sim::debug::swings_afforded(range.low.durability)),
+        swings_high: i64::from(sim::debug::swings_afforded(range.high.durability)),
+        capacity_low: range.low.capacity as i64,
+        capacity_high: range.high.capacity as i64,
+        held: assembly.mount() == Some(Mount::Held),
     }
 }
 
@@ -5626,6 +5789,284 @@ mod tests {
         assert!(
             seen.len() > 1,
             "every count and grade agreed, so this test cannot see a disagreement: {seen:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // ASSA-325: the whole readout, for a design made of the parts a pack holds.
+    // -----------------------------------------------------------------------
+
+    /// One item as the text `design_readout` takes.
+    fn item_of(kind: ItemKind, species: sim::SpeciesId, grade: sim::Grade) -> String {
+        serde_json::to_string(&Item::new(kind, species, grade)).expect("an item spells")
+    }
+
+    /// `(frame, mounted)` as texts, and the `Assembly` they stand for, so every
+    /// test below can ask the binding and the sim the same question.
+    fn design_of(
+        parts: &[(sim::PartKind, sim::SpeciesId, sim::Grade)],
+    ) -> (String, Vec<String>, Assembly) {
+        let texts: Vec<String> = parts
+            .iter()
+            .map(|(k, s, g)| item_of(ItemKind::Part(*k), *s, *g))
+            .collect();
+        let as_part = |(k, s, g): &(sim::PartKind, sim::SpeciesId, sim::Grade)| {
+            sim::Part::of(*k, Item::new(ItemKind::Refined, *s, *g))
+        };
+        let (frame, mounted) = parts.split_first().expect("a frame");
+        let assembly = Assembly::new(as_part(frame), mounted.iter().map(as_part).collect());
+        (texts[0].clone(), texts[1..].to_vec(), assembly)
+    }
+
+    /// **EVERY NUMBER IS `Assembly::stat_range`'S, not this crate's.** Driven
+    /// over two species (one assayed, one rough), all three grades and every
+    /// legal hopper count, because a roster that reads exact everywhere has
+    /// `low == high` on every stat and cannot see a band's ends swapped.
+    ///
+    /// The two premises at the end are the test's own honesty: a population
+    /// that held one verdict, or no band at all, would agree with anything.
+    #[test]
+    fn every_number_the_build_readout_crosses_is_the_sims_own() {
+        let (mut sim, _me) = with_a_player("limpet");
+        sim.world.species[0].assayed = true;
+        sim.world.species[1].assayed = false;
+        let mut verdicts: Vec<String> = Vec::new();
+        let mut saw_a_band = false;
+        for index in [0usize, 1] {
+            let species = sim.world().species[index].id;
+            for grade in [sim::Grade::C, sim::Grade::B, sim::Grade::A] {
+                for hoppers in 0..=sim::tuning::MAX_HOPPER_SLOTS as usize {
+                    let mut parts = vec![
+                        (sim::PartKind::Frame(Mount::Planted), species, grade),
+                        (sim::PartKind::Head, species, grade),
+                    ];
+                    parts.extend(std::iter::repeat_n(
+                        (sim::PartKind::Hopper, species, grade),
+                        hoppers,
+                    ));
+                    let (frame, mounted, assembly) = design_of(&parts);
+                    let got = design_readout_facts(sim.world(), &frame, &mounted);
+                    let range = assembly.stat_range(&sim.world().species);
+
+                    assert!(
+                        got.fault.is_empty(),
+                        "{hoppers} hoppers was refused: {got:?}"
+                    );
+                    assert_eq!(
+                        (
+                            got.verdict.as_str(),
+                            got.mass_low,
+                            got.mass_high,
+                            got.budget_low,
+                            got.budget_high,
+                            got.speed_low,
+                            got.speed_high,
+                            got.capacity_low,
+                            got.capacity_high,
+                            got.swings_low,
+                            got.swings_high,
+                            got.held,
+                        ),
+                        (
+                            range.verdict().label(),
+                            range.low.mass as i64,
+                            range.high.mass as i64,
+                            range.low.budget as i64,
+                            range.high.budget as i64,
+                            range.low.speed as i64,
+                            range.high.speed as i64,
+                            range.low.capacity as i64,
+                            range.high.capacity as i64,
+                            i64::from(sim::debug::swings_afforded(range.low.durability)),
+                            i64::from(sim::debug::swings_afforded(range.high.durability)),
+                            false,
+                        ),
+                        "species {index} grade {} with {hoppers} hoppers: {got:?} against {range:?}",
+                        grade.letter()
+                    );
+                    saw_a_band = saw_a_band
+                        || got.speed_low < got.speed_high
+                        || got.swings_low < got.swings_high;
+                    verdicts.push(got.verdict);
+                }
+            }
+        }
+        assert!(
+            saw_a_band,
+            "every design read exact, so swapping a band's ends is invisible here"
+        );
+        verdicts.sort();
+        verdicts.dedup();
+        assert!(
+            verdicts.len() > 1,
+            "every design agreed, so this fixture cannot see a disagreement: {verdicts:?}"
+        );
+    }
+
+    /// **THE CASE THAT MADE THIS A SECOND ENTRY POINT RATHER THAN THREE FIELDS
+    /// ON `design_if_built`.** A head a grade lower really does make a slower,
+    /// shorter-lived machine, and a question that takes one grade for the whole
+    /// design cannot say so -- while mass and budget, which is all
+    /// `design_if_built` answers, genuinely do not move.
+    ///
+    /// Asserted in both directions: the two numbers that must NOT move, and the
+    /// two that MUST. Without the second half this test would pass against a
+    /// readout that ignored the mounted parts' grades entirely.
+    #[test]
+    fn a_pack_holding_two_grades_is_weighed_part_by_part() {
+        let (mut sim, _me) = with_a_player("limpet");
+        sim.world.species[0].assayed = true;
+        let rock = sim.world().species[0].id;
+        let ask = |head: sim::Grade| {
+            let (frame, mounted, _) = design_of(&[
+                (sim::PartKind::Frame(Mount::Held), rock, sim::Grade::A),
+                (sim::PartKind::Head, rock, head),
+            ]);
+            design_readout_facts(sim.world(), &frame, &mounted)
+        };
+        let best = ask(sim::Grade::A);
+        let worse = ask(sim::Grade::C);
+
+        assert_eq!(
+            (
+                best.mass_low,
+                best.mass_high,
+                best.budget_low,
+                best.budget_high
+            ),
+            (
+                worse.mass_low,
+                worse.mass_high,
+                worse.budget_low,
+                worse.budget_high
+            ),
+            "the head's grade must not move mass or budget -- that is the claim\n\
+             `design_if_built`'s single grade rests on: {best:?} against {worse:?}"
+        );
+        assert!(
+            worse.speed_high < best.speed_high && worse.swings_high < best.swings_high,
+            "a grade-C head must give a slower, shorter-lived tool, or this\n\
+             readout is ignoring the grades of the parts it was handed:\n\
+             {worse:?} against {best:?}"
+        );
+        assert!(best.held, "a handle frame is held");
+        assert_eq!(
+            best.hand_speed,
+            i64::from(sim::tuning::HAND_WORK_PER_TICK),
+            "the baseline speed is only legible against is the sim's constant"
+        );
+    }
+
+    /// **A DESIGN THE RULES THROW OUT CROSSES NO NUMBERS**, read field by field.
+    ///
+    /// Every number zero and `held` false. A client that drew a bar off a
+    /// refused design would draw one for a machine that cannot exist, and the
+    /// three refusals here are step's three, in step's order.
+    #[test]
+    fn a_refused_design_crosses_no_numbers_at_all() {
+        let (mut sim, _me) = with_a_player("limpet");
+        sim.world.species[0].assayed = true;
+        let rock = sim.world().species[0].id;
+        let head = item_of(ItemKind::Part(sim::PartKind::Head), rock, sim::Grade::A);
+        let handle = item_of(
+            ItemKind::Part(sim::PartKind::Frame(Mount::Held)),
+            rock,
+            sim::Grade::A,
+        );
+        let ore = item_of(ItemKind::Ore, rock, sim::Grade::A);
+
+        for (what, frame, mounted) in [
+            ("an ore in the frame slot", ore.clone(), vec![head.clone()]),
+            ("an ore mounted", handle.clone(), vec![ore.clone()]),
+            (
+                "two heads on a handle",
+                handle.clone(),
+                vec![head.clone(), head.clone()],
+            ),
+            ("not an item at all", "{}".to_string(), vec![head.clone()]),
+        ] {
+            let got = design_readout_facts(sim.world(), &frame, &mounted);
+            assert!(!got.fault.is_empty(), "{what} should have a fault: {got:?}");
+            // THE ZEROS ARE WRITTEN OUT HERE AND NOT TAKEN FROM
+            // `DesignReadout::refused`, and a mutation is why. Comparing
+            // against that constructor compared the function with itself: a
+            // mutation putting 7 in one of its fields left this GREEN. A
+            // struct literal also makes a new field a COMPILE error here,
+            // which is stronger than a red -- whoever adds one has to decide
+            // what a refused design says about it.
+            assert_eq!(
+                got,
+                DesignReadout {
+                    verdict: String::new(),
+                    fault: got.fault.clone(),
+                    mass_low: 0,
+                    mass_high: 0,
+                    budget_low: 0,
+                    budget_high: 0,
+                    speed_low: 0,
+                    speed_high: 0,
+                    hand_speed: 0,
+                    swings_low: 0,
+                    swings_high: 0,
+                    capacity_low: 0,
+                    capacity_high: 0,
+                    held: false,
+                },
+                "{what}: a refusal must carry the fault and NOTHING else: {got:?}"
+            );
+        }
+
+        // THE PREMISE, or the loop above would pass against a readout that
+        // refused everything: the legal version of the same parts answers.
+        let (frame, mounted, _) = design_of(&[
+            (sim::PartKind::Frame(Mount::Held), rock, sim::Grade::A),
+            (sim::PartKind::Head, rock, sim::Grade::A),
+        ]);
+        let fine = design_readout_facts(sim.world(), &frame, &mounted);
+        assert!(fine.fault.is_empty() && fine.mass_low > 0, "{fine:?}");
+    }
+
+    /// **DURABILITY CROSSES AS SWINGS AND THE POOL NEVER CROSSES AT ALL**
+    /// (ADR 0003 amendment A10). The number here is the pool over
+    /// `PICK_WEAR_PER_SWING`, which is what `durability_readout` has printed
+    /// since ASSA-5, and the pool is what a bar drawn off it would leak:
+    /// divided by 60 it IS the head's effective strength.
+    ///
+    /// The constant is 20, so a readout that crossed the pool by mistake would
+    /// be twenty times this and the inequality below is not cosmetic.
+    #[test]
+    fn durability_crosses_as_swings_and_never_as_the_pool() {
+        let (mut sim, _me) = with_a_player("limpet");
+        sim.world.species[0].assayed = true;
+        let rock = sim.world().species[0].id;
+        let (frame, mounted, assembly) = design_of(&[
+            (sim::PartKind::Frame(Mount::Held), rock, sim::Grade::A),
+            (sim::PartKind::Head, rock, sim::Grade::A),
+        ]);
+        let got = design_readout_facts(sim.world(), &frame, &mounted);
+        let pool = assembly.stat_range(&sim.world().species).high.durability;
+
+        assert!(pool > 0, "the fixture needs a head that gives a pool");
+        assert_eq!(
+            got.swings_high,
+            i64::from(sim::debug::swings_afforded(pool)),
+            "swings must come from the sim's own division"
+        );
+        assert!(
+            got.swings_high < i64::from(pool),
+            "the pool itself ({pool}) must never be what crosses: {got:?}"
+        );
+        // And a planted design says it is not held, so a client cannot draw a
+        // pool on a drill -- the Game Director's ruling, crossed as data.
+        let (frame, mounted, _) = design_of(&[
+            (sim::PartKind::Frame(Mount::Planted), rock, sim::Grade::A),
+            (sim::PartKind::Head, rock, sim::Grade::A),
+        ]);
+        let drill = design_readout_facts(sim.world(), &frame, &mounted);
+        assert!(!drill.held, "a planted frame is not held: {drill:?}");
+        assert!(
+            drill.capacity_high > 0,
+            "a drill buffers something: {drill:?}"
         );
     }
 
