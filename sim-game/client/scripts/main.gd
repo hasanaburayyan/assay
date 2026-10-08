@@ -4754,6 +4754,11 @@ func _draw() -> void:
 		# their own MAP_BG keyline holds the band apart. That is Maren's to rule and it is on ASSA-278.
 		for band: Rect2 in AssayHud.frame_bands(shape["hole_rect"], AssayHud.MARK_KEYLINE_PX):
 			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
+		# **THE GLYPH PASS BELOW REPEATS THESE THREE LOOPS FOR A FRAME A LETTER'S BED COVERS**
+		# (ASSA-273 box 3, DRAFT). I tried to factor them into `_paint_building_frame(shape)` first
+		# and `test_map_key.gd` is right to refuse it: its scan reads `_draw`'s OWN source, so a draw
+		# call moved into a helper is a mark the key can stop naming. The painter has one entry point
+		# on purpose, so the repetition stays here where the scan can see it.
 
 	# **THE SPECIES LETTER, LAST, BECAUSE A MACHINE STANDS ON THE ROCK IT WORKS** (ASSA-213, Maren's
 	# P1: "a building mark may not remove the species letter from a deposit it stands on").
@@ -4839,6 +4844,43 @@ func _draw() -> void:
 				draw_string(font, glyph["baseline"] + offset, glyph["symbol"],
 						HORIZONTAL_ALIGNMENT_LEFT, -1, int(glyph["size"]),
 						AssayHud.mark_ink_of(&"species_bed", glyph["bed"]))
+		# **ASSA-273 BOX 3: THE BED YIELDS TO THE BAND IT LAPS; THE LETTER'S INK DOES NOT.** Maren's
+		# ruling 2026-10-08 13:29, under §11.39 of the same night: **where two marks overlap, the
+		# KEYLINE yields and the INK does not.** A bed is a separator; a machine's band has been its
+		# whole identity since ASSA-236. Nothing above this line changes -- the bed is still stamped
+		# whole, because it is one glyph and a halo cannot be drawn in pieces -- and then the frames
+		# the letter laps are stroked again, so the band gets its own pixels back from its own bed
+		# while the letter's strokes go on top of everything as ASSA-213 requires.
+		#
+		# **WHY THE BED AND NOT THE LETTER.** On real co-op frames with a drill on a deposit centre,
+		# the band keeps 13.2% of its own ink on seed 777042 and 62.5% on 63, and WHAT TOOK IT is not
+		# the letter: 65.3% of that band is bed on 777042 (the letter's own ink is 19.4%). A band is a
+		# shape, so the statistic is its longest unbroken run, and two of the four sides hold no pixel
+		# of the mark at all. (This said 44.4% for seed 63 while it was a draft; that was measured
+		# against the 32 px letter ASSA-293 retired, and the re-shot figure is 62.5 -> 86.8%.)
+		#
+		# **THE PRICE IS ASSA-218's FAILURE IN A SMALLER PLACE, AND IT IS THE COMMON CASE, NOT ONE
+		# SEED.** Where a stroke crosses the restored band there is no bed between a `GLYPH_LIGHT`
+		# letter and a 242 band -- white on near-white. I offered to condition this on `glyph_color`
+		# picking `GLYPH_DARK` and Maren refused it with a sweep of all 600 disc states: LIGHT is
+		# picked **342/600 (57.0%)**, and in **222/600 (37.0%) no single ink clears 3:1 against both
+		# its disc and the band**. So a letter cannot be whole on an occupied tile whatever the bed
+		# does, the condition would have read the DISC while the risk lives on the BAND, and the
+		# design call is hers: **the machine wins the overlap** -- you chose that tile and built on
+		# it, so you already own its species, and "something is built here" is the fact two cold
+		# readers could not get at all (ASSA-278 box 5, failed). The letter left at 1.12:1 on top of
+		# the mark that won is **ASSA-314**, hers.
+		#
+		# **THE BAND ALONE, NOT THE WHOLE FRAME, AND THAT IS A MEASUREMENT AND NOT A PREFERENCE.**
+		# Restoring the two `MAP_BG` keylines as well costs a DARK letter a quarter of its boundary:
+		# on seed 63 the share of the letter's boundary carrying a 4.5:1 edge went 80.2% -> 54.0%,
+		# because `GLYPH_DARK` (5,5,8) against a `MAP_BG` keyline (26,28,33) is 1.3:1 where the
+		# yellow bed it replaced was an edge. The keylines hold the band apart from the marks NEXT
+		# DOOR, and the bed is not next door -- it is on top. So only the band comes back.
+		for lapped_index in glyph.get("lapped_by", []):
+			var lapped: Dictionary = shapes[int(lapped_index)]
+			for band: Rect2 in AssayHud.frame_bands(lapped["rect"], float(lapped["stroke"])):
+				draw_rect(band, AssayHud.mark_ink_of(&"building", lapped["colour"]), true)
 		draw_string(font, glyph["baseline"], glyph["symbol"], HORIZONTAL_ALIGNMENT_LEFT, -1,
 				int(glyph["size"]), AssayHud.mark_ink_of(&"species_glyph", glyph["ink"]))
 
@@ -5028,6 +5070,15 @@ func _glyph_marks(deposits: Array, font: Font, building_marks: Array = []) -> Ar
 			# The lapped half is filled in below, once every letter's box exists: `letter_occlusions`
 			# needs the whole list, so it cannot be answered one letter at a time inside this loop.
 			"bedded": bool(disc["hatch"]),
+			# **ASSA-273 box 3: WHICH BUILDINGS LAP THIS LETTER, not just whether any does.**
+			# `bedded` is one bit and the bed's PRICE is per-building: the bed is a halo in the disc's
+			# colour and on a dark disc it is the thing that eats the band (65.3% of it on seed
+			# 777042, measured by `shared/assay/cove-assa273/bandread.py` on a real frame). To let the
+			# band back over its own bed, the painter has to know which frame to re-stroke.
+			# `test_a_letters_bed_yields_to_the_band_it_laps_and_its_ink_does_not` holds this list
+			# against `letter_occlusions` and holds its indices against the shapes `_draw` is given,
+			# because the painter subscripts `shapes[...]` with them.
+			"lapped_by": [],
 		})
 	# **WHICH LETTERS A BUILDING ACTUALLY LAPS** -- the same `letter_occlusions` the window shot's
 	# `case` leg reports, so the painter and the picture cannot disagree about which letter was at
@@ -5038,4 +5089,5 @@ func _glyph_marks(deposits: Array, font: Font, building_marks: Array = []) -> Ar
 		var j := int(lap["letter"])
 		if j >= 0 and j < marks.size():
 			(marks[j] as Dictionary)["bedded"] = true
+			((marks[j] as Dictionary)["lapped_by"] as Array).append(int(lap["building"]))
 	return marks

@@ -3696,6 +3696,120 @@ func test_a_letter_is_bedded_when_a_mark_laps_it_or_a_hatch_crosses_it() -> bool
 	return ok
 
 
+## **THE BED YIELDS TO THE BAND IT LAPS, AND THE LETTER'S OWN INK DOES NOT** (ASSA-273 box 3, Maren's
+## ruling 2026-10-08 13:29: *"take the band-only arm"*, under the §11.39 she wrote the same night —
+## **where two marks overlap, the keyline yields and the ink does not**).
+##
+## **WHY THE BED AND NOT THE LETTER.** On real co-op frames a drill standing on its own deposit centre
+## keeps **13.2%** of its band's own ink on seed 777042 and 62.5% on 63, and two of the four sides hold
+## no pixel of the mark at all — a band is a shape, so the statistic is its longest unbroken run. What
+## took it is not mostly the letter: **65.3% of that band is the letter's BED**, a halo in the disc's
+## colour stamped eight ways under the strokes (ASSA-218 box 9). A bed is a separator; a machine's
+## band has been its whole identity since ASSA-236, so the separator is what gives way.
+##
+## **AND MAREN REFUSED MY `GLYPH_DARK` CONDITION WITH A SWEEP, WHICH IS WHY NOTHING HERE BRANCHES ON
+## INK.** Over all 600 disc states `glyph_color` picks `GLYPH_LIGHT` **342 times (57.0%)**, which is
+## **1.12:1** on a 242 band, and in **222/600 (37.0%) no single ink clears 3:1 against both its disc
+## and the band**. So the fusion I measured on 777042 is the common case, not that seed, and a letter
+## cannot be whole on an occupied tile whatever the bed does. She ruled the design call — the machine
+## wins the overlap — and the leftover letter is ASSA-314, hers.
+##
+## **TWO LEGS, BECAUSE NOTHING HEADLESS RASTERISES A GLYPH.**
+##
+## 1. **THE DATA.** `lapped_by` must name exactly the buildings `letter_occlusions` says lap that
+##    letter, and be a valid index into the shapes the painter was handed — the painter indexes
+##    `shapes[...]` with it, so a stale index is a crash in `_draw` and not a wrong picture. `bedded`
+##    is one bit and the bed's price is PER BUILDING, which is the whole reason this field exists.
+## 2. **THE ORDER**, by a source scan, because `_draw` cannot be asked what it painted: the bed's
+##    stamps, then the band restored over them, then the letter's strokes. Move the re-stroke after
+##    the letter and the machine wins a band the letter no longer crosses; move it before the bed and
+##    the bed paints over it again, which is the defect.
+func test_a_letters_bed_yields_to_the_band_it_laps_and_its_ink_does_not() -> bool:
+	var screen := _joined_screen()
+	screen._show_close_up(false)
+	screen._refresh()
+	if screen._close_up or not screen._sim.running() or screen._cell <= 0.0:
+		screen.queue_free()
+		return _fail(("premise: close_up %s, running %s, cell %f -- `_draw` returns before any mark")
+				% [screen._close_up, screen._sim.running(), screen._cell])
+	var font := ThemeDB.fallback_font
+	var deposits: Array = screen._sim.deposits()
+	var bare: Array = screen._glyph_marks(deposits, font)
+	if bare.is_empty():
+		screen.queue_free()
+		return _fail("premise: this world paints no species letter, so nothing can lap one")
+	# A machine on the first letter's own tile: the case the item is about, and the one the ruling
+	# is about. Which letters it ends up lapping is `letter_occlusions`' answer, never mine.
+	var planted := [{"pos": (bare[0] as Dictionary)["tile"], "footprint": Vector2i(1, 1),
+			"kind": "machine"}]
+	var shapes: Array = screen._building_marks(planted)
+	var marks: Array = screen._glyph_marks(deposits, font, shapes)
+	var want := {}
+	for raw in AssayHud.letter_occlusions(shapes, marks):
+		var lap: Dictionary = raw
+		var j := int(lap["letter"])
+		if not want.has(j):
+			want[j] = []
+		(want[j] as Array).append(int(lap["building"]))
+	if want.is_empty():
+		screen.queue_free()
+		return _fail(("premise: a machine planted on letter 0's own tile %s laps no letter at all, "
+				+ "so this frame holds none of the case the ruling is about")
+				% [(bare[0] as Dictionary)["tile"]])
+	var ok := true
+	var unlapped := 0
+	for j in marks.size():
+		var glyph: Dictionary = marks[j]
+		if not glyph.has("lapped_by"):
+			ok = _fail(("letter %d (`%s`) carries no `lapped_by`, so the painter cannot know WHICH "
+					+ "frame to give its band back. `bedded` is one bit and the bed's price is per "
+					+ "building: 65.3%% of a drill's band is bed on seed 777042.")
+					% [j, glyph["symbol"]])
+			break
+		var got: Array = glyph["lapped_by"]
+		var expected: Array = want.get(j, [])
+		if got != expected:
+			ok = _fail(("letter %d (`%s`, tile %s) reports lapped_by=%s and `letter_occlusions` says "
+					+ "%s. The painter re-strokes exactly these frames' bands over the bed, so a "
+					+ "wrong list restores a band that was never covered or leaves a covered one "
+					+ "buried.") % [j, glyph["symbol"], glyph["tile"], got, expected])
+			break
+		if got.is_empty():
+			unlapped += 1
+		for raw_index in got:
+			var index := int(raw_index)
+			if index < 0 or index >= shapes.size():
+				ok = _fail(("letter %d names building %d and the painter was handed %d shapes. "
+						+ "`_draw` indexes `shapes[...]` with this, so a stale index is a crashed "
+						+ "frame, not a wrong one.") % [j, index, shapes.size()])
+				break
+	# **THE CONTROL, and without it "every letter is lapped" would pass this.** A letter nothing
+	# stands on must keep an EMPTY list: the bed is ASSA-218's and it only yields where a band is
+	# underneath it.
+	if ok and unlapped == 0:
+		ok = _fail(("premise: every one of the %d letters in this frame is lapped, so an empty "
+				+ "`lapped_by` is never exercised and the bed could be yielding everywhere")
+				% marks.size())
+	# **LEG 2: THE ORDER, WHICH IS THE WHOLE RULING AND WHICH NO DICTIONARY CAN CARRY.**
+	if ok:
+		var source := FileAccess.get_file_as_string("res://scripts/main.gd")
+		var bed_at := source.find("AssayHud.mark_ink_of(&\"species_bed\", glyph[\"bed\"])")
+		var band_at := source.find("AssayHud.mark_ink_of(&\"building\", lapped[\"colour\"])")
+		var ink_at := source.find("AssayHud.mark_ink_of(&\"species_glyph\", glyph[\"ink\"])")
+		if source == "" or bed_at < 0 or band_at < 0 or ink_at < 0:
+			ok = _fail(("main.gd's glyph pass does not paint all three of the bed (%d), the lapped "
+					+ "band (%d) and the letter's ink (%d) through the map's table, so this scan "
+					+ "says nothing") % [bed_at, band_at, ink_at])
+		elif not (bed_at < band_at and band_at < ink_at):
+			ok = _fail(("the glyph pass paints bed@%d, lapped band@%d, letter@%d and the ruling is "
+					+ "bed, then band, then letter. Band before the bed and the halo buries it "
+					+ "again; band after the letter and the machine wins a band the letter no "
+					+ "longer crosses -- ASSA-213 says the strokes stay last.")
+					% [bed_at, band_at, ink_at])
+	screen.queue_free()
+	return ok
+
+
 ## **EVERY DEPOSIT MARK SITS ON THE MIDDLE OF THE TILE IT NAMES** (ASSA-220).
 ##
 ## **WHY THE INVARIANT THAT ALREADY EXISTS CANNOT SEE THIS**, which is most of why a half-tile shipped
