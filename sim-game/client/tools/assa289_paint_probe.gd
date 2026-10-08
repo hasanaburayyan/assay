@@ -3,7 +3,11 @@ extends SceneTree
 ## **WHAT A NEIGHBOUR'S MARK ACTUALLY DELETES, PIXEL BY PIXEL, THROUGH THE REAL PAINT SEQUENCE**
 ## (ASSA-289 box 5).
 ##
-##   $GODOT --headless --path client --script res://tools/assa289_paint_probe.gd
+##   $GODOT --headless --path client --script res://tools/assa289_paint_probe.gd -- [png_dir]
+##
+## With `png_dir` it also writes the grid out as PNGs, at 1x and at 6x nearest-neighbour, because a
+## table cannot answer "does a band with a 12 px run still read as a side" and a picture can. The 1x
+## file is the one to judge; the 6x is only for pointing at a pixel.
 ##
 ## **WHY IT EXISTS: EVERY NUMBER ON ASSA-289 SO FAR, MINE AND MAREN'S, COUNTS GEOMETRIC OVERLAP AND
 ## CALLS IT DELETION.** Her probe said a younger machine's keyline covers 28.1% of an older
@@ -36,7 +40,15 @@ const BAND := &"band"
 const DARK := &"dark"
 
 
+var _png_dir := ""
+
+
 func _initialize() -> void:
+	var args := OS.get_cmdline_user_args()
+	if not args.is_empty():
+		_png_dir = String(args[0])
+		DirAccess.make_dir_recursive_absolute(_png_dir)
+		print("  writing pictures to %s" % _png_dir)
 	print("ASSA-289  what a neighbour DELETES, through the real paint sequence")
 	print("  BUILDING_MARK_PX %.0f, MARK_KEYLINE_PX %.0f, BUILDING_STROKE_PX %.0f, cell %.0f"
 			% [AssayHud.BUILDING_MARK_PX, AssayHud.MARK_KEYLINE_PX, AssayHud.BUILDING_STROKE_PX,
@@ -44,7 +56,55 @@ func _initialize() -> void:
 	print("  a band pixel is LOST only if the last ink on it is dark; both inks are alpha 1.0")
 	for case: Array in _cases():
 		_case(String(case[0]), case[1], case[2], case[3])
+	_floors()
 	quit()
+
+
+## **BOX 5 AS A PICTURE INSTEAD OF A NUMBER: THE SAME TWO 1x1 MACHINES AT FOUR FLOORS.**
+##
+## The shipped floor is 20 px on a 9 px tile, so each mark's wall lands 5.5 px INSIDE its neighbour's
+## tile and the pair cannot read as two machines however it is painted. That is a vocabulary defect,
+## not a deletion one, and `kept 136/144` does not say it -- which is the point of rendering it.
+##
+## **THIS IS A REPLICA AND IT IS FOR CHOOSING, NOT FOR SHIPPING.** `_mark_at_floor` repeats
+## `AssayHud.building_mark`'s three lines of arithmetic with the floor as a parameter, because a
+## const cannot be swept. `building_mark` stays the only path anything draws through; if a floor is
+## ever picked, it moves in `hud.gd` and this sweep is re-shot against it rather than trusted.
+func _floors() -> void:
+	print("")
+	print("  BOX 5, DRAFT: two adjacent 1x1 machines at four floors, two passes (a replica)")
+	print("    a 1x1's tile is %.0f px. The mark's wall sits (floor - cell) / 2 inside the next tile."
+			% CELL)
+	for floor_px: float in [AssayHud.BUILDING_MARK_PX, 15.0, 11.0, CELL]:
+		var a := _mark_at_floor(Vector2i(54, 56), Vector2i(1, 1), floor_px)
+		var b := _mark_at_floor(Vector2i(55, 56), Vector2i(1, 1), floor_px)
+		var grid := {}
+		_two_passes(grid, [a, b])
+		var into := (floor_px - CELL) * 0.5
+		print("    floor %2.0f px  reaches %4.1f px into the tile next door%s"
+				% [floor_px, maxf(into, 0.0), "   <- shipped"
+				if floor_px == AssayHud.BUILDING_MARK_PX else ""])
+		_report(grid, a, "A (older)")
+		_report(grid, b, "B (younger)")
+		if _png_dir != "":
+			_write(grid, [a, b], "box5-floor-%02.0f-DRAFT" % floor_px)
+			var lone := {}
+			_two_passes(lone, [_mark_at_floor(Vector2i(54, 56), Vector2i(1, 1), floor_px)])
+			_write(lone, [a], "box5-floor-%02.0f-DRAFT-lone" % floor_px)
+
+
+## `AssayHud.building_mark`'s arithmetic with the floor lifted out. Every other key it returns is
+## derived from `outer` exactly as it is there, so the paint loops above cannot tell the difference.
+func _mark_at_floor(pos: Vector2i, foot: Vector2i, floor_px: float) -> Dictionary:
+	var span := maxf(float(maxi(foot.x, foot.y)) * CELL, floor_px)
+	var at := AssayHud.MARGIN + (Vector2(pos) + Vector2(foot) * 0.5) * CELL
+	var outer := Rect2(at - Vector2(span, span) * 0.5, Vector2(span, span))
+	return {
+		"rect": outer,
+		"hole_rect": outer.grow(-AssayHud.BUILDING_STROKE_PX),
+		"keyline_rect": outer.grow(AssayHud.MARK_KEYLINE_PX),
+		"stroke": AssayHud.BUILDING_STROKE_PX,
+	}
 
 
 ## Every adjacency a player can build, plus a control that is not adjacent at all. The control is
@@ -84,6 +144,36 @@ func _case(name: String, foot: Vector2i, a_pos: Vector2i, b_pos: Vector2i) -> vo
 		print("    %s" % sequence)
 		_report(grid, a, "A (older)")
 		_report(grid, b, "B (younger)")
+		if _png_dir != "":
+			_write(grid, [a, b], "%s-%s" % [_slug(name), "one-pass" if sequence.begins_with("ONE")
+					else "two-passes"])
+
+
+## **THE GRID AS A PICTURE, ON THE REAL GROUND INK.** Only two things are visible to a player here:
+## the band is `HOVER` and the keyline is `MAP_BG`, which is the same colour as the ground off a
+## deposit -- so a keyline that ate a band shows up as a BITE out of a white line and nothing else.
+## That is the whole read, and it is why this is worth a file rather than a column.
+func _write(grid: Dictionary, marks: Array, name: String) -> void:
+	var box := Rect2i()
+	for i in range(marks.size()):
+		var rect: Rect2 = (marks[i] as Dictionary)["keyline_rect"]
+		var as_int := Rect2i(int(floor(rect.position.x)) - 4, int(floor(rect.position.y)) - 4,
+				int(ceil(rect.size.x)) + 8, int(ceil(rect.size.y)) + 8)
+		box = as_int if i == 0 else box.merge(as_int)
+	var image := Image.create(box.size.x, box.size.y, false, Image.FORMAT_RGB8)
+	image.fill(AssayHud.MAP_BG)
+	for y in range(box.size.y):
+		for x in range(box.size.x):
+			if StringName(grid.get(Vector2i(box.position.x + x, box.position.y + y), GROUND)) == BAND:
+				image.set_pixel(x, y, AssayHud.HOVER)
+	image.save_png("%s/%s-1x.png" % [_png_dir, name])
+	var big := image.duplicate() as Image
+	big.resize(box.size.x * 6, box.size.y * 6, Image.INTERPOLATE_NEAREST)
+	big.save_png("%s/%s-6x.png" % [_png_dir, name])
+
+
+func _slug(name: String) -> String:
+	return name.to_lower().replace(" ", "-").replace(",", "")
 
 
 ## `main.gd::_draw_buildings` as it stood before #421: one loop, three draw_rect passes per building.
