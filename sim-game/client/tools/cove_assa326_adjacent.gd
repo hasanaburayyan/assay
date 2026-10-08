@@ -1,0 +1,550 @@
+extends SceneTree
+## CI: local -- a shot: --headless writes a BLANK frame and reports success
+## TWO BUILT THINGS ON ADJACENT TILES, IN THE CLOSE-UP, ON THE REAL WINDOW (ASSA-326 box 7).
+##
+##   godot --path . --script res://tools/cove_assa326_adjacent.gd -- <out_dir> [seed] [east|west]
+##
+## **WHY THIS TOOL EXISTS AND `window_shot.gd` CANNOT ANSWER IT.** ASSA-326 asks how many built
+## things a cold reader counts in one picture. Every frame anybody here has shot holds the demo
+## loop's own pair -- a smelter and a planted drill, 2.5 tiles apart on both axes, because
+## `AssayDemoPlan.smelter_spot` starts at `(2, 2)` and `drill_spot` at `(0, 0)`. **No played frame in
+## this repo has ever contained two buildings on ADJACENT tiles** (Cove, #427), so the one question
+## the item is parked on has never had a picture to ask it of.
+##
+## **THE FIXTURE IS TWO SIM COMMANDS, NOT A SECOND CHAIN.** Maren priced box 1 as "a chain that
+## mines for a second machine, plus a GUI run". It is cheaper than that: the loop already builds and
+## places a smelter, `PlayerCommand::Pickup` returns it to the pack with its contents (`step.rs:389`,
+## reach is its only gate), and `Place` puts it back wherever the sim allows. So the pair is the
+## play's own two buildings, moved -- no extra ore mined, no part invented, every command the same
+## `AssayActions` builder a button sends.
+##
+## **WHAT IT MAY NOT DO, AND DOES NOT.** It does not reach into `World`. It submits `MoveTo`,
+## `Pickup` and `Place` and reads the answer back out of `AssaySim.buildings()`: a refused `Place`
+## leaves the smelter in the pack, and this run fails on that state rather than reporting a pair it
+## never saw. `REACH` below is used only to CHOOSE a tile to stand on; the sim still decides.
+##
+## **EAST BY DEFAULT, BECAUSE THE OVERHANG GOES EAST.** `_composite_place` draws a 1x1 machine 64 px
+## wide on a 32 px tile (`tiles [2, 1]`, Maren's #442: 95.3% of the neighbour's RECT, 43.5% of its
+## INK), so a smelter placed east of the drill is standing exactly where the drill's picture already
+## is. `west` puts it on the other side for the control, and the run prints which it took.
+##
+## **AND THE PAIR IS NOT THE UNSTABLE SORT CASE, WHICH I SAY HERE SO NOBODY READS IT AS ONE.** Box 8
+## is about two machines sharing a `bottom` and therefore a `sort_custom` the file calls unstable. A
+## 2x2 smelter's bottom row is one south of a 1x1 machine's, so this pair sorts deterministically and
+## the smelter is painted over the drill's overhang. Two ONE-TILE machines in a row is the unstable
+## case and it needs two full part chains; it is not this shot.
+##
+## Writes one frame and prints `ADJACENT SHOT OK` LAST and only on success, because Godot exits 0
+## even on a compile error.
+##
+## **THE LAYOUT IS ASSA-294's BLIND LAYOUT, ALWAYS, WITH NO FLAG.** The picture goes to
+## `<out_dir>/frames/` and everything that NAMES what is in it to `<out_dir>/key/`. This tool has
+## exactly one purpose and it is a cold read, so the safe layout is not an option a tired asker can
+## forget to pass.
+
+## The seed the ASSA-273 pair was shot on, so a reader comparing frames is on known ground.
+const DEFAULT_SEED := "777042"
+## Offline ticks the loop may take. `button_session.gd`'s own budget, for the same reason: an
+## underestimate turns a real failure into "ask for more ticks", which is the confusing way round.
+const PLAY_TICKS := 4000
+## Ticks per frame while the world runs, so containers get to lay out between slices.
+const TICKS_PER_FRAME := 40
+## Ticks a walk may take. The stand tile is within four tiles of the machine, so this is slack.
+const WALK_TICKS := 200
+## Ticks the toast gets to age out before the shot. `main.gd::SAYING_DWELL_TICKS` is 20 and this is
+## ten times it, because the dwell is measured from the LAST thing said and the world keeps acting.
+const QUIET_TICKS := 200
+## Frames to let the screen settle before a shot: layout is deferred, so the first frame after a
+## change photographs the state before it.
+const SETTLE_FRAMES := 6
+const RUN_CEILING := 900.0
+## `sim::tuning::REACH`, repeated ONLY to pick a tile to stand on -- the same licence
+## `AssayDemoPlan` takes for its quantities. Nothing here decides whether a command is legal.
+const REACH := 3
+
+var _out := ""
+var _frames := ""
+var _key := ""
+var _seed := DEFAULT_SEED
+var _side := "east"
+
+var _screen: Node = null
+var _play: AssayButtonPlay = null
+var _asked: Array = []
+var _step := 0
+var _settle := 0
+var _left := PLAY_TICKS
+var _started := false
+var _done := false
+var _ceiling := Time.get_unix_time_from_system() + RUN_CEILING
+
+var _smelter_id := -1
+var _smelter_item: Dictionary = {}
+var _machine_at := Vector2i(-1, -1)
+var _anchor := Vector2i(-1, -1)
+var _stand := Vector2i(-1, -1)
+var _walk_sent := false
+var _walked := 0
+var _quiet_ticks := 0
+var _pair: Array = []
+var _notes := PackedStringArray()
+
+
+func _initialize() -> void:
+	var argv := OS.get_cmdline_user_args()
+	if argv.is_empty():
+		_bail("usage: -- <out_dir> [seed] [east|west]")
+		return
+	_out = String(argv[0])
+	if argv.size() > 1:
+		_seed = String(argv[1])
+	if argv.size() > 2:
+		_side = String(argv[2])
+	if _side != "east" and _side != "west":
+		_bail("side must be east or west, not %s" % _side)
+		return
+	_frames = _out.path_join("frames")
+	_key = _out.path_join("key")
+	for dir in [_frames, _key]:
+		if DirAccess.make_dir_recursive_absolute(dir) != OK:
+			_bail("cannot write to %s" % dir)
+			return
+	_screen = load("res://scenes/main.tscn").instantiate()
+	root.add_child(_screen)
+	# `_ready` BY HAND: a `--script` run works inside `SceneTree._initialize`, before the root window
+	# is in the tree, so the engine's own call comes too late. Same note as `window_shot.gd`.
+	_screen._ready()
+	_screen._client.asked.connect(func(command: Variant) -> void: _asked.append(command))
+	_play = AssayButtonPlay.new(_screen, 0)
+	print("window %s, viewport %s, seed %s, side %s"
+			% [DisplayServer.window_get_size(), root.size, _seed, _side])
+	_step = 1
+
+
+func _process(_delta: float) -> bool:
+	if _done:
+		return true
+	if Time.get_unix_time_from_system() > _ceiling:
+		_bail("ran past its %ds ceiling at step %d" % [int(RUN_CEILING), _step])
+		return true
+	match _step:
+		1:
+			_settle_then(2)
+		2:
+			_play_frames()
+		3:
+			_plan()
+		4:
+			_walk()
+		5:
+			_take()
+		6:
+			_put()
+		7:
+			_settle_then(8)
+		9:
+			_quiet()
+		8:
+			_shoot_and_report()
+	return _done
+
+
+## OFFLINE: THIS SCRIPT IS THE RELAY. Lifted from `window_shot.gd::_begin_offline`, which lifted it
+## from `button_session.gd`, so the handshake has one implementation and this has no command path of
+## its own.
+func _begin_offline() -> bool:
+	var welcome := AssaySimHost.fresh_welcome_json(_seed, "cove")
+	if welcome == "":
+		_bail("could not make a world on seed %s" % _seed)
+		return false
+	_screen._client.play_offline()
+	_screen._client.feed_offline(welcome)
+	if not _screen._sim.running():
+		_bail("offline welcome did not start a sim: %s" % _screen._sim.fail_reason)
+		return false
+	return true
+
+
+func _play_frames() -> void:
+	if not _started:
+		if not _begin_offline():
+			return
+		_started = true
+	for _i in range(TICKS_PER_FRAME):
+		if _left <= 0:
+			_bail("the loop did not finish inside %d ticks (step %s)" % [PLAY_TICKS, _play.step])
+			return
+		_left -= 1
+		_play.advance()
+		if _play.failed != "":
+			_bail("the demo loop failed: %s" % _play.failed)
+			return
+		if _play.finished:
+			_notes.append("the loop finished: %s" % _play.outcome)
+			print("  %s" % _play.outcome)
+			_step = 3
+			return
+		if not _tick(_drain_asked()):
+			return
+
+
+## WHICH TWO BUILDINGS, AND WHERE THE SECOND ONE IS GOING. Read out of the sim, never off
+## `AssayButtonPlay`'s own `_smelter_at` / `_drill_at`: those are what the loop ASKED for, and the
+## only thing worth shooting is what the world says stands there.
+func _plan() -> void:
+	var smelter := _one_of("smelter")
+	var machine := _one_of("machine")
+	if smelter.is_empty() or machine.is_empty():
+		_bail("the play left %d smelters and %d machines standing, so there is no pair to move"
+				% [_count_of("smelter"), _count_of("machine")])
+		return
+	_smelter_id = int(smelter["id"])
+	_machine_at = top_left_of(machine)
+	# The anchor is the smelter's TOP-LEFT tile, which is what `Place` takes. East of a 1x1 machine
+	# at M that is M + (1, 0); west is M + (-2, 0), because a 2x2 reaches one tile right and down.
+	_anchor = _machine_at + (Vector2i(1, 0) if _side == "east" else Vector2i(-2, 0))
+	var world: Vector2i = _screen._sim.size_tiles()
+	for tile in _rect_tiles(_anchor, Vector2i(2, 2)):
+		var at: Vector2i = tile
+		if at.x < 0 or at.y < 0 or at.x >= world.x or at.y >= world.y:
+			_bail("the %s anchor %s falls outside the world %s" % [_side, _anchor, world])
+			return
+	_stand = _stand_tile(smelter)
+	if _stand == Vector2i(-1, -1):
+		_bail("no free tile is within reach of both the smelter at %s and the anchor %s"
+				% [top_left_of(smelter), _anchor])
+		return
+	print("  smelter %d at %s, machine at %s -> anchor %s, standing at %s"
+			% [_smelter_id, top_left_of(smelter), _machine_at, _anchor, _stand])
+	_step = 4
+
+
+## A TILE THAT CAN REACH BOTH, chosen in a fixed order so the answer is a pure function of the
+## world. Both commands are checked by the sim against `Building::distance_from`, which is Chebyshev
+## to the footprint RECT (`building.rs:388`), so this uses the same measure and the same number -- a
+## stand tile picked on a different metric would be refused and read as a design fact.
+func _stand_tile(smelter: Dictionary) -> Vector2i:
+	var world: Vector2i = _screen._sim.size_tiles()
+	var smelter_rect := Rect2i(top_left_of(smelter), footprint_of(smelter))
+	var anchor_rect := Rect2i(_anchor, Vector2i(2, 2))
+	var machine_rect := Rect2i(_machine_at, Vector2i(1, 1))
+	for dy in range(-REACH - 1, REACH + 2):
+		for dx in range(-REACH - 1, REACH + 2):
+			var at: Vector2i = _machine_at + Vector2i(dx, dy)
+			if at.x < 0 or at.y < 0 or at.x >= world.x or at.y >= world.y:
+				continue
+			# Not inside anything that stands now, not inside where the smelter is going, and not
+			# on the machine: a body cannot walk onto a building's tile.
+			if _standing_on(at) or anchor_rect.has_point(at) or machine_rect.has_point(at):
+				continue
+			if _chebyshev_to(smelter_rect, at) > REACH:
+				continue
+			if _chebyshev_to(anchor_rect, at) > REACH:
+				continue
+			return at
+	return Vector2i(-1, -1)
+
+
+## WALK, AND READ THE ARRIVAL OFF THE SIM. `MoveTo` is a standing destination, so it is submitted
+## once; counting ticks instead of checking `pos` is the mistake `window_shot.gd`'s north walk
+## records one layer down -- a number of ticks is not a state.
+func _walk() -> void:
+	if not _walk_sent:
+		_walk_sent = true
+		if not _tick([_input(AssayActions.move_to(_stand))]):
+			return
+		return
+	if _my_tile() == _stand:
+		print("  stood on %s after %d ticks" % [_stand, _walked])
+		_step = 5
+		return
+	_walked += 1
+	if _walked > WALK_TICKS:
+		_bail("walked %d ticks and never reached %s (still at %s)"
+				% [WALK_TICKS, _stand, _my_tile()])
+		return
+	_tick([])
+
+
+## PICK THE SMELTER UP, AND BELIEVE THE WORLD RATHER THAN THE COMMAND. A `Pickup` the sim refused
+## leaves the building standing and the pack empty, which is a different picture from the one this
+## tool is named for.
+func _take() -> void:
+	if not _tick([_input(AssayActions.pickup(_smelter_id))]):
+		return
+	if not _one_by_id(_smelter_id).is_empty():
+		_bail("Pickup was refused: the smelter %d still stands at %s, so the player at %s is out of "
+				% [_smelter_id, top_left_of(_one_by_id(_smelter_id)), _my_tile()]
+				+ "reach or the command never arrived")
+		return
+	for entry in _screen._sim.inventory_of(_screen._client.player_id):
+		var stack: Dictionary = entry
+		if String(stack.get("kind", "")) == "smelter":
+			_smelter_item = AssayActions.item_of_stack(stack)
+			break
+	if _smelter_item.is_empty():
+		_bail("the smelter came off the map and no smelter stack is in the pack")
+		return
+	_step = 6
+
+
+## PUT IT BACK ON THE TILE BESIDE THE MACHINE, and fail on the sim's answer, not on the submission.
+func _put() -> void:
+	if not _tick([_input(AssayActions.place(_smelter_item, _anchor))]):
+		return
+	var placed := _one_of("smelter")
+	if placed.is_empty():
+		_bail("Place was refused: no smelter stands anywhere, and the pack still holds %s"
+				% [_smelter_item])
+		return
+	if top_left_of(placed) != _anchor:
+		_bail("a smelter stands at %s and the anchor asked for was %s"
+				% [top_left_of(placed), _anchor])
+		return
+	_step = 9
+
+
+## **WAIT FOR THE SCREEN TO STOP SAYING WHAT I JUST DID, AND IT IS NOT A TIDY-UP.** The first frame
+## this tool wrote carried `Place 0 · submitted` in the toast over the world's bottom-left: a cold
+## reader asked *"how many built things are in this picture"* would have been told by the picture
+## that something was placed a moment ago. That is the panel-text leak Marlow declared himself on
+## ASSA-273, except here I would have built it in -- ASSA-294's `blind` layout separates the key
+## from the frames and can do nothing about a sentence INSIDE the frame.
+##
+## The toast is a `Say.JOINED` line, so it ages out after `SAYING_DWELL_TICKS` of the WORLD's clock
+## (`main.gd:2783`) -- which is why this ticks rather than waits on frames. The deadline makes it a
+## check and not a pause: a toast that never clears is reported in the key and in the run, so the
+## reader's answer can be discounted instead of trusted.
+func _quiet() -> void:
+	if not _screen._says_toast.visible:
+		_step = 7
+		return
+	_quiet_ticks += 1
+	if _quiet_ticks > QUIET_TICKS:
+		_notes.append("THE TOAST NEVER CLEARED in %d ticks: this frame still names a command, so a "
+				% QUIET_TICKS + "cold read taken on it is primed and must be discounted")
+		print("  the toast never cleared; shooting anyway and saying so")
+		_step = 7
+		return
+	_tick([])
+
+
+## THE SHOT, AND THE THREE THINGS THAT COULD MAKE IT A LIE.
+##
+## 1. **A PANEL STANDING OVER THE WORLD** (#432/#440). Every whole-world frame taken through a
+##    played chain for two hours on 10-08 was a picture of the `make` screen, and nothing failed: the
+##    chain printed FINISHED and the shot was of a full-screen panel. So the build screen is asked,
+##    by its own one reader, before the picture is written.
+## 2. **THE PAIR OUT OF FRAME.** The camera is on the body, so a machine four tiles away is normally
+##    in shot -- but "normally" is not a check. `visible_tiles` is the painter's own window and both
+##    footprints have to be inside it.
+## 3. **A FLAT FRAME**, which is `window_shot.gd`'s own first check: a dummy driver or a dead
+##    viewport reads back one colour and reports success.
+func _shoot_and_report() -> void:
+	if _screen._build_screen_open():
+		_bail("the build screen is open, so this frame would be a picture of a panel")
+		return
+	var view: Dictionary = _screen._world.view
+	var window := AssayScene.visible_tiles(view["origin"], view["size"], view["world_tiles"])
+	_pair = []
+	for entry in _screen._sim.buildings():
+		var building: Dictionary = entry
+		var rect := Rect2i(top_left_of(building), footprint_of(building))
+		_pair.append({"id": int(building["id"]), "kind": String(building["kind"]),
+				"name": String(building.get("name", "")), "pos": rect.position,
+				"foot": rect.size, "in_frame": window.encloses(rect)})
+		if not window.encloses(rect):
+			_bail("the %s at %s is not inside the drawn window %s"
+					% [String(building["kind"]), rect.position, window])
+			return
+	var image := root.get_texture().get_image()
+	if image == null:
+		_bail("no frame to read")
+		return
+	var seen := {}
+	for y in range(0, image.get_height(), 4):
+		for x in range(0, image.get_width(), 4):
+			seen[image.get_pixel(x, y).to_rgba32()] = true
+	if seen.size() < 2:
+		_bail("the frame is one flat colour, so nothing drew")
+		return
+	var name := "01-closeup-two-machines-%s.png" % _side
+	var path := _frames.path_join(name)
+	if image.save_png(path) != OK:
+		_bail("cannot write %s" % path)
+		return
+	var verdict := _adjacency()
+	var lines := PackedStringArray()
+	lines.append("ASSA-326 box 7: a close-up frame holding two ADJACENT built things.")
+	lines.append("seed %s, side %s, tick %d, frame %s (%dx%d, %d colours)"
+			% [_seed, _side, _screen._sim.tick(), name, image.get_width(), image.get_height(),
+			seen.size()])
+	lines.append("cell %d px, drawn window %s, camera origin %s"
+			% [int(AssayScene.TILE_PX), window, view["origin"]])
+	lines.append("player at %s" % _my_tile())
+	for entry in _pair:
+		var row: Dictionary = entry
+		lines.append("  %-8s id %d  top-left %s  footprint %s  %s"
+				% [row["kind"], row["id"], row["pos"], row["foot"], row["name"]])
+	lines.append("how the two footprints stand to each other: %s" % verdict)
+	lines.append("the toast that names commands, at the shot: %s"
+			% ("VISIBLE, so this frame is PRIMED" if _screen._says_toast.visible else "absent"))
+	for note in _notes:
+		lines.append("note: %s" % note)
+	var key := FileAccess.open(_key.path_join("what-is-in-the-frame.txt"), FileAccess.WRITE)
+	if key == null:
+		_bail("cannot write the key")
+		return
+	key.store_string("\n".join(lines) + "\n")
+	key.close()
+	print("")
+	for line in lines:
+		print(line)
+	if verdict != "SHARING AN EDGE":
+		_bail("the two footprints are %s, so this frame is not the pair box 7 asks for" % verdict)
+		return
+	print("ADJACENT SHOT OK")
+	_finish(0)
+
+
+## HOW THE TWO FOOTPRINTS STAND TO EACH OTHER, IN WORDS, and the first version of this got it wrong
+## in the direction that matters: **IT CALLED A TRUE PAIR A MISS.**
+##
+## I wrote `Building::distance_from`'s Chebyshev-to-a-rect and compared it to 0. That measure is
+## written for a POINT against a RECT, where 0 means inside -- so two rects that share an edge come
+## out at **1**, and the run refused a frame in which the machine at (74, 36) and the smelter at
+## (75, 36) really are side by side. A verdict function is a claim like any other, and this one was
+## measured against a threshold borrowed from a different question.
+##
+## SO IT IS DONE PER AXIS, BECAUSE "ADJACENT" IS NOT ONE NUMBER. Two rects share an EDGE when they
+## abut on one axis and OVERLAP on the other; abutting on both is a CORNER, which touches and shares
+## no side. Returned as a sentence rather than an int for that reason: a single number cannot tell
+## those two apart, and a corner pair is not the picture box 7 asks for.
+func _adjacency() -> String:
+	if _pair.size() != 2:
+		return "%d buildings, not a pair" % _pair.size()
+	var a := Rect2i(_pair[0]["pos"], _pair[0]["foot"])
+	var b := Rect2i(_pair[1]["pos"], _pair[1]["foot"])
+	var gap_x := _axis_gap(a.position.x, a.size.x, b.position.x, b.size.x)
+	var gap_y := _axis_gap(a.position.y, a.size.y, b.position.y, b.size.y)
+	if gap_x < 0 and gap_y < 0:
+		return "OVERLAPPING, which the sim refuses, so this is a bug in this tool"
+	if (gap_x == 0 and gap_y < 0) or (gap_y == 0 and gap_x < 0):
+		return "SHARING AN EDGE"
+	if gap_x == 0 and gap_y == 0:
+		return "TOUCHING AT A CORNER ONLY"
+	return "%d tile(s) apart on x and %d on y" % [maxi(gap_x, 0), maxi(gap_y, 0)]
+
+
+## Empty tiles between two spans on one axis: 0 when they abut, NEGATIVE when they overlap. The sign
+## carries the overlap, which is what lets an edge be told from a corner above.
+func _axis_gap(a_at: int, a_len: int, b_at: int, b_len: int) -> int:
+	if a_at <= b_at:
+		return b_at - (a_at + a_len)
+	return a_at - (b_at + b_len)
+
+
+func _chebyshev_to(rect: Rect2i, at: Vector2i) -> int:
+	var dx: int = maxi(maxi(rect.position.x - at.x, at.x - (rect.position.x + rect.size.x - 1)), 0)
+	var dy: int = maxi(maxi(rect.position.y - at.y, at.y - (rect.position.y + rect.size.y - 1)), 0)
+	return maxi(dx, dy)
+
+
+func _rect_tiles(at: Vector2i, foot: Vector2i) -> Array:
+	var tiles: Array = []
+	for dy in range(foot.y):
+		for dx in range(foot.x):
+			tiles.append(at + Vector2i(dx, dy))
+	return tiles
+
+
+func _standing_on(at: Vector2i) -> bool:
+	for entry in _screen._sim.buildings():
+		var building: Dictionary = entry
+		if Rect2i(top_left_of(building), footprint_of(building)).has_point(at):
+			return true
+	return false
+
+
+## The top-left tile of any building, spelled once -- the tile `Place` takes and the tile
+## `buildings()` reports. Cast rather than returned raw: a `Dictionary.get` is a `Variant`, and a
+## typed return of one is the runtime error that reads as "the tool said nothing".
+static func top_left_of(building: Dictionary) -> Vector2i:
+	return building.get("pos", Vector2i(-1, -1)) as Vector2i
+
+
+static func footprint_of(building: Dictionary) -> Vector2i:
+	return building.get("footprint", Vector2i(1, 1)) as Vector2i
+
+
+func _one_of(kind: String) -> Dictionary:
+	for entry in _screen._sim.buildings():
+		var building: Dictionary = entry
+		if String(building.get("kind", "")) == kind:
+			return building
+	return {}
+
+
+func _one_by_id(id: int) -> Dictionary:
+	for entry in _screen._sim.buildings():
+		var building: Dictionary = entry
+		if int(building.get("id", -1)) == id:
+			return building
+	return {}
+
+
+func _count_of(kind: String) -> int:
+	var n := 0
+	for entry in _screen._sim.buildings():
+		if String((entry as Dictionary).get("kind", "")) == kind:
+			n += 1
+	return n
+
+
+func _my_tile() -> Vector2i:
+	for entry in _screen._sim.players():
+		var player: Dictionary = entry
+		if int(player["id"]) == _screen._client.player_id:
+			return player["pos"] as Vector2i
+	return Vector2i(-1, -1)
+
+
+func _drain_asked() -> Array:
+	var inputs: Array = []
+	for command in _asked:
+		inputs.append(_input(command))
+	_asked.clear()
+	return inputs
+
+
+func _input(command: Variant) -> Dictionary:
+	return {"Player": {"player": _screen._client.player_id, "command": command}}
+
+
+## ONE TICK, WITH THE REFUSAL CHECK `window_shot.gd` uses: a bundle the sim will not apply is a dead
+## run, and a tool that kept stepping past one would be shooting a world nobody played.
+func _tick(inputs: Array) -> bool:
+	var at: int = _screen._sim.tick()
+	var before: int = _screen._sim.applied
+	_screen._client.feed_offline(JSON.stringify({"Tick": {"tick": at, "inputs": inputs}}))
+	if _screen._sim.applied == before:
+		_bail("the sim refused the bundle for tick %d" % at)
+		return false
+	return true
+
+
+func _settle_then(next: int) -> void:
+	_settle += 1
+	if _settle >= SETTLE_FRAMES:
+		_settle = 0
+		_step = next
+
+
+func _bail(why: String) -> void:
+	print("FAIL  %s" % why)
+	_finish(1)
+
+
+func _finish(code: int) -> void:
+	_done = true
+	quit(code)
