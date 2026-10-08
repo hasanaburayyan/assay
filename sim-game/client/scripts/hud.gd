@@ -543,6 +543,18 @@ const MAP_MARKS: Array[Dictionary] = [
 	# the table's `MAP_BG` is an example and not the colour. `mark_ink_of` is what `_draw` calls.
 	{"id": &"dead_end", "shape": &"hatch", "ink": MAP_BG, "data_ink": true, "in_key": true,
 			"label": "hatched: nothing can get this ore out"},
+	# **A MACHINE'S RIMS MOVED UP HERE, ABOVE THE PEOPLE, UNDER MAREN'S RULE 11.42** (*paint order is
+	# global, not per-mark: every SEPARATOR, then PEOPLE, then every IDENTITY*). It sat between
+	# `mine_ring` and `building` until 2026-10-08, which is where it was painted — per machine, after
+	# the players — and that cost a person 13.1% of their body fill to a rim that is only meant to
+	# separate a mark from the GROUND. Nacre's `test_the_tables_order_is_the_order_draw_paints_in` is
+	# what caught the move: I changed `_draw` and not the table, and it named the exact row.
+	#
+	# **MOVING IT SHOWS A PLAYER NOTHING, AND THAT IS WHY ONE ROW STILL SERVES BOTH RIMS.** This entry
+	# is `in_key: false` and defers to `building`, so the key panel is byte-identical either side of
+	# the move; what changed is the only thing this table's ORDER means, which is the paint order.
+	{"id": &"building_keyline", "shape": &"footprint", "ink": MAP_BG, "in_key": false,
+			"keyed_by": &"building", "label": "the map's own ink, under a machine's mark"},
 	{"id": &"walk_mine", "shape": &"line", "ink": MINE, "alpha": 0.35, "in_key": true,
 			"label": "where a player is walking to"},
 	{"id": &"walk_theirs", "shape": &"line", "ink": THEIRS, "alpha": 0.25, "in_key": false,
@@ -559,8 +571,6 @@ const MAP_MARKS: Array[Dictionary] = [
 			"label": "another player"},
 	{"id": &"mine_ring", "shape": &"ring", "ink": MINE, "in_key": true,
 			"label": "the ring is on your own body"},
-	{"id": &"building_keyline", "shape": &"footprint", "ink": MAP_BG, "in_key": false,
-			"keyed_by": &"building", "label": "the map's own ink, under a machine's mark"},
 	{"id": &"building", "shape": &"footprint", "ink": HOVER, "data_ink": true, "in_key": true,
 			"label": "a machine someone built, on the tiles it covers"},
 	# **AFTER THE BUILDING, AND THE TABLE'S ORDER IS THE PAINT ORDER** (ASSA-213). The letter used to

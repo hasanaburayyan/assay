@@ -5041,7 +5041,46 @@ func _draw() -> void:
 			for i in range(0, strokes.size(), 2):
 				draw_line(strokes[i], strokes[i + 1], AssayHud.mark_ink_of(&"dead_end", ink), thick)
 
-	# EVERY PLAYER, AT A SIZE THAT DOES NOT COME FROM THE TILE (ASSA-119 box 6, Maren's finding 1).
+	# **PASS 1 OF 3: EVERY MACHINE'S RIMS, BOTH OF THEM, BEFORE THE PEOPLE** (Maren's rule 11.42 of
+	# 2026-10-08: *paint order is global, not per-mark — one pass of every SEPARATOR, then PEOPLE, then
+	# every IDENTITY*). Rims here, players below, bands further down. The list is fetched once and read
+	# by all three passes plus the glyph pass, because two calls to `_building_marks` could be two
+	# different worlds in one frame.
+	#
+	# **THIS IS TWO ITEMS' FIX AND ONE ORDER, WHICH IS WHY IT IS A LAW AND NOT A PATCH.**
+	# - Pass 1 before pass 3 is **ASSA-289**: a younger machine's rim can no longer delete an older
+	#   one's band, because no rim is painted after any band.
+	# - Pass 1 before pass 2 is **ASSA-278 box 7** (#392, reopened): a rim no longer takes a person's
+	#   fill. §11.39, which Maren wrote in the ruling that first closed #392, forbids exactly that —
+	#   keyline over ink — and 11.42 is its global form.
+	#
+	# **AND IT REACHES WHAT I TOLD HER NOTHING COULD.** I wrote on ASSA-289 that the 1x1 residual was
+	# out of reach of paint order *"because a mark's own rim is painted after its own band by
+	# construction"*. 11.42 dissolves that construction, and `tools/assa289_paint_probe.gd` says so:
+	#
+	#   a neighbour's band kept      one loop   two passes (#421)   three passes (11.42)
+	#   2x2 adjacent, all three ways  136/144      144/144              144/144
+	#   1x1 adjacent, all three ways  128/144      136/144              **144/144**
+	#
+	# What survives is not a deletion and no order can touch it: a 20 px mark on a 9 px tile leaves the
+	# older machine's wall standing INSIDE the younger one's hole, so two adjacent drills read as one
+	# box with a tick in it. That is the floor, it is ASSA-289 box 5, and it is Maren's.
+	var shapes := _building_marks(_sim.buildings())
+	for shape_entry in shapes:
+		var shape: Dictionary = shape_entry
+		# **FOUR BANDS, NOT A STROKE** (ASSA-236): an unfilled `draw_rect` straddles the edge it is
+		# given, which on this mark would put ink on the tile next door at every machine on the map.
+		# The outward rim separates the mark from the ground it stands on; the inward one gives the
+		# band's inner edge a dark neighbour on a bright deposit (ASSA-278, 1.53:1 without it). Both
+		# are separators, both are `building_keyline`, and `test_map_key.gd` holds that as ONE row —
+		# so splitting them across the player pass would need a 22nd key row for an ink already in it.
+		for band: Rect2 in AssayHud.frame_bands(shape["keyline_rect"], AssayHud.MARK_KEYLINE_PX):
+			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
+		for band: Rect2 in AssayHud.frame_bands(shape["hole_rect"], AssayHud.MARK_KEYLINE_PX):
+			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
+
+	# **PASS 2 OF 3.** EVERY PLAYER, AT A SIZE THAT DOES NOT COME FROM THE TILE (ASSA-119 box 6,
+	# Maren's finding 1).
 	# This mark used to be two cells square, which made it 18 px on this world and would make it 36 on
 	# a small one -- so the bigger and more confusing the world, the smaller you got. Measured on the
 	# real shot: 324 px of an 864x576 view, 0.065% of it, smaller than all eleven deposits and twelve
@@ -5142,14 +5181,10 @@ func _draw() -> void:
 	# HELD IN A LOCAL AND NOT CALLED TWICE: the glyph pass below asks `letter_occlusions` which of
 	# these diamonds laps a letter (ASSA-218 box 9), and two calls could be two different worlds in
 	# the same frame -- the mistake `window_shot.gd` already carries a comment about.
-	var shapes := _building_marks(_sim.buildings())
-	# **EVERY MACHINE'S OUTWARD KEYLINE FIRST, THEN EVERY MACHINE'S BAND: TWO PASSES, NOT ONE LOOP**
-	# (ASSA-289, under Maren's rule 11.39 of 2026-10-08: *where two marks overlap, the keyline yields and
-	# the ink does not*). A keyline grows OUTWARD, so it is the one part of this mark that leaves the
-	# mark's own rect -- and two legal adjacent 2x2 footprints put the younger machine's keyline band
-	# on the older machine's frame band. One loop painted them per machine in `_sim.buildings()`
-	# order, so the younger machine's rim deleted part of the older one's band. A hollow mark's band
-	# has been its whole identity since ASSA-236.
+	# **PASS 3 OF 3: EVERY MACHINE'S BAND, AFTER EVERY RIM AND AFTER THE PEOPLE** (rule 11.42, above
+	# the player pass, where the list is fetched and the rims are painted). The band is this mark's
+	# IDENTITY — a hollow frame's four sides have been the whole of what says "machine" since
+	# ASSA-236 — and identity goes last so nothing of another mark's can bite it.
 	#
 	# **THE NUMBER THIS COMMENT CARRIED FIRST -- "ate 36 of the older one's 128 band px (28.1%), a
 	# contiguous 2x14 run" -- IS DEAD, AND SO IS MY OWN REPLACEMENT FOR IT.** Maren's probe ran at
@@ -5158,64 +5193,17 @@ func _draw() -> void:
 	# then wrote that the dominant eater was the neighbour's BAND, at 27.8%. **It is not. Both numbers
 	# count rect OVERLAP and call it deletion.** `building` and `building_keyline` carry no alpha in
 	# `AssayHud.MAP_MARKS`, so white over white loses nothing and only dark over white does.
-	# `tools/assa289_paint_probe.gd` paints these loops into a pixel grid and asks each band pixel
-	# what ink it ended up as, against a non-adjacent control:
 	#
-	#   2x2 adjacent, all three ways   one loop 136/144 (94.4%)   two passes 144/144 (100%)
-	#   1x1 adjacent, all three ways   one loop 128/144 (88.9%)   two passes 136/144 (94.4%)
-	#
-	# **TWO PASSES CLOSES THE 2x2 CASE THAT WAS FILED, COMPLETELY.** What it cannot close is the 1x1's
-	# last 8 px, and the sentence below used to deny that case could exist.
-	#
-	# **TWO PASSES AND NOT AN INWARD KEYLINE, WHICH IS THE OTHER MECHANISM SHE NAMED.** Turning this
-	# rim inward would retire the only thing that gives the band's OUTER edge a dark neighbour, and
-	# on a grade-A deposit the band is 2.19:1 against the ground and 11.40:1 against this rim
-	# (ASSA-278). That trade re-opens the defect ASSA-278 was filed for, on the other edge, and no
-	# test can buy it back. The order being load-bearing is the price, and a test can hold an order.
-	#
-	# **THE INWARD RIM BELOW STAYS IN THE SECOND PASS, AND MY REASON FOR IT WAS FALSE.** I wrote here
-	# that it "lands inside the mark's own hole, so it can never reach a neighbour". It can. The hole
-	# is inside the MARK, not inside the FOOTPRINT, and at `BUILDING_MARK_PX` 20 a 1x1's mark is 20 px
-	# over a 9 px tile -- so B's hole reaches 5.5 px into A's tile and its rim takes 8 px off A's band
-	# (right side 24/32, longest unbroken run 12 of 16). That is the whole of the 1x1 residual above,
-	# and it is the floor overstating the footprint, which is **ASSA-289 box 5 and Maren's to rule**:
-	# no paint order reaches it, because B's rim is painted after B's own band by construction. The
-	# rim stays here either way -- it must come after the band it surrounds.
-	for shape_entry in shapes:
-		var shape: Dictionary = shape_entry
-		# **FOUR BANDS AND FOUR BANDS, NOT A STROKE** (ASSA-236). The rim is drawn OUTSIDE the frame so
-		# the frame keeps every pixel of its own size -- the same rule the diamond's two polygons kept --
-		# and the frame itself is four filled rects because an unfilled `draw_rect` straddles the edge it
-		# is given, which on this mark would put white on the tile next door at every machine on the map.
-		for band: Rect2 in AssayHud.frame_bands(shape["keyline_rect"], AssayHud.MARK_KEYLINE_PX):
-			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
+	# **AND NOT AN INWARD-ONLY KEYLINE, WHICH IS THE OTHER MECHANISM SHE NAMED ON ASSA-289.** Turning
+	# the outward rim inward would retire the only thing that gives the band's OUTER edge a dark
+	# neighbour: on a grade-A deposit the band is 2.19:1 against the ground and 11.40:1 against this
+	# rim (ASSA-278). That trade re-opens the defect ASSA-278 was filed for, on the other edge.
 	for shape_entry in shapes:
 		var shape: Dictionary = shape_entry
 		for band: Rect2 in AssayHud.frame_bands(shape["rect"], float(shape["stroke"])):
 			draw_rect(band, AssayHud.mark_ink_of(&"building", shape["colour"]), true)
-		# **AND A RIM INSIDE THE HOLE, SO EVERY PIXEL OF THE BAND HAS A DARK NEIGHBOUR ON BOTH SIDES**
-		# (ASSA-278, Maren ruled option 1 at 23:10 EDT). Drawn AFTER the frame and INSIDE it, so the
-		# frame keeps every pixel of its own size -- the same rule the outward rim keeps. The species
-		# letter is painted later still (the glyph pass below), so ASSA-213 is untouched: a letter on a
-		# machine's tile still lands on top of both rims, and this does NOT fix ASSA-273.
-		#
-		# **I FILED THIS AS "A HOLLOW MARK SHOULD LOOK HOLLOW" AND THAT IS NOT THE RULING.** Hers is
-		# about the band: without an inner rim the band's weight is rented from whatever the map put
-		# under the mark, which on seed 63's grade-A disc was 1.53:1 and unreadable. A claim about the
-		# hole is a claim about one seed's disc; a claim about the band's neighbours holds on any tint.
-		#
-		# **AND IT IS PAID FOR OUT OF THE PERSON STANDING THERE, WHICH MY OWN COSTING LEFT OUT.** These
-		# marks go in AFTER the players (the paragraph above), so this rim is painted over them: a
-		# partner on a 1x1 machine keeps 69.2% of their cross without it and 38.5% with it, and your
-		# own body 85.3% -> 47.1% (your ring is outside the frame and untouched). Measured on the real
-		# geometry by `tools/person_under_machine.gd`. ASSA-236's case for the hollow frame was that it
-		# ENDED that trade (25.3% -> 70.4%), so this buys part of it back; the lever that would not is
-		# painting this rim BEFORE the player pass, where a person replaces the rim they stand on and
-		# their own MAP_BG keyline holds the band apart. That is Maren's to rule and it is on ASSA-278.
-		for band: Rect2 in AssayHud.frame_bands(shape["hole_rect"], AssayHud.MARK_KEYLINE_PX):
-			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
-		# **THE GLYPH PASS BELOW REPEATS THESE THREE LOOPS FOR A FRAME A LETTER'S BED COVERS**
-		# (ASSA-273 box 3, DRAFT). I tried to factor them into `_paint_building_frame(shape)` first
+		# **THE GLYPH PASS BELOW REPEATS THIS LOOP FOR A FRAME A LETTER'S BED COVERS**
+		# (ASSA-273 box 3, DRAFT). I tried to factor it into `_paint_building_frame(shape)` first
 		# and `test_map_key.gd` is right to refuse it: its scan reads `_draw`'s OWN source, so a draw
 		# call moved into a helper is a mark the key can stop naming. The painter has one entry point
 		# on purpose, so the repetition stays here where the scan can see it.
