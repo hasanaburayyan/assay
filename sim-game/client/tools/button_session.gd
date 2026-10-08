@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: gated
 ## CAN A PERSON AT THE WINDOW PLAY THE DEMO LOOP? Headless, one line of verdict.
 ##
 ##   godot --headless --path . --script res://tools/button_session.gd -- offline [seed] [rank] [job]

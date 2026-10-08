@@ -1,4 +1,6 @@
 extends SceneTree
+## CI: local -- needs a release `sim-relay` binary and a real socket, and it causes a true
+## divergence rather than faking one. ASSA-190's end-to-end proof, not a per-push gate.
 ## **DOES A DESYNCED CLIENT GET BACK IN?** (ASSA-190 box 3.)
 ##
 ##   cargo build -p sim-relay --release        # SEE BELOW: release wins, debug does not

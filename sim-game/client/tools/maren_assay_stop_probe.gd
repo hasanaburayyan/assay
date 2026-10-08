@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- answered one design question for Maren and is kept for re-asking it
 ## MAREN'S PROBE, not a shipped tool: does an assay STOPPED BY WALKING OFF reach the player?
 ##
 ## ASSA-95's last box, and Marlow said plainly that it is not driven by anyone — it may well hold

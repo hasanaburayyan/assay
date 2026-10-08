@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- a one-off sweep for the ASSA-209 hatch ruling, which is settled
 ## **EVERY SPECIES x THE WHOLE PURITY RANGE AGAINST THE HATCH INK, WHICH IS ASSA-209's BOX 1.**
 ##
 ##   godot --headless --path client --script res://tools/hatch_ink_sweep.gd -- [out.txt]

@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- draws a picture for human eyes; it has no verdict a gate could fail on
 ## A PICTURE OF WHAT THE ENGINE REALLY COMPOSITES, for human eyes (ASSA-63).
 ##
 ## Cove's `shared/assay/part-contract-2026-10-02.png` shows what the rules are FOR, drawn in Python.

@@ -1215,14 +1215,32 @@ const HOVER_STROKE_PX := 1.0
 ## edge to edge share a pixel, and only paint order or moving the outline inside its own cell can
 ## settle it. She ruled out paint order; the inset is ASSA-284's open box, not a thing I shipped.
 ##
-## Godot's unfilled `draw_rect` straddles the edge it is given, 0.5 px either side, so a rim at
-## `rect.grow(-HOVER_STROKE_PX)` lands exactly beside the outline's own pixels with no gap.
+## **AND BOTH RECTS ARE INSET BY HALF A STROKE, WHICH IS WHAT KEEPS EVERY PAINTED PIXEL INSIDE THE
+## CELL** (ASSA-284 box 7, Maren: "the outline may paint only pixels of the cell it names"). Godot's
+## unfilled `draw_rect` straddles the edge it is given, 0.5 px either side, so an edge AT the cell
+## boundary paints half a pixel on each side of it: tile 53 starts at x=501 and the outline painted
+## x=500, a pixel belonging to tile 52. ASSA-213 lets a mark lie about SIZE and never about POSITION,
+## and this is the one mark that *is* a cell, so it has no size to hide behind.
+##
+## The arithmetic, on a 9 px cell at x=501 (so the cell owns 501..509 and its box's right edge is 510):
+##
+## ```
+##                      left edge   covers        right edge   covers      painted columns
+## box                   501.0      500.5-501.5     510.0      509.5-510.5   500 and 510  <- both outside
+## box.grow(-0.5)        501.5      501.0-502.0     509.5      509.0-510.0   501 and 509  <- the cell's own
+## box.grow(-1.5)        502.5      502.0-503.0     508.5      508.0-509.0   502 and 508  <- the rim, abutting
+## ```
+##
+## So the rim is `1.5 * HOVER_STROKE_PX` rather than `1.0`: a half-stroke for the outline's own
+## centring plus a whole stroke to clear the column it paints. Written as multiples of the one
+## constant, because a rim and the mark it separates must move together.
 static func hover_mark(tile: Vector2i, cell: float, origin: Vector2) -> Dictionary:
 	var box := Rect2(origin + Vector2(tile) * cell, Vector2(cell, cell))
 	return {
 		"tile": tile,
-		"rect": box,
-		"keyline_rect": box.grow(-HOVER_STROKE_PX),
+		"cell_rect": box,
+		"rect": box.grow(-HOVER_STROKE_PX * 0.5),
+		"keyline_rect": box.grow(-HOVER_STROKE_PX * 1.5),
 		"width": HOVER_STROKE_PX,
 		"colour": HOVER,
 		"keyline": MAP_BG,

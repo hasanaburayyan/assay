@@ -50,9 +50,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # blitting an icon the stamp grows by itself and the check begins holding it to one.
 import review_sources  # noqa: E402
 review_sources.start()
+# WHICH CLIENT PANEL THIS IS A PICTURE OF (ASSA-151, and ASSA-173 is what made it possible here).
+# The sources stamp above says this sheet composites no shipped art, which is true and was the
+# whole answer for one sheet too long: the content of this picture is `design_row_layout.gd`'s
+# answer, so it can go stale against the client without a single sprite moving. That is the half
+# `review_layout` closes, and it is why `design_rows.png` was the last sheet in the repo named in
+# `check_review_layout.py::UNDECLARABLE`.
+import review_layout  # noqa: E402
+import design_row_dump  # noqa: E402
 
 HERE = Path(__file__).resolve().parent.parent
-LAYOUT = json.load(open(sys.argv[1] if len(sys.argv) > 1 else "/tmp/cove-dlayout.json"))
+LAYOUT = review_layout.load(sys.argv[1] if len(sys.argv) > 1 else "/tmp/cove-dlayout.json",
+                            probe=design_row_dump.PROBE)
 OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else HERE / "assets/review/design_rows.png"
 PROVENANCE = json.load(open(sys.argv[3])) if len(sys.argv) > 3 else {}
 
@@ -120,45 +129,109 @@ def draw_row(dst, row, ox, oy):
                verb["label"], font=f, fill=(232, 232, 232))
 
 
-def column(zoom=1):
-    """The bench, rows stacked the way the VBox stacks them."""
+def stamp_of(row):
+    """WHICH RUN AND TICK THIS ROW IS A PICTURE OF, or "" when the dump predates provenance.
+
+    **THIS IS THE ITEM'S OWN SUBJECT POINTED AT ITSELF** (Maren, ASSA-173 06:01). The sheet used
+    to print one `tick:` and one `hash:` in the caption over rows from TWO runs, so the two fields
+    named the showcase run and lied about the other row -- "ASSA-144 with the names changed". The
+    numbers now ride each design through the probe and are printed against the row they belong to.
+
+    `tick` is forced to an int because it crosses GDScript's JSON as a double and comes back
+    `516.0`, which reads as a precision nobody has.
+    """
+    s = row.get("source") or {}
+    if not s.get("run"):
+        return ""
+    tick = s.get("tick")
+    return "run %s (%s) · tick %s · hash %s" % (
+        s.get("run"), s.get("flags", "?"),
+        int(tick) if isinstance(tick, (int, float)) else "?", s.get("hash", "?"))
+
+
+#: Room under each row for [`stamp_of`]. The gap between rows was always this script's own choice
+#: and not the engine's `separation`, so spending it on the stamp costs the picture nothing.
+STAMP_H = 15
+
+
+def column(zoom=1, stamps=True):
+    """The bench, rows stacked the way the VBox stacks them, each with its provenance under it.
+
+    `stamps` is off for the 2x copy: that column is a magnifier for the letterforms, and doubling
+    11px provenance text adds no information and a lot of ink.
+    """
     sep = 10
-    h = int(sum(r["row_size"][1] for r in ROWS) + sep * (len(ROWS) - 1))
+    extra = STAMP_H if stamps else 0
+    h = int(sum(r["row_size"][1] + extra for r in ROWS) + sep * (len(ROWS) - 1))
     img = Image.new("RGB", (PANEL, h), BG)
+    d = ImageDraw.Draw(img)
     y = 0
     for r in ROWS:
         draw_row(img, r, 0, y)
-        y += int(r["row_size"][1]) + sep
+        y += int(r["row_size"][1])
+        if stamps:
+            d.text((0, y + 2), stamp_of(r), font=font(11), fill=(150, 156, 168))
+            y += extra
+        y += sep
     if zoom != 1:
         img = img.resize((img.width * zoom, img.height * zoom), Image.NEAREST)
     return img
 
 
 one = column(1)
-two = column(2)
+two = column(2, stamps=False)
 
 cap = font(13)
 head = font(15)
 small = font(12)
-lines = [
-    "THE BENCH AS THE ENGINE LAYS IT OUT. Decision #38 asks whether this reads as a DESIGN or as a",
-    "DEBUG STRIP. Every rect, font size, verdict colour and the %d px panel width are read back off" % PANEL,
-    "the nodes real main.tscn built; only the letterforms are this sheet's font, so each line carries",
-    "a tick at the width the ENGINE measured it to be. Widest line %d px of %d." % (
-        int(max(max(r["body"]["widths"]) for r in ROWS if r["body"])), PANEL),
-]
-for k in ("source", "seed", "tick", "hash", "rules", "note"):
-    if k in PROVENANCE:
-        lines.append("%s: %s" % (k, PROVENANCE[k]))
+paragraph = (
+    "THE BENCH AS THE ENGINE LAYS IT OUT. Decision #38 asks whether this reads as a DESIGN or as "
+    "a DEBUG STRIP. Every rect, font size, verdict colour and the %d px panel width are read back "
+    "off the nodes real main.tscn built; only the letterforms are this sheet's font, so each line "
+    "carries a tick at the width the ENGINE measured it to be. Widest line %d px of %d."
+    % (PANEL, int(max(max(r["body"]["widths"]) for r in ROWS if r["body"])), PANEL))
+# NO `tick` AND NO `hash` IN THIS LIST, and their absence is the point rather than an omission.
+# They are per-row facts (see `stamp_of`) and a single one of each over merged rows is the lie
+# Maren refused on 06:01. A caption key that cannot be true for every row does not belong to the
+# caption.
+facts = ["%s: %s" % (k, PROVENANCE[k])
+         for k in ("source", "seed", "rules", "note") if k in PROVENANCE]
+
+W = max(PANEL, one.width) + GAP + two.width + PAD * 3
+
+
+def wrapped(text, f, width):
+    """`text` broken to `width` px in `f`, by words.
+
+    **A STAMP NOBODY CAN READ IS THIS ITEM'S SUBJECT TOO** (Maren). The caption used to be a list
+    of pre-broken string literals drawn unwrapped, while the sheet's WIDTH comes from the panels --
+    so a provenance line longer than two bench columns ran off the right edge mid-word and the
+    sheet said nothing. Wrapping here means the caption adapts to the picture instead of a human
+    guessing the width at the time they typed it.
+    """
+    probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    out, line = [], ""
+    for word in text.split():
+        trial = (line + " " + word).strip()
+        if line and probe.textlength(trial, font=f) > width:
+            out.append(line)
+            line = word
+        else:
+            line = trial
+    return out + [line] if line else out
+
+
+AVAIL = W - PAD * 2
+lines = [(head, l) for l in wrapped(paragraph, head, AVAIL)]
+lines += [(cap, l) for fact in facts for l in wrapped(fact, cap, AVAIL)]
 
 cap_h = PAD * 2 + len(lines) * 17
-W = max(PANEL, one.width) + GAP + two.width + PAD * 3
 H = max(cap_h + one.height, cap_h + two.height) + PAD * 2 + 24
 sheet = Image.new("RGB", (W, H), (34, 34, 34))
 d = ImageDraw.Draw(sheet)
 y = PAD
-for i, line in enumerate(lines):
-    d.text((PAD, y), line, font=head if i == 0 else cap, fill=(236, 236, 236))
+for f, line in lines:
+    d.text((PAD, y), line, font=f, fill=(236, 236, 236))
     y += 17
 y += PAD
 d.text((PAD, y - 15), "1:1 (the honest size)", font=small, fill=(176, 176, 176))
@@ -166,7 +239,8 @@ sheet.paste(one, (PAD, y))
 d.text((PAD * 2 + one.width, y - 15), "2x", font=small, fill=(176, 176, 176))
 sheet.paste(two, (PAD * 2 + one.width, y))
 OUT.parent.mkdir(parents=True, exist_ok=True)
-sheet.save(OUT, pnginfo=review_sources.png_info())
+# TWO CLAIMS, TWO KEYS, ONE SHEET: the art it composited (none) and the client layout it drew.
+sheet.save(OUT, pnginfo=review_layout.png_info(review_sources.png_info()))
 
 for r in ROWS:
     b = r["body"]

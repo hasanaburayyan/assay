@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- measures a log line against the panel it is drawn in, which is window-derived
 ## ASSA-156: HOW TALL IS A LOG LINE, AND DOES THE ENGINE KNOW BEFORE LAYOUT RUNS?
 ##
 ## The fix caps the log panel to the room above the player, and the mechanism I want is to drop the

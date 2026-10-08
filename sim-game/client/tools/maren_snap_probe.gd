@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- reads the body's DRAWN position, which does not exist without a renderer
 ## MAREN'S PROBE: IS THE BODY'S DRAWN POSITION QUANTISED TO A WHOLE TILE?
 ##
 ##   godot --headless --path client --script res://tools/maren_snap_probe.gd

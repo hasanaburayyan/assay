@@ -138,6 +138,23 @@ jobs:
       # Stdlib only, no Godot, ~0.05s.
       - name: Every art check is actually run by CI
         run: python3 art/check_ci_runs_every_check.py
+      # THE SAME QUESTION FOR `client/tools/`, WHICH COULD NOT BE ASKED THE SAME
+      # WAY (ASSA-282). `art/check_*.py` has one class -- every check should run
+      # -- so a set difference answers it. `client/tools/` has two, and most of it
+      # SHOULD stay local: the shots write a blank frame headless, and the budget
+      # probe measures a clip that reads 0 px without a window. So the FILE
+      # declares `# CI: gated`, `# CI: local -- <why not>` or `# CI: library`, and
+      # this holds the claim to the tree in both directions: a tool that says
+      # gated and is wired to nothing reddens, and so does one that says local
+      # after somebody wired it up and did not edit its header.
+      #
+      # IT FOLLOWS INDIRECTION, and that is not theoretical: the gate reaches
+      # `hud_probe.gd` only through `tools/hud_in_a_gate.sh`, so a grep of this
+      # file for the filename would have called the probe ungated. It also strips
+      # YAML comment lines first, because `window_shot.gd` is named in this file
+      # inside a comment saying why nothing runs it. Stdlib only, no Godot.
+      - name: Every client tool says whether a gate runs it
+        run: python3 client/tools/check_tools_declare_ci.py
       # ONE SPECIES PALETTE, WRITTEN DOWN TWICE. The Blender pipeline tints the
       # ore sprite from `art/species_tints.py`; the Godot client fills a deposit
       # from a const in `client/scripts/hud.gd`. Neither language can read the
@@ -750,6 +767,18 @@ jobs:
       # Lever: REVIEW_LAYOUT_FAKE_MOVE=1 must turn it red naming both sheets. Proved red
       # for real too, by moving `ICON_PX` 32 -> 34 in the client with the sheets left
       # alone, and restoring it.
+      #
+      # A SECOND PROBE SINCE ASSA-173, AND IT IS WHY THIS STEP GOT SLOWER. `design_rows.png`
+      # was the last sheet that could declare nothing; it now carries a layout stamp, which
+      # means this step re-asks `art/design_row_layout.gd` as well. That one costs THREE
+      # Godot runs rather than one -- two offline demo runs (the bench shows one design per
+      # run, so SAFE and UNCERTAIN are two runs of the same seed) and the probe over the
+      # merge. The whole chain is `art/design_row_dump.py`, which the generator also draws
+      # from, so the digest here and the digest on the sheet come from one piece of code.
+      #
+      # Everything it needs is already standing in this job: the binding is built above and
+      # `button_session.gd` is the same script the demo-loop step runs. The lever covers it
+      # too -- FAKE_MOVE reddens FOUR sheets now, not three.
       - name: A review sheet is still a picture of the client it drew
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \

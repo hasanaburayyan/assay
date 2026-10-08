@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- needs a real relay; a gate could run it as hud_in_a_gate.sh does and none does yet
 ## DID A GODOT CLIENT REALLY JOIN A REAL RELAY? Headless, no window, one line of verdict.
 ##
 ##   godot --headless --path . --script res://tools/join_probe.gd -- localhost:7777 limpet [seconds]

@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- prices candidate start rules side by side for a ruling that is settled
 ## **WHAT EACH CANDIDATE START RULE COSTS, SIDE BY SIDE** (ASSA-212).
 ##
 ##   godot --headless --path client --script res://tools/start_jump_table.gd

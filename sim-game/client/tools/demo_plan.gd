@@ -1,4 +1,5 @@
 class_name AssayDemoPlan
+## CI: library
 extends RefCounted
 ## THE DEMO LOOP AS DATA: the commands it sends and the quantities it needs, as pure functions.
 ##

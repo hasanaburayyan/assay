@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- measures how much of a drawn person survives a drawn mark, in a real window
 ## **HOW MUCH OF A PERSON STANDING ON A MACHINE SURVIVES THE MACHINE'S MARK** (ASSA-278).
 ##
 ##   $GODOT --headless --path client --script res://tools/person_under_machine.gd

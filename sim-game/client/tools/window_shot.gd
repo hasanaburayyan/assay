@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- a shot: --headless writes a BLANK frame and reports success, the worst kind of green
 ## A PICTURE OF THE REAL WINDOW, at 1:1, with no hands (ASSA-116 box 5).
 ##
 ##   godot --path . --script res://tools/window_shot.gd -- <out_dir> [seed] [ticks] [hoppers]
@@ -27,7 +28,8 @@ extends SceneTree
 ##  - `03-log.png`    the same screen with the event log open and the crafting menu folded away.
 ##  - `04-pack.png`   the fullest the pack and the crafting menu ever get in this play. NOT a state
 ##                    anyone asks for -- a moment the tool notices, for the reason below.
-##  - `05-rocks.png`  the species roster scrolled to the rocks, two whole rows in frame.
+##  - `05-rocks.png`  the species roster scrolled to the rocks: one whole sheet, and the next
+##                    species' name row under it.
 ##  - `06/07-north-*` the north-edge pair, log open and log down (ASSA-156/184).
 ##  - `08-whole-world.png` **THE OTHER VIEW, AND IT TOOK ASSA-189 TO NOTICE IT WAS MISSING.** Every
 ##                    shot above is the close-up. The whole-world schematic is how you cross 96x64
@@ -1293,6 +1295,13 @@ func _fold_report() -> void:
 ## 04-pack is legitimately clipped, so anything behind it was measured on no run at all), which is why
 ## the fix is not a swap: both orders lose a verdict, because an early return is the wrong shape for a
 ## tool with four independent questions.
+## A [Rect2] as the four numbers a JSON table carries, so a reader never has to parse Godot's own
+## `Rect2(...)` spelling out of a string.
+static func _rect_numbers(rect: Variant) -> Array:
+	var box: Rect2 = rect
+	return [box.position.x, box.position.y, box.size.x, box.size.y]
+
+
 static func _passed() -> Dictionary:
 	return {"ok": true, "ran": true, "why": ""}
 
@@ -1737,10 +1746,25 @@ func _scroll_to_rocks() -> void:
 ## and call it what the player sees -- the same mistake as a byte-identity check between two
 ## surfaces that both compose from one wrong source (Marlow, ASSA-135).
 ##
-## THE VERDICT IS "AT LEAST TWO ROWS WHOLE", not "the section is on screen", because the section
-## cannot be: it is taller than the box. Two is the smallest number that can show the thing a roster
-## panel exists for -- that two rocks are described differently. A guard of "one" would pass on a
-## picture that cannot answer any comparison, and a guard of "all six" could never pass at all.
+## **THE VERDICT WAS "AT LEAST TWO ROWS WHOLE" AND MAREN RETIRED IT ON 2026-10-08, BECAUSE IT WAS
+## MEASURING SOMETHING NOBODY COULD EVER HAVE HAD.** The old reasoning was that two is the smallest
+## number that can show what a roster exists for -- that two rocks are described differently. Her
+## finding is that the premise was false from the day it was written: *"two rocks in one shot was
+## never reachable -- at 98 px you got 2.5 of six rows, so cross-species comparison always meant
+## scrolling."* A row that shows 2.5 of a species' six properties cannot be compared with anything;
+## the leg was green over frames that could not answer its own question.
+##
+## **SO THE UNIT OF MEANING IS THE SHEET, AND THE PROPERTY IS TWO CLAIMS ABOUT TWO RECTANGLES:**
+##   1. ONE species' whole table is readable without scrolling -- some row stands `whole`.
+##   2. The list VISIBLY CONTINUES -- a LATER species' name row stands whole in the same frame.
+##
+## Clause 2 is what stops clause 1 being satisfied by a roster of one. It is deliberately a NAME and
+## not a table: requiring a second whole table is the property she just retired, and a reader who can
+## see `Soumpukyte - rough` under Krerine's six knows the list goes on without needing to read it.
+##
+## **AND THE OLD CHECK COMES BACK FOR FREE, LATER, WHICH IS WHY THIS IS NOT A CLIMBDOWN** (her note):
+## after ASSA-272 deduplicates the Mineralogy headline -- 70% of played worlds print one fact twice,
+## ~90 px of this column -- 244 + ~90 = ~334 >= 306, so two full tables fit again. Re-measure then.
 ##
 ## **AND IT IS READ AT THE SHOT NOW, NOT AT REPORT TIME, BECAUSE A LATER PHASE MOVED IT** (ASSA-158).
 ## This asked the LIVE screen about a frame written six phases earlier, which was correct only while
@@ -1764,7 +1788,15 @@ func _capture_rocks() -> void:
 			var text := String((label as Label).text)
 			if text != "":
 				said.append(text)
+		# **THE NAME ROW IS CAPTURED SEPARATELY FROM THE TABLE IT HEADS** (ASSA-288). Maren's re-ruled
+		# property asks two different questions of two different rectangles -- is THIS species' whole
+		# sheet readable, and can you SEE that another species follows -- and the second is answered by
+		# a name line, not by a table. Measuring the row for both would make "the list continues" mean
+		# "a whole second table is in frame", which is the property she just retired.
+		var title := titles[0] as Control
 		rows.append({"said": " ".join(said), "rect": row.get_global_rect(),
+				"name": String((title as Label).text),
+				"name_standing": _standing_in(frame, title),
 				"standing": _standing_in(frame, row)})
 	_rocks_frame = {"frame": frame, "rows": rows}
 
@@ -1776,22 +1808,38 @@ func _rocks_report() -> Dictionary:
 	var captured: Array = _rocks_frame["rows"]
 	var whole := 0
 	var rows := captured.size()
-	for row in captured:
+	# The FIRST whole table, and the first name row that follows it. Both are indices into the
+	# captured order, which is the order the column lays the species out in.
+	var first_whole := -1
+	var continues_at := -1
+	for i in range(rows):
+		var row: Dictionary = captured[i]
 		var rect: Rect2 = row["rect"]
 		if String(row["standing"]) == "whole":
 			whole += 1
-		print("    row %-5s y %5d..%-5d  %s" % [row["standing"], rect.position.y, rect.end.y,
-				row["said"]])
-	print("  rocks: %d rows, %d whole in the frame y %d..%d" % [rows, whole, frame.position.y,
-			frame.end.y])
+			if first_whole < 0:
+				first_whole = i
+		if first_whole >= 0 and i > first_whole and continues_at < 0 \
+				and String(row["name_standing"]) == "whole":
+			continues_at = i
+		print("    row %-5s name %-5s y %5d..%-5d  %s" % [row["standing"], row["name_standing"],
+				rect.position.y, rect.end.y, row["said"]])
+	print("  rocks: %d rows, %d whole tables in the frame y %d..%d" % [rows, whole,
+			frame.position.y, frame.end.y])
 	if rows == 0:
 		# **NOT ASKED, NOT FAILED.** No roster rows at all is a screen with no world or no species
-		# panel: there is nothing to photograph, and `0 whole rows of 0` as a failure would be this
-		# leg complaining about a question nobody could put to it.
-		return _not_asked("the screen carries no roster rows, so no two rocks could be compared")
-	if whole < 2:
-		return _refused(("the roster shot shows %d whole rows of %d, so no two rocks in it can be "
-				+ "compared") % [whole, rows])
+		# panel: there is nothing to photograph, and `0 of 0` as a failure would be this leg
+		# complaining about a question nobody could put to it.
+		return _not_asked("the screen carries no roster rows, so no species sheet could be read")
+	if first_whole < 0:
+		return _refused(("not one of the %d species rows is whole in the frame, so no rock's sheet "
+				+ "can be read without scrolling") % rows)
+	if continues_at < 0:
+		return _refused(("%s's sheet is whole, but no later species' name row is in the frame: the "
+				+ "roster does not visibly continue, so the shot cannot show this is a LIST of "
+				+ "rocks rather than one rock") % String(captured[first_whole]["name"]))
+	print("  rocks: %s reads whole and %s's name row follows it in frame"
+			% [String(captured[first_whole]["name"]), String(captured[continues_at]["name"])])
 	return _passed()
 
 
@@ -2276,7 +2324,14 @@ func _hover_report() -> void:
 	if _done:
 		return
 	var cell: float = _screen._cell
-	var hover_box := Rect2(AssayHud.MARGIN + Vector2(_hover_tile) * cell, Vector2(cell, cell))
+	# **THE PAINTER'S OWN RECTS, NOT A SECOND COPY OF THE ARITHMETIC** (ASSA-284 box 7). This built
+	# `Rect2(MARGIN + tile * cell, cell)` by hand, which was the cell and WAS the outline's rect until
+	# the outline was inset half a stroke inside it; a table that recomputes a mark's geometry reports
+	# what the tool believes instead of what drew, and the whole question on box 7 is which pixels the
+	# stroke lands on. `cell_rect` is the promise (the tile's own pixels), `rect` and `keyline_rect`
+	# are what `_draw` strokes.
+	var mark_rects := AssayHud.hover_mark(_hover_tile, cell, AssayHud.MARGIN)
+	var hover_box: Rect2 = mark_rects["cell_rect"]
 	var box := hover_box.grow(1.0)
 	var before := Image.load_from_file("%s/08-whole-world.png" % _out)
 	var after := Image.load_from_file("%s/13-whole-world-hover.png" % _out)
@@ -2284,6 +2339,26 @@ func _hover_report() -> void:
 		_finish(false, "13-whole-world-hover.png: cannot reload the pair to compare them")
 		return
 	var moved := 0
+	# **AND SEPARATELY, EVERY CHANGED PIXEL THAT IS NOT THE HOVERED TILE'S** (ASSA-284 box 7: "the
+	# outline may paint only pixels of the cell it names"). Counted on a 3 px ring outside the cell,
+	# by DIFFERENCE against this run's own control, so it is what the hover actually moved rather than
+	# what the geometry predicts. Before the inset this was non-zero on both seeds: the outline's own
+	# stroke straddled the boundary and painted a column of the neighbouring tile, which on seed 63
+	# was the smelter's rim.
+	var outside := 0
+	var outside_px := []
+	var ring := hover_box.grow(3.0)
+	for y in range(int(ring.position.y), int(ring.end.y)):
+		for x in range(int(ring.position.x), int(ring.end.x)):
+			if x < 0 or y < 0 or x >= after.get_width() or y >= after.get_height():
+				continue
+			if before.get_pixel(x, y) == after.get_pixel(x, y):
+				continue
+			if hover_box.has_point(Vector2(x, y)):
+				continue
+			outside += 1
+			if outside_px.size() < 24:
+				outside_px.append([x, y])
 	for y in range(int(box.position.y), int(box.end.y)):
 		for x in range(int(box.position.x), int(box.end.x)):
 			if x < 0 or y < 0 or x >= after.get_width() or y >= after.get_height():
@@ -2312,8 +2387,13 @@ func _hover_report() -> void:
 		"note": _hover_note,
 		"hover": {"tile": [_hover_tile.x, _hover_tile.y],
 				"beside": [_hover_beside.x, _hover_beside.y],
-				"rect": [hover_box.position.x, hover_box.position.y, cell, cell],
-				"stroke": 1.0, "alpha": AssayHud.mark_ink(&"hover_tile").a},
+				"cell_rect": _rect_numbers(hover_box),
+				"rect": _rect_numbers(mark_rects["rect"]),
+				"keyline_rect": _rect_numbers(mark_rects["keyline_rect"]),
+				"stroke": float(mark_rects["width"]),
+				"alpha": AssayHud.mark_ink(&"hover_tile").a},
+		"changed_outside_the_hovered_cell": outside,
+		"changed_outside_the_hovered_cell_at": outside_px,
 		"ink": [AssayHud.HOVER.r, AssayHud.HOVER.g, AssayHud.HOVER.b],
 		"machines": rows,
 		"pixels_changed_in_the_hovered_tile": moved,
@@ -2325,8 +2405,8 @@ func _hover_report() -> void:
 		return
 	file.store_string(JSON.stringify(table, "  "))
 	file.close()
-	_shots.append("    hover        %s, %d px changed in its own tile -> %s"
-			% [_hover_note, moved, path.get_file()])
+	_shots.append("    hover        %s, %d px changed in its own tile, %d outside it -> %s"
+			% [_hover_note, moved, outside, path.get_file()])
 
 
 ## **DOES THIS SHOT CONTAIN THE ASSA-213 CASE: A MACHINE STANDING ON A SPECIES LETTER** (box 2, "today's
@@ -2410,7 +2490,7 @@ func _report() -> void:
 	var legs := [
 		["reveal", "the press put the log's heading where it said it would", _reveal_report()],
 		["controls", "opening the log moved no control off the screen", _controls_report()],
-		["roster", "two rocks can be compared in one shot", _rocks_report()],
+		["roster", "one rock's whole sheet reads, and the list visibly continues", _rocks_report()],
 		["make", "the crafting menu's shot starts at its own heading and holds its dead-end row",
 				_make_report()],
 		["walking", "the walk stroke the map key advertises has a frame with one in it",
