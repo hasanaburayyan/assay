@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- a shot: --headless writes a blank frame and reports success
 ## THE WHOLE-WORLD SCHEMATIC, PHOTOGRAPHED FOR THE FIRST TIME (Maren).
 ##
 ##   godot --path client --script res://tools/maren_whole_world_shot.gd -- <out_dir> [seed] [row]

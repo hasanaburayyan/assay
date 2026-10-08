@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- photographs the north edge in a real window
 ## ASSA-184: THE PICTURE. Walk to the world's north edge, open the log, photograph it.
 ##
 ##   godot --path client --script res://tools/maren_north_shot.gd -- <out_dir> [seed] [row]

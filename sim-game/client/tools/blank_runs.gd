@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- reads labelled emptiness off a saved shot, so it needs a frame somebody chose
 
 ## LABELLED EMPTINESS IN THE HUD COLUMN, MEASURED OFF A SHOT (ASSA-134).
 ##

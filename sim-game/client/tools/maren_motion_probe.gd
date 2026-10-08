@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- asks whether the body tweens in a real window; headless there is nothing drawn
 ## MAREN'S PROBE, not a shipped tool: does the body actually TWEEN in the window, or does it jump a
 ## tile at a time? The board said the movement is choppy. Nerite checked and said correctly that a
 ## still cannot answer it, and asked who owns the check. This is the check.

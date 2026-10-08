@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: gated
 ## **THE DEV HARNESS FOR `AssayMotionProbe`: it builds a window, the probe does the measuring.**
 ##
 ##   godot --path client --script res://tools/motion_speed_probe.gd -- <seed> [seconds] [label] [mode]

@@ -2672,13 +2672,58 @@ func _species_row(species: Dictionary) -> Control:
 	head.add_child(title)
 	row.add_child(head)
 
-	var readings := _note(AssayHud.species_readings_line(species))
-	readings.name = SPECIES_READINGS
-	row.add_child(readings)
+	row.add_child(_readings_table(species))
 	var tags := AssayHud.species_tags(species)
 	if not tags.is_empty():
 		row.add_child(_note("[%s]" % "] [".join(tags)))
 	return row
+
+
+## **THE SIX READINGS AS A TABLE WITH AN AXIS, WHERE THEY WERE ONE WRAPPED SENTENCE** (ASSA-288,
+## ASSA-276 move 3, Maren's two rulings of 2026-10-08).
+##
+## WHAT WAS HERE: `AssayHud.species_readings_line`, which joined all six into
+## `density 26-50 · strength 51-75 · ...` and let it wrap in a 318 px column. Every number was
+## present and none of them could be COMPARED -- not against each other, and not against the scale
+## they sit on, which a reader had no way to know was `(1, 100)`. Maren's rule 2 is that comparing
+## down the column is the only thing a position encoding is for.
+##
+## **EVERY STRING IS STILL THE SIM'S.** The label is the property key as `Property::ALL` spelled it,
+## the value is `readings[property]` verbatim, and the mark is `reading_ranges[property]` against
+## `AssaySim.reading_scale()`. This function joins nothing, parses nothing and orders nothing: a
+## seventh property appears here with no change, exactly as it did when this was one line.
+##
+## **THE SCALE IS ASKED ONCE PER TABLE, NOT ONCE PER ROW.** It is one call either way, but asking per
+## row invites the next reader to pass a different denominator to one of six tracks, and six tracks on
+## six different axes is the defect this whole move exists to end.
+##
+## **A PROPERTY WITH NO RANGE GETS ITS TEXT AND NO AXIS, AND THIS IS THE BRANCH I FIRST WROTE AS A
+## DEFAULT.** My own comment claimed `ranges.get(property, Vector2i.ZERO)` would draw nothing,
+## because (0,0) is off the bottom of a `(1, 100)` scale. It is not: `reading_span` CLAMPS into the
+## axis and then applies Maren's 2 px floor, so the absent case would have rendered as a confident
+## 2 px mark at the very bottom of the scale -- the most specific possible claim about a number
+## nobody sent. `reading_ranges` carries one pair per property (`test_sim_host.gd` asserts the count
+## against `Property::ALL`), so a missing key is a binding regression, and an absent axis is how a
+## readout says "I was not given this" instead of guessing. The default was the bug.
+func _readings_table(species: Dictionary) -> Control:
+	var table := VBoxContainer.new()
+	table.name = SPECIES_READINGS
+	table.add_theme_constant_override("separation", 1)
+	var readings: Dictionary = species.get("readings", {})
+	var ranges: Dictionary = species.get("reading_ranges", {})
+	var scale: Vector2i = _sim.reading_scale() if _sim != null else Vector2i.ZERO
+	var assayed := bool(species.get("assayed", false))
+	for property in readings:
+		var name := String(property)
+		var text := String(readings[property])
+		var row := AssayReadingRow.new()
+		if ranges.has(property):
+			var span: Vector2i = ranges[property]
+			row.show_reading(name, text, span.x, span.y, scale, assayed)
+		else:
+			row.show_unmarked(name, text)
+		table.add_child(row)
+	return table
 
 
 func _refresh_bench() -> void:
@@ -3537,9 +3582,9 @@ func _note(line: String) -> Label:
 ## ASSA-117 box 8).
 ##
 ## **THE SIM AUTHORED THESE LINES TO BE TRUNCATED AND THIS CLIENT WAS WRAPPING THEM.**
-## `sim/src/debug.rs:1785` says so in writing: *"Verdict first, then the numbers, then the parts.
-## Deliberate: a side panel is narrow and the line gets truncated, so the thing the player needs
-## before spending parts must not be the thing that is cut."* A design verdict became SIX rows here,
+## `sim::debug::assembly_readout` says so in writing: *"Verdict first, then the numbers, then
+## the parts. Deliberate: a side panel is narrow and the line gets truncated, so the thing the player
+## needs before spending parts must not be the thing that is cut."* A design verdict became SIX rows,
 ## so the ordering that exists to survive a cut bought nothing and the log inherited a panel per
 ## event: Maren measured entries 1, 4, 4, 5 and 6 rows tall, 682px of them in a 566px box.
 ##
@@ -4476,9 +4521,28 @@ func _draw() -> void:
 	# The tile the readout is talking about, outlined. Drawn last so it is never buried, and only
 	# while the mouse is actually over the map -- an outline left behind would point at an answer the
 	# panel is no longer giving.
+	#
+	# **AND IT CARRIES A RIM NOW, WHICH IT WAS THE LAST MARK ON THIS MAP WITHOUT** (ASSA-284, Maren on
+	# ASSA-275 box 5). At alpha 0.55 this outline has no value of its own, only the ground's, so on
+	# grade-A ore it moved one channel -- `234,234,47` to `239,239,154`, nearly all of it BLUE, and
+	# gone in a greyscale copy. Beside a machine it was worse than invisible: it ate one of the 2 px
+	# that hold two hollow squares apart. **NOT FIXED BY PAINT ORDER**, which is the tempting one-line
+	# version: hovering a machine's own tile is the commonest useful hover and this outline must stay
+	# on top of it. The rim is drawn first, and INWARD -- which is a correction to the ruling and not
+	# the ruling: outward it lands on the neighbouring tile, where a machine's own mark starts, and
+	# the smelter's band went 242 -> 28 at the shared edge on both seeds. `AssayHud.hover_mark` carries
+	# the rows.
+	#
+	# **AND THE OUTLINE IS NOW INSET INSIDE ITS OWN CELL** (ASSA-284 box 7; this paragraph said the
+	# inset "is ASSA-284's open box and Maren's call" and she called it at 05:55 EDT). Both rects are
+	# half-stroke insets, so every pixel either stroke paints belongs to the hovered tile -- it used to
+	# paint x=500 for a cell starting at 501. A mark that IS a cell has no size to hide behind, which
+	# is ASSA-213's rule about position with nothing left over.
 	if _hovering:
-		draw_rect(Rect2(MARGIN + Vector2(_hover) * _cell, Vector2(_cell, _cell)),
-				AssayHud.mark_ink(&"hover_tile"), false, 1.0)
+		var hover := AssayHud.hover_mark(_hover, _cell, MARGIN)
+		draw_rect(hover["keyline_rect"], AssayHud.mark_ink(&"hover_keyline"), false,
+				float(hover["width"]))
+		draw_rect(hover["rect"], AssayHud.mark_ink(&"hover_tile"), false, float(hover["width"]))
 
 
 ## **WHAT THE SCHEMATIC IS ABOUT TO PAINT FOR EVERY BUILDING** (ASSA-189). One mark per building, in

@@ -229,6 +229,20 @@ func _process(_d: float) -> bool:
 		if not (child is Control):
 			continue
 		var row: Control = child
+		# **WHICH RUN THIS ROW IS A PICTURE OF, carried from the dump entry that built it.**
+		# A sheet may merge two runs -- SAFE from the plain loop, UNCERTAIN from `hold-assay` --
+		# and the dump has ONE `tick` and ONE `hash` for the lot, so those fields named the
+		# showcase run and lied about the other row. Maren on this item, 06:01: "a sheet that
+		# cannot say which client each row reviews is ASSA-144 with the names changed." So
+		# provenance rides the DESIGN and reaches the sheet per row.
+		#
+		# BY POSITION, and the refusal after this loop is what buys that: `_rebuild_bench`
+		# builds one row per design in order, so the pairing is a contract this function can
+		# check in full rather than an assumption about a scene someone else edits. Inside a
+		# row it is still `find_child` by name (ASSA-117); that has not changed.
+		var source: Variant = {}
+		if rows.size() < _designs.size():
+			source = (_designs[rows.size()] as Dictionary).get("source", {})
 		# **BY NAME, NOT BY CHILD INDEX, and the client learned this the expensive way first.**
 		# `main.gd::_write_design` reads these two with `find_child(BENCH_VERDICT/BENCH_BODY)` and says
 		# why in its own comment: they *were* `get_child(0)` and `get_child(1)`, and adding a sprite to
@@ -279,7 +293,19 @@ func _process(_d: float) -> bool:
 				"line_count": body.get_line_count(),
 			},
 			"verbs": verbs,
+			"source": source,
 		})
+	# THE PAIRING IS CHECKED, NOT TRUSTED. If the bench ever stops being one row per design
+	# -- a header child, a filtered row, a design the client declines to show -- then every
+	# `source` above is attached to the wrong row and the sheet would stamp confident
+	# provenance onto the wrong picture. That is worse than no provenance, so it refuses.
+	if rows.size() != _designs.size():
+		print("FAIL  the bench laid out %d row(s) for %d design(s), so this script cannot say"
+				% [rows.size(), _designs.size()])
+		print("      which run each row came from. `_rebuild_bench` is no longer one row per")
+		print("      design; pair them by something other than order before drawing a sheet.")
+		quit(1)
+		return true
 	print("DESIGN_LAYOUT_JSON ", JSON.stringify({
 		"rows": rows,
 		"panel_px": _screen.PANEL,

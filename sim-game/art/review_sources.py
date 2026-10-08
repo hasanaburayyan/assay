@@ -223,8 +223,19 @@ def verdict(sheet):
     except ValueError as why:
         return ABSENT, ["carries a `%s` stamp that is not readable (%s)." % (KEY, why)]
     if not sources:
-        return EMPTY, ["composited no shipped art, so there is nothing for it to go stale\n"
-                       "      against."]
+        # **THIS LINE USED TO BE A CLEAN BILL AND IT WAS NOT ENTITLED TO BE ONE** (ASSA-144 box
+        # 4). It read "composited no shipped art, so there is nothing for it to go stale
+        # against" -- stated as a fact about the picture, where the stamp only supports a fact
+        # about the RECORDING. A present, empty stamp is what a generator run outside
+        # `recording()` writes, which is how Cove reached one, so the two readings are
+        # indistinguishable FROM THIS FILE. Box 4 asks whether a reader can tell a stale sheet
+        # from a current one without git archaeology; where they cannot, the honest output says
+        # so rather than reassuring them.
+        return EMPTY, ["recorded an EMPTY source list, and this file cannot say which of two\n"
+                       "      things that means: a sheet that composites no shipped art, or a\n"
+                       "      generator that drew it outside `review_sources.recording()`.\n"
+                       "      `art/check_review_sources.py` decides, by asking whether the\n"
+                       "      generator can name the shipped-art path at all."]
     moved = []
     for rel in sorted(sources):
         full = os.path.join(SPRITES, rel)

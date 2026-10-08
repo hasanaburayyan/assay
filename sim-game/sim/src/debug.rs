@@ -15,7 +15,7 @@ use crate::item::{Item, ItemKind, ItemStack};
 use crate::ladder::Lighting;
 use crate::mineral::{Grade, MineralSpecies, NameError, Property, Sheet, SpeciesId};
 use crate::ore::OreDeposit;
-use crate::proximity::{Heading, Question};
+use crate::proximity::{Heading, NearestDeposit, Question};
 use crate::recipe::{RECIPES, Station};
 // `YIELD_BY_GRADE` was here until ASSA-94: this file used it to work out for
 // itself whether a drill's buffer had room. It decides nothing now, so it
@@ -1473,6 +1473,40 @@ pub fn question_asked(q: Question) -> &'static str {
     }
 }
 
+/// THE QUESTION'S PREDICATE — [`question_asked`] with "what near me" taken off.
+///
+/// **IT EXISTS SO A MERGED LABEL IS COMPOSED RATHER THAN CARVED** (ASSA-272).
+/// When one patch answers both questions the label has to name both, and the
+/// only other way to get "burns" out of "what near me burns" is to slice a
+/// prefix off our own wording — string surgery that breaks silently the day a
+/// label is phrased differently. [`questions_asked`] builds every label from
+/// this, including the one-question case, so the two cannot drift: the test
+/// `every_question_asked_is_what_near_me_plus_its_predicate` holds them equal
+/// for every [`Question`], and a label that stops fitting the pattern reddens
+/// there instead of in a tab.
+///
+/// **IT LIVES HERE AND NOT ON `Question` BECAUSE `proximity.rs` IS RULES.** A
+/// method there moves `RULES_ID` (`rules_walk::NOT_RULES` is only `debug.rs`)
+/// and `check_join` would refuse every older peer — for a readout that changes
+/// no rule. The binding learned this the same way at ASSA-263.
+pub fn question_predicate(q: Question) -> &'static str {
+    match q {
+        Question::Burns => "burns",
+        Question::HardEnough => "is hard enough",
+    }
+}
+
+/// The label for one answer, naming every question that answer covers.
+///
+/// One question gives today's [`question_asked`] byte for byte; two give
+/// "what near me burns and is hard enough". Three would read "a and b and c",
+/// which is clumsy but true — no third question exists, and the day one does
+/// this is where the comma goes.
+fn questions_asked(qs: &[Question]) -> String {
+    let predicates: Vec<&str> = qs.iter().map(|&q| question_predicate(q)).collect();
+    format!("what near me {}", predicates.join(" and "))
+}
+
 /// WHAT THE HEADLINE SAYS WHEN THE WORLD HAS NO ANSWER, and it must say
 /// something.
 ///
@@ -1570,19 +1604,47 @@ pub fn too_poor_answer(q: Question, species: &str) -> String {
 /// also why the fuel claim here carries the grade: a conditional claim carries
 /// its condition (ASSA-143).
 pub fn proximity_headline(world: &World, player: PlayerId, q: Question) -> String {
-    let asked = question_asked(q);
     let Some(me) = world.player(player) else {
-        return format!("{asked}: no such player");
+        return format!("{}: no such player", question_asked(q));
     };
-    let Some(near) = world.nearest_answering(q, me.pos) else {
-        // Two empty states, told apart (ruling 3). `too_poor_for` asks the same
-        // predicate at `Grade::A`, so the two sentences cannot disagree with the
-        // real search about which case this is.
-        return match world.too_poor_for(q) {
-            Some(s) => format!("{asked}: {}", too_poor_answer(q, world.species(s).name())),
-            None => format!("{asked}: {}", nothing_answers(q)),
-        };
-    };
+    match world.nearest_answering(q, me.pos) {
+        Some(near) => answer_about(world, &[q], &near),
+        None => empty_answer(world, q),
+    }
+}
+
+/// What the headline says when nothing answers: two empty states, told apart
+/// (ASSA-248 ruling 3). `too_poor_for` asks the same predicate at `Grade::A`,
+/// so the two sentences cannot disagree with the real search about which case
+/// this is.
+///
+/// **AN EMPTY ANSWER NEVER MERGES WITH ANOTHER** (ASSA-272): the merge is "one
+/// patch answers both", and a question with no patch has nothing to be the
+/// same as. Two unanswered questions keep their two sentences, which are
+/// different news in each direction.
+fn empty_answer(world: &World, q: Question) -> String {
+    let asked = question_asked(q);
+    match world.too_poor_for(q) {
+        Some(s) => format!("{asked}: {}", too_poor_answer(q, world.species(s).name())),
+        None => format!("{asked}: {}", nothing_answers(q)),
+    }
+}
+
+/// ONE PATCH, ANSWERING EVERY QUESTION IN `qs` — the sentence builder behind
+/// both [`proximity_headline`] and [`proximity_headlines`].
+///
+/// **THE ONE-QUESTION CASE IS TODAY'S BYTES BY CONSTRUCTION, NOT BY CARE.**
+/// There is no second sentence builder to keep in step: a single-question call
+/// walks the same `format!` and the same two loops, each of which runs once.
+/// That is what makes ASSA-272 box 4 (every unmerged world byte-identical) a
+/// property of the code rather than a thing I measured once.
+///
+/// **THE MERGED LINE OPENS EXACTLY AS AN UNMERGED ONE DOES**, species, grade
+/// and place first, because that is the half a player acts on and the end of a
+/// line is what a narrow panel cuts (my own ASSA-242 note). Then both readings
+/// side by side, then both tags: nothing is dropped and nothing is reordered
+/// within a question.
+fn answer_about(world: &World, qs: &[Question], near: &NearestDeposit) -> String {
     let d = world
         .deposit(near.deposit)
         .expect("nearest_answering names a deposit of this world");
@@ -1600,14 +1662,23 @@ pub fn proximity_headline(world: &World, player: PlayerId, q: Question) -> Strin
         ),
     };
     let mut line = format!(
-        "{asked}: {} ({}) {whereabouts} at ({}, {}) · {} {}",
+        "{}: {} ({}) {whereabouts} at ({}, {})",
+        questions_asked(qs),
         s.name(),
         d.grade().letter(),
         near.tile.x,
         near.tile.y,
-        q.property().name(),
-        reading(s, q.property()),
     );
+    // THE DECIDING PROPERTY OF EACH QUESTION, through `reading`, which is what
+    // keeps a rough species rough on a merged line too.
+    for &q in qs {
+        let _ = write!(
+            line,
+            " · {} {}",
+            q.property().name(),
+            reading(s, q.property())
+        );
+    }
     // **THE TRAILING CLAUSE ANSWERS THE QUESTION ASKED, and my first version
     // did not.** It appended the fuel claim to every headline, so the real
     // output read `what near me is hard enough: Tonore (A) ... · hardness 26-50
@@ -1616,25 +1687,118 @@ pub fn proximity_headline(world: &World, player: PlayerId, q: Question) -> Strin
     // the wrong fact, which on a one-line answer is the same cost. One picture
     // of the real output found it after thirteen green tests did not.
     //
+    // On a merged line both clauses are earned, because both questions were
+    // asked and both are answered by this rock — which is the fact the merge
+    // exists to print once instead of twice.
+    //
     // Both clauses are the species table's own words either way (`fuel_tag` +
     // `lighting_clause`, and `mining_note` for ASSA-135), so the line still
     // cannot phrase a fact differently from the row it points at.
-    match q {
-        Question::Burns => {
-            if let Some(grade) = crate::ladder::fuel_grade(s) {
-                let _ = write!(
-                    line,
-                    " · {}{}",
-                    fuel_tag(grade, crate::ladder::hand_minable(s)),
-                    lighting_clause(crate::ladder::lighting(&world.species, s.id))
-                );
+    for &q in qs {
+        match q {
+            Question::Burns => {
+                if let Some(grade) = crate::ladder::fuel_grade(s) {
+                    let _ = write!(
+                        line,
+                        " · {}{}",
+                        fuel_tag(grade, crate::ladder::hand_minable(s)),
+                        lighting_clause(crate::ladder::lighting(&world.species, s.id))
+                    );
+                }
             }
-        }
-        Question::HardEnough => {
-            let _ = write!(line, " · {}", mining_note(mining(&world.species, s.id)));
+            Question::HardEnough => {
+                let _ = write!(line, " · {}", mining_note(mining(&world.species, s.id)));
+            }
         }
     }
     line
+}
+
+/// ONE ANSWER IN THE MINERALOGY READOUT: the sim's sentence, the questions it
+/// answers, and the two facts the sentence cannot carry.
+///
+/// **THE SIM DECIDES HOW MANY LINES THERE ARE.** That is the whole of ASSA-272
+/// stated as a return type instead of as a prohibition (Game Director, 04:22Z):
+/// a host that looped `Question::ALL` and rendered one line each could never
+/// print the merge, and a host that merged two lines itself would be inventing
+/// wording — the defect ASSA-43 and ASSA-52 already cost us.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProximityAnswer {
+    /// Every question this one line answers, in `Question::ALL` order. One
+    /// entry normally; two when the same patch is the nearest answer to both.
+    pub questions: Vec<Question>,
+    /// The label, [`questions_asked`] of [`Self::questions`]. It is also the
+    /// prefix of [`Self::line`], so a body rendering both says it twice.
+    pub asked: String,
+    /// The sentence, for hosts to print verbatim.
+    pub line: String,
+    /// The tile the answer is ABOUT, or `None` when nothing answers.
+    pub tile: Option<TilePos>,
+    /// Whether that tile is the one the player is already standing on, in
+    /// which case there is no walk to offer (ASSA-263).
+    pub underfoot: bool,
+}
+
+/// WHAT NEAR THIS PLAYER ANSWERS THE QUESTIONS — one line per *answer*, which
+/// is not the same as one line per question (ASSA-272).
+///
+/// **WHEN ONE PATCH IS THE NEAREST ANSWER TO BOTH QUESTIONS IT IS SAID ONCE.**
+/// The Game Director measured the duplicate on 17 of 40 worlds at spawn and I
+/// measured it on 28 of 40 once the player walks where the game sent them
+/// (ASSA-290) — seven worlds in ten printing one fact as two near-identical
+/// four-line paragraphs, in the tab a board member specced by name. It is not a
+/// compression: *one rock that is both your fuel and your material* is the
+/// starter ladder working, and printing it twice buries it as a coincidence.
+///
+/// **THE MERGE IS ON THE PATCH, WHICH IS WHAT "THE SAME ROCK" MEANS.** Same
+/// deposit and same tile, not same species: a second patch of the same species
+/// is a different walk, a different grade and a different answer, and 5 worlds
+/// in 60 are exactly that case. Grouping by species would merge two true
+/// answers into one wrong one.
+///
+/// AN UNKNOWN PLAYER GETS AN EMPTY VEC — `proximity_headline` has the "no such
+/// player" sentence and that belongs in a log, not in a readout.
+pub fn proximity_headlines(world: &World, player: PlayerId) -> Vec<ProximityAnswer> {
+    let Some(me) = world.player(player) else {
+        return Vec::new();
+    };
+    let from = me.pos;
+    // ONE SEARCH PER QUESTION, READ MANY TIMES. The grouping, the sentence,
+    // the tile and the walk are all read off the same `NearestDeposit`, so a
+    // future non-deterministic search cannot hand one host a tile from one call
+    // and a walk from another.
+    let mut groups: Vec<(Vec<Question>, Option<NearestDeposit>)> = Vec::new();
+    for q in Question::ALL {
+        match world.nearest_answering(q, from) {
+            Some(near) => {
+                let same = groups.iter_mut().find(|(_, g)| {
+                    g.is_some_and(|p| p.deposit == near.deposit && p.tile == near.tile)
+                });
+                match same {
+                    Some((qs, _)) => qs.push(q),
+                    None => groups.push((vec![q], Some(near))),
+                }
+            }
+            // Never merged, so this group always has exactly one question and
+            // `empty_answer` below can ask about it by name.
+            None => groups.push((vec![q], None)),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(questions, near)| ProximityAnswer {
+            asked: questions_asked(&questions),
+            line: match near {
+                Some(near) => answer_about(world, &questions, &near),
+                None => empty_answer(world, questions[0]),
+            },
+            tile: near.map(|n| n.tile),
+            // The same field the sentence branches on, not a second copy of
+            // its test: `answer_about` reads `near.heading` being `None`.
+            underfoot: near.is_some_and(|n| n.heading.is_none()),
+            questions,
+        })
+        .collect()
 }
 
 /// Table of every species with its sheet as the players know it (rough

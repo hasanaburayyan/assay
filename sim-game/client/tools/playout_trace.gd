@@ -1,4 +1,5 @@
 extends SceneTree
+## CI: local -- one line per tick for a human to read; it reports, it does not judge
 ## ONE LINE PER TICK OF A REAL WALK: where the playout clock is, how deep its buffer is, and what the
 ## body is being drawn between (ASSA-197).
 ##
