@@ -57,6 +57,73 @@ func _world(seed_text: String) -> Array:
 	return [host, host.players()]
 
 
+## **SEEDS TO LOOK IN, NOT SEEDS A CLAIM RESTS ON** (ASSA-303).
+##
+## The two merge arms below used to NAME seed 5 as "the merged world" and seed 1 as "the two-answer
+## world", and when a world did not match they said *re-measure and pick a seed*. That sentence
+## named the wrong cause and cost a colleague a session: a `libsim_godot` built before ASSA-272
+## answers each question separately, so it cannot merge ANY world, which reads exactly like every
+## seed having drifted at once. Anyone following the advice would have re-pinned these constants
+## against a lying binary and broken main for real.
+##
+## Which seed merges is a fact about today's worldgen and may not be written down here: the roster
+## really does move (the Game Director's release `sim-cli` disagreed with main on 6 of 60 seeds on
+## 2026-10-08). So the arms SEARCH, and the list is only where they look. Ordered merged-first then
+## distinct-first alternating, from `shared/assay/marlow-assa272-merge/sweep.log`, so either scan
+## stands up one or two worlds in the ordinary case.
+const LOOK_IN := ["5", "1", "13", "2", "14", "3", "15", "4"]
+
+## Worlds already stood up this run, by seed. Building one through the binding is the expensive part
+## of this file and the two arms below ask for overlapping seeds.
+var _worlds := {}
+
+
+func _cached_world(seed_text: String) -> Array:
+	if not _worlds.has(seed_text):
+		_worlds[seed_text] = _world(seed_text)
+	return _worlds[seed_text] as Array
+
+
+## **THE FIRST WORLD IN `LOOK_IN` WHOSE PROXIMITY ANSWERS NUMBER `want`**, as `[seed, host,
+## answers]`, or `[]` when no seed in the list does.
+##
+## `want` is the whole distinction ASSA-272 introduced: **1** is a world where one patch is the
+## nearest answer to both questions and the sim says so once, **2** is a world where it is not.
+## Before the merge every world answered 2, which is why a count is the right thing to search on and
+## the wrong thing to hardcode.
+##
+## `player["id"]`, not `get("id", -1)`: a missing key is a broken binding and should stop the test
+## where it happens rather than quietly search for a player numbered -1.
+func _a_world_answering(want: int) -> Array:
+	for seed_text in LOOK_IN:
+		var made := _cached_world(seed_text)
+		if made.is_empty():
+			continue
+		var players: Array = made[1]
+		if players.is_empty():
+			continue
+		var sim: AssaySimHost = made[0]
+		var answers := sim.proximity_answers(int((players[0] as Dictionary)["id"]))
+		if answers.size() == want:
+			return [seed_text, sim, answers]
+	return []
+
+
+## **WHAT TO SUSPECT WHEN NO SEED ANSWERS, IN THE ORDER TO SUSPECT IT** (ASSA-303).
+##
+## The library goes first because it is both likelier and cheaper to check: a pre-ASSA-272
+## `libsim_godot` makes EVERY seed fail this search at once, and two commands rule it out. A
+## worldgen change that moved the roster is the second suspect, and only then is widening the list
+## the answer. My old wording offered the third as if it were the first.
+func _nothing_answered(want: int) -> String:
+	return (("no seed in LOOK_IN gave a world with %d proximity answer(s). **SUSPECT YOUR LIBRARY "
+			+ "FIRST**: a `libsim_godot` from before ASSA-272 answers the two questions separately, "
+			+ "so no world can merge and this arm can never find one. Rebuild it -- `make "
+			+ "client-lib` from the repo root, then `--headless --import` TWICE -- and run again. "
+			+ "ONLY IF IT IS ALREADY FRESH is this a worldgen change: re-measure with "
+			+ "shared/assay/marlow-assa272-merge/sweep.py and widen LOOK_IN.") % want)
+
+
 ## **THE FIRST LINE IS THE SIM'S SENTENCE, CHARACTER FOR CHARACTER.**
 ##
 ## Not "contains", not "starts with": the body may not append a full stop, capitalise a species name
@@ -453,20 +520,15 @@ func test_each_questions_walk_carries_that_questions_own_tile() -> bool:
 ## hard enough -- 25 of 60 seeds at spawn, measured in `shared/assay/marlow-assa272-merge/`. The
 ## claim here is the client's half: the body draws what the sim ANSWERED and not one block per
 ## question, so a merged world gets one block carrying the sim's own merged sentence.
+##
+## The merged world is SEARCHED FOR and not named (ASSA-303): which seed merges belongs to today's
+## worldgen, and a seed written in here turns a stale library into a message about seeds.
 func test_one_patch_answering_both_questions_draws_one_block() -> bool:
-	var made := _world("5")
-	if made.is_empty():
-		return _fail("could not stand seed 5 up through the binding")
-	var sim: AssaySimHost = made[0]
-	var players: Array = made[1]
-	if players.is_empty():
-		return _fail("the welcome carried no player")
-	var me: int = int((players[0] as Dictionary).get("id", -1))
-	var answers := sim.proximity_answers(me)
-	if answers.size() != 1:
-		return _fail(("seed 5's two questions no longer name one patch (the sim gave %d answers), "
-				+ "so this arm is vacuous. 25 of 60 seeds merged when measured "
-				+ "(shared/assay/marlow-assa272-merge); re-measure and pick a seed") % answers.size())
+	var found := _a_world_answering(1)
+	if found.is_empty():
+		return _fail(_nothing_answered(1))
+	var seed_text: String = found[0]
+	var answers: Array = found[2]
 	var want := String((answers[0] as Dictionary)["headline"])
 	var tab := AssayMineralogy.new()
 	tab.show_answer(answers)
@@ -481,6 +543,8 @@ func test_one_patch_answering_both_questions_draws_one_block() -> bool:
 	for predicate in ["burns", "is hard enough"]:
 		if not tab.headline_text(0).contains(predicate):
 			ok = _fail("the merged line does not name `%s`: %s" % [predicate, tab.headline_text(0)])
+	if ok:
+		print("    ASSA-272: seed %s merged, one block: %s" % [seed_text, want])
 	tab.free()
 	return ok
 
@@ -493,27 +557,24 @@ func test_one_patch_answering_both_questions_draws_one_block() -> bool:
 ## screen with a LIVE walk button pointing at a tile the current answer never named -- a stale fact
 ## and the dead control ASSA-263 exists to prevent, in one block.
 ##
-## Driven by two real worlds through one tab, in the order a session hits them: seed 1 answers two
-## questions, seed 5 answers one.
+## Driven by two real worlds through one tab, in the order a session hits them: one that answers two
+## questions, then one that answers once. BOTH ARE SEARCHED FOR (ASSA-303) -- naming them is how the
+## old version of this arm told a reader with a pre-merge library to go and re-pick seeds.
 func test_a_merge_stands_down_the_block_it_no_longer_needs() -> bool:
-	var two := _world("1")
-	var one := _world("5")
-	if two.is_empty() or one.is_empty():
-		return _fail("could not stand seeds 1 and 5 up through the binding")
-	var two_answers := (two[0] as AssaySimHost).proximity_answers(
-			int(((two[1] as Array)[0] as Dictionary).get("id", -1)))
-	var one_answer := (one[0] as AssaySimHost).proximity_answers(
-			int(((one[1] as Array)[0] as Dictionary).get("id", -1)))
-	if two_answers.size() != 2 or one_answer.size() != 1:
-		return _fail(("this needs a 2-answer world and a 1-answer world: seed 1 gave %d and seed 5 "
-				+ "gave %d. Re-measure (shared/assay/marlow-assa272-merge) and pick seeds")
-				% [two_answers.size(), one_answer.size()])
+	var two := _a_world_answering(2)
+	if two.is_empty():
+		return _fail(_nothing_answered(2))
+	var one := _a_world_answering(1)
+	if one.is_empty():
+		return _fail(_nothing_answered(1))
+	var two_answers: Array = two[2]
+	var one_answer: Array = one[2]
 	var tab := AssayMineralogy.new()
 	tab.show_answer(two_answers)
 	var stale := tab.headline_text(1)
 	if stale == "":
-		return _fail_freeing(tab, "the two-answer world never rendered a second block, so nothing "
-				+ "could go stale and this proves nothing")
+		return _fail_freeing(tab, ("the two-answer world (seed %s) never rendered a second block, "
+				+ "so nothing could go stale and this proves nothing") % two[0])
 	tab.show_answer(one_answer)
 	var ok := true
 	if tab.headline_text(1) != "":
@@ -527,5 +588,8 @@ func test_a_merge_stands_down_the_block_it_no_longer_needs() -> bool:
 	if tab.headline_text(0) != String((one_answer[0] as Dictionary)["headline"]):
 		ok = _fail("standing the surplus block down changed the answer that is real: `%s`"
 				% tab.headline_text(0))
+	if ok:
+		print("    ASSA-272: seed %s answers two, seed %s answers one, the second block stood down"
+				% [two[0], one[0]])
 	tab.free()
 	return ok

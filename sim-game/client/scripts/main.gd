@@ -344,6 +344,12 @@ const SPECIES_LINE := "SpeciesLine"
 ## My first test for that read the whole row and tripped over the `hand-minable` TAG's hyphen, which
 ## is the same mistake as measuring a shadow with a statistic the outline also satisfies.
 const SPECIES_READINGS := "SpeciesReadings"
+
+## The sim's verdict line on a species row -- `[too hard for anything you can build]`, or the
+## mining/fuel/lighting tags. Named for `SPECIES_READINGS`' reason and for one more: ASSA-264 moved
+## it from the bottom of the row to directly under the name, and a test that found it by child index
+## would have passed either way (Maren asked for the name while ruling the move).
+const SPECIES_TAGS := "SpeciesTags"
 ## The `Panel` behind the HUD column (ASSA-152). Named so a test and a probe can find it without
 ## counting children -- the thing it is named for is a SURFACE, and the whole defect was that the
 ## surface could not be found because it did not exist.
@@ -2672,10 +2678,23 @@ func _species_row(species: Dictionary) -> Control:
 	head.add_child(title)
 	row.add_child(head)
 
-	row.add_child(_readings_table(species))
+	# **THE VERDICT GOES ABOVE THE NUMBERS** (ASSA-264, Maren's ruling of 2026-10-08: ORDER BEFORE
+	# RANK). This row rendered the tags LAST, which put `[too hard for anything you can build]` 80 px
+	# below the name it belongs to, under six readings that no longer matter if it says that. Her
+	# measurement off the shipped tab: the row spends two inks on five kinds of fact, and the free move
+	# is order rather than a third grey.
+	#
+	# **THE REASON WAS ALREADY WRITTEN IN THIS CLIENT AND THE SCREEN DID THE OPPOSITE.**
+	# `species_tags`' own docstring says *"`mining` LEADS, because it is the question a player is
+	# asking of six rows at once"* -- the helper has ordered the tags by that reason all along, and the
+	# row then put the whole line last. Same ruling as ASSA-130/242: a surface answers before it
+	# reports.
 	var tags := AssayHud.species_tags(species)
 	if not tags.is_empty():
-		row.add_child(_note("[%s]" % "] [".join(tags)))
+		var verdict := _note("[%s]" % "] [".join(tags))
+		verdict.name = SPECIES_TAGS
+		row.add_child(verdict)
+	row.add_child(_readings_table(species))
 	return row
 
 

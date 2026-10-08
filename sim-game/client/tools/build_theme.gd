@@ -258,6 +258,13 @@ func _style_button(theme: Theme) -> void:
 	theme.set_font_size("font_size", "Button", SMALL)
 	theme.set_color("font_color", "Button", INK)
 	theme.set_color("font_hover_color", "Button", Color.WHITE)
+	# **CHECKED BY ASSA-267 AND DELIBERATELY LEFT ALONE, which is the box most likely to be "tidied"
+	# by whoever reads the Quiet comment above and assumes the accent is simply banned from a pressed
+	# state.** It is not. An ordinary button -- Mine, Stop, Assay -- is pressed for the frame a finger
+	# is down and then is not: that is FEEDBACK, momentary and self-cancelling, and it is the one case
+	# where the accent's meaning survives being used on something already pressed. ASSA-267's bar is
+	# about controls that are pressed AND STAY pressed; Maren amended the item in place to say so,
+	# because the first wording would have failed any shot that caught a button mid-press.
 	theme.set_color("font_pressed_color", "Button", ACCENT)
 	theme.set_color("font_disabled_color", "Button", INK_MUTED.darkened(0.25))
 	theme.set_stylebox("normal", "Button", _box(RAISED, BORDER))
@@ -333,7 +340,24 @@ func _style_quiet_button(theme: Theme) -> void:
 	theme.set_font_size("font_size", name, SMALL)
 	theme.set_color("font_color", name, INK_MUTED)
 	theme.set_color("font_hover_color", name, INK)
-	theme.set_color("font_pressed_color", name, ACCENT)
+	# **A CONTROL THAT STAYS PRESSED CANNOT MEAN `PRESS THIS NEXT`** (ASSA-267, Maren's ASSA-224
+	# one-accent rule). This declared `ACCENT`, and nobody saw it for two days because `Quiet` was
+	# authored for LONE toggles -- `_log_toggle`, `_make_toggle` -- where pressed is occasional and
+	# self-cancelling. A four-tab strip is the first control group here where exactly one member is
+	# ALWAYS pressed, so what used to flash under a finger became a second accent sitting on screen:
+	# Maren counted 172 px of `(128,229,140)` at x 1143..1201 on a real 1x shot, byte-identical to
+	# `Mine`'s core.
+	#
+	# **RANK, NOT HUE.** `INK` over the resting `INK_MUTED` is 1.80:1, already in the palette, and no
+	# new literal anywhere. `tab_strip.gd` proved it on main before this landed.
+	theme.set_color("font_pressed_color", name, INK)
+	# **AND THE SAME STATE UNDER A POINTER, WHICH IS THE HALF THAT WOULD HAVE ROTTED SILENTLY.**
+	# `Quiet` declared no `font_hover_pressed_color`, so a pressed-and-hovered quiet control fell
+	# through to plain `Button`'s -- which is still `ACCENT` and deliberately so (see `_style_button`).
+	# ASSA-247's local override set BOTH keys; removing that override without declaring this one would
+	# have taken the accent out of the open tab and handed it straight back the moment a pointer
+	# crossed it, with every shot of an un-hovered strip looking fixed.
+	theme.set_color("font_hover_pressed_color", name, INK)
 	theme.set_color("font_disabled_color", name, INK_MUTED.darkened(0.25))
 	# **AN EDGE AT REST, AT LOWER ALPHA** (ASSA-233, Maren's 18:40Z ruling, which is her third on this
 	# clause and the only one carrying a measurement -- see `QUIET_EDGE`). A dim centred line across
