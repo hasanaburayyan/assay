@@ -28,16 +28,33 @@ use sim::{
 /// guards: there is no second copy to update.
 const DEBUG_RS: &str = include_str!("../src/debug.rs");
 
-/// `event_line`'s body, from its signature to the next item at column zero.
-fn event_line_body() -> &'static str {
+/// One function's body in `debug.rs`, from its signature to the next item at
+/// column zero.
+fn body_of(name: &str) -> &'static str {
     let start = DEBUG_RS
-        .find("pub fn event_line")
-        .expect("event_line is still called that");
+        .find(&format!("pub fn {name}"))
+        .unwrap_or_else(|| panic!("{name} is still called that"));
     let rest = &DEBUG_RS[start..];
     let end = rest[1..]
         .find("\npub fn ")
         .map_or(rest.len(), |i| i + 1 + 1);
     &rest[..end]
+}
+
+/// **EVERY FUNCTION THAT WORDS A REFUSAL FOR A PLAYER**, which is not one
+/// function any more.
+///
+/// ASSA-324 moved four refusal sentences out of `event_line` and into
+/// `plan_refusal_phrase`, so that a host asking BEFORE a press could reach the
+/// same words. That is the right move and it silently shrank this guard's
+/// reach: the next sentence to spell a keystroke would have been written in the
+/// function the guard had stopped watching. Adding a name here is the cost of
+/// moving a sentence out.
+const WORDS_A_REFUSAL: [&str; 2] = ["event_line", "plan_refusal_phrase"];
+
+/// The slice the other guards in this file are about, by its own name.
+fn event_line_body() -> &'static str {
+    body_of("event_line")
 }
 
 /// **THE RULE IS MECHANICAL, WHICH IS WHY IT CAN BE A GUARD: no backtick
@@ -56,22 +73,23 @@ fn event_line_body() -> &'static str {
 /// because the thing to prevent is the next one.
 #[test]
 fn no_event_line_sentence_spells_a_command() {
-    let body = event_line_body();
     let mut prose_lines = 0;
-    for (n, line) in body.lines().enumerate() {
-        // Comments may discuss `insert` and `sim-cli` freely; players never
-        // read them.
-        if line.trim_start().starts_with("//") {
-            continue;
+    for name in WORDS_A_REFUSAL {
+        for (n, line) in body_of(name).lines().enumerate() {
+            // Comments may discuss `insert` and `sim-cli` freely; players never
+            // read them.
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            prose_lines += 1;
+            assert!(
+                !line.contains('`'),
+                "{name} quotes something at a player, body line {n}: {line}\n\
+                 A sim sentence names the ACTION, not the keystrokes: a host with \
+                 buttons cannot type it, and the sim must not know that some host \
+                 has a prompt (ASSA-67, ASSA-70)."
+            );
         }
-        prose_lines += 1;
-        assert!(
-            !line.contains('`'),
-            "event_line quotes something at a player, body line {n}: {line}\n\
-             A sim sentence names the ACTION, not the keystrokes: a host with \
-             buttons cannot type it, and the sim must not know that some host \
-             has a prompt (ASSA-67, ASSA-70)."
-        );
     }
     // **NON-VACUITY HAD TO CHANGE SHAPE WITH THE RULE.** While one backtick pair
     // was legal, "I found some" proved the scan was looking at the right text.
@@ -80,8 +98,9 @@ fn no_event_line_sentence_spells_a_command() {
     // test below, which is the other half of this.
     assert!(
         prose_lines > 200,
-        "only {prose_lines} non-comment lines in event_line; it is a long match \
-         over every Event, so this guard is reading the wrong slice"
+        "only {prose_lines} non-comment lines across {WORDS_A_REFUSAL:?}; event_line \
+         alone is a long match over every Event, so this guard is reading the \
+         wrong slice"
     );
 }
 

@@ -302,12 +302,32 @@ const SPAWN_PAD := Color(0.455, 0.429, 0.26)
 ## (`shared/assay/cove-assa236/`, arm B2, is the no-floor version rendered: a 1x1 drill is 64 px of
 ## white frame and I could not find it at 1x.)
 ##
-## **AND THE FLOOR IS WHAT PUTS A MARK ON A TILE ITS MACHINE DOES NOT STAND ON** (ASSA-289 box 5,
-## Maren's to rule). Because the mark is wider than the footprint, two machines on adjacent tiles have
-## overlapping marks, and the younger one's inward rim -- painted after its own band by construction,
-## so no paint order reaches it -- takes 8 px off the older one's band on two adjacent 1x1s.
-## `tools/assa289_paint_probe.gd` is the number, through the real paint sequence rather than off a
-## rect intersection. The 2x2 case is closed by the two passes in `main.gd::_draw`; this is the rest.
+## **AND THE FLOOR IS WHAT PUTS A MARK ON A TILE ITS MACHINE DOES NOT STAND ON. RULED, ASSA-326 /
+## ASSA-289 box 5: THE COST IS A READING AND NOT A DELETION, AND IT IS PAID RATHER THAN FIXED.**
+## This paragraph said the younger machine's rim *"takes 8 px off the older one's band"*. **No it does
+## not.** Neither `building` nor `building_keyline` carries alpha, so a neighbour's band is `HOVER` on
+## `HOVER`: Cove's 27.8% and Maren's 28.1% were both rect intersections reported as deletions, and
+## #421 and #429 have closed every real one (`tools/assa289_paint_probe.gd`: 144/144 at every
+## adjacency). What survives is that two 20 px marks whose centres are 9 px apart **overlap by 55%**,
+## so their outlines fuse: two adjacent 1x1 machines read as ONE box with a tick in it.
+##
+## **THREE WAYS OUT WERE MEASURED AND ALL THREE ARE CLOSED.**
+##
+## - **The floor.** It is a HOLE bar, not a visibility one: `hole_rect` is `outer.grow(-stroke)` and
+##   the inward rim takes 2 more, so the visible hole is span - 8 (12x12 at 20, 8x8 at 16, **3x3 at
+##   11**). `tools/person_under_machine.gd` is a person standing under a machine, and 11 erases them.
+## - **A species letter.** Two machines in a row are usually two of the same species, so they carry
+##   the SAME letter and a repeated letter counts nothing (and #431: a 2x2 carries no capital at any
+##   legal size, because a letter anchors on a TILE and a 2x2's mark on the JOIN of four).
+## - **Paint order** (`tools/maren_assa326_seam.gd`, pictures in `shared/assay/maren-assa326/`): one
+##   pass gives two shapes with the older mutilated to a bracket; 11.42's three passes give one box
+##   with three panes; a seam gives three shapes for two machines, neither whole. **No order divides a
+##   55% overlap, and 11.42 is itself inside the trade -- it bought integrity and paid in cardinality.**
+##
+## **SO THE SURFACE ANSWERS IT.** This is the whole-world SCHEMATIC at 9 px a tile -- `main.gd`'s
+## `_draw`, *"what makes it a map rather than a view"* -- and the close-up at 32 px a tile (ASSA-119)
+## is where sprites and counting live. **On this map the mark's unit is the CLUSTER, not the machine:
+## it says *machines here*.** That is what the key row says, and it is why the floor stays at 20.
 const BUILDING_MARK_PX := 20.0
 
 ## HOW THICK THE FOOTPRINT FRAME'S OWN STROKE IS, drawn INWARD from the footprint's edge (ASSA-236).
@@ -572,7 +592,12 @@ const MAP_MARKS: Array[Dictionary] = [
 	{"id": &"mine_ring", "shape": &"ring", "ink": MINE, "in_key": true,
 			"label": "the ring is on your own body"},
 	{"id": &"building", "shape": &"footprint", "ink": HOVER, "data_ink": true, "in_key": true,
-			"label": "a machine someone built, on the tiles it covers"},
+			# **PLURAL, AND THE NUMBER IS THE RULING** (ASSA-326). At 9 px a tile two machines on
+			# adjacent tiles fuse into one outline and nothing can divide them (see
+			# [constant BUILDING_MARK_PX]), so this mark's unit is the CLUSTER. "a machine" promised a
+			# count the map cannot keep; "machines ... they cover" promises only what is true here, and
+			# the close-up at 32 px a tile is where a player counts.
+			"label": "machines someone built, on the tiles they cover"},
 	# **AFTER THE BUILDING, AND THE TABLE'S ORDER IS THE PAINT ORDER** (ASSA-213). The letter used to
 	# sit between the hatch and the walk lines, which is where it was painted, which is why a machine
 	# standing on a deposit erased it. `tests/test_map_key.gd` now holds this list against the order
@@ -921,6 +946,92 @@ static func build_screen_rect(world: Rect2, band_top: float) -> Rect2:
 	return Rect2(top, Vector2(world.size.x - MARGIN.x * 2.0, maxf(0.0, bottom - top.y)))
 
 
+## **HOW TALL THE COMMIT BAR IS** (ASSA-332; Maren's §5.4: *"block 7 becomes the COMMIT BAR, 863 x 112
+## at y 529..641"*, which is the rect her §7 said she expected to move).
+##
+## **IT IS 112 BECAUSE OF A MEASUREMENT, NOT A TASTE.** `client/tools/maren_readout_rows.gd` measured
+## the sim's own sentence in the shipped body font: the held-tool readout is **916 px at `BODY` 13**
+## and this screen is **863 px wide**, so there is no width anywhere on it at which that sentence is
+## one row. At the bar's ≥ 687 px it is 2 rows today and 4 rows + 2 note rows in the worst case the
+## catalogue can make — 108 px inside 112.
+##
+## **AND THE REASON IT IS IN THIS RECT RATHER THAN THE READOUT'S IS A DESIGN REASON.** The sentence is
+## the sim saying whether you are about to waste parts you cannot get back, so it belongs beside the
+## irreversible act and not in a side column you scan while placing. One green thing, one irreversible
+## act, same place.
+const BUILD_COMMIT_BAR := 112.0
+
+## **HOW WIDE `Build`'S BOX MAY BE** (ASSA-332; her §5.4: *"Build's box is ≤ 160 px, so the sentence
+## gets ≥ 687 px, the width the wrap was measured at"*).
+##
+## **IT IS A CEILING THE LAYOUT DOES NOT ENFORCE, AND THAT IS DELIBERATE.** A `Button` in a container
+## takes its text's natural width, and clamping it with `custom_minimum_size` would CLIP a longer word
+## instead of reporting it — a control whose label is cut is the ASSA-175 lying control with the lie in
+## the middle. So the bar lets the button be its natural size and `test_main_screen.gd` asserts the
+## laid-out width against this number: the day `Build` becomes a longer word, a test says so and the
+## sentence's floor below is what it says it is.
+const BUILD_ACT_WIDTH := 160.0
+
+## **HOW MUCH OF THE BAR THE SIM'S SENTENCE IS OWED, DERIVED AND NEVER TYPED** (ASSA-332).
+##
+## Maren's 687 is `863 - 160 - 16`: the bar less `Build`'s ceiling less the gutter between them. **The
+## 687 is not written down anywhere in this project**, because a second typed number is exactly
+## ASSA-320's defect — prose and a constant agreeing today and drifting the day the bar or the button
+## moves. A test asserts the laid-out sentence is at least what this returns.
+##
+## **AND THE SCREEN IS 864 PX WIDE, NOT HER 863** (measured, ASSA-332): `world_rect()` is 912 wide and
+## the pad takes 24 from each side. Her 863 is `911 - 48`, an **exclusive end written as a width** —
+## x 48..911 is 864 pixels if 911 is the last one. **Neither number is wrong and the pixel is not a
+## defect**, which is why the check that holds this is ONE-SIDED: the sentence may never get less than
+## the width the wrap was measured at. An equality against 687 would have been red forever over a
+## pixel no one can see, and that red would have taught the next person to delete the check.
+##
+## **THE GUTTER IS AN ARGUMENT FOR `build_screen_rect`'S REASON**: it is `main.gd`'s `BUILD_GUTTER`,
+## the same constant the containers are given, so this function cannot disagree with the layout it
+## describes.
+static func commit_sentence_width(bar_width: float, gutter: float) -> float:
+	return maxf(0.0, bar_width - BUILD_ACT_WIDTH - gutter)
+
+
+## **THE SIM'S OWN BREAK POINT, AND THE ONLY ONE THIS CLIENT MAY WRAP A SIM SENTENCE AT** (ASSA-332;
+## Maren's §5.4 ruling 2). The sentence's clauses are joined by this mark by the sim itself; the `+`
+## inside the parts clause is **not** a break point.
+const SIM_CLAUSE_MARK := "·"
+
+## **THE SIM'S SENTENCE, BROKEN ONLY WHERE THE SIM BROKE IT** (ASSA-332; Maren's §5.4).
+##
+## **"WHOLE" MEANS EVERY CHARACTER IN THE SIM'S ORDER, AND WRAPPING IS NOT RECOMPOSING** — her ruling,
+## said explicitly because at `BODY` 13 the other reading of ASSA-305 is impossible to obey anywhere
+## on this screen, and a rule nobody can obey gets quietly dropped instead of argued with.
+##
+## **WHY NOT FREE WORD WRAP:** it orphans a grade letter onto its own row. At block 5's width the
+## engine's own wrap cut `head(Bokase` / `B 1-25)` — a material separated from its own grade letter,
+## which is ASSA-272 box 7's defect in a new place: a break inside a clause puts a number and the
+## thing it is about on different rows.
+##
+## **THE MARK STAYS AT THE END OF THE CLAUSE IT FOLLOWS**, so no character is deleted and the order is
+## the sim's. The one character a break consumes is the single space at it, which is what every text
+## engine does at a wrap and is the reason this is a wrap rather than an edit: `" ".join(clauses)` is
+## the sentence back, and `test_hud.gd` holds exactly that.
+##
+## **A CLAUSE WIDER THAN THE BAR STILL WRAPS**, in the engine, inside that clause. That is not a
+## loophole in the ruling: the only other option is deleting characters, which ASSA-305 forbids
+## outright, and today's widest clause is 280 px against the bar's 687.
+static func sentence_clauses(sentence: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	var rest := sentence
+	while true:
+		var at := rest.find(SIM_CLAUSE_MARK)
+		if at < 0:
+			break
+		out.append(rest.substr(0, at + SIM_CLAUSE_MARK.length()).strip_edges())
+		rest = rest.substr(at + SIM_CLAUSE_MARK.length())
+	var last := rest.strip_edges()
+	if last != "":
+		out.append(last)
+	return out
+
+
 ## **THE WORD ON A MAKE ROW'S ONE CONTROL, NOW THAT IT OPENS A SCREEN INSTEAD OF MAKING SOMETHING**
 ## (ASSA-328; Maren's §2: *"a row's button becomes `Make…` and opens this screen with that recipe
 ## already chosen"*).
@@ -960,21 +1071,48 @@ static func build_close_text() -> String:
 	return "close (Esc)"
 
 
-
-
-## **COST AS A COUNT, HAVE ON THE LEFT** (ASSA-328; Maren's §5.3: *"Cost (block 6) is COUNTS, so it is
-## text: `12 / 20`, have on the left. A count is not a reading and must not be given a band"*).
+## **COST AS TWO COUNTS, NEED FIRST AND NO SLASH** (ASSA-332; Maren's §5.5, which reverses her own
+## §5.3 twenty minutes after slice 1 shipped it).
 ##
 ## **FACTORIO'S ONE BORROWING, AND THE REASON IT IS WORTH A FUNCTION** (her §3): have/need beside an
 ## ingredient means affordability is READ, never computed by the player in their head. The row this
 ## replaces printed the sim's sentence — *"2 Tonore refined (A), you have 8"* — which says the same
 ## thing in prose, and prose is what the board called a debug dump.
 ##
+## **`2/1` IS NOT A RATIO, WHICH IS WHY THE SLASH IS GONE.** Her ruling with her reason: a slash is a
+## ratio's mark and a ratio needs left ≤ right, so `12 / 20` reads as progress and `2/1` reads as 200%
+## of something — and **on any stocked pack the surplus case is the normal case**, so most rows on a
+## working screen were broken ratios. I built §5.3 literally, said on the item I was not sure it read
+## right, and the thing that settled it was this screen printing `2/1 Bokase head (B)` on my own save.
+##
+## **NEED FIRST, BOTH NUMBERS ALWAYS.** The question block 6 answers is *is the need met*, and a short
+## row then reads as an instruction: `need 1 · have 0`.
+##
 ## **IT NAMES NO ITEM AND SO IT IS NOT A SECOND COPY OF A SIM SENTENCE** (ASSA-43/52's defect). The
 ## two numbers are `offer.count` and `offer.cost`, both crossed as data by `make_offers` for exactly
-## this (ASSA-256), and the thing they are about is named once, by the sim, elsewhere on the screen.
-static func have_need_line(have: int, need: int) -> String:
-	return "%d / %d" % [have, need]
+## this (ASSA-256), and the thing they are about is named once, by the sim, on the row above.
+##
+## **THE OLD NAME IS DELETED RATHER THAN REORDERED** (`have_need_line`, ASSA-328): GDScript takes a
+## swapped pair of `int`s without a word, and would print `need 8 · have 2` on the one surface whose
+## whole job is affordability. A static function that no longer exists is a compile error, which
+## `tools/check_every_script.sh` runs on every script in the project.
+static func cost_counts_line(need: int, have: int) -> String:
+	return "need %d · have %d" % [need, have]
+
+
+## **WHETHER A COST ENTRY IS SHORT, so the WHOLE entry can be drawn in `FAILED`** (ASSA-332; Maren's
+## §5.5: *"the whole entry in `FAILED` when have < need"*, and `need 1 · have 0` reads as an
+## instruction).
+##
+## **THIS IS NOT THE CLIENT DECIDING AFFORDABILITY, AND THE DISTINCTION IS WORTH THE FUNCTION.** Her
+## §3 rule stands — affordability is READ, never computed — and what is read here is the comparison
+## she specified, between the sim's own two crossed numbers: `cost` is what the sim says a batch
+## spends and `count` is what the sim says the pack holds. ASSA-247 is where that comparison was
+## ruled in and `cost` crossed the binding for it. **What a client may never do is reach the verdict
+## out of `line`'s prose or invent a threshold of its own**, and a named predicate with one call site
+## is how the one comparison on this screen stays findable.
+static func cost_entry_short(need: int, have: int) -> bool:
+	return have < need
 
 
 ## **HOW MUCH OF A STACK A SLOT ROW OFFERS BESIDES ALL OF IT** (ASSA-316, Maren's ruling 4).

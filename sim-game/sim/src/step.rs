@@ -1,6 +1,6 @@
 //! Advancing the world one tick.
 
-use crate::assembly::{Assembly, Built, Mount, Part, PartKind, spec};
+use crate::assembly::{self, AssemblyPlan, Mount, Part, PartKind, spec};
 use crate::building::{
     Building, BuildingId, BuildingKind, Machine, MachineState, Slot, footprint_tiles,
 };
@@ -100,7 +100,7 @@ fn apply_player(
     // Items name a species by index; never trust a client's index. Every
     // command carrying one is listed here, because the stats and recipe code
     // downstream indexes `world.species` directly.
-    let unknown = |s: &SpeciesId| usize::from(s.0) >= world.species.len();
+    let unknown = |s: &SpeciesId| !crate::mineral::known_species(&world.species, *s);
     let names_unknown_species = match command {
         PlayerCommand::Craft { item, .. }
         | PlayerCommand::Place { item, .. }
@@ -510,44 +510,25 @@ fn apply_player(
             });
         }
         PlayerCommand::Assemble { frame, mounted } => {
-            let Some(frame_part) = Part::from_item(frame) else {
-                return reject(RejectReason::NotAPart(frame), events);
+            // ONE DECISION, AND THIS ARM DOES NOT OWN IT (ASSA-324).
+            // `assembly::plan` holds the whole refusal chain and the tallied
+            // cost, because a headless `design`, the Godot build screen and
+            // this arm all have to agree — about the verdict, about the order
+            // a design is refused in, and about WHICH item is missing. What is
+            // left here is the only thing a preview must not do: spend.
+            let me = world.player(player).expect("checked above");
+            let plan = assembly::plan(frame, &mounted, &world.species, &me.inventory);
+            if let Some(reason) = plan.refusal() {
+                return reject(reason, events);
+            }
+            let AssemblyPlan::Weighed { built, cost, .. } = plan else {
+                unreachable!("refusal() is None only for a Weighed plan the player can afford")
             };
-            let mut parts = Vec::with_capacity(mounted.len());
-            for item in &mounted {
-                let Some(part) = Part::from_item(*item) else {
-                    return reject(RejectReason::NotAPart(*item), events);
-                };
-                parts.push(part);
-            }
-            let assembly = Assembly::new(frame_part, parts);
-            // Slots only. **Mass is never consulted here** (decision 11): the
-            // sim does not protect a player from their own design, and a
-            // refusal now would make the frame budget invisible.
-            if let Err(e) = assembly.validate() {
-                return reject(RejectReason::BadAssembly(e), events);
-            }
-
-            // Tally first so duplicates (two hoppers of one material) are
-            // taken all-or-nothing instead of one at a time.
-            let mut needed: Vec<ItemStack> = Vec::new();
-            for item in assembly.part_items() {
-                match needed.iter_mut().find(|s| s.item == item) {
-                    Some(s) => s.count += 1,
-                    None => needed.push(ItemStack::new(item, 1)),
-                }
-            }
             let p = world.player_mut(player).expect("checked above");
-            if let Some(s) = needed.iter().find(|s| !p.inventory.has(s.item, s.count)) {
-                return reject(RejectReason::MissingItems(s.item), events);
-            }
-            for s in &needed {
+            for s in &cost {
                 let taken = p.inventory.remove(s.item, s.count);
                 debug_assert!(taken);
             }
-
-            let built = Built::new(assembly, &world.species);
-            let p = world.player_mut(player).expect("checked above");
             p.assemblies.push(built);
             events.push(Event::Assembled {
                 player,

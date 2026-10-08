@@ -1693,28 +1693,41 @@ pub fn design_readout_facts(world: &World, frame: &str, mounted: &[String]) -> D
     let Some(frame_item) = read(frame) else {
         return DesignReadout::refused(format!("{frame} is not an item"));
     };
-    // STEP'S REFUSALS IN STEP'S ORDER (`PlayerCommand::Assemble`): the frame's
-    // kind, then each mounted kind, then the slot rules. A readout that
-    // answered only the arithmetic would hand back numbers for a design
-    // `Assemble` throws out.
-    let Some(frame_part) = sim::assembly::Part::from_item(frame_item) else {
-        return DesignReadout::refused(sim::debug::not_a_part_phrase(frame_item.kind.name()));
-    };
-    let mut parts = Vec::with_capacity(mounted.len());
+    let mut items = Vec::with_capacity(mounted.len());
     for text in mounted {
         let Some(item) = read(text) else {
             return DesignReadout::refused(format!("{text} is not an item"));
         };
-        let Some(part) = sim::assembly::Part::from_item(item) else {
-            return DesignReadout::refused(sim::debug::not_a_part_phrase(item.kind.name()));
-        };
-        parts.push(part);
+        items.push(item);
     }
-    let assembly = Assembly::new(frame_part, parts);
-    if let Err(e) = assembly.validate() {
-        return DesignReadout::refused(sim::debug::assembly_error_phrase(e));
-    }
-
+    // STEP'S REFUSALS IN STEP'S ORDER, AND STEP'S OWN FUNCTION (ASSA-324):
+    // `sim::assembly::plan` is what `PlayerCommand::Assemble` asks, so a
+    // readout and the Build button cannot drift apart about which design is
+    // legal. A readout that answered only the arithmetic would hand back
+    // numbers for a design `Assemble` throws out.
+    //
+    // **THE EMPTY PACK IS THE POINT, not a shortcut.** This entry point has no
+    // player and prices nothing — §5.2 is five bars, and have/need is block 6's
+    // job (`debug::design_preview`). `plan` weighs an unaffordable design
+    // anyway (the Game Director's ASSA-324 ruling), so the bars are the same
+    // whatever the pack holds, and `MissingItems` is dropped on the floor by
+    // reading `built` rather than `refusal`.
+    //
+    // It also closes a hole: this walked the chain itself with no species gate,
+    // and `stat_range` indexes the roster raw, so `design_readout` on a
+    // made-up index **panicked** — measured on main `e27ef54`, `index out of
+    // bounds: the len is 6 but the index is 200`. Nothing in `client/` calls it
+    // yet, and `item_json` will spell species 200 for anyone who asks.
+    let empty = sim::inventory::Inventory::new();
+    let planned = sim::assembly::plan(frame_item, &items, &world.species, &empty);
+    let Some(built) = planned.built() else {
+        let reason = planned.refusal().expect("a plan with no design refuses");
+        return DesignReadout::refused(
+            sim::debug::plan_refusal_phrase(world, None, reason)
+                .expect("`plan` refuses only in its own four words"),
+        );
+    };
+    let assembly = &built.assembly;
     let range = assembly.stat_range(&world.species);
     DesignReadout {
         verdict: range.verdict().label().to_string(),
@@ -5984,6 +5997,36 @@ mod tests {
                 vec![head.clone(), head.clone()],
             ),
             ("not an item at all", "{}".to_string(), vec![head.clone()]),
+            // ADDED BY ASSA-324, AND IT PANICKED HERE UNTIL `plan` GATED IT.
+            // This entry point's refusal chain was its own copy of `step`'s,
+            // minus the first link: the species roster is checked in `step`'s
+            // precheck, where a readout could not reach it, and
+            // `stat_range` indexes `world.species` raw. Measured on main
+            // `e27ef54`: `index out of bounds: the len is 6 but the index is
+            // 200`, from `assembly.rs:684`. Nothing in `client/` calls
+            // `design_readout` yet and `item_json` will spell species 200 for
+            // anyone who asks, so this is the hole that was waiting rather
+            // than the crash that happened. Kept in THIS loop rather than a
+            // parallel test: a refused design says one thing, whatever
+            // refused it.
+            (
+                "a species this world never rolled",
+                item_of(
+                    ItemKind::Part(sim::PartKind::Frame(Mount::Held)),
+                    sim::SpeciesId(200),
+                    sim::Grade::A,
+                ),
+                vec![head.clone()],
+            ),
+            (
+                "a made-up species on a mounted part, not the frame",
+                handle.clone(),
+                vec![item_of(
+                    ItemKind::Part(sim::PartKind::Head),
+                    sim::SpeciesId(200),
+                    sim::Grade::A,
+                )],
+            ),
         ] {
             let got = design_readout_facts(sim.world(), &frame, &mounted);
             assert!(!got.fault.is_empty(), "{what} should have a fault: {got:?}");
