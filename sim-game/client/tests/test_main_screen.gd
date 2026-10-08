@@ -3390,6 +3390,19 @@ func test_both_player_marks_carry_the_maps_own_keyline() -> bool:
 ## the 1x window shot in the item. The two legs here are the ORDER (a source scan, because `_draw`'s
 ## statements run in written order) and the BED (the colour the ink was picked against travels with
 ## the letter, so the order is safe over a mark as well as over a rock).
+##
+## **ASSA-314 NARROWED WHAT THIS GUARDS AND I SAY SO HERE RATHER THAN LEAVE IT LOOKING UNTOUCHED.**
+## Maren ruled on 2026-10-08 that a tile carrying a building mark gets **no species letter at all**:
+## her census says a drill's 16x16 hole is 56.2% letter and 0 of 26 capitals fit it, so ASSA-213's
+## remedy — paint the letter LAST, over the machine — was saving a letter into a hole it could never
+## fit. On the shipped frame the case this test plants **cannot occur**: `_glyph_marks` is handed the
+## sim's buildings and suppresses that letter.
+##
+## So the COVERAGE leg below now measures a collision the player never sees, and it is kept on
+## purpose, as the arithmetic behind the newer ruling: if a mark and a letter ever stop landing on
+## each other, 314's suppression is deleting a letter for nothing and this is what notices. The
+## ORDER and BED legs are undiminished — they hold every letter that IS drawn, which is every letter
+## on a tile nobody built on. `test_a_letter_is_not_drawn_on_a_tile_a_machine_stands_on` holds 314.
 func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> bool:
 	var screen := _joined_screen()
 	screen._show_close_up(false)
@@ -3481,10 +3494,12 @@ func test_a_building_on_a_deposits_centre_cannot_erase_the_species_letter() -> b
 		# was amended to `lapped OR hatched`: a hatched letter is bedded with no buildings at all,
 		# which is the half of the ruling that does not depend on this argument.) `shapes` and not
 		# `_building_marks(...)` inline, so the same list reaches both passes in one frame.
-		elif not source.contains("_glyph_marks(deposits, font, shapes)"):
-			ok = _fail("`_glyph_marks` is not handed the deposits AND the building marks `_draw` "
-					+ "read, which is ASSA-189's shape: a correct mark that nothing paints, or "
-					+ "since box 9 a correct mark nothing beds")
+		elif not source.contains("_glyph_marks(deposits, font, shapes, _sim.buildings())"):
+			ok = _fail("`_glyph_marks` is not handed the deposits, the building marks `_draw` read "
+					+ "AND the sim's buildings, which is ASSA-189's shape: a correct mark that "
+					+ "nothing paints, since box 9 a correct mark nothing beds, and since ASSA-314 "
+					+ "a letter drawn in a machine's hole because the painter was never told a "
+					+ "machine stands there")
 	# **THE BED, which is what makes painting last safe.** `glyph_color` picks the ink by contrast
 	# against the DISC; over a pale `HOVER` diamond a `GLYPH_LIGHT` letter chosen for a dark rock is
 	# the same letter gone. So the ink must be the one picked for the bed it carries.
@@ -3694,6 +3709,80 @@ func test_a_letter_is_bedded_when_a_mark_laps_it_or_a_hatch_crosses_it() -> bool
 				break
 	screen.queue_free()
 	return ok
+
+
+## **A SPECIES LETTER IS NOT DRAWN AT ALL ON A TILE A MACHINE STANDS ON** (ASSA-314, Maren ruled
+## option 1 at 16:38 EDT: *no species letter on a tile carrying a building mark*).
+##
+## **BOTH HALVES, AND THE SECOND IS THE ONE THAT MATTERS.** Her ruling names a SIM fact —
+## `machines_on_letters`, a footprint holding the tile a letter is drawn on. The obvious wrong helper
+## is `letter_occlusions`, a PIXEL lap, which at the shipped numbers (a 20 px mark, a 23x27 cap box,
+## a 9 px cell) reaches **two tiles away**. A build on that one would delete the letters of deposits
+## nothing is standing on, and *a patch whose centre is free keeps its letter* is the whole clause.
+##
+## So the control is not "some other letter survives": it is a letter that **`letter_occlusions`
+## says IS lapped** and `machines_on_letters` says is not. That letter must still be drawn. If the
+## two helpers ever stop disagreeing at this distance the test says so as a stale premise rather
+## than passing on a control that controls nothing.
+func test_a_letter_is_not_drawn_on_a_tile_a_machine_stands_on() -> bool:
+	var screen := _joined_screen()
+	screen._show_close_up(false)
+	screen._refresh()
+	if screen._close_up or not screen._sim.running() or screen._cell <= 0.0:
+		screen.queue_free()
+		return _fail(("premise: close_up %s, running %s, cell %f -- `_draw` returns before any mark")
+				% [screen._close_up, screen._sim.running(), screen._cell])
+	var font := ThemeDB.fallback_font
+	var deposits: Array = screen._sim.deposits()
+	var bare: Array = screen._glyph_marks(deposits, font)
+	if bare.is_empty():
+		screen.queue_free()
+		return _fail("premise: this world paints no species letter, so none can be suppressed")
+	var home: Vector2i = (bare[0] as Dictionary)["tile"]
+	var symbol := String((bare[0] as Dictionary)["symbol"])
+
+	# HALF ONE: a machine standing on that very tile. The letter must be gone.
+	var on_it := [{"pos": home, "footprint": Vector2i(1, 1), "kind": "machine"}]
+	var shapes: Array = screen._building_marks(on_it)
+	var after: Array = screen._glyph_marks(deposits, font, shapes, on_it)
+	if after.size() != bare.size() - 1:
+		screen.queue_free()
+		return _fail(("a machine on tile %s left %d letters and the bare frame had %d: exactly one "
+				+ "letter (`%s`) stands on an occupied tile, so exactly one must go. Her census: a "
+				+ "drill's 16x16 hole is 56.2%% species letter, and 0 of 26 capitals fit it.")
+				% [home, after.size(), bare.size(), symbol])
+	for glyph_entry in after:
+		if (glyph_entry as Dictionary)["tile"] == home:
+			screen.queue_free()
+			return _fail(("letter `%s` is still drawn on tile %s with a machine standing on it. The "
+					+ "mark is hollow so the ROCK shows through it (ASSA-236); a letter in the hole "
+					+ "is the thing the hollowness was bought for, gone.") % [symbol, home])
+
+	# HALF TWO: THE CONTROL. Two tiles away, where the two helpers disagree.
+	var near := home + Vector2i(2, 0)
+	var beside := [{"pos": near, "footprint": Vector2i(1, 1), "kind": "machine"}]
+	var near_shapes: Array = screen._building_marks(beside)
+	# **THE LAP IS MEASURED ON `bare`, THE FRAME WITH NO SUPPRESSION IN IT.** Measuring it on the
+	# suppressed frame makes this premise circular: a build on `letter_occlusions` deletes that very
+	# letter, so the lap "disappears" and the premise reports a geometry change that never happened.
+	# It cost me one lever run to notice, which is what levers are for.
+	var laps := false
+	for raw in AssayHud.letter_occlusions(near_shapes, bare):
+		if int((raw as Dictionary)["letter"]) == 0:
+			laps = true
+	if not laps:
+		screen.queue_free()
+		return _fail(("premise: a machine two tiles from letter `%s` no longer LAPS it, so this "
+				+ "control cannot catch a build on `letter_occlusions`. Re-measure the reach: it "
+				+ "was two tiles at a 20 px mark and a 23x27 cap box on a 9 px cell.") % [symbol])
+	var kept: Array = screen._glyph_marks(deposits, font, near_shapes, beside)
+	screen.queue_free()
+	if kept.size() != bare.size():
+		return _fail(("a machine two tiles away at %s deleted a letter: %d letters, not %d. "
+				+ "`letter_occlusions` laps that letter and `machines_on_letters` does not, and the "
+				+ "ruling is the second one -- a patch whose centre is free keeps its letter.")
+				% [near, kept.size(), bare.size()])
+	return true
 
 
 ## **THE BED YIELDS TO THE BAND IT LAPS, AND THE LETTER'S OWN INK DOES NOT** (ASSA-273 box 3, Maren's

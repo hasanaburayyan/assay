@@ -5263,7 +5263,10 @@ func _draw() -> void:
 	# holds a partner on a deposit centre. Do not build to a number here; ASSA-221 carries the state.
 	#
 	# THE DECISION IS `_glyph_marks`', like `_building_marks` above; this loop paints what it is told.
-	for glyph_entry in _glyph_marks(deposits, font, shapes):
+	# `_sim.buildings()` a second time and NOT `shapes`: ASSA-314's condition is a SIM fact (which
+	# tiles a footprint holds) and `shapes` are pixels. The list is the same one `_building_marks`
+	# read at the top of this frame — the sim is not stepped inside `_draw`.
+	for glyph_entry in _glyph_marks(deposits, font, shapes, _sim.buildings()):
 		var glyph: Dictionary = glyph_entry
 		draw_string_outline(font, glyph["baseline"], glyph["symbol"], HORIZONTAL_ALIGNMENT_LEFT, -1,
 				int(glyph["size"]), int(glyph["bed_px"]),
@@ -5445,7 +5448,8 @@ func _building_marks(buildings: Array) -> Array:
 ## A hatch is a property of the rock, so it decides the bed whether or not anything stands on the
 ## map; a letter with neither is on its own disc, where `glyph_color` picked its ink against that
 ## exact surface, and the stamps buy it nothing.
-func _glyph_marks(deposits: Array, font: Font, building_marks: Array = []) -> Array:
+func _glyph_marks(deposits: Array, font: Font, building_marks: Array = [],
+		buildings: Array = []) -> Array:
 	var marks := []
 	if font == null:
 		return marks
@@ -5538,4 +5542,35 @@ func _glyph_marks(deposits: Array, font: Font, building_marks: Array = []) -> Ar
 		if j >= 0 and j < marks.size():
 			(marks[j] as Dictionary)["bedded"] = true
 			((marks[j] as Dictionary)["lapped_by"] as Array).append(int(lap["building"]))
+	# **AND A LETTER ON A TILE A MACHINE STANDS ON IS NOT DRAWN AT ALL** (ASSA-314, Maren ruled
+	# option 1 at 16:38 EDT: *no species letter on a tile carrying a building mark*).
+	#
+	# **THE RULING RESTS ON THE HOLE, NOT ON INK.** ASSA-236 made this mark hollow so the rock shows
+	# through it; her census of a real frame says a drill's 16x16 hole is **56.2% species letter** on
+	# the placement a drill always has, because a drill mines the rock it stands on. The inward rim
+	# (ASSA-278) and the 16->20 size bump were both bought to protect that hollowness and it was
+	# already gone. Her geometry leg agrees from the other side: **0 of 26 capitals fit the hole**,
+	# and the killer is the 27 px ASCENT against 16 px, which no letter and no species roster
+	# escapes. No ink could have fixed it, which is why option 2 and option 3 are dead.
+	#
+	# **`machines_on_letters` AND NOT `letter_occlusions`, WHICH IS THE OBVIOUS WRONG ONE.** Her rule
+	# says *a tile carrying a building mark*: a SIM fact about occupancy. `letter_occlusions` is a
+	# PIXEL lap, and a 20 px mark laps a 23x27 cap box on a 9 px grid out to **two tiles away** — so
+	# building this on the helper two lines above would delete the letters of deposits nothing is
+	# standing on. **A patch whose centre is free keeps its letter**; that clause is the difference,
+	# and `test_a_letter_is_not_drawn_on_a_tile_a_machine_stands_on` holds both halves.
+	#
+	# Suppressed LAST, after `lapped_by` is filled, so ASSA-273's bed yield is untouched on every
+	# letter that survives: this removes letters, it does not re-score them.
+	var covered := {}
+	for raw in AssayHud.machines_on_letters(buildings, marks):
+		covered[int((raw as Dictionary)["letter"])] = true
+	if not covered.is_empty():
+		var kept := []
+		for j in range(marks.size()):
+			if not covered.has(j):
+				kept.append(marks[j])
+		# `lapped_by` indexes `building_marks`, which this does not touch, so the surviving letters'
+		# lists stay valid. Dropping a letter cannot invalidate another letter's indices.
+		marks = kept
 	return marks

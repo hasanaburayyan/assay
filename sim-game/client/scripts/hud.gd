@@ -580,8 +580,22 @@ const MAP_MARKS: Array[Dictionary] = [
 	{"id": &"species_bed", "shape": &"glyph", "ink": MAP_BG, "data_ink": true, "in_key": false,
 			"keyed_by": &"species_glyph",
 			"label": "the deposit's own colour, carried under its letter"},
+	# **AND THE LABEL SAYS WHERE THE LETTER IS NOT** (ASSA-314 box 5, under ASSA-283's rule that a
+	# key which describes a mark the map does not draw is lying). Maren ruled that a tile carrying a
+	# building mark gets no species letter at all, so a reader who has learned "every patch wears its
+	# initial" would read a built-on patch as a patch of nothing. The absence is now part of the
+	# vocabulary, which means the key owns it.
+	#
+	# **AND I WROTE "IT COSTS NO WIDTH" HERE AND THEN MEASURED IT, TWICE, BEING WRONG BOTH TIMES.**
+	# `AssayMapKey.wants` sizes the panel off the WIDEST row. My first phrasing — *"the species, as
+	# its own letter · not on a built tile"* — is **295 px**, and the widest row on this map is not
+	# the deposit row I compared against (246 px) but `building`'s own, at **292 px**. So the long
+	# clause would have grown the panel 346 → 349: three pixels, not the forty-five my first
+	# correction claimed. Small either way, and a key row that sets the panel's width is a row that
+	# can only get shorter later. The shipped phrasing is **226 px** and sets nothing.
+	# `tools/letter_size_spread.gd` prints the widest row and the panel together.
 	{"id": &"species_glyph", "shape": &"glyph", "ink": GLYPH_LIGHT, "data_ink": true, "in_key": true,
-			"label": "the species, as its own letter"},
+			"label": "the species letter · not on a built tile"},
 	{"id": &"target", "shape": &"brackets", "ink": HOVER, "in_key": true,
 			"label": "the tile the buttons act on"},
 	# **AND THE HOVER OUTLINE'S OWN RIM, WHICH IT WENT WITHOUT WHILE I AUDITED EVERY OTHER MARK FOR
