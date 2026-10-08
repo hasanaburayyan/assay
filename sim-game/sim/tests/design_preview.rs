@@ -517,12 +517,15 @@ fn a_species_this_world_never_rolled_is_refused_rather_than_indexed() {
 #[test]
 fn a_design_with_an_empty_slot_is_weighed_and_gets_no_verdict() {
     let (world, me) = world_with_player();
-    let head = part_item(PartKind::Head, HEAVY);
     let hopper = part_item(PartKind::Hopper, LIGHT);
 
     for (what, frame, mounted) in [
         ("a handle with no head", part_item(HELD, LIGHT), vec![]),
-        ("a planted frame with no head", part_item(PLANTED, LIGHT), vec![]),
+        (
+            "a planted frame with no head",
+            part_item(PLANTED, LIGHT),
+            vec![],
+        ),
         (
             "a planted frame holding only its hopper",
             part_item(PLANTED, LIGHT),
@@ -563,12 +566,8 @@ fn a_design_with_an_empty_slot_is_weighed_and_gets_no_verdict() {
         let line = debug::design_preview(&world, me, frame, &mounted);
         // THE HEADLINE IS THE SIM'S PHRASE FOR WHAT IS MISSING, and it is the
         // SAME phrase the log gives after a press — not a second wording.
-        let phrase = debug::plan_refusal_phrase(
-            &world,
-            Some(me),
-            RejectReason::BadAssembly(error),
-        )
-        .expect("BadAssembly is one of the plan's four");
+        let phrase = debug::plan_refusal_phrase(&world, Some(me), RejectReason::BadAssembly(error))
+            .expect("BadAssembly is one of the plan's four");
         assert!(
             line.starts_with(&phrase),
             "{what}: the missing slot goes where the verdict would: {line}"
@@ -607,7 +606,11 @@ fn a_permanently_faulted_design_keeps_todays_refusal_and_no_numbers() {
 
     for (what, bad_frame, mounted) in [
         ("a head where the frame goes", head, vec![head]),
-        ("a frame mounted on a frame", part_item(PLANTED, LIGHT), vec![head, frame]),
+        (
+            "a frame mounted on a frame",
+            part_item(PLANTED, LIGHT),
+            vec![head, frame],
+        ),
         ("a hopper on a handle", frame, vec![head, hopper]),
         ("two heads on one handle", frame, vec![head, head]),
     ] {
