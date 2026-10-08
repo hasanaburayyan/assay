@@ -662,15 +662,19 @@ func _ready() -> void:
 	# THE WARNING BEFORE THE DROP (ASSA-191). Not a `_say`: it is reversible, so it may not become the
 	# last real sentence the window remembers. See `_render_status`.
 	_client.link_quiet.connect(_on_link_quiet)
-	# **THE ADVICE IS RIGHT AND ITS REASON WAS WRONG** (ASSA-177). It said "(Decision 3: no
-	# reconnect)", which the probe has now disproved for every other way a session ends -- but a
-	# desync is not a drop: `desynced` leaves the stage JOINED, so the Join button refuses and there
-	# is genuinely nothing on this screen that can recover. The sentence says that instead of citing a
-	# decision that no longer holds. Whether a desync SHOULD drop you to DEAD, where Join would work,
-	# is a question for whoever owns the net layer; see ASSA-177's note.
-	_client.desynced.connect(func(tick): _say(
-			"desync at tick %d. Restart the client to rejoin: a desync leaves you joined, so Join "
-			% tick + "cannot help.", AssayHud.Say.FAILED))
+	# **THE QUESTION THIS COMMENT USED TO ASK HAS BEEN ANSWERED: A DESYNC DROPS YOU** (ASSA-190, and
+	# it was my own question to answer -- the net layer is mine). It used to read "a desync is not a
+	# drop, so Join refuses and there is genuinely nothing on this screen that can recover", which was
+	# true and was the defect: the one failure in this client with no way out of the window.
+	#
+	# `net_client.gd` now hangs up on `Desync`, so the stage is DEAD, the join band is back and Join
+	# is live -- one press and the relay's fresh `Welcome` replaces the world that drifted.
+	#
+	# **THE SENTENCE NAMES THE TICK AND BOTH HASHES, which is the evidence half.** A drop that says
+	# only "we diverged" is indistinguishable from a bad connection, and a determinism bug that reads
+	# as a network problem is the one this game cannot afford to lose. It stays `Say.FAILED`: the
+	# session really did end, and Join is an offer, not a reassurance.
+	_client.desynced.connect(func(tick, reported, expected): _on_desync(tick, reported, expected))
 	# **A NOTE IS NARRATION, AND ONCE YOU ARE IN A WORLD IT STOPS BEING THE PLAYER'S** (ASSA-245,
 	# Maren's Gap 2; found at 1x by Nerite and independently by my own suite).
 	#
@@ -1591,8 +1595,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 ## five "no world yet" sentences and a sixth would be noise.
 ##
 ## CALLED FROM `_process`, NOT FROM A SIGNAL. There are four ways into DEAD (`refused`, `desynced`,
-## a read failure, a write failure) and only two of them reach a handler here that refreshes
-## anything, so a signal-driven hide would be a list to keep in step with `net_client.gd`. Asking the
+## a read failure, a write failure) -- and this line said "only two of them reach a handler here"
+## while `desynced` did not reach DEAD at all; ASSA-190 made that list true and the count three. It
+## is still not all four, so a signal-driven hide would be a list to keep in step with
+## `net_client.gd`. Asking the
 ## stage every frame cannot miss a transition, and `CanvasItem.set_visible` early-returns when the
 ## value is unchanged.
 ## **IT HIDES THE CELLS AND NOT ONLY THE BAND NOW, BECAUSE THEY ARE NOT ALWAYS IN IT** (ASSA-231).
@@ -1814,9 +1820,12 @@ func _on_refused(reason: String) -> void:
 ## state where no bundle will ever arrive again, so without this the button keeps the green it had on
 ## the last tick before the host went away.
 ##
-## NOT A DESYNC, deliberately: `desynced` leaves the stage at JOINED (see the signal wiring above), so
-## `Mine` stays accented there. Whether a desync should also grey it is a question about what a
-## desync IS, and it is not this item's to answer.
+## **A DESYNC COMES HERE NOW, AND THIS COMMENT USED TO SAY IT DELIBERATELY DID NOT** (ASSA-190). It
+## read: "`desynced` leaves the stage at JOINED, so `Mine` stays accented there. Whether a desync
+## should also grey it is a question about what a desync IS, and it is not this item's to answer."
+## The answer is that a desync ends the session -- `net_client.gd` hangs up on it -- so there are
+## three routes into here, and `Mine` greys for the same reason it does on a drop: no bundle will
+## ever confirm a swing at a world we have stopped trusting.
 func _session_ended() -> void:
 	_forget_click()
 	# **AND THE SELECTION GOES WITH THE WORLD IT WAS MADE IN, WHICH IS A BUG THAT PREDATES THIS
@@ -1855,6 +1864,30 @@ func _on_link_failed(reason: String) -> void:
 	_say(reason if said == "" else "%s It said: %s" % [reason, said], AssayHud.Say.FAILED)
 	# THE OTHER EXIT (ASSA-251). See `_session_ended`: the action row has to be rebuilt when a
 	# session dies, and this is one of the two routes that can kill one.
+	_session_ended()
+
+
+## **THE WORLDS DIVERGED, AND THAT IS NOT A CONNECTION FAILURE** (ASSA-190).
+##
+## A handler rather than a lambda because it does three things now, and because the one thing a
+## player in this state is owed is a sentence they can act on plus the evidence they cannot get
+## anywhere else: the host's hash does not exist on this client until the `Desync` message carries it
+## (protocol 10).
+##
+## **IT NEVER READS AS A DROPPED CABLE.** `_on_link_failed`'s sentences are about a socket; this one
+## is about two worlds disagreeing, and the difference matters because a determinism bug that reads
+## as a network problem is the one class of bug we cannot afford to mistake. The hashes are quoted
+## rather than summarised for the same reason the F3 readout exists -- they are the only thing that
+## tells you which of the two builds to go and look at.
+##
+## `_session_ended` for `_on_link_failed`'s reason: the link really is gone (we hung up), so the
+## click is unanswerable and `Mine`'s accent has to go with it. This used to be the comment on
+## `_session_ended` saying a desync deliberately did NOT come here, because a desync left the stage
+## at JOINED. It does not any more.
+func _on_desync(tick: int, reported: String, expected: String) -> void:
+	_say(("the worlds diverged at tick %d: we hashed %s, the host has %s. The link is closed; "
+			+ "press Join to rebuild this world from the host's.")
+			% [tick, reported, expected], AssayHud.Say.FAILED)
 	_session_ended()
 
 

@@ -143,10 +143,12 @@ why determinism rules are non-negotiable.
   decision; v9 never shipped. **Ask the source for these two numbers, never
   this file**: it said 10 and protocol 4 for days after they were 12 and 9,
   and a stale constant here reads as fact to anyone who has not grepped.
-- `PROTOCOL_VERSION = 9`. Bump it whenever `World` or a message changes
+- `PROTOCOL_VERSION = 10`. Bump it whenever `World` or a message changes
   shape; the relay refuses mismatched clients. A running relay will tell you
   what it speaks: `sim-relay --bogus` prints `RELAY STARTED protocol <n>
-  rules <id>` before it complains.
+  rules <id>` before it complains. 9 → 10 on 2026-10-07 (ASSA-190):
+  `ServerMsg::Desync` grew the two hashes, as hex text because the Godot
+  client parses that message in GDScript and has no 64-bit integer.
 - Golden determinism hash lives in `sim/tests/determinism.rs`. It changes
   whenever rules change; update it only for intentional changes and say so
   in the commit.

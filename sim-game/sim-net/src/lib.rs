@@ -22,7 +22,12 @@ use sim::{Input, PlayerCommand, PlayerId, World};
 /// **THIS IS NOT THE RULES.** It answers "can we understand each other's
 /// messages", and two builds can understand each other perfectly while
 /// playing different games — see [`sim::RULES_ID`] and [`check_join`].
-pub const PROTOCOL_VERSION: u32 = 9;
+///
+/// 9 → 10 (ASSA-190): [`ServerMsg::Desync`] grew the two hashes. A bump is a
+/// coordination event, not a line of code — Decision #41 was a build dying at
+/// protocol 6 against 8 — so this one was spent on purpose on the night
+/// `RULES_ID` had already moved twice and every peer owed a rebuild anyway.
+pub const PROTOCOL_VERSION: u32 = 10;
 
 /// The rules this build runs, re-exported so a host has one place to look.
 pub const RULES_ID: &str = sim::RULES_ID;
@@ -94,7 +99,35 @@ pub enum ServerMsg {
     /// The inputs for one tick, in the order everyone must apply them.
     Tick(TickBundle),
     /// Your hash for `tick` doesn't match the host's. Your world has drifted.
-    Desync { tick: u64 },
+    ///
+    /// **IT CARRIES BOTH HASHES, AND UNTIL ASSA-190 IT CARRIED NEITHER.** The
+    /// host knew both and logged both; the peer knew only its own, so no
+    /// surface could show a player the evidence that their world had diverged.
+    /// A drop with no evidence is the shape that lets a determinism bug pass
+    /// as a bad connection.
+    ///
+    /// **HEX TEXT, NOT `u64`, and that is the one reason this is a `String`.**
+    /// The Godot client parses this message in GDScript, which has no 64-bit
+    /// integer at all and reads every JSON number as a double — a hash spelled
+    /// as a number would arrive rounded and be displayed wrong, which is worse
+    /// than absent. [`hash_hex`] decides the spelling for the wire, once.
+    /// (`ClientMsg::Hash` stays a `u64`: both of its producers are Rust.)
+    Desync {
+        tick: u64,
+        /// What the peer said its world hashed to, as [`hash_hex`].
+        reported: String,
+        /// What the host's own world hashed to at the same tick.
+        expected: String,
+    },
+}
+
+/// A state hash as it travels and as it is shown: 16 lowercase hex digits.
+///
+/// One function so the wire, the relay's log and a client's band cannot spell
+/// the same hash three ways. A hash is only ever compared or displayed, never
+/// arithmetic, so text costs nothing.
+pub fn hash_hex(hash: u64) -> String {
+    format!("{hash:016x}")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

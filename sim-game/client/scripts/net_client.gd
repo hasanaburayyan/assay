@@ -37,10 +37,11 @@ extends Node
 ## **WHAT IS STILL ABSENT.** (1) A relay that accepts the socket and never answers `Hello`: the clock
 ## below starts at the `Welcome`, so a client stuck at GREETED is not timed by it. Deliberate -- an
 ## unanswered connect is the OS's business and a cold start must not be called a drop -- and not
-## measured either way. (2) A desync, which does not come here at all: `desynced` leaves the stage
-## JOINED, and the relay sends `Desync` without dropping the peer or stopping its clock (read, not
-## measured: `sim-relay/src/main.rs:382` is the only place it is sent and it closes nothing), so the
-## bundles keep coming, the clock below is refreshed, and restarting really is the only way back. Nothing in this file resets `bundles_seen`, `last_tick`, `player_id` or
+## measured either way. (2) **A desync used to be the second absence and is not one any more**
+## (ASSA-190): `Desync` leaves this node at DEAD with the socket closed BY US, so the join band comes
+## back and one press of Join rebuilds the world from a fresh `Welcome`. The relay still closes
+## nothing and still runs its clock -- that half is unchanged and is the host's business -- but the
+## peer no longer sits in a world it has stopped trusting. Nothing in this file resets `bundles_seen`, `last_tick`, `player_id` or
 ## `_reader` on a second `join`, which the probe shows is harmless today (the reader was empty at the
 ## drop) and is where to look first if a reconnect ever reads garbage.
 
@@ -51,8 +52,12 @@ signal welcomed(player: int, world: Dictionary, raw: String)
 signal refused(reason: String)
 ## One tick's inputs, in the order every peer must apply them, plus the message's own text.
 signal tick_bundle(tick: int, inputs: Array, raw: String)
-## Our hash for `tick` did not match the host's. Unrecoverable in the demo: restart to rejoin.
-signal desynced(tick: int)
+## **OUR HASH FOR `tick` DID NOT MATCH THE HOST'S, AND BOTH HASHES ARE HERE** (ASSA-190, protocol
+## 10). It is no longer unrecoverable: this node hangs up on a desync, so the stage is DEAD and Join
+## is live -- one press and the relay sends a fresh `Welcome`, which is the only cure for a world
+## that has drifted. The two hashes travel with it because a drop with no evidence is the shape that
+## lets a determinism bug pass as a bad connection.
+signal desynced(tick: int, reported: String, expected: String)
 ## The socket never came up, or died. `reason` is for a player to read.
 signal link_failed(reason: String)
 ## **THE LINK HAS SAID NOTHING FOR `seconds` WHOLE SECONDS, AND NOTHING HAS CHANGED BECAUSE OF IT**
@@ -123,6 +128,12 @@ var joined_world: Dictionary = {}
 ## even before anything can be applied.
 var bundles_seen := 0
 var last_tick := -1
+## **DESYNCS THIS NODE HAS BEEN TOLD ABOUT, COUNTED BECAUSE THE DROP MUST BE VISIBLE** (ASSA-190).
+## A client that quietly re-welcomed itself on every desync would be a client that hides a
+## determinism bug, which is the one class of bug this game cannot afford. Not reset by a second
+## `join`, like `bundles_seen`: the count is a session's history, and a peer that diverges twice is
+## a different story from two peers that diverged once.
+var desyncs_seen := 0
 
 ## **THE ENGINE CLOCK AT THE LAST THING THE RELAY SAID**, or -1 while nothing is being timed.
 ##
@@ -384,7 +395,26 @@ func _handle(msg: Variant) -> void:
 			last_tick = int(bundle.get("tick", last_tick))
 			tick_bundle.emit(last_tick, bundle.get("inputs", []), raw)
 		"Desync":
-			desynced.emit(int((body as Dictionary).get("tick", -1)))
+			# **WE HANG UP, AND THAT IS THE WHOLE FIX** (ASSA-190). A desync means our copy of the
+			# world is wrong, and the only cure is a fresh `Welcome` carrying the host's state --
+			# which a rejoin already delivers, same slot, nothing lost while the host is up
+			# (measured by `tools/reconnect_probe.gd` for ASSA-177). `_join_address` refuses at
+			# JOINED, so leaving the stage there meant the one failure in this client with no way
+			# out of the window. Closing the socket ourselves makes DEAD *honest*: the link really
+			# is gone, because we ended it. The alternative was spelling a desync as DEAD while the
+			# socket stayed up, and then nobody could tell a cable from a hash.
+			#
+			# **SHAPED LIKE THE `Refused` ARM ABOVE** -- stage, disconnect, then emit -- because
+			# they are the same event from this node's side: the relay has told us this session is
+			# over and the socket has no further use.
+			var d: Dictionary = body as Dictionary
+			desyncs_seen += 1
+			stage = Stage.DEAD
+			_socket.disconnect_from_host()
+			desynced.emit(
+					int(d.get("tick", -1)),
+					String(d.get("reported", "")),
+					String(d.get("expected", "")))
 		_:
 			# A message we do not know is a protocol mismatch, not noise to skip: the relay and this
 			# client disagree about what the wire looks like, and pretending otherwise desyncs.
