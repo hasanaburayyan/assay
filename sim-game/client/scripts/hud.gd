@@ -102,7 +102,15 @@ const LOG_TOGGLE_H := 28.0
 ## deposit's colour against it to decide whether a letter on top should be dark or light.
 const MAP_BG := Color(0.10, 0.11, 0.13)
 
-## **THE PLATE THE TITLE SCREEN WORDS STAND ON** (ASSA-292, ASSA-276 §4). `build_theme.gd`s SURFACE
+## **THE PLATE THE TITLE SCREEN WORDS WILL STAND ON -- MEASURED, SPECIFIED, AND NOT YET BUILT**
+## (ASSA-292, ASSA-276 §4). Nothing reads these two constants yet and that is deliberate: they are the
+## derivation, kept where the next slice needs it rather than in a comment on a pull request. The
+## plate itself was attempted and withdrawn the same night -- the rectangle it produced in a real
+## window did not match the one its own arithmetic asks for, and a half-working panel in the draw path
+## is worse than an honest absence. **Until it is built, the words on the lit door read INK 2.10:1 and
+## INK_MUTED 1.00:1, so this screen FAILS Marens floor 1.**
+##
+## `build_theme.gd`s SURFACE
 ## -- the same surface every panel in the game is drawn on -- at an alpha DERIVED and not chosen.
 ##
 ## THE DERIVATION, so the next person can redo it rather than trust it. Measured on a real 1x frame

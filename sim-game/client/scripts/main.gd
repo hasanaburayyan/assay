@@ -88,16 +88,6 @@ var _door_title := Label.new()
 ## **IT IS THE SEED SOLO PLAYS, BY REFERENCE.** `AssaySoloRelay.DEFAULT_SEED`, never a copy of its
 ## digits, because the design is *"press the button and you walk into the field you were looking at"*
 ## and that sentence is only true while the two seeds are the same one.
-## **THE PLATE THE WORDS STAND ON** (ASSA-292, Maren: *"THE PLATE IS APPROVED, with floors"*).
-##
-## **IT IS THE SIZE OF THE TEXT, NOT THE SIZE OF THE DOOR, AND THAT IS FLOOR 2 BEING OBEYED RATHER
-## THAN QUOTED.** Her warning: *"a scrim may help and may not be the whole answer. Dimming the world
-## until text passes is how a title screen becomes a flat field with extra steps."* The arithmetic
-## agrees with her: to lift `INK_MUTED` to 4.5:1 against the worst pixel the lit world actually puts
-## behind a word -- (244,154,81), an ore deposit -- a FULL-DOOR scrim needs alpha 0.73, which is the
-## flat field with extra steps, measured. A plate the size of the words needs the same alpha over ~a
-## tenth of the door and leaves the rest of the world alone.
-var _door_plate := ColorRect.new()
 var _door_sim := AssaySimHost.new()
 ## Ore in the door world, computed ONCE. The live `_ore_under` re-caches on `_sim.tick()`; this world
 ## never ticks, so the only thing that could move the answer is the camera, and the margin below
@@ -795,14 +785,6 @@ func _build_ui() -> void:
 	# over the map, and a Container does NOT inherit the note's filter. IGNORE does not apply to
 	# children, so every button inside it still gets its clicks -- and the failure if it did would
 	# read as "Play solo does nothing", nowhere near this line.
-	# **THE PLATE GOES IN BETWEEN THE WORLD AND THE WORDS** (ASSA-292), which is the whole of its
-	# wiring: added after `_world` so it covers the picture, before `_front_door` so the words sit on
-	# it. `MOUSE_FILTER_IGNORE` for the reason everything else over this map has it -- the map is
-	# clicked through `_unhandled_input` and a control that answered the mouse would swallow it.
-	_door_plate.color = AssayHud.DOOR_PLATE
-	_door_plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_door_plate.visible = false
-	add_child(_door_plate)
 	_front_door.position = door.position
 	_front_door.size = door.size
 	_front_door.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -3646,40 +3628,6 @@ func _clear(box: Node) -> void:
 ## fact, which is why it is set here rather than on a predicate of its own -- Maren's Gap 5 is one
 ## ruling about one screen, and two conditions for it is how a door and a column end up both on
 ## screen for a frame.
-## THE PLATE, FITTED TO THE WORDS IT CARRIES (ASSA-292).
-##
-## **FROM THE LAID-OUT CHILDREN AND NOT FROM A RECTANGLE I TYPED**, because the words change size:
-## the wordmark is a type-scale constant, the sentence wraps to the door width, and the join row grows
-## by a whole line when it has a refusal to show. A plate with its own numbers would be right on the
-## frame I measured and wrong on every other one.
-##
-## IT HIDES ITSELF WHEN THE LAYOUT HAS NOT HAPPENED, which is the headless case and is why no test in
-## the suite asserts this rectangle: before a layout pass every child is 0x0 (`get_combined_minimum_
-## size` is the only honest question there), so a plate derived from them would be a 48x48 square in
-## the corner. Headless draws nothing here; the real window is measured off the PNG instead.
-func _place_door_plate(showing: bool) -> void:
-	_door_plate.visible = false
-	if not showing:
-		return
-	var box := Rect2()
-	var found := false
-	for child in _front_door.get_children():
-		var control := child as Control
-		if control == null or not control.visible:
-			continue
-		if control.size.x <= 0.0 or control.size.y <= 0.0:
-			continue
-		var rect := Rect2(_front_door.position + control.position, control.size)
-		box = rect if not found else box.merge(rect)
-		found = true
-	if not found:
-		return
-	var pad := Vector2(AssayHud.DOOR_PLATE_PAD, AssayHud.DOOR_PLATE_PAD)
-	_door_plate.position = box.position - pad
-	_door_plate.size = box.size + pad * 2.0
-	_door_plate.visible = true
-
-
 func _refresh_front_door() -> void:
 	# **THE PREDICATE IS "AM I IN A WORLD I CAN SEE", AND IT USED TO BE "IS ANYTHING DRAWN"**
 	# (ASSA-292). `_world.view.is_empty()` alone was a correct proxy for exactly as long as the door
@@ -3693,7 +3641,6 @@ func _refresh_front_door() -> void:
 	# the column up over nothing.
 	var empty: bool = not _sim.running() or _world.view.is_empty()
 	_front_door.visible = empty
-	_place_door_plate(empty)
 	_door_backdrop.visible = empty
 	if _column != null:
 		_column.visible = not empty
