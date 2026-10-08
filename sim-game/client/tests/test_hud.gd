@@ -451,6 +451,53 @@ func test_the_held_letter_fits_the_smallest_patch_the_sim_rolls() -> bool:
 	return true
 
 
+## **THE COST OF THE HELD LETTER IS A SENTENCE IN `hud.gd`, AND THIS IS WHAT STOPS IT ROTTING**
+## (ASSA-320, on ASSA-293). Holding every letter at the smallest patch's size hands `glyph_size`'s
+## 10px floor one decision for the whole map: past a world size the cell falls under 4px and NO letter
+## draws, where the wide patches used to keep theirs. `glyph_size_held(9.0) > 0` is asserted one test
+## up -- the shipped cell draws -- and the flip itself was prose.
+##
+## **THE NUMBER IS DERIVED AND THEN HELD AGAINST THE DOCSTRING, never typed into this test.** A change
+## to the floor, to `MIN_DEPOSIT_RADIUS_TILES` or to the map rect moves the flip; the sentence in
+## `hud.gd` would go on reading as fact, and in this repo prose is what has shipped wrong twice
+## (ASSA-174, ASSA-207). So the sweep finds the widest world that still draws a letter and the
+## docstring has to name it.
+##
+## 228 is the answer today and the arithmetic is worth having written down, because I got it wrong
+## once: a letter needs `floor(2.8 x cell) >= 10`, i.e. cell >= 3.58 -- but `map_cell` FLOORS to a
+## whole pixel, so 3.58 is DRAWN as 3 and the real flip is at cell 4. 912/4 = 228. Dividing the map
+## rect by a cell the map never draws gives 304, which is what my note on ASSA-293 said.
+func test_the_world_size_where_letters_stop_is_the_one_the_docstring_names() -> bool:
+	# The floor, at the two cells either side of it, before any sweep: a letter at 4px of cell and
+	# nothing at 3px is what makes the width below a width and not an accident of the loop.
+	if AssayHud.glyph_size_held(4.0) <= 0:
+		return _fail("a 4px cell draws no letter, so the flip is not where hud.gd says it is")
+	if AssayHud.glyph_size_held(3.0) != 0:
+		return _fail("a 3px cell still draws a %d px letter: the 10px floor has moved and the cost "
+				% AssayHud.glyph_size_held(3.0) + "named in hud.gd is now about something else")
+	# **THE SWEEP IS OVER WORLDS, NOT OVER CELLS**, because the sentence is about world size and
+	# `map_cell` is the only thing that turns one into the other. Height held at the tallest world the
+	# same cell survives, so the width is the term that bites -- the map rect is wider than it is tall.
+	var tallest := 168
+	var widest := 0
+	for width in range(16, 400):
+		if AssayHud.glyph_size_held(AssayHud.map_cell(Vector2i(width, tallest))) > 0:
+			widest = width
+		else:
+			break
+	if widest <= 96:
+		return _fail(("letters stop at %d tiles wide, which is the test world (96) or narrower: the "
+				+ "shipped map would have no letters on it at all") % widest)
+	var source := FileAccess.get_file_as_string("res://scripts/hud.gd")
+	if source == "":
+		return _fail("scripts/hud.gd could not be read, so this test is about nothing")
+	if not source.contains(str(widest)):
+		return _fail(("letters stop past %d tiles wide and `hud.gd` does not say %d anywhere. The "
+				+ "held letter's cost is documented there as a number; derive it, do not guess it -- "
+				+ "and `map_cell` floors, so it is not the map rect over 3.58.") % [widest, widest])
+	return true
+
+
 ## THE MAP MUST NOT RUN UNDER THE HUD. The panel's width comes out of the map's width term, so the map
 ## shrinks (Maren's ruling). Checked at several world sizes, including one far too big to fit.
 func test_the_map_always_stops_short_of_the_hud_column() -> bool:
