@@ -491,7 +491,7 @@ func test_a_menu_row_carries_the_sims_dead_end_clause_and_only_then() -> bool:
 			checked += 1
 			# RULING 1: the row is there and its button is pressable whatever the sim says about
 			# the output. Absence is never a cue and neither is a greyed-out button.
-			var button := _find_button(row, AssayHud.make_button_text())
+			var button := _find_button(row, AssayHud.make_launch_text())
 			if button == null:
 				ok = _fail("row %d has no button" % i)
 				break
