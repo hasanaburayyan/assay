@@ -94,6 +94,27 @@ static func is_blind_name(name: String) -> bool:
 	return all_digits(stem)
 
 
+## The moment already written under `shot_name`'s blind name, if it is a DIFFERENT moment; else "".
+##
+## **TWO MOMENTS MAY NOT SHARE AN ORDINAL -- AND A MOMENT RE-TAKEN IS NOT TWO MOMENTS.** The first
+## version of this asked only `taken.has(blind)`, and the real blind run refused itself at the second
+## frame: `04-pack.png` is shot repeatedly on purpose (`window_shot.gd` passes `guard_repeat := false`
+## for it alone, because it is a high-water mark the tool NOTICES as the pack grows, and the last
+## write is the answer). A guard that cannot tell a re-take from a clash stops the run it was added
+## to protect. **535 green tests could not see that; the six-minute run saw it on frame two.**
+##
+## What it still catches is the thing worth catching: `08-whole-world.png` and `08-other.png` both
+## becoming `08.png`, where the second silently replaces the first and the set comes back a picture
+## short of what its own report lists.
+static func collides_with(taken: Dictionary, shot_name: String) -> String:
+	var blind := blind_frame_name(shot_name)
+	if blind == "":
+		return ""
+	if taken.has(blind) and String(taken[blind]) != shot_name:
+		return String(taken[blind])
+	return ""
+
+
 ## Everything in `names` that may not sit in a blind `frames/` directory, sorted.
 ##
 ## **ONE QUESTION, ASKED OF A LIST, so a test can ask it without a disk.** The old sweep took the

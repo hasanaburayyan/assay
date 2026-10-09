@@ -118,6 +118,28 @@ func test_a_name_with_no_ordinal_is_refused_rather_than_passed_through() -> bool
 	return true
 
 
+func test_a_moment_re_taken_is_not_two_moments_sharing_an_ordinal() -> bool:
+	# **THE CASE A REAL BLIND RUN CAUGHT AND 534 GREEN TESTS COULD NOT.** My first collision guard
+	# asked `taken.has(blind)` and refused the run at frame two, because `04-pack.png` is shot
+	# several times on purpose -- the only frame `window_shot.gd` passes `guard_repeat := false` for,
+	# since it is a high-water mark the tool notices as the pack grows and the last write is the
+	# answer. A guard that cannot tell a re-take from a clash stops the run it was added to protect.
+	var taken := {"04.png": "04-pack.png"}
+	if AssayBlindName.collides_with(taken, "04-pack.png") != "":
+		return _fail("a re-take of 04-pack.png was called a collision, which is what broke the run")
+	# And the thing worth catching still is: a DIFFERENT moment on the same ordinal.
+	if AssayBlindName.collides_with({"08.png": "08-whole-world.png"}, "08-other.png") \
+			!= "08-whole-world.png":
+		return _fail("two different moments on ordinal 08 were not reported as a clash")
+	if AssayBlindName.collides_with({}, "01-join.png") != "":
+		return _fail("an empty set cannot collide with anything")
+	# A name with no ordinal has no blind name to clash over; `_write_path` fails it earlier, and
+	# this must not be the place that reports it, or the run gets the wrong sentence.
+	if AssayBlindName.collides_with({"04.png": "04-pack.png"}, "frame.png") != "":
+		return _fail("a name with no ordinal was reported as a collision instead of as unnameable")
+	return true
+
+
 func test_every_frame_the_shared_tool_shoots_can_be_made_blind() -> bool:
 	# **THE ONE THAT WOULD HAVE CAUGHT THE REAL BUG**, and the only one here that cannot go stale:
 	# it reads the shot list out of `window_shot.gd` rather than carrying a copy of it. A unit test

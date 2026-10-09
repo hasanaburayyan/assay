@@ -2887,6 +2887,12 @@ func _frame_path(shot_name: String) -> String:
 ## silently overwrites the first and the set comes back one picture short of what its own report
 ## lists. The descriptive names make that impossible today, which is exactly why it would survive
 ## being introduced.
+##
+## **A MOMENT RE-TAKEN IS NOT TWO MOMENTS, AND THE FIRST VERSION OF THIS GOT THAT WRONG IN THE
+## DIRECTION THAT BREAKS THE RUN.** `04-pack.png` is shot several times by design -- it is the only
+## frame passing `guard_repeat := false`, because it is a high-water mark this tool NOTICES as the
+## pack grows and the last write is the answer. A `has()` on the blind name called the second write a
+## clash and refused the run at frame two. The suite could not see it; the real blind run did.
 func _write_path(shot_name: String) -> String:
 	var path := _frame_path(shot_name)
 	if path == "":
@@ -2895,13 +2901,13 @@ func _write_path(shot_name: String) -> String:
 				+ "one keep a name that tells a cold reader what to find.") % shot_name)
 		return ""
 	if _blind and not _names_marks(shot_name):
-		var blind := path.get_file()
-		if _blind_names.has(blind):
+		var clash := AssayBlindName.collides_with(_blind_names, shot_name)
+		if clash != "":
 			_finish(false, ("%s and %s both become %s, so one would overwrite the other and the set "
 					+ "would come back one picture short of what its own report lists")
-					% [_blind_names[blind], shot_name, blind])
+					% [clash, shot_name, path.get_file()])
 			return ""
-		_blind_names[blind] = shot_name
+		_blind_names[path.get_file()] = shot_name
 	return path
 
 
