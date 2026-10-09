@@ -3902,6 +3902,68 @@ func test_build_refuses_an_unfinished_design_without_eating_it() -> bool:
 	return ok
 
 
+## **`unfinished` AND `fault` ARE NOT THE SAME QUESTION, AND THIS IS THE STATE THAT PROVES IT**
+## (ASSA-373's second box: *"never a string test on `fault`"*).
+##
+## **WHY A CONTRACT TEST RATHER THAN A CLIENT ONE.** `_send_build`'s gate reads `unfinished`; swapping
+## it for `fault != ""` leaves every client test of mine GREEN, because in every state a PRESS can
+## reach the two agree. So the box cannot be held by the press -- it is held by showing that the sim
+## answers a non-empty `fault` with `unfinished` FALSE, which is the readout a text gate would refuse
+## and the flag would not. `AssemblyError::is_unfinished` is where the sim draws that line
+## (`assembly.rs:726`: `TooFew` is recoverable, `NoSuchSlot` and `TooMany` are not).
+##
+## **THE REQUIRED SLOT IS FILLED ON PURPOSE.** `validate` reports one error, and a frame with an empty
+## required slot would answer `TooFew` -- which IS unfinished -- so an unfilled fixture would make the
+## two fields agree and this test would pass about the wrong state. That is the near-miss shape I keep
+## hitting: a mutation tripping an earlier assertion than the one it is aimed at.
+##
+## **WHAT THIS DOES NOT CLAIM: what `Build` should do about such a readout.** Maren scoped that to
+## ASSA-373 part 2 by name (`TooMany` after a frame switch), and it is unreachable by presses today --
+## `part_press_refusal` refuses the mount that would make it. Asserting a behaviour here would be me
+## inventing the ruling part 2 exists to make.
+func test_the_sims_unfinished_flag_is_not_its_fault_sentence() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := true
+	var spare := String(_roomiest_frame().get("mounts", ""))
+	var narrow := _frame_without(spare)
+	var needs := _required_slot_of(narrow)
+	if spare == "" or narrow.is_empty() or needs == "":
+		screen.queue_free()
+		return _fail(("premise: no frame in the catalogue both lacks a `%s` slot and requires something "
+				+ "(%s), so there is no permanently-refused design to read") % [spare, narrow])
+	screen._building = [_part_stack_of(String(narrow.get("name", ""))),
+			_part_stack_of(needs), _part_stack_of(spare)]
+	var readout: Dictionary = screen._design_readout()
+	var fault := String(readout.get("fault", ""))
+	if fault == "":
+		ok = _fail(("mounting a `%s` on a `%s`, which has no such slot, is no fault to the sim (%s)")
+				% [spare, String(narrow.get("name", "")), readout])
+	elif bool(readout.get("unfinished", false)):
+		ok = _fail(("the sim calls `%s` unfinished (`%s`), so the flag and the sentence agree here and "
+				+ "a text gate would be indistinguishable") % [readout, fault])
+	elif String(readout.get("verdict", "")) != "":
+		ok = _fail("a design the sim refuses carries the verdict `%s`" % String(readout.get("verdict", "")))
+	screen.queue_free()
+	return ok
+
+
+## **A FRAME WITH NO SLOT OF THIS KIND AT ALL**, out of the sim's catalogue -- the held frame today,
+## named by its shape rather than by its name so a fifth kind does not rewrite the test.
+func _frame_without(slot_kind: String) -> Dictionary:
+	for entry in AssaySimHost.part_kinds():
+		var row: Dictionary = entry
+		if not bool(row.get("is_frame", false)):
+			continue
+		var offers := false
+		for slot in (row.get("slots", []) as Array):
+			if String((slot as Dictionary).get("name", "")) == slot_kind:
+				offers = true
+		if not offers:
+			return row
+	return {}
+
+
 ## **THE NAME OF ONE SLOT THIS FRAME REQUIRES, OR `""`** -- out of `slot_boxes`, which is the same
 ## walk the screen draws the shape from, so a test and the picture cannot disagree about which boxes
 ## are required. `required` is per BOX (`i < min`), not per kind, so the first required box's name is
