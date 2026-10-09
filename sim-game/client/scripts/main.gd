@@ -5385,9 +5385,35 @@ func _slot_box(box: Dictionary) -> Control:
 ## **THE PRESS IS `_choose_part`, WHICH ASKS THE SIM FIRST** (ASSA-86 ruling 2): a press that could
 ## never lead to a machine is refused in the sim's own sentence, at the press, rather than confirmed
 ## here and refused at `Assemble` -- which clears the whole design and loses the good presses too.
+##
+## **AND THE SAME QUESTION IS NOW ASKED BEFORE THE ROW IS DRAWN, NOT ONLY AT THE PRESS** (ASSA-371,
+## Maren reading the `slots-full` frame cold). On a full frame every row in this list was a live
+## control whose only outcome was a refusal: press `2 x Tonore head (A)` with the head box filled and
+## `fault_adding` answers `TooMany`, the toast says so, and nothing is appended. Nothing lied -- but
+## **learning it cost a press**, which ASSA-316 ruling 2 forbids: *the reason is always reachable and
+## reaching it must never cost a press.* This is ASSA-351's defect one screen over, and the remedy is
+## ASSA-351's: the sim's own refusal chain as a predicate, asked before the control is drawn.
+##
+## **THE ROW STAYS, WHICH IS THE HALF THAT IS A RULING RATHER THAN AN IMPLEMENTATION.** A pack stack
+## vanishing from this list because the design happens to be full is a list that changes membership
+## for a reason the player cannot see -- and it would come back on the next unmount, which reads as
+## the game forgetting what you are carrying. So a refused kind is drawn present, not pressable, and
+## **carries `part_press_refusal`'s sentence verbatim** under it. Both the contingent refusal
+## (`TooMany`, cured by taking a hopper off) and the frame-permanent one (`NoSuchSlot`) SHOW, per
+## ASSA-351 box 4: the lever for both is on this screen, one click away in block 2.
+##
+## **THE SENTENCE IS NEVER COMPOSED HERE AND THE LABEL IS NEVER TOUCHED.** The refusal goes in its own
+## `_note`, not appended to the button's text, because `stack_line` IS that button's text and three
+## instruments look rows up by it (`tools/limpet_build_screen_shot.gd::_mount_one` among them). A
+## reason glued onto a label would have broken the lookup and read as a missing row.
 func _rebuild_build_mounts() -> void:
 	_clear(_build_mounts)
 	var kinds := AssaySimHost.part_kinds()
+	# **THE SAME `chosen` `_choose_part` BUILDS AT THE PRESS**, frame included, so the control and its
+	# press are asking the sim one question and cannot disagree about the answer.
+	var chosen := PackedStringArray()
+	for entry in _building:
+		chosen.append(String((entry as Dictionary).get("kind", "")))
 	var offered := 0
 	for entry in (_sim.inventory_of(_client.player_id) if _client != null else []):
 		var stack: Dictionary = entry
@@ -5395,9 +5421,22 @@ func _rebuild_build_mounts() -> void:
 		if part.is_empty() or bool(part.get("is_frame", false)):
 			continue
 		offered += 1
-		_build_mounts.add_child(_button(AssayHud.stack_line(stack),
+		var refusal := AssaySimHost.part_press_refusal(chosen, String(stack.get("kind", "")))
+		var row := _button(AssayHud.stack_line(stack),
 				func() -> void: _choose_part(stack),
-				"mount one on the frame you are building on"))
+				"mount one on the frame you are building on" if refusal == "" else refusal)
+		if refusal == "":
+			_build_mounts.add_child(row)
+			continue
+		# **THE PRESS STAYS CONNECTED UNDER THE DISABLED FLAG.** ASSA-37's rule was that the sim does
+		# the refusing, and that is still true one layer down: if anything ever reaches this control
+		# anyway -- a synthetic `pressed.emit()`, a future keyboard path -- `_choose_part` asks the
+		# same question again and still refuses. Disabling is what saves the press, not what decides.
+		row.disabled = true
+		var held := VBoxContainer.new()
+		held.add_child(row)
+		held.add_child(_note(refusal))
+		_build_mounts.add_child(held)
 	if offered == 0:
 		_build_mounts.add_child(_note("you are not carrying anything that mounts on a frame"))
 
@@ -6121,6 +6160,14 @@ func _insert_into(at: int, stack: Dictionary, slot: String, want: int) -> void:
 ## sim's own wording (ASSA-102); a design that is merely half built answers `""`, because the
 ## recoverable/permanent line is a rule in there and not something GDScript gets to guess at.
 ## Nothing is disabled either (ASSA-37): the button stays pressable and the sim does the refusing.
+##
+## **THAT LAST SENTENCE IS NARROWED BY ASSA-371 AND I AM NOT DELETING IT, BECAUSE ITS REASON STILL
+## HOLDS WHERE IT WAS WRITTEN.** `what to mount` now disables a row the sim would refuse and draws
+## the refusal under it, so on that list the reason no longer costs a press (ASSA-316 ruling 2).
+## **What has not changed is who decides:** the predicate `_rebuild_build_mounts` asks is this same
+## `part_press_refusal`, the press stays connected beneath the disabled flag, and this function
+## refuses again if anything reaches it. ASSA-37's rule was that GDScript may not invent a limit;
+## disabling a control whose refusal the SIM has already stated is not inventing one.
 func _choose_part(stack: Dictionary) -> void:
 	var chosen := PackedStringArray()
 	for entry in _building:
