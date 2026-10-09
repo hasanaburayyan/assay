@@ -898,9 +898,26 @@ const MENU_ANCHOR_GAP := 12.0
 ## the panel's own padding out of the theme instead of this number carrying it. A floor with the
 ## padding baked in would be wrong the day the panel's stylebox changes, and nothing would say so.
 const MENU_FLOOR_PX := 343.0
-const MENU_CAP_PX := 408.0
 
-## **WHAT THE WORST CASE ACTUALLY MEASURES, WHICH IS 44 PX MORE THAN THE CAP ALLOWS** (ASSA-334).
+## **THE CAP IS THE RATCHET, AND THAT IS MAREN'S ONE CONDITION FOR RAISING IT** (ASSA-334 box 8).
+##
+## It was 408 -- her ASSA-316 ruling 1, half the world less two pads. The worst case then measured
+## **452**, so the widest control the menu can be handed was being CLIPPED by the cap meant to protect
+## it. She ruled the cap up: *"It was never a taste number and you measured the thing it was made of
+## ... The cap's reason survives at the new number, so the number moves."*
+##
+## **WRITTEN AS THE CONSTANT AND NOT AS `452.0`, WHICH IS THE WHOLE CONDITION SHE ATTACHED:** *"the
+## sweep must read `MENU_WORST_CONTENT_PX`, not a literal 452. If the ratchet and the clearance proof
+## can drift apart, the ratchet records a number nothing checks."* `test_hud.gd`'s anchoring sweep
+## sweeps at `MENU_CAP_PX`, so defining the cap AS the ratchet is what wires the two together: the day
+## the worst case grows, the sweep proves clearance at the NEW width or it reddens. Two literals that
+## happened to agree would have let the proof go stale in silence.
+const MENU_CAP_PX := MENU_WORST_CONTENT_PX
+
+## **WHAT THE WORST CASE ACTUALLY MEASURES -- AND SINCE MAREN RULED BOX 8, IT IS ALSO THE CAP**
+## (ASSA-334). For one day this sat 44 px ABOVE the cap, which meant the widest control the menu can
+## be handed was clipped by the number meant to protect it. She chose the first of the three ways out
+## below; `MENU_CAP_PX` is now defined as this constant, so the two cannot drift.
 ##
 ## **A MEASUREMENT ON RECORD, NOT A SECOND CAP.** Maren's §6 floor is 343 px for the widest string the
 ## sim can hand this menu. Measured here from the sim's own bounds -- a four-digit stack, a
@@ -909,16 +926,18 @@ const MENU_CAP_PX := 408.0
 ## real `PanelContainer` the box needs **452 px**. The 40 px on top is the two styleboxes; the 69 px
 ## between 343 and 412 is a longer worst case than hers, not a disagreement about a measurement.
 ##
-## **SO THE FLOOR CANNOT PAY FOR THE CAP AT THE WORST CASE, AND THE CAP IS HERS.** Today's real menu is
-## 254 px, comfortably inside 408; the overflow needs a 20-char species AND a four-digit stack at once.
-## Three ways out, all hers to choose: raise the cap to 452 (every anchor position still holds it -- the
-## sweep in `test_hud.gd` passes at 452 in a 912 px world), let the put button ellipsis past the cap, or
-## shorten the label. **I am not picking one**: §6 is the box where she retracted her own first floor
-## after measuring it, and the same kind of measurement is what produced this.
+## **THE FLOOR COULD NOT PAY FOR THE CAP AT THE WORST CASE, AND THE CAP WAS HERS TO MOVE.** Today's
+## real menu is 254 px; the overflow needs a 20-char species AND a four-digit stack at once. Three
+## ways out were put to her and **she took the first: raise the cap to 452**, every anchor position
+## still holding it -- the sweep in `test_hud.gd` passes at 452 in a 912 px world. Not the ellipsis,
+## in her words, because *"the put button is the one control §11.41 sizes, and a clipped label is the
+## one thing a player is handed and cannot read"*; not a shorter label, because that undoes ruling 5.
 ##
-## **IT IS A RATCHET AND THAT IS THE ONLY REASON IT MAY SIT ABOVE THE CAP.** `test_buttons.gd` asserts
+## **IT IS STILL A RATCHET, AND BEING THE CAP TOO IS WHAT GIVES IT TEETH.** `test_buttons.gd` asserts
 ## the worst case is no WIDER than this, so the day a label grows the suite reddens rather than the menu
-## quietly overflowing -- ASSA-287's treatment of a number we do not like but must not lose.
+## quietly overflowing -- ASSA-287's treatment of a number we do not like but must not lose. Raising it
+## to absorb such a growth now also widens the menu and re-runs the clearance sweep at the new width,
+## which is the coupling Maren asked for: the number cannot be bumped without re-proving the geometry.
 const MENU_WORST_CONTENT_PX := 452.0
 
 ## **THE COUNTS COLUMN IN A MENU'S RATIO ROW, FIXED FOR `AssayReadingRow.VALUE_W`'S REASON** (ASSA-334,
