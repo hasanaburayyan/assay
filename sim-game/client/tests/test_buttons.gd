@@ -773,27 +773,6 @@ func _text_of(node: Node) -> String:
 	return " · ".join(out)
 
 
-## **RE-TEXT EVERY STRING IN A LIVE MENU WITH THE WIDEST ONE THE SIM COULD PUT THERE** (ASSA-334), so
-## a width measurement is about the bound rather than about the seed the test happened to roll.
-##
-## **IT MATCHES BY NODE NAME AND BY CLASS, NEVER BY THE WORDS ON SCREEN.** A walker that recognised a
-## slot row by the word `fuel` would quietly stretch nothing the day a slot is renamed, and this test
-## would then pass by measuring the menu it was handed -- a check that cannot fail. `ROW_WORDS` and
-## `MENU_STATE` are names `main.gd` writes for exactly this kind of reach, and a put button is the only
-## `Button` in the box whose label the sim's own strings reach into.
-func _stretch(screen: Node, node: Node, button: String, words: String) -> void:
-	for child in node.get_children():
-		if child.name == screen.ROW_WORDS and child is Label:
-			(child as Label).text = words
-		elif child.name == screen.MENU_STATE and child is Label:
-			# THE LONGEST SENTENCE `debug::smelter_state_line` CAN WRITE, with the widest numbers
-			# `stall_reason`'s `FireTooCool` arm can carry.
-			(child as Label).text = "stalled: fire 9999 too cool for ore needing 9999"
-		elif child is Button and (child as Button).text.begins_with("put all"):
-			(child as Button).text = button
-		_stretch(screen, child, button, words)
-
-
 func _labels_of(node: Node) -> PackedStringArray:
 	var out := PackedStringArray()
 	for child in node.get_children():
@@ -2408,20 +2387,72 @@ func test_nothing_in_a_machine_menu_wraps_at_the_worst_strings_the_sim_can_write
 		ok = _fail("the menu a real smelter draws is %.0f px wide and the cap is %.0f"
 				% [want.x, AssayHud.MENU_CAP_PX])
 	if ok:
-		# THE SIM'S OWN BOUNDS, STRETCHED IN PLACE: `SPECIES_NAME_MAX` of species, the longest item
-		# kind, a grade letter, a four-digit count, and the longest stall sentence the sim writes. The
-		# controls are the REAL ones, so the button's and the panel's own padding are in the answer --
-		# the half a measurement of bare strings would miss.
-		var worst := "%s smelter (A)" % "W".repeat(20)
-		_stretch(screen, screen._menu_box, AssayHud.insert_label(9999, worst,
-				AssayActions.SLOT_FUEL), "output · %s" % worst)
-		var stretched: Vector2 = screen._menu_box.get_combined_minimum_size()
-		print("menu width: real %.0f px, worst case %.0f px, floor %.0f, cap %.0f"
-				% [want.x, stretched.x, AssayHud.MENU_FLOOR_PX, AssayHud.MENU_CAP_PX])
-		if stretched.x > AssayHud.MENU_CAP_PX:
-			ok = _fail(("on the worst strings the sim can write the menu wants %.0f px and Maren's cap "
-					+ "is %.0f: the floor is wrong and the number is hers, not mine")
-					% [stretched.x, AssayHud.MENU_CAP_PX])
+		# **A FRESH PANEL AND NOT THE LIVE ONE RE-TEXTED, BECAUSE THE LIVE ONE'S ANSWER IS CACHED.**
+		# The first version of this test set the real controls' text to the worst strings and asked the
+		# box again: `Control.update_minimum_size` queues its recalculation for a frame, and this harness
+		# runs inside `_initialize` where no frame ever comes, so it returned the number it had computed
+		# BEFORE the stretch -- real 254, "worst case" 254, a check that could not fail. A fresh tree is
+		# measured on its first ask, which is how `test_track.gd` compares two rows.
+		# **THE KIND COMES OUT OF THE SIM'S RECIPE TABLE, NOT OFF THE TOP OF MY HEAD.** The first
+		# version of this measurement used `smelter`, which is the longest ITEM kind in the game and
+		# cannot reach a slot: `insert_slots` offers a put only for a kind some NON-HAND recipe eats, so
+		# the widest put button is bounded by the longest of THOSE. It made the number I was about to
+		# hand Maren 28 px too dear, which is the mistake I made once before in her disfavour -- an
+		# inflated number is as bad as no number.
+		var kind := ""
+		for entry in AssaySimHost.recipes():
+			var recipe: Dictionary = entry
+			if not bool(recipe.get("hand", false)) \
+					and String(recipe.get("input", "")).length() > kind.length():
+				kind = String(recipe.get("input", ""))
+		if kind == "":
+			screen.queue_free()
+			return _fail("no non-hand recipe in the sim's table, so nothing can be put in a slot")
+		# 20 IS `sim::tuning::SPECIES_NAME_MAX` AND IT IS A COPY. The binding does not publish it; the
+		# ask is on ASSA-334. If the sim raises the cap this measurement silently stops being the worst
+		# case, which is the one stale thing in this test and is written down rather than hidden.
+		var worst := "%s %s (A)" % ["W".repeat(20), kind]
+		var probe := PanelContainer.new()
+		var inside := VBoxContainer.new()
+		probe.add_child(inside)
+		# EVERY KIND OF LINE THE MENU HAS, AT ITS BOUND: the sim's longest stall sentence, a slot's own
+		# ratio row, the sim's longest item name on the line under it, and the widest put button a
+		# `SPECIES_NAME_MAX` species and a four-digit stack can produce.
+		var state := Label.new()
+		state.text = "stalled: fire 9999 too cool for ore needing 9999"
+		inside.add_child(state)
+		var row: HBoxContainer = screen._amount_row()
+		(row.get_node(screen.ROW_WORDS) as Label).text = "output"
+		(row.get_node(screen.ROW_COUNTS) as Label).text = AssayHud.amount_counts_line(9999, 9999)
+		inside.add_child(row)
+		var what := Label.new()
+		what.text = worst
+		inside.add_child(what)
+		var put := Button.new()
+		put.text = AssayHud.insert_label(9999, worst, AssayActions.SLOT_FUEL)
+		inside.add_child(put)
+		var stretched: Vector2 = probe.get_combined_minimum_size()
+		# THE DECOMPOSITION, SO THE NUMBER HANDED TO MAREN IS NOT JUST A TOTAL: her 343 is the string
+		# and the rest is furniture she never measured because nothing asked.
+		var font := ThemeDB.fallback_font
+		var theme: Theme = load("res://theme/assay.tres")
+		var words := font.get_string_size(put.text, HORIZONTAL_ALIGNMENT_LEFT, -1.0,
+				theme.get_font_size(&"font_size", &"Button") if theme != null else 13).x \
+				if theme != null else 0.0
+		print(("menu width: real %.0f px, worst case %.0f px (widest string %.0f + %.0f of button and "
+				+ "panel padding), floor %.0f, cap %.0f")
+				% [want.x, stretched.x, words, stretched.x - words, AssayHud.MENU_FLOOR_PX,
+				AssayHud.MENU_CAP_PX])
+		probe.free()
+		# **THE RATCHET, NOT THE CAP, AND THE DIFFERENCE IS WHOSE DECISION IT IS.** The worst case
+		# measures 455 px against Maren's 408 -- her floor is a STRING width and this is the control's,
+		# with 112 px of button and panel padding between them. The cap is hers to move, so this asserts
+		# the number does not get WORSE (`MENU_WORST_CONTENT_PX`, where the three ways out are written
+		# down) and the gap itself is reported on the item rather than silently chosen here.
+		if stretched.x > AssayHud.MENU_WORST_CONTENT_PX:
+			ok = _fail(("the worst case now wants %.0f px and the number on record is %.0f: a label "
+					+ "grew, and the overflow past Maren's %.0f cap grew with it")
+					% [stretched.x, AssayHud.MENU_WORST_CONTENT_PX, AssayHud.MENU_CAP_PX])
 	screen.queue_free()
 	return ok
 

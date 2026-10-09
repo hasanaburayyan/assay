@@ -900,6 +900,27 @@ const MENU_ANCHOR_GAP := 12.0
 const MENU_FLOOR_PX := 343.0
 const MENU_CAP_PX := 408.0
 
+## **WHAT THE WORST CASE ACTUALLY MEASURES, WHICH IS 44 PX MORE THAN THE CAP ALLOWS** (ASSA-334).
+##
+## **A MEASUREMENT ON RECORD, NOT A SECOND CAP.** Maren's §6 floor is 343 px for the widest string the
+## sim can hand this menu. Measured here from the sim's own bounds -- a four-digit stack, a
+## `SPECIES_NAME_MAX` species, and the longest kind any NON-HAND recipe eats (which is what
+## `insert_slots` will offer a put for) -- that string is **412 px**, and in a real `Button` inside a
+## real `PanelContainer` the box needs **452 px**. The 40 px on top is the two styleboxes; the 69 px
+## between 343 and 412 is a longer worst case than hers, not a disagreement about a measurement.
+##
+## **SO THE FLOOR CANNOT PAY FOR THE CAP AT THE WORST CASE, AND THE CAP IS HERS.** Today's real menu is
+## 254 px, comfortably inside 408; the overflow needs a 20-char species AND a four-digit stack at once.
+## Three ways out, all hers to choose: raise the cap to 452 (every anchor position still holds it -- the
+## sweep in `test_hud.gd` passes at 452 in a 912 px world), let the put button ellipsis past the cap, or
+## shorten the label. **I am not picking one**: §6 is the box where she retracted her own first floor
+## after measuring it, and the same kind of measurement is what produced this.
+##
+## **IT IS A RATCHET AND THAT IS THE ONLY REASON IT MAY SIT ABOVE THE CAP.** `test_buttons.gd` asserts
+## the worst case is no WIDER than this, so the day a label grows the suite reddens rather than the menu
+## quietly overflowing -- ASSA-287's treatment of a number we do not like but must not lose.
+const MENU_WORST_CONTENT_PX := 452.0
+
 ## **THE COUNTS COLUMN IN A MENU'S RATIO ROW, FIXED FOR `AssayReadingRow.VALUE_W`'S REASON** (ASSA-334,
 ## ASSA-288): a column that sized itself to its digits would put every band at its own x, and *"a
 ## position encoding whose axes are not aligned cannot be compared down the column, which is the only

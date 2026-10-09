@@ -4172,13 +4172,24 @@ func _rebuild_machine_menu_rows(stacks: Array, it: Dictionary) -> void:
 		var slot: Dictionary = entry
 		var role := String(slot.get("role", "?"))
 		var held: Variant = slot.get("held")
+		var group := VBoxContainer.new()
+		group.add_theme_constant_override("separation", 2)
 		var fill := _amount_row()
-		# THE SLOT'S OWN WORD FROM THE SIM (`SlotRole::name`), and the held item's name verbatim beside
-		# it -- two sim nouns, joined and neither reworded. An empty slot says the slot and the band says
-		# the rest: `0 of 5` with no fill is what empty looks like, so no word for it is invented here.
-		_set_amount_row(fill, "%s · %s" % [role, String((held as Dictionary).get("name", ""))] \
-				if held != null else role, int(slot.get("count", 0)), int(slot.get("cap", 0)))
-		_menu_rows.add_child(fill)
+		# THE SLOT'S OWN WORD FROM THE SIM (`SlotRole::name`) AND NOTHING ELSE ON THIS LINE. An empty
+		# slot says the slot and the band says the rest: `0 of 5` with no fill is what empty looks like,
+		# so no word for it is invented here.
+		_set_amount_row(fill, role, int(slot.get("count", 0)), int(slot.get("cap", 0)))
+		group.add_child(fill)
+		# **WHAT IS IN IT GETS ITS OWN LINE, AND THE REASON IS A MEASUREMENT.** The name was on the line
+		# above, after the slot -- and that line's label column is CLIPPED (it has to be, or a long word
+		# would push the band out of line with the band above it), so a 20-char species came out as an
+		# ellipsis: `output · Remdornitexxxxx…`. The sim's own name for an item is not a thing this menu
+		# may cut. On its own line it is 237 px of the 343 px floor (Maren's §6 table) and whole.
+		if held != null:
+			var what := _note(String((held as Dictionary).get("name", "")))
+			what.autowrap_mode = TextServer.AUTOWRAP_OFF
+			group.add_child(what)
+		_menu_rows.add_child(group)
 		_menu_slot_rows[role] = fill
 		var tag: Variant = slot.get("insert_tag")
 		if tag == null:
@@ -4242,11 +4253,11 @@ func _refresh_machine_slot_fills(it: Dictionary) -> void:
 		var row: Variant = _menu_slot_rows.get(String(slot.get("role", "?")))
 		if row == null:
 			continue
-		var held: Variant = slot.get("held")
-		_set_amount_row(row, "%s · %s" % [String(slot.get("role", "?")),
-				String((held as Dictionary).get("name", ""))] if held != null \
-				else String(slot.get("role", "?")),
-				int(slot.get("count", 0)), int(slot.get("cap", 0)))
+		# THE ROLE AND THE TWO NUMBERS, WHICH ARE THE THREE THINGS ON THIS LINE. What the slot HOLDS is
+		# the line below and is `_slot_shape`'s business: swapping it rebuilds, so re-texting it here
+		# would be a second writer for one fact.
+		_set_amount_row(row, String(slot.get("role", "?")), int(slot.get("count", 0)),
+				int(slot.get("cap", 0)))
 
 
 ## **BESIDE ITS MACHINE, RE-ASKED EVERY REFRESH** (ASSA-334; Maren's reversal of her own ruling 1).
