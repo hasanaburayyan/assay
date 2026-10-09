@@ -609,14 +609,23 @@ func _measure_commit_bar(screen_rect: Rect2) -> void:
 	# STATES: the numbers go to her and the RELATIONS are the faults.** Her ruling 4 is
 	# `|Build.centre - row 1.centre| <= 2`, so a tool that printed 5 and exited 0 would be green about
 	# a ruling it had just measured broken -- the exact shape of defect every other check here exists
-	# to refuse. `BUILD_SENTENCE_INSET` is derived from a `BODY` row (its docstring says so: *"Build is
-	# 30 px and a BODY row is 18"*), so any first row that is NOT 18 px breaks it by half the
-	# difference, and this is where that shows up.
+	# to refuse. **THIS IS THE CHECK THAT FOUND ASSA-363**: the inset was the constant
+	# `BUILD_SENTENCE_INSET`, 6, derived from a `BODY` row, so the assembly path's `Display` row 1 came
+	# out 5 px low -- `(28 - 18) / 2`, printed here as a fault on the slots-full shot while the
+	# slots-empty shot beside it read 0. It is now `AssayHud.commit_inset` off the heights this window
+	# laid out, and the inset is printed below so the pair can be read without re-deriving it.
+	var inset := 0
+	var inset_box := _screen._build_said_inset as Control
+	if inset_box != null:
+		inset = inset_box.get_theme_constant(&"margin_top")
+	print("INSET    sentence inset %d px  (Build %.0f, row 1 %.0f -> commit_inset %.1f)"
+			% [inset, act_rect.size.y, row_one_height,
+			AssayHud.commit_inset(act_rect.size.y, row_one_height)])
 	if row_one_height > 0.0 and absf(row_one_centre - act_centre) > BOX_8_TOLERANCE:
 		_faults.append(("`Build`'s centre is %.0f and row 1's is %.0f, %.0f px apart against her %.0f "
-				+ "px bar: row 1 measures %.0f px, and `BUILD_SENTENCE_INSET` is (30 - 18) / 2")
+				+ "px bar: row 1 measures %.0f px against `Build`'s %.0f, and the sentence is inset %d")
 				% [act_centre, row_one_centre, absf(row_one_centre - act_centre), BOX_8_TOLERANCE,
-				row_one_height])
+				row_one_height, act_rect.size.y, inset])
 	var block6 := (_screen._build_cost as Control).get_parent() as Control
 	if block6 != null:
 		print("BLOCK 6  bottom %.0f, bar top %.0f, gap %.0f (her blocks end at y 513)"

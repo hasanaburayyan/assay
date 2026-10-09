@@ -1078,26 +1078,47 @@ static func build_screen_rect(world: Rect2, band_top: float) -> Rect2:
 ##     `Build` 30 px centred on row 1's 18 (top -6)         +  6
 ##                                                 bar min  = 114
 ##
-## **114, not 124 and not a round 128.** The 6 is `BUILD_SENTENCE_INSET` below and it is the same
+## **114, not 124 and not a round 128.** The 6 is `commit_inset(30, 18)` below and it is the same
 ## number twice on purpose: the overhang the bar must find room for IS the inset the sentence starts
 ## at, because `Build` is anchored to the bar's top.
+##
+## **AND THE 6 IN THIS SUM IS THE MAKE PATH'S, WHICH IS THE WORST CASE FOR THIS HEIGHT** (ASSA-363).
+## Since the inset is derived, the assembly path's `Display` row 1 insets by 1, not 6 -- a smaller
+## first row offset, so a bar sized for 6 is never short because of it. The number this sum is
+## genuinely short on is the ROW COUNT, which is Maren's (her 04:45 correction: `readout_after` is
+## five `·` clauses plus a two-row note, so seven rows, and her six came from a count measured at
+## block 5's 240 px carried across to this bar's 775). That is re-worded on ASSA-341, not here.
 const BUILD_COMMIT_BAR := 114.0
 
-## **WHERE THE SENTENCE'S FIRST ROW STARTS INSIDE THE COMMIT BAR** (ASSA-341 boxes 8-9).
+## **HOW FAR THE SHORTER OF `Build` AND ROW 1 IS INSET SO THE TWO CENTRES MEET** (ASSA-363; Maren's
+## ASSA-341 ruling 4, re-ruled as the relation it always was rather than the number I made of it).
 ##
-## **IT EXISTS SO THAT `Build`'S CENTRE LANDS ON ROW 1'S CENTRE, WHICH IS THE RULING** (Maren's
-## ruling 4: *"`Build` aligns with the sentence's FIRST ROW, which is `line`, the clause ASSA-88 ranks
-## highest"*). `Build` is 30 px and a `BODY` row is 18, so a button whose top is the bar's top sits 6
-## px low against the first row; insetting the sentence by `(30 - 18) / 2` puts the two centres
-## together without either control being centred in the BAR.
+## **HALF THE DIFFERENCE, CLAMPED AT 0.** `over` is the taller control's rendered height and `under`
+## the shorter's. Two controls anchored to the same top meet at their centres when the shorter starts
+## `(over - under) / 2` further down. The clamp is hers: a negative margin would push a control out of
+## the bar it is a block of.
 ##
-## **AND THAT IS THE HALF THAT MAKES BOX 9 TRUE BY CONSTRUCTION.** Box 9 asks that `Build`'s y not
-## move between a one-row and a six-row sentence. It used to be `SHRINK_CENTER`, which is centred in
-## whatever the bar grew to -- so at six rows and 118 px of content the button moved DOWN 3 px while
-## the sentence it is aligned to stayed put. Both controls now anchor to the bar's top, so neither
-## one's y is a function of the other's height, and that is a structural answer rather than an
-## arithmetic one that holds only for today's worst case.
-const BUILD_SENTENCE_INSET := 6.0
+## **THE WORKED EXAMPLE IS THE `6` THIS REPLACES, and it is kept because being a function of two
+## measured numbers is what made it checkable** (her ruling 5: *"I valued the 6 being a function and
+## not a number. A function of the row that is actually there is more of that, not less"*):
+##
+##     commit_inset(30, 18) = (30 - 18) / 2 = 6    a 30 px `Build` against a `BODY` row (the make path)
+##     commit_inset(30, 28) = (30 - 28) / 2 = 1    the same button against a `Display` row (assembly)
+##
+## **AND THE SECOND LINE IS WHY A CONSTANT CANNOT DO THIS JOB** (ASSA-363, measured at 1x):
+## `main.gd`'s `_said_about_design` draws row 1 at `Display` when the sim has a verdict word and at
+## `BODY` when it has a fault, so one screen needs 1 and 6 on two consecutive clicks. The old `6` was
+## measured on the path its author was looking at -- mine -- and left `Build` 5 px off row 1 on the
+## other, which is `(28 - 18) / 2`. Maren's standing ruling since (*"`Display` is for a word, never
+## for a sentence"*) makes two row-1 heights permanent, so this is the form and not a stopgap.
+##
+## **IT IS GIVEN RENDERED HEIGHTS AND NEVER A HEADLESS MEASUREMENT** (her constraint, off my own
+## ASSA-341 finding): the headless engine measures `Build`'s minimum at **28** and a real window lays
+## the same button out at **30**, so an inset baked from a headless read pins 5 and is wrong about
+## every screen a player sees. The caller reads `size.y` at layout time; this function is the
+## arithmetic only, which is what lets a test hold it without a window.
+static func commit_inset(over: float, under: float) -> float:
+	return maxf(0.0, (over - under) / 2.0)
 
 ## **HOW WIDE `Build`'S BOX MAY BE** (ASSA-332; her §5.4: *"Build's box is ≤ 160 px, so the sentence
 ## gets ≥ 687 px, the width the wrap was measured at"*).
