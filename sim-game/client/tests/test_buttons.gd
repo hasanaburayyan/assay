@@ -5079,3 +5079,60 @@ func _hidden_by(from: Node, stop: Node) -> Node:
 			return null
 		at = at.get_parent()
 	return null
+
+## **BLOCK 5's HEADING NAMES WHAT IS UNDER IT ON BOTH PATHS** (ASSA-369; Maren 13:42Z).
+##
+## `what you get` is right on the make path, where block 5 is a picture of the thing a recipe
+## makes, and wrong on the assembly path, where the rect is the mass/budget fill. A heading over
+## the wrong noun is this screen's own named defect — `_rebuild_build_screen`'s comment calls
+## `what to make` over a list of frames *"the labelled-wrong-thing defect rather than a stale
+## string"*, and block 2 has swapped by path since slice 2b for exactly that reason.
+##
+## **IT ASSERTS THE PAIR, NOT ONE STRING.** A test that only checked the assembly path would pass
+## on a build that said `mass against the frame's budget` over the make path's smelter picture —
+## the same defect facing the other way.
+##
+## **WHAT IT CANNOT SEE: whether the long form fits its column.** That is a laid-out width and this
+## runner never lays anything out. It is measured by `maren_headline_rows.gd` on the shipped
+## `Heading` font (one row at 244/240/220 px, two at 200; the column is 244) and confirmed on a 1x
+## shot. If the column is ever narrowed below 220 this test will still pass while the heading
+## wraps — which is why the fallback string is named in the code comment rather than left to memory.
+func test_block_fives_heading_names_what_is_under_it_on_both_paths() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	# **THE MAKE PATH IS OPENED THE WAY A PLAYER OPENS IT, not by setting the verb.** There is no
+	# `BUILD_MAKE`: `_assembling_mode()` is `_build_verb == BUILD_ASSEMBLE`, so "the make path" is
+	# whatever verb the SIM put on the offer. Typing one here would be this test inventing the sim's
+	# vocabulary — and my first version set a constant that does not exist, which the runner caught.
+	if not _mine_some_ore(screen):
+		return _fail("could not mine any ore, so the make path cannot be opened and this test "
+				+ "proves nothing")
+	var launcher := _make_launcher_for(screen, "ore")
+	if launcher == null:
+		return _fail("no menu row to open the build screen on: %s" % _text_of(screen._make))
+	launcher.pressed.emit()
+	var making: Label = screen._section_heading(screen._build_detail)
+	if making == null:
+		return _fail("block 5 has no heading at all, so nothing names the rect on either path")
+	var made := making.text
+	screen._build_verb = screen.BUILD_ASSEMBLE
+	screen._build_showing = screen.UNBUILT
+	screen._refresh_build_screen()
+	var assembling: Label = screen._section_heading(screen._build_detail)
+	if assembling == null:
+		return _fail("block 5's heading vanished on the assembly path")
+	if assembling.text == made:
+		return _fail(("block 5 reads `%s` on BOTH paths. On the make path it is a picture of the "
+				+ "thing you get; on the assembly path it is the mass/budget fill, and one word "
+				+ "cannot name both") % made)
+	# THE QUANTITY, NOT THE VERDICT. `SAFE / UNCERTAIN / WILL BREAK` is the commit bar's, and a
+	# heading that asked the same question would give the verdict a second home (ASSA-328 §2).
+	for word in ["SAFE", "UNCERTAIN", "WILL BREAK", "hold", "break"]:
+		if assembling.text.to_lower().contains(word.to_lower()):
+			return _fail(("block 5's heading on the assembly path is `%s`, which asks the question "
+					+ "the sim's verdict answers in the bar. A heading names the QUANTITY")
+					% assembling.text)
+	if not assembling.text.to_lower().contains("mass"):
+		return _fail(("block 5's heading on the assembly path is `%s` and the rect under it is a "
+				+ "mass against a budget") % assembling.text)
+	return true
