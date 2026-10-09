@@ -144,6 +144,8 @@ func _process(_delta: float) -> bool:
 			_take()
 		6:
 			_put()
+		10:
+			_aim_off_the_pair()
 		7:
 			_settle_then(8)
 		9:
@@ -305,7 +307,126 @@ func _put() -> void:
 		_bail("a smelter stands at %s and the anchor asked for was %s"
 				% [top_left_of(placed), _anchor])
 		return
+	_step = 10
+
+
+## **PARK THE TARGET WHERE IT CANNOT BE IN THE PICTURE** (ASSA-355 box 1, Maren 02:23Z).
+##
+## The frame this tool shot for ASSA-326 carried the selection ring on the 1x1 machine, and Nacre's
+## cold read turned on it: *"I would not have called it built if the white box had not been drawn on
+## it… Without it I think I would have called the whole mass one thing."* That last clause is an
+## INTROSPECTION. ASSA-355's first box is the observation — the same pair with the target on neither
+## building — and until it exists, *"two abutting buildings read as one"* rests on a reader imagining
+## a picture they were not shown.
+##
+## **THE RING IS A PLACEMENT RESIDUE, WHICH IS WHY THIS COSTS A CLICK AND NOT A FIXTURE** (Maren's
+## amendment to her own exclusion 1). `main.gd:6208-6212` returns into the machine menu on either
+## button over an occupied tile, **before** the one line that assigns `_target` — so a player cannot
+## aim the ring at a standing building at all, and the one in the old frame was left behind by the
+## play chain that planted the drill. Right-click anywhere empty and it moves.
+##
+## **IT GOES OUTSIDE THE DRAWN WINDOW, NOT MERELY OFF THE TWO BUILDINGS.** The box says "on NEITHER",
+## and a ring parked on a visible empty tile would satisfy that wording while still putting the
+## frame's brightest mark in front of the reader — a distractor in the exact channel the last read
+## tripped on. Outside the window there is nothing to discount.
+##
+## **AND THE CLICK IS THE PLAYER'S PATH, NOT A FIELD ASSIGNMENT.** `point_of_tile` is the screen's
+## own answer to where a tile is and `_unhandled_input` is the handler a mouse reaches, so this
+## exercises the same return-into-the-menu branch a player would. Setting `_target` directly would
+## park the ring and prove nothing about whether a player can.
+func _aim_off_the_pair() -> void:
+	_shut_the_panel()
+	var view: Dictionary = _screen._world.view
+	var window := AssayScene.visible_tiles(view["origin"], view["size"], view["world_tiles"])
+	var away := _a_tile_off_the_window(window, view["world_tiles"])
+	if away == Vector2i(-1, -1):
+		_bail("no empty tile outside the drawn window %s to park the target on" % window)
+		return
+	if not _click_right(away):
+		_bail("the screen has no cell size, so a tile cannot be turned into a click")
+		return
+	# THE OUTCOME, NOT THE GESTURE. A click that lands in the machine menu changes nothing here and
+	# would leave the residue exactly where the play chain left it.
+	if not _screen._targeted or _screen._target != away:
+		_bail("aimed %s but the target is %s, so the residue is still where the play left it"
+				% [away, _screen._target if _screen._targeted else "unset"])
+		return
+	_notes.append("the target was parked on %s, outside the drawn window %s, so this frame holds "
+			% [away, window] + "no selection ring at all -- ASSA-355 box 1's baseline")
+	print("  target parked on %s, outside the drawn window %s" % [away, window])
 	_step = 9
+
+
+## **PRESS ESC, BECAUSE THE CHAIN NOW ENDS WITH THE BUILD SCREEN STANDING OVER THE WORLD.**
+##
+## `_shoot_and_report`'s first check has caught it since #440: a played chain leaves `_build_verb`
+## set, and nothing closes that screen except the Close button, Esc, opening a machine menu, or the
+## sim stopping (`main.gd:1749 / 2138 / 4126 / 4453`). Building something does NOT close it, which
+## is a reasonable product decision — you may want to build again — and it means a tool that plays
+## and then photographs has to put the panel away itself.
+##
+## **THIS IS NOT MY CHANGE AND I CHECKED RATHER THAN ASSUMED.** The run that first hit it was the
+## one with the aim step in, so the aim step was the suspect. A control on the same `origin/main`
+## (a2ce195) with the aim step STASHED fails at exactly the same line, so the panel is main's and
+## the click is innocent. The frame this tool shot on 10-08 at 19:00 predates tonight's build-screen
+## work and got away with it.
+##
+## **ESC RATHER THAN THE CLOSE BUTTON**, because `_unhandled_key_input` documents it as the gesture
+## every pop-up answers to and calls both closes unconditionally — *"each close is a no-op on a
+## surface that is shut"* — so this cannot depend on which panel happens to be up. The outcome is
+## read back off `_build_screen_open()`; a key event that reached nothing would otherwise look the
+## same as one that worked.
+func _shut_the_panel() -> void:
+	if not _screen._build_screen_open():
+		return
+	var esc := InputEventKey.new()
+	esc.keycode = KEY_ESCAPE
+	esc.pressed = true
+	_screen._unhandled_key_input(esc)
+	if _screen._build_screen_open():
+		_bail("Esc did not close the build screen, so this frame would be a picture of a panel")
+		return
+	_notes.append("the build screen was open when the chain finished and Esc closed it before the "
+			+ "shot; nothing built it into the picture")
+	print("  the build screen was open after the chain; Esc closed it")
+
+
+## An EMPTY tile outside the drawn window, searched outward from the machine so the walk home is
+## short and the answer is deterministic for a seed. Empty matters twice: an occupied tile opens a
+## menu instead of moving the cursor, and a menu is a panel standing over the world.
+func _a_tile_off_the_window(window: Rect2i, world_tiles: Vector2i) -> Vector2i:
+	for radius in range(2, 48):
+		for step in [Vector2i(0, radius), Vector2i(0, -radius), Vector2i(radius, 0),
+				Vector2i(-radius, 0)]:
+			var tile: Vector2i = _machine_at + step
+			if tile.x < 0 or tile.y < 0 or tile.x >= world_tiles.x or tile.y >= world_tiles.y:
+				continue
+			if window.has_point(tile):
+				continue
+			if _screen._sim.tile_at(tile).get("building") != null:
+				continue
+			return tile
+	return Vector2i(-1, -1)
+
+
+## A RIGHT-CLICK ON A TILE, THROUGH THE HANDLER A MOUSE REACHES. Lifted from `button_play.gd::_click`
+## including the reason for the view switch: a tile outside the close-up's window has no point on
+## that view, so the press has to be made on the schematic, which is the whole reason the schematic
+## exists. The view is put back before anything is photographed.
+func _click_right(tile: Vector2i) -> bool:
+	if _screen._cell <= 0.0:
+		return false
+	var event := InputEventMouseButton.new()
+	event.button_index = MOUSE_BUTTON_RIGHT
+	event.pressed = true
+	var was: bool = _screen._close_up
+	if was and not AssayHud.world_rect().has_point(_screen.point_of_tile(tile)):
+		_screen._show_close_up(false)
+	event.position = _screen.point_of_tile(tile)
+	_screen._unhandled_input(event)
+	if was != _screen._close_up:
+		_screen._show_close_up(was)
+	return true
 
 
 ## **WAIT FOR THE SCREEN TO STOP SAYING WHAT I JUST DID, AND IT IS NOT A TIDY-UP.** The first frame
@@ -372,6 +493,29 @@ func _shoot_and_report() -> void:
 	if seen.size() < 2:
 		_bail("the frame is one flat colour, so nothing drew")
 		return
+	# **4. THE RING, COUNTED IN THE PICTURE RATHER THAN ARGUED FROM THE WINDOW.** `_aim_off_the_pair`
+	# parks the target outside the drawn window and checks `_target`; that is a claim about state,
+	# and what the cold reader gets is the FRAME. Maren found the old ring by counting this exact
+	# paint — *"exactly 224 pixels of HOVER (242,242,242) exist in the whole 1280x720 frame… every
+	# pure-white pixel in that picture is the selection ring and nothing else is"* — so the same
+	# count is the check, read off the painter's own ink and never typed. Striding would be wrong
+	# here where it is right above: 224 px is findable by a reader and missable by a stride of 4.
+	var ring := AssayHud.mark_ink(&"target").to_rgba32()
+	var ring_px := 0
+	var ring_first := Vector2i(-1, -1)
+	for y in range(image.get_height()):
+		for x in range(image.get_width()):
+			if image.get_pixel(x, y).to_rgba32() == ring:
+				ring_px += 1
+				if ring_first == Vector2i(-1, -1):
+					ring_first = Vector2i(x, y)
+	if ring_px > 0:
+		_bail(("%d px of the target's own ink are in this frame, first at %s, so it is not "
+				% [ring_px, ring_first]) + "ASSA-355's baseline: a reader would see the mark that "
+				+ "manufactured the boundary last time")
+		return
+	_notes.append("target ink in the frame: 0 px, counted exactly over all %d x %d"
+			% [image.get_width(), image.get_height()])
 	var name := blind_frame_name(1)
 	if not _is_blind_name(name):
 		_bail("the frame would be called %s, which is not a blind name" % name)
