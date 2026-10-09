@@ -2660,6 +2660,47 @@ func test_the_ring_stays_on_the_acted_on_tile_while_a_menus_machine_is_elsewhere
 	return ok
 
 
+## **THE STATE LINE COMES BACK OUT OF `FAILED` WHEN THE MACHINE STOPS BEING STALLED** (ASSA-334).
+##
+## **THE BUG THIS CLOSES REACHED A SCREENSHOT AND NO NUMBER SAW IT.** The refresh read the ordinary
+## ink back off the Label with `get_theme_color`, which answers out of that node's OWN overrides
+## first -- so after one stall the colour it restored was the `FAILED` it had just written, and the
+## line stayed red for the rest of the session. `nacre-assa334-anchor/14-machine-menu.png` had
+## `idle: nothing to refine` in (242,102,89) on a smelter the sim called idle.
+##
+## **IT FORCES THE RED RATHER THAN WAITING FOR A STALL**, which is the honest way to test a
+## transition whose other half needs fuel, a fire and twenty ticks: the defect is in the RESTORE, so
+## the fixture is "red is on the node, now refresh an idle machine".
+func test_an_idle_machines_state_line_is_not_left_in_the_failure_ink() -> bool:
+	var screen := _joined()
+	var ok := true
+	if _a_placed_smelter(screen) < 0:
+		screen.queue_free()
+		return false
+	_click(screen, screen._target_tile(), MOUSE_BUTTON_LEFT)
+	var failed := AssayHud.status_color(AssayHud.Say.FAILED)
+	var facts: Dictionary = screen._sim.tile_at(screen._menu_tile).get("building", {})
+	if AssayHud.state_is_failure(String(facts.get("state", ""))):
+		screen.queue_free()
+		return _fail("this smelter IS stalled (%s), so the restore is not what is being tested"
+				% facts.get("state"))
+	screen._menu_state.add_theme_color_override(&"font_color", failed)
+	screen._refresh_machine_menu()
+	var got: Color = screen._menu_state.get_theme_color(&"font_color")
+	if got == failed:
+		ok = _fail("the machine is `%s` and its line is still drawn in FAILED %s"
+				% [facts.get("state"), got])
+	# AND THE CONTROL: a stall must still be able to turn it red, or the check above passes on a menu
+	# that never uses the failure ink at all.
+	screen._menu_state.add_theme_color_override(&"font_color",
+			AssayHud.status_color(AssayHud.Say.FAILED) \
+			if AssayHud.state_is_failure("stalled") else screen._menu_state_ink)
+	if ok and screen._menu_state.get_theme_color(&"font_color") != failed:
+		ok = _fail("a stalled machine's line does not reach the failure ink either")
+	screen.queue_free()
+	return ok
+
+
 ## **EVERY SLOT THE MACHINE HAS DRAWS ITS FILL AS A BAND, AND A MACHINE WITH NO BATCH DRAWS NONE**
 ## (ASSA-339; Maren's ASSA-316 ruling 5, and Marlow's two conditions on it).
 ##

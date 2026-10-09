@@ -282,6 +282,9 @@ var _menu_name: Label = null
 var _menu_state: Label = null
 var _menu_work: HBoxContainer = null
 var _menu_rows: VBoxContainer = null
+## THE STATE LINE'S ORDINARY INK, read once at build. A node whose `font_color` this file also WRITES
+## cannot be asked what its ordinary colour is (`_refresh_machine_menu`).
+var _menu_state_ink := Color.WHITE
 ## **EACH SLOT'S FILL ROW BY THE SIM'S OWN NAME FOR THAT SLOT** (ASSA-334), so the per-tick path can
 ## re-text a band without walking the tree or rebuilding a button under the cursor. Emptied by every
 ## rebuild, because a row held here after `_clear` freed it is a stale reference that reads fine until
@@ -1619,6 +1622,19 @@ func _build_machine_menu_over_the_map(world: Rect2) -> void:
 	add_child(_menu_region)
 	_menu_box = PanelContainer.new()
 	_menu_box.name = MENU_BOX
+	# **PLACED AGAIN WHENEVER THE ENGINE CHANGES ITS MIND ABOUT THE SIZE, AND A PICTURE IS THE ONLY
+	# THING THAT COULD HAVE FOUND THIS** (ASSA-334). `_place_machine_menu` reads
+	# `get_combined_minimum_size()` in the same frame as the rebuild that changed the content, and in a
+	# real window that recalculation is DEFERRED -- so the first placement of an anchored menu used the
+	# previous frame's height. Measured on `nacre-assa334-anchor/14-machine-menu.png`: placed as if 272
+	# px tall, laid out at 356, hanging 84 px below the world and clipped to 76% of itself.
+	#
+	# **AND THE CLAMP COULD NOT SAVE IT, WHICH IS THE PART WORTH WRITING DOWN.** A `PanelContainer`
+	# enforces its own minimum, so assigning a SMALLER size than its content needs does not cut the
+	# panel -- it snaps back up and the box grows out of the rect I gave it. The arithmetic was right
+	# about a height that was wrong. **The headless suite cannot see it**: nothing lays out there, so
+	# the first ask computes lazily and comes back fresh, which is why 470 tests were green over it.
+	_menu_box.minimum_size_changed.connect(_place_machine_menu)
 	# SAID RATHER THAN INHERITED, as the log says it: `STOP` is a Control's default and the paragraph
 	# above is the reason this panel has it. A default nobody wrote down is a default somebody changes.
 	_menu_box.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -1650,6 +1666,10 @@ func _build_machine_menu_over_the_map(world: Rect2) -> void:
 	_menu_state = _note("")
 	_menu_state.name = MENU_STATE
 	_menu_state.autowrap_mode = TextServer.AUTOWRAP_OFF
+	# **READ ONCE, HERE, WHILE THE ONLY OVERRIDE ON THIS NODE IS THE ONE `_note` JUST WROTE.** After the
+	# first stall the node's own `font_color` is `FAILED`, and asking it then returns that. See
+	# `_refresh_machine_menu` for the defect this closes.
+	_menu_state_ink = _menu_state.get_theme_color(&"font_color", &"Muted")
 	inside.add_child(_menu_state)
 	# **THE BATCH, AS THE BAND RULING 5 ASKED FOR AND THE SENTENCE THE SIM WRITES FOR IT** (ASSA-339).
 	# Built once and emptied by `_refresh_machine_menu`, because `work` is NIL whenever nothing is in
@@ -4088,11 +4108,17 @@ func _refresh_machine_menu() -> void:
 	# the binding's own words for this field: *"the condition on its own line, in `FAILED` when it is a
 	# stall"*). The verdict is `state`, which the sim publishes for exactly this -- see
 	# `AssayHud.state_is_failure` for why neither `stopped` nor "not working" may stand in for it.
+	# **THE INK IT GOES BACK TO IS HELD, NOT ASKED OF THE NODE, AND THAT IS A BUG I SHIPPED INTO A
+	# SCREENSHOT.** This read `_menu_state.get_theme_color(&"font_color", &"Label")` for the normal
+	# case -- and `get_theme_color` answers out of the node's OWN OVERRIDES first, so the moment a
+	# machine stalled once, the "normal" colour it read back was the `FAILED` it had just written. The
+	# line stayed red for the rest of the session. Measured on `nacre-assa334-anchor`: `idle: nothing to
+	# refine` drawn in (242,102,89) on a smelter the sim called idle. A node is not a place to store a
+	# constant you are also writing to.
 	_menu_state.text = String(it.get("state_line", ""))
 	_menu_state.add_theme_color_override(&"font_color",
 			AssayHud.status_color(AssayHud.Say.FAILED) \
-			if AssayHud.state_is_failure(String(it.get("state", ""))) \
-			else _menu_state.get_theme_color(&"font_color", &"Label"))
+			if AssayHud.state_is_failure(String(it.get("state", ""))) else _menu_state_ink)
 	# **THE BATCH: THE SIM'S CLAUSE AND THE SIM'S PAIR, OR NOTHING AT ALL** (ASSA-339). `work` is nil
 	# whenever nothing is in front of the machine and `work_clause` is nil in exactly the same cases
 	# (asserted in `sim-godot`), so this reads the pair for the band and the clause for the words and
@@ -4277,6 +4303,24 @@ func _refresh_machine_slot_fills(it: Dictionary) -> void:
 ## string the sim can hand this menu; the stylebox either side of it is the theme's business, so this
 ## reads the margins in force rather than baking today's numbers into the constant. `_note`'s own
 ## comment is the precedent for an off-tree theme lookup being the honest way to ask.
+## **HOW FAR UP THE WORLD'S OWN CONTROL BAND REACHES RIGHT NOW**, measured off the live controls, with
+## `AssayHud.WORLD_CONTROLS_BAND` as the answer before anything has laid out (ASSA-328).
+##
+## **IT IS A FUNCTION BECAUSE TWO SURFACES MUST NOT COVER THAT BAND AND ONLY ONE OF THEM KNEW**
+## (ASSA-334). The build screen has kept off it since ASSA-328 -- Maren listed the status toast and
+## `whole world (V)` as things no surface may cover -- and the machine menu never had to, because the
+## two halves kept it top-aligned. Anchored, it reaches the bottom corner: in
+## `nacre-assa334-anchor/14-machine-menu.png` the toast `Place 0 · submitted` is drawn over the menu's
+## own `close (Esc)`. One copy of the measurement, so the next surface inherits the rule.
+func _world_band_top() -> float:
+	var band := AssayHud.world_rect().end.y - AssayHud.WORLD_CONTROLS_BAND
+	for control in [_view_toggle, _map_key_toggle, _says_toast]:
+		var node := control as Control
+		if node != null and node.visible and node.size.y > 0.0:
+			band = minf(band, node.global_position.y)
+	return band
+
+
 func _place_machine_menu() -> void:
 	if not is_instance_valid(_menu_region):
 		return
@@ -4287,7 +4331,12 @@ func _place_machine_menu() -> void:
 		pad = skin.get_margin(SIDE_LEFT) + skin.get_margin(SIDE_RIGHT)
 	var want := _menu_box.get_combined_minimum_size()
 	want.x = maxf(want.x, AssayHud.MENU_FLOOR_PX + pad)
-	var rect := AssayHud.machine_menu_rect(world, _footprint_rect(), want)
+	# **THE ROOM IS THE WORLD LESS THE CONTROL BAND, NOT THE WORLD** (ASSA-334; `_world_band_top`). The
+	# REGION still clips at the world -- that is the HUD column's guarantee and it does not move -- but
+	# the panel is placed inside the shorter rect, so an anchored menu on a machine at the bottom of the
+	# screen stops above the status toast instead of being drawn under it.
+	var rect := AssayHud.machine_menu_rect(AssayHud.build_screen_rect(world, _world_band_top()),
+			_footprint_rect(), want)
 	_menu_region.position = world.position
 	_menu_region.size = world.size
 	_menu_box.position = rect.position - world.position
@@ -4453,12 +4502,7 @@ func _place_build_screen() -> void:
 	if not is_instance_valid(_build_box):
 		return
 	var world := AssayHud.world_rect()
-	var band := world.end.y - AssayHud.WORLD_CONTROLS_BAND
-	for control in [_view_toggle, _map_key_toggle, _says_toast]:
-		var node := control as Control
-		if node != null and node.visible and node.size.y > 0.0:
-			band = minf(band, node.global_position.y)
-	var rect := AssayHud.build_screen_rect(world, band)
+	var rect := AssayHud.build_screen_rect(world, _world_band_top())
 	_build_region.position = world.position
 	_build_region.size = world.size
 	_build_box.position = rect.position - world.position

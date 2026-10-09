@@ -2483,13 +2483,19 @@ func test_a_centred_label_is_asked_for_its_ink_and_not_its_width() -> bool:
 ## with a 3 px menu. 343 px of content plus the panel's padding has to fit beside a machine wherever
 ## the machine stands, or this goes red instead of going narrow.
 func test_a_machine_menu_is_anchored_beside_its_machine_and_never_over_it() -> bool:
-	var world := AssayHud.world_rect()
+	# **THE ROOM THE CALLER ACTUALLY PASSES, AND NOT THE WHOLE WORLD** (`main.gd::_place_machine_menu`):
+	# the world less its pad and clear of the control band, because a menu drawn over the status toast
+	# is the defect the first real-window shot of this item found. The SUBJECTS still sweep the whole
+	# world -- a machine can stand anywhere, including outside the room, and that is what exercises the
+	# clamp at both ends.
+	var whole := AssayHud.world_rect()
+	var world := AssayHud.build_screen_rect(whole, whole.end.y - AssayHud.WORLD_CONTROLS_BAND)
 	var menu := Vector2(AssayHud.MENU_CAP_PX, 420.0)
 	var seen := {}
 	for span in [Vector2(32.0, 32.0), Vector2(64.0, 64.0)]:
 		for x in range(0, 913, 16):
 			for y in range(0, 673, 32):
-				var subject := Rect2(world.position + Vector2(float(x), float(y)), span as Vector2)
+				var subject := Rect2(whole.position + Vector2(float(x), float(y)), span as Vector2)
 				var rect := AssayHud.machine_menu_rect(world, subject, menu)
 				if rect.intersects(subject):
 					return _fail("a %s machine at %s got a menu at %s, over itself"
