@@ -160,6 +160,24 @@ var _base_level: int = AssayHud.Say.IDLE
 ## The world's tick when `_base_line` was said, or -1 if there was no world then. See
 ## `_age_the_saying`, which is what stops a healthy sentence becoming a permanent one.
 var _said_at_tick := -1
+## **WHAT `_base_line` IS A CLAIM ABOUT**: the building of a CONDITION, or `NOT_A_CONDITION` for an
+## act (ASSA-300). The sim decides which — `attention_conditions`, beside the sentence itself — and
+## this client never reads a word of the line to find out, because the wording moved thirteen times in
+## one afternoon on ASSA-67.
+##
+## **SET BY `_say` AND NOWHERE ELSE, WHICH IS THE WHOLE REASON IT IS AN ARGUMENT.** A second setter
+## could leave the previous sentence's building attached to a new line, and then `_age_the_saying`
+## would take down a refusal because some machine got fixed. Every `_say` states it; the default is
+## "nothing to re-ask".
+var _said_about_building := NOT_A_CONDITION
+## **NO BUILDING TO RE-ASK**, which is what every sentence in this client is except a stall notice:
+## a refusal, a loss, a join, a connection state.
+##
+## The same -1 `attention_conditions` crosses, and the direction matters: an unset or out-of-range
+## answer must mean "never take this down". The other way round, a stray 0 would mean "a condition
+## about building 0" and could fade a refusal, which ASSA-239 calls the one class of sentence a player
+## cannot recover.
+const NOT_A_CONDITION := -1
 ## How long a `Say.JOINED` sentence stays on screen, in the WORLD's ticks (ASSA-239). 2 s at the
 ## relay's default 10 ticks/s. See `_age_the_saying` for why it is not seconds.
 const SAYING_DWELL_TICKS := 20
@@ -2582,9 +2600,23 @@ func _remember_events() -> void:
 	#
 	# THE NEWEST ONE WINS. The surface holds one line; events arrive in the order the sim emitted
 	# them, so the last is the most recent thing that did not happen.
+	#
+	# **AND WHAT EACH ONE IS ABOUT COMES WITH IT** (ASSA-300). `attention_conditions` is the same
+	# `attention_pairs` call as the lines above, mapped the other way, so element i is element i by
+	# construction rather than by agreement. A stall notice arrives carrying the building it is a claim
+	# about and `_age_the_saying` can take it down when that building is working again; everything else
+	# arrives as -1 and nothing will ever take it down.
 	var notices := _sim.attention_lines(_client.player_id)
 	if not notices.is_empty():
-		_say(notices[notices.size() - 1], AssayHud.Say.FAILED)
+		var about := _sim.attention_conditions(_client.player_id)
+		# THE SIZES AGREE OR NOTHING IS A CONDITION, and the fallback is the safe direction. Reading
+		# past the end of a `PackedInt64Array` yields 0 in GDScript, which would read as "a condition
+		# about building 0" and could fade a refusal -- the one class of sentence ASSA-239 says a
+		# player cannot recover. `test_sim_binding.gd` asserts the two really are the same length; this
+		# is what happens if that ever stops being true in a shipped build.
+		var kind: int = (about[notices.size() - 1] if about.size() == notices.size()
+				else NOT_A_CONDITION)
+		_say(notices[notices.size() - 1], AssayHud.Say.FAILED, kind)
 
 
 ## THE EVENT LOG, NEWEST FIRST AND BRIGHTEST FIRST (ASSA-117, box 1).
@@ -2855,9 +2887,14 @@ func _rebuild_running(lines: PackedStringArray) -> void:
 		rows.add_child(_note(line))
 
 
-func _say(line: String, level: int) -> void:
+## **`about_building` IS THE SIM'S ANSWER, NEVER THIS FILE'S GUESS** (ASSA-300). It is defaulted
+## rather than required because all but one caller is saying something about an act or a connection,
+## and the default is the one that can never go wrong: a line with no condition attached is a line
+## nothing will ever take down.
+func _say(line: String, level: int, about_building := NOT_A_CONDITION) -> void:
 	_base_line = line
 	_base_level = level
+	_said_about_building = about_building
 	# WHEN, IN THE WORLD'S OWN CLOCK, so `_age_the_saying` can let a healthy line go. -1 while there is
 	# no world: a sentence said during the handshake has no tick to be older than, and it is cleared by
 	# the world arriving rather than by ageing.
@@ -2887,8 +2924,47 @@ func _say(line: String, level: int) -> void:
 ## lifetime depend on the frame rate of the machine reading it. 20 ticks is 2 s at the relay's default
 ## 10 ticks/s, and it is long enough to read `walking to 57, 59` and short enough that the resting
 ## state of a played screen is world and column and nothing else.
+## **AND THE SECOND WAY A SENTENCE CAN STOP BEING TRUE: ITS CONDITION CLEARED** (ASSA-300, the Game
+## Director's §300 ruling: *"a sentence about a CONDITION comes down when the condition does. A
+## sentence about an ACT does not."*).
+##
+## **THE PARAGRAPH ABOVE WAS WRONG ABOUT `FAILED` AND IT TOOK AN ITEM TO SEE IT.** It read *"`FAILED`
+## is a refusal, and no refusal is silent"* — true of a refusal and false of the other thing this
+## level carries. A stall notice is not about an act of yours: it is a claim about a machine *now*, it
+## already has a standing home in the pinned block and the `bench` list, and when it outlasts the
+## condition it is simply false. Fuel the smelter and the sim stops reporting it, the pinned count
+## drops to zero — and before this clause the toast still read `the … smelter (A) stopped: no fuel`
+## until something unrelated happened to replace it. The screen contradicted itself and the half that
+## was wrong was the half with the reason on it.
+##
+## **NO DWELL HERE, AND THAT IS THE POINT OF THE SPLIT.** A `JOINED` line goes quiet because it has
+## been read; this one goes the moment it stops being true, which is not a duration. A dwell would
+## leave a false sentence on screen for two seconds, and a false sentence is worse the longer it is
+## legible.
+##
+## **THE QUESTION IS THE SIM'S AND IT IS ASKED BY ID, NOT BY TEXT.** `is_halted` is `World::halted`
+## asked about one building — the same predicate `halt_lines` is worded from, so the toast and the
+## pinned count cannot disagree about whether anything is stopped (box 6). Matching the two sentences
+## instead would never clear anything: the pinned list says `smelter 3 at (12, 7) … stalled: the fuel
+## will not light` where this one says `the Tonore smelter (A) stopped: no fuel`. Two wordings, one
+## condition — and matching them loosely is the client classifying by reading, which
+## `_remember_events` refuses by name (ASSA-67).
+##
+## **WHAT IT DELIBERATELY DOES NOT ASK IS WHETHER THE STALL IS THE SAME ONE.** A drill whose buffer
+## you empty while its deposit runs out stays halted, so its notice stays up naming a reason that has
+## been replaced. That is the coarse answer on purpose: the fine one would take the toast down while
+## that building was still listed in the block, and the block carries the live reason. A moment's
+## sentence may be out of date; the standing surface may not.
 func _age_the_saying() -> void:
-	if _base_level != AssayHud.Say.JOINED or _base_line == "":
+	if _base_line == "":
+		return
+	if _said_about_building != NOT_A_CONDITION:
+		# `_sim` is non-null here: a building id only ever arrives from `attention_conditions`, which
+		# needs a world to have answered.
+		if not _sim.is_halted(_said_about_building):
+			_say("", AssayHud.Say.IDLE)
+		return
+	if _base_level != AssayHud.Say.JOINED:
 		return
 	if _said_at_tick < 0 or _sim.tick() - _said_at_tick < SAYING_DWELL_TICKS:
 		return
