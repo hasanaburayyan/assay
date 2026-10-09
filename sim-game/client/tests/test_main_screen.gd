@@ -5117,7 +5117,7 @@ func test_a_stall_sentence_comes_down_when_the_stall_does_and_a_refusal_never_do
 
 	# 1. WHILE IT IS TRUE IT STAYS, asked many times. A sentence that went on the second look would
 	#    be a dwell wearing a condition's clothes.
-	screen._say(notice, AssayHud.Say.FAILED, 3)
+	screen._stand(notice, AssayHud.Say.FAILED, 3)
 	for _i in range(5):
 		screen._age_the_saying()
 	if screen._status.text != notice:
@@ -5142,11 +5142,15 @@ func test_a_stall_sentence_comes_down_when_the_stall_does_and_a_refusal_never_do
 		ok = _fail("a refusal aged out of the toast because no building was stopped, so every "
 				+ "sentence in the client just became a condition")
 
-	# 4. AND AN ACT SAID OVER A CONDITION KEEPS ITS OWN KIND. Stall, then a refusal wins the line
-	#    (newest wins, `_remember_events`), then the stall clears: the refusal must still be there.
-	#    This is the leak a `_said_about_building` set anywhere but `_say` would have.
+	# 4. AND AN ACT SAID OVER A CONDITION KEEPS ITS OWN KIND. Stall, then a refusal covers the line
+	#    (ASSA-370: a transient may cover a standing notice), then the stall clears: the refusal must
+	#    still be there. This is the leak a `_standing_building` set anywhere but `_stand` would have.
+	screen._say("", AssayHud.Say.IDLE)
 	sim.stopped = 3
-	screen._say(notice, AssayHud.Say.FAILED, 3)
+	screen._stand(notice, AssayHud.Say.FAILED, 3)
+	if screen._status.text != notice:
+		ok = _fail("premise: the stall notice is not the sentence being covered, `%s` is"
+				% screen._status.text)
 	screen._say("refused: out of reach", AssayHud.Say.FAILED)
 	sim.stopped = -1
 	screen._age_the_saying()
@@ -5176,6 +5180,117 @@ func test_a_joined_line_still_ages_on_the_dwell_and_not_on_the_first_ask() -> bo
 	if joined._status.text != "":
 		ok = _fail("a healthy sentence outlived its dwell by the condition clause taking it over: `%s`"
 				% joined._status.text)
+	joined.queue_free()
+	return ok
+
+
+## **A SCREEN WELCOMED INTO A WORLD WHERE BUILDING 3 IS STOPPED AND STAYS STOPPED.**
+##
+## `_SimWhereOneBuildingIsStopped` over a world that really started, which the two tests below need
+## and the ASSA-300 test above does not: they press a real button and step a real clock, so `_refresh`
+## must get past `_sim.running()` and `_on_tick_bundle` must have a world to apply bundles to.
+## `is_halted` is the one answer that is chosen rather than simulated, because the headless suite
+## cannot reach a world with a stalled building in it.
+func _joined_screen_with_one_building_stopped() -> Node:
+	var joined := _joined_screen()
+	var sim := _SimWhereOneBuildingIsStopped.new()
+	sim.stopped = 3
+	joined._sim = sim
+	joined._on_welcomed(0, {}, AssaySimHost.fresh_welcome_json("777042", "limpet"))
+	return joined
+
+
+## **AN ACCEPTED COMMAND COVERS THE STALL NOTICE AND THEN GIVES IT BACK** (ASSA-370, the Game
+## Director's amendment to her own §300: *"A TRANSIENT LINE MAY COVER A STANDING NOTICE. IT MAY NEVER
+## DESTROY ONE. A CONDITION NOTICE'S LIFETIME BELONGS TO ITS CONDITION, SO NOTHING WHOSE OWN LIFETIME
+## IS A TIMER MAY END IT."*).
+##
+## **THE BUG THIS CLOSES IS ASSA-300'S FIX BEING DEFEATED BY ORDINARY PLAY, and QA found it with a
+## camera.** Every accepted command — a routine `Mine` press, nothing to do with any machine — called
+## `_say` with no building, which overwrote the stall sentence AND its building outright. The
+## replacement then aged out on the 20-tick dwell, so the warning vanished within two seconds whatever
+## the smelter was doing: at tick 108 of Nerite's run the toast was silent while the pinned count
+## still read `1 of 1 buildings stopped`, with the fuel not yet inserted.
+##
+## **THE BOX IS THE UNCOVERING, NOT THE STORAGE.** A test that read `_standing_line` after the press
+## would pass on a client that stored the sentence and never drew it again — a mechanism, not a
+## behaviour. Every assertion here is on `_status.text`, which is what a player sees.
+func test_an_accepted_command_covers_the_stall_notice_and_then_uncovers_it() -> bool:
+	var ok := true
+	var joined := _joined_screen_with_one_building_stopped()
+	if not joined._sim.running():
+		joined.queue_free()
+		return _fail("the fixture never simulated, so no command could be accepted and no tick could "
+				+ "age anything")
+	var notice := "the Tonore smelter (A) stopped: no fuel"
+	joined._stand(notice, AssayHud.Say.FAILED, 3)
+	# THE JOIN LINE IS IN THE WAY FIRST, and that is the covering rule working: `joined as player 0`
+	# is a live transient. Age it out before the measurement, so what is on screen is the notice.
+	_step_the_world(joined, joined.SAYING_DWELL_TICKS + 1)
+	if joined._status.text != notice:
+		ok = _fail("premise: the stall notice is not on the toast to be covered, `%s` is"
+				% joined._status.text)
+
+	# 1. THE RECEIPT STILL ARRIVES, which is the half the Game Director refused to trade away
+	#    (shape (a): *"your Mine press then gets no receipt at all while anything is stalled"*). A
+	#    receipt channel that goes quiet exactly when the player is busy is not a fix.
+	joined._act("Mine", AssayActions.mine())
+	if not joined._status.text.contains("submitted"):
+		ok = _fail(("a press during a stall said `%s`: the acceptance is the only thing telling a "
+				+ "player the game heard them, for up to a third of a second")
+				% joined._status.text)
+
+	# 2. AND THE NOTICE IS STILL THERE ONCE THE RECEIPT HAS BEEN READ. This is the bug: before the
+	#    split the press had destroyed the sentence and its building, so this frame was blank with the
+	#    smelter still cold and the pinned count still saying so.
+	_step_the_world(joined, joined.SAYING_DWELL_TICKS + 1)
+	if joined._status.text != notice:
+		ok = _fail(("%d ticks after a routine press the toast reads `%s` and the sim still calls that "
+				+ "building stopped. A notice whose duration says nothing about its subject teaches a "
+				+ "player to ignore notice durations.")
+				% [joined.SAYING_DWELL_TICKS + 1, joined._status.text])
+
+	# 3. AND THE CONDITION STILL OWNS ITS OWN END, after having been covered. The press must not have
+	#    carried the building off with it: if it had, nothing would be left to re-ask and the sentence
+	#    would now be permanent instead of merely early.
+	joined._sim.stopped = -1
+	_step_the_world(joined, 1)
+	if joined._status.text != "":
+		ok = _fail(("the smelter is working and the toast still reads `%s`: the press carried off the "
+				+ "building this sentence was a claim about") % joined._status.text)
+	joined.queue_free()
+	return ok
+
+
+## **AND A STALL NOTICE DOES NOT CROSS INTO THE NEXT WORLD** (ASSA-370). A hole the split opens and
+## the same commit closes, said plainly because I would otherwise have shipped it: before the two
+## slots existed every world-death path set a non-empty FAILED transient over the triple, so a
+## stranded notice was permanently covered and nothing showed. Afterwards `_on_welcomed`'s `joined as
+## player N` is a transient that AGES — so a drop, a second Join, and two seconds later the previous
+## world's stall sentence would surface over a fresh world, about a building that no longer exists.
+##
+## **THE STUB IS WHAT MAKES THIS A TEST RATHER THAN A COINCIDENCE.** Over a real sim, `is_halted(3)`
+## on a fresh world answers false and `_age_the_saying` would clear the notice on the first tick — so
+## this would pass with `_on_welcomed`'s line deleted. Here the sim keeps saying that building is
+## stopped, so the only thing that can take the sentence down is the `Welcome` itself.
+func test_a_stall_notice_does_not_survive_the_world_it_is_about() -> bool:
+	var ok := true
+	var joined := _joined_screen_with_one_building_stopped()
+	var notice := "the Tonore smelter (A) stopped: no fuel"
+	joined._stand(notice, AssayHud.Say.FAILED, 3)
+	_step_the_world(joined, joined.SAYING_DWELL_TICKS + 1)
+	if joined._status.text != notice:
+		joined.queue_free()
+		return _fail("premise: there is no standing notice to carry across a world, `%s` is on screen"
+				% joined._status.text)
+
+	# THE SECOND WELCOME, which is what pressing Join after a drop does.
+	joined._on_welcomed(0, {}, AssaySimHost.fresh_welcome_json("777042", "limpet"))
+	_step_the_world(joined, joined.SAYING_DWELL_TICKS + 1)
+	if joined._status.text != "":
+		ok = _fail(("after a second Join the toast reads `%s` — a sentence about a building in the "
+				+ "world that was replaced, and one nothing can ever retire, because `is_halted` is "
+				+ "now answering about a different world's buildings") % joined._status.text)
 	joined.queue_free()
 	return ok
 
