@@ -4148,11 +4148,37 @@ func _refresh_actions() -> void:
 	# signature changes, and a dropped link moves none of the other terms, so the button would keep
 	# an accent that no longer means anything until something else happened to move.
 	var live := _client.stage == AssayNetClient.Stage.JOINED
-	# **THE BUILDING'S ID LEFT THIS SIGNATURE WITH THE TWO BUTTONS IT WAS FOR** (ASSA-316, Maren's
-	# ruling 3). It was here for `Take` and `Pick up`, which now live in the machine's own menu; a term
-	# in a cache key that no drawn thing depends on is a rebuild nobody asked for, every time a machine
-	# under the cursor changes -- the exact note `_pack_shape` carries one section away.
-	var signature := "%s/%s/%s/%s/%s" % [target, _targeted, _building, minable, live]
+	# **THE BUILDING'S ID IS BACK, AND THE PREMISE THAT TOOK IT OUT WAS FALSE WHEN IT WAS WRITTEN**
+	# (ASSA-353, found by Cove off a 1x frame; the reader was Nacre, who did not know this line
+	# existed). This comment used to say: *"it was here for `Take` and `Pick up`, which now live in
+	# the machine's own menu; a term in a cache key that no drawn thing depends on is a rebuild
+	# nobody asked for."* **Maren's ruling 3 is sound -- those two acts do belong in the menu -- but
+	# a drawn thing does depend on it:** `AssayHud.target_line`, thirty-five lines below at the
+	# bottom of this very function, names the building standing on the target. With the id gone its
+	# clause froze at whatever stood there when the target was last chosen, so a machine you had just
+	# placed was described as the bare rock it replaced.
+	#
+	# **AND ON MAIN THAT CLAUSE WAS ONLY EVER DRAWN WHILE IT WAS WRONG** (Cove's second measurement,
+	# which is why this is a behaviour fix and not a tidy-up). A right-click on a tile carrying a
+	# building opens that building's MENU and returns before `_target` is set, so no gesture could
+	# ever point this sentence at a standing building on purpose: the only way it named one was the
+	# stale path, and `clear ground` after a `Pick up` was right by cancellation rather than by
+	# refresh. This is the first state of the client in which the building clause can be true.
+	#
+	# **THE ID, NEVER THE STATUS**, which is the docstring's rule above and is why this is one term
+	# and not `facts` itself: a smelter's status sentence changes every tick while it burns, and
+	# rebuilding on that would free the Take button four times a second. `-1` is safe as the absent
+	# value because `BuildingId` is a `u32` counting from zero.
+	var standing: Variant = facts.get("building")
+	var building_here := -1
+	if standing != null:
+		var b := standing as Dictionary
+		# `building_dict` always sets `id`; an absent one means a stale `libsim_godot.dylib`, the
+		# same cause `target_line` names when `name` is missing. Loud there, harmless here -- a
+		# missing id just keeps the old value, and that file already pushes the error.
+		if b.has("id"):
+			building_here = int(b["id"])
+	var signature := "%s/%s/%s/%s/%s/%s" % [target, _targeted, _building, minable, live, building_here]
 	if signature == _actions_showing:
 		return
 	_actions_showing = signature
