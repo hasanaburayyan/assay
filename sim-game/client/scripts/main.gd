@@ -160,16 +160,35 @@ var _base_level: int = AssayHud.Say.IDLE
 ## The world's tick when `_base_line` was said, or -1 if there was no world then. See
 ## `_age_the_saying`, which is what stops a healthy sentence becoming a permanent one.
 var _said_at_tick := -1
-## **WHAT `_base_line` IS A CLAIM ABOUT**: the building of a CONDITION, or `NOT_A_CONDITION` for an
-## act (ASSA-300). The sim decides which — `attention_conditions`, beside the sentence itself — and
-## this client never reads a word of the line to find out, because the wording moved thirteen times in
-## one afternoon on ASSA-67.
+## **THE STANDING NOTICE, UNDER THE LINE ABOVE** (ASSA-370, the Game Director's amendment to her own
+## ASSA-300 ruling: *"A TRANSIENT LINE MAY COVER A STANDING NOTICE. IT MAY NEVER DESTROY ONE. A
+## CONDITION NOTICE'S LIFETIME BELONGS TO ITS CONDITION, SO NOTHING WHOSE OWN LIFETIME IS A TIMER MAY
+## END IT."*).
 ##
-## **SET BY `_say` AND NOWHERE ELSE, WHICH IS THE WHOLE REASON IT IS AN ARGUMENT.** A second setter
-## could leave the previous sentence's building attached to a new line, and then `_age_the_saying`
-## would take down a refusal because some machine got fixed. Every `_say` states it; the default is
-## "nothing to re-ask".
-var _said_about_building := NOT_A_CONDITION
+## **ONE VISIBLE SLOT, TWO STORED LINES, AND THIS IS THE LOWER ONE.** `_base_*` above is the
+## transient: a receipt, a refusal, a connection state. This is a claim about a machine *now*, and the
+## bug that bought it is that every accepted command used to overwrite the triple outright — so a
+## routine `Mine` press wiped a live stall warning and then aged out on its own 20-tick dwell, leaving
+## the toast silent while the pinned count still read `1 of 1 buildings stopped`. A notice whose
+## duration says nothing about its subject teaches a player to ignore notice durations.
+##
+## **NO `_said_at_tick` HERE, AND THAT IS THE RULING AND NOT A SAVING.** A standing notice has no
+## stamp because nothing may end it on a timer; it ends when `is_halted` says its building is working,
+## and that is the only way out. The transient keeps the stamp, because being read IS its lifetime.
+var _standing_line := ""
+var _standing_level: int = AssayHud.Say.IDLE
+## **WHAT `_standing_line` IS A CLAIM ABOUT**: the building of a CONDITION, or `NOT_A_CONDITION` when
+## there is no standing notice at all (ASSA-300). The sim decides which — `attention_conditions`,
+## beside the sentence itself — and this client never reads a word of the line to find out, because
+## the wording moved thirteen times in one afternoon on ASSA-67.
+##
+## **SET BY `_stand` AND NOWHERE ELSE, WHICH IS WHY IT IS AN ARGUMENT TO IT.** ASSA-300 made this an
+## argument to `_say` for exactly this reason and the property survives the split: a second setter
+## could leave one sentence's building attached to another, and then `_age_the_saying` would take down
+## a refusal because some machine got fixed. What the split changes is that an ordinary `_say` no
+## longer resets it — that reset WAS the bug — so the guarantee moves from "every sentence restates
+## it" to "only its own condition can end it", which is the ruling in one line of state.
+var _standing_building := NOT_A_CONDITION
 ## **NO BUILDING TO RE-ASK**, which is what every sentence in this client is except a stall notice:
 ## a refusal, a loss, a join, a connection state.
 ##
@@ -2626,6 +2645,11 @@ func _forget_click() -> void:
 ## THE RAW TEXT GOES TO THE SIM, the dictionary does not. By the time a `Welcome` is a Godot
 ## Dictionary its numbers have been through a double, so the world is built from the bytes.
 func _on_welcomed(player: int, _world: Dictionary, raw: String) -> void:
+	# **THE PREVIOUS WORLD'S STANDING NOTICE DOES NOT CROSS INTO THIS ONE** (ASSA-370). A `Welcome`
+	# replaces the world, so a sentence about building 3 being stopped is about a building that no
+	# longer exists and nothing will ever retire it. Before both branches: a `Welcome` we cannot
+	# simulate has also replaced the world.
+	_forget_the_standing_notice()
 	if not _sim.start(raw):
 		_say("joined as player %d, but cannot simulate: %s" % [player, _sim.fail_reason],
 				AssayHud.Say.FAILED)
@@ -2709,7 +2733,14 @@ func _remember_events() -> void:
 		# is what happens if that ever stops being true in a shipped build.
 		var kind: int = (about[notices.size() - 1] if about.size() == notices.size()
 				else NOT_A_CONDITION)
-		_say(notices[notices.size() - 1], AssayHud.Say.FAILED, kind)
+		# **AND THE KIND CHOOSES THE SLOT, WHICH IS THE WHOLE OF ASSA-370** (the Game Director's
+		# amendment). A condition goes to the standing notice, where only its own condition can end it.
+		# An act — a refusal, with no building — goes to the transient line over it, where the next
+		# thing that happens to this player replaces it and nothing re-asks the sim about it.
+		if kind == NOT_A_CONDITION:
+			_say(notices[notices.size() - 1], AssayHud.Say.FAILED)
+		else:
+			_stand(notices[notices.size() - 1], AssayHud.Say.FAILED, kind)
 
 
 ## THE EVENT LOG, NEWEST FIRST AND BRIGHTEST FIRST (ASSA-117, box 1).
@@ -2980,20 +3011,56 @@ func _rebuild_running(lines: PackedStringArray) -> void:
 		rows.add_child(_note(line))
 
 
-## **`about_building` IS THE SIM'S ANSWER, NEVER THIS FILE'S GUESS** (ASSA-300). It is defaulted
-## rather than required because all but one caller is saying something about an act or a connection,
-## and the default is the one that can never go wrong: a line with no condition attached is a line
-## nothing will ever take down.
-func _say(line: String, level: int, about_building := NOT_A_CONDITION) -> void:
+## **THE TRANSIENT LINE, AND IT NO LONGER TAKES A BUILDING** (ASSA-370). ASSA-300 gave this function a
+## third argument so the sim's answer to *what is this a claim about* could never be set by anything
+## else; the argument has moved to `_stand`, which is now the only setter of that triple, so the
+## property is intact and the thing that caused ASSA-370 is gone: **a sentence about an act cannot
+## reach the standing notice at all, not even to clear it.**
+##
+## Everything that comes through here is about a moment — a receipt, a refusal, a connection state —
+## and it is DRAWN OVER whatever standing notice exists. It never destroys one.
+func _say(line: String, level: int) -> void:
 	_base_line = line
 	_base_level = level
-	_said_about_building = about_building
 	# WHEN, IN THE WORLD'S OWN CLOCK, so `_age_the_saying` can let a healthy line go. -1 while there is
 	# no world: a sentence said during the handshake has no tick to be older than, and it is cleared by
 	# the world arriving rather than by ageing.
 	_said_at_tick = _sim.tick() if _sim != null else -1
 	_render_status()
 	print(line)
+
+
+## **THE STANDING NOTICE, AND `about_building` IS THE SIM'S ANSWER, NEVER THIS FILE'S GUESS**
+## (ASSA-300 for the question, ASSA-370 for the separate home). The only caller is `_remember_events`,
+## handing over the sentence and the building `attention_conditions` crossed with it.
+##
+## **PRINTED ONLY WHEN THE SENTENCE CHANGES, BECAUSE THIS ONE CAN BE RE-SAID.** The transient above is
+## said once per thing that happened; a standing notice can arrive again for a condition already
+## standing (the sim's attention list is re-read whenever it is non-empty), and an unguarded `print`
+## would put the same line in the console as fast as bundles land and bury the one that matters. Same
+## reason `_refresh`'s `joined at tick N, but no world` branch is guarded.
+func _stand(line: String, level: int, about_building: int) -> void:
+	var changed := line != _standing_line
+	_standing_line = line
+	_standing_level = level
+	_standing_building = about_building
+	_render_status()
+	if changed and line != "":
+		print(line)
+
+
+## **A NOTICE ABOUT A BUILDING IN A WORLD THAT IS GOING AWAY GOES WITH IT** (ASSA-370). Not an ageing
+## rule: the condition is not resolved, the subject has ceased to exist, and a sentence about a
+## building in a replaced world is false in the only way that matters — nothing can ever retire it,
+## because `is_halted` will be answering about a different world's buildings.
+##
+## **REACHABLE, AND I ONLY SAW IT BECAUSE THE SLOTS SPLIT.** Before the split every world-death path
+## set a non-empty FAILED transient over the triple, so a stranded notice was permanently covered and
+## nothing showed. Afterwards `_on_welcomed`'s `joined as player N` is a JOINED transient that AGES —
+## so a drop, a second Join, and two seconds later the previous world's stall sentence would surface
+## over a fresh world.
+func _forget_the_standing_notice() -> void:
+	_stand("", AssayHud.Say.IDLE, NOT_A_CONDITION)
 
 
 ## **A HEALTHY SENTENCE GETS A MOMENT AND THEN THE SCREEN GOES QUIET** (ASSA-239, Maren's ruling on
@@ -3048,14 +3115,25 @@ func _say(line: String, level: int, about_building := NOT_A_CONDITION) -> void:
 ## been replaced. That is the coarse answer on purpose: the fine one would take the toast down while
 ## that building was still listed in the block, and the block carries the live reason. A moment's
 ## sentence may be out of date; the standing surface may not.
+## **AND THE TWO CLAUSES ARE ASKED INDEPENDENTLY, WHICH IS ASSA-370 IN THE CONTROL FLOW** (the Game
+## Director's amendment: *"a transient line may COVER a standing notice. It may never DESTROY one"*).
+##
+## This used to be one chain with an early return: a line carrying a building took the condition
+## clause and nothing else, a line without one took the dwell. That was correct while the two kinds
+## shared a slot, and the sharing was the bug. Now the standing notice and the transient over it are
+## separate state, so **both can need ending on the same tick** — the smelter you just fuelled, and
+## the receipt for having fuelled it — and a chain would silently do only the first.
 func _age_the_saying() -> void:
+	# THE CONDITION FIRST, SO AN UNCOVERING FRAME CANNOT SHOW A SENTENCE THAT IS ALREADY FALSE. If the
+	# transient went first, this function's own two writes would leave one frame's worth of
+	# `_render_status` drawing a stall notice whose building is working again — and the uncovering tick
+	# is exactly the tick a player is looking at the toast.
+	#
+	# `_sim` is non-null here: a building id only ever arrives from `attention_conditions`, which needs
+	# a world to have answered.
+	if _standing_building != NOT_A_CONDITION and not _sim.is_halted(_standing_building):
+		_forget_the_standing_notice()
 	if _base_line == "":
-		return
-	if _said_about_building != NOT_A_CONDITION:
-		# `_sim` is non-null here: a building id only ever arrives from `attention_conditions`, which
-		# needs a world to have answered.
-		if not _sim.is_halted(_said_about_building):
-			_say("", AssayHud.Say.IDLE)
 		return
 	if _base_level != AssayHud.Say.JOINED:
 		return
@@ -3085,9 +3163,32 @@ func _render_status() -> void:
 		_say_in(AssayHud.Say.CONNECTING)
 		_place_says_toast()
 		return
-	_status.text = _base_line
-	_say_in(_base_level)
+	_status.text = _shown_line()
+	_say_in(_shown_level())
 	_place_says_toast()
+
+
+## **THE ONE VISIBLE SLOT, DERIVED FROM THE TWO STORED LINES** (ASSA-370). A pair of accessors rather
+## than a third pair of fields, for the same reason the status label is derived from `_base_line`
+## instead of being saved and restored: the cover rule is then a RULE, in one place, and not two
+## assignments somewhere that have to agree.
+##
+## **THE TRANSIENT WINS WHILE IT EXISTS, WHATEVER ARRIVED LAST.** Not newest-wins: a standing notice
+## that displaced a receipt would make the receipt channel unreliable exactly while a machine is
+## stopped, which is the trade the Game Director refused in shape (a). The transient is covering
+## furniture with a short life of its own; when it goes, the condition underneath is still true,
+## because `_age_the_saying` has been re-asking the sim about it the whole time.
+##
+## **AND A REFUSAL COVERS INDEFINITELY, WHICH IS CORRECT AND NOT A GAP** (her section 4): a refusal is
+## about an act of yours and never ages, so it holds this slot for as long as it is the last thing
+## that happened to you. A standing fact about a machine has the pinned block and the `bench` list; a
+## refusal has nowhere else to be.
+func _shown_line() -> String:
+	return _base_line if _base_line != "" else _standing_line
+
+
+func _shown_level() -> int:
+	return _base_level if _base_line != "" else _standing_level
 
 
 ## **STATE THE COLOUR, NEVER MULTIPLY THE INK** (ASSA-251, Maren's ruling being applied for the third

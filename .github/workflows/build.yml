@@ -619,6 +619,28 @@ jobs:
           "$GODOT" --headless --path . --script res://tools/toast_stall_probe.gd \
             -- 14247 900 | tee toast-stall.log
           grep -qx 'TOAST STALL PROBE OK' toast-stall.log
+      # AND A PRESS COVERS THAT SENTENCE RATHER THAN DESTROYING IT (ASSA-370).
+      # The step above buys its answer by FREEZING player 0 the moment a stall
+      # reaches the toast -- the screen that is lied to is the screen that
+      # pressed nothing. This one needs the opposite: player 0 presses a real
+      # button while the stall is live, which is the premise the other probe
+      # spends. Two claims, two instruments, so each can fail honestly.
+      #
+      # QA FOUND THIS WITH A CAMERA, not a test: every accepted command used to
+      # overwrite the stall sentence and the building it was about, so the
+      # warning vanished within two seconds of the next press whatever the
+      # machine was doing. The notice must come back when the receipt ages.
+      #
+      # Offline, no socket, no relay, one tick per frame, ~2s. Marker printed
+      # LAST and only on success; exit 2 is NO VERDICT and fails this step
+      # rather than passing.
+      - name: A press covers a stall sentence and gives it back
+        working-directory: sim-game/client
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64"
+          "$GODOT" --headless --path . --script res://tools/toast_cover_probe.gd \
+            -- 14247 900 | tee toast-cover.log
+          grep -qx 'TOAST COVER PROBE OK' toast-cover.log
       # THE HUD'S OWN PROBE, IN A GATE FOR THE FIRST TIME (ASSA-238). ASSA-116's
       # box 6 is about the HUD panels, and the only instrument that reads them is
       # `client/tools/hud_probe.gd`, which until this step had ZERO references in
