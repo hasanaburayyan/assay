@@ -21,6 +21,7 @@
 
 use godot::prelude::*;
 use sim::assembly::{Assembly, Built, Mount, PartKind};
+use sim::building::BuildingId;
 use sim::command::{Event, Input};
 use sim::hash::fnv64;
 use sim::item::{Item, ItemKind};
@@ -200,12 +201,67 @@ impl AssaySim {
     /// pressed did nothing.
     #[func]
     pub fn attention_lines(&self, me: i64) -> PackedStringArray {
-        let who = player_id_of(me);
-        self.last_events
+        self.attention_pairs(player_id_of(me))
             .iter()
-            .filter(|event| sim::debug::event_needs_attention(who, event))
-            .map(|event| gstring(&self.describe(who, event)))
+            .map(|(line, _)| gstring(line))
             .collect()
+    }
+
+    /// **WHAT EACH ATTENTION LINE IS ABOUT** — the building of a CONDITION, or
+    /// `-1` for an ACT (ASSA-300, the Game Director's §300 ruling: *"a sentence
+    /// about a condition comes down when the condition does; a sentence about
+    /// an act does not"*).
+    ///
+    /// Element `i` belongs to element `i` of [`AssaySim::attention_lines`], and
+    /// **the pairing is by construction**: both are one `attention_pairs` call,
+    /// so there is no second filter to drift and no way for a line and its kind
+    /// to come from different events. A host still asks for them separately
+    /// because a `Dictionary` field is invisible to Rust (ASSA-105), and the
+    /// kind is exactly the field whose silence would reinstate this bug.
+    ///
+    /// **`-1` IS THE SAFE ANSWER AND THAT IS WHY IT IS THE ACT.** A host that
+    /// reads past the end of this array gets `0` out of GDScript, and `0` must
+    /// not mean "a condition about building 0" — that would let a *refusal*
+    /// fade, which ASSA-239 calls the one class of sentence a player cannot
+    /// recover. The out-of-range answer has to be "never take it down".
+    ///
+    /// The id is a handle and not an address: the only thing a host may do with
+    /// it is ask [`AssaySim::is_halted`] whether the condition still holds. It
+    /// is deliberately not the tile, the kind or the state — `halt_lines` was
+    /// made a list of sentences rather than rows precisely so nothing in
+    /// `hud.gd` could compose a sentence out of parts, and the Game Director
+    /// restated it on this item: *"the toast's sentence stays the sim's"*.
+    #[func]
+    pub fn attention_conditions(&self, me: i64) -> PackedInt64Array {
+        self.attention_pairs(player_id_of(me))
+            .iter()
+            .map(|(_, about)| about.map_or(-1, |id| i64::from(id.0)))
+            .collect()
+    }
+
+    /// **IS THIS BUILDING STILL STOPPED?** `World::halted`, asked about one
+    /// building instead of listed (ASSA-300).
+    ///
+    /// The question a host has to be able to ask on any later tick, because the
+    /// stall EVENT is an edge — `announce_new_stalls` fires once on the way in
+    /// and says nothing while the stall sits — so a sentence said from that
+    /// event has no way of knowing it has stopped being true. Before this, the
+    /// Godot client had none: `the Tonore smelter (A) stopped: no fuel` stayed
+    /// over the world after the smelter was refuelled, while the pinned count
+    /// beside it had already dropped to zero.
+    ///
+    /// **THE SAME PREDICATE THE PINNED BLOCK IS BUILT FROM**, which is what
+    /// makes the toast and the count unable to disagree about whether anything
+    /// is stopped (ASSA-300 box 6): `halt_lines` is `World::halted` worded, and
+    /// this is `World::halted` asked. A finer question — *is it still in the
+    /// stall it reported* — would let the toast go down while that building was
+    /// still in the block, so this is the coarser one on purpose.
+    ///
+    /// An unknown id answers `false`: a building that no longer exists is not
+    /// stopped, and a picked-up machine's sentence should go.
+    #[func]
+    pub fn is_halted(&self, building: i64) -> bool {
+        self.world.halted().any(|b| i64::from(b.id.0) == building)
     }
 
     /// **EVERYTHING THAT HAS STOPPED AND NEEDS A PERSON**, one worded line per
@@ -2547,6 +2603,33 @@ impl AssaySim {
     /// type it into. The tile stays — that is how you find the thing.
     pub fn halt_line_texts(&self) -> Vec<String> {
         sim::debug::halt_lines(&self.world, sim::debug::Audience::Pointed)
+    }
+
+    /// Engine-free half of [`AssaySim::attention_lines`] and
+    /// [`AssaySim::attention_conditions`] **at once, which is the whole point**
+    /// (ASSA-300).
+    ///
+    /// The two `#[func]`s above are each one `map` over this, so a line and its
+    /// kind are produced by the same `filter_map` over the same event. The
+    /// alternative — two functions each matching the loud set — is how one of
+    /// them quietly stops covering a variant, which is the mistake
+    /// `event_needs_attention` was collapsed into `sim::debug::attention` to
+    /// prevent one layer down.
+    ///
+    /// `None` is an ACT: something that happened, which nothing can un-happen,
+    /// so there is nothing to re-ask and no host may age it out (ASSA-239).
+    pub fn attention_pairs(&self, who: Option<PlayerId>) -> Vec<(String, Option<BuildingId>)> {
+        self.last_events
+            .iter()
+            .filter_map(|event| {
+                let kind = sim::debug::attention(who, event)?;
+                let about = match kind {
+                    sim::debug::AttentionKind::Act => None,
+                    sim::debug::AttentionKind::Condition { building } => Some(building),
+                };
+                Some((self.describe(who, event), about))
+            })
+            .collect()
     }
 
     /// EVERY BUILDING IN THE WORLD, FOR DRAWING, in the world's own order.
@@ -5179,6 +5262,274 @@ mod tests {
             cold_after > 0,
             "premise: the run has to outlast the batch for this edge to be pinned at all"
         );
+    }
+
+    /// **A STALL AND ITS RECOVERY, DRIVEN THROUGH `step`** — the one case
+    /// ASSA-300 exists for, and the only one that proves a host has a way back.
+    ///
+    /// Before this, the Godot client had nothing to ask: the stall event is an
+    /// edge, so `the … smelter (A) stopped: no fuel` sat over the world after
+    /// the smelter was refuelled while the pinned count beside it had already
+    /// dropped to zero. The three facts a host needs are asserted at three
+    /// moments of one real world, not arranged by hand.
+    #[test]
+    fn a_stall_arrives_as_a_condition_about_a_building_and_stops_being_halted_when_it_is_fixed() {
+        let (mut sim, me) = with_a_player("marlow");
+        let rock = sim.world().species[0].id;
+        let fuel_species = sim.world().species[1].id;
+        // The same two sheets `a_smelter_reads_lit_only_…` sets, and for the
+        // same reason: ore these walls can take, and a fuel that lights from a
+        // hand spark. Worldgen rolls a roster per seed; this test is not about
+        // which one it rolled.
+        sim.world.species_mut(rock).sheet = sim::Sheet {
+            density: 50,
+            strength: 50,
+            hardness: 30,
+            heat_tolerance: 60,
+            reactivity: 1,
+            conductivity: 50,
+        };
+        sim.world.species_mut(fuel_species).sheet = sim::Sheet {
+            density: 50,
+            strength: 50,
+            hardness: 30,
+            heat_tolerance: sim::tuning::HAND_SPARK_TEMPERATURE as u8,
+            reactivity: 60,
+            conductivity: 50,
+        };
+        let smelter = Item::new(sim::ItemKind::Smelter, rock, sim::Grade::B);
+        let ore = Item::new(sim::ItemKind::Ore, rock, sim::Grade::A);
+        let fuel = Item::new(sim::ItemKind::Ore, fuel_species, sim::Grade::A);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.inventory.add(smelter, 1);
+            p.inventory.add(ore, 15);
+            p.inventory.add(fuel, 3);
+        }
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 1, at.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place {
+                item: smelter,
+                pos: spot,
+            },
+        )]);
+        let id = sim
+            .world()
+            .building_at(spot)
+            .expect("the smelter was placed")
+            .id;
+
+        // 1. AN EMPTY SMELTER IS NOT A CONDITION. `Idle` is what follows every
+        //    finished batch, so a surface that listed it would cry wolf.
+        assert!(
+            !sim.is_halted(i64::from(id.0)),
+            "an empty smelter is idle, which the sim refuses to call a stall"
+        );
+
+        // 2. ORE IN, NOTHING TO BURN: the stall fires, and it arrives as a
+        //    CONDITION carrying this building.
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Insert {
+                building: id,
+                slot: sim::Slot::Input,
+                item: ore,
+                count: 15,
+            },
+        )]);
+        let pairs = sim.attention_pairs(Some(me));
+        let about: Vec<Option<BuildingId>> = pairs.iter().map(|(_, b)| *b).collect();
+        assert!(
+            about.contains(&Some(id)),
+            "premise: the stall edge has to be in this tick's events at all: {pairs:?}"
+        );
+        let said = pairs
+            .iter()
+            .find(|(_, b)| *b == Some(id))
+            .map(|(line, _)| line.clone())
+            .expect("just asserted");
+        assert!(
+            sim.is_halted(i64::from(id.0)),
+            "the condition is true on the tick its sentence is said: {said}"
+        );
+
+        // **AND THE TWO WORDINGS DO NOT MATCH, WHICH IS WHY THE ID IS CARRIED**
+        // (ASSA-67): a host that compared the toast with the pinned list would
+        // never clear anything. This fails if they ever converge, which would
+        // be a design change and not a pass.
+        let pinned = sim.halt_line_texts();
+        assert!(
+            !pinned.contains(&said),
+            "the notice and the pinned line are two wordings of one condition; \
+             if they are now identical, the id this test guards is no longer needed: \
+             {said:?} vs {pinned:?}"
+        );
+
+        // 3. FUEL IN: the condition is gone on the tick it is fixed, so the
+        //    sentence has somewhere to go. This is the half that did not exist.
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Insert {
+                building: id,
+                slot: sim::Slot::Fuel,
+                item: fuel,
+                count: 3,
+            },
+        )]);
+        assert!(
+            !sim.is_halted(i64::from(id.0)),
+            "refuelled and working, so nothing about it is still stopped: {:?}",
+            sim.building_facts()[0].status
+        );
+        // AND THE PINNED BLOCK AGREES, because both are `World::halted`
+        // (ASSA-300 box 6: the toast and the count never disagree about
+        // whether anything is stopped).
+        assert!(
+            sim.halt_line_texts().is_empty(),
+            "a host keying the toast on `is_halted` and the block on `halt_lines` \
+             must not be able to disagree: {:?}",
+            sim.halt_line_texts()
+        );
+    }
+
+    /// **A REFUSAL IS AN ACT AND MUST NEVER BE AGEABLE** (ASSA-239: a failure
+    /// that faded out would be the one class of sentence a player cannot
+    /// recover).
+    ///
+    /// `-1` and not the building it was about, even when the refused command
+    /// names one: the act happened, nothing can un-happen it, so there is no
+    /// condition to re-ask. A host handed an id here would take the sentence
+    /// down the moment that building was healthy — which it already is, because
+    /// the refusal was about the player's reach, not the machine.
+    #[test]
+    fn a_refusal_is_an_act_with_no_building_to_re_ask() {
+        let (mut sim, me) = with_a_player("marlow");
+        let species = sim.world().species[0].id;
+        let ore = Item::new(sim::ItemKind::Ore, species, sim::Grade::C);
+        // Insert into a building that does not exist: rejected, and the command
+        // names a `BuildingId` so this is the arm where carrying one would look
+        // reasonable.
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Insert {
+                building: BuildingId(7),
+                slot: sim::Slot::Input,
+                item: ore,
+                count: 1,
+            },
+        )]);
+        let pairs = sim.attention_pairs(Some(me));
+        assert_eq!(
+            pairs.len(),
+            1,
+            "premise: a refused command has to be one attention line: {pairs:?}"
+        );
+        assert_eq!(
+            pairs[0].1, None,
+            "a refusal is an ACT: {:?} must never carry a building a host could \
+             watch go healthy",
+            pairs[0]
+        );
+    }
+
+    /// **THE LINE AND ITS KIND COME FROM THE SAME EVENT, INDEX FOR INDEX.**
+    ///
+    /// The two `#[func]`s a host calls are each one `map` over `attention_pairs`,
+    /// so this is a property rather than an agreement — but it is the property
+    /// the whole fix rests on, and a future hand that reintroduced a second
+    /// filter would break it silently. Driven over a tick carrying BOTH kinds
+    /// at once, because a fixture with one of them cannot tell a correct
+    /// pairing from a constant.
+    #[test]
+    fn an_act_and_a_condition_in_one_tick_keep_their_own_kinds() {
+        let (mut sim, me) = with_a_player("marlow");
+        let rock = sim.world().species[0].id;
+        sim.world.species_mut(rock).sheet = sim::Sheet {
+            density: 50,
+            strength: 50,
+            hardness: 30,
+            heat_tolerance: 60,
+            reactivity: 1,
+            conductivity: 50,
+        };
+        let smelter = Item::new(sim::ItemKind::Smelter, rock, sim::Grade::B);
+        let ore = Item::new(sim::ItemKind::Ore, rock, sim::Grade::A);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.inventory.add(smelter, 1);
+            p.inventory.add(ore, 15);
+        }
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 1, at.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place {
+                item: smelter,
+                pos: spot,
+            },
+        )]);
+        let id = sim
+            .world()
+            .building_at(spot)
+            .expect("the smelter was placed")
+            .id;
+        // One tick, two inputs: the ore that stalls it, and a second insert into
+        // a building that is not there, which is refused.
+        sim.step_with(&[
+            Input::player(
+                me,
+                sim::PlayerCommand::Insert {
+                    building: id,
+                    slot: sim::Slot::Input,
+                    item: ore,
+                    count: 15,
+                },
+            ),
+            Input::player(
+                me,
+                sim::PlayerCommand::Insert {
+                    building: BuildingId(9999),
+                    slot: sim::Slot::Input,
+                    item: ore,
+                    count: 1,
+                },
+            ),
+        ]);
+        let pairs = sim.attention_pairs(Some(me));
+        let acts = pairs.iter().filter(|(_, b)| b.is_none()).count();
+        let conditions = pairs.iter().filter(|(_, b)| *b == Some(id)).count();
+        assert_eq!(
+            (acts, conditions),
+            (1, 1),
+            "premise: this tick must carry one of each kind, or the test cannot \
+             tell a pairing from a constant: {pairs:?}"
+        );
+        // AND THE SENTENCES ARE NOT SWAPPED. The condition's line is the one
+        // the sim says about the machine; the act's is the refusal.
+        for (line, about) in &pairs {
+            match about {
+                Some(_) => assert!(
+                    !line.contains("refused"),
+                    "a refusal arrived carrying a building: {line}"
+                ),
+                None => assert!(
+                    line.contains("refused"),
+                    "a machine's condition arrived as an act: {line}"
+                ),
+            }
+        }
+    }
+
+    /// An id nothing in the world answers to is not stopped. A machine that has
+    /// been picked up cannot keep a sentence on screen for ever.
+    #[test]
+    fn an_unknown_building_is_not_halted() {
+        let sim = AssaySim::from_world(fresh());
+        assert!(!sim.is_halted(0));
+        assert!(!sim.is_halted(9999));
+        assert!(!sim.is_halted(-1));
     }
 
     /// A MACHINE CARRIES ITS PARTS IN `Assembly::parts()` ORDER, FRAME FIRST.
