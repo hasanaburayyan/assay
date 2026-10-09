@@ -602,6 +602,13 @@ var _build_materials: VBoxContainer = null
 var _build_slots: VBoxContainer = null
 var _build_mounts: VBoxContainer = null
 var _build_detail: VBoxContainer = null
+## **BLOCK 5's CROWN AND BLOCK 5's HEADING, HELD BECAUSE THE OUTPUT PICTURE IS SIZED FROM THE ROOM
+## LEFT OVER AFTER THEM** (ASSA-357 box 5). Both are things the picture cannot move -- a sibling
+## above it and a label beside it -- which is the whole reason they may be read live while the
+## picture's own column may not (`AssayHud.build_columns_height`'s docstring: reading the laid-out
+## column closes the chain on itself and the scale ratchets).
+var _build_crown: HBoxContainer = null
+var _build_detail_heading: Label = null
 var _build_cost: VBoxContainer = null
 ## Block 6's whole SECTION -- heading and scroll box, not just the rows. Held because the make path
 ## hides the block entirely (ASSA-341) and a heading left standing over nothing is a labelled empty
@@ -1804,6 +1811,7 @@ func _build_build_screen_over_the_map(world: Rect2) -> void:
 	# SIM's sentence in the detail column instead (ASSA-88: a row's identity lives in its sentence).
 	var crown := HBoxContainer.new()
 	crown.add_theme_constant_override("separation", BUILD_GUTTER)
+	_build_crown = crown
 	_build_title = Label.new()
 	_build_title.name = BUILD_TITLE
 	_build_title.theme_type_variation = &"Display"
@@ -1887,6 +1895,12 @@ func _build_build_screen_over_the_map(world: Rect2) -> void:
 	# untouched; `BUILD_READOUT_SHARE` now only decides how tall this block may GROW to.
 	_build_detail = _build_section(right, BUILD_READOUT_SHARE, "what you get", false)
 	_build_detail.name = BUILD_DETAIL
+	# **THE HEADING, WALKED ONCE HERE AND NEVER AGAIN** (ASSA-357 box 5). `_build_section` builds
+	# holder -> [heading, scroll -> rows] and returns the rows, so the heading is two parents up and
+	# the holder's first child. Walked at CONSTRUCTION rather than per refresh so a refresh cannot
+	# depend on the tree's shape, and held as a `Label` so the day that shape changes this is a null
+	# the sizing below falls back from instead of a wrong number.
+	_build_detail_heading = _build_detail.get_parent().get_parent().get_child(0) as Label
 	# **BLOCK 6: COST, AS TWO COUNTS** (her block 6, now x 671..911 y 423..**513** since the commit bar
 	# grew; her §5.5: need first, no slash, text, never a band).
 	_build_cost = _build_section(right, 1.0 - BUILD_READOUT_SHARE, "cost")
@@ -5208,6 +5222,21 @@ func _rebuild_build_detail() -> void:
 	# **ASSA-71 IS UNTOUCHED FOR THE PACK**, which is the half of her ruling that still holds and the
 	# reason `plated` defaults to `true`: every pack row keeps its plate and its one-colour-per-species
 	# reason, because that is the surface the 3:1 bar was measured on and passes.
+	# **BUILT BEFORE THE PICTURE AND ADDED AFTER IT, BECAUSE THE PICTURE IS SIZED FROM THE ROOM THIS
+	# LEAVES** (ASSA-357 box 5). The tree's order is unchanged -- picture, then clause -- but the
+	# clause's own minimum has to exist before the scale can be derived, and a Label's minimum does not
+	# depend on being in a tree. Measuring it rather than allowing a row for it is the difference
+	# between furniture that is read and furniture that is remembered.
+	var walls := String(offer.get("walls", ""))
+	var said: Label = null
+	if walls != "":
+		# **NO EM-DASH: `— walls 44` READ AS A FRAGMENT OF A SENTENCE THAT ENDED TWO LINES EARLIER**
+		# (ASSA-343; Maren's ASSA-328 ruling 5). The dash was mine, not the sim's, and it was a
+		# continuation mark from when this block sat under the sim's own sentence -- which moved to
+		# the commit bar in ASSA-332. The figure itself stays here: it is her ASSA-332 box 10 ruling,
+		# *"the one number on slice 1 that MOVES when you change your pick"*.
+		said = _note(walls)
+		said.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	var picture := _icon_box(makes, true, false)
 	if picture != null:
 		# **A PLATE IS SIZED BY WHAT STANDS ON IT, NOT BY THE COLUMN IT SITS IN** (ASSA-343; Maren's
@@ -5220,25 +5249,111 @@ func _rebuild_build_detail() -> void:
 		# column's 304 px while staying 48 px tall. `SHRINK_BEGIN` is the whole fix, and it also
 		# left-aligns it, which is the rest of her sentence.
 		#
-		# **AND IT IS SQUARE AT THE SPRITE'S OWN WIDTH, WHICH IS THE ONE NUMBER I MAY NOT MOVE.**
-		# `ICON_BOX_PX` is `(ICON_PX, 48)` -- 48 to match a pack row's height, which this is not. The
-		# box becomes `ICON_PX` square: the WIDTH is unchanged, so the `KEEP_ASPECT_CENTERED` scale
-		# ASSA-65 made exact (1/2 for an item, 1/4 for a part) is untouched and
-		# `check_pack_icon_scale.py` still measures what it always did -- it reads the pack, and
-		# nothing here reaches the pack.
-		picture.custom_minimum_size = Vector2(ICON_PX, ICON_PX)
+		# **AND IT IS THE AUTHORED FRAME AT A WHOLE-NUMBER SCALE OF THE ROOM IT IS GIVEN, WHICH
+		# REPLACES THE `ICON_PX` SQUARE THIS LINE HELD** (ASSA-357 box 5; Maren's box 4 ruling, 3x
+		# today and derived rather than typed). `ICON_PX` is untouched and the pack is untouched:
+		# `check_pack_icon_scale.py` reads the pack's rows, and nothing here reaches them.
+		#
+		# **THE `ICON_PX` SQUARE WAS NOT WRONG, IT WAS THE PACK'S NUMBER STANDING IN FOR THIS SCREEN'S.**
+		# ASSA-343 set it to stop a full-width plate reading as a progress bar, and square-at-32 was
+		# the smallest thing that did that. It is the only picture on a 235 px column whose job is to
+		# show the player the object they are about to spend parts on, and at 32 px it is the same
+		# size as a row icon in a list of twelve.
+		#
+		# **AND ONE SENTENCE THAT WENT WITH IT WAS FALSE, WHICH I AM NAMING RATHER THAN DELETING** (my
+		# own, ASSA-343). It said the square keeps *"the `KEEP_ASPECT_CENTERED` scale ASSA-65 made
+		# exact (1/2 for an item, 1/4 for a part)"* because the WIDTH was unchanged. The width is not
+		# what that mode reads: it fits by the SMALLER ratio, so a 64x96 frame in a 32x32 box drew at
+		# `min(32/64, 32/96)` = **1/3**, and ASSA-65's exact 1/2 had been gone since ASSA-343 shipped.
+		#
+		# **MEASURED OFF THE PAINT IN A 1x WINDOW, NOT ARGUED FROM THE DOCS** -- Limpet's make-path
+		# shot `shared/assay/limpet-assa363-centres/build-screen-14247.png`, binned by hue because
+		# every frame is tinted: the smelter's ink is **17 x 22 px, x 675..691 y 146..167**, which is
+		# its own 54x69 opaque box at 1/3 (18x23, one px of edge alpha). Not 32x48 and not 32x32: a
+		# 17 px object on a 235 px column. Nothing headless could have said so -- a drawn size needs a
+		# laid-out window -- which is why this is a shot and not a test.
+		#
+		# **THE WHOLE CLASS OF MISTAKE GOES AWAY FROM HERE**: the box is the frame times a whole
+		# number, so both ratios ARE that number and there is no smaller one to lose to.
+		var art := picture as TextureRect
+		if art != null and art.texture != null:
+			# **THE FRAME OFF THE `AtlasTexture`'S OWN REGION, NOT A 64x96 TYPED HERE.** `icon_for`
+			# slices the sheet by `manifest.json`'s `frame_px`, so the region IS the authored frame and
+			# the day the sheets are re-authored at another size this follows without an edit.
+			var frame := art.texture.get_size()
+			picture.custom_minimum_size = frame * float(AssayHud.picture_scale(frame,
+					_build_picture_room(said)))
+		else:
+			# **A RESERVED-BUT-EMPTY BOX HAS NO FRAME TO SCALE**, so it keeps the reserved square:
+			# `_icon_box`'s `reserve` arm returns a bare `Control` drawing nothing (ASSA-237, Maren's
+			# *"space is structure"*), and scaling nothing by 3 is 3x of a gap.
+			picture.custom_minimum_size = Vector2(ICON_PX, ICON_PX)
 		picture.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		_build_detail.add_child(picture)
-	var walls := String(offer.get("walls", ""))
-	if walls != "":
-		# **NO EM-DASH: `— walls 44` READ AS A FRAGMENT OF A SENTENCE THAT ENDED TWO LINES EARLIER**
-		# (ASSA-343; Maren's ASSA-328 ruling 5). The dash was mine, not the sim's, and it was a
-		# continuation mark from when this block sat under the sim's own sentence -- which moved to
-		# the commit bar in ASSA-332. The figure itself stays here: it is her ASSA-332 box 10 ruling,
-		# *"the one number on slice 1 that MOVES when you change your pick"*.
-		var said := _note(walls)
-		said.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	if said != null:
 		_build_detail.add_child(said)
+
+
+## **THE ROOM BLOCK 5's OUTPUT PICTURE HAS, DERIVED FROM THE SCREEN'S RECT AND NEVER FROM THE COLUMN
+## THE PICTURE STANDS IN** (ASSA-357 box 5; Maren's box 4 ruling and her 04:17 reason for it).
+##
+## **EVERY TERM AND WHERE IT COMES FROM.** Width: the screen's rect less the panel's own content
+## margin, shared out by `BUILD_COLUMNS` and `BUILD_GUTTER` exactly as the `HBoxContainer` does it,
+## taking the LAST column because `right` is the last one added. Height: the same rect less the pad,
+## less the crown, less two gutters, less `BUILD_COMMIT_BAR` -- which is the columns region -- and
+## then less block 5's own furniture, the heading plus the `walls` clause plus the two separations
+## between the three.
+##
+## **NOT ONE TERM IS READ OFF THE LAID-OUT COLUMN, AND THAT IS THE WHOLE DESIGN.** Block 5 is built
+## `fill := false`, so it is `SHRINK_BEGIN` with scrolling disabled and its content's height is a hard
+## FLOOR under the section, the column and the screen (ASSA-362's mechanism, a P0 the night this was
+## ruled). Size the picture from the laid-out column and the chain closes on itself -- picture 288 ->
+## column >= 288 -> room >= 288 -> scale >= 3 -- a ratchet that can only grow, which is the opposite
+## of what the derived scale is for. Every quantity here is either the window's or a sibling's.
+##
+## **THE CROWN, THE HEADING AND THE CLAUSE ARE READ LIVE BECAUSE THEY ARE FONT METRICS.** A `Display`
+## label beside a `Quiet` button, a `Heading` label, and one `BODY` row are the engine's answers, not
+## numbers this project owns, and none of the three can be moved by the picture. The two separations
+## are asked of the containers that were given them, so this cannot disagree with the layout.
+##
+## **WHAT IT ANSWERS AGAINST THE 1x WINDOW THAT FITS** (`shared/assay/limpet-assa317-assembly/`):
+## `864x588` -> inside `844x576` -> columns `402` -> room **234 x ~341**, and `floor(min(234/64,
+## 341/96))` = 3. **The ceiling is the width**: 4x needs 256 against a 235 px column.
+##
+## **`walls` IS MEASURED UNWRAPPED AND THAT IS THIS FUNCTION'S ONE KNOWN SOFT EDGE.** A Label that has
+## never been laid out reports a one-row minimum, so a clause that wraps to three rows in the window
+## leaves 36 px less than this allows for. Maren priced that case before ruling: 3x sits 57 px under
+## the column at one row and 21 px under it at three, so the scale does not move -- and the direction
+## of the error is the safe one, because the clause is a `ScrollContainer`'s child in a block whose
+## slack falls under `cost`.
+func _build_picture_room(said: Label) -> Vector2:
+	var rect := AssayHud.build_screen_rect(AssayHud.world_rect(), _world_band_top())
+	# **THE PANEL'S OWN CONTENT MARGIN, ASKED OF THE PANEL** (`build_theme.gd`'s `PAD_X` 10 / `PAD_Y`
+	# 6, which this file may not hold a second copy of -- ASSA-320's defect is prose and a constant
+	# agreeing today). No stylebox means no theme, and then no padding either, which is consistent
+	# rather than a guess.
+	var pad := Vector2.ZERO
+	if is_instance_valid(_build_box):
+		var skin := _build_box.get_theme_stylebox(&"panel")
+		if skin != null:
+			pad = Vector2(skin.get_margin(SIDE_LEFT), skin.get_margin(SIDE_TOP))
+	var crown := 0.0
+	if is_instance_valid(_build_crown):
+		# THE MINIMUM AND NOT THE LAID-OUT SIZE: a minimum is what the control asks for and is the same
+		# answer in a window and in the test suite, where nothing has a size at all.
+		crown = _build_crown.get_combined_minimum_size().y
+	var furniture := float(_build_detail.get_theme_constant(&"separation"))
+	var holder := _build_detail.get_parent().get_parent() as Control
+	if holder != null:
+		furniture += float(holder.get_theme_constant(&"separation"))
+	if is_instance_valid(_build_detail_heading):
+		furniture += _build_detail_heading.get_combined_minimum_size().y
+	if said != null:
+		furniture += said.get_combined_minimum_size().y
+	var columns := AssayHud.build_columns_height(rect, pad, crown, float(BUILD_GUTTER))
+	return Vector2(AssayHud.build_column_width(rect.size.x - pad.x * 2.0, BUILD_COLUMNS,
+			BUILD_COLUMNS.size() - 1, float(BUILD_GUTTER)),
+			maxf(0.0, columns - furniture))
 
 
 ## **THE COMMIT BAR'S LEFT: THE SIM'S SENTENCE ABOUT THE ACT, BROKEN ONLY WHERE THE SIM BROKE IT**

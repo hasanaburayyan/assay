@@ -2895,6 +2895,68 @@ func test_the_build_screen_gives_back_whatever_the_control_band_takes() -> bool:
 	return true
 
 
+## **THE OUTPUT PICTURE'S SCALE IS AN ARGMAX AND NOT A NUMBER, AND THAT IS THE WHOLE OF BOX 5**
+## (ASSA-357; Maren's box 4 ruling: *"my 3 is a result and not a number to type"*).
+##
+## **THE CASE THAT PINS TODAY IS THE 1x WINDOW'S OWN MEASUREMENTS, not the spec's.** Maren corrected
+## her own two numbers before I built to them: the right column is **235** and not the doc's 240, and
+## the columns region ~**402** and not 406 (`shared/assay/limpet-assa317-assembly/shot-report.txt`).
+## So the pinned inputs here are a rect of `864x588`, which is what that shot's screen measured.
+##
+## **AND THE LEVERS ARE WHAT MAKE IT AN ARGMAX RATHER THAN A COINCIDENCE**: one more step must NOT
+## fit, the width must be the axis that refuses 4x, a room that shrinks must take the scale with it,
+## and a room smaller than one frame must still answer 1 rather than 0.
+func test_the_output_pictures_scale_is_the_largest_whole_step_its_room_allows() -> bool:
+	var frame := Vector2(64.0, 96.0)
+	# THE ROOM, DERIVED THE WAY THE CLIENT DERIVES IT, off the 1x window's rect.
+	var rect := Rect2(Vector2.ZERO, Vector2(864.0, 588.0))
+	var pad := Vector2(10.0, 6.0)
+	var gutter := 16.0
+	var shares := [287.0 / 863.0, 304.0 / 863.0, 240.0 / 863.0]
+	var width := AssayHud.build_column_width(rect.size.x - pad.x * 2.0, shares, 2, gutter)
+	if width > 235.0 or width < 230.0:
+		return _fail(("the right column derives to %.0f and the 1x window measured 235; the share "
+				+ "arithmetic has stopped describing the layout") % width)
+	var columns := AssayHud.build_columns_height(rect, pad, 28.0, gutter)
+	if absf(columns - 402.0) > 2.0:
+		return _fail(("the columns region derives to %.0f and the 1x window measured ~402") % columns)
+	# BLOCK 5's FURNITURE on that window: a 31 px heading, a one-row 18 px clause, two 6 px separations.
+	var room := Vector2(width, columns - 31.0 - 18.0 - 12.0)
+	if AssayHud.picture_scale(frame, room) != 3:
+		return _fail(("a 64x96 frame in block 5's real room %s came out %dx; Maren's box 4 ruled 3x "
+				+ "off these very numbers") % [room, AssayHud.picture_scale(frame, room)])
+	# **ARGMAX: ONE MORE STEP MUST NOT FIT.** Without this the function could answer 3 by returning a
+	# constant, or by flooring a ratio it never took the minimum of.
+	if frame.x * 4.0 <= room.x and frame.y * 4.0 <= room.y:
+		return _fail("4x fits room %s, so 3 is not the largest step and this test is the wrong claim"
+				% room)
+	# **AND THE AXIS THAT REFUSES 4x IS THE WIDTH**, which is Maren's ceiling: 256 against 235. A room
+	# with unlimited height still answers 3.
+	if AssayHud.picture_scale(frame, Vector2(room.x, 100000.0)) != 3:
+		return _fail(("with unlimited height the width alone gave %dx; the ceiling is supposed to be "
+				+ "the 235 px column") % AssayHud.picture_scale(frame, Vector2(room.x, 100000.0)))
+	# **THE LEVER THAT MAKES IT A FUNCTION OF THE ROOM: SHRINK THE ROOM AND THE SCALE FOLLOWS DOWN.**
+	# This is what Maren asked the derived constant for (her 04:17 comment): the day `cost` comes back
+	# to the make path, or a window gets smaller, the picture gives way instead of becoming the floor
+	# that pushes `Build` off the screen (ASSA-362).
+	if AssayHud.picture_scale(frame, Vector2(room.x, 200.0)) != 2:
+		return _fail("a room only 200 px tall still drew %dx"
+				% AssayHud.picture_scale(frame, Vector2(room.x, 200.0)))
+	if AssayHud.picture_scale(frame, Vector2(130.0, room.y)) != 2:
+		return _fail("a 130 px column still drew %dx" % AssayHud.picture_scale(frame, Vector2(130.0,
+				room.y)))
+	# **AND A ROOM SMALLER THAN ONE FRAME ANSWERS 1, NOT 0.** A 0 is an invisible picture on the one
+	# surface whose job is to show you what you get, and it is what an unclamped floor returns.
+	for cramped in [Vector2(10.0, 10.0), Vector2(63.0, 95.0), Vector2.ZERO, Vector2(-5.0, -5.0)]:
+		if AssayHud.picture_scale(frame, cramped) != 1:
+			return _fail("a room of %s drew the picture at %dx"
+					% [cramped, AssayHud.picture_scale(frame, cramped)])
+	# A FRAME WITH NO SIZE CANNOT DIVIDE, and the answer is 1 rather than an error or an infinity.
+	if AssayHud.picture_scale(Vector2.ZERO, room) != 1:
+		return _fail("a frame of no size drew %dx" % AssayHud.picture_scale(Vector2.ZERO, room))
+	return true
+
+
 ## **THE COST GRAMMAR, AS A LITERAL** (ASSA-332; Maren's §5.5: *"`need 1 · have 2`. Both numbers
 ## always, no slash, need first"*, reversing her own §5.3 after seeing what slice 1 drew).
 ##
