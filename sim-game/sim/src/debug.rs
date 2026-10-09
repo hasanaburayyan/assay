@@ -9,7 +9,7 @@ use crate::assembly::{
 };
 use crate::building::{
     Building, BuildingId, BuildingKind, BuildingState, Machine, MachineIdle, MachineStall,
-    MachineState, Slot, SmelterStall, SmelterState,
+    MachineState, Slot, SmelterIdle, SmelterStall, SmelterState,
 };
 use crate::command::{Event, PlayerCommand, RejectReason, StopReason};
 use crate::item::{Item, ItemKind, ItemStack};
@@ -2363,7 +2363,23 @@ pub fn stall_reason(why: SmelterStall) -> String {
 /// ASSA-52 happened.
 pub fn smelter_state_line(state: SmelterState) -> String {
     match state {
-        SmelterState::Idle => "idle: nothing to refine".to_string(),
+        SmelterState::Idle(SmelterIdle::Empty) => "idle: nothing to refine".to_string(),
+        // **BOTH NUMBERS AND THE VERB COME OFF `RECIPES`** (Game Director,
+        // ASSA-322): `needs` is the table's batch size and `to {name}` is the
+        // table's own word for the act, so the day a resmelt eats four this
+        // sentence says four with nothing red. A literal `3` or `"resmelt"`
+        // here is ASSA-59 read backwards.
+        //
+        // **A COMMA, NEVER A `·`.** The dot is the status line's one top-level
+        // clause mark and a state line is a clause sitting on it, so
+        // `at 4 2 · idle: needs 3 · holding 2` would be unreadable about which
+        // dot divides what. `stalled: full, take the ore out` already has a
+        // comma inside a reason, which is the precedent.
+        SmelterState::Idle(SmelterIdle::ShortBatch { recipe, holding }) => format!(
+            "idle: needs {} to {}, holding {holding}",
+            recipe.recipe().input.1,
+            recipe.name()
+        ),
         SmelterState::Stalled(why) => format!("stalled: {}", stall_reason(why)),
         SmelterState::Working { at } => format!("working at {at}"),
     }

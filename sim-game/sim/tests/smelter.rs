@@ -4,8 +4,8 @@ use sim::tuning::{
 };
 use sim::{
     BuildingId, BuildingKind, Event, Grade, Input, Item, ItemKind, PlayerCommand, PlayerId,
-    RecipeId, RejectReason, Sheet, Slot, SmelterStall, SmelterState, SpeciesId, SystemCommand,
-    TilePos, World, WorldConfig, step,
+    RecipeId, RejectReason, Sheet, Slot, SmelterIdle, SmelterStall, SmelterState, SpeciesId,
+    SystemCommand, TilePos, World, WorldConfig, step,
 };
 
 /// Species used by these tests, with sheets set explicitly so the rules are
@@ -611,24 +611,33 @@ fn the_total_comes_from_the_recipe_in_the_slot_and_not_from_one_constant() {
     assert_eq!(work_words(&world, id), "3 of 40 ticks into this batch");
 }
 
-/// **A SLOT HOLDING LESS THAN A BATCH IS NOT A BATCH** — and the state line
-/// does not know it.
+/// **A SLOT HOLDING LESS THAN A BATCH IS NOT A BATCH**, and since ASSA-322 the
+/// state line knows it.
 ///
 /// `run_smelters` skips a smelter whose input is short of `recipe.input.1`
-/// (resmelt eats 3), but `World::smelter_state` never checks the count: it
-/// reports `Working` for a smelter that will sit there forever. So the status
-/// line of a smelter holding 2 refined says `working at 60` and nothing
-/// happens, which is the "honest status" defect ASSA-80 and ASSA-94 exist to
-/// kill, one slot over.
+/// (resmelt eats 3), and `World::smelter_state` used not to check the count: it
+/// reported `Working` for a smelter that would sit there forever, so the status
+/// line of a smelter holding 2 refined said `working at 60` while nothing
+/// happened — the "honest status" defect ASSA-80 and ASSA-94 exist to kill, one
+/// slot over.
 ///
-/// **THIS TEST PINS THE DISAGREEMENT RATHER THAN FIXING IT.** The reading is
-/// `None` here because the sim's own precondition says there is no batch; the
-/// fix is a new state whose WORDING is the Game Director's (filed with a price
-/// on ASSA-322), and it needs a `PROTOCOL_VERSION` bump because `SmelterStall`
-/// rides on an event. Pinning it means the day that lands, this test names
-/// exactly what changed.
+/// **WHAT CHANGED, NAMED RATHER THAN QUIETLY EDITED.** This test pinned the
+/// disagreement for a day and asserted `Working { at: 60 }` as *wrong on
+/// purpose*. The Game Director ruled it an idle with a reason, not a stall and
+/// not a fifth state, so the assertion below is now
+/// `Idle(ShortBatch { recipe: Resmelt, holding: 2 })` and the wording test
+/// beside it owns the sentence.
+///
+/// **AND THE PROTOCOL CLAIM IN MY OWN OLD DOC COMMENT WAS WRONG.** It said the
+/// fix "needs a `PROTOCOL_VERSION` bump because `SmelterStall` rides on an
+/// event". It does ride on one — but a short batch is not a stall, and
+/// `SmelterState` derives no `Serialize` at all (`building.rs`), so it is on no
+/// wire and in no save. Protocol stayed 10 and `SAVE_VERSION` stayed 12.
+///
+/// The reading stays `None`: the sim's own precondition says there is no batch,
+/// so there is no batch to report progress on.
 #[test]
-fn a_part_batch_makes_no_progress_and_the_state_line_does_not_know_it() {
+fn a_part_batch_makes_no_progress_and_the_state_line_says_so() {
     let (mut world, me, id, _) = world_with_smelter();
     let refined_b = Item::new(ItemKind::Refined, WALLS, Grade::B);
     let needs = RecipeId::Resmelt.recipe().input.1;
@@ -655,11 +664,100 @@ fn a_part_batch_makes_no_progress_and_the_state_line_does_not_know_it() {
         None,
         "no batch is in front of it, so there is no batch to report"
     );
-    // The half that is wrong, recorded as wrong.
+    // The half that used to be wrong. `holding` is this smelter's own fact and
+    // `recipe` is the table's, which is what lets the sentence carry a batch
+    // size without a second copy of the number.
     assert_eq!(
         world.smelter_state(world.building(id).unwrap()),
-        SmelterState::Working { at: 60 },
-        "ASSA-322: the state line claims it is working. It is not."
+        SmelterState::Idle(SmelterIdle::ShortBatch {
+            recipe: RecipeId::Resmelt,
+            holding: 2
+        }),
+        "a smelter holding 2 of a 3-refined batch is idle with a reason"
+    );
+    assert_eq!(
+        sim::debug::building_state_line(&world, world.building(id).unwrap()),
+        "idle: needs 3 to resmelt, holding 2",
+        "the Game Director's sentence, on the surface a player reads"
+    );
+    // **AND IT IS NOT SOMETHING TO FIX.** The whole reason this is an idle and
+    // not a stall is that it is where every bulk load ends, so it must not
+    // reach the halt surface or announce an event.
+    assert!(
+        !world.building_state(world.building(id).unwrap()).halted(),
+        "a short batch is the rules' own remainder, not a player's mistake"
+    );
+    assert_eq!(
+        sim::debug::halt_lines(&world, sim::debug::Audience::Typed),
+        Vec::<String>::new(),
+        "a surface listing this would cry wolf after every bulk resmelt"
+    );
+}
+
+/// **THE SENTENCE'S TWO NUMBERS AND ITS VERB COME OFF `RECIPES`, AND THIS IS
+/// THE CHECK ON IT** (Game Director, ASSA-322).
+///
+/// The end-to-end test above can only ever reach `Resmelt`: it is the one
+/// smelter recipe that eats more than one, so it is also the only one a real
+/// slot can be short of. That makes it blind to a hardcoded `3` or
+/// `"resmelt"` — the exact literal the ruling forbids, and ASSA-59's shape.
+///
+/// So this drives the wording function directly over four recipes carrying
+/// three different batch sizes (3, 2 and 5). A literal anywhere in the format
+/// string reddens it.
+#[test]
+fn the_short_batch_sentence_reads_the_recipe_table_and_not_a_literal() {
+    let line = |recipe, holding| {
+        sim::debug::smelter_state_line(SmelterState::Idle(SmelterIdle::ShortBatch {
+            recipe,
+            holding,
+        }))
+    };
+    assert_eq!(
+        line(RecipeId::Resmelt, 2),
+        "idle: needs 3 to resmelt, holding 2"
+    );
+    // Not reachable through a slot, and that is the point: these pin the
+    // function to the table rather than to the one row the world can show us.
+    assert_eq!(line(RecipeId::Sort, 1), "idle: needs 3 to sort, holding 1");
+    assert_eq!(line(RecipeId::Gear, 1), "idle: needs 2 to gear, holding 1");
+    assert_eq!(
+        line(RecipeId::Smelter, 4),
+        "idle: needs 5 to smelter, holding 4"
+    );
+    // Non-vacuity: the three above must not all be the same string.
+    assert_ne!(line(RecipeId::Gear, 1), line(RecipeId::Sort, 1));
+    // And the batch size really is the table's, not a constant that happens to
+    // match today.
+    for recipe in [RecipeId::Resmelt, RecipeId::Sort, RecipeId::Gear] {
+        assert!(
+            line(recipe, 0).contains(&format!(
+                "needs {} to {}",
+                recipe.recipe().input.1,
+                recipe.name()
+            )),
+            "{recipe:?} sentence drifted from the table: {}",
+            line(recipe, 0)
+        );
+    }
+}
+
+/// **AN EMPTY SLOT STAYS WORDLESS** (Game Director, ASSA-322): her standing
+/// ruling is that an absent part gives an absent number, never a 0, so the
+/// empty arm keeps `nothing to refine` and never becomes `holding 0`.
+#[test]
+fn an_empty_smelter_says_nothing_about_counts() {
+    let (world, _, id, _) = world_with_smelter();
+    let b = world.building(id).unwrap();
+    assert_eq!(
+        world.smelter_state(b),
+        SmelterState::Idle(SmelterIdle::Empty)
+    );
+    let line = sim::debug::building_state_line(&world, b);
+    assert_eq!(line, "idle: nothing to refine");
+    assert!(
+        !line.contains("holding") && !line.contains('0'),
+        "the empty arm must not print a count: {line}"
     );
 }
 

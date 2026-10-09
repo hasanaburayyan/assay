@@ -2,7 +2,7 @@
 
 use crate::building::{
     Building, BuildingId, BuildingKind, BuildingState, Machine, MachineIdle, MachineStall,
-    MachineState, SlotRole, Smelter, SmelterStall, SmelterState, WorkReading,
+    MachineState, SlotRole, Smelter, SmelterIdle, SmelterStall, SmelterState, WorkReading,
 };
 use crate::hash::fnv64;
 use crate::item::{Item, ItemStack};
@@ -254,7 +254,7 @@ impl World {
     /// callers do not have to match the kind twice.
     pub fn smelter_state(&self, b: &Building) -> SmelterState {
         let BuildingKind::Smelter(s) = &b.kind else {
-            return SmelterState::Idle;
+            return SmelterState::Idle(SmelterIdle::Empty);
         };
         let walls = self.max_temperature(b);
         // The fire this smelter is running on: what is burning now, or what
@@ -277,8 +277,8 @@ impl World {
         let needs = s
             .input
             .map(|i| u32::from(self.species(i.item.species).sheet.heat_tolerance));
-        if s.input.is_none() {
-            SmelterState::Idle
+        if let Some(idle) = Self::input_idle(s) {
+            SmelterState::Idle(idle)
         } else if s
             .output
             .is_some_and(|o| o.count >= crate::tuning::SMELTER_OUTPUT_CAP)
@@ -296,6 +296,37 @@ impl World {
         } else {
             SmelterState::Working { at: fire }
         }
+    }
+
+    /// The input slot's own answer: empty, or holding less than one batch.
+    /// `None` means there is a batch to work on and the rest of the chain
+    /// decides.
+    ///
+    /// **THIS IS `run_smelters`' OWN PRECONDITION, READ OFF THE SAME TABLE**
+    /// (ASSA-322). `step.rs` skips a smelter whose `input.count` is below
+    /// `recipe.input.1` and used to be the only place that knew: a smelter
+    /// holding 2 of a 3-refined resmelt reported `working at 60` on every
+    /// surface, forever, and `lit` in the Godot binding reads the same answer —
+    /// so the window drew a fire on a smelter that had never lit and would
+    /// never consume a unit.
+    ///
+    /// It sits where `input.is_none()` sat, and that is the Game Director's
+    /// placement, not a convenience: holding 0 of 3 and holding 2 of 3 are one
+    /// condition in degree, and the input shortfall already outranks fuel here
+    /// (an empty smelter with no fuel says `nothing to refine`, not `no fuel`).
+    ///
+    /// An input kind with no smelter recipe answers `None` and falls through,
+    /// exactly as before. `Insert` refuses that kind at the door
+    /// (`RejectReason::WrongItem`), so it is unreachable rather than handled.
+    fn input_idle(s: &Smelter) -> Option<SmelterIdle> {
+        let Some(input) = s.input else {
+            return Some(SmelterIdle::Empty);
+        };
+        let recipe = crate::recipe::smelter_recipe_for(input.item.kind)?;
+        (input.count < recipe.recipe().input.1).then_some(SmelterIdle::ShortBatch {
+            recipe,
+            holding: input.count,
+        })
     }
 
     /// What this planted machine is doing, and why if it has stopped.
