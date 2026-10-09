@@ -3073,7 +3073,28 @@ pub fn design_preview(world: &World, player: PlayerId, frame: Item, mounted: &[I
         None => assembly_readout(world, built),
     };
     let _ = write!(out, "\n      your pack: {counts}");
-    if let Some(item) = missing {
+    // **THE FIGURES ON BOTH ARMS, THE VERDICT ON ONE** (Game Director, ASSA-352).
+    //
+    // `missing` is carried by `Weighed` and `Unfinished` alike, so this clause
+    // used to print on a half-placed design too — and then a design with an
+    // empty slot and a thin pack read its `fault` (*"no head yet"*) and
+    // *"assembling it would be refused"* underneath it. Two verdicts, and the
+    // second one blames the pack when `step` refuses the SLOT first. The
+    // sentence was true and its blame was wrong, which is the worse of the two:
+    // a player reads it and goes mining when what they need is a head.
+    //
+    // **THE COMMENT TWENTY LINES UP HAD ALREADY RULED IT** — *"the middle one
+    // gets every number and no verdict"* — and this function contradicted it
+    // just far enough down to read as separate code. `your pack: {counts}` stays
+    // on both arms: it already spells `1/2 Tonore frame`, so the shortfall is
+    // visible as a FIGURE and nothing actionable is lost. Only the blame goes.
+    //
+    // ASSA-88 in one line: a disqualifier outranks a figure, and the
+    // disqualifier here is the empty slot, which `unfinished_readout` names. One
+    // blocker, named once. "A refusal sits below the figures" is not weakened —
+    // the refusal is still last; it is simply not claimed when something
+    // outranks it.
+    if let (Some(item), None) = (missing, unfinished) {
         let item = *item;
         // The sentence `step` would answer the press with, said before it.
         let _ = write!(
