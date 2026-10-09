@@ -770,15 +770,44 @@ pub fn event_line(
             "{} is full at {held} of {capacity} and has stopped: take the ore out, or give it a hopper",
             site(building)
         ),
-        // **THE ORDER IS NOT TOUCHED HERE AND THAT IS DELIBERATE.** The Game
-        // Director ruled the reason comes first on the STOPPED BLOCK
-        // (`halt_lines`, ASSA-94) and in the same breath drew the line this arm
-        // sits on the other side of: *"a refusal is a MOMENT; a stall is a
-        // CONDITION"*. This is the moment — the edge into the stall, said once —
-        // so it keeps a sentence's order. Only the noun and the id change.
-        Event::SmelterStalled { building, why } => {
-            format!("{} stopped: {}", site(building), stall_reason(world, *why))
-        }
+        // **REASON FIRST, IDENTITY AFTER — THE STANDING-CONDITION ORDER, and
+        // the premise that used to justify the other order is gone** (Game
+        // Director, ASSA-364 box 7).
+        //
+        // This arm read `{site} stopped: {reason}`, and its comment defended
+        // the sentence order on one fact: *"this is the moment — the edge into
+        // the stall, **said once**"*. **ASSA-364 is the change that makes it
+        // not said once.** The edge is now *a stall nobody has been told
+        // about*, so `NoFuel -> FuelWontLight` emits a SECOND notice about one
+        // machine that never restarted — and `stopped` a second time reports a
+        // transition that did not happen. The behaviour outlived the reason
+        // written beside it.
+        //
+        // Her ruling, in her words: **a first notice is a moment; a second is a
+        // condition — and when one event cannot tell you which, it speaks as
+        // the condition.** `Event::SmelterStalled` carries no way to tell a
+        // first from a second, so one sentence serves both, and the only
+        // sentence that is true either way is the state.
+        //
+        // **THE WORDS ARE `smelter_state_line`'S, SO THIS WRITES NONE OF ITS
+        // OWN** — the same wording `halt_lines` and `building_status` show, in
+        // `halt_lines`' own `reason · identity` shape. One change, one place,
+        // both surfaces.
+        //
+        // **BUT IT IS BUILT FROM THE EVENT'S `why`, NOT FROM THE WORLD'S
+        // CURRENT STATE, and that is not a shortcut.** The obvious reading of
+        // "use `building_state_line`" would re-derive the stall from the world
+        // as it is when the line is rendered, which is not in general the world
+        // that raised the event: a host renders after `step` returns, and a
+        // tick bundle can carry an `Insert` that changes the reason in the same
+        // tick. A sentence that re-derived would then contradict the event it
+        // is the text of, and the second notice is precisely the case where
+        // those two differ. The event's payload is the authority.
+        Event::SmelterStalled { building, why } => format!(
+            "{} · {}",
+            smelter_state_line(world, SmelterState::Stalled(*why)),
+            site(building)
+        ),
         Event::MoveStarted { player, from, to } => format!(
             "{} started walking from ({}, {}) to ({}, {})",
             who(player),

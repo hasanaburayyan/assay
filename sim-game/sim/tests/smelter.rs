@@ -1895,6 +1895,199 @@ fn every_stall_reason_says_the_same_thing_in_the_log_and_on_the_status_line() {
     );
 }
 
+/// **A STALL THAT BECOMES A DIFFERENT STALL IS ANNOUNCED** (ASSA-364, the Game
+/// Director's, found while ruling the open trade on ASSA-300).
+///
+/// `announce_new_stalls` took `before: &[(BuildingId, bool)]`, so a smelter
+/// that was stalled, stayed stalled and changed WHY emitted nothing at all —
+/// and this is her reproduction, which costs **one `Insert`**: a smelter with
+/// ore and no fuel is `NoFuel`; put in fuel that cannot light from cold and it
+/// is `FuelWontLight`. Still stalled, new reason, no event.
+///
+/// **WHY IT IS NOT COSMETIC:** the toast then reads `no fuel` about a smelter
+/// with fuel in its slot, and no event will ever arrive to replace it. The
+/// client's clearing rule (ASSA-300) asks whether that building is still
+/// halted; it is, so the stale reason stays. Neither the coarse question nor
+/// the fine one can fix that from the client side — only the sim saying the
+/// new fact can.
+///
+/// **BOTH HALVES ARE ASSERTED AS ONE SEQUENCE, in the order a player does
+/// them, so a fix that announced the second reason by announcing every tick
+/// would fail here on the counts rather than passing on the first.**
+#[test]
+fn a_stall_that_becomes_a_different_stall_is_announced_once() {
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(WALLS), 15);
+    give(&mut world, me, ore(HOT_FUEL), 3);
+
+    // ORE IN, NOTHING TO BURN. Asserted as the premise: without this first
+    // stall there is no edge from one stall to another to measure.
+    let first = run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Input, ore(WALLS), 15))],
+        30,
+    );
+    assert_eq!(
+        stalls(&first),
+        vec![SmelterStall::NoFuel],
+        "premise: thirty ticks of ore with no fuel has to say `no fuel`, once: {first:?}"
+    );
+
+    // ONE INSERT of fuel that will not light from cold. The smelter is still
+    // stalled -- nothing a player did has cleared it -- and the reason is now
+    // a different one.
+    let second = run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Fuel, ore(HOT_FUEL), 3))],
+        60,
+    );
+    assert!(
+        world
+            .smelter_state(world.building(id).unwrap())
+            .stall()
+            .is_some(),
+        "premise: the insert cleared the stall, so this is not the edge under test"
+    );
+    assert_eq!(
+        stalls(&second),
+        vec![SmelterStall::FuelWontLight],
+        "the new reason is said exactly once across sixty ticks: a silent one leaves the \
+         player's screen reading `no fuel` at a smelter with fuel in it, and a repeated one \
+         is rule 2 broken: {second:?}"
+    );
+}
+
+/// **BOTH NOTICES ABOUT ONE MACHINE, AS A PLAYER READS THEM** (ASSA-364 box 7,
+/// the Game Director's ruling of 11:37Z).
+///
+/// **NOTHING IN THIS SUITE PINNED THIS SENTENCE AND IT IS THE LOUDEST ONE WE
+/// HAVE.** `event_audience.rs` says so in its own words -- *"`SmelterStalled`
+/// is LOUD, so it lands on the always-visible status line"* -- and I rewrote it
+/// end to end for this item with **every one of 36 targets still green**. The
+/// tests around it assert that the event FIRES, how OFTEN, and what
+/// `halt_lines` says about the standing condition; none of them read the text
+/// the event itself prints. That is the gap this closes.
+///
+/// Her three tests, each asserted below rather than described:
+///
+/// 1. **TRUE ALONE.** A player may see only the second notice, so it must not
+///    claim a transition that did not happen. The machine never restarted, so
+///    neither sentence may say `stopped`.
+/// 2. **DIFFERENT AT A GLANCE.** The two must not share a leading clause; the
+///    thing that CHANGED leads. `the X stopped: no fuel` against `the X
+///    stopped: the fuel will not light` shared twenty-odd characters and
+///    differed only in the tail, which is ASSA-317.
+/// 3. **SAME SUBJECT PHRASE** both times, or the player reads a second machine
+///    stalling rather than one machine changing its mind.
+///
+/// **AND THE WORDS ARE `smelter_state_line`'S, ASSERTED BY REUSE.** Each
+/// sentence is built here from the same function the standing surfaces use, so
+/// a test that passed while the arm invented its own eleventh wording is not
+/// possible: the expected string is not typed in this file.
+#[test]
+fn both_notices_about_one_machine_name_their_reason_and_never_claim_a_stop() {
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(WALLS), 15);
+    give(&mut world, me, ore(HOT_FUEL), 3);
+    let first = run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Input, ore(WALLS), 15))],
+        30,
+    );
+    let second = run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Fuel, ore(HOT_FUEL), 3))],
+        60,
+    );
+
+    // THE PREMISE: one notice from each stretch, two different reasons. Without
+    // this the assertions below could be comparing a sentence with itself.
+    assert_eq!(
+        (stalls(&first), stalls(&second)),
+        (
+            vec![SmelterStall::NoFuel],
+            vec![SmelterStall::FuelWontLight]
+        ),
+        "premise: this test needs exactly one notice of each reason"
+    );
+
+    let said = |events: &[Event]| -> String {
+        let e = events
+            .iter()
+            .find(|e| matches!(e, Event::SmelterStalled { .. }))
+            .expect("the premise above proved there is one");
+        sim::debug::event_line(&world, Some(me), e, sim::debug::Audience::Typed)
+    };
+    let one = said(&first);
+    let two = said(&second);
+
+    // 1. TRUE ALONE: neither claims a stop, because only one of them could
+    //    ever be true about a machine that never restarted.
+    for line in [&one, &two] {
+        assert!(
+            !line.contains("stopped"),
+            "a second notice about a machine that never restarted may not report a \
+             transition, so neither sentence claims one: {line}"
+        );
+    }
+
+    // 2. DIFFERENT AT A GLANCE: the reason leads, so the leading clause is the
+    //    thing that changed. Compared as clauses, not as a prefix length.
+    let lead = |line: &str| line.split(" \u{b7} ").next().unwrap_or("").to_string();
+    assert_ne!(
+        lead(&one),
+        lead(&two),
+        "the two notices lead with the same clause, so a glance at the second reads as \
+         the first (ASSA-317): {one} / {two}"
+    );
+
+    // 3. SAME SUBJECT PHRASE: one machine changing its mind, not two machines.
+    let tail = |line: &str| line.split(" \u{b7} ").nth(1).unwrap_or("").to_string();
+    assert_eq!(
+        tail(&one),
+        tail(&two),
+        "the subject phrase must be identical or the player reads a second machine: \
+         {one} / {two}"
+    );
+
+    // AND THE WORDS ARE THE SIM'S EXISTING ONES, not an eleventh wording. Built
+    // from `smelter_state_line` rather than typed, so this cannot pass over an
+    // arm that writes its own.
+    assert_eq!(
+        lead(&one),
+        sim::debug::smelter_state_line(&world, SmelterState::Stalled(SmelterStall::NoFuel)),
+        "the first notice's reason is the standing surfaces' wording: {one}"
+    );
+    assert_eq!(
+        lead(&two),
+        sim::debug::smelter_state_line(&world, SmelterState::Stalled(SmelterStall::FuelWontLight)),
+        "the second notice's reason is the standing surfaces' wording: {two}"
+    );
+}
+
+/// **AND A STALL THAT DOES NOT CHANGE STILL SAYS NOTHING AFTER THE FIRST
+/// TICK** (Game Director's rule 2, and the control for the test above).
+///
+/// Without this, "announces a changed stall" and "announces every tick it is
+/// stalled" are the same green. Driven with fuel that **will** light so the
+/// path differs from the test above: ore, no fuel, four hundred ticks of
+/// nobody doing anything.
+#[test]
+fn an_unchanged_stall_is_announced_once_however_long_it_lasts() {
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(WALLS), 15);
+    let events = run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Input, ore(WALLS), 15))],
+        400,
+    );
+    assert_eq!(
+        stalls(&events),
+        vec![SmelterStall::NoFuel],
+        "four hundred ticks of one unchanged stall is one sentence: {events:?}"
+    );
+}
+
 /// **IDLE IS NOT A STALL AND IS NEVER ANNOUNCED** (Game Director's rule 2). A
 /// finished batch empties the input slot, and announcing that would fire after
 /// every batch -- noise that teaches a player to stop reading the log.
