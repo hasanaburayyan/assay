@@ -115,6 +115,10 @@ var _mounting := false
 var _refusing := false
 ## The shot armed by `_arm`, taken once `_settle` has run out. `""` when none is waiting.
 var _pending := ""
+## Quiet ticks still owed before the armed shot settles, one per frame; see `_arm`.
+var _quiet_left := 0
+## Which shot the quiet drain is running for, moved into `_pending` when the drain empties.
+var _quiet_for := ""
 ## What the design and the bar said BEFORE the press, so `_report_press` compares two readings of the
 ## same screen rather than one reading and a memory of the other.
 var _before_parts := PackedStringArray()
@@ -182,6 +186,23 @@ func _process(_delta: float) -> bool:
 		return false
 	if _settle > 0:
 		_settle -= 1
+		return false
+	# **ONE TICK PER FRAME, BECAUSE THAT IS WHAT A RELAY DELIVERS** (ASSA-377). `_arm` used to feed
+	# `TICKS_PER_FRAME` ticks inside ONE `_process` call, and that is not a faster relay -- it is ten
+	# refreshes with no layout pass between them. Each refresh re-adds the commit sentence's labels,
+	# and an autowrapped `Label`'s minimum is evaluated against a width that is only valid after the
+	# parent has been sized, so it answers the one-letter-per-row height (ASSA-362's mechanism). Ten
+	# of those stack: the bar's minimum read **570** on the assembly path and **1365** on the make
+	# path against its own 114, the `PanelContainer` was clamped up to them, and the clamp relaxed a
+	# frame later with nothing left to re-place the box. The relay sends one bundle per frame at 10/s
+	# against 60 fps, so the pile never forms.
+	if _quiet_left > 0:
+		_quiet_left -= 1
+		_tick_quiet(1)
+		if _quiet_left == 0:
+			_settle = SETTLE_FRAMES
+			_pending = _quiet_for
+			_quiet_for = ""
 		return false
 	# **EVERY SHOT IS TAKEN A SETTLE AFTER THE LAST THING THAT COULD MOVE THE TREE** (ASSA-373). The
 	# stages below only ever ARM a shot; `_pending` is fired here, after `_settle` has run out above.
@@ -309,10 +330,11 @@ func _tick_some() -> void:
 ## **ARM A SHOT: TICK THE WORLD, THEN WAIT A SETTLE, THEN TAKE IT.** The two halves are one call
 ## because they are one rule -- a shot must be of a tree that has stopped moving, and a tick is the
 ## thing that moves it. Splitting them is how the first version of this measured mid-layout.
+## **AND THE TICKS ARE SPREAD OVER FRAMES RATHER THAN SPENT IN THIS CALL** (ASSA-377): `_arm` only
+## sets the drain going, and `_process` lands one tick per frame before the settle and the shot.
 func _arm(what: String) -> void:
-	_tick_quiet(TICKS_PER_FRAME)
-	_settle = SETTLE_FRAMES
-	_pending = what
+	_quiet_left = TICKS_PER_FRAME
+	_quiet_for = what
 
 
 ## **TICKS WITH NOTHING IN THEM, SO THE SCREEN REFRESHES WITHOUT THE DEMO LOOP TOUCHING THE DESIGN.**
