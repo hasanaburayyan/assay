@@ -2,7 +2,17 @@ extends SceneTree
 ## CI: local -- a shot: --headless writes a BLANK frame and reports success, the worst kind of green
 ## **A PICTURE OF THE OPEN BUILD SCREEN, AND THE ONE MEASUREMENT ARITHMETIC CANNOT GIVE** (ASSA-328).
 ##
-##   godot --path . --script res://tools/limpet_build_screen_shot.gd -- <out_dir> [seed] [ticks]
+##   godot --path . --script res://tools/limpet_build_screen_shot.gd -- <out_dir> [seed] [ticks] [mode]
+##
+## **`mode` IS `make` (THE DEFAULT) OR `assemble`, AND THEY ARE TWO DIFFERENT PICTURES OF ONE
+## SCREEN.** `make` presses a crafting row's launcher after a short play. `assemble` plays the WHOLE
+## demo loop until the parts are in the pack, presses a pack row's `Frame`, and shoots the screen
+## TWICE: once with every slot empty and once with the design as full as the frame allows.
+##
+## **TWO SHOTS BECAUSE ASSA-341 BOX 9 IS A CLAIM ABOUT TWO STATES.** *"`Build`'s y does not move
+## between a one-row and a six-row sentence"* cannot be held by one render, and the Game Director
+## ruled (02:18Z) that asserting the two FLAGS that make it true is the mechanism and not the
+## behaviour. So the behaviour is measured here, in a laid-out window, on both states of one run.
 ##
 ## **WHY IT IS NOT A STATE IN `window_shot.gd`.** That tool shoots seven fixed moments of a played
 ## world and every one of them is about the HUD column. This is about a surface that only exists
@@ -28,6 +38,32 @@ const DEFAULT_SEED := "14247"
 ## longer; a shot only needs the catalogue to have rows.
 const DEFAULT_TICKS := 60
 
+## The two pictures this tool takes. **AN UNKNOWN MODE IS REFUSED RATHER THAN DEFAULTED TO `make`**:
+## an argument that silently means something else is how a run comes back green about a screen
+## nobody asked for -- the shape of defect I have now written down six times.
+const MODE_MAKE := "make"
+const MODE_ASSEMBLE := "assemble"
+
+## **THE ASSEMBLY PICTURE NEEDS THE WHOLE DEMO LOOP, SO THE TICKS ARE A CEILING AND A STATE IS THE
+## STOP.** `AssayButtonPlay` mines, smelts and crafts `handle, head x2, frame, hopper x4` and only
+## then plants them; the pack holds all of it for exactly one step, `PICK`. Stopping on a tick COUNT
+## would be a number that goes stale the day the loop's pace changes, and it would stop in the
+## middle of smelting with an empty pack and still write a PNG.
+const ASSEMBLE_TICK_CEILING := 2000
+
+## **FRAMES HANDED BACK BEFORE ANYTHING IS MEASURED, AND WHY IT IS MORE THAN ONE.** A container's
+## minimum is recalculated DEFERRED (ASSA-341: a growth check reads `0.0 against 90.0` for ever),
+## and every mount refreshes this screen -- so a rect read on the frame of the press is the rect
+## before it. Three is not a tuning: it is one frame for the press, one for the deferred minimum and
+## one for the layout that follows it. **MEASURED, NOT ASSUMED: a run at 30 gave byte-identical
+## rects** (864x729, both overlaps, box 8's 5 px), which is how the overflow below was cleared of
+## being my instrument reading a half-laid tree rather than a defect.
+const SETTLE_FRAMES := 3
+
+## **HER BAR ON BOX 8**, quoted rather than chosen: ruling 4 is `|Build.centre_y - row1.centre_y|
+## <= 2`, and 2 px is where she put it.
+const BOX_8_TOLERANCE := 2.0
+
 ## Ticks between handing the frame back, so containers lay out before anything is measured.
 const TICKS_PER_FRAME := 10
 
@@ -39,6 +75,14 @@ const TICKS_PER_FRAME := 10
 ## that costs. 120 s is four times the longest this has taken (the play is 60 ticks and the shot is
 ## one frame), so reaching it means something stopped advancing rather than that the world was slow.
 const RUN_CEILING := 120.0
+
+## **THE ASSEMBLY RUN'S OWN BUDGET, WHICH WIDENS `RUN_CEILING` RATHER THAN REPLACING IT.** The 120 s
+## is armed at declaration for the reason this file gives two paragraphs up -- a ceiling set at the
+## end of `_initialize` is absent in exactly the case it is for -- and `assemble` raises it once the
+## mode is parsed. Widening an armed guard is safe; arming one late is not. The whole demo loop is
+## ~1400 ticks of real sim with a HUD rebuild on every one of them, `button_session.gd` gives that
+## same work a 300 s floor, and this Mac at load 80 is the case the number is for.
+const ASSEMBLE_RUN_CEILING := 300.0
 var _ceiling := Time.get_unix_time_from_system() + RUN_CEILING
 
 var _screen: Node = null
@@ -51,16 +95,34 @@ var _started := false
 var _shot := false
 var _done := false
 var _faults: Array = []
+var _mode := MODE_MAKE
+## The tick count as ASKED FOR, kept because `_left` is spent and a timeout has to name the budget
+## it blew rather than report 0.
+var _ticks_asked := 0
+## Frames still owed to the layout before the next measurement; see `SETTLE_FRAMES`.
+var _settle := 0
+## True between the empty shot and the full one, while one part is mounted per frame.
+var _mounting := false
+## How far down `_faults` the phase labels have been written; see `_end_phase`.
+var _phase_from := 0
 
 
 func _initialize() -> void:
 	var argv := OS.get_cmdline_user_args()
 	if argv.is_empty():
-		_finish(false, "usage: -- <out_dir> [seed] [ticks]")
+		_finish(false, "usage: -- <out_dir> [seed] [ticks] [%s|%s]" % [MODE_MAKE, MODE_ASSEMBLE])
 		return
 	_out = String(argv[0])
 	_seed = String(argv[1]) if argv.size() > 1 else DEFAULT_SEED
-	_left = int(argv[2]) if argv.size() > 2 else DEFAULT_TICKS
+	_mode = String(argv[3]) if argv.size() > 3 else MODE_MAKE
+	if _mode != MODE_MAKE and _mode != MODE_ASSEMBLE:
+		_finish(false, "mode is `%s` or `%s`, not `%s`" % [MODE_MAKE, MODE_ASSEMBLE, _mode])
+		return
+	var budget := ASSEMBLE_TICK_CEILING if _mode == MODE_ASSEMBLE else DEFAULT_TICKS
+	_left = int(argv[2]) if argv.size() > 2 else budget
+	_ticks_asked = _left
+	if _mode == MODE_ASSEMBLE:
+		_ceiling = maxf(_ceiling, Time.get_unix_time_from_system() + ASSEMBLE_RUN_CEILING)
 	if DirAccess.make_dir_recursive_absolute(_out) != OK:
 		_finish(false, "cannot write to %s" % _out)
 		return
@@ -94,39 +156,291 @@ func _process(_delta: float) -> bool:
 			return true
 		_started = true
 		return false
-	if _left > 0:
-		for _i in range(TICKS_PER_FRAME):
-			if _left <= 0:
-				break
-			_left -= 1
-			_play.advance()
-			var inputs := []
-			for command in _asked:
-				inputs.append({"Player": {"player": _screen._client.player_id,
-						"command": command}})
-			_asked.clear()
-			var at: int = _screen._sim.tick()
-			_screen._client.feed_offline(JSON.stringify({"Tick": {"tick": at, "inputs": inputs}}))
-		return false
+	if not _played():
+		return _done
 	if not _shot:
 		_shot = true
 		_open_and_settle()
+		_settle = SETTLE_FRAMES
 		return false
+	if _settle > 0:
+		_settle -= 1
+		return false
+	if _mounting:
+		# ONE PART PER FRAME, so each mount lays out before the next empty box is chosen.
+		if _mount_one():
+			_settle = SETTLE_FRAMES
+			return false
+		_mounting = false
+		_shoot("slots-full", "THE ASSEMBLY PATH, every box the frame has filled from the pack")
+		_stop()
+		return _done
+	if _mode == MODE_MAKE:
+		_shoot("", "THE MAKE PATH, opened by a crafting row's launcher")
+		_stop()
+		return _done
+	_shoot("slots-empty", "THE ASSEMBLY PATH, frame chosen and nothing mounted yet")
+	_mounting = true
+	return false
+
+
+## **WHAT STOPS THE PLAY, WHICH IS A DIFFERENT QUESTION IN THE TWO MODES.** `make` needs a catalogue
+## with rows in it, and a duration gives that. `assemble` needs PARTS IN THE PACK, which is a state
+## and not a duration -- so it waits for `AssayButtonPlay`'s own step to reach `PICK` (everything
+## crafted, nothing planted yet) and treats the tick count as a ceiling it may not pass in silence.
+##
+## **A LOOP THAT STOPPED EARLY IS A FAULT AND NOT A SHORTER RUN.** `_play.failed` and a blown tick
+## budget both mean the pack never held the parts this picture is of, and the PNG written then would
+## be a build screen saying *you are not carrying a frame to build on* -- a perfectly plausible
+## screenshot of the wrong thing, which is the one outcome worse than a red run.
+func _played() -> bool:
+	if _mode == MODE_MAKE:
+		if _left <= 0:
+			return true
+		_tick_some()
+		return false
+	if _pack_can_fill_a_frame():
+		return true
+	if String(_play.failed) != "":
+		_finish(false, "the demo loop stopped before the parts were made: %s" % _play.failed)
+		return false
+	if _left <= 0:
+		_finish(false, ("the loop reached %s in %d ticks and the pack never held a frame it could "
+				+ "fill, so no pack ever held the design this picture is of")
+				% [AssayButtonPlay.Step.keys()[_play.step], _ticks_asked])
+		return false
+	_tick_some()
+	return false
+
+
+## `TICKS_PER_FRAME` of the loop, pressing the screen's own buttons and feeding the sim's own answer
+## back. Lifted out of `_process` unchanged when the stop condition became a state.
+func _tick_some() -> void:
+	for _i in range(TICKS_PER_FRAME):
+		if _left <= 0:
+			break
+		# **THE STOP IS CHECKED EVERY TICK, NOT ONCE A FRAME.** Ten ticks pass per frame and the state
+		# this picture needs lasts a handful of them, so a check between frames steps over it: the
+		# first version of this stopped on `AssayButtonPlay.Step.PICK` and came back *"reached DONE and
+		# never reached PICK"* -- true, and about a pack that HAD held the parts and then spent them on
+		# the loop's own pick and drill. Checked BEFORE `advance()`, so the tick that would spend them
+		# is never taken.
+		if _mode == MODE_ASSEMBLE and _pack_can_fill_a_frame():
+			return
+		_left -= 1
+		_play.advance()
+		var inputs := []
+		for command in _asked:
+			inputs.append({"Player": {"player": _screen._client.player_id,
+					"command": command}})
+		_asked.clear()
+		var at: int = _screen._sim.tick()
+		_screen._client.feed_offline(JSON.stringify({"Tick": {"tick": at, "inputs": inputs}}))
+
+
+## Measure, write, and label every fault this shot found with which shot found it.
+func _shoot(suffix: String, about: String) -> void:
+	print("")
+	print("=== %s ===" % about)
 	_measure()
-	_write()
-	return _done
+	_write(suffix)
+	_end_phase(suffix if suffix != "" else _mode)
+
+
+## **WHICH OF THE TWO SHOTS A FAULT IS ABOUT.** Both shots measure the same screen into one list, so
+## an unlabelled fault sends a reader to the wrong picture.
+func _end_phase(named: String) -> void:
+	for i in range(_phase_from, _faults.size()):
+		_faults[i] = "[%s] %s" % [named, _faults[i]]
+	_phase_from = _faults.size()
+
+
+func _stop() -> void:
+	_finish(_faults.is_empty(), "\n".join(PackedStringArray(_faults)))
 
 
 ## **PRESS THE ROW A PLAYER WOULD PRESS.** Not `_open_build_screen`: the launcher opening nothing is
 ## one of the two defects this picture is evidence against, and calling the open function directly
 ## would take the row's one control out of the test.
 func _open_and_settle() -> void:
+	if _mode == MODE_ASSEMBLE:
+		_open_assembly()
+		return
 	for row in _screen._make.get_children():
 		var button := _find(row, AssayHud.make_launch_text())
 		if button != null:
 			button.pressed.emit()
 			return
 	_faults.append("no make row carried a `%s` control at all" % AssayHud.make_launch_text())
+
+
+## **THE STATE THIS PICTURE IS OF, TESTED DIRECTLY RATHER THAN INFERRED FROM THE LOOP'S PACE.**
+## Maren's §5.4 worst case is a frame with every box filled, so that is literally the stop: a frame
+## in the pack whose every box can be filled from the same pack.
+func _pack_can_fill_a_frame() -> bool:
+	var frame := _fillable_frame(false)
+	if frame.is_empty():
+		return false
+	return _room_of(frame) >= _worst_case_room()
+
+
+## **THE MOST ROOM ANY FRAME IN THE CATALOGUE HAS, WHICH IS WHAT MAKES THE STOP THE WORST CASE
+## RATHER THAN THE FIRST CASE.** The pack holds a handle -- one box -- long before it holds the frame
+## with six, and `_fillable_frame` honestly answered the handle: the first run of this shot specced a
+## six-box screen and PHOTOGRAPHED A ONE-BOX ONE, green, with `CHOSEN 1 x Tonore handle (A)` in the
+## report as the only tell. **The ceiling is the catalogue's, so nothing here picks a number**, and
+## the day a frame with more slots is added the stop follows it.
+func _worst_case_room() -> int:
+	var most := 0
+	for entry in AssaySimHost.part_kinds():
+		var part: Dictionary = entry
+		if not bool(part.get("is_frame", false)):
+			continue
+		var room := 0
+		for slot in part.get("slots", []):
+			room += int((slot as Dictionary).get("max", 0))
+		most = maxi(most, room)
+	return most
+
+
+## How many parts one frame STACK can take, by its kind's `slots`. 0 for anything that is not a frame.
+func _room_of(stack: Dictionary) -> int:
+	var part := AssayHud.part_kind_of(stack, AssaySimHost.part_kinds())
+	if part.is_empty() or not bool(part.get("is_frame", false)):
+		return 0
+	var room := 0
+	for slot in part.get("slots", []):
+		room += int((slot as Dictionary).get("max", 0))
+	return room
+
+
+## **THE FRAME WITH THE MOST ROOM THAT THE PACK CAN COMPLETELY FILL**, or `{}`. One function answers
+## both "may we stop playing" and "which frame do we open", because two functions would be free to
+## disagree -- a stop that certified one frame and a launcher that opened another would shoot a
+## half-empty screen and call it the worst case.
+##
+## **WHICH FRAME IS THE SIM'S ANSWER AND NOT THIS TOOL'S TASTE.** The pack holds a handle AND a
+## frame and BOTH are frames by `is_frame` -- a pick is a handle with a head on it -- so the choice
+## is `slots`' summed room, and with `report` it PRINTS every candidate and what it was short of.
+## A tool that quietly picked the handle would shoot a two-box screen as the worst case.
+func _fillable_frame(report: bool) -> Dictionary:
+	var kinds := AssaySimHost.part_kinds()
+	var held: Array = _screen._sim.inventory_of(_screen._client.player_id)
+	var pack := {}
+	for entry in held:
+		var stack: Dictionary = entry
+		var kind := String(stack.get("kind", ""))
+		pack[kind] = int(pack.get(kind, 0)) + int(stack.get("count", 0))
+	var best := {}
+	var most := -1
+	for entry in held:
+		var stack: Dictionary = entry
+		var part := AssayHud.part_kind_of(stack, kinds)
+		if part.is_empty() or not bool(part.get("is_frame", false)):
+			continue
+		var want := {}
+		var room := 0
+		for box in AssayHud.slot_boxes(part.get("slots", [])):
+			var named := String((box as Dictionary).get("name", ""))
+			want[named] = int(want.get(named, 0)) + 1
+			room += 1
+		var missing := PackedStringArray()
+		for named in want:
+			if int(pack.get(named, 0)) < int(want[named]):
+				missing.append("%s (want %d, hold %d)"
+						% [named, int(want[named]), int(pack.get(named, 0))])
+		if report:
+			print("FRAME    %-22s room for %-2d of the catalogue's %-2d  %s"
+					% [AssayHud.stack_line(stack), room, _worst_case_room(),
+					"fillable" if missing.is_empty() else "short of " + ", ".join(missing)])
+		if not missing.is_empty() or room <= 0:
+			continue
+		if room > most:
+			most = room
+			best = stack
+	return best
+
+
+## **OPEN THE ASSEMBLY PATH THE WAY A PLAYER DOES: a pack row's `Frame`** (ASSA-317 slice 2b, where
+## a frame row became the launcher and a mount row kept mounting). Not `_open_assembly_screen`, for
+## the reason `_open_and_settle` gives about the make launcher: the row's control is half of what
+## this picture is evidence about.
+##
+## **WHICH FRAME IS THE SIM'S ANSWER AND NOT THIS TOOL'S TASTE.** At `PICK` the pack holds a handle
+## AND a frame and BOTH are frames by `is_frame` -- a pick is a handle with a head on it. The
+## picture the Game Director needs is §5.4's worst case, so this takes the frame with the most room
+## (`slots`' summed `max`) and PRINTS every candidate with its room, because a tool that quietly
+## picked the handle would shoot a two-box screen and report it as the worst case.
+##
+## **AND THE WORD ON THE BUTTON IS READ, NEVER SPELLED.** `AssayHud.stack_verbs` is where `Frame`
+## comes from; a literal here would be this tool's copy of a label, free to agree with the screen
+## until somebody renames it. The footprint argument only shapes the Place verb's tooltip, so ONE
+## is safe and says so.
+func _open_assembly() -> void:
+	var kinds := AssaySimHost.part_kinds()
+	var best := _fillable_frame(true)
+	if best.is_empty():
+		_faults.append("the pack holds no frame it can fill, so there is no worst case to open")
+		return
+	var word := ""
+	for descriptor in AssayHud.stack_verbs(best, kinds, Vector2i.ONE):
+		if bool((descriptor as Dictionary).get("is_frame", false)):
+			word = String((descriptor as Dictionary).get("label", ""))
+	if word == "":
+		_faults.append("`stack_verbs` offers no frame verb on %s" % AssayHud.stack_line(best))
+		return
+	var line := AssayHud.stack_line(best)
+	print("CHOSEN   %s, opened with `%s`" % [line, word])
+	for row in _screen._carrying.get_children():
+		var named: Array = row.find_children("*", "Label", true, false)
+		var matched := false
+		for child in named:
+			if (child as Label).text == line:
+				matched = true
+		if not matched:
+			continue
+		var button := _find(row, word)
+		if button != null:
+			button.pressed.emit()
+			return
+	_faults.append("no pack row for %s carried a `%s` control" % [line, word])
+
+
+## **MOUNT ONE PART INTO THE FIRST EMPTY BOX, CHOSEN BY THE SIM'S OWN JOIN.** Returns false when
+## nothing is left to mount, which is what ends the mounting phase.
+##
+## **THE BOX IS PICKED BY `slot_fill`, THE SAME FUNCTION THE SCREEN DRAWS FROM** (ASSA-317 slice 2).
+## Pressing mount rows blindly until the sim refuses would spend presses on a second head the frame
+## has no box for, and the refusal sentence would then be in the picture -- a true refusal about a
+## press no player would make. Asking which box is empty first is what a player reads off the shape.
+##
+## **AND THE PRESS IS THE ROW'S OWN CONTROL, FOUND BY THE LABEL THE SCREEN GAVE IT.** The rows are
+## rebuilt after every mount, so a button held from a previous frame is freed; this looks it up again
+## each time.
+func _mount_one() -> bool:
+	var frame: Dictionary = _screen._design_frame()
+	if frame.is_empty():
+		_faults.append("no frame is chosen after pressing the launcher, so nothing can be mounted")
+		return false
+	var kinds := AssaySimHost.part_kinds()
+	var part := AssayHud.part_kind_of(frame, kinds)
+	var fill := AssayHud.slot_fill(part.get("slots", []), _screen._design_mounted())
+	for box in fill.get("boxes", []):
+		var entry: Dictionary = box
+		if not (entry.get("part", {}) as Dictionary).is_empty():
+			continue
+		var want := String(entry.get("name", ""))
+		for held in _screen._sim.inventory_of(_screen._client.player_id):
+			var stack: Dictionary = held
+			if String(stack.get("kind", "")) != want:
+				continue
+			var button := _find(_screen._build_mounts, AssayHud.stack_line(stack))
+			if button == null:
+				continue
+			print("MOUNT    %s into an empty `%s` box" % [AssayHud.stack_line(stack), want])
+			button.pressed.emit()
+			return true
+	return false
 
 
 ## **THE OVERLAP, IN PIXELS, AGAINST THE THREE CONTROLS MAREN'S §1 PROTECTS.**
@@ -163,8 +477,13 @@ func _measure() -> void:
 	if screen_rect.size.y > asked.size.y + 1.0 or screen_rect.size.x > asked.size.x + 1.0:
 		_faults.append("the box is %.0f x %.0f and `build_screen_rect` asked for %.0f x %.0f"
 				% [screen_rect.size.x, screen_rect.size.y, asked.size.x, asked.size.y])
+		# **THE ASSEMBLY PATH'S OWN TWO BLOCKS ARE IN THIS LIST AS OF ASSA-317 SLICE 2b.** It held the
+		# five leaves the make path has, so the first run that overflowed named every block EXCEPT the
+		# slots and the mount list -- the two that only exist on the path that overflowed. A chain that
+		# cannot reach the node paying for the height reports the overshoot and hides its cause.
 		for leaf in [_screen._build_picker, _screen._build_materials, _screen._build_detail,
-				_screen._build_cost, _screen._build_said]:
+				_screen._build_cost, _screen._build_said, _screen._build_slots,
+				_screen._build_mounts]:
 			var node := leaf as Control
 			var trail := PackedStringArray()
 			while node != null and node != _screen._build_box:
@@ -253,6 +572,51 @@ func _measure_commit_bar(screen_rect: Rect2) -> void:
 	print("SENTENCE %s  width %.0f, floor %.0f (bar %.0f - Build's %.0f ceiling - gutter %d)"
 			% [said_rect, said_rect.size.x, owed, bar_rect.size.x, AssayHud.BUILD_ACT_WIDTH,
 			_screen.BUILD_GUTTER])
+	# **THE SENTENCE'S OWN ROW STRUCTURE, WHICH IS THE NUMBER ASSA-341 BOX 9 IS ABOUT.** The bar is
+	# ruled at 114 = six 18 px rows plus the 6 px inset, so *how many rows* is the question a reader
+	# of these shots has to be able to answer. **IT IS NOT THE LABEL COUNT:** the make path draws one
+	# Label per clause and each clause then WRAPS, while the assembly path draws exactly one Label
+	# that may wrap by itself (`_said_about_design`). So both numbers are printed, and the rows are
+	# the engine's own `get_line_count` rather than a division I did on the heights.
+	var rows := 0
+	var row_one := Rect2()
+	var row_one_height := 0.0
+	for child in said.get_children():
+		var text := child as Label
+		if text == null:
+			continue
+		if rows == 0:
+			row_one = Rect2(text.global_position, text.size)
+			row_one_height = float(text.get_line_height())
+		rows += text.get_line_count()
+		print("    %d row(s)  %-10s  %s" % [text.get_line_count(),
+				str(text.theme_type_variation) if str(text.theme_type_variation) != "" else "BODY",
+				text.text])
+	print("SAID     %d label(s), %d row(s) in total, row 1 is %.0f px tall"
+			% [said.get_child_count(), rows, row_one_height])
+	# **BOX 9's TWO RELATIONS, PRINTED ON BOTH SHOTS SO NEITHER HAS TO BE TRUSTED ALONE.** `Build`'s y
+	# against the BAR'S TOP is the mechanism -- a control at a container's top cannot be moved by a
+	# sibling below it -- and `Build`'s centre against ROW 1's centre is the alignment ruling 4 asked
+	# for. **A VERDICT IS NOT PRINTED HERE AND THAT IS DELIBERATE:** whether these two shots show the
+	# behaviour is the Game Director's judgement on the pair, not this tool's on one.
+	print("BOX 9    Build y %.0f, bar top %.0f, delta %.0f" % [act_rect.position.y,
+			bar_rect.position.y, act_rect.position.y - bar_rect.position.y])
+	var row_one_centre := row_one.position.y + row_one_height / 2.0
+	var act_centre := act_rect.position.y + act_rect.size.y / 2.0
+	print("BOX 8    row 1 centre %.0f, Build centre %.0f, apart %.0f"
+			% [row_one_centre, act_centre, absf(row_one_centre - act_centre)])
+	# **AND BOX 8's RELATION IS A FAULT AND NOT JUST A NUMBER, WHICH IS THE RULE THIS FILE ALREADY
+	# STATES: the numbers go to her and the RELATIONS are the faults.** Her ruling 4 is
+	# `|Build.centre - row 1.centre| <= 2`, so a tool that printed 5 and exited 0 would be green about
+	# a ruling it had just measured broken -- the exact shape of defect every other check here exists
+	# to refuse. `BUILD_SENTENCE_INSET` is derived from a `BODY` row (its docstring says so: *"Build is
+	# 30 px and a BODY row is 18"*), so any first row that is NOT 18 px breaks it by half the
+	# difference, and this is where that shows up.
+	if row_one_height > 0.0 and absf(row_one_centre - act_centre) > BOX_8_TOLERANCE:
+		_faults.append(("`Build`'s centre is %.0f and row 1's is %.0f, %.0f px apart against her %.0f "
+				+ "px bar: row 1 measures %.0f px, and `BUILD_SENTENCE_INSET` is (30 - 18) / 2")
+				% [act_centre, row_one_centre, absf(row_one_centre - act_centre), BOX_8_TOLERANCE,
+				row_one_height])
 	var block6 := (_screen._build_cost as Control).get_parent() as Control
 	if block6 != null:
 		print("BLOCK 6  bottom %.0f, bar top %.0f, gap %.0f (her blocks end at y 513)"
@@ -279,17 +643,18 @@ func _measure_commit_bar(screen_rect: Rect2) -> void:
 				% [bar_rect.end.y, screen_rect.end.y])
 
 
-func _write() -> void:
+## **THE MAKE PATH'S FILENAME IS UNCHANGED** (`build-screen-<seed>.png`): three pieces of evidence
+## on ASSA-332, ASSA-341 and ASSA-343 point at that name, and moving an artefact somebody else's
+## comment cites is a silent break. The assembly shots take a suffix because there are two of them.
+func _write(suffix: String) -> void:
 	var image := root.get_texture().get_image()
-	var path := "%s/build-screen-%s.png" % [_out, _seed]
+	var named := ("build-screen-%s.png" % _seed if suffix == ""
+			else "build-screen-%s-%s.png" % [_seed, suffix])
+	var path := "%s/%s" % [_out, named]
 	if image.save_png(path) != OK:
-		_finish(false, "could not write %s" % path)
+		_faults.append("could not write %s" % path)
 		return
 	print("  %s  %dx%d" % [path, image.get_width(), image.get_height()])
-	if _faults.is_empty():
-		_finish(true, "")
-		return
-	_finish(false, "\n".join(PackedStringArray(_faults)))
 
 
 func _find(node: Node, label: String) -> Button:
