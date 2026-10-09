@@ -5455,12 +5455,18 @@ func test_focus_cannot_add_an_accent_region_to_the_front_door() -> bool:
 		if control is LineEdit and focus.border_color.is_equal_approx(rest.border_color):
 			ok = _fail(("%s draws the same edge %s focused and unfocused, so focus is invisible: "
 					+ "ruling 4 asks for two inks on one geometry") % [named, rest.border_color])
-	# **THE REMAINDER IS A RATCHET, NOT A TOLERANCE, AND IT IS NAMED.** `Button`'s focus stylebox is
-	# still `_box(RAISED, ACCENT)`, so tabbing from the host box to `Join` DOES put a second accent
-	# region on this screen. Recolouring is the Game Director's call, not mine, and it is measured and
-	# handed back on ASSA-335 rather than tidied in passing. Listing it here means a NEW accent focus
-	# ring reds this test, and the day Maren rules on `Button` the list goes empty.
-	const OPEN_WITH_MAREN := ["Button:Join"]
+	# **THE RATCHET IS EMPTY, AND THAT DAY ARRIVED** (ASSA-367). It read `["Button:Join"]` because
+	# `Button`'s focus stylebox was `_box(RAISED, ACCENT)`, so tabbing from the host box to `Join`
+	# really did put a second accent region on this screen; recolouring was the Game Director's
+	# call and was handed back rather than tidied in passing. Maren ruled it: `Button` and `Quiet`
+	# focus rings are `INK` now, and the entry went stale.
+	#
+	# **EMPTY AND NOT DELETED, which is the whole point of it.** The list is what makes a NEW accent
+	# focus ring red this test; deleting it would leave the sweep computing `gained` and comparing
+	# it to nothing. The `stale` clause below is the other half and it is what TOLD me to empty
+	# this: it reds when an excused control stops needing the excuse, so the list cannot quietly
+	# outlive the ruling it was waiting on.
+	const OPEN_WITH_MAREN: Array[String] = []
 	var unexpected := PackedStringArray()
 	for named in gained:
 		if not OPEN_WITH_MAREN.has(named):

@@ -3306,3 +3306,119 @@ func test_a_pack_stack_finds_its_own_part_kind_and_ore_finds_none() -> bool:
 			return _fail(("the sim names a part kind `%s` and a pack stack of it finds %s -- the `name` "
 					+ "join has drifted from `ItemKind::Part(k).name()`") % [kind, found])
 	return true
+
+
+## **NO FOCUS RING ANYWHERE IN THIS THEME HOLDS THE ACCENT** (ASSA-367; ASSA-335 ruling 1 applied
+## where it already read).
+##
+## **ACCENT marks the one act a screen is for, one region per screen, and a focus ring is not an
+## act.** Tabbing from the host box to `Join` used to put a second accent region on the front door.
+## A 2 px `INK` ring already means *the thing your input addresses* (ASSA-276 move 4); keyboard
+## focus is that fact for the keyboard.
+##
+## **IT ASKS THE BUILT THEME FOR ITS OWN LIST OF TYPES, not a list typed here.** That is ASSA-304's
+## lesson in this same file: a hand-written table of pairs passed while the screen failed at
+## 1.39:1, because the table did not know about the state the screen was in. A variation added
+## tomorrow with an accent focus ring is caught by this without anyone remembering to add it.
+##
+## **`Primary` IS THE ONE EXEMPTION AND IT IS NOT A HOLE.** Its focus box is `_box(ACCENT, INK)` --
+## the accent is its FILL, which it already wears at rest because it IS the act; the ring itself is
+## `INK`, the same ink as everything else here. So the rule is about the ring, and the test reads
+## the border rather than the fill.
+func test_no_focus_ring_in_this_theme_is_drawn_in_the_accent() -> bool:
+	var builder = load("res://tools/build_theme.gd")
+	var theme: Theme = load("res://theme/assay.tres")
+	if theme == null:
+		return _fail("no theme/assay.tres to check")
+	var accent: Color = builder.ACCENT
+	var types := theme.get_type_variation_list(&"Button")
+	types.append(&"Button")
+	types.append(&"LineEdit")
+	if types.size() < 3:
+		return _fail(("the theme reports %d Button variations, so this sweep is reading almost "
+				+ "nothing: %s") % [types.size(), types])
+	var ringed := 0
+	var offenders := PackedStringArray()
+	for type_name in types:
+		var box := theme.get_stylebox(&"focus", type_name) as StyleBoxFlat
+		if box == null:
+			continue
+		ringed += 1
+		if box.border_color.is_equal_approx(accent):
+			offenders.append(String(type_name))
+	if ringed < 3:
+		return _fail(("only %d of %d types carry a focus stylebox at all, so a green result here "
+				+ "would mean the sweep found nothing to look at") % [ringed, types.size()])
+	if not offenders.is_empty():
+		return _fail(("%s ring themselves in ACCENT on focus. The accent is the one act a screen "
+				+ "is for and a focus ring is not an act (ASSA-335 ruling 1)")
+				% ", ".join(offenders))
+	# **AND THE RING IS LOUDER, NOT QUIETER**, which is what kills the only argument for the accent:
+	# measured against the fill each ring is actually drawn on, not against a nominal surface.
+	for pair in [[&"Button", 3.0], [&"Quiet", 3.0]]:
+		var type_name: StringName = pair[0]
+		var box := theme.get_stylebox(&"focus", type_name) as StyleBoxFlat
+		if box == null:
+			return _fail("%s has no focus stylebox to measure" % type_name)
+		var ratio := AssayHud.contrast_ratio(box.border_color, box.bg_color)
+		if ratio < float(pair[1]):
+			return _fail(("%s's focus ring reads %.2f:1 against its own fill, under the %.1f:1 a "
+					+ "mark owes") % [type_name, ratio, float(pair[1])])
+	return true
+
+
+## **A HELD PRESS KEEPS THE ACCENT, AND IT DID NOT GET TIDIED AWAY WITH THE RING** (ASSA-367 box 4).
+##
+## **A press IS an act** -- for the length of the gesture that control is what the screen is being
+## used for, and the accent is gone when the finger lifts. Focus persists with no gesture attached,
+## which is the whole distinction ASSA-367 turns on. Both halves are asserted because the ring and
+## the press state sit four lines apart in `build_theme.gd` and a sweep-and-replace of `ACCENT` in
+## that function would take both.
+##
+## **THE TRAP, NAMED HERE BECAUSE A COMMENT IN THE THEME CANNOT FAIL** (box 5). `pressed` is only
+## transient if nothing HOLDS a plain `Button` pressed. A `toggle_mode` button at the default
+## weight would latch, and a latched press is a persistent accent region that is not the screen's
+## act -- the exact thing the ring was just taken off for. So this also walks `main.gd` for
+## `toggle_mode` and requires every one of them to be a variation whose pressed state is not the
+## accent. On main there is exactly one and it is `Quiet`.
+func test_a_held_press_keeps_the_accent_and_no_toggle_can_latch_one() -> bool:
+	var builder = load("res://tools/build_theme.gd")
+	var theme: Theme = load("res://theme/assay.tres")
+	if theme == null:
+		return _fail("no theme/assay.tres to check")
+	var accent: Color = builder.ACCENT
+	var pressed := theme.get_stylebox(&"pressed", &"Button") as StyleBoxFlat
+	if pressed == null:
+		return _fail("plain Button has no pressed stylebox")
+	if not pressed.border_color.is_equal_approx(accent):
+		return _fail(("a held plain Button rings itself in %s, not the accent. A press IS the act "
+				+ "the accent is for, and it was not what ASSA-367 took the accent off")
+				% pressed.border_color)
+	var label := theme.get_color(&"font_pressed_color", &"Button")
+	if not label.is_equal_approx(accent):
+		return _fail(("a held plain Button draws its label in %s, not the accent: the other half "
+				+ "of the press state went with the ring") % label)
+	# THE TRAP. A toggle at the default weight latches the accent on.
+	var source := FileAccess.get_file_as_string("res://scripts/main.gd")
+	if source.is_empty():
+		return _fail("could not read res://scripts/main.gd to check for toggles")
+	var toggles := 0
+	for raw in source.split("\n"):
+		var line := String(raw).strip_edges()
+		if line.begins_with("#") or line.begins_with("##"):
+			continue
+		if line.contains("toggle_mode = true"):
+			toggles += 1
+	if toggles == 0:
+		return _fail("no `toggle_mode = true` found in main.gd at all. Either the trap this test "
+				+ "guards has moved, or the scan has stopped finding what it reads")
+	# EVERY TOGGLE MUST CARRY A VARIATION, and the variation's pressed ring must not be the accent.
+	# Scanned rather than instantiated: the suite never lays the screen out, and the question is
+	# which STYLE a toggled button resolves to, which is a property of the source and the theme.
+	var quiet := theme.get_stylebox(&"pressed", &"Quiet") as StyleBoxFlat
+	if quiet == null:
+		return _fail("Quiet has no pressed stylebox, so a latched Quiet toggle has no defined ring")
+	if quiet.border_color.is_equal_approx(accent):
+		return _fail(("Quiet's pressed ring is the accent, so the one toggle_mode on main latches "
+				+ "a persistent accent region that is not the screen's act"))
+	return true
