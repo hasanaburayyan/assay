@@ -2892,6 +2892,77 @@ func test_picking_a_machine_up_leaves_a_one_tile_cursor_and_not_a_ring_round_not
 	return ok
 
 
+## **PICK A SMELTER UP BY ITS FAR QUARTER AND THE CURSOR STAYS ON THAT QUARTER, NOT ON THE ORIGIN**
+## (ASSA-366; Maren's refinement of the box above: *"collapses to one tile" does not say WHICH tile*).
+##
+## The test above is true of a 1x1 and of a 2x2 and silent about the only interesting difference
+## between them. `_target` is **the tile you clicked** and a footprint runs from `pos` as its
+## TOP-LEFT (`BuildingFacts.footprint`), so clicking a smelter's bottom-right quarter, picking it up
+## and pressing `Place` puts it back one tile down and one right of where it stood. **That offset is
+## correct and Maren does not want it fixed**: the cursor is where the player pointed, and a cursor
+## that silently jumped to the old origin so the rebuild landed on the old square would be a mark
+## moving on its own -- ASSA-213, a mark may lie about size and colour but never about POSITION.
+##
+## **SO THIS IS A GUARD AGAINST A FIX, not against a bug.** Without it the first person to notice a
+## smelter coming back one tile over reads it as a defect and snaps the cursor to `pos`, and every
+## test in this file stays green while the ring starts jumping off the tile that was pressed.
+func test_picking_a_smelter_up_by_its_far_quarter_leaves_the_cursor_on_that_quarter() -> bool:
+	var screen := _joined()
+	var ok := true
+	var id := _a_placed_smelter(screen)
+	if id < 0:
+		screen.queue_free()
+		return false
+	_tick(screen, 1)
+	# `_a_placed_smelter` has already asserted the buttons act on the tile it right-clicked, which for
+	# a placement is the sim's `pos`. The quarter is the OTHER corner of the same building.
+	var pos: Vector2i = screen._target_tile()
+	var whole: Rect2i = screen._footprint_tiles(pos)
+	# THE PREMISE, TWICE: a 1x1 has no far quarter, and a quarter the sim calls a DIFFERENT building
+	# would make this a test about two machines.
+	if whole.size != Vector2i(2, 2):
+		screen.queue_free()
+		return _fail("the sim says this smelter is %s, so it has no far quarter" % whole.size)
+	var quarter := pos + Vector2i(1, 1)
+	var at: Variant = screen._sim.tile_at(quarter).get("building")
+	if at == null or int((at as Dictionary).get("id", -1)) != id:
+		screen.queue_free()
+		return _fail("the tile at %s is not part of the smelter %d placed at %s" % [quarter, id, pos])
+	_click(screen, quarter, MOUSE_BUTTON_LEFT)
+	if screen._target_tile() != quarter:
+		ok = _fail("clicked the far quarter %s and the verbs act on %s" % [quarter, screen._target_tile()])
+	# THE CONTROL, and it is what makes the collapse below a change rather than a coincidence: while
+	# the machine stands, the ring is still the WHOLE 2x2 (ASSA-348) even though a quarter was pressed.
+	elif screen._world.selection != whole:
+		ok = _fail("the quarter %s was pressed and the ring is %s, not the whole smelter %s"
+				% [quarter, screen._world.selection, whole])
+	if not ok:
+		screen.queue_free()
+		return false
+	var away := _find(screen._menu_box, "Pick up")
+	if away == null:
+		ok = _fail("the machine menu offers no Pick up: %s" % [_labels_of(screen._menu_box)])
+	else:
+		away.pressed.emit()
+		_tick(screen, 8)
+		if screen._sim.tile_at(pos).get("building") != null:
+			ok = _fail("the sim still has a building on %s, so nothing was picked up" % pos)
+		elif screen._target_tile() == pos:
+			ok = _fail(("the smelter was picked up by its quarter %s and the cursor snapped back to "
+					+ "the origin %s: `Place` would rebuild it where it stood and not where the "
+					+ "player is pointing, which is a mark moving on its own (ASSA-213)")
+					% [quarter, pos])
+		elif screen._target_tile() != quarter:
+			ok = _fail("the smelter is gone and the cursor left the pressed quarter %s for %s"
+					% [quarter, screen._target_tile()])
+		elif screen._world.selection != Rect2i(quarter, Vector2i.ONE):
+			ok = _fail(("the smelter is gone and the ring is %s: the mark and the placement cursor "
+					+ "have to be the same tile, and that tile is the one that was pressed")
+					% [screen._world.selection])
+	screen.queue_free()
+	return ok
+
+
 ## **A SMELTER IS OUTLINED WHOLE, AND THE QUARTER THAT WAS CLICKED IS NOT THE SUBJECT** (ASSA-348;
 ## Maren: *"the outline follows the subject, and the sim says what the subject is"*).
 ##
@@ -2900,13 +2971,15 @@ func test_picking_a_machine_up_leaves_a_one_tile_cursor_and_not_a_ring_round_not
 ## marked one of them -- and since the menus shipped, the anchored panel and the ring were two marks
 ## on screen disagreeing about the extent of one machine.
 ##
-## **THE SECOND HALF IS ASKED OF A QUARTER THE PLAYER CANNOT CURRENTLY TARGET, AND THAT IS DELIBERATE
-## RATHER THAN THOROUGH.** A click on an occupied tile opens that machine's menu and returns
-## (`_unhandled_input`), so `_target` only ever lands on a building at its placement anchor, where
-## `pos` and the clicked tile are the same tile and the two rules cannot be told apart -- the exact
-## shape of ruling 8 shipping green. `_footprint_tiles` is asked about the far quarter directly,
-## against the same live sim, so the fixture's blind spot is named instead of being mistaken for
-## coverage.
+## **THE SECOND HALF ASKS `_footprint_tiles` ABOUT EVERY QUARTER DIRECTLY, AND THE REASON THAT USED TO
+## BE A BLIND SPOT IS GONE.** This said *"a quarter the player cannot currently target"*: a click on an
+## occupied tile opened that machine's menu and returned without assigning `_target`, so the target
+## only ever landed on a building at its placement anchor, where `pos` and the clicked tile are the
+## same tile and the two rules cannot be told apart. **ASSA-366 made that click aim**, so a player can
+## now press any quarter and `_target` is that quarter -- and
+## `test_picking_a_smelter_up_by_its_far_quarter_leaves_the_cursor_on_that_quarter` presses one.
+## Asking the live sim about all four quarters here is still the right shape: this test is about the
+## EXTENT the ring claims, and four direct answers pin it on the quarter nobody has clicked as well.
 func test_a_smelters_outline_is_its_whole_footprint_and_not_one_quarter() -> bool:
 	var screen := _joined()
 	var ok := true
