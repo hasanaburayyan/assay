@@ -40,7 +40,29 @@ import rig
 from rig import mat
 
 out = rig.args()
-asset = rig.Asset("items", out, (1, 1), headroom=0.5)
+# `fill="top"`: EVERY FRAME ON THIS SHEET IS AN ICON BOX, NOT A TILE WINDOW. (ASSA-376)
+#
+# Maren's rule, one level down from ASSA-328: *a frame's own transparency is air, and
+# ASSA-328 governs it -- an icon frame carries no transparent band above its art; slack
+# collects at the bottom.* Every row here was authored inside a 1x1 window with half a
+# tile of headroom, and nothing in this file is tall enough to use it, so each row shipped
+# a band of air above it: measured on the sheet as it shipped, `refined` 40 px, `ore` 34,
+# `smelter` 29, `hopper` 15, `head` 10, `frame` and `handle` 5. At 1x nobody could see it.
+# At the 3x the build screen's `what you get` picture earned in ASSA-357, the smelter's
+# band put 81 px of nothing between a label and the thing it labels.
+#
+# WHY THE FIT AND NOT NEW NUMBERS IN EACH ROW. The seven `fit(r, s, down_px)` levers below
+# already exist for exactly this job and are exactly the wrong tool for it: a lever is a
+# constant, so the day a row's geometry changes the constant is silently wrong and the band
+# comes back. `pack()` measures the paint it actually rendered. `art/check_items_top_band.py`
+# is the ratchet that holds it.
+#
+# WHAT IT COSTS: this sheet stops carrying relative size between its rows. It never carried
+# it truthfully -- a `refined` slab drew 96 px tall against the 2x2 smelter's 69 -- and the
+# only size question an icon box asks is how much of itself the picture fills (Maren,
+# ASSA-376). `anchor_px` is NOT touched: `sprites.gd:184` takes the whole frame with no
+# anchor term, and only that one reader was checked.
+asset = rig.Asset("items", out, (1, 1), headroom=0.5, fill="top")
 
 
 def ore_row():

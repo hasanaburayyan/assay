@@ -139,6 +139,14 @@ func _initialize() -> void:
 		_finish(false, "mode is one of %s, not `%s`"
 				% [[MODE_MAKE, MODE_ASSEMBLE, MODE_REFUSE], _mode])
 		return
+	# **AN EXPLICIT TICK COUNT DISPLACES THE MODE'S BUDGET ENTIRELY, AND THAT COST A TEAMMATE A RUN**
+	# (ASSA-383). `make` is built around `DEFAULT_TICKS`; `assemble`/`refuse` need parts in the pack
+	# and want `ASSEMBLE_TICK_CEILING`. Hand `make` the assembly number and it plays 33x longer than
+	# the mode intends, walks the catalogue to a recipe nothing uses, and shoots a frame whose block 5
+	# -- the make path's whole subject -- draws nothing. QA hit exactly that at `14247 2000 make` and
+	# could neither confirm nor deny the thing they were sent to check. **The override stays** --
+	# `assemble` legitimately wants a big number and ASSA-377's evidence was taken at 2000 -- so the
+	# protection is `_report_make_subject`, which refuses the shot instead of letting it look green.
 	var budget := ASSEMBLE_TICK_CEILING if _needs_pack() else DEFAULT_TICKS
 	_left = int(argv[2]) if argv.size() > 2 else budget
 	_ticks_asked = _left
@@ -736,7 +744,117 @@ func _measure() -> void:
 		_faults.append(("WORLD_CONTROLS_BAND is %.0f and the real band is %.0f px tall, so the "
 				+ "headless answer would put the screen over a control")
 				% [AssayHud.WORLD_CONTROLS_BAND, world.end.y - top])
+	_report_mount_rows()
+	_report_make_subject()
 	_measure_commit_bar(screen_rect)
+
+
+## **A MAKE-PATH SHOT WHOSE SUBJECT IS ABSENT MAY NOT SAY `SHOT OK`** (ASSA-383).
+##
+## `_measure`'s own docstring already holds the principle one level up: *"a laid-out window that
+## reports a control with no size is itself the finding: it means this tool measured nothing and must
+## not say so in green."* Block 5 IS the make path -- it is what `what you get` is for, and it is the
+## surface ASSA-357's scale ruling was measured on. A frame where it draws nothing is not evidence
+## about it, whatever the rects say.
+##
+## **THIS IS NOT HYPOTHETICAL AND IT COST A TEAMMATE A RUN.** Nerite re-shot the make path at
+## `14247 2000 make` to answer a Game Director question, landed on *"dead end: nothing uses a gear"*
+## with block 5 completely empty, and reported they could not confirm or deny -- while the tool
+## printed its ordinary report and the answer was the tool's own `DEFAULT_TICKS`, which their
+## explicit argument had silently displaced. They then spent further tries hunting a combination.
+##
+## **MODELLED ON `refuse` MODE'S OWN GUARD**, which refuses a run the sim does not call `unfinished`
+## rather than shooting it: a run that is not the state the mode is about is refused, not reported.
+##
+## **THE PICTURE IS READ OFF THE NODE, NOT OFF THE OFFER.** `_icon_box`'s reserve arm returns a bare
+## `Control` drawing nothing when there is no art, so "the offer has a `makes`" and "a picture is on
+## the screen" are different claims and only the second one is this tool's business.
+func _report_make_subject() -> void:
+	if _mode != MODE_MAKE:
+		return
+	var drawn := 0
+	for child in _screen._build_detail.find_children("*", "TextureRect", true, false):
+		if (child as TextureRect).texture != null:
+			drawn += 1
+	var offer: Dictionary = _screen._chosen_offer()
+	var row := String(offer.get("line", offer.get("name", "")))
+	var dead_end := String(offer.get("dead_end", ""))
+	print("MAKE     block 5 draws %d picture(s) · row `%s` · dead end `%s`" % [drawn, row, dead_end])
+	if drawn > 0:
+		return
+	var why := "the sim still offers it, so the empty box is not a dead end"
+	if dead_end != "":
+		why = "%s%s" % [_screen._sim.dead_end_label(), dead_end]
+	elif offer.is_empty():
+		why = "the sim offers nothing in this material any more"
+	_faults.append(("block 5 draws NO PICTURE, so this frame is not evidence about the make path: "
+			+ "the chosen row is `%s` and %s. This run asked for %d ticks and `make` is built around "
+			+ "%d (`DEFAULT_TICKS`); an explicit tick count displaces the mode's budget, and a bigger "
+			+ "one walks the catalogue past the recipes that have an output (ASSA-383)")
+			% [row, why, _ticks_asked, DEFAULT_TICKS])
+
+
+## **NO `what to mount` ROW OFFERS AN ACT THE SIM WOULD REFUSE** (ASSA-371).
+##
+## Maren read the `slots-full` frame cold and found every row in that list a live control whose only
+## outcome was a refusal: a full frame still offered `2 x Tonore head (A)`, and pressing it got
+## `TooMany` from the sim and nothing else. **Learning that cost a press**, which ASSA-316 ruling 2
+## forbids.
+##
+## **THIS IS THE HALF A SHOT CANNOT SHOW AND THE CLIENT SUITE CANNOT REACH.** A PNG shows a row
+## greyed; it cannot show that the grey AGREES with the sim. And the suite cannot build this list at
+## all -- it reads `inventory_of`, so it needs real parts in the pack, which needs the whole
+## mine-smelt-craft chain. So the pairing is asserted here, where the pack is real: for every row,
+## the control's `disabled` flag against `part_press_refusal`'s own answer for that kind, on the same
+## `chosen` array `_choose_part` builds. **A row live where the sim refuses, or dead where the sim
+## allows, is a fault either way** -- the second direction is what stops this from being a check that
+## only ever confirms greying.
+func _report_mount_rows() -> void:
+	if not _screen._build_mounts.visible:
+		return
+	var chosen := PackedStringArray()
+	for entry in _screen._building:
+		chosen.append(String((entry as Dictionary).get("kind", "")))
+	var kinds := AssaySimHost.part_kinds()
+	var rows := 0
+	for held in _screen._sim.inventory_of(_screen._client.player_id):
+		var stack: Dictionary = held
+		var part := AssayHud.part_kind_of(stack, kinds)
+		if part.is_empty() or bool(part.get("is_frame", false)):
+			continue
+		rows += 1
+		var line := AssayHud.stack_line(stack)
+		var refusal := AssaySimHost.part_press_refusal(chosen, String(stack.get("kind", "")))
+		var button := _find(_screen._build_mounts, line)
+		if button == null:
+			_faults.append(("`what to mount` has no row for %s, which the player is carrying: a "
+					+ "stack dropped from this list because the design is full is a list that "
+					+ "changes membership for a reason the player cannot see") % line)
+			continue
+		print("MOUNT ROW  %-26s disabled=%s · sim says `%s`" % [line, button.disabled, refusal])
+		if refusal != "" and not button.disabled:
+			_faults.append(("`what to mount` offers %s as a live control and the sim refuses it: "
+					+ "`%s`. Learning that costs a press (ASSA-371)") % [line, refusal])
+		elif refusal == "" and button.disabled:
+			_faults.append(("`what to mount` greys out %s and the sim allows it, so a mount the "
+					+ "player could make is unreachable (ASSA-371)") % line)
+		if refusal == "":
+			continue
+		# **AND THE REASON IS ON THE SCREEN, IN THE SIM'S WORDS, WITHOUT A PRESS.** A disabled row
+		# that says nothing is the silent refusal ASSA-316 ruling 2 forbids; a row wording it itself
+		# is the ASSA-43/52 shape where two surfaces drift on the Game Director's wording.
+		var said := false
+		var holder := button.get_parent()
+		if holder != null:
+			for child in holder.find_children("*", "Label", true, false):
+				if (child as Label).text == refusal:
+					said = true
+		if not said:
+			_faults.append(("%s is correctly not pressable but its reason is not drawn beside it: "
+					+ "the sim's sentence `%s` has to be reachable without a press (ASSA-371)")
+					% [line, refusal])
+	if rows == 0:
+		print("MOUNT ROW  the pack carries no mountable part, so this list was not measured")
 
 
 ## **A "COVERS" LINE IS A RECT INTERSECTION, NOT A DELETION** (ASSA-384; Maren's ASSA-377 11:13Z).
