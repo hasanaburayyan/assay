@@ -1513,6 +1513,43 @@ func test_no_menu_button_label_carries_what_the_row_makes() -> bool:
 	return ok
 
 
+## **THE SIM'S OWN STATUS SENTENCE FOR WHATEVER STANDS ON A TILE**, or `""`. Read off `tile_at` rather
+## than off any drawn label: the whole point of the test below is to compare what the SIM says against
+## what the screen rebuilt.
+func _status_of(screen: Node, spot: Vector2i) -> String:
+	var building: Variant = screen._sim.tile_at(spot).get("building")
+	if building == null:
+		return ""
+	return String((building as Dictionary).get("status", ""))
+
+
+## **PUT ORE IN BOTH OF A MACHINE'S SLOTS THROUGH THE MENU'S OWN BUTTONS**, so it lights and smelts.
+## False having already failed the run.
+##
+## ONE STACK FILLS BOTH, and that is a fact about this world rather than a shortcut: `starter_pair()`
+## is `[material, fuel]` and nothing stops one species being both — in the offline test world it is,
+## which is the finding `_mine_two_species`' docstring carries.
+##
+## THE LABEL IS RECOMPUTED BETWEEN THE TWO PRESSES. `insert_label` carries the count read at the
+## press (ASSA-55), so after the fuel goes in, the input slot's button is a different sentence. A test
+## that cached the first label would press nothing the second time and still be green about a smelter
+## that never lit.
+func _fill_both_slots(screen: Node, id: int) -> bool:
+	for slot in [AssayActions.SLOT_FUEL, AssayActions.SLOT_INPUT]:
+		var ore := _stack_of(screen, "ore")
+		if ore.is_empty():
+			return _fail("no ore left in the pack for the %s slot" % slot)
+		var held := _counted(screen, ore)
+		var label := AssayHud.insert_label(held, String(ore.get("name", "?")), slot)
+		var button := _find(screen._menu_box, label)
+		if button == null:
+			return _fail("no `%s` button in building %d's menu: %s"
+					% [label, id, _labels_of(screen._menu_box)])
+		button.pressed.emit()
+		_tick(screen, 2)
+	return true
+
+
 ## MINE TWO DIFFERENT SPECIES OF ORE, so the pack holds two stacks.
 ##
 ## NOT `starter_pair()[0]` AND `[1]`: the pair is (material, fuel) and ONE species can be both, which
@@ -2676,6 +2713,64 @@ func test_esc_closes_a_menu_and_a_dismissing_click_does_not_walk() -> bool:
 ## that ore is fuel. Maren's ASSA-331 label ruling put the slot IN the label, so the press can be aimed
 ## at the fuel slot and the command checked against it -- the hedge was a cost of the wording, not a
 ## principle. Which slots exist is still asked of the sim (`insert_slots`), never assumed.
+## **A BURNING SMELTER DOES NOT REBUILD THE ACTING-ON ROW** (ASSA-353 box 3, which names a BEHAVIOUR
+## and is why "the signature has no status term" does not close it — that is the implementation
+## restating itself).
+##
+## **THE OTHER HALF OF THE FIX, AND THE EXPENSIVE ONE TO GET WRONG.** The defect was the building's
+## **identity** missing from `_refresh_actions`' cache key; the trap next door is putting its
+## **status** in instead. `_refresh_actions`' own docstring rules it out — *"a smelter's status
+## sentence changes every tick while it burns, and rebuilding on that would free the Take button four
+## times a second"* — and nothing measured it until this test. A row that rebuilt ten times a second
+## would take the buttons out from under a pressing finger.
+##
+## **BUILT, NOT PLANTED, AND THE SMELTER REALLY BURNS.** Mined, crafted, right-clicked, `Place`d, then
+## fuel and ore through the menu's own slot buttons. One species fills both slots because
+## `starter_pair()` is `[material, fuel]` and in this world they are the same rock.
+##
+## **THE PREMISE IS ASSERTED AS A FAILURE, which is the lesson ASSA-300 cost me:** the run must prove
+## the sim's `status` MOVED over the window with no command submitted. Without that, a smelter that
+## never lit gives a frozen status, an unchanged signature, and a green that means nothing at all.
+func test_a_burning_smelters_status_does_not_rebuild_the_acting_on_row() -> bool:
+	var screen := _joined()
+	var ok := true
+	var id := _a_placed_smelter(screen)
+	if id < 0:
+		screen.queue_free()
+		return false
+	var spot: Vector2i = screen._target_tile()
+	# THE MENU IS THE ONLY DOOR FOR AN INSERT (ASSA-331), and opening it on the machine is also what
+	# aims the acting-on row at a building at all (ASSA-366, Maren amending her ruling 8).
+	_click(screen, spot, MOUSE_BUTTON_LEFT)
+	if not _fill_both_slots(screen, id):
+		screen.queue_free()
+		return false
+	# LONG ENOUGH TO LIGHT AND START CONSUMING. Lighting from cold is a rule in the fuel's own heat
+	# tolerance, so this waits rather than asserting a tick count.
+	_tick(screen, 30)
+	var before := _status_of(screen, spot)
+	var showing: String = screen._actions_showing
+	# **NOT ONE PRESS IN THIS WINDOW.** `_tick` feeds whatever `_asked` holds and nothing has been
+	# pressed, so every change from here is the world's own doing — which is the only way this test
+	# can tell "the row ignores a status" from "nothing happened".
+	_tick(screen, 20)
+	var after := _status_of(screen, spot)
+	if before == "" or after == "":
+		ok = _fail("premise: nothing stands on %s to have a status (`%s` then `%s`)"
+				% [spot, before, after])
+	elif after == before:
+		ok = _fail(("premise: the smelter's status did not move across 20 ticks (`%s` both times), "
+				+ "so this run says nothing about a status that changes with no command. The fuel "
+				+ "may never have lit.") % before)
+	elif screen._actions_showing != showing:
+		ok = _fail(("the acting-on row rebuilt because a smelter's status moved (`%s` -> `%s`). "
+				+ "The key went `%s` -> `%s`: a burning machine would rebuild that row four times a "
+				+ "second and take its buttons out from under a pressing finger.")
+				% [before, after, showing, screen._actions_showing])
+	screen.queue_free()
+	return ok
+
+
 func test_a_slot_button_fuels_the_menus_machine_with_the_count_at_the_press() -> bool:
 	var screen := _joined()
 	var ok := true
