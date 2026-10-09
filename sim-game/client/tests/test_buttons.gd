@@ -3247,16 +3247,34 @@ func _acting_on_line(screen: Node) -> String:
 ## below the key and reads `facts.building`. So the building clause is frozen at whatever stood on the
 ## tile when the tile was last chosen.
 ##
-## **BOTH DIRECTIONS IN ONE RUN, AND EACH IS THE OTHER'S CONTROL** (acceptance 1 and 2): a line
-## frozen on the ground fails the arrival, a line frozen on a machine that has been picked up fails
-## the removal. The target tile is asserted not to have moved between them, because a re-chosen
-## target rebuilds the row for the ordinary reason and would make either half vacuous.
+## **BOTH DIRECTIONS IN ONE RUN** (acceptance 1 and 2): a building arrives on the chosen tile, then
+## is picked up off it. The target tile is asserted not to have moved across either, because a target
+## re-chosen at the wrong moment rebuilds the row for the ordinary reason and would make that half
+## vacuous. **Only the arrival is red on main**, for the two reasons below.
+##
+## **THE REMOVAL HALF CANNOT RED ON MAIN, AND BOTH REASONS ARE MEASURED RATHER THAN ARGUED.** It is
+## written anyway, because the fix must carry both directions and this is where that is held.
+##
+## 1. **THE DEFECT CANCELS ITSELF.** A probe printed the row's own key and the drawn line either side
+##    of the pickup: `key=(76, 38)/true/[]/true/true` both times, line `… · clear ground` both times.
+##    The sentence was already frozen at the bare ground from before the `Place`, so taking the
+##    building away made the frozen sentence true again.
+## 2. **AND THE HONEST IN-BETWEEN STATE IS NOT REACHABLE BY ANY GESTURE ON MAIN.** The obvious cure --
+##    re-choose the target so the line names the machine, then remove it -- cannot be played:
+##    `main.gd:6227-6231` answers a right-click on a tile carrying a building with that building's
+##    MENU and returns, before the branch that sets `_target` (ASSA-316 rulings 7/8; the same return
+##    Maren recorded on ASSA-326 at 02:55 for the ring). So on main the building clause of
+##    `target_line` is only ever drawn while it is WRONG.
+##
+## That is worth saying beyond this file: Maren's box 6 confirms the line names the building when one
+## stands on the chosen tile, and **no player has ever seen it do that in a state that was true.**
 ##
 ## **THE EXPECTATION IS `target_line`'s OWN ANSWER FOR THE TILE'S CURRENT FACTS, never a phrase typed
 ## here.** `test_actions.gd` once pinned `smelter 3` out of a hand-built dict and froze the defect
 ## (ASSA-244); the wording is Maren's to rule and box 6 of this item leaves it exactly as it is.
 ##
-## **RED ON MAIN AT 3747eba**, both halves, with the sentence it drew instead.
+## **RED ON MAIN AT 3747eba** on the arrival, with the sentence it drew instead of the one the tile's
+## own facts make.
 func test_the_acting_on_line_follows_the_building_on_the_chosen_tile() -> bool:
 	var screen := _joined()
 	var ok := true
@@ -3264,8 +3282,9 @@ func test_the_acting_on_line_follows_the_building_on_the_chosen_tile() -> bool:
 	# between the right-click that chooses the tile and the Place that builds on it.
 	var smelter := _a_smelter_in_the_pack(screen)
 	var spot := Vector2i(-1, -1)
+	var me := Vector2i(-1, -1)
 	if not smelter.is_empty():
-		var me: Vector2i = screen._my_tile()
+		me = screen._my_tile()
 		spot = AssayDemoPlan.smelter_spot(me, screen._sim.size_tiles(), _buildings_near(screen, me))
 		if spot.x < 0:
 			ok = _fail("no free 2x2 within reach of %s for a smelter" % me)
@@ -3314,8 +3333,12 @@ func test_the_acting_on_line_follows_the_building_on_the_chosen_tile() -> bool:
 						% [drawn, fresh])
 	# **AND THE REVERSE, WHICH IS THE WORSE ONE: the machine is gone and the line goes on naming it.**
 	# Pick up lives in the machine's own menu since ASSA-316; opening that menu does not move the
-	# target (`main.gd:6208-6212` returns before the line that sets it), so the row's key is as still
-	# here as it was on the way in.
+	# target (`main.gd:6227-6231` returns before the branch at `:6251` that sets it), so the row's key
+	# is as still here as it was on the way in.
+	#
+	# **IT ONLY HAS TEETH ONCE THE ARRIVAL IS HONEST, AND THAT IS NOT A WEAKNESS OF THE TEST -- IT IS A
+	# FACT ABOUT MAIN.** See the docstring: on main the row is already frozen at `clear ground`, so
+	# removing the building makes the frozen sentence true again and this half cannot see anything.
 	if ok:
 		_click(screen, spot, MOUSE_BUTTON_LEFT)
 		var away := _find(screen._menu_box, "Pick up")
