@@ -26,7 +26,14 @@ extends SceneTree
 ## measured at BOTH widths here and the difference is the finding, not a footnote.
 
 ## The log's own home today (`main.gd:1612`: `_log_region` takes `world.position`/`world.size`), and
-## the width Maren ruled for the dock. Both minus the panel's horizontal padding at the call site.
+## the width Maren ruled for the dock. **THESE ARE THE PANEL'S OUTER WIDTHS AND THE TEXT NEVER GETS
+## THEM.** The game wraps at `world_rect().size.x - pad.x` (`_log_lines_that_fit`), `pad.x` being the
+## log panel's own stylebox margins, and for a day this file passed both of these straight in under a
+## docstring of mine claiming they were already "minus the panel's horizontal padding at the call
+## site". They were not: that sentence described the game and was false of the constants, so every
+## figure this tool published wrapped its text at a width the log never offers -- too WIDE, so it
+## under-counted wrapping, so it was optimistic in the one direction that matters. `pad.x` is
+## subtracted below, off the same stylebox the game asks.
 const WIDE := 912.0
 const DOCKED := 318.0
 ## Maren's floor, in lines.
@@ -38,20 +45,38 @@ const CLIP_WORST := 390.0
 const CLIP_REST := 510.0
 const REACH_DEEPEST := 350.0
 
-## **THESE ARE RECONSTRUCTED FROM THE LOG'S WORDINGS, NOT CAPTURED FROM A RUN, AND THE DIFFERENCE
-## MATTERS BECAUSE OF WHAT THEY ANSWERED.** I wrote them expecting the dock to cost a wrap, and **all
-## five fit 318 px on one line, so the predicted cost is 0.0 px.** That is the instrument refusing my
-## hypothesis, and it is only worth anything if the provenance is honest: a sentence long enough to
-## wrap costs `pitch` per extra line, and one exists -- ASSA-242 is that the assembly sentence is too
-## long for either home it already has. **So the wrap cost here is a measured zero for these five
-## sentences and an OPEN question for the log as a whole**, and the honest next version of this tool
-## captures the sentences off a real play instead of taking them from my memory of the format.
+## **THE SENTENCES THIS IS FED DECIDE THE ANSWER, AND THE FIRST SET WAS MINE FROM MEMORY.** Five
+## wordings I reconstructed stood here, all of them short; they fit 318 px on one line and the tool
+## published a wrap cost of **0.0 px**. Maren's reading of a real frame is what killed that zero: two
+## assembly lines **already end in an ellipsis at 912 px**, and `you made 1 x Tonore hopper (A)` is
+## four of the eleven rows on screen. *"My five were the short ones."*
+##
+## **SO THESE ARE ASSA-242's CONSTRUCTED WORST CASES, VERBATIM FROM `maren-assa242-bar/
+## candidates.txt`** -- Maren's own file, measured through `client/tools/line_width.gd` at the font
+## `_note` really gives a log line, built the way Marlow built his: a 20-character species name (the
+## rename rule's maximum), the longest real player name we have, 4-digit coordinates. Her published
+## widths are beside each line so a reader can tell a wrap from a mis-transcription: **591 px** the
+## widest ORDINARY line, **564** ore-mined, **434** the longest note row, **358** C4's common case,
+## **1004** today's assembly row 1 -- the defect ASSA-242 is about, and still what the log draws.
+##
+## **NOTHING HERE IS A SENTENCE I WROTE.** That is the point: the floor this tool reports is Maren's
+## *"seven cut rows plus the tallest newest entry the log can be asked to draw, at the dock's real
+## text width"*, and "can be asked to draw" is the sim's worst case rather than the frame I happened
+## to shoot.
 const LINES := [
-	"Mine - submitted at tick 514",
-	"mined 2 ore of Tonore at grade B",
-	"the smelter at (59, 61) has stopped: its fire is out",
-	"placed a Tonore smelter at (59, 61)",
-	"discovered Tonore - you may name it",
+	# 1004 px -- today's assembly row 1, the one ASSA-242 exists about.
+	"you assembled a machine: SAFE · mass 616 of 705 budget · holds 60 · speed 78 (bare hands 25)"
+			+ " · frame(Tonore A 385) + head(Tonore A 77) + hopper(Tonore A 154)",
+	# 591 px -- the widest ORDINARY line, which is the bar Maren set for the assembly family.
+	"the Ttwentycharacters smelter smelted 3 Ttwentycharacters refined (A) (5 waiting to be taken)",
+	# 564 px -- ore mined, worst case.
+	"hasanaburayyan mined 3 Ttwentycharacters ore (A) (carrying 148, 1200 left in the deposit)",
+	# 536 px -- C4's worst case, with a 14-character name.
+	"hasanaburayyan assembled a machine: UNCERTAIN · mass 616-700 of 705-800 budget",
+	# 434 px -- the sim's own second row (`verdict_note`), worst case. A ROW, cut separately.
+	"assay Ttwentycharacters and Fourteencharsx and Ninechars to know",
+	# 358 px -- C4's common case, the shape Maren approved.
+	"you assembled a machine: SAFE · mass 616 of 705 budget",
 ]
 
 
@@ -73,6 +98,12 @@ func _initialize() -> void:
 	root.add_child(head)
 	var box := VBoxContainer.new()
 	root.add_child(box)
+	# **THE PANEL THE LOG SITS IN, SO ITS PADDING CAN BE ASKED FOR RATHER THAN ASSUMED.** `_log_box`
+	# is a plain `PanelContainer` (`main.gd:1668`) and the game reads `get_theme_stylebox(&"panel")`
+	# off it, which resolves to `panel`/`PanelContainer` in the shipped theme. Same node kind, same
+	# lookup, so this cannot drift from the thing it is measuring.
+	var plate := PanelContainer.new()
+	root.add_child(plate)
 
 	var font: Font = body.get_theme_font(&"font", &"Label")
 	var size := body.get_theme_font_size(&"font_size", &"Label")
@@ -85,10 +116,20 @@ func _initialize() -> void:
 	var separation := float(box.get_theme_constant(&"separation"))
 	var pitch := font.get_height(size) + separation
 
+	# **THE PANEL'S OWN PADDING, BOTH WAYS.** `pad.x` comes off the wrap width and `pad.y` is the
+	# first of the four parts of chrome -- and this file added three of them. The comment below has
+	# named "the panel's vertical padding" since the tool was written while the arithmetic went
+	# straight to `separation`, so the chrome was short by `pad.y` in the same optimistic direction as
+	# the wrap width. Two defects, one instrument, both found by Maren asking what the padding was.
+	var pad := Vector2.ZERO
+	var plate_style: StyleBox = plate.get_theme_stylebox(&"panel")
+	if plate_style != null:
+		pad = Vector2(plate_style.get_margin(SIDE_LEFT) + plate_style.get_margin(SIDE_RIGHT),
+				plate_style.get_margin(SIDE_TOP) + plate_style.get_margin(SIDE_BOTTOM))
 	# CHROME, THE SAME FOUR PARTS `_log_lines_that_fit` ADDS UP: the panel's vertical padding, one
 	# separation, the heading's font height, and the air the Heading stylebox puts above it. The last
 	# one is the part a font metric cannot see (ASSA-224).
-	var chrome := separation + head_font.get_height(head_size)
+	var chrome := pad.y + separation + head_font.get_height(head_size)
 	var air: StyleBox = head.get_theme_stylebox(&"normal", &"Heading")
 	var air_y := 0.0
 	if air != null:
@@ -98,21 +139,40 @@ func _initialize() -> void:
 	print("THE LOG'S OWN NUMBERS, off the shipped theme")
 	print("  pitch   %.1f px  (Label %d px font height %.1f + VBox separation %.1f)"
 			% [pitch, size, font.get_height(size), separation])
-	print("  chrome  %.1f px  (separation %.1f + Heading %d px height %.1f + its air %.1f)"
-			% [chrome, separation, head_size, head_font.get_height(head_size), air_y])
+	print("  chrome  %.1f px  (panel pad.y %.1f + separation %.1f + Heading %d px height %.1f + its "
+			% [chrome, pad.y, separation, head_size, head_font.get_height(head_size)]
+			+ "air %.1f)" % air_y)
+	print("  panel   pad %.1f x %.1f, so the TEXT gets %.0f px wide and %.0f px docked"
+			% [pad.x, pad.y, WIDE - pad.x, DOCKED - pad.x])
 
-	print("\nTHE NEWEST LINE, WRAPPED, AT BOTH WIDTHS -- the half the ruling does not mention")
+	print("\nTHE NEWEST LINE, WRAPPED, AT BOTH TEXT WIDTHS -- the half the ruling does not mention")
+	# ONE ROW AT THIS FONT AND THIS WIDTH, measured the same way the lines are, so the row counts
+	# below are a ratio of two numbers from one call and not a division by a font metric that wraps
+	# differently. A string with no space in it cannot wrap at any width worth measuring.
+	var one_row := font.get_multiline_string_size("Mg", HORIZONTAL_ALIGNMENT_LEFT,
+			DOCKED - pad.x, size).y
 	var worst_wide := 0.0
 	var worst_dock := 0.0
+	var worst_rows := 0.0
 	for text in LINES:
-		var wide := font.get_multiline_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, WIDE, size).y
-		var dock := font.get_multiline_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, DOCKED, size).y
+		var wide := font.get_multiline_string_size(text, HORIZONTAL_ALIGNMENT_LEFT,
+				WIDE - pad.x, size).y
+		var dock := font.get_multiline_string_size(text, HORIZONTAL_ALIGNMENT_LEFT,
+				DOCKED - pad.x, size).y
 		worst_wide = maxf(worst_wide, wide)
 		worst_dock = maxf(worst_dock, dock)
-		print("  %5.1f -> %5.1f px   %s" % [wide, dock, text])
-	print("  WORST  %.1f px wide (%.0f px), %.1f px docked (%.0f px): the dock costs %.1f px before a "
-			% [worst_wide, WIDE, worst_dock, DOCKED, worst_dock - worst_wide]
-			+ "single line of history is kept")
+		worst_rows = maxf(worst_rows, dock / one_row)
+		# **AND THE FLOOR THIS ONE LINE WOULD SET, PER LINE.** Maren's floor is *seven cut rows plus
+		# the tallest newest entry the log can be asked to draw*, so which sentence is the tallest
+		# decides it -- and that changes when ASSA-242 cuts the assembly line. Printing the floor
+		# beside every candidate means the number after the cut is this tool's answer rather than
+		# arithmetic either of us did in a comment.
+		print("  %5.1f px (%.1f rows) -> %5.1f px (%.1f rows)  floor %5.1f px   %s"
+				% [wide, wide / one_row, dock, dock / one_row,
+				chrome + dock + float(FLOOR_LINES - 1) * pitch, text])
+	print("  WORST  %.1f px wide (text %.0f px), %.1f px docked (text %.0f px) = %.1f rows: the dock "
+			% [worst_wide, WIDE - pad.x, worst_dock, DOCKED - pad.x, worst_rows]
+			+ "costs %.1f px before a single line of history is kept" % (worst_dock - worst_wide))
 
 	print("\nWHAT %d LINES WANT, inverting AssayHud.log_lines_that_fit" % FLOOR_LINES)
 	var want := chrome + worst_dock + float(FLOOR_LINES - 1) * pitch
