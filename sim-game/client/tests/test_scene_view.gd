@@ -3338,3 +3338,228 @@ func test_the_title_camera_never_snaps_and_its_sample_gap_is_what_it_claims() ->
 				+ "%.2f px: the bound is loose enough to hide a real snap and would be quoted as "
 				+ "the error on a contrast number it does not describe") % [claimed, worst])
 	return true
+
+
+## ------------------------------------------------------------------------------------------------
+## THE SELECTION MARK AND THE PERSON STANDING IN IT (ASSA-361)
+##
+## Maren measured 81 px of a body deleted by the mark's bar and its halo on a 1x frame, and ruled
+## **`DRAWN LAST WINS: PEOPLE > THE MARK > BUILDINGS ON THE MARK'S TILE`** -- after withdrawing her
+## own first mechanism, because a person's sort key is a float and a mark's is a whole number, so no
+## single ordering can put the mark over the machine it names AND under the body standing on it.
+##
+## WHAT THESE TESTS CAN AND CANNOT SEE. `over_mark` decides WHO IS DRAWN AFTER THE MARK, which is
+## arithmetic and belongs here. Whether the body's pixels survived is a picture: it is box 1 of the
+## item, measured on a 1x real-window shot with the both-sides predicate Maren wrote. A green test
+## here over a frame nobody opened is exactly the pair of claims a shot broke on ASSA-378.
+## ------------------------------------------------------------------------------------------------
+
+## THE MARK'S OWN RECTANGLES, from the functions that paint them, for a footprint in tiles.
+func _mark_rects(area: Rect2i) -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	out.append_array(AssayScene.selection_keyline(area, Vector2.ZERO))
+	out.append_array(AssayScene.selection_mark(area, Vector2.ZERO))
+	return out
+
+
+func _standing_of(view: Dictionary) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for place in AssayScene.placements(view):
+		if int((place as Dictionary).get("layer", AssayScene.FLOOR)) == AssayScene.STANDING:
+			out.append(place)
+	return out
+
+
+## **THE LADDER INSIDE ONE BOTTOM EDGE IS A LADDER, ASSERTED AS AN ORDER AND NOT AS THREE NUMBERS.**
+## `above` used to be 1 for a fire and 0 for everything else, and the thing it left undecided was
+## everything a PERSON ties with: a body whose feet are on a lit smelter's bottom edge sorted under
+## that smelter's fire (said out loud in `placements` and accepted on ASSA-137 as merely
+## deterministic), and a body on a 1x1 machine's own tile was ordered by the length of the array.
+##
+## Asserted as `<` between the constants rather than against 0/1/2, because the values are nobody's
+## decision and a test that pins them would redden on a rename of nothing (my own rule from
+## ASSA-366: assert the property, not the value you set).
+func test_the_within_edge_ladder_puts_a_person_in_front_of_walls_and_fire() -> bool:
+	if not (AssayScene.ABOVE_BODY < AssayScene.ABOVE_FIRE):
+		return _fail("a building's walls do not sort before its own fire, so a wall can be drawn "
+				+ "over the fire burning inside it (ASSA-137's hazard)")
+	if not (AssayScene.ABOVE_FIRE < AssayScene.ABOVE_PERSON):
+		return _fail("a person does not sort after a fire on the same bottom edge, so a body "
+				+ "standing at a lit smelter's front face is drawn behind its flames")
+	return true
+
+
+## **A BODY AT A LIT SMELTER'S BOTTOM EDGE IS DRAWN IN FRONT OF ITS FIRE** (Maren, ASSA-361: *"a body
+## at a smelter's bottom edge stands at its front face, so it is nearer. That is depth, not 11.14"*).
+##
+## **IT GETS ITS OWN TEST BECAUSE IT ARRIVED AS A SIDE EFFECT, and Maren's reason is the one I had
+## just given her about something else: a fix that arrives as a by-product leaves the same way.** The
+## next person to touch the comparator would revert a reorder nobody wrote down -- which is the
+## ASSA-137 shape repeating. So this asserts the three placements' order directly, through
+## `placements`, and not the constants above.
+func test_a_player_at_a_lit_smelters_bottom_edge_is_drawn_over_its_fire() -> bool:
+	# The smelter's own bottom edge: a 2x2 at (10, 5) ends at row 7, so a body on row 6 has
+	# `at.y + 1 == 7` exactly. This is the tie, and it is the normal case -- you stand at a
+	# machine's front face to feed it.
+	var view := _view({"buildings": [_smelter(Vector2i(10, 5), true)],
+			"players": [{"at": Vector2(10.0, 6.0), "facing": "N", "moving": false}]})
+	var places := AssayScene.placements(view)
+	var walls := -1
+	var fire := -1
+	var body := -1
+	for i in range(places.size()):
+		var place: Dictionary = places[i]
+		if int(place.get("layer", AssayScene.FLOOR)) != AssayScene.STANDING:
+			continue
+		match String(place["asset"]):
+			"smelter":
+				# BY THE ROW THE MANIFEST FLAGS, not by the word "fire" typed here, which is
+				# `test_a_burning_smelter...`'s own rule two hundred lines up.
+				if String(place["row"]) == AssayScene.light_row(_manifest(), "smelter", "body"):
+					fire = i
+				else:
+					walls = i
+			"player": body = i
+	if walls < 0 or fire < 0 or body < 0:
+		return _fail(("the fixture did not draw all three of walls (%d), fire (%d) and body (%d), "
+				+ "so this test proves nothing") % [walls, fire, body])
+	if not (walls < fire and fire < body):
+		return _fail(("a lit smelter's walls, its fire and a body on its bottom edge are drawn at "
+				+ "%d, %d and %d. The order must be walls, fire, body: a player at a machine's "
+				+ "front face is nearer than the flames inside it") % [walls, fire, body])
+	return true
+
+
+## **THE MARK WAITS FOR THE PERSON STANDING IN IT, AND FOR NOBODY ELSE.** `over_mark` names the
+## placements drawn after the mark; with a body on the marked tile that is the body, and the machine
+## it stands on is NOT in the list -- which is box 4, the mark staying visible on the thing it names.
+##
+## **IT SWEEPS ARRAY LENGTHS, AND THERE IS A TEST I DELETED BEHIND THAT.** A person on a 1x1
+## machine's tile shares its bottom edge exactly, so this answer depends on the two being ordered at
+## all -- and until ASSA-361 that was `sort_custom`'s treatment of two equal elements, which ASSA-137
+## recorded as varying with the length of the array. I wrote a test asserting the machine is drawn
+## first and it **passed with the ladder taken out**, at every one of fourteen array lengths: today's
+## `sort_custom` happens to keep the input order, so the direction has no detector and I will not
+## keep a test that agrees with the defect. What is left is the sweep, here, where a flip at any
+## length has a visible consequence -- the body stops waiting and the mark goes back through it.
+func test_the_mark_is_drawn_under_the_body_on_its_tile_and_over_the_machine() -> bool:
+	var tile := Vector2i(12, 7)
+	for n in range(14):
+		# A WORLD WITH n EXTRA MACHINES, none on the marked tile and none sharing its bottom edge,
+		# so the only thing changing between runs is how many things the sort has to order.
+		var buildings: Array = [_drill(tile, 1)]
+		for i in range(n):
+			buildings.append(_drill(Vector2i(i % 7, 1 + i / 7), 1))
+		var view := _view({"buildings": buildings,
+				"players": [{"at": Vector2(tile), "facing": "S", "moving": false}]})
+		var standing := _standing_of(view)
+		var over := AssayScene.over_mark(standing, _mark_rects(Rect2i(tile, Vector2i.ONE)))
+		if over.is_empty():
+			return _fail(("with %d extra machines on the scene nothing waits for the mark, so the "
+					+ "bar and its halo are painted through the body standing on the selected tile "
+					+ "-- the 81 px ASSA-361 measured") % n)
+		for i in over:
+			if String((standing[i] as Dictionary).get("asset", "")) != "player":
+				return _fail(("placement %d (`%s`) is drawn after the mark. Only a person may be, "
+						+ "and whatever is in front of them: a machine lifted over it would hide "
+						+ "the outline on exactly the thing it points at") % [i, standing[i]])
+	return true
+
+
+## **AND WITH NOTHING SELECTED, NOBODY WAITS.** The phase is the whole of this change's cost on a
+## normal frame, and the honest statement of it is that there is none: no selection, one loop, the
+## picture this view has drawn since ASSA-119.
+func test_nothing_waits_for_a_mark_that_is_not_there() -> bool:
+	var view := _view({"players": [{"at": Vector2(12.0, 7.0), "facing": "S", "moving": false}]})
+	var standing := _standing_of(view)
+	if standing.is_empty():
+		return _fail("the fixture drew no standing placements, so this test proves nothing")
+	var over := AssayScene.over_mark(standing, [] as Array[Rect2])
+	if not over.is_empty():
+		return _fail("%d placements wait for a mark that is not on screen" % over.size())
+	return true
+
+
+## **A BODY THE MARK DOES NOT TOUCH IS NOT LIFTED.** The control for the test above, and it is the one
+## that can fail: a phase that lifted every person whenever anything was selected would pass that
+## test and reorder the whole scene. Same world, same selection, body two tiles clear of it.
+func test_a_body_clear_of_the_mark_is_not_lifted_over_it() -> bool:
+	var tile := Vector2i(12, 7)
+	var view := _view({"buildings": [_drill(tile, 1)],
+			"players": [{"at": Vector2(12.0, 11.0), "facing": "N", "moving": false}]})
+	var standing := _standing_of(view)
+	var over := AssayScene.over_mark(standing, _mark_rects(Rect2i(tile, Vector2i.ONE)))
+	if not over.is_empty():
+		return _fail(("%d placements wait for a mark four tiles away from the only body on the "
+				+ "scene: the phase is lifting people it was not asked about") % over.size())
+	return true
+
+
+## **A BODY THE MARKED MACHINE IS DRAWN OVER IS NOT LIFTED EITHER, AND THIS IS THE OPEN HALF OF
+## ASSA-361 PINNED AS A TEST RATHER THAN LEFT AS A SENTENCE.**
+##
+## Maren split the boxes for exactly this: *"stationary zero is one box, walking zero its own. Ship
+## the stationary fix with the walk named and open -- a partial proof, named, beats a box ticked with
+## a condition hidden in it."*
+##
+## A body walking onto the marked tile FROM THE NORTH has a bottom edge strictly less than the
+## tile's, so the machine on that tile is drawn in front of it -- and lifting the body over the mark
+## would lift it over the machine too, which is the worse picture Maren refused (*"a player painted
+## in front of the smelter they stand behind"*). So it waits for nothing, and what covers the body
+## there is the MACHINE and not the mark. The same holds for the back row of a 2x2.
+##
+## **IF THIS TEST EVER GOES RED, THAT IS NOT NECESSARILY A REGRESSION** -- it may be the walk case
+## being solved by a mechanism that can see pixels. Read the name and then the item.
+func test_a_body_the_marked_machine_covers_is_left_where_it_is() -> bool:
+	var tile := Vector2i(12, 7)
+	# HALF A TILE NORTH, which is where a walking body spends nine frames out of ten (ASSA-197) --
+	# `_standing` keeps `at` unfloored precisely so this position exists in the sort at all.
+	var view := _view({"buildings": [_drill(tile, 1)],
+			"players": [{"at": Vector2(12.0, 6.5), "facing": "S", "moving": true}]})
+	var standing := _standing_of(view)
+	var body := -1
+	for i in range(standing.size()):
+		if String((standing[i] as Dictionary).get("asset", "")) == "player":
+			body = i
+	if body < 0:
+		return _fail("the walking body was not drawn, so this test proves nothing")
+	var machine := -1
+	for i in range(standing.size()):
+		if bool((standing[i] as Dictionary).get("composite", false)):
+			machine = i
+	if machine < 0 or machine < body:
+		return _fail(("the fixture puts the machine at %d and the body at %d: this test is about "
+				+ "the case where the MACHINE is in front, and it is not that case") % [machine, body])
+	var over := AssayScene.over_mark(standing, _mark_rects(Rect2i(tile, Vector2i.ONE)))
+	if over.has(body):
+		return _fail("a body the marked machine is drawn over was lifted in front of the mark, "
+				+ "which lifts it in front of the machine as well")
+	return true
+
+
+## **AND A PARTNER IN FRONT OF YOU COMES WITH YOU.** The scope's second half, and the reason
+## `_shaded` does not count people: without this, a second body standing on the next tile south --
+## whose sprite overlaps yours by a whole tile -- would be "something in front of you at the mark"
+## and the fix would switch itself off for the rest of the session. A fix that silently stops fixing
+## is worse than the bug.
+##
+## Both bodies are in the list, and the one in FRONT is drawn after the one behind, so the phase
+## reorders nothing between them.
+func test_a_partner_in_front_of_you_is_carried_over_the_mark_with_you() -> bool:
+	var tile := Vector2i(12, 7)
+	var view := _view({"buildings": [_drill(tile, 1)], "players": [
+		{"at": Vector2(tile), "facing": "S", "moving": false},
+		{"at": Vector2(12.0, 8.0), "facing": "N", "moving": false},
+	]})
+	var standing := _standing_of(view)
+	var over := AssayScene.over_mark(standing, _mark_rects(Rect2i(tile, Vector2i.ONE)))
+	if over.size() != 2:
+		return _fail(("%d placements wait for the mark with two bodies on top of each other at it; "
+				+ "both must, or the one in front is drawn behind the one on the marked tile")
+				% over.size())
+	var first: Dictionary = standing[over[0]]
+	var second: Dictionary = standing[over[1]]
+	if first["dest"].position.y >= second["dest"].position.y:
+		return _fail("the two bodies are drawn after the mark in the wrong order, so a body "
+				+ "behind covers one in front")
+	return true
