@@ -52,8 +52,15 @@ var me: Variant = null
 ## can move a body.
 var destination: Variant = null
 
-## **THE TILE THE BUTTONS ACT ON, OR null** (ASSA-276 move 4). A `Vector2i`, set by `main.gd` from
-## `_target` whenever a tile is actually targeted.
+## **WHAT THE BUTTONS ACT ON, OR null** (ASSA-276 move 4). A **`Rect2i` IN TILES** -- `position` is
+## the subject's top-left tile and `size` its span -- set by `main.gd` from `_target` whenever a tile
+## is actually targeted.
+##
+## **IT WAS A `Vector2i` UNTIL ASSA-348 AND THE SPAN IS NOT DECORATION.** Three of the sim's five
+## verbs (`Take`, `Pickup`, `Insert`) take a `BuildingId`, and a smelter covers four tiles, so the
+## mark understated its own subject on every one of them. `main.gd` crosses `BuildingFacts.footprint`
+## to fill this in; the span is never inferred here from a sprite or a kind, because this node draws
+## and decides nothing (`_blit`'s rule, one screen down).
 ##
 ## SEPARATE FROM `destination` BECAUSE THEY ARE DIFFERENT FACTS AND CAN BE THE SAME TILE: one is
 ## "where I asked to walk", alive for a quarter of a second; this is "what the buttons will do
@@ -157,12 +164,17 @@ func _draw() -> void:
 			_blit(place)
 	# **WHAT THE BUTTONS ACT ON (ASSA-276 move 4), AND IT IS DRAWN LAST, WHICH IS THE OPPOSITE OF
 	# THE DESTINATION ABOVE.** That one goes under the standing layer because it marks the GROUND a
-	# body is walking to. This one marks the SUBJECT of the next button press, and the commonest
-	# subject is a machine or a rock that stands on its tile -- under the sprites it would be
-	# invisible exactly when it matters. It can sit on top without hiding anything because it is a
-	# 2 px outline inset inside the tile: the middle, which is the thing selected, is untouched.
+	# body is walking to. This one marks the SUBJECT of the next button press, and that subject is
+	# usually a BUILDING standing on its tiles -- under the sprites it would be invisible exactly
+	# when it matters. It can sit on top without hiding anything because it is a 2 px outline inset
+	# inside the footprint: the middle, which is the thing selected, is untouched.
+	#
+	# **THIS USED TO SAY "a machine or a ROCK that stands on its tile" AND THE ROCK WAS WRONG**
+	# (ASSA-348). `Mine` carries no argument at all, so a rock is never the subject of any command;
+	# the example quietly justified a one-tile mark by naming the one thing that is always one tile.
+	# The span arrives as `selection`, in tiles, and the sim is what decided it.
 	if selection != null:
-		var at: Vector2i = selection
+		var at: Rect2i = selection
 		var from: Vector2 = view.get("origin", Vector2.ZERO)
 		# EVERY KEYLINE FIRST, THEN EVERY BAR, for `destination`'s reason one block up: the sides of
 		# the outline meet at the corners, so a per-bar rim would lay MAP_BG over the ink beside it.
@@ -176,8 +188,11 @@ func _draw() -> void:
 			draw_rect(halo, AssayHud.MAP_BG, true)
 		for edge in AssayScene.selection_mark(at, from):
 			draw_rect(edge, AssayHud.mark_ink(&"target"), true)
-		drawn_selection = Rect2(Vector2(at) * AssayScene.TILE_PX - from,
-				Vector2(AssayScene.TILE_PX, AssayScene.TILE_PX))
+		# THE UNION OF THE BARS, ASKED OF THE SAME FUNCTION THAT MADE THEM (ASSA-348). This line used
+		# to rebuild the rect out of the tile and `TILE_PX`, which is a second arithmetic for one
+		# rectangle: the bars could trace a quarter of a smelter while this went on reporting the
+		# whole of it, and the probe that reads this would have proved the defect correct.
+		drawn_selection = AssayScene.selection_box(at, from)
 
 
 ## ONE SPRITE. Nothing is decided here; `src`, `dest` and `tint` all arrive worked out.

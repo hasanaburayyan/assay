@@ -73,6 +73,98 @@ func _screen() -> Node:
 	return node
 
 
+## **THE HOST FIELD FITS THE ADDRESS DECISION #40 SENDS A FRIEND** (ASSA-318, Maren's rewritten box
+## 3 and her option 2).
+##
+## **A NAMED STRING, NOT A CHARACTER COUNT, AND THAT IS THE WHOLE POINT OF THE REWRITE.** Her first
+## wording asked that the longest address a friend can be handed be fully visible -- unsatisfiable,
+## because a MagicDNS name is whatever somebody called their computer. So the bar is one address,
+## `AssayHud.LONGEST_HOSTNAME`, by value.
+##
+## **IN WORDS, BECAUSE IT IS A LIMIT AND NOT A FAILURE: AN ADDRESS LONGER THAN THIS ONE STILL
+## SCROLLS, AND NOTHING IS LOST WHEN IT DOES.** A `LineEdit` scrolls rather than truncates. What the
+## width buys is reading what you type *while* you type it; the "does this match what I was sent"
+## need is already served by `_join_address`'s `connecting to %s` Label and by `net_client`'s seven
+## failure sentences, which all carry `_where`.
+##
+## **MEASURED THE WAY `tools/limpet_host_fit.gd` MEASURES, so the suite and the instrument cannot
+## disagree:** usable width is the rect LESS the field's own `normal` stylebox content margins --
+## asked of the stylebox, because a `LineEdit` draws inside them and the rect is not the room.
+##
+## **AND IT REFUSES TO PASS WITHOUT A FONT.** A node that resolves none would make
+## `get_string_size` meaningless, and a test that measured nothing would go green for ever.
+##
+## **WHAT THIS TEST CANNOT BE THE AUTHORITY ON, SAID HERE RATHER THAN DISCOVERED LATER.** The suite
+## is headless, and headless font metrics in this project are not the window's -- a `Display` Label
+## measures 18 px here and 28 in a window (ASSA-363). A narrower headless font would make the string
+## measure SMALLER and this test pass more easily, so it is a floor and not the verdict. The verdict
+## is `tools/limpet_host_fit.gd` in a real 1280x720 window: **307 px of 340 usable, 33 px spare**,
+## and the name field's shipped default at **70.0%** of its room. Re-run that after moving either
+## constant; this test only catches someone moving one and not the other.
+func test_the_host_field_fits_the_address_decision_40_hands_out() -> bool:
+	var screen := _screen()
+	var ok := true
+	var box: LineEdit = screen._host
+	var named: LineEdit = screen._name
+	var font := box.get_theme_font(&"font")
+	var size := box.get_theme_font_size(&"font_size")
+	var style := box.get_theme_stylebox(&"normal")
+	var pad := 0.0 if style == null else style.get_margin(SIDE_LEFT) + style.get_margin(SIDE_RIGHT)
+	var usable := AssayHud.HOST_FIELD_PX - pad
+	if font == null:
+		ok = _fail("the host field resolves no font, so nothing below is a measurement")
+	elif box.custom_minimum_size.x != AssayHud.HOST_FIELD_PX:
+		ok = _fail("the host field asks for %.0f px, not `HOST_FIELD_PX` (%.0f)"
+				% [box.custom_minimum_size.x, AssayHud.HOST_FIELD_PX])
+	elif named.custom_minimum_size.x != AssayHud.NAME_FIELD_PX:
+		ok = _fail("the name field asks for %.0f px, not `NAME_FIELD_PX` (%.0f)"
+				% [named.custom_minimum_size.x, AssayHud.NAME_FIELD_PX])
+	else:
+		var wide: float = font.get_string_size(AssayHud.LONGEST_HOSTNAME,
+				HORIZONTAL_ALIGNMENT_LEFT, -1.0, size).x
+		# **THE DEFAULT MUST NOT ARRIVE FULL** -- her reason for the name field, held against a named
+		# value because the shipped default is `$USER` and is whatever this machine calls its account.
+		# `hasanaburayyan` is the one this item measured at 105 px of 120.
+		var mine: float = font.get_string_size("hasanaburayyan",
+				HORIZONTAL_ALIGNMENT_LEFT, -1.0, size).x
+		var room := AssayHud.NAME_FIELD_PX - pad
+		if wide > usable:
+			ok = _fail(("`%s` is %.0f px in the field's own font at size %d, and the field has %.0f "
+					+ "usable (%.0f rect less %.0f of stylebox margin): it CLIPS by %.0f")
+					% [AssayHud.LONGEST_HOSTNAME, wide, size, usable, AssayHud.HOST_FIELD_PX, pad,
+					wide - usable])
+		elif mine > room * 0.75:
+			ok = _fail(("a 14-character account name is %.0f px of the name field's %.0f usable "
+					+ "(%.0f%%); the default we ship must not arrive nearly full")
+					% [mine, room, 100.0 * mine / maxf(1.0, room)])
+	screen.queue_free()
+	return ok
+
+
+## **NO LITERAL CARD WIDTH ANYWHERE ON THE DOOR** (ASSA-318 box 5, which is ASSA-292's rule restated
+## and is what made the width change two constants instead of a layout).
+##
+## **THERE IS NO CARD AT ALL, AND THAT IS THE FINDING THIS GUARDS.** Maren wrote four options trading
+## width between the two fields, then read the constructor: `_front_door` is a centred VBox with no
+## panel, `_cred_cell` an HBox that derives its width from its children. So the row grows with the
+## fields and nothing has to be told a number. A `custom_minimum_size` appearing on either container
+## would quietly re-invent the scarcity both of us argued inside of for a day.
+func test_the_door_takes_its_width_from_its_children_and_not_from_a_number() -> bool:
+	var screen := _screen()
+	var ok := true
+	for entry in [["_cred_cell", screen._cred_cell], ["_front_door", screen._front_door],
+			["_door_secondary", screen._door_secondary]]:
+		var holder: Control = entry[1]
+		if holder == null:
+			ok = _fail("%s does not exist, so this test is guarding nothing" % entry[0])
+		elif holder.custom_minimum_size.x != 0.0:
+			ok = _fail(("%s carries a literal width of %.0f px; the row derives its width from its "
+					+ "children (ASSA-292) and a card width here is the scarcity ASSA-318 found was "
+					+ "invented") % [entry[0], holder.custom_minimum_size.x])
+	screen.queue_free()
+	return ok
+
+
 ## WHERE A SECTION ACTUALLY IS, in the screen's own coordinates.
 ##
 ## Positions are SUMMED UP THE ANCESTOR CHAIN rather than read off one node, because the HUD column
@@ -4987,6 +5079,222 @@ func test_a_command_that_never_reached_the_wire_still_says_so() -> bool:
 	return ok
 
 
+## A HOST IN WHICH EXACTLY ONE BUILDING IS STOPPED, and nothing else is replaced.
+##
+## This file's `_SimSaying` idiom: one method overridden, so `_age_the_saying` runs the real decision
+## over an answer this test chooses. **Stubbed for one reason only** — the headless suite cannot reach
+## a world with a stalled building in it (the same limit `_rebuild_halt`'s tests are under), and both
+## directions of this decision have to be covered or the test could not tell "ages when the condition
+## clears" from "ages always". The real stall and the real recovery are measured end to end by
+## `tools/toast_stall_probe.gd`, against a real sim, which is ASSA-300's box 4.
+class _SimWhereOneBuildingIsStopped extends AssaySimHost:
+	var stopped := -1
+
+	func is_halted(building: int) -> bool:
+		return building == stopped
+
+
+## **A STALL SENTENCE COMES DOWN WHEN THE STALL DOES, AND A REFUSAL NEVER DOES** (ASSA-300, the Game
+## Director's §300 ruling).
+##
+## The bug this closes: nothing in this client could clear a `Say.FAILED` line at all, so fuelling a
+## smelter left `the Tonore smelter (A) stopped: no fuel` over the world while the pinned count beside
+## it had already dropped to zero — the screen contradicting itself, with the reason on the false
+## half.
+##
+## **FOUR MOMENTS, AND THE LAST IS THE ONE A CARELESS FIX LOSES.** A condition that holds must stay; a
+## condition that clears must go, on the first ask and with no dwell; an act must never go; and an act
+## said OVER a condition must survive that condition clearing. The fourth is only true because the
+## building is an argument to `_say` rather than a field something else sets — which is the difference
+## between a rule and two assignments that have to agree.
+func test_a_stall_sentence_comes_down_when_the_stall_does_and_a_refusal_never_does() -> bool:
+	var ok := true
+	var screen := _screen()
+	var sim := _SimWhereOneBuildingIsStopped.new()
+	sim.stopped = 3
+	screen._sim = sim
+	var notice := "the Tonore smelter (A) stopped: no fuel"
+
+	# 1. WHILE IT IS TRUE IT STAYS, asked many times. A sentence that went on the second look would
+	#    be a dwell wearing a condition's clothes.
+	screen._stand(notice, AssayHud.Say.FAILED, 3)
+	for _i in range(5):
+		screen._age_the_saying()
+	if screen._status.text != notice:
+		ok = _fail(("a stall notice came down while the sim still called that building stopped: `%s`. "
+				+ "The one surface carrying the reason would go blank with the machine still cold.")
+				% screen._status.text)
+
+	# 2. THE TICK IT IS FIXED, IT GOES -- no dwell, because this is not about having been read. A
+	#    false sentence is worse the longer it is legible.
+	sim.stopped = -1
+	screen._age_the_saying()
+	if screen._status.text != "":
+		ok = _fail(("the smelter is working and the toast still reads `%s`. This is the whole of "
+				+ "ASSA-300: the pinned count has already dropped to zero.") % screen._status.text)
+
+	# 3. AN ACT IN THE SAME HEALTHY WORLD DOES NOT MOVE (ASSA-239: a failure that faded out would be
+	#    the one class of sentence a player cannot recover).
+	screen._say("refused: nothing there", AssayHud.Say.FAILED)
+	for _i in range(5):
+		screen._age_the_saying()
+	if screen._status.text == "":
+		ok = _fail("a refusal aged out of the toast because no building was stopped, so every "
+				+ "sentence in the client just became a condition")
+
+	# 4. AND AN ACT SAID OVER A CONDITION KEEPS ITS OWN KIND. Stall, then a refusal covers the line
+	#    (ASSA-370: a transient may cover a standing notice), then the stall clears: the refusal must
+	#    still be there. This is the leak a `_standing_building` set anywhere but `_stand` would have.
+	screen._say("", AssayHud.Say.IDLE)
+	sim.stopped = 3
+	screen._stand(notice, AssayHud.Say.FAILED, 3)
+	if screen._status.text != notice:
+		ok = _fail("premise: the stall notice is not the sentence being covered, `%s` is"
+				% screen._status.text)
+	screen._say("refused: out of reach", AssayHud.Say.FAILED)
+	sim.stopped = -1
+	screen._age_the_saying()
+	if screen._status.text != "refused: out of reach":
+		ok = _fail(("a refusal said over a stall notice read `%s` after the stall cleared: the "
+				+ "sentence on screen was taken down by something that happened to a different "
+				+ "sentence") % screen._status.text)
+	screen.queue_free()
+	return ok
+
+
+## **AND THE JOINED DWELL IS UNTOUCHED BY ALL OF THAT.** `_age_the_saying` now has two clauses, and
+## the cheap mistake is to let the new one swallow the old: a `JOINED` line carries no building, so it
+## must still age on the dwell and not instantly.
+##
+## The control is in the same test: a `JOINED` line asked BEFORE the dwell is up must still be there.
+## Without it, "ages on the dwell" and "ages on the first ask" are the same green.
+func test_a_joined_line_still_ages_on_the_dwell_and_not_on_the_first_ask() -> bool:
+	var ok := true
+	var joined := _joined_screen()
+	joined._say("walking to 57, 59", AssayHud.Say.JOINED)
+	joined._age_the_saying()
+	if joined._status.text == "":
+		ok = _fail("a healthy sentence went on the first ask, so the dwell is gone and nothing on "
+				+ "this screen can be read before it disappears")
+	_step_the_world(joined, joined.SAYING_DWELL_TICKS + 1)
+	if joined._status.text != "":
+		ok = _fail("a healthy sentence outlived its dwell by the condition clause taking it over: `%s`"
+				% joined._status.text)
+	joined.queue_free()
+	return ok
+
+
+## **A SCREEN WELCOMED INTO A WORLD WHERE BUILDING 3 IS STOPPED AND STAYS STOPPED.**
+##
+## `_SimWhereOneBuildingIsStopped` over a world that really started, which the two tests below need
+## and the ASSA-300 test above does not: they press a real button and step a real clock, so `_refresh`
+## must get past `_sim.running()` and `_on_tick_bundle` must have a world to apply bundles to.
+## `is_halted` is the one answer that is chosen rather than simulated, because the headless suite
+## cannot reach a world with a stalled building in it.
+func _joined_screen_with_one_building_stopped() -> Node:
+	var joined := _joined_screen()
+	var sim := _SimWhereOneBuildingIsStopped.new()
+	sim.stopped = 3
+	joined._sim = sim
+	joined._on_welcomed(0, {}, AssaySimHost.fresh_welcome_json("777042", "limpet"))
+	return joined
+
+
+## **AN ACCEPTED COMMAND COVERS THE STALL NOTICE AND THEN GIVES IT BACK** (ASSA-370, the Game
+## Director's amendment to her own §300: *"A TRANSIENT LINE MAY COVER A STANDING NOTICE. IT MAY NEVER
+## DESTROY ONE. A CONDITION NOTICE'S LIFETIME BELONGS TO ITS CONDITION, SO NOTHING WHOSE OWN LIFETIME
+## IS A TIMER MAY END IT."*).
+##
+## **THE BUG THIS CLOSES IS ASSA-300'S FIX BEING DEFEATED BY ORDINARY PLAY, and QA found it with a
+## camera.** Every accepted command — a routine `Mine` press, nothing to do with any machine — called
+## `_say` with no building, which overwrote the stall sentence AND its building outright. The
+## replacement then aged out on the 20-tick dwell, so the warning vanished within two seconds whatever
+## the smelter was doing: at tick 108 of Nerite's run the toast was silent while the pinned count
+## still read `1 of 1 buildings stopped`, with the fuel not yet inserted.
+##
+## **THE BOX IS THE UNCOVERING, NOT THE STORAGE.** A test that read `_standing_line` after the press
+## would pass on a client that stored the sentence and never drew it again — a mechanism, not a
+## behaviour. Every assertion here is on `_status.text`, which is what a player sees.
+func test_an_accepted_command_covers_the_stall_notice_and_then_uncovers_it() -> bool:
+	var ok := true
+	var joined := _joined_screen_with_one_building_stopped()
+	if not joined._sim.running():
+		joined.queue_free()
+		return _fail("the fixture never simulated, so no command could be accepted and no tick could "
+				+ "age anything")
+	var notice := "the Tonore smelter (A) stopped: no fuel"
+	joined._stand(notice, AssayHud.Say.FAILED, 3)
+	# THE JOIN LINE IS IN THE WAY FIRST, and that is the covering rule working: `joined as player 0`
+	# is a live transient. Age it out before the measurement, so what is on screen is the notice.
+	_step_the_world(joined, joined.SAYING_DWELL_TICKS + 1)
+	if joined._status.text != notice:
+		ok = _fail("premise: the stall notice is not on the toast to be covered, `%s` is"
+				% joined._status.text)
+
+	# 1. THE RECEIPT STILL ARRIVES, which is the half the Game Director refused to trade away
+	#    (shape (a): *"your Mine press then gets no receipt at all while anything is stalled"*). A
+	#    receipt channel that goes quiet exactly when the player is busy is not a fix.
+	joined._act("Mine", AssayActions.mine())
+	if not joined._status.text.contains("submitted"):
+		ok = _fail(("a press during a stall said `%s`: the acceptance is the only thing telling a "
+				+ "player the game heard them, for up to a third of a second")
+				% joined._status.text)
+
+	# 2. AND THE NOTICE IS STILL THERE ONCE THE RECEIPT HAS BEEN READ. This is the bug: before the
+	#    split the press had destroyed the sentence and its building, so this frame was blank with the
+	#    smelter still cold and the pinned count still saying so.
+	_step_the_world(joined, joined.SAYING_DWELL_TICKS + 1)
+	if joined._status.text != notice:
+		ok = _fail(("%d ticks after a routine press the toast reads `%s` and the sim still calls that "
+				+ "building stopped. A notice whose duration says nothing about its subject teaches a "
+				+ "player to ignore notice durations.")
+				% [joined.SAYING_DWELL_TICKS + 1, joined._status.text])
+
+	# 3. AND THE CONDITION STILL OWNS ITS OWN END, after having been covered. The press must not have
+	#    carried the building off with it: if it had, nothing would be left to re-ask and the sentence
+	#    would now be permanent instead of merely early.
+	joined._sim.stopped = -1
+	_step_the_world(joined, 1)
+	if joined._status.text != "":
+		ok = _fail(("the smelter is working and the toast still reads `%s`: the press carried off the "
+				+ "building this sentence was a claim about") % joined._status.text)
+	joined.queue_free()
+	return ok
+
+
+## **AND A STALL NOTICE DOES NOT CROSS INTO THE NEXT WORLD** (ASSA-370). A hole the split opens and
+## the same commit closes, said plainly because I would otherwise have shipped it: before the two
+## slots existed every world-death path set a non-empty FAILED transient over the triple, so a
+## stranded notice was permanently covered and nothing showed. Afterwards `_on_welcomed`'s `joined as
+## player N` is a transient that AGES — so a drop, a second Join, and two seconds later the previous
+## world's stall sentence would surface over a fresh world, about a building that no longer exists.
+##
+## **THE STUB IS WHAT MAKES THIS A TEST RATHER THAN A COINCIDENCE.** Over a real sim, `is_halted(3)`
+## on a fresh world answers false and `_age_the_saying` would clear the notice on the first tick — so
+## this would pass with `_on_welcomed`'s line deleted. Here the sim keeps saying that building is
+## stopped, so the only thing that can take the sentence down is the `Welcome` itself.
+func test_a_stall_notice_does_not_survive_the_world_it_is_about() -> bool:
+	var ok := true
+	var joined := _joined_screen_with_one_building_stopped()
+	var notice := "the Tonore smelter (A) stopped: no fuel"
+	joined._stand(notice, AssayHud.Say.FAILED, 3)
+	_step_the_world(joined, joined.SAYING_DWELL_TICKS + 1)
+	if joined._status.text != notice:
+		joined.queue_free()
+		return _fail("premise: there is no standing notice to carry across a world, `%s` is on screen"
+				% joined._status.text)
+
+	# THE SECOND WELCOME, which is what pressing Join after a drop does.
+	joined._on_welcomed(0, {}, AssaySimHost.fresh_welcome_json("777042", "limpet"))
+	_step_the_world(joined, joined.SAYING_DWELL_TICKS + 1)
+	if joined._status.text != "":
+		ok = _fail(("after a second Join the toast reads `%s` — a sentence about a building in the "
+				+ "world that was replaced, and one nothing can ever retire, because `is_halted` is "
+				+ "now answering about a different world's buildings") % joined._status.text)
+	joined.queue_free()
+	return ok
+
+
 ## **THE POKE IN `_drawn_color` IS LOAD-BEARING, AND TODAY NO COLOUR CAN PROVE IT** (ASSA-246).
 ##
 ## Our theme is a PROJECT theme, and a control themed that way ignores its own
@@ -5042,13 +5350,17 @@ func test_the_theme_names_every_line_edit_colour_the_engine_would_otherwise_pick
 	if engine_picks.is_empty():
 		return _fail(("the engine declares NO LineEdit colours, so this test would pass against a "
 				+ "theme that declares none either: the premise is gone, not the defect"))
-	# **THE THREE THE GAME DIRECTOR HAS NOT RULED YET, NAMED OUT LOUD RATHER THAN QUIETLY PASSED.**
-	# Asking the engine found more than ASSA-315 set out to fix: Godot declares NINE LineEdit
-	# colours and her ruling covers three. These are the remainder. They are not a tolerance — the
-	# test still fails for any colour outside this list, so an engine upgrade that invents a tenth
-	# lands here, and it ALSO fails once one of these is declared, so the list cannot rot into a
-	# permanent excuse. It shrinks to empty the day she rules them.
-	const UNRULED := ["font_outline_color", "clear_button_color", "clear_button_color_pressed"]
+	# **IT SHRANK TO EMPTY, WHICH IS THE DAY THIS LIST WAS WRITTEN FOR** (ASSA-335 ruling 5). It held
+	# `font_outline_color`, `clear_button_color` and `clear_button_color_pressed` — the remainder
+	# after ASSA-315, because Godot declares NINE LineEdit colours and that ruling covered three.
+	# Maren ruled all three on ASSA-335 and `_style_line_edit` now declares them, so the escape
+	# clause has nothing left to excuse and every one of the engine's nine must be ours.
+	#
+	# **IT STAYS AS AN EMPTY CONST RATHER THAN BEING DELETED.** The stale-declaration branch below is
+	# what caught ME: declaring the three turned this test red until the list was emptied, which is
+	# the only reason the two could not drift. Keeping the mechanism costs one line and the next
+	# unruled colour an engine upgrade invents has somewhere honest to sit.
+	const UNRULED := []
 	var undeclared := PackedStringArray()
 	for name in engine_picks:
 		if not theme.has_color(name, "LineEdit") and not UNRULED.has(name):
@@ -5066,6 +5378,106 @@ func test_the_theme_names_every_line_edit_colour_the_engine_would_otherwise_pick
 			+ "so Godot chooses them and nobody here did: %s. Declare them in "
 			+ "`build_theme.gd::_style_line_edit` and rebuild the theme.")
 			% [undeclared.size(), engine_picks.size(), ", ".join(undeclared)])
+
+
+## **FOCUS MAY NOT PUT AN ACCENT WHERE REST HAD NONE, ON THE ONE SCREEN THE BOARD MEETS FIRST**
+## (ASSA-335, Maren's rulings 1 and 2: the accent marks the one act a screen is for, one region per
+## screen, and a focus ring is not an act).
+##
+## The measured defect, off a real 1x window (`shared/assay/nacre-assa315-selection/`): the door
+## screen held ONE contiguous accent region, `Play solo` at 1781 px, and clicking the host box —
+## the board's first act on their first screen — added a SECOND at 526 px outlining a box 3.2x the
+## area of the only thing there is to press.
+##
+## **IT ASSERTS THE PROPERTY, NOT THE COLOUR I HAPPENED TO SET.** A test reading `focus.border_color
+## == INK` would pass against a theme that moved the accent onto the focus BACKGROUND instead, and
+## it would also fail `Primary`, whose focus fill is legitimately accent because its RESTING fill
+## already is. So the predicate is the one the pixels measured: accent on focus AND NOT accent at
+## rest. `Play solo` is the control that makes that distinction load-bearing rather than pedantic.
+##
+## **`ACCENT` AND `INK` ARE ASKED OF THE SHIPPED THEME, NEVER TYPED HERE.** `Primary`'s resting fill
+## IS the accent and `LineEdit`'s `font_color` IS the ink, so this file holds no second copy of
+## either literal and a palette change moves the test with it (ASSA-116's rule). The two are
+## cross-examined before anything is measured against them: if they ever coincide, every comparison
+## below is satisfied by both branches at once and the test proves nothing.
+##
+## **STYLEBOXES ARE READ OFF THE CONTROLS, not out of the resource**, which is the half that holds
+## Maren's "declared in `_style_line_edit`, not poked into a control": a local
+## `add_theme_stylebox_override` would satisfy a resource read and still draw an accent ring.
+func test_focus_cannot_add_an_accent_region_to_the_front_door() -> bool:
+	var screen := _screen()
+	var theme: Theme = load("res://theme/assay.tres")
+	if theme == null:
+		screen.queue_free()
+		return _fail("no theme/assay.tres, so there is nothing to derive accent and ink from")
+	var primary := theme.get_stylebox("normal", "Primary") as StyleBoxFlat
+	if primary == null:
+		screen.queue_free()
+		return _fail("`Primary` resolves no StyleBoxFlat at rest, so the accent cannot be derived")
+	var accent := primary.bg_color
+	var ink := theme.get_color("font_color", "LineEdit")
+	var ok := true
+	# THE CONTROL ON THE DERIVATION. Two colours that coincide would make every test below pass for
+	# the wrong reason, and a transparent one would match nothing at all.
+	if accent.is_equal_approx(ink):
+		screen.queue_free()
+		return _fail(("the accent and the ink are both %s, so `is this accent` and `is this ink` "
+				+ "are one question and nothing below can tell a ring apart") % accent)
+	if accent.a < 1.0 or ink.a < 1.0:
+		screen.queue_free()
+		return _fail("accent %s / ink %s is not opaque, so a border match means nothing" % [accent, ink])
+	var gained := PackedStringArray()
+	for control in _row_reading(screen._front_door):
+		if not (control is Button or control is LineEdit):
+			continue
+		_poke_theme(control)
+		var rest := control.get_theme_stylebox(&"normal") as StyleBoxFlat
+		var focus := control.get_theme_stylebox(&"focus") as StyleBoxFlat
+		var named: String = control.get_class() + ":" + String(control.get("text"))
+		if rest == null or focus == null:
+			ok = _fail("%s resolves no StyleBoxFlat at rest or on focus, so this is not measurable"
+					% named)
+			continue
+		var accent_at_rest := rest.bg_color.is_equal_approx(accent) \
+				or rest.border_color.is_equal_approx(accent)
+		var accent_on_focus := focus.bg_color.is_equal_approx(accent) \
+				or focus.border_color.is_equal_approx(accent)
+		if accent_on_focus and not accent_at_rest:
+			gained.append(named)
+		# AND THE TWO TEXT BOXES SPECIFICALLY RING IN THE INK ASSA-276 MOVE 4 ALREADY SPENDS ON THE
+		# ACTED-ON TILE -- the same fact for the keyboard. Named rather than left to the sweep above,
+		# because "not accent" would also be satisfied by a ring nobody can see.
+		if control is LineEdit and not focus.border_color.is_equal_approx(ink):
+			ok = _fail(("%s rings itself in %s on focus, not the ink %s: ruling 2 asks for the ink "
+					+ "a mark already means in this game") % [named, focus.border_color, ink])
+		# A STATE CHANGE IS STILL REQUIRED. Ruling 4 is that the ring gets STRONGER, so an ink ring
+		# that equals the resting edge would satisfy every line above by erasing the affordance.
+		if control is LineEdit and focus.border_color.is_equal_approx(rest.border_color):
+			ok = _fail(("%s draws the same edge %s focused and unfocused, so focus is invisible: "
+					+ "ruling 4 asks for two inks on one geometry") % [named, rest.border_color])
+	# **THE REMAINDER IS A RATCHET, NOT A TOLERANCE, AND IT IS NAMED.** `Button`'s focus stylebox is
+	# still `_box(RAISED, ACCENT)`, so tabbing from the host box to `Join` DOES put a second accent
+	# region on this screen. Recolouring is the Game Director's call, not mine, and it is measured and
+	# handed back on ASSA-335 rather than tidied in passing. Listing it here means a NEW accent focus
+	# ring reds this test, and the day Maren rules on `Button` the list goes empty.
+	const OPEN_WITH_MAREN := ["Button:Join"]
+	var unexpected := PackedStringArray()
+	for named in gained:
+		if not OPEN_WITH_MAREN.has(named):
+			unexpected.append(named)
+	var stale := PackedStringArray()
+	for named in OPEN_WITH_MAREN:
+		if not gained.has(named):
+			stale.append(named)
+	if not unexpected.is_empty():
+		ok = _fail(("%s gains an accent on focus and has none at rest, so focusing it puts a second "
+				+ "accent region on the front door (ASSA-335 ruling 1)") % ", ".join(unexpected))
+	if not stale.is_empty():
+		ok = _fail(("%s no longer gains an accent on focus but is still excused here, so this list "
+				+ "is covering for a ruling that already landed. Delete it from OPEN_WITH_MAREN.")
+				% ", ".join(stale))
+	screen.queue_free()
+	return ok
 
 
 func test_the_theme_poke_is_load_bearing_and_the_sweeps_coincidence_is_declared() -> bool:
@@ -5511,11 +5923,22 @@ func test_the_commit_bar_holds_the_sentence_left_and_build_right() -> bool:
 	var bar: Control = screen._build_bar
 	if bar == null:
 		ok = _fail("the screen has no commit bar at all")
-	elif screen._build_said.get_parent() != bar or screen._build_act.get_parent() != bar:
+	# **`is_ancestor_of` FOR THE SENTENCE AND `get_parent` FOR `Build`, WHICH IS NOT A WEAKENING**
+	# (ASSA-341 box 8): the sentence reaches the bar through the `MarginContainer` that insets row 1,
+	# and `Build` must still be a DIRECT child or it is not at the bar's own top. Two different
+	# claims, so two different questions.
+	elif not bar.is_ancestor_of(screen._build_said) or screen._build_act.get_parent() != bar:
 		ok = _fail("the sentence and `Build` are not both in the bar, so they are not one rect")
-	elif bar.get_child(0) != screen._build_said or bar.get_child(1) != screen._build_act:
+	# **RE-POINTED, NOT RELAXED** (ASSA-341 box 8): the sentence is now in the bar through its own
+	# `MarginContainer`, which is what insets row 1 so `Build`'s centre lands on it. The property is
+	# unchanged -- sentence left, `Build` right -- and this says it of the node that now holds the
+	# left-hand slot, plus that the sentence is really inside it.
+	elif bar.get_child(0) != screen._build_said_inset or bar.get_child(1) != screen._build_act:
 		ok = _fail("the bar holds %s; §5.4 puts the sentence left and `Build` right"
 				% [bar.get_children()])
+	elif not screen._build_said_inset.is_ancestor_of(screen._build_said):
+		ok = _fail("the bar's left-hand slot does not hold the sentence; it holds %s"
+				% [screen._build_said_inset.get_children()])
 	elif screen._build_act.size_flags_horizontal != Control.SIZE_SHRINK_END:
 		ok = _fail("`Build` is not pinned to the bar's right end (flags %d), so the sentence's floor "
 				% screen._build_act.size_flags_horizontal + "is not the width it was measured at")
@@ -5568,3 +5991,263 @@ func test_the_build_screen_is_replaced_when_its_own_minimum_moves() -> bool:
 				+ "rect of 864x592, over the status toast")
 	screen.queue_free()
 	return ok
+
+
+## **`Build` SITS ON THE SENTENCE'S FIRST ROW, AND ITS y DOES NOT MOVE WHEN THE SENTENCE GROWS**
+## (ASSA-341 boxes 8-9; Maren's ruling 4 and her 00:31 arithmetic).
+##
+## **MEASURED OFF THE ENGINE'S OWN MINIMUMS, NOT OFF A LAID-OUT RECT.** Nothing in this suite has a
+## size, so the laid-out y of either control is 0 here and an assertion about it would be satisfied by
+## every possible screen -- the shape of check this file keeps finding in other people's work and in
+## mine. A `Control`'s COMBINED MINIMUM is real headless, because it comes from the theme's font
+## metrics, and it is the number the container will lay out from.
+##
+## **THE ROW HEIGHT IS ASKED FOR, AND A ZERO IS A FAILURE RATHER THAN A PASS.** If the theme reported
+## no height, every comparison below would be `0` against `0` and this test would be green about
+## nothing. So it is refused first and by name.
+##
+## **BOTH HALVES OF HER ARITHMETIC, AS A PAIRING.** The literals -- 18 px rows, a 30 px button, so a
+## 6 px inset and a 114 px bar -- are asserted TOGETHER with the measurements they came from, so the
+## day the body font changes this says *"the theme now measures 20 and 32, so the inset should be 6"*
+## instead of passing quietly on numbers that no longer describe the screen.
+##
+## **AND IT HELD ONE ROW-1 KIND WHILE THE SCREEN HAD TWO, WHICH IS ASSA-363** (Maren's ruling: *"a
+## literal cannot satisfy ruling 4 on the assembly path TODAY"*). `_said_about_design` draws row 1 at
+## `Display` for the sim's verdict word and at `BODY` for its fault, so the old `inset == 6` was
+## correct for the path I measured and 5 px wrong on the other -- green, on a screen where `Build` did
+## not sit on row 1. **So the relation is now held on BOTH kinds and against BOTH buttons** (the
+## window's ruled 30 and the engine's headless 28), the inset's own value is never asserted, and the
+## 6 survives as `commit_inset`'s worked example with literals on both sides.
+##
+## **AND BOX 9 IS HELD STRUCTURALLY, WHICH IS THE ONLY HONEST WAY HEADLESS.** The reason `Build`'s y
+## cannot move is that both controls anchor to the bar's TOP: `SHRINK_CENTER` was centred in whatever
+## the bar grew to, so six rows of sentence moved the button and one row did not. The flag is the
+## property; the two renders below are what prove the bar does not have to grow in the first place.
+func test_build_sits_on_the_sentences_first_row_at_one_row_and_at_six() -> bool:
+	var screen := _screen()
+	var ok := true
+	var probe := Label.new()
+	probe.text = "mass 3 of 240-360 budget"
+	screen._build_said.add_child(probe)
+	var row: float = probe.get_combined_minimum_size().y
+	var act: float = screen._build_act.get_combined_minimum_size().y
+	# **ROW 1's OTHER KIND, WHICH IS THE WHOLE OF ASSA-363 -- AND THIS SUITE CANNOT MEASURE IT.**
+	# `_said_about_design` gives row 1 the `Display` variation when the sim has a verdict word, so the
+	# screen has two row-1 heights. **Measured, both instruments: this suite reports 18 px for a
+	# `Display` Label and the 1x shot reports 28.** A node whose theme owner was never assigned -- and
+	# nothing here is inside the tree, as `_screen`'s own docstring says -- resolves against the
+	# DEFAULT theme, where the variation does not exist. So the verdict row's geometry below comes from
+	# the window's ruled 28 and NOT from this probe, and the probe stays as the assertion that says so.
+	var verdict := Label.new()
+	verdict.text = "WILL BREAK"
+	verdict.theme_type_variation = &"Display"
+	screen._build_said.add_child(verdict)
+	var tall: float = verdict.get_combined_minimum_size().y
+	# **THE RULED `Display` ROW, FROM THE 1x SHOT** (`shared/assay/limpet-assa362-after/`: `1 row(s)
+	# Display`, row 1 is 28 px tall, against the same frame's 18 px `BODY` row).
+	var window_tall := 28.0
+	# **`Build`'s HEIGHT IN A REAL WINDOW, AS THE RULED LITERAL** -- `limpet_build_screen_shot.gd`
+	# measures 53x30 at 1x and the headless minimum of the same button is 28, so the arithmetic Maren
+	# ruled is about this number and not about `act` below. The pair is asserted together: `act` is
+	# what the engine will lay out from if this suite's numbers ever become the window's.
+	var window_act := 30.0
+	if row <= 0.0 or act <= 0.0 or tall <= 0.0:
+		ok = _fail(("the theme reports a %0.f px row, a %0.f px verdict row and a %0.f px button "
+				+ "headless, so every comparison in this test would be 0 against 0")
+				% [row, act, tall])
+	elif not is_equal_approx(tall, row):
+		# **THE DAY THIS GOES RED IS A GOOD DAY: the suite can see the variation.** Then the verdict
+		# row's relation should be measured off `tall` instead of taken from the shot's 28.
+		ok = _fail(("a `Display` row measures %.0f px here against a `BODY` row's %.0f, so this suite "
+				+ "can now resolve the variation: measure the verdict row rather than using the 1x "
+				+ "shot's 28") % [tall, row])
+	elif screen._build_act.size_flags_vertical != Control.SIZE_SHRINK_BEGIN:
+		ok = _fail(("`Build` has vertical flags %d; centred in the bar it drifts down as the sentence "
+				+ "grows, which moves a control under the cursor while you mine (ASSA-213)")
+				% screen._build_act.size_flags_vertical)
+	elif screen._build_said.get_theme_constant(&"separation") != 0:
+		ok = _fail(("the sentence's rows are separated by %d px; they are ONE sentence broken at the "
+				+ "sim's own mark, and paragraph air inside it says the clauses are separate items")
+				% screen._build_said.get_theme_constant(&"separation"))
+	elif not _centres_meet(window_act, row):
+		# Row 1's centre is `commit_inset(Build, row) + row / 2` from the bar's top and `Build`'s is
+		# `Build / 2`, because the button carries no margin and both are anchored to that top. Her box
+		# asks for 2 px. **THREE PAIRS, NOT ONE**: the window's button against both row-1 kinds, which
+		# is the ruling, and the engine's own button against the one row kind this suite can actually
+		# measure, which is what a theme change would move first.
+		ok = _fail(_centres_said("the make path, in the window", window_act, row))
+	elif not _centres_meet(window_act, window_tall):
+		ok = _fail(_centres_said("the assembly path's verdict row, in the window",
+				window_act, window_tall))
+	elif not _centres_meet(act, row):
+		ok = _fail(_centres_said("the make path, on the engine's headless numbers", act, row))
+	elif not is_equal_approx(AssayHud.commit_inset(row, window_act), 0.0):
+		# **THE CLAMP, WHICH IS THE ONE HALF OF HER RULING NO SCREEN CAN REACH.** She ruled "inset
+		# whichever is shorter, clamped at 0"; `Build` is 30 and both row kinds are under it, so the
+		# mirror never runs in the layout and this is the only place it is held. Without the clamp a
+		# taller row would hand the sentence a NEGATIVE margin and push it out of the bar.
+		ok = _fail("a %.0f px row against a %.0f px button insets by %.1f; a row taller than `Build` "
+				% [row, window_act, AssayHud.commit_inset(row, window_act)]
+				+ "may not hand the sentence a negative margin")
+	elif AssayHud.BUILD_COMMIT_BAR < AssayHud.commit_inset(window_act, row) + 6.0 * row:
+		ok = _fail(("six rows and the inset need %.0f px and the bar asks for %.0f; the sentence is "
+				+ "drawn whole and never scrolls (§5.4)")
+				% [AssayHud.commit_inset(window_act, row) + 6.0 * row, AssayHud.BUILD_COMMIT_BAR])
+	# **HER WORKED EXAMPLES AS PLAIN LITERALS ON BOTH SIDES, WHICH IS WHAT THE OLD `inset == 6` WAS
+	# FOR AND IS THE ONE THING ASSA-363 DID NOT TAKE AWAY** (her ruling 5: *"my 6 does not leave; it
+	# becomes the worked example"*). Literal in, literal out: a `commit_inset` that compared itself
+	# with itself, or that lost its `/ 2`, is red here and not merely inconsistent elsewhere.
+	#
+	# **AND THE SECOND EXAMPLE IS THE DEFECT'S OWN NUMBER.** `commit_inset(30, 28)` is 1; the constant
+	# this replaced said 6 on that path, and 6 - 1 is the 5 px the 1x shot measured.
+	#
+	# **THE THEME IS HELD AGAINST THOSE LITERALS RATHER THAN DERIVED FROM, which is the pairing the
+	# old test had and the reason it is still worth having.** The 6 and the 1 are written for an 18 px
+	# `BODY` row and a 28 px `Display` row; if the theme moves, the relation checks above still pass
+	# (that is the point of deriving the inset) and nothing would ever tell us the docstring's
+	# arithmetic had stopped describing this screen. This says it.
+	elif not is_equal_approx(AssayHud.commit_inset(30.0, 18.0), 6.0):
+		ok = _fail(("`commit_inset(30, 18)` is %.1f; Maren's worked example is (30 - 18) / 2 = 6, the "
+				+ "make path's inset and the number `BUILD_COMMIT_BAR` is built from")
+				% AssayHud.commit_inset(30.0, 18.0))
+	elif not is_equal_approx(AssayHud.commit_inset(30.0, 28.0), 1.0):
+		ok = _fail(("`commit_inset(30, 28)` is %.1f; a `Display` row 1 insets by (30 - 28) / 2 = 1, "
+				+ "and the 6 this replaced is the 5 px ASSA-363 measured at 1x")
+				% AssayHud.commit_inset(30.0, 28.0))
+	elif not is_equal_approx(row, 18.0):
+		ok = _fail(("a `BODY` row measures %.0f px; `commit_inset`'s worked examples are written for "
+				+ "an 18 px row and a 28 px `Display` row, so the 6 and the 1 above -- and its "
+				+ "docstring -- describe a screen this no longer is") % row)
+	elif not is_equal_approx(AssayHud.BUILD_COMMIT_BAR, 114.0):
+		ok = _fail("6 x 18 + 6 is 114 and the bar asks for %.0f" % AssayHud.BUILD_COMMIT_BAR)
+	if ok:
+		# **BOX 9's "TWO RENDERS" IS HELD AS THE STRUCTURE THAT MAKES IT TRUE, AND THE PIXELS ARE THE
+		# SHOT'S. I tried the measurement first and it lied to me**, which is worth the paragraph: I
+		# added five clauses and asked the sentence for its combined minimum, and it answered the
+		# same number — because **a container's minimum is recalculated DEFERRED**, the very fact
+		# `_place_build_screen`'s docstring is built on. A growth check here would have been `0.0 px
+		# against 90.0` forever, or worse, green by arithmetic I did myself.
+		#
+		# So what this holds is the pair of flags that makes `Build`'s y independent of the
+		# sentence's height: both controls anchored to the bar's TOP, neither centred in it. That is
+		# the whole mechanism — `SHRINK_CENTER` was centred in whatever the bar grew to. **The 1x
+		# real-window check at one row and at six belongs to `tools/limpet_build_screen_shot.gd`,
+		# which is box 10's shot and is owed to Maren with this change.**
+		if screen._build_said_inset.size_flags_vertical != Control.SIZE_SHRINK_BEGIN:
+			ok = _fail(("the sentence's inset has vertical flags %d; anything but SHRINK_BEGIN makes "
+					+ "row 1's top a function of the bar's height, and `Build` is aligned to row 1")
+					% screen._build_said_inset.size_flags_vertical)
+		elif screen._build_said.size_flags_vertical != Control.SIZE_SHRINK_BEGIN:
+			ok = _fail("the sentence has vertical flags %d, so it does not grow downward from row 1"
+					% screen._build_said.size_flags_vertical)
+	screen.queue_free()
+	return ok
+
+
+## **DO ROW 1 AND `Build` MEET AT THEIR CENTRES, GIVEN A BUTTON AND A ROW HEIGHT** (ASSA-363; Maren's
+## ruling 4, her 2 px). Row 1's centre is the derived inset plus half the row; `Build`'s is half the
+## button, because the button carries no margin of its own -- `commit_inset`'s docstring says why the
+## mirror direction cannot be reached. **The relation, never the inset's value**, which is her box 4.
+func _centres_meet(act: float, row: float) -> bool:
+	return absf((AssayHud.commit_inset(act, row) + row / 2.0) - act / 2.0) <= 2.0
+
+
+## The failure sentence for the above, carrying which pair it was about and both centres.
+func _centres_said(which: String, act: float, row: float) -> String:
+	return (("on %s: a %.0f px row 1 insets by %.1f so its centre is %.1f px down the bar, and a %.0f "
+			+ "px `Build` centres at %.1f -- the ruling is that they meet within 2 px")
+			% [which, row, AssayHud.commit_inset(act, row),
+			AssayHud.commit_inset(act, row) + row / 2.0, act, act / 2.0])
+
+
+## **THE INSET IS WRITTEN FROM THE HEIGHTS THE ENGINE LAID OUT, AND IT CHANGES WHEN ROW 1's KIND
+## CHANGES** (ASSA-363; Maren: *"compute it at layout time, never precomputed and never off a headless
+## read"*).
+##
+## **THE BUTTON'S 30 IS FORCED, AND THAT IS WHAT PUTS THIS TEST ON THE RULING'S NUMBERS.** Nothing in
+## this suite lays anything out, so `_build_act.size.y` is 0 here and every margin the screen writes
+## would be `commit_inset(0, row)` = 0 -- a test green about nothing, the shape this file keeps
+## finding. Assigning 30 (over this environment's 28) is allowed by `Control.size`'s clamp.
+##
+## **THE SIGNAL IS HELD AS A CONNECTION AND THE ALIGNER IS THEN CALLED, BECAUSE A `resized` DOES NOT
+## FIRE OUT HERE.** I wrote this the other way first -- assign the size and let the real signal run
+## the aligner -- and it went red on row 1's connection: nothing is inside the tree in this suite
+## (`_screen`'s own docstring), so the size is assigned and no notification follows. **So the hook is
+## asserted as a connection, the arithmetic is asserted by calling the same function the hook calls,
+## and the proof that the two meet in a window is the 1x shot, which reads 0 px apart on both paths.**
+##
+## **THE VERDICT ROW'S HEIGHT IS HANDED IN, BECAUSE NOTHING HERE CAN PRODUCE ONE.** Measured, twice:
+## a `Display` Label answers 18 px in this suite and 28 in the 1x shot, and a local
+## `font_size` override does not move it either -- a Label's height out here does not respond to a font
+## at all. Nothing is inside the tree (`_screen`'s own docstring), so no theme owner is ever assigned.
+## **Both of my first two attempts were therefore the `BODY` case held twice, which is exactly how the
+## constant ASSA-363 replaces shipped, and both were caught by the guard that compares the two rows.**
+## So `_write_commit_inset` exists to take the pair, and the verdict row's 28 comes from the shot.
+##
+## **THE EXPECTED CENTRES ARE COMPUTED FROM `get_combined_minimum_size`, NOT FROM `get_line_height`.**
+## The screen derives the inset from the line height, so a test that measured row 1 the same way would
+## be the function agreeing with itself; these two numbers are equal for a one-row label and the
+## assertion below says so by name if they ever stop being.
+##
+## **AND THE MUTATION THAT MATTERS IS THE OLD CODE.** A constant 6 passes the `BODY` half of this test
+## and fails the tall half by exactly the difference, which is the defect, measured at 1x, that
+## ASSA-363 is.
+func test_the_commit_bars_inset_is_derived_from_the_rendered_heights() -> bool:
+	var screen := _screen()
+	var ok := true
+	var probe := Label.new()
+	probe.text = "it needs at least 1 head and has 0"
+	screen._build_said.add_child(probe)
+	var row: float = probe.get_combined_minimum_size().y
+	screen._build_act.size.y = 30.0
+	var act: float = screen._build_act.size.y
+	screen._align_commit_row()
+	var inset: float = float(screen._build_said_inset.get_theme_constant(&"margin_top"))
+	if not is_equal_approx(act, 30.0):
+		ok = _fail(("`Build` reports %.0f px after being told 30; this test cannot stand on the "
+				+ "window's own number and everything below it would be about a 0 px button") % act)
+	elif not is_equal_approx(row, float(probe.get_line_height())):
+		ok = _fail(("row 1's minimum is %.0f px and its line height is %.0f; the screen insets by the "
+				+ "line height, so this test must measure the same row it does") % [row,
+				probe.get_line_height()])
+	elif not screen._build_act.resized.is_connected(screen._align_commit_row):
+		ok = _fail("nothing re-derives the inset when `Build` is given its size, so the only number "
+				+ "the screen could use is one measured before any layout -- 28 against a window's 30")
+	elif not probe.resized.is_connected(screen._align_commit_row):
+		ok = _fail("row 1's own `resized` is not connected, so a sentence laid out after the button "
+				+ "keeps the previous row kind's inset")
+	elif not absf((inset + row / 2.0) - act / 2.0) <= 2.0:
+		ok = _fail("with a %.0f px `BODY` row 1 " % row + _centres_said_measured(inset, act, row))
+	else:
+		# **NOW THE VERDICT ROW, AS THE WINDOW MEASURES IT.** `_said_about_design` puts a `Display`
+		# label where the `BODY` one was and `_refresh_build_said` ends by aligning; what this suite
+		# cannot do is make that label 28 px tall. So the pair goes straight to the writer, with the
+		# 28 off `shared/assay/limpet-assa362-after/` and the 30 off the same frame.
+		var tall := 28.0
+		screen._write_commit_inset(act, tall)
+		inset = float(screen._build_said_inset.get_theme_constant(&"margin_top"))
+		if tall <= row:
+			ok = _fail(("the verdict row is %.0f px against a `BODY` row's %.0f, so this test holds "
+					+ "one row height twice") % [tall, row])
+		elif not absf((inset + tall / 2.0) - act / 2.0) <= 2.0:
+			ok = _fail("with a %.0f px verdict row 1 " % tall
+					+ _centres_said_measured(inset, act, tall))
+		else:
+			# **AND NO SENTENCE AT ALL INSETS BY NOTHING**, which is not the same as the screen's
+			# inset being 0: there is no row to align to, and half of `Build` would be 15 px of air
+			# above an empty block.
+			screen._clear(screen._build_said)
+			screen._align_commit_row()
+			var empty: int = screen._build_said_inset.get_theme_constant(&"margin_top")
+			if empty != 0:
+				ok = _fail(("with no sentence the bar insets by %d px; there is no row 1 to align to "
+						+ "and `commit_inset` would otherwise be given a 0 px row") % empty)
+	screen.queue_free()
+	return ok
+
+
+## The failure sentence for a margin the screen really wrote, as against one derived in the test.
+func _centres_said_measured(inset: float, act: float, row: float) -> String:
+	return (("the screen inset the sentence by %.0f px, which puts row 1's centre %.1f px down the bar "
+			+ "against `Build`'s %.1f; her ruling is 2 px, and `commit_inset` says %.1f")
+			% [inset, inset + row / 2.0, act / 2.0, AssayHud.commit_inset(act, row)])

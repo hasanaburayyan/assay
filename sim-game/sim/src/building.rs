@@ -147,6 +147,23 @@ pub enum SmelterStall {
     /// Burning, and not hot enough for this ore. `fire` is already capped by
     /// the walls, which is what makes the smelter's own material matter.
     FireTooCool { fire: u32, needs: u32 },
+    /// **THE OUTPUT SLOT HOLDS A MATERIAL THIS BATCH CANNOT ADD TO** (ASSA-350).
+    /// Refine one species, leave the bar, load another: `run_smelters` has
+    /// skipped that smelter on every tick since ASSA-43 with the comment *"wait
+    /// to be emptied"*, and nothing in the game said so. `smelter_state` read
+    /// `Working` forever and the window drew a fire on it.
+    ///
+    /// **A STALL AND NOT AN IDLE, on the Game Director's ASSA-350 criterion:**
+    /// *an idle is waiting for SUPPLY; a stall is blocked by a CONFLICT no
+    /// supply resolves.* Pour more ore into a short batch and it runs. Pour
+    /// more ore into this and nothing happens, ever — the only thing that
+    /// clears it is a hand in the output slot.
+    ///
+    /// Carries the item so the sentence can name it with the sim's own
+    /// `item_name`, character for character the one the machine menu draws on
+    /// that slot's `held` line (ASSA-43/52: two spellings of one item is how a
+    /// player stops trusting either).
+    OutputHoldsAnother(crate::item::Item),
 }
 
 /// Why a smelter has no batch in front of it. **NEITHER ARM IS A STALL** and

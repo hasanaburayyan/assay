@@ -252,6 +252,38 @@ impl World {
     ///
     /// Returns [`SmelterState::Idle`] for anything that is not a smelter, so
     /// callers do not have to match the kind twice.
+    /// What this smelter's current input would refine into, or `None` when
+    /// there is no runnable batch at all: nothing in the input, less than a
+    /// recipe's worth, a kind no smelter recipe eats, or already grade A.
+    ///
+    /// **ONE GATE, NAMED ONCE** (ASSA-128's lesson, which cost us a smelter
+    /// that said *"fuel won't light from cold"* once per unit burned because
+    /// `run_smelters` and `smelter_state` each kept their own copy of a
+    /// comparison). `run_smelters` decides whether to produce `out_item` and
+    /// `smelter_state` decides whether the output is blocking it; those two
+    /// must agree about what the batch would make, or the status line
+    /// contradicts the tick.
+    pub fn smelter_output_item(&self, s: &crate::building::Smelter) -> Option<crate::item::Item> {
+        let input = s.input?;
+        let recipe = crate::recipe::smelter_recipe_for(input.item.kind)?.recipe();
+        if input.count < recipe.input.1 {
+            return None;
+        }
+        recipe.output_for(input.item)
+    }
+
+    /// The item sitting in this smelter's output that the current batch cannot
+    /// add to, or `None` when the output is empty, holds the same item, or
+    /// there is no batch to be blocked (ASSA-350).
+    pub fn smelter_output_conflict(
+        &self,
+        s: &crate::building::Smelter,
+    ) -> Option<crate::item::Item> {
+        let want = self.smelter_output_item(s)?;
+        let held = s.output?;
+        (held.item != want).then_some(held.item)
+    }
+
     pub fn smelter_state(&self, b: &Building) -> SmelterState {
         let BuildingKind::Smelter(s) = &b.kind else {
             return SmelterState::Idle(SmelterIdle::Empty);
@@ -284,6 +316,14 @@ impl World {
             .is_some_and(|o| o.count >= crate::tuning::SMELTER_OUTPUT_CAP)
         {
             SmelterState::Stalled(SmelterStall::OutputFull)
+        } else if let Some(held) = self.smelter_output_conflict(s) {
+            // **BEFORE THE FUEL STALLS, BECAUSE NO AMOUNT OF FUEL CLEARS IT**
+            // (ASSA-350). A smelter blocked on its output with an unlit fire
+            // has two problems and only one of them is the one a player has to
+            // solve first: lighting it changes nothing. After `OutputFull`
+            // though — a slot that is both full and holding something else is
+            // already described by the sentence we have.
+            SmelterState::Stalled(SmelterStall::OutputHoldsAnother(held))
         } else if s.burn_left == 0 && s.fuel.is_none() {
             SmelterState::Stalled(SmelterStall::NoFuel)
         } else if burning.is_none() {

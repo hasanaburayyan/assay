@@ -90,6 +90,39 @@ func _runs_silently() -> Array:
 	return ["/bin/sh", PackedStringArray(["-c", "sleep 30"])]
 
 
+## **THE SAME SILENT STAND-IN, BUT THE FILE IS CALLED `sim-relay`** (ASSA-345). `""` where this
+## platform cannot have one.
+##
+## **WHY A FILE ON DISK AND NOT A STRING SUBSTITUTION, which is what I tried first and what I am
+## correcting.** `_check_shape` carries the rule that `sim-relay` may be named only in a clause that
+## is about a file in the player's folder — and every other stand-in here is `/bin/sh`, so that rule
+## has never once been applied to a sentence containing the word. My first version patched the name
+## into the sentence with `replace("the sh file", "the sim-relay file")`. The mutation that it existed
+## to catch — the sentence naming the binary **without** calling it a file — changed the phrase the
+## substitution was keyed on, so it substituted nothing, the sentence kept `sh`, the rule never fired
+## and **the whole suite stayed green over the defect**. A match that can fail silently is not a
+## guard; the file is named `sim-relay`, so nothing is keyed on the wording at all.
+##
+## A two-line shell script rather than a copy of `/bin/sh`: it is a real executable file with the
+## shipped name, it tolerates the flags `start` adds (positional parameters a script ignores), and it
+## does not depend on a copied Apple binary still passing its own signature check.
+func _a_silent_stand_in_named_sim_relay() -> String:
+	if OS.get_name() == "Windows":
+		return ""
+	var path := OS.get_user_data_dir().path_join("sim-relay")
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		return ""
+	file.store_string("#!/bin/sh\nsleep 30\n")
+	file.close()
+	# 493 IS 755, SPELLED THE ONLY WAY GDSCRIPT SPELLS IT. `0o755` is a parse error here (*invalid
+	# numeric notation*), which is also the number `is_runnable`'s own comment quotes: *493 (755) for
+	# the real relay and for the client's own executable*.
+	if FileAccess.set_unix_permissions(path, 493) != OK:
+		return ""
+	return path
+
+
 ## RULING 6, FIRST SENTENCE: a missing binary names every place it looked.
 ##
 ## NOT "file not found": a player who unzipped into a folder where the helper was stripped, or who
@@ -218,8 +251,26 @@ func test_a_silent_relay_times_out_says_so_and_is_not_left_running() -> bool:
 			ok = _fail("a silent relay never timed out; the window would hang here")
 		elif not solo.failure.contains("ready"):
 			ok = _fail("the sentence does not say what was waited for: %s" % solo.failure)
+		# **IT NAMES WHAT WOULD NOT SPEAK** (ASSA-345). The sentence used to begin `it did not say it
+		# was ready`, with no subject at all — and this is the one branch a quarantined `sim-relay`
+		# reaches, measured 2 of 2 on the shipped zip. A player looking at a folder of files was told
+		# that something in it was quiet.
+		elif not solo.failure.contains("sh"):
+			ok = _fail("the sentence does not name what would not speak: %s" % solo.failure)
+		# **AND THE CLEARING COMMAND IS HERE, NOT ONLY ON THE SIBLING BRANCH** (ASSA-345). A
+		# quarantined binary HANGS rather than exiting, so `has_exited()` is false and the `did not
+		# run` branch that carries this clause is never reached. Same guard in both directions as that
+		# branch's test: a Windows or Linux player told about `xattr` is sent to a command that does
+		# not exist on their machine.
+		elif OS.get_name() == "macOS" and not solo.failure.contains("quarantine"):
+			ok = _fail("macOS and no quarantine clause on the one sentence a quarantined relay "
+					+ "reaches: %s" % solo.failure)
+		elif OS.get_name() != "macOS" and solo.failure.contains("quarantine"):
+			ok = _fail("%s and a macOS-only clause: %s" % [OS.get_name(), solo.failure])
 		# **THE ONE SENTENCE THAT MAY SAY `PRESS PLAY SOLO AGAIN`**, and the `stop()` four lines
 		# below is what earns it: the process is gone, so a second press starts from clean ground.
+		# It stays LAST: a slow relay is the other thing this branch catches, and a second press is
+		# honest for that one.
 		elif not _check_shape("a silent relay", solo.failure, AssaySoloRelay.SOLO_AGAIN):
 			ok = false
 		elif took > 3000:
@@ -231,6 +282,52 @@ func test_a_silent_relay_times_out_says_so_and_is_not_left_running() -> bool:
 		# process lives. That is the same measurement that fixed the class.
 		elif OS.get_process_exit_code(pid) == -1:
 			ok = _fail("the timed-out relay is still running, holding whatever port it took")
+	solo.stop()
+	return ok
+
+
+## **THE SHAPE RULES, ASKED ABOUT A FILE ACTUALLY CALLED `sim-relay`** (ASSA-345).
+##
+## `_check_shape` carries two rules this file could never exercise, because every stand-in in it is
+## `/bin/sh`: *a solo player has never met the word `the relay`*, and *`sim-relay` may be named only
+## in a clause that is about the file*. The second has never been applied to a sentence containing
+## `sim-relay` — not here and not on the sibling branch, which has named the binary since ASSA-120.
+##
+## **I TRIED TO BUY THIS WITH A STRING SUBSTITUTION AND IT WAS GREEN OVER THE DEFECT.** Patching
+## `the sh file` into `the sim-relay file` is keyed on the wording, so the mutation it existed to
+## catch — the sentence naming the binary and NOT calling it a file — changed that wording, matched
+## nothing, and the suite stayed at 509 / 0 with the rule broken. The stand-in is named `sim-relay`
+## instead, so nothing is keyed on a phrase.
+##
+## The deadline branch is the one driven, because it is the branch a quarantined relay actually
+## reaches (QA, 2 of 2 on the shipped zip) and the one that said nothing about what was quiet.
+func test_the_shipped_name_is_only_ever_named_as_a_file_in_their_folder() -> bool:
+	var binary := _a_silent_stand_in_named_sim_relay()
+	if binary == "":
+		# NOT A SILENT SKIP: the suite says which platform declined and why, so a green on Windows
+		# cannot be read as this rule having been checked there.
+		print("  (skipped on %s: no writable executable stand-in named sim-relay)" % OS.get_name())
+		return true
+	var solo := AssaySoloRelay.new()
+	var ok := true
+	if not solo.start(binary, PackedStringArray(), 300):
+		ok = _fail("could not start the sim-relay-named stand-in: %s" % solo.failure)
+	else:
+		var waited := 0
+		while waited < 4000:
+			if solo.poll() or solo.failure != "":
+				break
+			OS.delay_msec(20)
+			waited += 20
+		if solo.failure == "":
+			ok = _fail("the stand-in named sim-relay never timed out, so no sentence was produced")
+		# THE PREMISE, AS A FAILURE. If the sentence does not contain the shipped name, this test is
+		# reading something other than what it claims to and must say so rather than pass.
+		elif not solo.failure.contains("sim-relay"):
+			ok = _fail(("premise: the sentence does not name `sim-relay` at all, so the rule under "
+					+ "test was never applied: %s") % solo.failure)
+		elif not _check_shape("a silent sim-relay", solo.failure, AssaySoloRelay.SOLO_AGAIN):
+			ok = false
 	solo.stop()
 	return ok
 
