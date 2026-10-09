@@ -5042,13 +5042,17 @@ func test_the_theme_names_every_line_edit_colour_the_engine_would_otherwise_pick
 	if engine_picks.is_empty():
 		return _fail(("the engine declares NO LineEdit colours, so this test would pass against a "
 				+ "theme that declares none either: the premise is gone, not the defect"))
-	# **THE THREE THE GAME DIRECTOR HAS NOT RULED YET, NAMED OUT LOUD RATHER THAN QUIETLY PASSED.**
-	# Asking the engine found more than ASSA-315 set out to fix: Godot declares NINE LineEdit
-	# colours and her ruling covers three. These are the remainder. They are not a tolerance — the
-	# test still fails for any colour outside this list, so an engine upgrade that invents a tenth
-	# lands here, and it ALSO fails once one of these is declared, so the list cannot rot into a
-	# permanent excuse. It shrinks to empty the day she rules them.
-	const UNRULED := ["font_outline_color", "clear_button_color", "clear_button_color_pressed"]
+	# **IT SHRANK TO EMPTY, WHICH IS THE DAY THIS LIST WAS WRITTEN FOR** (ASSA-335 ruling 5). It held
+	# `font_outline_color`, `clear_button_color` and `clear_button_color_pressed` — the remainder
+	# after ASSA-315, because Godot declares NINE LineEdit colours and that ruling covered three.
+	# Maren ruled all three on ASSA-335 and `_style_line_edit` now declares them, so the escape
+	# clause has nothing left to excuse and every one of the engine's nine must be ours.
+	#
+	# **IT STAYS AS AN EMPTY CONST RATHER THAN BEING DELETED.** The stale-declaration branch below is
+	# what caught ME: declaring the three turned this test red until the list was emptied, which is
+	# the only reason the two could not drift. Keeping the mechanism costs one line and the next
+	# unruled colour an engine upgrade invents has somewhere honest to sit.
+	const UNRULED := []
 	var undeclared := PackedStringArray()
 	for name in engine_picks:
 		if not theme.has_color(name, "LineEdit") and not UNRULED.has(name):
@@ -5066,6 +5070,106 @@ func test_the_theme_names_every_line_edit_colour_the_engine_would_otherwise_pick
 			+ "so Godot chooses them and nobody here did: %s. Declare them in "
 			+ "`build_theme.gd::_style_line_edit` and rebuild the theme.")
 			% [undeclared.size(), engine_picks.size(), ", ".join(undeclared)])
+
+
+## **FOCUS MAY NOT PUT AN ACCENT WHERE REST HAD NONE, ON THE ONE SCREEN THE BOARD MEETS FIRST**
+## (ASSA-335, Maren's rulings 1 and 2: the accent marks the one act a screen is for, one region per
+## screen, and a focus ring is not an act).
+##
+## The measured defect, off a real 1x window (`shared/assay/nacre-assa315-selection/`): the door
+## screen held ONE contiguous accent region, `Play solo` at 1781 px, and clicking the host box —
+## the board's first act on their first screen — added a SECOND at 526 px outlining a box 3.2x the
+## area of the only thing there is to press.
+##
+## **IT ASSERTS THE PROPERTY, NOT THE COLOUR I HAPPENED TO SET.** A test reading `focus.border_color
+## == INK` would pass against a theme that moved the accent onto the focus BACKGROUND instead, and
+## it would also fail `Primary`, whose focus fill is legitimately accent because its RESTING fill
+## already is. So the predicate is the one the pixels measured: accent on focus AND NOT accent at
+## rest. `Play solo` is the control that makes that distinction load-bearing rather than pedantic.
+##
+## **`ACCENT` AND `INK` ARE ASKED OF THE SHIPPED THEME, NEVER TYPED HERE.** `Primary`'s resting fill
+## IS the accent and `LineEdit`'s `font_color` IS the ink, so this file holds no second copy of
+## either literal and a palette change moves the test with it (ASSA-116's rule). The two are
+## cross-examined before anything is measured against them: if they ever coincide, every comparison
+## below is satisfied by both branches at once and the test proves nothing.
+##
+## **STYLEBOXES ARE READ OFF THE CONTROLS, not out of the resource**, which is the half that holds
+## Maren's "declared in `_style_line_edit`, not poked into a control": a local
+## `add_theme_stylebox_override` would satisfy a resource read and still draw an accent ring.
+func test_focus_cannot_add_an_accent_region_to_the_front_door() -> bool:
+	var screen := _screen()
+	var theme: Theme = load("res://theme/assay.tres")
+	if theme == null:
+		screen.queue_free()
+		return _fail("no theme/assay.tres, so there is nothing to derive accent and ink from")
+	var primary := theme.get_stylebox("normal", "Primary") as StyleBoxFlat
+	if primary == null:
+		screen.queue_free()
+		return _fail("`Primary` resolves no StyleBoxFlat at rest, so the accent cannot be derived")
+	var accent := primary.bg_color
+	var ink := theme.get_color("font_color", "LineEdit")
+	var ok := true
+	# THE CONTROL ON THE DERIVATION. Two colours that coincide would make every test below pass for
+	# the wrong reason, and a transparent one would match nothing at all.
+	if accent.is_equal_approx(ink):
+		screen.queue_free()
+		return _fail(("the accent and the ink are both %s, so `is this accent` and `is this ink` "
+				+ "are one question and nothing below can tell a ring apart") % accent)
+	if accent.a < 1.0 or ink.a < 1.0:
+		screen.queue_free()
+		return _fail("accent %s / ink %s is not opaque, so a border match means nothing" % [accent, ink])
+	var gained := PackedStringArray()
+	for control in _row_reading(screen._front_door):
+		if not (control is Button or control is LineEdit):
+			continue
+		_poke_theme(control)
+		var rest := control.get_theme_stylebox(&"normal") as StyleBoxFlat
+		var focus := control.get_theme_stylebox(&"focus") as StyleBoxFlat
+		var named: String = control.get_class() + ":" + String(control.get("text"))
+		if rest == null or focus == null:
+			ok = _fail("%s resolves no StyleBoxFlat at rest or on focus, so this is not measurable"
+					% named)
+			continue
+		var accent_at_rest := rest.bg_color.is_equal_approx(accent) \
+				or rest.border_color.is_equal_approx(accent)
+		var accent_on_focus := focus.bg_color.is_equal_approx(accent) \
+				or focus.border_color.is_equal_approx(accent)
+		if accent_on_focus and not accent_at_rest:
+			gained.append(named)
+		# AND THE TWO TEXT BOXES SPECIFICALLY RING IN THE INK ASSA-276 MOVE 4 ALREADY SPENDS ON THE
+		# ACTED-ON TILE -- the same fact for the keyboard. Named rather than left to the sweep above,
+		# because "not accent" would also be satisfied by a ring nobody can see.
+		if control is LineEdit and not focus.border_color.is_equal_approx(ink):
+			ok = _fail(("%s rings itself in %s on focus, not the ink %s: ruling 2 asks for the ink "
+					+ "a mark already means in this game") % [named, focus.border_color, ink])
+		# A STATE CHANGE IS STILL REQUIRED. Ruling 4 is that the ring gets STRONGER, so an ink ring
+		# that equals the resting edge would satisfy every line above by erasing the affordance.
+		if control is LineEdit and focus.border_color.is_equal_approx(rest.border_color):
+			ok = _fail(("%s draws the same edge %s focused and unfocused, so focus is invisible: "
+					+ "ruling 4 asks for two inks on one geometry") % [named, rest.border_color])
+	# **THE REMAINDER IS A RATCHET, NOT A TOLERANCE, AND IT IS NAMED.** `Button`'s focus stylebox is
+	# still `_box(RAISED, ACCENT)`, so tabbing from the host box to `Join` DOES put a second accent
+	# region on this screen. Recolouring is the Game Director's call, not mine, and it is measured and
+	# handed back on ASSA-335 rather than tidied in passing. Listing it here means a NEW accent focus
+	# ring reds this test, and the day Maren rules on `Button` the list goes empty.
+	const OPEN_WITH_MAREN := ["Button:Join"]
+	var unexpected := PackedStringArray()
+	for named in gained:
+		if not OPEN_WITH_MAREN.has(named):
+			unexpected.append(named)
+	var stale := PackedStringArray()
+	for named in OPEN_WITH_MAREN:
+		if not gained.has(named):
+			stale.append(named)
+	if not unexpected.is_empty():
+		ok = _fail(("%s gains an accent on focus and has none at rest, so focusing it puts a second "
+				+ "accent region on the front door (ASSA-335 ruling 1)") % ", ".join(unexpected))
+	if not stale.is_empty():
+		ok = _fail(("%s no longer gains an accent on focus but is still excused here, so this list "
+				+ "is covering for a ruling that already landed. Delete it from OPEN_WITH_MAREN.")
+				% ", ".join(stale))
+	screen.queue_free()
+	return ok
 
 
 func test_the_theme_poke_is_load_bearing_and_the_sweeps_coincidence_is_declared() -> bool:
