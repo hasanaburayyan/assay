@@ -3155,13 +3155,42 @@ pub fn design_preview(world: &World, player: PlayerId, frame: Item, mounted: &[I
     if let Some(item) = missing {
         let item = *item;
         // The sentence `step` would answer the press with, said before it.
-        let _ = write!(
-            out,
-            " — not enough {}: assembling it would be refused",
-            world.item_name(item)
-        );
+        //
+        // The sentence is [`pack_refusal_phrase`]'s and the JOINT is this
+        // caller's. ASSA-338 moves this clause onto a line of its own (the
+        // counts become a list, and a trailed clause would hang off the LAST
+        // row when `plan` picks the FIRST unpayable one); the window says the
+        // same words with no em-dash at all. One sentence, three joints.
+        let _ = write!(out, " — {}", pack_refusal_phrase(world, item));
     }
     out
+}
+
+/// **THE THIN PACK, PREDICTED BESIDE A LIST THAT ALREADY PRINTS THE FIGURES.**
+///
+/// [`plan_refusal_phrase`] words this same refusal for the moment it HAPPENS and
+/// carries the count with it (`not enough X (you have 1)`), which is right in an
+/// event log where no column says what you hold. Here the counts are printed
+/// beside it, so a count in the clause would be the third copy of one number on
+/// one surface (ASSA-43/52), and what is left to say is the consequence: the
+/// press would be refused.
+///
+/// **THE SENTENCE IS HERE AND THE JOINT IS THE CALLER'S** — ` — ` in
+/// `design_preview` today, a line of its own after ASSA-338, nothing at all in
+/// the window's block 6.
+///
+/// **Public because the Godot build screen has to say it too** (ASSA-347, the
+/// Game Director's (A) on ASSA-317's block 6, which prices a design the pack
+/// cannot pay for). `AssaySim::design_cost` crosses this string; it does not
+/// compose one. The window's block 6 and `sim-cli`'s `your pack:` list are the
+/// same list of counts, and this morning ASSA-338 was what two wordings of one
+/// pack fact cost — the window had the Game Director's `need 1 · have 2` while
+/// the reference client still printed `2/1`.
+pub fn pack_refusal_phrase(world: &World, item: Item) -> String {
+    format!(
+        "not enough {}: assembling it would be refused",
+        world.item_name(item)
+    )
 }
 
 /// A design the rules throw out, said in a way that cannot be read as a
