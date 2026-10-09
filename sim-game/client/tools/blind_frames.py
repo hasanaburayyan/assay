@@ -26,7 +26,23 @@ to."* That read is worth nothing and cannot be re-run on them.
 CATCHING IT.** My first sweep there refused non-pictures and walked straight past
 `09-whole-world-key.png` -- it IS a PNG, and it is the MAP KEY, the one frame whose whole job is to
 say what the marks mean. Testing the file EXTENSION is not testing the property, so `names_marks`
-below is the same rule `window_shot.gd` applies, held in one sentence rather than two places.
+below asks for `key` or `marks` as a whole token.
+
+**AND AS OF ASSA-360 IT IS NO LONGER THE SAME RULE `window_shot.gd` APPLIES.** This docstring said
+it was, "held in one sentence rather than two places", and that sentence was two copies all along:
+a word list is a guess about what the next frame will be about, and
+`01-closeup-two-machines-east.png` -- the name that really did cost a cold read -- holds neither
+token. `window_shot.gd`'s blind mode now writes `NN.png` and nothing else
+(`tools/blind_name.gd::is_blind_name`, the shape rule stated once).
+
+**SO THE TWO TOOLS ANSWER DIFFERENT QUESTIONS NOW, DELIBERATELY AND FOR TODAY ONLY.** This one is
+pointed by a person at an ARBITRARY directory, nearly always an old non-blind one, and 166 such
+directories in `shared/` would turn red at once under the shape rule. They would not be false reds
+-- a directory of `10-stopped.png` and `14-machine-menu.png` genuinely is unsafe to hand a cold
+reader -- so adopting the shape here is a real improvement and a judgement about everyone's
+historical evidence at the same time. Filed rather than taken: see ASSA-360's follow-up. Until then,
+`names_marks` is the WEAKER of the two rules and this file must not be read as proof that a
+directory it calls SAFE TO SEND carries no names.
 
 **DELIBERATELY NOT NAMED `check_*`.** `art/check_ci_runs_every_check.py` globs `art/check_*.py` and
 regexes bare `check_*.py` filenames out of build.yml; ASSA-282 hit exactly that collision when a

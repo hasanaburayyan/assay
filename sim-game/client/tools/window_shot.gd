@@ -5,11 +5,18 @@ extends SceneTree
 ##   godot --path . --script res://tools/window_shot.gd -- <out_dir> [seed] [ticks] [hoppers] \
 ##       [row=N] [blind]
 ##
-## **`blind` IS FOR A COLD READ AND CHANGES ONLY WHERE THINGS LAND** (ASSA-294): pictures go to
-## `<out_dir>/frames/`, and everything that NAMES what is in them -- the marks JSON, the hover JSON,
-## the art provenance -- goes to `<out_dir>/key/`. So `send the frames directory` is safe by
-## construction instead of safe by the asker remembering. Without it the layout is exactly what it
-## has always been, and the run says out loud that the directory is not safe to hand over.
+## **`blind` IS FOR A COLD READ** (ASSA-294): pictures go to `<out_dir>/frames/`, and everything that
+## NAMES what is in them -- the marks JSON, the hover JSON, the art provenance -- goes to
+## `<out_dir>/key/`. So `send the frames directory` is safe by construction instead of safe by the
+## asker remembering. Without it the layout is exactly what it has always been, and the run says out
+## loud that the directory is not safe to hand over.
+##
+## **AND IT RENAMES THE FRAMES, WHICH IT DID NOT UNTIL ASSA-360.** This said `blind` changes "only
+## where things land", and that was the bug: a blind run handed a cold reader `10-stopped`,
+## `14-machine-menu` and `15-selection-2x2` -- every one of them a verdict about its own subject, and
+## `15` giving away the mark's size as well. Under `blind` a frame is `NN.png` and nothing else
+## ([AssayBlindName]), with `key/names.txt` mapping each number back to its moment. The ordinal is
+## the frame's own, so `08` is `08` in every run.
 ##
 ## `hoppers` is for ASSA-138 and is the one thing about the played world a caller may change: how
 ## many hoppers the loop MOUNTS on the drill it plants (default: every one it makes, which is what
@@ -160,6 +167,15 @@ var _out := ""
 var _blind := false
 var _frames := ""
 var _key := ""
+## **THE MAP FROM A BLIND NUMBER BACK TO THE MOMENT IT PHOTOGRAPHS** (ASSA-360), written to
+## `key/names.txt` at the end of a blind run. Nothing is withheld by the rename -- it is moved one
+## level up, to the directory that already holds the marks JSON and the provenance.
+##
+## Blind name -> the moment it photographs. A Dictionary and not a list of lines: the collision check
+## below is `has()` on the thing that would collide, rather than splitting a formatted string back
+## apart to find out what it said. Insertion order is Godot's iteration order, so the file still
+## reads in the order the moments were reached, which is itself part of the report.
+var _blind_names := {}
 var _seed := DEFAULT_SEED
 var _ticks := PLAY_TICKS
 var _phase: Phase = Phase.SETTLE_JOIN
@@ -337,6 +353,11 @@ func _initialize() -> void:
 	# directories, and `send the frames directory` is safe by construction rather than by the asker
 	# remembering on a tired wake-up. The report is not withheld and not weakened -- it is one level
 	# up, which is the half of this that keeps the builder's own evidence intact.
+	#
+	# ASSA-360: AND THE FRAME'S OWN NAME IS PART OF WHAT NAMES IT. Nacre was handed the walk's
+	# endpoints as well, but Cove's `01-closeup-two-machines-east.png` answered the question from
+	# inside the frames directory, and this tool's own `10-stopped` and `14-machine-menu` would have
+	# done the same. Under `blind` a frame is `NN.png`; `key/names.txt` is the map.
 	if _blind:
 		_frames = "%s/frames" % _out
 		_key = "%s/key" % _out
@@ -1185,13 +1206,20 @@ func _shoot(name: String, subjects: PackedStringArray, guard_repeat := true) -> 
 			return
 		_taken[fingerprint] = name
 	# ASSA-294: a shot whose name advertises a key goes with the report, not with the pictures.
-	var into := _key if _blind and _names_marks(name) else _frames
-	var path := "%s/%s" % [into, name]
+	# ASSA-360: and the ones that go with the pictures lose their names on the way.
+	var path := _write_path(name)
+	if path == "":
+		return
 	if image.save_png(path) != OK:
 		_finish(false, "cannot write %s" % path)
 		return
-	var line := "%s  %dx%d  %d colours  %s" % [name, image.get_width(), image.get_height(),
-			seen.size(), fingerprint.substr(0, 12)]
+	# **THE REPORT KEEPS THE REAL NAME AND SAYS WHICH NUMBER IT BECAME** (ASSA-360). These lines are
+	# the ASKER's -- they are how a builder finds the frame they wanted -- and stdout is not the
+	# frames directory. A caller that redirects them INTO it is caught by the sweep below.
+	var written := path.get_file()
+	var became := "" if written == name else "  -> %s" % written
+	var line := "%s%s  %dx%d  %d colours  %s" % [name, became, image.get_width(),
+			image.get_height(), seen.size(), fingerprint.substr(0, 12)]
 	if name == "04-pack.png":
 		line += "  %d rows at tick %d" % [_rows_best, _rows_tick]
 	if name == "10-stopped.png":
@@ -2588,8 +2616,11 @@ func _hover_report() -> void:
 	var mark_rects := AssayHud.hover_mark(_hover_tile, cell, AssayHud.MARGIN)
 	var hover_box: Rect2 = mark_rects["cell_rect"]
 	var box := hover_box.grow(1.0)
-	var before := Image.load_from_file("%s/08-whole-world.png" % _frames)
-	var after := Image.load_from_file("%s/13-whole-world-hover.png" % _frames)
+	# THROUGH `_frame_path` AND NOT BY HAND (ASSA-360): under `blind` these two are `08.png` and
+	# `13.png`, and a hand-built path would come back null and be reported as a comparison that
+	# could not reload its pair.
+	var before := Image.load_from_file(_frame_path("08-whole-world.png"))
+	var after := Image.load_from_file(_frame_path("13-whole-world-hover.png"))
 	if before == null or after == null:
 		_finish(false, "13-whole-world-hover.png: cannot reload the pair to compare them")
 		return
@@ -2819,6 +2850,61 @@ func _names_marks(shot_name: String) -> bool:
 	return lower.contains("-key.") or lower.contains("marks")
 
 
+## WHERE A SHOT OF THIS NAME LANDS, or `""` if a blind run cannot strip its name (ASSA-360).
+##
+## **ONE FUNCTION, BECAUSE THE TOOL READS ITS OWN FRAMES BACK OFF DISK.** `_write_hover_table`
+## reloads `08-whole-world.png` and `13-whole-world-hover.png` to diff them, and that is the caller a
+## rename breaks in the way nobody notices: under `blind` the pair would be `08.png` and `13.png`,
+## the loads would return null, and the only report of it would be a failure sentence about
+## reloading a pair -- blaming the comparison for a path. The write and both reads ask here.
+##
+## Three cases and they are not symmetrical:
+##   - not blind: unchanged, the descriptive name in the out directory. Every path quoted in an item
+##     and every frame in `shared/` still resolves.
+##   - blind and the name advertises a key or a mark list: `key/`, under its DESCRIPTIVE name. That
+##     directory's whole job is to say what the pictures hold, so there is nothing to strip.
+##   - blind, otherwise: `frames/NN.png`.
+func _frame_path(shot_name: String) -> String:
+	if not _blind:
+		return "%s/%s" % [_frames, shot_name]
+	if _names_marks(shot_name):
+		return "%s/%s" % [_key, shot_name]
+	var blind := AssayBlindName.blind_frame_name(shot_name)
+	if blind == "":
+		return ""
+	return "%s/%s" % [_frames, blind]
+
+
+## [method _frame_path] for the write, which is where the run is allowed to fail and the mapping is
+## recorded.
+##
+## **A RENAME THAT DECLINES TO RENAME FAILS THE RUN RATHER THAN WRITING THE DESCRIPTIVE NAME.** The
+## fallback is the bug wearing the fix's clothes: the frame lands in `frames/` naming its subject,
+## and a green line now says a shape rule is in force.
+##
+## **AND TWO MOMENTS MAY NOT SHARE AN ORDINAL.** The repeat guard above catches two frames that are
+## pixel-identical; it says nothing about two DIFFERENT frames both called `08-`, where the second
+## silently overwrites the first and the set comes back one picture short of what its own report
+## lists. The descriptive names make that impossible today, which is exactly why it would survive
+## being introduced.
+func _write_path(shot_name: String) -> String:
+	var path := _frame_path(shot_name)
+	if path == "":
+		_finish(false, ("%s has no two-digit ordinal, so a blind run cannot strip its name. "
+				+ "Every frame here is NN-something.png; name it that way rather than letting this "
+				+ "one keep a name that tells a cold reader what to find.") % shot_name)
+		return ""
+	if _blind and not _names_marks(shot_name):
+		var blind := path.get_file()
+		if _blind_names.has(blind):
+			_finish(false, ("%s and %s both become %s, so one would overwrite the other and the set "
+					+ "would come back one picture short of what its own report lists")
+					% [_blind_names[blind], shot_name, blind])
+			return ""
+		_blind_names[blind] = shot_name
+	return path
+
+
 ## **THE REFUSAL THAT MAKES `blind` A MODE AND NOT A CONVENTION** (ASSA-294 box 3).
 ##
 ## Maren: a rule that depends on the asker remembering fails on the wake-up somebody is tired. So
@@ -2828,16 +2914,43 @@ func _names_marks(shot_name: String) -> bool:
 ## The commonest way to earn it is a caller redirecting its own stdout into the frames directory
 ## (`> .../frames/shot.log`) -- which is precisely the contamination this item is about, and the
 ## shell creates that file before this script starts, so the sweep sees it.
+##
+## **IT ASKED FOR TWO WORDS AND THEREFORE PASSED EVERY NAME THIS TOOL WRITES** (ASSA-360). `-key.`
+## and `marks` catch a legend; they do not catch a frame whose name states its SUBJECT, so
+## `10-stopped`, `14-machine-menu` and `15-selection-2x2` all printed a green line, as would
+## `01-closeup-two-machines-east.png`, the name that actually cost a cold read. The rule is now the
+## shape in [AssayBlindName] -- a superset of the word list, including everything it used to catch.
 func _unblind_offenders() -> PackedStringArray:
-	var offenders := PackedStringArray()
 	if not _blind:
-		return offenders
-	for entry in DirAccess.get_files_at(_frames):
-		var found := String(entry)
-		if not found.to_lower().ends_with(".png") or _names_marks(found):
-			offenders.append(found)
-	offenders.sort()
-	return offenders
+		return PackedStringArray()
+	return AssayBlindName.offenders(DirAccess.get_files_at(_frames))
+
+
+## **WHAT THE RENAME DID NOT TAKE AWAY** (ASSA-360): `key/names.txt`, every number against the moment
+## it photographs.
+##
+## The blind split is not a withholding -- ASSA-294 moved the answers one level up precisely so the
+## builder's own evidence stays intact, and a renumbered set with no map would be the first thing in
+## that design to actually destroy something. Written before the leak sweep, so a run that goes red
+## is still decodable by whoever has to work out why.
+##
+## Nothing is written when the run is not blind: the names are the filenames there.
+func _write_blind_names() -> void:
+	if not _blind:
+		return
+	var path := "%s/names.txt" % _key
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		# NOT A FAILURE OF THE SHOT RUN. The pictures are on disk and correct; what is missing is the
+		# convenience of decoding them, and `_shots` has already printed the same pairs to stdout.
+		print("  NOTE: cannot write %s, so the number-to-moment key is only in the lines above" % path)
+		return
+	file.store_line("# Which moment each blind frame is (ASSA-360). The frames carry no names so a")
+	file.store_line("# cold reader cannot be told what to find; this is the same report, one level up.")
+	file.store_line("# seed %s, %d ticks." % [_seed, _ticks])
+	for blind in _blind_names:
+		file.store_line("%s  %s" % [blind, _blind_names[blind]])
+	file.close()
 
 
 func _finish(ok: bool, why: String) -> void:
@@ -2853,16 +2966,20 @@ func _finish(ok: bool, why: String) -> void:
 		# said" -- which is the version of this change that would have been worth refusing.
 		# ASSA-294: EARNED BEFORE THE GREEN LINE, never printed beside it as a note. A blind run whose
 		# frames directory is not purely pictures is not a usable blind run.
+		_write_blind_names()
 		var leaked := _unblind_offenders()
 		if not leaked.is_empty():
-			# NAMED AS THE PROPERTY AND NOT AS "not a picture", because one of the two things this
-			# catches IS a picture -- the map key. A red whose sentence is wrong about its own
-			# offender teaches the next reader the wrong rule.
-			var said := "FAIL  blind run: %s holds %d file(s) that name what is in the pictures" % [
-					_frames, leaked.size()]
-			said += ", so handing this directory to a cold reader hands them the answer too: "
+			# NAMED AS THE PROPERTY AND NOT AS "not a picture", because the things this catches
+			# include pictures -- the map key, and any frame named after its subject. A red whose
+			# sentence is wrong about its own offender teaches the next reader the wrong rule, and
+			# this one used to say "name what is in the pictures" while only knowing two words.
+			var said := ("FAIL  blind run: %s holds %d file(s) that are not NN.png"
+					% [_frames, leaked.size()])
+			said += ", so each one can say something about the picture beside it"
+			said += " -- which is the answer a cold reader is about to be asked for: "
 			said += ", ".join(leaked)
-			said += ". Move them under %s, which is where this run put its own report." % _key
+			said += ". Move them under %s, which is where this run put its own report" % _key
+			said += " and the key from each number back to its moment."
 			print(said)
 			return
 		if not _blind:
