@@ -262,42 +262,19 @@ fn apply_player(
             item,
             count,
         } => {
-            if count == 0 {
-                return reject(RejectReason::ZeroCount, events);
+            // **THE CHAIN IS `insert_rejection`'S AND THIS IS ITS ONLY CALLER
+            // THAT MOVES ANYTHING** (ASSA-351). It used to be written out here,
+            // interleaved with taking `&mut` on the slot, which is why a host
+            // asking *before* the press could not reach it and `hud.gd`
+            // guessed from the item's kind instead — offering four controls
+            // the sim refuses in the one frame we have of a machine menu.
+            // `plan_refusal_phrase`'s docstring tells the same story one
+            // command over, and it ended with a fourth copy in GDScript.
+            if let Some(reason) = insert_rejection(world, player, building, slot, item, count) {
+                return reject(reason, events);
             }
-            let me_pos = world.player(player).expect("checked above").pos;
-            let Some(b) = world.building(building) else {
-                return reject(RejectReason::UnknownBuilding, events);
-            };
-            if b.distance_from(me_pos) > REACH {
-                return reject(RejectReason::OutOfReach, events);
-            }
-            // A machine has no insertable slots at all: `Slot` names the
-            // smelter's, and ore leaves a drill by `Take` (decision 9).
-            if b.kind.machine().is_some() {
-                return reject(RejectReason::NotInsertable, events);
-            }
-            if !world
-                .player(player)
-                .expect("checked above")
-                .inventory
-                .has(item, count)
-            {
-                return reject(RejectReason::MissingItems(item), events);
-            }
-            let walls = world.max_temperature(b);
             let (cap, target) = match slot {
                 Slot::Input => {
-                    let Some(recipe) = smelter_recipe_for(item.kind) else {
-                        return reject(RejectReason::WrongItem, events);
-                    };
-                    if recipe.recipe().output_for(item).is_none() {
-                        return reject(RejectReason::AlreadyBestGrade, events);
-                    }
-                    let needs = u32::from(world.species(item.species).sheet.heat_tolerance);
-                    if needs > walls {
-                        return reject(RejectReason::TooHotForWalls, events);
-                    }
                     let BuildingKind::Smelter(s) =
                         &mut world.building_mut(building).expect("checked above").kind
                     else {
@@ -306,12 +283,6 @@ fn apply_player(
                     (SMELTER_INPUT_CAP, &mut s.input)
                 }
                 Slot::Fuel => {
-                    if !matches!(item.kind, ItemKind::Ore | ItemKind::Refined) {
-                        return reject(RejectReason::WrongItem, events);
-                    }
-                    if world.fuel_temperature(item).is_none() {
-                        return reject(RejectReason::NotFuel, events);
-                    }
                     let BuildingKind::Smelter(s) =
                         &mut world.building_mut(building).expect("checked above").kind
                     else {
@@ -320,11 +291,9 @@ fn apply_player(
                     (SMELTER_FUEL_CAP, &mut s.fuel)
                 }
             };
-            let have = match *target {
-                None => 0,
-                Some(stack) if stack.item == item => stack.count,
-                Some(_) => return reject(RejectReason::SlotFull, events),
-            };
+            // The chain already refused a slot holding something else, so
+            // anything here is either empty or this very item.
+            let have = target.map_or(0, |stack| stack.count);
             // TAKE WHAT FITS (ASSA-48, Game Director's ruling). This used to
             // reject the whole offer when `have + count > cap`, so a player who
             // had mined for thirty seconds and pressed one button was told
@@ -335,11 +304,10 @@ fn apply_player(
             //
             // Rejection survives for the one case that is not a clamp: no room
             // at all. "Nothing happened" is then true, and the player needs to
-            // empty the slot rather than offer less.
+            // empty the slot rather than offer less. That case is the chain's
+            // last arm, so **a clamp is never a refusal** and a host asking
+            // whether this press does anything is told yes.
             let room = cap.saturating_sub(have);
-            if room == 0 {
-                return reject(RejectReason::SlotFull, events);
-            }
             let fits = count.min(room);
             *target = Some(ItemStack::new(item, have + fits));
             let taken = world
@@ -685,6 +653,103 @@ fn apply_player(
             }
         }
     }
+}
+
+/// Why a `PlayerCommand::Insert` would be refused, or `None` if it would move
+/// something. **The whole chain, and `step`'s own Insert arm calls it**, so a
+/// host asking before the press and the press itself cannot disagree.
+///
+/// **ONE PREDICATE, NOT TWO COMPARISONS** (ASSA-351). The Game Director's rule
+/// is *a control may offer an act that goes badly; it may not offer an act that
+/// does nothing* — and the client cannot decide that for itself. It can read a
+/// stack's grade (it prints the `(A)`) and the slot's held item (it draws it),
+/// which is why `hud.gd` looked like it could cross these; but `TooHotForWalls`
+/// is a sheet reading against the smelter's own material, and `NotFuel` is
+/// reactivity at grade. A client learning three of the rules and missing the
+/// fourth is exactly how four dead controls shipped. The conclusion is the
+/// sim's, whole, or it is wrong somewhere.
+///
+/// **"WOULD NOTHING MOVE", NEVER "WOULD THIS BE CLAMPED"** (ASSA-48). `fits =
+/// count.min(room)` takes what fits and `ItemsInserted { left }` says what
+/// stayed behind, so `put all 50` at a slot with room for 3 is an act with an
+/// outcome and this returns `None` for it. Only `room == 0` — no room at all —
+/// is a refusal, which is the one case where "nothing happened" is true.
+///
+/// The two prechecks `step` applies to every command before reaching the arm
+/// are repeated at the top: a host asking about a press has not been through
+/// them, and `UnknownSpecies` is the one that stops `world.species(…)` below
+/// from indexing a roster that does not have that slot.
+pub fn insert_rejection(
+    world: &World,
+    player: PlayerId,
+    building: BuildingId,
+    slot: Slot,
+    item: Item,
+    count: u32,
+) -> Option<RejectReason> {
+    // NOT `world.player(player)?`: `None` out of this function means
+    // "pressable", so a player who does not exist would read as a press that
+    // works. `step` rejects it first and so does this.
+    let Some(me) = world.player(player) else {
+        return Some(RejectReason::UnknownPlayer);
+    };
+    if !crate::mineral::known_species(&world.species, item.species) {
+        return Some(RejectReason::UnknownSpecies);
+    }
+    if count == 0 {
+        return Some(RejectReason::ZeroCount);
+    }
+    let Some(b) = world.building(building) else {
+        return Some(RejectReason::UnknownBuilding);
+    };
+    if b.distance_from(me.pos) > REACH {
+        return Some(RejectReason::OutOfReach);
+    }
+    // A machine has no insertable slots at all: `Slot` names the
+    // smelter's, and ore leaves a drill by `Take` (decision 9).
+    if b.kind.machine().is_some() {
+        return Some(RejectReason::NotInsertable);
+    }
+    if !me.inventory.has(item, count) {
+        return Some(RejectReason::MissingItems(item));
+    }
+    let walls = world.max_temperature(b);
+    let BuildingKind::Smelter(s) = &b.kind else {
+        return Some(RejectReason::NotInsertable);
+    };
+    let (cap, held) = match slot {
+        Slot::Input => {
+            let Some(recipe) = smelter_recipe_for(item.kind) else {
+                return Some(RejectReason::WrongItem);
+            };
+            if recipe.recipe().output_for(item).is_none() {
+                return Some(RejectReason::AlreadyBestGrade);
+            }
+            let needs = u32::from(world.species(item.species).sheet.heat_tolerance);
+            if needs > walls {
+                return Some(RejectReason::TooHotForWalls);
+            }
+            (SMELTER_INPUT_CAP, s.input)
+        }
+        Slot::Fuel => {
+            if !matches!(item.kind, ItemKind::Ore | ItemKind::Refined) {
+                return Some(RejectReason::WrongItem);
+            }
+            if world.fuel_temperature(item).is_none() {
+                return Some(RejectReason::NotFuel);
+            }
+            (SMELTER_FUEL_CAP, s.fuel)
+        }
+    };
+    let have = match held {
+        None => 0,
+        Some(stack) if stack.item == item => stack.count,
+        Some(_) => return Some(RejectReason::SlotFull),
+    };
+    if cap.saturating_sub(have) == 0 {
+        return Some(RejectReason::SlotFull);
+    }
+    None
 }
 
 /// First contact: the first player to mine or assay a species becomes its

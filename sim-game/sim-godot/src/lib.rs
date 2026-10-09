@@ -718,6 +718,30 @@ impl AssaySim {
             .collect()
     }
 
+    /// **WHAT A MACHINE MENU MAY OFFER, PER SLOT, AND WHY NOT** (ASSA-351).
+    /// One dictionary per insertable slot, each carrying every stack the
+    /// player is holding with `refusal` absent when the press would move
+    /// something and the sim's own sentence when it would not.
+    ///
+    /// `hud.gd::insert_slots` is what this replaces, and the replacement is
+    /// not a supplement: that function decided from the item's KIND which
+    /// slots to offer, so a pack of grade-A refined got four full-width
+    /// controls and `sim::step` refused all four. See [`SlotOffersFacts`].
+    ///
+    /// A caller draws a refused offer **present and unpressable with its
+    /// sentence beside it**, never hidden: a player carrying only refused
+    /// stacks would otherwise open a smelter to an empty box, which teaches
+    /// less than a named dead end (ASSA-301). The Game Director's rule this
+    /// serves: *a control may offer an act that goes badly; it may not offer
+    /// an act that does nothing.*
+    #[func]
+    pub fn insert_offers(&self, player: i64, building: i64) -> Array<VarDictionary> {
+        self.insert_offer_facts(player_id_of(player), building)
+            .iter()
+            .map(slot_offers_dict)
+            .collect()
+    }
+
     /// **WHAT THE SIM WOULD SAY ABOUT A DESIGN NOBODY HAS BUILT YET** — the
     /// one question `designs_of` cannot answer, because that list is what a
     /// player already holds.
@@ -1756,6 +1780,28 @@ fn slot_dict(slot: &SlotFacts) -> VarDictionary {
     out
 }
 
+fn slot_offers_dict(slot: &SlotOffersFacts) -> VarDictionary {
+    vdict! {
+        "slot" => &gstring(&slot.slot).to_variant(),
+        "role" => &gstring(&slot.role).to_variant(),
+        "offers" => &slot.offers.iter().map(insert_offer_dict)
+            .collect::<Array<VarDictionary>>().to_variant(),
+    }
+}
+
+fn insert_offer_dict(offer: &InsertOfferFacts) -> VarDictionary {
+    let mut out = stack_dict(&offer.stack);
+    // **ABSENT MEANS PRESSABLE**, the same treatment `insert_tag` and `held`
+    // get one function up and for the same reason: a key carrying "" is a
+    // value a caller can accidentally draw — an unpressable control with an
+    // empty reason beside it — where a missing key is a mistake GDScript
+    // reports on the line that made it. `has("refusal")` is the whole test.
+    if let Some(why) = &offer.refusal {
+        out.set("refusal", &gstring(why).to_variant());
+    }
+    out
+}
+
 /// The sim's reading of a design that does not exist: [`AssaySim::design_if_built`]'s
 /// engine-free half, so `cargo test` can run it over thousands of worlds
 /// without a Godot in the room. Same keys, same order.
@@ -2491,6 +2537,51 @@ pub struct StackFacts {
     pub name: String,
 }
 
+/// ONE CARRIED STACK AGAINST ONE SLOT: the put control a machine menu draws,
+/// and whether pressing it would do anything (ASSA-351).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InsertOfferFacts {
+    /// The stack as the pack rows spell it, so a menu row and a put command
+    /// are built from one dictionary and `AssayActions.item_of_stack` needs no
+    /// rearranging (`stack_dict`'s own rule).
+    pub stack: StackFacts,
+    /// **`None` MEANS PRESSABLE.** Otherwise the sim's own sentence for why
+    /// nothing would move — `sim::debug::insert_refusal`, which is the event
+    /// log's wording byte for byte. Never this crate's and never GDScript's.
+    pub refusal: Option<String>,
+}
+
+/// EVERY CARRIED STACK CROSSED AGAINST ONE INSERTABLE SLOT.
+///
+/// **THE CLIENT USED TO DERIVE THIS AND GOT IT WRONG FOUR CONTROLS OUT OF
+/// FOUR** (ASSA-351). `hud.gd::insert_slots` keyed on the item's KIND alone,
+/// out of the recipe table, and offered both slots on the honest ground that
+/// *"which one a species is good for … is a sheet reading and only the sim has
+/// it"*. The reading it was missing is that a REFUSAL is a sheet reading too:
+/// grade, the held item, reactivity at grade, the walls' heat tolerance. In the
+/// one 1x frame we have of a machine menu, all four put controls were acts
+/// `sim::step` refuses — on the surface the board asked for by name.
+///
+/// So the crossing happens here, once, over `insert_rejection` — the same
+/// function `step` itself calls, so a control cannot disagree with its press.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SlotOffersFacts {
+    /// The wire tag `PlayerCommand::Insert` deserialises, from serde and not
+    /// typed here — same source as `SlotFacts::insert_tag`.
+    pub slot: String,
+    /// What the sim calls this slot (`input`, `fuel`), for a row that wants to
+    /// name it in prose rather than in a command.
+    pub role: String,
+    /// In the pack's own order, which is `Inventory`'s sorted order and so the
+    /// same on every peer. **Every carried stack appears, refused or not —
+    /// except the categorically wrong kind**: a pack of only grade-A refined
+    /// must still open a menu with a named reason rather than an empty box
+    /// (ASSA-301), but a gear is not a rung of any ladder and gets no row. See
+    /// the `WrongItem` note in `insert_offer_facts`, which is the one
+    /// judgement on this item the Game Director may want back.
+    pub offers: Vec<InsertOfferFacts>,
+}
+
 /// ONE PART OF A DESIGN, as a menu row: kind, species, grade and mass, and
 /// nothing else (Game Director's ruling on ASSA-7). Mass is the only number
 /// that moves the verdict; every other sheet property belongs to the assay
@@ -2828,6 +2919,123 @@ impl AssaySim {
                 name: self.world.item_name(stack.item),
             })
             .collect()
+    }
+
+    /// Engine-free half of [`AssaySim::insert_offers`] — see
+    /// [`SlotOffersFacts`] for why this crossing is the sim's and not the
+    /// client's.
+    ///
+    /// **THE SLOTS COME FROM `slot_facts`, NOT FROM A PAIR THIS FUNCTION
+    /// KNOWS ABOUT.** A smelter has two insertable slots and an output that
+    /// takes nothing; a machine's buffer takes nothing either. Walking
+    /// `insert_tag` means a surface drawn from this cannot offer a put control
+    /// where the rules have no target — the same structural refusal
+    /// `SlotFacts::insert_tag` already carries, rather than a second list that
+    /// agrees today.
+    ///
+    /// Empty for an unknown player or building, and empty for a building with
+    /// no insertable slot: a menu with nothing to put is a menu with no rows,
+    /// which is different from a menu whose rows are all refused.
+    pub fn insert_offer_facts(
+        &self,
+        player: Option<PlayerId>,
+        building: i64,
+    ) -> Vec<SlotOffersFacts> {
+        let Some(player) = player else {
+            return Vec::new();
+        };
+        let Some(id) = u32::try_from(building).ok().map(sim::BuildingId) else {
+            return Vec::new();
+        };
+        let Some(b) = self.world.building(id) else {
+            return Vec::new();
+        };
+        let stacks: Vec<sim::ItemStack> = match self.world.player(player) {
+            Some(p) => p.inventory.stacks().to_vec(),
+            None => return Vec::new(),
+        };
+        let mut out = Vec::new();
+        for (role, _, _) in self.world.building_slots(b) {
+            let Some(slot) = role.insertable() else {
+                continue;
+            };
+            let Some(tag) = insert_tag(slot) else {
+                continue;
+            };
+            let offers = stacks
+                .iter()
+                .filter_map(|stack| {
+                    // **THE WHOLE OFFER, NOT ONE UNIT.** The control a player
+                    // presses is `put all N`, so the question asked here is
+                    // the one the button sends. A clamp is not a refusal
+                    // (ASSA-48), so `put all 50` at a slot with room for 3
+                    // answers `None` and still inserts 3.
+                    let reason = sim::step::insert_rejection(
+                        &self.world,
+                        player,
+                        id,
+                        slot,
+                        stack.item,
+                        stack.count,
+                    );
+                    // **`WrongItem` IS THE ONE REFUSAL THAT GETS NO ROW, and
+                    // this is my narrowing of the Game Director's box 4 — it
+                    // is the thing on this item to disagree with.** She ruled
+                    // no refused control hidden, so that a pack of grade-A
+                    // refined opens a menu with a named reason rather than an
+                    // empty box. Read literally over every carried stack it
+                    // also draws your gears, your spare smelter and your pick
+                    // handle as dead fuel controls, two rows each: ten dead
+                    // rows to teach the ladder with two, which is the hierarchy
+                    // complaint that made this P1, inverted again.
+                    //
+                    // `WrongItem` is the only reason that is CATEGORICAL — no
+                    // grade, no world state and no emptying of a slot makes a
+                    // gear smelter input, which is what `plan_refusal_phrase`
+                    // says about `NotAPart` in the same words. Every other
+                    // reason is a rung: `AlreadyBestGrade` says you are at the
+                    // top of one, `TooHotForWalls` says build a better smelter,
+                    // `NotFuel` says this rock will not burn, `SlotFull` says
+                    // empty it. Those teach; "a gear is not ore" does not.
+                    //
+                    // This is still the sim's judgement and not a kind filter
+                    // come back: the client no longer reads the recipe table at
+                    // all, and `WrongItem` is the rules' own word for the
+                    // categorical case. Choosing AMONG the sim's answers is a
+                    // caller's business; deriving one is not (`designs_of`).
+                    if matches!(reason, Some(sim::RejectReason::WrongItem)) {
+                        return None;
+                    }
+                    Some(InsertOfferFacts {
+                        stack: StackFacts {
+                            kind: stack.item.kind.name().to_string(),
+                            species: stack.item.species.0 as i64,
+                            species_name: self.world.species(stack.item.species).name().to_string(),
+                            grade: stack.item.grade.letter().to_string(),
+                            count: stack.count as i64,
+                            name: self.world.item_name(stack.item),
+                        },
+                        refusal: reason.map(|_| {
+                            sim::debug::insert_refusal(
+                                &self.world,
+                                player,
+                                id,
+                                slot,
+                                stack.item,
+                                stack.count,
+                            )
+                            .expect("the chain just returned a reason for this very press")
+                        }),
+                    })
+                })
+                .collect();
+            out.push(SlotOffersFacts {
+                slot: tag,
+                role: role.name().to_string(),
+                offers,
+            });
+        }
+        out
     }
 
     /// Engine-free half of [`AssaySim::halt_lines`], so the rule it carries can
@@ -5941,6 +6149,129 @@ mod tests {
              for it, so a menu is handed no way to try"
         );
         assert_eq!(slots[2].cap as u32, sim::tuning::SMELTER_OUTPUT_CAP);
+    }
+
+    /// **ONE REFUSED PUT CONTROL AND ONE PRESSABLE ONE, IN THE SAME SLOT**
+    /// (ASSA-351). This is the payload `hud.gd::insert_slots` used to derive
+    /// from the item's kind, which offered both slots for any kind some
+    /// non-hand recipe eats — so a pack of grade-A refined got four full-width
+    /// controls and `sim::step` refused all four.
+    ///
+    /// The fixture is the board's own frame in miniature: a pack holding
+    /// grade-A refined (which can never enter an input: nothing refines above
+    /// A) beside ore of the same species (which can). The crossing has to tell
+    /// them apart in one list, keep both rows, and put the SIM's sentence on
+    /// the dead one.
+    #[test]
+    fn a_refused_put_control_crosses_the_sims_own_sentence_and_a_pressable_one_crosses_none() {
+        let (mut sim, me) = with_a_player("nacre");
+        let rock = sim.world().species[0].id;
+        sim.world.species_mut(rock).sheet = sim::Sheet {
+            density: 50,
+            strength: 50,
+            hardness: 30,
+            heat_tolerance: 60,
+            // Below the fuel threshold on purpose, so the Fuel slot refuses
+            // everything and the Input slot is where the interesting split is.
+            reactivity: 1,
+            conductivity: 50,
+        };
+        let smelter = Item::new(sim::ItemKind::Smelter, rock, sim::Grade::B);
+        let ore = Item::new(sim::ItemKind::Ore, rock, sim::Grade::A);
+        let best = Item::new(sim::ItemKind::Refined, rock, sim::Grade::A);
+        // Categorically not smelter input and not fuel: the one stack that must
+        // get NO row in either slot.
+        let gear = Item::new(sim::ItemKind::Gear, rock, sim::Grade::B);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.inventory.add(smelter, 1);
+            p.inventory.add(ore, 7);
+            p.inventory.add(best, 2);
+            p.inventory.add(gear, 3);
+        }
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 1, at.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place {
+                item: smelter,
+                pos: spot,
+            },
+        )]);
+        let id = sim.world().building_at(spot).expect("placed").id;
+
+        let crossed = sim.insert_offer_facts(Some(me), id.0 as i64);
+        let slots: Vec<&str> = crossed.iter().map(|s| s.slot.as_str()).collect();
+        assert_eq!(
+            slots,
+            vec!["Input", "Fuel"],
+            "the insertable slots only, in the sim's order: an output slot has \
+             no `Slot` variant, so no row is offered for it at all"
+        );
+
+        let input = &crossed[0];
+        let kinds: Vec<&str> = input.offers.iter().map(|o| o.stack.kind.as_str()).collect();
+        assert_eq!(
+            kinds,
+            vec!["ore", "refined"],
+            "a refused stack still gets a row -- the refined is grade A and \
+             dead -- but the gear is categorically not input and gets none"
+        );
+        assert!(
+            crossed[1].offers.iter().all(|o| o.stack.kind != "gear"),
+            "and the gear is no more fuel than it is input"
+        );
+
+        let dead = input
+            .offers
+            .iter()
+            .find(|o| o.stack.kind == "refined")
+            .expect("the grade-A refined is in the pack");
+        let why = dead
+            .refusal
+            .as_deref()
+            .expect("grade A cannot be refined further, so this control is dead");
+        assert!(
+            why.contains(sim::debug::best_grade_note()),
+            "the reason beside a dead control is the sim's own: {why:?}"
+        );
+        assert_eq!(
+            dead.refusal,
+            sim::debug::insert_refusal(sim.world(), me, id, sim::Slot::Input, best, 2),
+            "and this crate re-words nothing on the way through"
+        );
+
+        let live = input
+            .offers
+            .iter()
+            .find(|o| o.stack.kind == "ore")
+            .expect("the ore is in the pack");
+        assert_eq!(
+            live.refusal, None,
+            "ore of the smelter's own species goes in: the fix must not \
+             disable the working path"
+        );
+
+        // SELF-CHECK ON THE FIXTURE'S OWN AIM. Every assertion above is
+        // satisfied by a world where the split never happened — all refused,
+        // or all pressable — if the two `find`s happened to land on the same
+        // kind of answer. One frame has to contain both.
+        let refused = input.offers.iter().filter(|o| o.refusal.is_some()).count();
+        let pressable = input.offers.iter().filter(|o| o.refusal.is_none()).count();
+        assert_eq!(
+            (refused, pressable),
+            (1, 1),
+            "the point of this fixture is one of each in one list: {:?}",
+            input.offers
+        );
+
+        // And the slot a sheet reading rules out entirely: unreactive rock is
+        // not fuel at any grade, so both rows are dead and both say why.
+        let fuel = &crossed[1];
+        assert!(
+            fuel.offers.iter().all(|o| o.refusal.is_some()),
+            "reactivity 1 is below the fuel threshold for every stack here"
+        );
     }
 
     /// **A SMELTER HOLDING LESS THAN ONE BATCH READS COLD, AND UNTIL ASSA-322 IT

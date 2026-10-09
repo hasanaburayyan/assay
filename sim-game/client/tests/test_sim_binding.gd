@@ -54,6 +54,11 @@ const REQUIRED_METHODS := [
 	# worst way this surface can: the panel that exists to say "something has stopped" would say
 	# nothing, which is indistinguishable from a factory that is working.
 	"halt_lines",
+	# WHETHER A MACHINE MENU'S PUT CONTROLS DO ANYTHING (ASSA-351). A rename here fails open in the
+	# direction the item exists to close: `insert_offers` returning [] draws a menu with no put
+	# controls at all, which reads as a machine that takes nothing in -- and the client has no second
+	# reading to fall back on any more, which is the point of deleting `AssayHud.insert_slots`.
+	"insert_offers",
 ]
 
 
