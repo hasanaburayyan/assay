@@ -14,7 +14,8 @@
 //! a part that does not exist anywhere in the world. Five reads off one
 //! session:
 //!
-//! 1. a design named in full — the numbers, `0/1`, and the refusal PREDICTED;
+//! 1. a design named in full — the numbers, `need 1 · have 0`, and the refusal
+//!    PREDICTED;
 //! 2. `assemble` with the very same words — still "you have no", because it
 //!    spends what it names;
 //! 3. `make` likewise, so the change is not loose in the resolver everything
@@ -104,21 +105,42 @@ quit
         "a design you cannot afford is weighed, not refused: {readout}\n{transcript}"
     );
 
-    // ...and the have/need the Game Director asked for, plus the press's own
+    // ...and the counts the Game Director asked for, plus the press's own
     // refusal said before it is pressed.
     //
-    // PINNED TO TODAY'S WORDING ON PURPOSE. `assay-build-screen` §5.5 reverses
-    // §5.3 — `0/1` becomes `need 1 · have 0`, because a slash is a ratio's mark
-    // and `2/1` reads as 200% — and says the sim's `--plain` line should carry
-    // the same words (ASSA-338). This assertion is what makes whoever moves it
-    // move both clients' expectations deliberately rather than one of them.
-    let pack_line = stdout
-        .lines()
-        .find(|l| l.contains("your pack: "))
+    // MOVED TO §5.5's WORDING (ASSA-338), which is what the comment that used
+    // to sit here predicted: `0/1` is now `need 1 · have 0`, because a slash is
+    // a ratio's mark and `2/1` reads as 200% of something. The window's block 6
+    // already said it her way, so until this landed the two clients spelled one
+    // fact apart — and this is the one the charter calls the reference client.
+    // ONE ENTRY PER LINE as of her third ruling, so the counts and the refusal
+    // are no longer one string to search: the entries sit under the header and
+    // the clause closes them at the header's own indent.
+    let lines: Vec<&str> = stdout.lines().collect();
+    let header = lines
+        .iter()
+        .position(|l| l.contains("your pack:"))
         .unwrap_or_else(|| panic!("the readout counted no parts\n{transcript}"));
+    let entries: Vec<&&str> = lines[header + 1..]
+        .iter()
+        .take_while(|l| l.contains(" need ") && l.contains(" · have "))
+        .collect();
     assert!(
-        pack_line.contains("0/1 ") && pack_line.contains("not enough"),
-        "an empty pack reads 0/1 and predicts the refusal: {pack_line}\n{transcript}"
+        !entries.is_empty() && entries.iter().all(|l| l.ends_with("need 1 · have 0")),
+        "every part of this design is unowned, so each entry is its own line \
+         reading `need 1 · have 0`: {entries:?}\n{transcript}"
+    );
+    let clause = lines[header + 1 + entries.len()..]
+        .iter()
+        .find(|l| l.contains("not enough"))
+        .unwrap_or_else(|| panic!("the refusal was not predicted\n{transcript}"));
+    // The clause carries the item's DISPLAY name (`Bokase handle (A)`), not the
+    // spec that was typed (`handle:bokase:a`), so the kind word is what this
+    // can honestly assert without rebuilding an `Item` from a string here.
+    assert!(
+        clause.contains("handle"),
+        "the clause names `plan`'s own choice — the FIRST entry the pack cannot \
+         pay for, which is the frame here: {clause:?}\n{transcript}"
     );
 
     // READS 2 AND 3 — NO COMMAND THAT SPENDS SOMETHING MOVED. Same words as

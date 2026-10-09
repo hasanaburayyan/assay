@@ -3113,8 +3113,10 @@ fn readout_after(world: &World, built: &Built, headline: &str) -> String {
 /// **A PACK TOO THIN IS NOT A REFUSAL HERE**, which is the one place this
 /// deliberately differs from [`crate::step::step`]. `step` rejects
 /// `MissingItems` last and builds nothing; a build screen has to show the
-/// verdict for the design you are SAVING UP FOR, with have/need beside it
-/// (the Game Director's §5.3: counts are text, have on the left). So the
+/// verdict for the design you are SAVING UP FOR, with the counts beside it
+/// (the Game Director's §5.5: counts are text, `need 1 · have 2`, both numbers
+/// always. She reversed §5.3's "have on the left" the same evening and
+/// ASSA-338 moved this line with her). So the
 /// counts are always printed and the refusal is PREDICTED in words instead.
 /// The tally is step's own all-or-nothing shape: two hoppers of one material
 /// need two in the pack, not one twice.
@@ -3150,24 +3152,53 @@ pub fn design_preview(world: &World, player: PlayerId, frame: Item, mounted: &[I
     // THE TALLY IS THE PLAN'S, not a second count of the same parts: a pack
     // column that disagreed with what the press spends is the bug this whole
     // function exists to prevent, one row lower down.
-    let counts = cost
-        .iter()
-        .map(|s| {
-            format!(
-                "{}/{} {}",
-                p.inventory.count(s.item),
-                s.count,
-                world.item_name(s.item)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" · ");
+    //
+    // **NEED FIRST, BOTH NUMBERS ALWAYS, NO SLASH** (ASSA-338; the Game
+    // Director's §5.5, which reverses her own §5.3 the same evening). This
+    // printed `2/1 Bokase head (B)` — you have two and need one — and a slash
+    // is a ratio's mark, which needs left ≤ right to read: `12 / 20` is
+    // progress, `2/1` reads as 200% of something. **On any stocked pack the
+    // surplus case is the NORMAL case**, so most rows on a working screen were
+    // broken ratios. Need first because the question the line answers is *is
+    // the need met*, and the short case then reads as an instruction:
+    // `need 1 · have 0`.
+    //
+    // **THE WINDOW ALREADY SAYS IT HER WAY AND THIS LINE DID NOT**, which is
+    // why it is worth a change rather than a note: `AssayHud.cost_counts_line`
+    // landed §5.5 on block 6 of the build screen, and a `--plain` player read
+    // the old wording of the same fact. Two surfaces spelling one fact apart is
+    // ASSA-43/52, and this is the half the charter calls the reference client.
+    //
+    // THE NAME LEADS THE ENTRY AND THERE IS ONE ENTRY PER LINE, which is the
+    // Game Director taking back her own `, ` (ASSA-338, third ruling). Her
+    // §5.5 moved `·` INSIDE an entry (`need 1 · have 2`) while `·` is already
+    // this sim's TOP-LEVEL clause mark (`SAFE · mass … · …`), so one mark held
+    // two ranks; a wrap could then split `need 1` from `have 2`, which is the
+    // one thing ASSA-305 lets a client do to our sentences. Parting entries on
+    // `, ` would have fixed the collision by inverting the hierarchy — the
+    // weakest mark doing the strongest job. **A list with no separator cannot
+    // give a mark two jobs**, so the list is lines and `·` keeps one rank.
+    //
+    // The counts are in a column because her ruling's own sample is in a
+    // column, and the width comes off the names actually printed: this is a
+    // list, and a list the eye can scan down is the whole reason for the shape.
+    let names: Vec<String> = cost.iter().map(|s| world.item_name(s.item)).collect();
+    let column = names.iter().map(|n| n.chars().count()).max().unwrap_or(0);
 
     let mut out = match unfinished {
         Some(error) => unfinished_readout(world, built, error),
         None => assembly_readout(world, built),
     };
-    let _ = write!(out, "\n      your pack: {counts}");
+    let _ = write!(out, "\n      your pack:");
+    for (name, s) in names.iter().zip(cost.iter()) {
+        let pad = " ".repeat(column - name.chars().count());
+        let _ = write!(
+            out,
+            "\n        {name}{pad}  need {} · have {}",
+            s.count,
+            p.inventory.count(s.item)
+        );
+    }
     // **THE FIGURES ON BOTH ARMS, THE VERDICT ON ONE** (Game Director, ASSA-352).
     //
     // `missing` is carried by `Weighed` and `Unfinished` alike, so this clause
@@ -3180,9 +3211,12 @@ pub fn design_preview(world: &World, player: PlayerId, frame: Item, mounted: &[I
     //
     // **THE COMMENT TWENTY LINES UP HAD ALREADY RULED IT** — *"the middle one
     // gets every number and no verdict"* — and this function contradicted it
-    // just far enough down to read as separate code. `your pack: {counts}` stays
-    // on both arms: it already spells `1/2 Tonore frame`, so the shortfall is
-    // visible as a FIGURE and nothing actionable is lost. Only the blame goes.
+    // just far enough down to read as separate code. The pack LIST stays on
+    // both arms: every entry already spells `need 2 · have 1`, so the shortfall
+    // is visible as a FIGURE and nothing actionable is lost. Only the blame
+    // goes. (ASSA-352 wrote this about the one-line `your pack: {counts}`;
+    // ASSA-338 turned that into the list above and the ruling is unchanged by
+    // the shape.)
     //
     // ASSA-88 in one line: a disqualifier outranks a figure, and the
     // disqualifier here is the empty slot, which `unfinished_readout` names. One
@@ -3194,11 +3228,20 @@ pub fn design_preview(world: &World, player: PlayerId, frame: Item, mounted: &[I
         // The sentence `step` would answer the press with, said before it.
         //
         // The sentence is [`pack_refusal_phrase`]'s and the JOINT is this
-        // caller's. ASSA-338 moves this clause onto a line of its own (the
-        // counts become a list, and a trailed clause would hang off the LAST
-        // row when `plan` picks the FIRST unpayable one); the window says the
-        // same words with no em-dash at all. One sentence, three joints.
-        let _ = write!(out, " — {}", pack_refusal_phrase(world, item));
+        // caller's — one spelling of the refusal, so this surface and the
+        // window cannot drift (ASSA-43/52). This line held its own `format!` of
+        // the same words on the ASSA-338 branch; the extraction landed first on
+        // ASSA-352 and the duplicate died here, in the merge.
+        //
+        // **ITS OWN LINE, AT THE HEADER'S INDENT AND NOT THE ENTRIES'**, and so
+        // no em-dash, which is what the window has always done. It used to
+        // trail the counts, which worked only while they were one line. It is
+        // not a fourth entry and must not read as one: it is a verdict on the
+        // whole list, and `plan` picks it with `cost.iter().find(…)` — the
+        // FIRST entry the pack cannot pay for, which is not in general the last
+        // one printed, so trailing it on the final row would have hung it off a
+        // number that is not the one at fault.
+        let _ = write!(out, "\n      {}", pack_refusal_phrase(world, item));
     }
     out
 }

@@ -337,11 +337,128 @@ fn a_design_the_pack_cannot_pay_for_is_still_weighed() {
         line.contains("not enough"),
         "and it must say what is short: {line}"
     );
-    // The have/need column is the plan's tally, so an empty pack reads 0 on
-    // both rows rather than omitting them.
+    // The counts are the plan's tally, so an empty pack reads 0 on both rows
+    // rather than omitting them — and in §5.5's words, which make the short
+    // case an instruction (ASSA-338).
     assert!(
-        line.contains("0/1") && !line.contains("1/1"),
-        "and the have/need column must read off the same empty pack: {line}"
+        line.contains("need 1 · have 0") && !line.contains("have 1"),
+        "and the counts must read off the same empty pack, need first: {line}"
+    );
+}
+
+/// **THE SURPLUS CASE IS THE NORMAL CASE, WHICH IS WHY THE SLASH WENT**
+/// (ASSA-338; the Game Director's §5.5, reversing her own §5.3 the same
+/// evening). You have two heads and need one, and `2/1` says that as a ratio
+/// with its left side bigger than its right — which reads as 200% of
+/// something, not as a pack.
+///
+/// **THIS IS THE CASE THE OTHER TWO TESTS CANNOT SEE.** They weigh a design
+/// against a pack holding exactly one of each or none at all, where need and
+/// have are the same number or the same word — so `need 1 · have 1` survives
+/// swapping the pair, and the whole wording would be unpinned by tests that
+/// look green. A surplus is the one shape where the two numbers differ in the
+/// direction nothing else in this file produces.
+///
+/// It asks for the WHOLE entry, name included, because the name's place is the
+/// other half of her ruling (*name, then counts*) and a `contains` of the two
+/// counts alone would pass with the name anywhere on the line.
+///
+/// **AND IT NOW PINS THE LIST'S SHAPE WITH `ends_with`** (ASSA-338, her third
+/// ruling: one entry per line). Each entry must END at its own `have`, which is
+/// a claim no `contains` can make: re-joining the entries with `, ` — the shape
+/// this replaced — leaves the first entry's line running on into the second, so
+/// that entry no longer ends where its counts do and this test reddens. The
+/// reason the list is lines at all is that `·` is the sim's TOP-LEVEL clause
+/// mark, so an entry that contains one may not also be separated by one, and
+/// the weaker marks all invert the hierarchy.
+#[test]
+fn a_surplus_pack_reads_need_then_have_and_never_a_ratio() {
+    let (mut world, me) = world_with_player();
+    let frame = part_item(HELD, LIGHT);
+    let head = part_item(PartKind::Head, LIGHT);
+    give(&mut world, me, frame, 1);
+    give(&mut world, me, head, 2);
+
+    let line = debug::design_preview(&world, me, frame, &[head]);
+    // The claim is about the pack clause, so the slash is looked for THERE and
+    // not on the whole readout: a verdict line that grows a slash of its own
+    // some day is not this test's business.
+    let header = line
+        .lines()
+        .position(|l| l.contains("your pack:"))
+        .unwrap_or_else(|| panic!("a weighed design prints its pack: {line}"));
+    let entries: Vec<&str> = line.lines().skip(header + 1).collect();
+
+    for (item, counts) in [(head, "need 1 · have 2"), (frame, "need 1 · have 1")] {
+        let name = world.item_name(item);
+        let entry = entries
+            .iter()
+            .find(|l| l.trim_start().starts_with(&name))
+            .unwrap_or_else(|| panic!("no entry of its own for {name}: {line}"));
+        assert!(
+            entry.ends_with(counts),
+            "{name}'s entry must be a line of its own that ENDS at its counts \
+             ({counts}), or the separator is back: {entry:?}\n{line}"
+        );
+    }
+    assert!(
+        !entries.iter().any(|l| l.contains('/')),
+        "a slash is a ratio's mark and this is not a ratio: {line}"
+    );
+    assert!(
+        !line.contains("not enough"),
+        "a pack with a spare head is not short of anything: {line}"
+    );
+}
+
+/// **THE REFUSAL CLAUSE NAMES THE FIRST ENTRY THE PACK CANNOT PAY FOR, WHICH IS
+/// NOT THE LAST ONE PRINTED** — the thing one-entry-per-line made askable.
+///
+/// While the counts were a single line the clause trailed them and there was
+/// nothing to get wrong. Now it is a line, and the only wrong place to put it is
+/// hanging off the final row: `assembly::plan` picks the item with
+/// `cost.iter().find(…)`, so it is the FIRST short entry in `part_items()`
+/// order. This fixture holds the head and not the frame, so the short entry is
+/// the frame — printed FIRST, with an affordable row after it. A clause trailed
+/// on the last row would blame the head, which the player is holding.
+///
+/// It also pins the clause's indent as the HEADER's and not the entries': it is
+/// a verdict on the list, not a fourth entry, and the indent is what says so.
+#[test]
+fn the_refusal_clause_blames_the_first_short_entry_and_is_not_an_entry() {
+    let (mut world, me) = world_with_player();
+    let frame = part_item(HELD, LIGHT);
+    let head = part_item(PartKind::Head, LIGHT);
+    give(&mut world, me, head, 1);
+
+    let line = debug::design_preview(&world, me, frame, &[head]);
+    let clause = line
+        .lines()
+        .find(|l| l.contains("not enough"))
+        .unwrap_or_else(|| panic!("an unaffordable design predicts the refusal: {line}"));
+
+    assert!(
+        clause.contains(&world.item_name(frame)),
+        "the frame is the part the pack is short of: {clause:?}\n{line}"
+    );
+    assert!(
+        !clause.contains(&world.item_name(head)),
+        "the head is held, so blaming it would be the clause trailing the last \
+         row instead of naming `plan`'s own choice: {clause:?}\n{line}"
+    );
+    // The entries are indented one step deeper than the header; the clause sits
+    // at the header's step. Measured off the strings rather than asserted as a
+    // constant, because the width is `debug.rs`'s to change.
+    let header = line
+        .lines()
+        .find(|l| l.contains("your pack:"))
+        .expect("a weighed design prints its pack");
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    assert_eq!(
+        indent(clause),
+        indent(header),
+        "the clause is a verdict on the list, so it sits at the header's \
+         indent, not an entry's:\n{line}"
     );
 }
 
@@ -359,7 +476,7 @@ fn the_preview_reads_as_the_machine_it_builds() {
     let planned = preview(&world, me, frame, &[head]);
     let before = debug::design_preview(&world, me, frame, &[head]);
     assert!(
-        before.contains("1/1") && !before.contains("not enough"),
+        before.contains("need 1 · have 1") && !before.contains("not enough"),
         "the pack does cover it: {before}"
     );
     let readout = debug::assembly_readout(&world, planned.built().expect("sound design"));
@@ -648,9 +765,12 @@ fn a_permanently_faulted_design_keeps_todays_refusal_and_no_numbers() {
 ///
 /// **THE PREMISE IS ASSERTED, because a fixture with a full pack would pass this
 /// with the guard gone.** The pack has to be short for the suppressed clause to
-/// have been reachable at all, so the figure `1/2` is checked first — and the
-/// refusal `step` really answers that press with is checked last, so the test
-/// says what is being suppressed rather than that nothing was there.
+/// have been reachable at all, so the shortfall is checked first — off the
+/// INVENTORY, not off the readout's wording (ASSA-338 re-spelled the pack as a
+/// list and `1/2 ` stopped appearing; a premise keyed on that phrase would have
+/// gone green over a deleted guard) — and the refusal `step` really answers that
+/// press with is checked last, so the test says what is being suppressed rather
+/// than that nothing was there.
 #[test]
 fn a_half_placed_design_shows_its_shortfall_as_a_figure_and_blames_the_slot() {
     let (mut world, me) = world_with_player();
@@ -668,10 +788,25 @@ fn a_half_placed_design_shows_its_shortfall_as_a_figure_and_blames_the_slot() {
          test is about the other arm: {planned:?}"
     );
     let line = debug::design_preview(&world, me, frame, &[hopper, hopper]);
+    // **THE PREMISE IS ON THE PACK, NOT ON A SPELLING OF IT** (ASSA-338). This
+    // read `line.contains("1/2 ")`, the one-line pack's wording; the list form
+    // spells the same shortfall `need 2 · have 1` on the hopper's own row, so a
+    // premise keyed on the old phrase would have gone quietly green with the
+    // guard under test removed — a premise that cannot fail is not a premise.
+    // Asked of the inventory, which no re-wording reaches.
+    assert_eq!(
+        world.player(me).map(|p| p.inventory.count(hopper)),
+        Some(1),
+        "premise: the pack has to be short of the two hoppers this design asks \
+         for, or the clause under test was never reachable here"
+    );
+    // And the FIGURE is still printed, which is the half ASSA-352 keeps when it
+    // drops the blame: *"the shortfall is visible as a figure and nothing
+    // actionable is lost"*. That claim IS about the wording, so it is keyed on
+    // the wording deliberately.
     assert!(
-        line.contains("1/2 "),
-        "premise: the pack has to be short, or the clause under test was never \
-         reachable here: {line}"
+        line.contains("need 2 · have 1"),
+        "the shortfall survives as a figure on the hopper's row: {line}"
     );
     assert!(
         line.starts_with("it needs at least 1 head and has 0 · "),
@@ -730,9 +865,16 @@ fn a_whole_design_with_a_thin_pack_still_predicts_the_refusal() {
         "premise: every slot this frame requires is filled, so it is WEIGHED: {planned:?}"
     );
     let line = debug::design_preview(&world, me, frame, &[head, hopper, hopper]);
+    // Premise on the pack rather than on the pack LINE's wording, for the
+    // reason written out in the test above.
+    assert_eq!(
+        world.player(me).map(|p| p.inventory.count(hopper)),
+        Some(1),
+        "premise: the pack still has to be short of the two hoppers asked for"
+    );
     assert!(
-        line.contains("1/2 "),
-        "premise: the pack still has to be short: {line}"
+        line.contains("need 2 · have 1"),
+        "and the shortfall is still a figure on the hopper's row: {line}"
     );
     assert!(
         line.contains("not enough") && line.contains("assembling it would be refused"),
