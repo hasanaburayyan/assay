@@ -139,6 +139,14 @@ func _initialize() -> void:
 		_finish(false, "mode is one of %s, not `%s`"
 				% [[MODE_MAKE, MODE_ASSEMBLE, MODE_REFUSE], _mode])
 		return
+	# **AN EXPLICIT TICK COUNT DISPLACES THE MODE'S BUDGET ENTIRELY, AND THAT COST A TEAMMATE A RUN**
+	# (ASSA-383). `make` is built around `DEFAULT_TICKS`; `assemble`/`refuse` need parts in the pack
+	# and want `ASSEMBLE_TICK_CEILING`. Hand `make` the assembly number and it plays 33x longer than
+	# the mode intends, walks the catalogue to a recipe nothing uses, and shoots a frame whose block 5
+	# -- the make path's whole subject -- draws nothing. QA hit exactly that at `14247 2000 make` and
+	# could neither confirm nor deny the thing they were sent to check. **The override stays** --
+	# `assemble` legitimately wants a big number and ASSA-377's evidence was taken at 2000 -- so the
+	# protection is `_report_make_subject`, which refuses the shot instead of letting it look green.
 	var budget := ASSEMBLE_TICK_CEILING if _needs_pack() else DEFAULT_TICKS
 	_left = int(argv[2]) if argv.size() > 2 else budget
 	_ticks_asked = _left
@@ -737,7 +745,53 @@ func _measure() -> void:
 				+ "headless answer would put the screen over a control")
 				% [AssayHud.WORLD_CONTROLS_BAND, world.end.y - top])
 	_report_mount_rows()
+	_report_make_subject()
 	_measure_commit_bar(screen_rect)
+
+
+## **A MAKE-PATH SHOT WHOSE SUBJECT IS ABSENT MAY NOT SAY `SHOT OK`** (ASSA-383).
+##
+## `_measure`'s own docstring already holds the principle one level up: *"a laid-out window that
+## reports a control with no size is itself the finding: it means this tool measured nothing and must
+## not say so in green."* Block 5 IS the make path -- it is what `what you get` is for, and it is the
+## surface ASSA-357's scale ruling was measured on. A frame where it draws nothing is not evidence
+## about it, whatever the rects say.
+##
+## **THIS IS NOT HYPOTHETICAL AND IT COST A TEAMMATE A RUN.** Nerite re-shot the make path at
+## `14247 2000 make` to answer a Game Director question, landed on *"dead end: nothing uses a gear"*
+## with block 5 completely empty, and reported they could not confirm or deny -- while the tool
+## printed its ordinary report and the answer was the tool's own `DEFAULT_TICKS`, which their
+## explicit argument had silently displaced. They then spent further tries hunting a combination.
+##
+## **MODELLED ON `refuse` MODE'S OWN GUARD**, which refuses a run the sim does not call `unfinished`
+## rather than shooting it: a run that is not the state the mode is about is refused, not reported.
+##
+## **THE PICTURE IS READ OFF THE NODE, NOT OFF THE OFFER.** `_icon_box`'s reserve arm returns a bare
+## `Control` drawing nothing when there is no art, so "the offer has a `makes`" and "a picture is on
+## the screen" are different claims and only the second one is this tool's business.
+func _report_make_subject() -> void:
+	if _mode != MODE_MAKE:
+		return
+	var drawn := 0
+	for child in _screen._build_detail.find_children("*", "TextureRect", true, false):
+		if (child as TextureRect).texture != null:
+			drawn += 1
+	var offer: Dictionary = _screen._chosen_offer()
+	var row := String(offer.get("line", offer.get("name", "")))
+	var dead_end := String(offer.get("dead_end", ""))
+	print("MAKE     block 5 draws %d picture(s) · row `%s` · dead end `%s`" % [drawn, row, dead_end])
+	if drawn > 0:
+		return
+	var why := "the sim still offers it, so the empty box is not a dead end"
+	if dead_end != "":
+		why = "%s%s" % [_screen._sim.dead_end_label(), dead_end]
+	elif offer.is_empty():
+		why = "the sim offers nothing in this material any more"
+	_faults.append(("block 5 draws NO PICTURE, so this frame is not evidence about the make path: "
+			+ "the chosen row is `%s` and %s. This run asked for %d ticks and `make` is built around "
+			+ "%d (`DEFAULT_TICKS`); an explicit tick count displaces the mode's budget, and a bigger "
+			+ "one walks the catalogue past the recipes that have an output (ASSA-383)")
+			% [row, why, _ticks_asked, DEFAULT_TICKS])
 
 
 ## **NO `what to mount` ROW OFFERS AN ACT THE SIM WOULD REFUSE** (ASSA-371).
