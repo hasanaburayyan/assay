@@ -2335,12 +2335,15 @@ func test_either_click_on_a_machine_opens_a_menu_beside_it() -> bool:
 			break
 		# **THE POSITION IS THE TETHER SINCE ASSA-334** (Maren reversing ruling 1), SO THE RING IS NOT.
 		# Ruling 8 gave the menu's machine the mark ASSA-276 move 4 had put on the acted-on tile; with
-		# the panel beside its machine, the ring goes back. Nothing here right-clicked, so `_targeted` is
-		# false and the honest answer is NO ring at all -- a menu that still claimed one would be the
-		# two-subjects-one-mark defect this item exists to undo.
-		if screen._world.selection != null:
-			ok = _fail(("the menu is open on %s and the ring is on %s: opening a menu does not aim "
-					+ "anything") % [spot, screen._world.selection])
+		# the panel beside its machine, the ring goes back to `_target` and tracks it whatever menu is
+		# open. **THIS TEST CANNOT TELL THE TWO RULES APART AND SAYS SO**: the smelter was placed on the
+		# targeted tile, so here the acted-on tile IS the menu's machine and both rules predict the same
+		# mark. `test_the_ring_stays_on_the_acted_on_tile_while_a_menus_machine_is_elsewhere` is the one
+		# that separates them.
+		var want: Variant = screen._target if screen._targeted else null
+		if screen._world.selection != want:
+			ok = _fail("the ring is on %s and the acted-on tile is %s"
+					% [screen._world.selection, want])
 			break
 		# **AND THE PANEL IS BESIDE ITS MACHINE, ASKED OF THE SCREEN'S OWN GEOMETRY** -- the box's rect
 		# and not the region's, which is the whole world now and exists to clip.
@@ -2560,13 +2563,15 @@ func test_a_slot_button_fuels_the_menus_machine_with_the_count_at_the_press() ->
 			ok = _fail("a slot button asked for %s" % [_asked])
 		elif _asked[0] != want:
 			ok = _fail("`%s` asked for %s, not %s" % [label, _asked[0], want])
-	# THE FRACTION SENDS ITS OWN NUMBER. `or 1` is the one count every stack of two or more offers.
+	# THE FRACTION SENDS ITS OWN NUMBER. `put 1` is the one count every stack of two or more offers.
 	#
 	# **THE FRACTIONS STILL DO NOT NAME THEIR SLOT, SO THIS HALF KEEPS THE HEDGE ON PURPOSE** -- the two
-	# `or 1` buttons under the two slot rows read alike, and the one found here is whichever the sim's
-	# slot order put first. That is the open half of Maren's ASSA-331 label ruling: a fraction is a
-	# continuation of the button above it, and naming the slot in each would make it the longest row in
-	# the menu. Filed for her; if she rules the slot in, this hedge is what should tighten.
+	# `put 1` buttons under the two slot rows read alike, and the one found here is whichever the sim's
+	# slot order put first. Maren's ASSA-334 §5 renamed them (`or 1` is not a sentence) and did NOT ask
+	# for the slot in them, while her acceptance box asks that no two buttons in the menu read alike;
+	# those two cannot both hold here, and the reason I kept her sentence over her box is her own ruling
+	# 6: with the slot in the row's own button, repeating it twice more under it is the same answer three
+	# times. It is cheap to reverse -- one argument to `insert_some_label` -- and it is hers.
 	if ok and AssayHud.insert_fractions(held).size() > 0:
 		var some := _find(screen._menu_box, AssayHud.insert_some_label(1))
 		if some == null:
@@ -2579,10 +2584,159 @@ func test_a_slot_button_fuels_the_menus_machine_with_the_count_at_the_press() ->
 			var one_in: Variant = AssayActions.insert(id, AssayActions.SLOT_INPUT,
 					AssayActions.item_of_stack(ore), 1)
 			if _asked.size() != 1:
-				ok = _fail("`or 1` asked for %s" % [_asked])
+				ok = _fail("`put 1` asked for %s" % [_asked])
 			elif _asked[0] != one and _asked[0] != one_in:
-				ok = _fail("`or 1` asked for %s, not an Insert of 1 into building %d"
+				ok = _fail("`put 1` asked for %s, not an Insert of 1 into building %d"
 						% [_asked[0], id])
+	screen.queue_free()
+	return ok
+
+
+## **THE RING STAYS ON THE TILE THE VERBS ACT ON, WITH A MENU OPEN ON A MACHINE SOMEWHERE ELSE**
+## (ASSA-334; Maren reversing her ASSA-316 ruling 8, which had routed it to the menu's machine).
+##
+## **THIS IS THE FIXTURE THAT SEPARATES THE TWO RULES, AND NO OTHER TEST IN THE FILE HAS IT.** Every
+## other menu test places its smelter on the targeted tile, so the acted-on tile and the menu's machine
+## are the same tile and both rules predict the same mark -- which is how ruling 8 shipped and was
+## measured green. Here the cursor is aimed at my own feet and the menu is opened on a machine one tile
+## away: the state Maren's shot caught, ring on (59, 61), the menu's smelter, while the column read
+## `acting on (57, 59) · on a deposit`.
+##
+## THE ORDER OF THE TWO GESTURES IS FORCED by her own ruling 7 amendment: a right-click that dismisses
+## a menu still aims, so right-clicking AFTER opening would close the menu. Aim first, then open.
+func test_the_ring_stays_on_the_acted_on_tile_while_a_menus_machine_is_elsewhere() -> bool:
+	var screen := _joined()
+	var ok := true
+	var id := _a_placed_smelter(screen)
+	if id < 0:
+		screen.queue_free()
+		return false
+	var machine: Vector2i = screen._target_tile()
+	var feet: Vector2i = screen._my_tile()
+	if machine == feet:
+		screen.queue_free()
+		return _fail("the smelter stands on my own feet, so this fixture cannot tell the two apart")
+	_click(screen, feet, MOUSE_BUTTON_RIGHT)
+	_click(screen, machine, MOUSE_BUTTON_LEFT)
+	if screen._menu_at != id:
+		ok = _fail("the menu did not open on the machine at %s" % machine)
+	elif screen._world.selection == machine:
+		ok = _fail(("the ring is on %s, the menu's machine, and the verbs act on %s: one mark, two "
+				+ "subjects") % [machine, feet])
+	elif screen._world.selection != feet:
+		ok = _fail("the verbs act on %s and the ring is on %s" % [feet, screen._world.selection])
+	screen.queue_free()
+	return ok
+
+
+## **EVERY SLOT THE MACHINE HAS DRAWS ITS FILL AS A BAND, AND A MACHINE WITH NO BATCH DRAWS NONE**
+## (ASSA-339; Maren's ASSA-316 ruling 5, and Marlow's two conditions on it).
+##
+## **THE SLOT LIST IS THE SIM'S AND THE TEST WALKS IT**, so a menu that drew two of the three slots a
+## smelter has would fail rather than look complete. `output` takes no insert and still gets a row: it
+## is the slot that answers *is there anything for Take*, and under ASSA-316 it had no line at all.
+##
+## **THE NIL CASE IS THE ONE MARLOW NAMED AND IT IS ASSERTED AS NIL, NOT AS ZERO** -- *"`0 of 100` on a
+## drill standing on bare ground is a number that reads as a promise"*. A fresh smelter has nothing in
+## front of it, so `work` is nil and the batch row must be ABSENT; the control is that the slot bands,
+## on the same surface in the same grammar, are present in the same frame. Without that control a menu
+## that drew no bands at all would pass the half this test exists for.
+func test_every_slot_draws_a_band_and_a_machine_with_no_batch_draws_none() -> bool:
+	var screen := _joined()
+	var ok := true
+	if _a_placed_smelter(screen) < 0:
+		screen.queue_free()
+		return false
+	_click(screen, screen._target_tile(), MOUSE_BUTTON_LEFT)
+	var facts: Dictionary = screen._sim.tile_at(screen._menu_tile).get("building", {})
+	var slots: Array = facts.get("slots", [])
+	if slots.is_empty():
+		screen.queue_free()
+		return _fail("the sim gives this smelter no slots, so this test asserts nothing")
+	for entry in slots:
+		var slot: Dictionary = entry
+		var role := String(slot.get("role", "?"))
+		var row: Variant = screen._menu_slot_rows.get(role)
+		if row == null:
+			ok = _fail("the `%s` slot has no row in the menu: %s"
+					% [role, screen._menu_slot_rows.keys()])
+			break
+		var band := (row as Node).get_node(screen.ROW_BAND) as AssayTrack
+		var counts := ((row as Node).get_node(screen.ROW_COUNTS) as Label).text
+		if band.grammar() != AssayTrack.Grammar.AMOUNT:
+			ok = _fail("the `%s` slot's band is grammar %d, not an amount" % [role, band.grammar()])
+			break
+		# THE NUMBERS ARE THE SIM'S PAIR AND NOT A RATIO THIS CLIENT WORKED OUT.
+		var want := AssayHud.amount_counts_line(int(slot.get("count", 0)), int(slot.get("cap", 0)))
+		if counts != want:
+			ok = _fail("the `%s` slot reads `%s` and the sim says `%s`" % [role, counts, want])
+			break
+	if ok and facts.get("work") != null:
+		ok = _fail("a freshly placed smelter reports a batch (%s), so the nil case is untested here"
+				% [facts.get("work")])
+	if ok and screen._menu_work.visible:
+		ok = _fail("there is no batch and the menu draws a row for it: `%s`"
+				% (screen._menu_work.get_node(screen.ROW_COUNTS) as Label).text)
+	if ok and (screen._menu_work.get_node(screen.ROW_BAND) as AssayTrack).grammar() \
+			!= AssayTrack.Grammar.NOTHING:
+		ok = _fail("there is no batch and its band has a grammar, so something is drawn for it")
+	# **AND THE BURN STAYS TEXT, WHICH IS MARLOW'S RULING AND IS HERE SO NOBODY ADDS IT AS AN
+	# OVERSIGHT.** A fire's denominator is `reactivity * BURN_TICKS_PER_REACTIVITY`, a sim rule, and a
+	# host multiplying it out would be writing that rule in GDScript. So `burn_left` gets no band: the
+	# only bands in this menu are the slots' fills and the batch, one per slot plus at most one.
+	if ok:
+		var bands := 0
+		for node in _tracks_of(screen._menu_box):
+			bands += 1 if (node as AssayTrack).grammar() != AssayTrack.Grammar.NOTHING else 0
+		if bands != slots.size():
+			ok = _fail(("%d bands are drawn for %d slots and no batch: a burn band is Marlow's to add "
+					+ "in the sim, not this file's to divide") % [bands, slots.size()])
+	screen.queue_free()
+	return ok
+
+
+## EVERY `AssayTrack` UNDER A NODE, so a band count is a fact about the tree rather than about the
+## names this test remembers.
+func _tracks_of(node: Node) -> Array:
+	var out := []
+	for child in node.get_children():
+		if child is AssayTrack:
+			out.append(child)
+		out.append_array(_tracks_of(child))
+	return out
+
+
+## **NO TWO `put all` BUTTONS IN THE MENU READ ALIKE** (ASSA-334 §5; Maren: *"two buttons both reading
+## `put all 2 Tonore refined (A)`, told apart only by the heading above them, are one label twice"*).
+##
+## **IT IS THE `put all` BUTTONS AND NOT EVERY BUTTON, WHICH IS A READING OF HER RULING RATHER THAN HER
+## BOX.** Her acceptance asks that no two buttons in the menu carry identical labels; the fraction
+## toggles under one slot's button are `put 1` and `put 18`, and they repeat under the next slot. Her
+## own §5 sentence renamed them and did not ask for the slot in them -- and naming the slot in a
+## fraction would put it three times in three consecutive lines, which is her ruling 6. Said here
+## because this test is where somebody would come looking for it.
+func test_no_two_put_all_buttons_in_a_machine_menu_read_alike() -> bool:
+	var screen := _joined()
+	var ok := true
+	if _a_placed_smelter(screen) < 0:
+		screen.queue_free()
+		return false
+	_click(screen, screen._target_tile(), MOUSE_BUTTON_LEFT)
+	var seen := {}
+	var puts := 0
+	for label in _labels_of(screen._menu_box):
+		if not label.begins_with("put all"):
+			continue
+		puts += 1
+		if seen.has(label):
+			ok = _fail("two buttons in the menu read `%s`" % label)
+			break
+		seen[label] = true
+	# **A STACK THE SIM TAKES AS EITHER FUEL OR INPUT IS WHAT THE RULING IS ABOUT**, so one button is
+	# not evidence: with a single slot row the check above cannot fail.
+	if ok and puts < 2:
+		ok = _fail("only %d `put all` button(s) in this menu, so two cannot be compared: %s"
+				% [puts, _labels_of(screen._menu_box)])
 	screen.queue_free()
 	return ok
 

@@ -4099,9 +4099,15 @@ func _refresh_machine_menu() -> void:
 	# invents neither. The NOUN in that clause is a sim decision -- ticks of a recipe for a smelter,
 	# work toward a unit for a drill -- and ASSA-334 crossed it through the binding rather than let
 	# this file pick one.
+	# **`nil` IS READ AS `nil` AND NOT THROUGH A DEFAULT.** `Dictionary.get(key, "")` returns the default
+	# only when the KEY is missing, and these two keys are always present and carry `nil` for "there is
+	# no batch" -- so `String(it.get("work_clause", ""))` is `String(null)`, which is a runtime error and
+	# not an empty string. Five tests found it; the binding is explicit that both fields are nil
+	# together, and this is the branch that reads them that way.
 	var work: Variant = it.get("work")
+	var clause: Variant = it.get("work_clause")
 	var batch: Vector2i = work if work != null else Vector2i.ZERO
-	_set_amount_row(_menu_work, String(it.get("work_clause", "")), batch.x, batch.y)
+	_set_amount_row(_menu_work, String(clause) if clause != null else "", batch.x, batch.y)
 	var stacks := _sim.inventory_of(_client.player_id) if _client != null else []
 	# **THE SLOTS ARE IN THE SIGNATURE NOW AND THE REASON IS THE BANDS** (ASSA-339). The rows used to
 	# depend on the pack alone; a slot's fill is a row too, and its CAP and its contents' NAME change
