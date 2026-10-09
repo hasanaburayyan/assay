@@ -6,14 +6,20 @@
 ITEMS frame instead, so the stretch mode picks 1/3 and the HEIGHT binds. That is still the stretch
 rule written out in my own words, which is a replica. This reads the window.
 
-The plate is a themed `Panel` (RAISED), the sprite is species-TINTED, and the panel behind both is
-SURFACE -- so the sprite is the only COLOURED thing in the region: a pixel whose channel spread
-(max-min) clears SPREAD is paint. Panels, borders, text and the screen itself are all neutral greys.
+The plate is a themed `Panel`, the sprite is species-TINTED, and the panel behind both is SURFACE,
+so the sprite is the only non-neutral thing in the region. **How "neutral" is decided is in
+`_is_ui_neutral` below and it is NOT a spread threshold** -- this paragraph said it was, for as long
+as it took me to find that the threshold binned the dark half of a sprite as furniture. Read the
+function, not this sentence.
 
     art/slot_plate_probe.py <window.png> <x0> <y0> <x1> <y1>
 
-Prints one line per connected run of columns holding paint (one plate's sprite), with its ink bbox
-and what share of a 32x32 and a 32x48 plate that is.
+ONE RECT IS ONE PLATE. The caller names it; the probe does not guess, and a rect borrowed from
+another frame CLIPS silently. For a sprite that overruns its plate, flood-fill from a seed pixel
+inside it instead -- see `CONTROL-pre-fit.txt` in the evidence folder for that form.
+
+Prints the plate's bbox, the ink's bbox, how far the ink reaches outside the plate on each side,
+and the ink's share of the plate.
 """
 import sys
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
