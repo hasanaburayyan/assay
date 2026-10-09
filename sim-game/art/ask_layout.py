@@ -92,10 +92,58 @@ def ask_the_engine(because, probe=None):
             "ICON_GODOT_TIMEOUT=<seconds>." % (TIMEOUT, os.path.relpath(CLIENT, ROOT)))
     for line in p.stdout.splitlines():
         if line.startswith("LAYOUT_JSON "):
-            return json.loads(line[len("LAYOUT_JSON "):])
+            return trust(json.loads(line[len("LAYOUT_JSON "):]), because)
     blob = p.stdout + p.stderr
     raise CannotCheck("the probe printed no LAYOUT_JSON.%s\n--- godot said ---\n%s"
                       % (diagnose(blob), excerpt(blob)))
+
+
+def trust(answer, because):
+    """THE PROBE'S OWN SELF-REPORT, REFUSED IN ONE PLACE FOR EVERY CHECK THAT READS IT.
+
+    ASSA-319. A probe can answer perfectly about a layout nobody will ever see, and for a
+    year this one did: the pack list has been a TAB since ASSA-264 and `mineralogy` is the
+    tab that opens, so `_carrying` was never visible, and an invisible container is never
+    laid out -- what its children keep is their own MINIMUM size. For a pack row that
+    happens to be the real size, so six checks scored it right by luck. Same shape on the
+    make list, whose sentence is `EXPAND_FILL`: five rows 95 px wide and 837 to 1361 px
+    tall, scored green over all of it. The window was the same story -- `--script` leaves
+    the root viewport at 64x64 unless a probe sets it every frame.
+
+    SO THE REFUSAL LIVES HERE AND NOT IN THE CHECKS, for this module's own reason: a copy
+    of a rule is a copy, and this one would be seven copies. A check that reads these rows
+    is asking what the engine DREW, and neither a collapsed container nor a 64 px window
+    can answer that -- so it is `CannotCheck`, which every caller turns into EXIT 2, never
+    a pass and never a red.
+
+    IT ONLY JUDGES WHAT THE PROBE VOLUNTEERS. Two probes answer through here (the pack's
+    and the crafting menu's), their JSON has different shapes, and a key that is absent is
+    not a failure: an older probe that reports neither state is exactly as trusted as it
+    was before, and gets no false confidence either.
+
+    **AND IT JUDGES THE TAB, NOT `is_visible_in_tree`, WHICH I FOUND OUT BY MEASURING.**
+    The obvious gate is the pack container's visibility, and on the pack probe it is FALSE
+    even when the layout is perfect: pressing the tab moved every row from its minimum
+    (156-175 px wide) to its laid-out 300, and the flag stayed false, because that probe
+    never joins a world and the screen the column hangs under is not on display. Keyed on
+    it, this function would have refused all seven checks that read the probe while they
+    were measuring the right thing. `pack_box` is reported beside the rows for a reader who
+    wants to tell a width from a minimum.
+    """
+    if answer.get("pack_tab_selected") is False:
+        raise CannotCheck(
+            "the probe measured the pack list without its TAB open, so every rect it reported\n"
+            "is a `custom_minimum_size` and not a drawn size -- an invisible container is\n"
+            "never laid out. Press it through `AssayTabStrip.select` before measuring.\n"
+            "Deliberately not a pass: %s" % because)
+    got, want = answer.get("viewport"), answer.get("viewport_declared")
+    if got and want and list(got) != list(want):
+        raise CannotCheck(
+            "the probe measured a %sx%s window; the project declares %sx%s. Under `--script`\n"
+            "the engine shrinks the root viewport on frame one, so `root.size` has to be set\n"
+            "every frame, not once.\nDeliberately not a pass: %s"
+            % (got[0], got[1], want[0], want[1], because))
+    return answer
 
 
 # A method the GDScript asks for that the registered class does not have. This is what a

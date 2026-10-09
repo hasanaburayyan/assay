@@ -167,6 +167,23 @@ jobs:
       # earn the green. Stdlib only, no Godot, milliseconds.
       - name: The theme poke lives in exactly one place
         run: python3 client/tools/check_one_theme_poke.py
+      # A TOOL WHOSE PRODUCT IS SILENCE NEEDS A GATE OF ITS OWN (ASSA-375).
+      # `client/tools/cache_blind.py` reads every `_refresh_*` with a cache key
+      # and reports what the gated region draws that the key cannot see move --
+      # ASSA-353's family, which no test can find because the defect is an
+      # ABSENCE: there is no state in which a green assertion would have been
+      # red. Once a clean run exists nobody reads those functions by hand again,
+      # so this holds the walk to the two cases Marlow commissioned it against
+      # (ASSA-353 on this tree, his `_refresh_machine_menu` on a declared
+      # replica) plus the three properties that make its classes mean anything.
+      # ASSA-320 is the cost of skipping this: a renamed loop made the
+      # paint-order pin assert nothing for a week, green the whole time.
+      # It also pins a LIMIT on purpose -- the slots in Marlow's key enter
+      # through the sim, so the tool names his function and cannot see his fix,
+      # and that sentence is an assertion rather than a footnote. Stdlib only,
+      # no Godot, ~0.3s.
+      - name: The cache-blind walk still answers both knowns
+        run: python3 client/tools/check_cache_blind.py
       # ONE SPECIES PALETTE, WRITTEN DOWN TWICE. The Blender pipeline tints the
       # ore sprite from `art/species_tints.py`; the Godot client fills a deposit
       # from a const in `client/scripts/hud.gd`. Neither language can read the
@@ -614,6 +631,54 @@ jobs:
           "$GODOT" --headless --path . --script res://tools/button_session.gd \
             -- offline 14247 0 break | tee session-break.log
           grep -q '^BUTTON SESSION OK · DESIGN BROKE' session-break.log
+      # A STALL SENTENCE COMES DOWN WHEN THE STALL DOES (ASSA-300). Before that
+      # item nothing in the client could clear a `Say.FAILED` line at all, so
+      # `the Tonore smelter (A) stopped: no fuel` stayed over the world after
+      # the smelter was fixed, beside a pinned count that had already dropped to
+      # zero. The probe watches the demo's own `NoFuel` stall -- loading the
+      # input before mining the fuel is a step of `button_play` -- and then has a
+      # SECOND player clear it on a tick bundle.
+      #
+      # THE SECOND PLAYER IS THE MEASUREMENT, NOT A CONVENIENCE. In solo play
+      # the fix is always the player's own command and `_act` echoes an
+      # acceptance on the same tick, so the notice is covered before it can be
+      # caught being false -- the first version of this probe passed with the
+      # fix REVERTED. The screen that is lied to is the screen that pressed
+      # nothing, which is co-op.
+      #
+      # Offline, no socket, no relay, one tick per frame, ~2s. The marker is
+      # printed LAST and only on success, which is the only thing a grep can
+      # trust when Godot exits 0 on a failed script. Exit 2 is NO VERDICT (a run
+      # in which nothing stalled), and it fails this step rather than passing.
+      - name: A stall sentence comes down when the stall does
+        working-directory: sim-game/client
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64"
+          "$GODOT" --headless --path . --script res://tools/toast_stall_probe.gd \
+            -- 14247 900 | tee toast-stall.log
+          grep -qx 'TOAST STALL PROBE OK' toast-stall.log
+      # AND A PRESS COVERS THAT SENTENCE RATHER THAN DESTROYING IT (ASSA-370).
+      # The step above buys its answer by FREEZING player 0 the moment a stall
+      # reaches the toast -- the screen that is lied to is the screen that
+      # pressed nothing. This one needs the opposite: player 0 presses a real
+      # button while the stall is live, which is the premise the other probe
+      # spends. Two claims, two instruments, so each can fail honestly.
+      #
+      # QA FOUND THIS WITH A CAMERA, not a test: every accepted command used to
+      # overwrite the stall sentence and the building it was about, so the
+      # warning vanished within two seconds of the next press whatever the
+      # machine was doing. The notice must come back when the receipt ages.
+      #
+      # Offline, no socket, no relay, one tick per frame, ~2s. Marker printed
+      # LAST and only on success; exit 2 is NO VERDICT and fails this step
+      # rather than passing.
+      - name: A press covers a stall sentence and gives it back
+        working-directory: sim-game/client
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64"
+          "$GODOT" --headless --path . --script res://tools/toast_cover_probe.gd \
+            -- 14247 900 | tee toast-cover.log
+          grep -qx 'TOAST COVER PROBE OK' toast-cover.log
       # THE HUD'S OWN PROBE, IN A GATE FOR THE FIRST TIME (ASSA-238). ASSA-116's
       # box 6 is about the HUD panels, and the only instrument that reads them is
       # `client/tools/hud_probe.gd`, which until this step had ZERO references in

@@ -457,8 +457,44 @@ func poll() -> bool:
 		# AND THIS IS THE ONE CASE WHERE RETRY IS HONEST, because the `stop()` below is what makes it
 		# so: the process is gone, so a second press starts from clean ground rather than fighting a
 		# relay that is still holding a port.
-		failure = ("%s: it did not say it was ready within %d seconds, so it has been stopped. %s"
-				% [CANNOT, int(_deadline_ms / 1000.0), SOLO_AGAIN])
+		# **AND THIS IS THE SENTENCE A QUARANTINED RELAY ACTUALLY REACHES, WHICH IS NOT WHAT THE LONG
+		# COMMENT ABOVE ASSUMES** (ASSA-345, measured by QA on the SHIPPED macOS zip from main
+		# `0d17524`, not reasoned about: `shared/assay/nerite-assa345-quarantine/`). Four unzipped
+		# copies of one artifact, the real `sim-relay` on real disk, driven through this very
+		# `start()`/`poll()` pair. The quarantine case landed HERE both times it was run — **2 of 2** —
+		# and never on `would_not_run()` or on the `did not run` branch fifteen lines up, which is the
+		# one that carries the clearing command.
+		#
+		# **WHY: A QUARANTINED BINARY DOES NOT DIE, IT HANGS.** It gets a live pid, prints neither its
+		# own first line nor anything else, and is still alive when the deadline fires — so
+		# `has_exited()` is false and the branch above cannot be reached. Every word of that comment
+		# block about telling a refused exec from a relay that ran and died is about children that
+		# EXIT. This one does not.
+		#
+		# **SO THE ONE SENTENCE A STRANGER MEETS WAS THE ONE SENTENCE WITH NOTHING TO ACT ON**: no
+		# binary named, no cause offered, and `Press Play solo again` as its only door — which on a
+		# quarantined folder hangs for another eight seconds and fails identically, because pressing a
+		# button does not clear an extended attribute. A misleading retry, not a dead end, and the
+		# wrong door. The board hit exactly this on 2026-10-08.
+		#
+		# **THE HEDGE IS `CLEAR_QUARANTINE`'S OWN AND THAT IS WHY IT CAN GO HERE.** It says *usually*,
+		# never *because*, so a player whose relay was merely slow is not told something false — and
+		# the retry stays, last, because a slow relay is the other thing this branch catches and a
+		# second press is honest for that one. Maren's rule: a confident wrong diagnosis on a player
+		# who hit a real bug is worse than a vague true one.
+		# **AND IT NAMES THE FILE THE WAY ITS SIBLINGS DO.** `not_a_program` says *the sim-relay file
+		# beside this client*, and that phrasing is not decoration: our internals may be named in the
+		# one clause that is about a file in the player's own folder, and nowhere else (the rule
+		# `test_solo_relay.gd::_check_shape` carries). This branch said `it did not say it was ready`
+		# — no subject at all — so a player looking at a folder of files was told that something in it
+		# was quiet.
+		var quiet_one := ("the %s file beside this client" % _binary.get_file() if _binary != ""
+				else "the world host")
+		failure = ("%s: %s did not say it was ready within %d seconds, so it has been stopped."
+				% [CANNOT, quiet_one, int(_deadline_ms / 1000.0)])
+		if OS.get_name() == "macOS":
+			failure += " " + CLEAR_QUARANTINE
+		failure += " " + SOLO_AGAIN
 		stop()
 		return false
 	return false

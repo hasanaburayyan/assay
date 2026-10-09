@@ -122,6 +122,33 @@ const DOOR_PLATE := Color(0.145, 0.157, 0.188, 0.90)
 ## the plate reads as a panel in this games own idiom rather than as a highlighter stroke.
 const DOOR_PLATE_PAD := 24.0
 
+## **THE LONGEST ADDRESS A FRIEND IS ACTUALLY HANDED** (ASSA-318, Maren's replacement for her own
+## box 3). Her first wording asked that *"the longest address a friend can be handed is fully
+## visible"* -- unsatisfiable, because a MagicDNS name is whatever somebody called their computer, so
+## **no width answers it**. A NAMED string, measured in the live font, does: this is the 45-character
+## address the studio Mac would hand out under Decision #40, and `HOST_FIELD_PX` is sized to it.
+##
+## **LONGER ADDRESSES STILL SCROLL, AND THAT IS THE DESIGN AND NOT A SHORTFALL.** A `LineEdit` never
+## truncates, so nothing is ever lost -- what a wider field buys is reading what you type *while* you
+## type it. The checking need the item was filed for is already served elsewhere: `_join_address`
+## says `connecting to %s` in a Label, and `net_client`'s seven failure sentences all carry `_where`.
+const LONGEST_HOSTNAME := "hasans-macbook-pro-m1max.tail9a3f.ts.net:7777"
+
+## **THE HOST FIELD'S RECT, AND THE ONLY LITERAL WIDTH ON THE DOOR.** 360 is Maren's floor from my
+## measurement of the live font (45 chars x 7.46 px worst-case glyph = 336 usable, plus the 20 px the
+## field's own stylebox margins take at any rect). `tests/test_main_screen.gd` holds it against
+## `LONGEST_HOSTNAME` measured in the font the node resolves, so this number cannot quietly stop
+## being enough.
+##
+## **IT IS NOT A CARD WIDTH AND ASSA-292 IS WHY THAT MATTERS**: `_cred_cell` derives its width from
+## its children, so growing a field grows the row and nothing else has to be told.
+const HOST_FIELD_PX := 360.0
+
+## **THE NAME FIELD'S RECT.** 170 for a reason that is not symmetry: `_name.text` is already
+## `$USER` when the screen opens, and at 140 that default spent 105 of 120 usable px -- 87.5% full
+## before anyone types. 150 usable puts our own default at 70% and holds 20 wide characters.
+const NAME_FIELD_PX := 170.0
+
 
 ## WHERE THE PLATE GOES: the words it carries, padded, AND CLIPPED TO THE DOOR IT SITS IN.
 ##

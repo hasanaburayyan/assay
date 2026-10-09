@@ -143,12 +143,27 @@ why determinism rules are non-negotiable.
   decision; v9 never shipped. **Ask the source for these two numbers, never
   this file**: it said 10 and protocol 4 for days after they were 12 and 9,
   and a stale constant here reads as fact to anyone who has not grepped.
-- `PROTOCOL_VERSION = 10`. Bump it whenever `World` or a message changes
-  shape; the relay refuses mismatched clients. A running relay will tell you
+- `PROTOCOL_VERSION = 11`. Bump it whenever `World`, a command, **an event**
+  or a message changes shape; the relay refuses mismatched clients. (This line
+  said "`World` or a message" until 2026-10-09 and `sim-game/CLAUDE.md` said
+  the longer version; the longer one is the rule, and the short one made a
+  justified bump look unjustified.) A running relay will tell you
   what it speaks: `sim-relay --bogus` prints `RELAY STARTED protocol <n>
   rules <id>` before it complains. 9 → 10 on 2026-10-07 (ASSA-190):
   `ServerMsg::Desync` grew the two hashes, as hex text because the Godot
   client parses that message in GDScript and has no 64-bit integer.
+  10 → 11 on 2026-10-09 (ASSA-350): `sim::SmelterStall` grew
+  `OutputHoldsAnother(Item)`, so `Event::SmelterStalled` changed shape.
+  **It does NOT ride a tick bundle, which is what this file and the constant's
+  own comment both claimed for a day:** `TickBundle` carries `inputs`, no
+  message carries an `Event`, and in lockstep every peer computes its own
+  events. An event counts toward the shape because both hosts render one.
+- **A RUNNING RELAY REFUSES CLIENTS BUILT AFTER ANY `sim/src` EDIT, AND THAT IS
+  `RULES_ID`, NOT THE PROTOCOL NUMBER** (`sim/build.rs` fingerprints the rules
+  sources). So **the relay has to come back up from the merge commit or later
+  and any demo build has to be cut after it — relay and client from one
+  commit — for every sim change**, not only for a protocol bump. Recorded
+  because ASSA-350 announced this as that item's own cost.
 - Golden determinism hash lives in `sim/tests/determinism.rs`. It changes
   whenever rules change; update it only for intentional changes and say so
   in the commit.

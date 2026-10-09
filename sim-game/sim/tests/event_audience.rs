@@ -340,6 +340,116 @@ fn every_loud_event_is_sayable_to_both_readers() {
     );
 }
 
+/// **EVERY LOUD LINE KNOWS WHETHER IT MAY EVER BE TAKEN DOWN** (ASSA-300).
+///
+/// `attention` is the one decision and `event_needs_attention` is it asked
+/// whether the answer is `Some`, so a loud line without a kind is impossible by
+/// construction. What is worth asserting is the *partition*: only the two stall
+/// events are conditions, and a condition names the building it is about.
+///
+/// If this ever reddens on a new variant, the question to answer is not "which
+/// arm do I add" but "is this sentence a claim about now".
+#[test]
+fn only_a_stall_is_a_condition_and_every_other_loud_line_is_an_act() {
+    let life = a_smelters_life();
+    let mut acts = 0;
+    let mut conditions = 0;
+    for event in &life.events {
+        let loud = debug::event_needs_attention(Some(life.me), event);
+        let kind = debug::attention(Some(life.me), event);
+        assert_eq!(
+            loud,
+            kind.is_some(),
+            "loudness and kind disagree, so two matches have drifted: {event:?}"
+        );
+        match kind {
+            None => continue,
+            Some(debug::AttentionKind::Act) => {
+                acts += 1;
+                assert!(
+                    !matches!(
+                        event,
+                        Event::MachineStalled { .. } | Event::SmelterStalled { .. }
+                    ),
+                    "a stall is a condition, not an act: {event:?}"
+                );
+            }
+            Some(debug::AttentionKind::Condition { building }) => {
+                conditions += 1;
+                let reported = match event {
+                    Event::MachineStalled { building, .. }
+                    | Event::SmelterStalled { building, .. } => *building,
+                    other => panic!("only a stall may be a condition: {other:?}"),
+                };
+                assert_eq!(
+                    building, reported,
+                    "a condition must name the building it is a claim about"
+                );
+            }
+        }
+    }
+    // Non-vacuity, and the comment on `every_loud_event_is_sayable_to_both_readers`
+    // is why it is spelled out: I have claimed this corpus was loud twice by
+    // reasoning about the smelter instead of measuring it.
+    assert!(
+        conditions > 0,
+        "no stall in the corpus, so the condition arm measured nothing: {:?}",
+        life.events
+    );
+    assert!(
+        acts > 0,
+        "no act in the corpus, so the partition is untested on one side: {:?}",
+        life.events
+    );
+}
+
+/// **WHY THE BUILDING IS CARRIED AND NOT JUST THE KIND** (ASSA-300).
+///
+/// The cheap fix everyone reaches for first is "age a loud line once it stops
+/// appearing in `halt_lines`". It cannot work, and this is the measurement that
+/// says so rather than the argument: **the two surfaces word one condition
+/// differently.** The pinned list names the building by address, the notice
+/// names it the way a player does. A host comparing those strings finds no
+/// match and ages nothing; a host matching them loosely is classifying a
+/// sentence by reading it, which `_remember_events` refuses by name (ASSA-67).
+///
+/// So the handle has to be the id, and this test fails if the two wordings ever
+/// converge — at which point the cheap fix becomes possible and this design
+/// should be revisited rather than quietly kept.
+#[test]
+fn one_stall_is_two_different_sentences_so_only_the_id_ties_them() {
+    let life = a_smelters_life();
+    let (event, building) = life
+        .events
+        .iter()
+        .find_map(|e| match e {
+            Event::SmelterStalled { building, .. } => Some((e, *building)),
+            _ => None,
+        })
+        .expect("the corpus stalls a smelter on purpose");
+    let notice = debug::event_line(&life.live, Some(life.me), event, debug::Audience::Typed);
+    let pinned = debug::halt_lines(&life.live, debug::Audience::Typed);
+    assert!(
+        !pinned.is_empty(),
+        "the stall has no pinned line, so there is nothing to compare"
+    );
+    for line in &pinned {
+        assert_ne!(
+            line.trim(),
+            notice.trim(),
+            "the two surfaces now word a stall identically, so a host COULD \
+             match on text and ASSA-300's id is no longer load-bearing. That is \
+             a design change, not a passing test."
+        );
+    }
+    // And the non-textual handle really is available on the loud line.
+    assert_eq!(
+        debug::attention(Some(life.me), event),
+        Some(debug::AttentionKind::Condition { building }),
+        "the notice must hand over the id the pinned list is keyed on"
+    );
+}
+
 /// **THE NARROWNESS, STATED AS AN EQUALITY.** This is the assertion I would keep
 /// if I could keep only one: a sentence with no building in it is the *same
 /// bytes* for both readers. It is what makes "the audience changes how a

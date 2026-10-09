@@ -73,6 +73,98 @@ func _screen() -> Node:
 	return node
 
 
+## **THE HOST FIELD FITS THE ADDRESS DECISION #40 SENDS A FRIEND** (ASSA-318, Maren's rewritten box
+## 3 and her option 2).
+##
+## **A NAMED STRING, NOT A CHARACTER COUNT, AND THAT IS THE WHOLE POINT OF THE REWRITE.** Her first
+## wording asked that the longest address a friend can be handed be fully visible -- unsatisfiable,
+## because a MagicDNS name is whatever somebody called their computer. So the bar is one address,
+## `AssayHud.LONGEST_HOSTNAME`, by value.
+##
+## **IN WORDS, BECAUSE IT IS A LIMIT AND NOT A FAILURE: AN ADDRESS LONGER THAN THIS ONE STILL
+## SCROLLS, AND NOTHING IS LOST WHEN IT DOES.** A `LineEdit` scrolls rather than truncates. What the
+## width buys is reading what you type *while* you type it; the "does this match what I was sent"
+## need is already served by `_join_address`'s `connecting to %s` Label and by `net_client`'s seven
+## failure sentences, which all carry `_where`.
+##
+## **MEASURED THE WAY `tools/limpet_host_fit.gd` MEASURES, so the suite and the instrument cannot
+## disagree:** usable width is the rect LESS the field's own `normal` stylebox content margins --
+## asked of the stylebox, because a `LineEdit` draws inside them and the rect is not the room.
+##
+## **AND IT REFUSES TO PASS WITHOUT A FONT.** A node that resolves none would make
+## `get_string_size` meaningless, and a test that measured nothing would go green for ever.
+##
+## **WHAT THIS TEST CANNOT BE THE AUTHORITY ON, SAID HERE RATHER THAN DISCOVERED LATER.** The suite
+## is headless, and headless font metrics in this project are not the window's -- a `Display` Label
+## measures 18 px here and 28 in a window (ASSA-363). A narrower headless font would make the string
+## measure SMALLER and this test pass more easily, so it is a floor and not the verdict. The verdict
+## is `tools/limpet_host_fit.gd` in a real 1280x720 window: **307 px of 340 usable, 33 px spare**,
+## and the name field's shipped default at **70.0%** of its room. Re-run that after moving either
+## constant; this test only catches someone moving one and not the other.
+func test_the_host_field_fits_the_address_decision_40_hands_out() -> bool:
+	var screen := _screen()
+	var ok := true
+	var box: LineEdit = screen._host
+	var named: LineEdit = screen._name
+	var font := box.get_theme_font(&"font")
+	var size := box.get_theme_font_size(&"font_size")
+	var style := box.get_theme_stylebox(&"normal")
+	var pad := 0.0 if style == null else style.get_margin(SIDE_LEFT) + style.get_margin(SIDE_RIGHT)
+	var usable := AssayHud.HOST_FIELD_PX - pad
+	if font == null:
+		ok = _fail("the host field resolves no font, so nothing below is a measurement")
+	elif box.custom_minimum_size.x != AssayHud.HOST_FIELD_PX:
+		ok = _fail("the host field asks for %.0f px, not `HOST_FIELD_PX` (%.0f)"
+				% [box.custom_minimum_size.x, AssayHud.HOST_FIELD_PX])
+	elif named.custom_minimum_size.x != AssayHud.NAME_FIELD_PX:
+		ok = _fail("the name field asks for %.0f px, not `NAME_FIELD_PX` (%.0f)"
+				% [named.custom_minimum_size.x, AssayHud.NAME_FIELD_PX])
+	else:
+		var wide: float = font.get_string_size(AssayHud.LONGEST_HOSTNAME,
+				HORIZONTAL_ALIGNMENT_LEFT, -1.0, size).x
+		# **THE DEFAULT MUST NOT ARRIVE FULL** -- her reason for the name field, held against a named
+		# value because the shipped default is `$USER` and is whatever this machine calls its account.
+		# `hasanaburayyan` is the one this item measured at 105 px of 120.
+		var mine: float = font.get_string_size("hasanaburayyan",
+				HORIZONTAL_ALIGNMENT_LEFT, -1.0, size).x
+		var room := AssayHud.NAME_FIELD_PX - pad
+		if wide > usable:
+			ok = _fail(("`%s` is %.0f px in the field's own font at size %d, and the field has %.0f "
+					+ "usable (%.0f rect less %.0f of stylebox margin): it CLIPS by %.0f")
+					% [AssayHud.LONGEST_HOSTNAME, wide, size, usable, AssayHud.HOST_FIELD_PX, pad,
+					wide - usable])
+		elif mine > room * 0.75:
+			ok = _fail(("a 14-character account name is %.0f px of the name field's %.0f usable "
+					+ "(%.0f%%); the default we ship must not arrive nearly full")
+					% [mine, room, 100.0 * mine / maxf(1.0, room)])
+	screen.queue_free()
+	return ok
+
+
+## **NO LITERAL CARD WIDTH ANYWHERE ON THE DOOR** (ASSA-318 box 5, which is ASSA-292's rule restated
+## and is what made the width change two constants instead of a layout).
+##
+## **THERE IS NO CARD AT ALL, AND THAT IS THE FINDING THIS GUARDS.** Maren wrote four options trading
+## width between the two fields, then read the constructor: `_front_door` is a centred VBox with no
+## panel, `_cred_cell` an HBox that derives its width from its children. So the row grows with the
+## fields and nothing has to be told a number. A `custom_minimum_size` appearing on either container
+## would quietly re-invent the scarcity both of us argued inside of for a day.
+func test_the_door_takes_its_width_from_its_children_and_not_from_a_number() -> bool:
+	var screen := _screen()
+	var ok := true
+	for entry in [["_cred_cell", screen._cred_cell], ["_front_door", screen._front_door],
+			["_door_secondary", screen._door_secondary]]:
+		var holder: Control = entry[1]
+		if holder == null:
+			ok = _fail("%s does not exist, so this test is guarding nothing" % entry[0])
+		elif holder.custom_minimum_size.x != 0.0:
+			ok = _fail(("%s carries a literal width of %.0f px; the row derives its width from its "
+					+ "children (ASSA-292) and a card width here is the scarcity ASSA-318 found was "
+					+ "invented") % [entry[0], holder.custom_minimum_size.x])
+	screen.queue_free()
+	return ok
+
+
 ## WHERE A SECTION ACTUALLY IS, in the screen's own coordinates.
 ##
 ## Positions are SUMMED UP THE ANCESTOR CHAIN rather than read off one node, because the HUD column
@@ -4987,6 +5079,222 @@ func test_a_command_that_never_reached_the_wire_still_says_so() -> bool:
 	return ok
 
 
+## A HOST IN WHICH EXACTLY ONE BUILDING IS STOPPED, and nothing else is replaced.
+##
+## This file's `_SimSaying` idiom: one method overridden, so `_age_the_saying` runs the real decision
+## over an answer this test chooses. **Stubbed for one reason only** — the headless suite cannot reach
+## a world with a stalled building in it (the same limit `_rebuild_halt`'s tests are under), and both
+## directions of this decision have to be covered or the test could not tell "ages when the condition
+## clears" from "ages always". The real stall and the real recovery are measured end to end by
+## `tools/toast_stall_probe.gd`, against a real sim, which is ASSA-300's box 4.
+class _SimWhereOneBuildingIsStopped extends AssaySimHost:
+	var stopped := -1
+
+	func is_halted(building: int) -> bool:
+		return building == stopped
+
+
+## **A STALL SENTENCE COMES DOWN WHEN THE STALL DOES, AND A REFUSAL NEVER DOES** (ASSA-300, the Game
+## Director's §300 ruling).
+##
+## The bug this closes: nothing in this client could clear a `Say.FAILED` line at all, so fuelling a
+## smelter left `the Tonore smelter (A) stopped: no fuel` over the world while the pinned count beside
+## it had already dropped to zero — the screen contradicting itself, with the reason on the false
+## half.
+##
+## **FOUR MOMENTS, AND THE LAST IS THE ONE A CARELESS FIX LOSES.** A condition that holds must stay; a
+## condition that clears must go, on the first ask and with no dwell; an act must never go; and an act
+## said OVER a condition must survive that condition clearing. The fourth is only true because the
+## building is an argument to `_say` rather than a field something else sets — which is the difference
+## between a rule and two assignments that have to agree.
+func test_a_stall_sentence_comes_down_when_the_stall_does_and_a_refusal_never_does() -> bool:
+	var ok := true
+	var screen := _screen()
+	var sim := _SimWhereOneBuildingIsStopped.new()
+	sim.stopped = 3
+	screen._sim = sim
+	var notice := "the Tonore smelter (A) stopped: no fuel"
+
+	# 1. WHILE IT IS TRUE IT STAYS, asked many times. A sentence that went on the second look would
+	#    be a dwell wearing a condition's clothes.
+	screen._stand(notice, AssayHud.Say.FAILED, 3)
+	for _i in range(5):
+		screen._age_the_saying()
+	if screen._status.text != notice:
+		ok = _fail(("a stall notice came down while the sim still called that building stopped: `%s`. "
+				+ "The one surface carrying the reason would go blank with the machine still cold.")
+				% screen._status.text)
+
+	# 2. THE TICK IT IS FIXED, IT GOES -- no dwell, because this is not about having been read. A
+	#    false sentence is worse the longer it is legible.
+	sim.stopped = -1
+	screen._age_the_saying()
+	if screen._status.text != "":
+		ok = _fail(("the smelter is working and the toast still reads `%s`. This is the whole of "
+				+ "ASSA-300: the pinned count has already dropped to zero.") % screen._status.text)
+
+	# 3. AN ACT IN THE SAME HEALTHY WORLD DOES NOT MOVE (ASSA-239: a failure that faded out would be
+	#    the one class of sentence a player cannot recover).
+	screen._say("refused: nothing there", AssayHud.Say.FAILED)
+	for _i in range(5):
+		screen._age_the_saying()
+	if screen._status.text == "":
+		ok = _fail("a refusal aged out of the toast because no building was stopped, so every "
+				+ "sentence in the client just became a condition")
+
+	# 4. AND AN ACT SAID OVER A CONDITION KEEPS ITS OWN KIND. Stall, then a refusal covers the line
+	#    (ASSA-370: a transient may cover a standing notice), then the stall clears: the refusal must
+	#    still be there. This is the leak a `_standing_building` set anywhere but `_stand` would have.
+	screen._say("", AssayHud.Say.IDLE)
+	sim.stopped = 3
+	screen._stand(notice, AssayHud.Say.FAILED, 3)
+	if screen._status.text != notice:
+		ok = _fail("premise: the stall notice is not the sentence being covered, `%s` is"
+				% screen._status.text)
+	screen._say("refused: out of reach", AssayHud.Say.FAILED)
+	sim.stopped = -1
+	screen._age_the_saying()
+	if screen._status.text != "refused: out of reach":
+		ok = _fail(("a refusal said over a stall notice read `%s` after the stall cleared: the "
+				+ "sentence on screen was taken down by something that happened to a different "
+				+ "sentence") % screen._status.text)
+	screen.queue_free()
+	return ok
+
+
+## **AND THE JOINED DWELL IS UNTOUCHED BY ALL OF THAT.** `_age_the_saying` now has two clauses, and
+## the cheap mistake is to let the new one swallow the old: a `JOINED` line carries no building, so it
+## must still age on the dwell and not instantly.
+##
+## The control is in the same test: a `JOINED` line asked BEFORE the dwell is up must still be there.
+## Without it, "ages on the dwell" and "ages on the first ask" are the same green.
+func test_a_joined_line_still_ages_on_the_dwell_and_not_on_the_first_ask() -> bool:
+	var ok := true
+	var joined := _joined_screen()
+	joined._say("walking to 57, 59", AssayHud.Say.JOINED)
+	joined._age_the_saying()
+	if joined._status.text == "":
+		ok = _fail("a healthy sentence went on the first ask, so the dwell is gone and nothing on "
+				+ "this screen can be read before it disappears")
+	_step_the_world(joined, joined.SAYING_DWELL_TICKS + 1)
+	if joined._status.text != "":
+		ok = _fail("a healthy sentence outlived its dwell by the condition clause taking it over: `%s`"
+				% joined._status.text)
+	joined.queue_free()
+	return ok
+
+
+## **A SCREEN WELCOMED INTO A WORLD WHERE BUILDING 3 IS STOPPED AND STAYS STOPPED.**
+##
+## `_SimWhereOneBuildingIsStopped` over a world that really started, which the two tests below need
+## and the ASSA-300 test above does not: they press a real button and step a real clock, so `_refresh`
+## must get past `_sim.running()` and `_on_tick_bundle` must have a world to apply bundles to.
+## `is_halted` is the one answer that is chosen rather than simulated, because the headless suite
+## cannot reach a world with a stalled building in it.
+func _joined_screen_with_one_building_stopped() -> Node:
+	var joined := _joined_screen()
+	var sim := _SimWhereOneBuildingIsStopped.new()
+	sim.stopped = 3
+	joined._sim = sim
+	joined._on_welcomed(0, {}, AssaySimHost.fresh_welcome_json("777042", "limpet"))
+	return joined
+
+
+## **AN ACCEPTED COMMAND COVERS THE STALL NOTICE AND THEN GIVES IT BACK** (ASSA-370, the Game
+## Director's amendment to her own §300: *"A TRANSIENT LINE MAY COVER A STANDING NOTICE. IT MAY NEVER
+## DESTROY ONE. A CONDITION NOTICE'S LIFETIME BELONGS TO ITS CONDITION, SO NOTHING WHOSE OWN LIFETIME
+## IS A TIMER MAY END IT."*).
+##
+## **THE BUG THIS CLOSES IS ASSA-300'S FIX BEING DEFEATED BY ORDINARY PLAY, and QA found it with a
+## camera.** Every accepted command — a routine `Mine` press, nothing to do with any machine — called
+## `_say` with no building, which overwrote the stall sentence AND its building outright. The
+## replacement then aged out on the 20-tick dwell, so the warning vanished within two seconds whatever
+## the smelter was doing: at tick 108 of Nerite's run the toast was silent while the pinned count
+## still read `1 of 1 buildings stopped`, with the fuel not yet inserted.
+##
+## **THE BOX IS THE UNCOVERING, NOT THE STORAGE.** A test that read `_standing_line` after the press
+## would pass on a client that stored the sentence and never drew it again — a mechanism, not a
+## behaviour. Every assertion here is on `_status.text`, which is what a player sees.
+func test_an_accepted_command_covers_the_stall_notice_and_then_uncovers_it() -> bool:
+	var ok := true
+	var joined := _joined_screen_with_one_building_stopped()
+	if not joined._sim.running():
+		joined.queue_free()
+		return _fail("the fixture never simulated, so no command could be accepted and no tick could "
+				+ "age anything")
+	var notice := "the Tonore smelter (A) stopped: no fuel"
+	joined._stand(notice, AssayHud.Say.FAILED, 3)
+	# THE JOIN LINE IS IN THE WAY FIRST, and that is the covering rule working: `joined as player 0`
+	# is a live transient. Age it out before the measurement, so what is on screen is the notice.
+	_step_the_world(joined, joined.SAYING_DWELL_TICKS + 1)
+	if joined._status.text != notice:
+		ok = _fail("premise: the stall notice is not on the toast to be covered, `%s` is"
+				% joined._status.text)
+
+	# 1. THE RECEIPT STILL ARRIVES, which is the half the Game Director refused to trade away
+	#    (shape (a): *"your Mine press then gets no receipt at all while anything is stalled"*). A
+	#    receipt channel that goes quiet exactly when the player is busy is not a fix.
+	joined._act("Mine", AssayActions.mine())
+	if not joined._status.text.contains("submitted"):
+		ok = _fail(("a press during a stall said `%s`: the acceptance is the only thing telling a "
+				+ "player the game heard them, for up to a third of a second")
+				% joined._status.text)
+
+	# 2. AND THE NOTICE IS STILL THERE ONCE THE RECEIPT HAS BEEN READ. This is the bug: before the
+	#    split the press had destroyed the sentence and its building, so this frame was blank with the
+	#    smelter still cold and the pinned count still saying so.
+	_step_the_world(joined, joined.SAYING_DWELL_TICKS + 1)
+	if joined._status.text != notice:
+		ok = _fail(("%d ticks after a routine press the toast reads `%s` and the sim still calls that "
+				+ "building stopped. A notice whose duration says nothing about its subject teaches a "
+				+ "player to ignore notice durations.")
+				% [joined.SAYING_DWELL_TICKS + 1, joined._status.text])
+
+	# 3. AND THE CONDITION STILL OWNS ITS OWN END, after having been covered. The press must not have
+	#    carried the building off with it: if it had, nothing would be left to re-ask and the sentence
+	#    would now be permanent instead of merely early.
+	joined._sim.stopped = -1
+	_step_the_world(joined, 1)
+	if joined._status.text != "":
+		ok = _fail(("the smelter is working and the toast still reads `%s`: the press carried off the "
+				+ "building this sentence was a claim about") % joined._status.text)
+	joined.queue_free()
+	return ok
+
+
+## **AND A STALL NOTICE DOES NOT CROSS INTO THE NEXT WORLD** (ASSA-370). A hole the split opens and
+## the same commit closes, said plainly because I would otherwise have shipped it: before the two
+## slots existed every world-death path set a non-empty FAILED transient over the triple, so a
+## stranded notice was permanently covered and nothing showed. Afterwards `_on_welcomed`'s `joined as
+## player N` is a transient that AGES — so a drop, a second Join, and two seconds later the previous
+## world's stall sentence would surface over a fresh world, about a building that no longer exists.
+##
+## **THE STUB IS WHAT MAKES THIS A TEST RATHER THAN A COINCIDENCE.** Over a real sim, `is_halted(3)`
+## on a fresh world answers false and `_age_the_saying` would clear the notice on the first tick — so
+## this would pass with `_on_welcomed`'s line deleted. Here the sim keeps saying that building is
+## stopped, so the only thing that can take the sentence down is the `Welcome` itself.
+func test_a_stall_notice_does_not_survive_the_world_it_is_about() -> bool:
+	var ok := true
+	var joined := _joined_screen_with_one_building_stopped()
+	var notice := "the Tonore smelter (A) stopped: no fuel"
+	joined._stand(notice, AssayHud.Say.FAILED, 3)
+	_step_the_world(joined, joined.SAYING_DWELL_TICKS + 1)
+	if joined._status.text != notice:
+		joined.queue_free()
+		return _fail("premise: there is no standing notice to carry across a world, `%s` is on screen"
+				% joined._status.text)
+
+	# THE SECOND WELCOME, which is what pressing Join after a drop does.
+	joined._on_welcomed(0, {}, AssaySimHost.fresh_welcome_json("777042", "limpet"))
+	_step_the_world(joined, joined.SAYING_DWELL_TICKS + 1)
+	if joined._status.text != "":
+		ok = _fail(("after a second Join the toast reads `%s` — a sentence about a building in the "
+				+ "world that was replaced, and one nothing can ever retire, because `is_halted` is "
+				+ "now answering about a different world's buildings") % joined._status.text)
+	joined.queue_free()
+	return ok
+
+
 ## **THE POKE IN `_drawn_color` IS LOAD-BEARING, AND TODAY NO COLOUR CAN PROVE IT** (ASSA-246).
 ##
 ## Our theme is a PROJECT theme, and a control themed that way ignores its own
@@ -5668,9 +5976,18 @@ func test_the_commit_bar_holds_the_sentence_left_and_build_right() -> bool:
 ## the height). What a headless test CAN hold is the connection itself, because the way this defect
 ## comes back is somebody deleting a line whose comment they do not believe.
 ##
-## **AND IT IS `minimum_size_changed` RATHER THAN `call_deferred`, WHICH I MEASURED AS NO FIX**: the
+## **AND IT IS `minimum_size_changed` RATHER THAN `call_deferred`, WHICH I MEASURED AS NO FIX** -- the
 ## minimum's own recalculation is deferred too, so a deferred placement can run before it and be
 ## clamped by the same stale number.
+##
+## **THAT LAST SENTENCE WAS TRUE OF THIS DEFECT AND I WROTE IT AS A FACT ABOUT `call_deferred`, WHICH
+## ASSA-377 FALSIFIED WITH MY OWN PATCH** (#485, and I shipped it without coming back here). On the
+## assembly path the box kept a size of 864x804 while its minimum relaxed to 348 UNDERNEATH it, so
+## `minimum_size_changed` did not re-place the screen and one deferred `_place_build_screen` did --
+## measured both ways in `shared/assay/limpet-assa377-empty-pack/`. The reading that survives both
+## items is narrower than either sentence: **a deferred placement is clamped by whatever the minimum
+## is on the frame it lands on, which is stale in ASSA-332's case and relaxed in ASSA-377's.** Two
+## frames, two lines, neither one sufficient. The sibling below holds the other one.
 func test_the_build_screen_is_replaced_when_its_own_minimum_moves() -> bool:
 	var screen := _screen()
 	var ok := true
@@ -5683,6 +6000,85 @@ func test_the_build_screen_is_replaced_when_its_own_minimum_moves() -> bool:
 				+ "rect of 864x592, over the status toast")
 	screen.queue_free()
 	return ok
+
+
+## **THE SCREEN IS PLACED AGAIN ON A LATER FRAME, AND THAT ONE LINE IS THE WHOLE OF ASSA-377**
+## (P0: with the world ticking, `Build` left the bottom of the window on the assembly path and could
+## not be pressed at all).
+##
+## **WHAT THIS HOLDS, SAID BEFORE WHAT IT DOES NOT: that the call is WRITTEN, in the function whose
+## frame is the problem.** Maren asked for the real assertion -- one frame after a refresh, the
+## panel's actual size equals `build_screen_rect(world, band)` -- and that cannot be written in this
+## suite. **Measured, not assumed:** a `test_*` method that awaits `process_frame` is called by
+## `run_tests.gd:49` as `suite.call(mname)`, which raises `Trying to call an async function without
+## "await"` and leaves `_initialize` WITHOUT REACHING `quit()`. The headless process then sits there
+## forever with no count printed -- the exact hang `run_tests.gd`'s own docstring documents for a
+## parse error, and in CI the job's whole timeout. So an awaiting test here is not merely a check
+## that cannot fail; it is a check that stops every check after it. Proof log:
+## `shared/assay/limpet-assa377-unfinished/no-frame-boundary-proof.log`.
+##
+## **SO THE PIXELS ARE THE SHOT TOOL'S JOB, AND IT IS A CHECK SOMEBODY RUNS RATHER THAN A PNG
+## SOMEBODY REMEMBERS.** `tools/limpet_build_screen_shot.gd::_measure` compares the box's real
+## `size` against `AssayHud.build_screen_rect` read off the LIVE band and faults on the difference,
+## printing the chain of minimums that paid for the height:
+##
+##     godot --path client --script res://tools/limpet_build_screen_shot.gd -- <dir> 14247 2000 refuse
+##
+## **ITS COMPARISON IS ONE-SIDED ON PURPOSE AND I AM NOT WIDENING IT TO LOOK LIKE AN EQUALITY.**
+## `_place_build_screen` assigns `rect.size` outright, and a `Control` clamps UP to its combined
+## minimum and never down, so actual-smaller-than-asked has no mechanism -- asserting it would add a
+## branch nothing can reach, which is the defect shape this file keeps finding.
+##
+## **AND THE SIBLING ABOVE IS NOT THIS CHECK.** `minimum_size_changed` fires when the minimum MOVES;
+## ASSA-377's box kept an 804 px size while its minimum relaxed to 348 under it, so the connection
+## demonstrably did not re-place this screen. Both lines are load-bearing now, for different frames.
+func test_the_build_screen_is_placed_again_on_a_later_frame() -> bool:
+	var source := FileAccess.get_file_as_string("res://scripts/main.gd")
+	if source == "":
+		return _fail("could not read main.gd, so this scan proves nothing")
+	# **THE CALL HAS TO BE INSIDE `_refresh_build_screen`, WHICH IS THE PAIRING.** A file-wide
+	# `contains` is satisfied by this line living anywhere -- including in a comment discussing it, or
+	# in some other function that does not run on a rebuild. The defect is a frame, so the function
+	# the frame belongs to is half of the claim.
+	var lines := source.split("\n")
+	var inside := false
+	# **`found` IS A SEPARATE FLAG AND THAT IS NOT A STYLE CHOICE.** `inside` is false by the end of
+	# every scan -- the last `func ` in the file is somebody else's -- so reading it afterwards as
+	# "was the function there?" made a DELETED deferred call report `no _refresh_build_screen`, which
+	# tells the next person to re-point a test that is working perfectly. Caught by reading WHICH
+	# assertion the mutation tripped rather than that it went red.
+	var found := false
+	var deferred := false
+	var immediate := false
+	for raw in lines:
+		var line := String(raw)
+		var code := line.strip_edges()
+		if code.begins_with("func "):
+			# The body ends at the next function, whichever one that is.
+			inside = code.begins_with("func _refresh_build_screen(")
+			found = found or inside
+			continue
+		if not inside or code.begins_with("#"):
+			continue
+		if code.contains("_place_build_screen.call_deferred("):
+			deferred = true
+		elif code.contains("_place_build_screen("):
+			immediate = true
+	if not found:
+		return _fail("main.gd has no `_refresh_build_screen` for this scan to read; if it was "
+				+ "renamed, re-point this test rather than deleting it")
+	if not deferred:
+		return _fail("`_refresh_build_screen` no longer re-places the build screen deferred. That "
+				+ "single line is what keeps `Build` on the window: the placement beside it runs in "
+				+ "the same frame as `_rebuild_build_screen`, when the sentence's re-added "
+				+ "autowrapped `Label`s have no width and report one letter per row, and `set_size` "
+				+ "clamps the panel UP to that minimum -- measured at 864x804 in an 864x592 rect, "
+				+ "bar at y732 in a 720 px window, no `Build` on the screen at all (ASSA-377)")
+	if not immediate:
+		return _fail("the same-frame `_place_build_screen()` is gone from `_refresh_build_screen`, "
+				+ "so the screen is unplaced for one frame after every rebuild. The deferred call is "
+				+ "an ADDITION to it (ASSA-377), not a replacement")
+	return true
 
 
 ## **`Build` SITS ON THE SENTENCE'S FIRST ROW, AND ITS y DOES NOT MOVE WHEN THE SENTENCE GROWS**

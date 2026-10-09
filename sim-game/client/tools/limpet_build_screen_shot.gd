@@ -4,10 +4,13 @@ extends SceneTree
 ##
 ##   godot --path . --script res://tools/limpet_build_screen_shot.gd -- <out_dir> [seed] [ticks] [mode]
 ##
-## **`mode` IS `make` (THE DEFAULT) OR `assemble`, AND THEY ARE TWO DIFFERENT PICTURES OF ONE
+## **`mode` IS `make` (THE DEFAULT), `assemble` OR `refuse`, AND THEY ARE DIFFERENT PICTURES OF ONE
 ## SCREEN.** `make` presses a crafting row's launcher after a short play. `assemble` plays the WHOLE
 ## demo loop until the parts are in the pack, presses a pack row's `Frame`, and shoots the screen
 ## TWICE: once with every slot empty and once with the design as full as the frame allows.
+## `refuse` (ASSA-373) plays the same loop, fills only the OPTIONAL boxes so the design stays
+## `unfinished`, and shoots before and after one press of `Build` -- a pair whose two pictures are
+## identical when the client is right and differ by every mounted part when it is not.
 ##
 ## **TWO SHOTS BECAUSE ASSA-341 BOX 9 IS A CLAIM ABOUT TWO STATES.** *"`Build`'s y does not move
 ## between a one-row and a six-row sentence"* cannot be held by one render, and the Game Director
@@ -43,6 +46,11 @@ const DEFAULT_TICKS := 60
 ## nobody asked for -- the shape of defect I have now written down six times.
 const MODE_MAKE := "make"
 const MODE_ASSEMBLE := "assemble"
+## **ASSA-373's PAIR: THE SAME UNFINISHED DESIGN BEFORE AND AFTER A `Build` PRESS.** It mounts only
+## the OPTIONAL boxes, so the frame's required slot stays empty and the bar is already saying so,
+## then presses the one accent on the screen and shoots again. On `origin/main` the two pictures
+## differ -- every mounted part is gone from the second -- and that difference IS the defect.
+const MODE_REFUSE := "refuse"
 
 ## **THE ASSEMBLY PICTURE NEEDS THE WHOLE DEMO LOOP, SO THE TICKS ARE A CEILING AND A STATE IS THE
 ## STOP.** `AssayButtonPlay` mines, smelts and crafts `handle, head x2, frame, hopper x4` and only
@@ -103,6 +111,18 @@ var _ticks_asked := 0
 var _settle := 0
 ## True between the empty shot and the full one, while one part is mounted per frame.
 var _mounting := false
+## `refuse` mode's stage: filling the optional boxes.
+var _refusing := false
+## The shot armed by `_arm`, taken once `_settle` has run out. `""` when none is waiting.
+var _pending := ""
+## Quiet ticks still owed before the armed shot settles, one per frame; see `_arm`.
+var _quiet_left := 0
+## Which shot the quiet drain is running for, moved into `_pending` when the drain empties.
+var _quiet_for := ""
+## What the design and the bar said BEFORE the press, so `_report_press` compares two readings of the
+## same screen rather than one reading and a memory of the other.
+var _before_parts := PackedStringArray()
+var _before_said := ""
 ## How far down `_faults` the phase labels have been written; see `_end_phase`.
 var _phase_from := 0
 
@@ -115,13 +135,14 @@ func _initialize() -> void:
 	_out = String(argv[0])
 	_seed = String(argv[1]) if argv.size() > 1 else DEFAULT_SEED
 	_mode = String(argv[3]) if argv.size() > 3 else MODE_MAKE
-	if _mode != MODE_MAKE and _mode != MODE_ASSEMBLE:
-		_finish(false, "mode is `%s` or `%s`, not `%s`" % [MODE_MAKE, MODE_ASSEMBLE, _mode])
+	if not [MODE_MAKE, MODE_ASSEMBLE, MODE_REFUSE].has(_mode):
+		_finish(false, "mode is one of %s, not `%s`"
+				% [[MODE_MAKE, MODE_ASSEMBLE, MODE_REFUSE], _mode])
 		return
-	var budget := ASSEMBLE_TICK_CEILING if _mode == MODE_ASSEMBLE else DEFAULT_TICKS
+	var budget := ASSEMBLE_TICK_CEILING if _needs_pack() else DEFAULT_TICKS
 	_left = int(argv[2]) if argv.size() > 2 else budget
 	_ticks_asked = _left
-	if _mode == MODE_ASSEMBLE:
+	if _needs_pack():
 		_ceiling = maxf(_ceiling, Time.get_unix_time_from_system() + ASSEMBLE_RUN_CEILING)
 	if DirAccess.make_dir_recursive_absolute(_out) != OK:
 		_finish(false, "cannot write to %s" % _out)
@@ -166,21 +187,89 @@ func _process(_delta: float) -> bool:
 	if _settle > 0:
 		_settle -= 1
 		return false
+	# **ONE TICK PER FRAME, BECAUSE THAT IS WHAT A RELAY DELIVERS** (ASSA-377). `_arm` used to feed
+	# `TICKS_PER_FRAME` ticks inside ONE `_process` call, and that is not a faster relay -- it is ten
+	# refreshes with no layout pass between them. Each refresh re-adds the commit sentence's labels,
+	# and an autowrapped `Label`'s minimum is evaluated against a width that is only valid after the
+	# parent has been sized, so it answers the one-letter-per-row height (ASSA-362's mechanism). Ten
+	# of those stack: the bar's minimum read **570** on the assembly path and **1365** on the make
+	# path against its own 114, the `PanelContainer` was clamped up to them, and the clamp relaxed a
+	# frame later with nothing left to re-place the box. The relay sends one bundle per frame at 10/s
+	# against 60 fps, so the pile never forms.
+	if _quiet_left > 0:
+		_quiet_left -= 1
+		_tick_quiet(1)
+		if _quiet_left == 0:
+			_settle = SETTLE_FRAMES
+			_pending = _quiet_for
+			_quiet_for = ""
+		return false
+	# **EVERY SHOT IS TAKEN A SETTLE AFTER THE LAST THING THAT COULD MOVE THE TREE** (ASSA-373). The
+	# stages below only ever ARM a shot; `_pending` is fired here, after `_settle` has run out above.
+	# **I ADDED THE QUIET TICKS AND MEASURED IN THE SAME FRAME FIRST, AND IT READ A SCREEN 212 px PAST
+	# ITS RECT WITH A 570 px COMMIT BAR -- while the PNG beside it was correct.** A tick refreshes the
+	# screen, which invalidates every container minimum, and those are recalculated DEFERRED; reading
+	# a rect before that lands measures the growth and never the shrink back. The picture disagreeing
+	# with the numbers is what caught it, and the numbers were mine.
+	if _pending != "":
+		var firing := _pending
+		_pending = ""
+		match firing:
+			"slots-full":
+				_shoot("slots-full", "THE ASSEMBLY PATH, every box the frame has filled from the pack")
+				_stop()
+				return _done
+			"before-press":
+				_shoot("before-press",
+						"ASSA-373: AN UNFINISHED DESIGN, OPTIONAL BOXES FILLED, `Build` UNPRESSED")
+				_report_before_press()
+				# **PRESSED THROUGH THE BUTTON, NOT THROUGH `_send_build`.** What the board would do is
+				# press the accent, and a gate wired to a function nothing calls would pass a test of
+				# the function.
+				_asked.clear()
+				_screen._build_act.pressed.emit()
+				_arm("after-press")
+				return false
+			"after-press":
+				_shoot("after-press", "ASSA-373: THE SAME DESIGN AFTER ONE PRESS OF `Build`")
+				_report_press()
+				_stop()
+				return _done
+			"slots-empty":
+				_shoot("slots-empty", "THE ASSEMBLY PATH, frame chosen and nothing mounted yet")
+				_mounting = true
+				return false
+			"make":
+				_shoot("", "THE MAKE PATH, opened by a crafting row's launcher")
+				_stop()
+				return _done
+		_faults.append("armed an unknown shot `%s`" % firing)
+		_stop()
+		return _done
 	if _mounting:
 		# ONE PART PER FRAME, so each mount lays out before the next empty box is chosen.
 		if _mount_one():
 			_settle = SETTLE_FRAMES
 			return false
 		_mounting = false
-		_shoot("slots-full", "THE ASSEMBLY PATH, every box the frame has filled from the pack")
-		_stop()
-		return _done
+		_arm("slots-full")
+		return false
+	if _refusing:
+		if _mount_one_optional():
+			_settle = SETTLE_FRAMES
+			return false
+		_refusing = false
+		_arm("before-press")
+		return false
 	if _mode == MODE_MAKE:
-		_shoot("", "THE MAKE PATH, opened by a crafting row's launcher")
-		_stop()
-		return _done
-	_shoot("slots-empty", "THE ASSEMBLY PATH, frame chosen and nothing mounted yet")
-	_mounting = true
+		_arm("make")
+		return false
+	if _mode == MODE_REFUSE:
+		# NO `slots-empty` SHOT IN THIS MODE, so the directory holds exactly the pair the item asks
+		# for and nothing a reader has to be told to ignore.
+		_refusing = true
+		return false
+	_arm("slots-empty")
 	return false
 
 
@@ -225,7 +314,7 @@ func _tick_some() -> void:
 		# never reached PICK"* -- true, and about a pack that HAD held the parts and then spent them on
 		# the loop's own pick and drill. Checked BEFORE `advance()`, so the tick that would spend them
 		# is never taken.
-		if _mode == MODE_ASSEMBLE and _pack_can_fill_a_frame():
+		if _needs_pack() and _pack_can_fill_a_frame():
 			return
 		_left -= 1
 		_play.advance()
@@ -236,6 +325,26 @@ func _tick_some() -> void:
 		_asked.clear()
 		var at: int = _screen._sim.tick()
 		_screen._client.feed_offline(JSON.stringify({"Tick": {"tick": at, "inputs": inputs}}))
+
+
+## **ARM A SHOT: TICK THE WORLD, THEN WAIT A SETTLE, THEN TAKE IT.** The two halves are one call
+## because they are one rule -- a shot must be of a tree that has stopped moving, and a tick is the
+## thing that moves it. Splitting them is how the first version of this measured mid-layout.
+## **AND THE TICKS ARE SPREAD OVER FRAMES RATHER THAN SPENT IN THIS CALL** (ASSA-377): `_arm` only
+## sets the drain going, and `_process` lands one tick per frame before the settle and the shot.
+func _arm(what: String) -> void:
+	_quiet_left = TICKS_PER_FRAME
+	_quiet_for = what
+
+
+## **TICKS WITH NOTHING IN THEM, SO THE SCREEN REFRESHES WITHOUT THE DEMO LOOP TOUCHING THE DESIGN.**
+## `_tick_some` advances `AssayButtonPlay`, which at this step plants the parts -- it would spend the
+## very design the picture is of. This feeds the sim the empty bundle a relay sends when nobody
+## pressed anything, which is what a player staring at an open screen actually generates.
+func _tick_quiet(count: int) -> void:
+	for _i in range(count):
+		var at: int = _screen._sim.tick()
+		_screen._client.feed_offline(JSON.stringify({"Tick": {"tick": at, "inputs": []}}))
 
 
 ## Measure, write, and label every fault this shot found with which shot found it.
@@ -263,7 +372,7 @@ func _stop() -> void:
 ## one of the two defects this picture is evidence against, and calling the open function directly
 ## would take the row's one control out of the test.
 func _open_and_settle() -> void:
-	if _mode == MODE_ASSEMBLE:
+	if _needs_pack():
 		_open_assembly()
 		return
 	for row in _screen._make.get_children():
@@ -441,6 +550,93 @@ func _mount_one() -> bool:
 			button.pressed.emit()
 			return true
 	return false
+
+
+## **WHETHER THIS MODE NEEDS PARTS IN THE PACK**, which is what decides the tick budget, the wall
+## ceiling, the stop condition and which launcher is pressed. One predicate rather than four
+## `_mode == MODE_ASSEMBLE` tests: adding `refuse` to three of four is the shape of defect where a
+## new mode plays the whole loop and then presses a crafting row.
+func _needs_pack() -> bool:
+	return _mode != MODE_MAKE
+
+
+## **FILL ONE *OPTIONAL* BOX, LEAVING EVERY REQUIRED ONE EMPTY** (ASSA-373). `_mount_one`'s body with
+## one clause added, and the clause is the whole point of the mode: a design missing a required part
+## is what the sim calls `unfinished`, and it is the state the bar is already describing.
+##
+## **`required` IS READ OFF THE BOX, NOT OFF THE SLOT'S NAME.** `slot_boxes` marks the first `min` of
+## a kind's boxes required, so a `1-4` slot is one required box and three optional ones -- keying off
+## the kind would skip all four and mount nothing at all.
+func _mount_one_optional() -> bool:
+	var frame: Dictionary = _screen._design_frame()
+	if frame.is_empty():
+		_faults.append("no frame is chosen after pressing the launcher, so nothing can be mounted")
+		return false
+	var part := AssayHud.part_kind_of(frame, AssaySimHost.part_kinds())
+	var fill := AssayHud.slot_fill(part.get("slots", []), _screen._design_mounted())
+	for box in fill.get("boxes", []):
+		var entry: Dictionary = box
+		if bool(entry.get("required", false)):
+			continue
+		if not (entry.get("part", {}) as Dictionary).is_empty():
+			continue
+		var want := String(entry.get("name", ""))
+		for held in _screen._sim.inventory_of(_screen._client.player_id):
+			var stack: Dictionary = held
+			if String(stack.get("kind", "")) != want:
+				continue
+			var button := _find(_screen._build_mounts, AssayHud.stack_line(stack))
+			if button == null:
+				continue
+			print("MOUNT    %s into an empty OPTIONAL `%s` box" % [AssayHud.stack_line(stack), want])
+			button.pressed.emit()
+			return true
+	return false
+
+
+## **THE STATE THE FIRST PICTURE IS OF, ASSERTED RATHER THAN HOPED FOR.** A run that mounted nothing,
+## or whose design the sim does not call unfinished, would write two identical PNGs and a reader
+## would see a passing pair where there was no test.
+func _report_before_press() -> void:
+	_before_parts = _parts_now()
+	_before_said = _screen._status.text
+	var readout: Dictionary = _screen._design_readout()
+	print("DESIGN   %s" % [_before_parts])
+	print("BAR      unfinished %s · fault `%s` · verdict `%s`"
+			% [readout.get("unfinished", false), readout.get("fault", ""),
+			readout.get("verdict", "")])
+	if _before_parts.size() < 2:
+		_faults.append("nothing optional was mounted, so the press cannot cost any work")
+	if not bool(readout.get("unfinished", false)):
+		_faults.append("the sim does not call this design unfinished (%s), so this is not ASSA-373's state"
+				% [readout])
+
+
+## **WHAT THE PRESS COST, AS TWO READINGS OF ONE SCREEN.** The verdict is the design surviving; the
+## sentence and the wire are reported beside it because a design kept by a silent button, or kept and
+## then submitted anyway, are both wrong in ways the pixels do not show.
+func _report_press() -> void:
+	var after := _parts_now()
+	print("DESIGN   before %s" % [_before_parts])
+	print("DESIGN   after  %s" % [after])
+	print("SAID     before `%s`" % _before_said)
+	print("SAID     after  `%s`" % _screen._status.text)
+	print("WIRE     %d command(s) submitted by the press: %s" % [_asked.size(), _asked])
+	print("BUILD    disabled %s · variation `%s`"
+			% [_screen._build_act.disabled, _screen._build_act.theme_type_variation])
+	if after != _before_parts:
+		_faults.append("the press changed the design from %s to %s; a refusal may cost a press and "
+				% [_before_parts, after] + "never your work")
+	if not _asked.is_empty():
+		_faults.append("the press submitted %s for a design the sim calls unfinished" % [_asked])
+
+
+## The kinds in the design right now, frame first, in the order they were pressed.
+func _parts_now() -> PackedStringArray:
+	var kinds := PackedStringArray()
+	for entry in _screen._building:
+		kinds.append(String((entry as Dictionary).get("kind", "")))
+	return kinds
 
 
 ## **THE OVERLAP, IN PIXELS, AGAINST THE THREE CONTROLS MAREN'S §1 PROTECTS.**
