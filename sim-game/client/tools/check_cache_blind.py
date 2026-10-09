@@ -118,6 +118,41 @@ func _line(tile_facts: Dictionary) -> String:
 """
 
 
+# **A SLOT THE FILE EMPTIES AND REFILLS.** `_cache` is handed to a helper that writes into it and
+# is never dotted in the region, so nothing but the `= {}` says it is furniture. `main.gd` has three
+# of these (`_halt_lines`, `_running_lines`, `_menu_slot_rows`) and they were four of the first ten
+# candidates -- a report that is mostly furniture is a report nobody reads.
+EMPTIED = """extends Node
+
+var _showing := ""
+var _cache := {}
+var _menu_at := -1
+var _sim = null
+
+
+func _refresh() -> void:
+\tvar k := "%s" % [_sim.tick()]
+\tif k == _showing:
+\t\treturn
+\t_showing = k
+\t_fill(_cache)
+\t_cache[1] = _sim.status()
+\t_cache[2] = _menu_at
+
+
+func _fill(into: Dictionary) -> void:
+\tinto[0] = 1
+
+
+func _reset() -> void:
+\t_cache = {}
+
+
+func _choose(id: int) -> void:
+\t_menu_at = id
+"""
+
+
 def run(text: str, name: str = "probe.gd") -> dict:
     """The tool's own answer on one file, as data."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -258,6 +293,24 @@ def main() -> int:
         ok("the surface filter quietens the container and not the sim")
     else:
         ok("the surface filter quietens the container")
+
+    # ---- 7. A SLOT THE FILE EMPTIES IS FURNITURE, AND A SENTINEL IS NOT -------------------------
+    emptied = run(EMPTIED, "emptied.gd")
+    if "_cache" in emptied["candidates"]:
+        fail("`_cache`, a dictionary this file resets with `= {}` and refills through a helper, is "
+             "reported as an input: three of main.gd's `_refresh_*` carry one of these and they "
+             "were four of the first ten candidates. A report that is mostly furniture is ignored")
+    elif "_sim.status" not in emptied["candidates"]:
+        fail("`_sim.status`, read in the region and NOT in the key (which holds `_sim.tick`), is "
+             "not reported (%s): either the emptied-slot filter is greedy or two reads through one "
+             "member are being flattened into one" % sorted(emptied["candidates"]))
+    elif "_menu_at" not in emptied["candidates"]:
+        fail("`_menu_at`, a member a signal WRITES (`_menu_at = id`) and the region reads, is not "
+             "reported (%s): the emptied-slot rule has gone greedy over every assignment, which "
+             "silences exactly the inputs this tool exists to find" % sorted(emptied["candidates"]))
+    else:
+        ok("a slot the file empties is furniture; the sim read and the signal-written member "
+           "beside it are not")
 
     print()
     if FAILURES:

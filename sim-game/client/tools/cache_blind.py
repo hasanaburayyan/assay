@@ -422,6 +422,13 @@ def surfaces(script: Script) -> set:
         m = WRITE_CALL.match(s) or WRITE_PROP.match(s)
         if m and m.group(1) in script.members:
             found.add(m.group(1))
+        # **AND A MEMBER THE FILE EMPTIES IS A SLOT THE FILE REFILLS.** `_halt_lines = null`,
+        # `_menu_slot_rows = {}`: a container this file tears down and rebuilds, which arrives in
+        # the walk looking like an input because the rebuild helper reads it back. Only the EMPTY
+        # literals count -- `_menu_at = -1` is a sentinel on a real input and stays a candidate.
+        e = re.match(r"^(_[A-Za-z0-9_]*)\s*=\s*(null|\{\}|\[\]|\"\")\s*$", s)
+        if e and e.group(1) in script.members:
+            found.add(e.group(1))
     return found
 
 
