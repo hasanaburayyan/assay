@@ -2822,3 +2822,327 @@ func _labels_under(root: Node, needle: String) -> Array[Label]:
 	for child in root.get_children():
 		found.append_array(_labels_under(child, needle))
 	return found
+
+
+## A STACK SHAPED LIKE ONE PART KIND, out of the sim's own catalogue name. The species and grade are
+## a real world's -- species 0 exists in every world worldgen makes -- because `design_readout` reads
+## the species sheet to band a design even though it never looks at the pack.
+func _part_stack_of(kind: String) -> Dictionary:
+	return {"kind": kind, "species": 0, "species_name": "Testore", "grade": "C", "count": 1,
+			"name": kind}
+
+
+## The frame kind with the most room in it, and the one slot of that frame with the most room, both
+## out of the SIM's catalogue rather than typed: a renamed kind or a fifth one must not rewrite a
+## test, and `max` is the number the shape is drawn from.
+func _roomiest_frame() -> Dictionary:
+	var best := {}
+	for entry in AssaySimHost.part_kinds():
+		var row: Dictionary = entry
+		if not bool(row.get("is_frame", false)):
+			continue
+		var widest := {}
+		for slot in (row.get("slots", []) as Array):
+			var limit: Dictionary = slot
+			if widest.is_empty() or int(limit.get("max", 0)) > int(widest.get("max", 0)):
+				widest = limit
+		var room := int(widest.get("max", 0))
+		if best.is_empty() or room > int(best.get("room", -1)):
+			best = {"kind": String(row.get("name", "")), "room": room,
+					"mounts": String(widest.get("name", "")), "slots": row.get("slots", [])}
+	return best
+
+
+## **THE SCREEN'S TWO MODES ARE THE SAME TWO RECTS DOING TWO JOBS** (ASSA-317 slice 2b; Maren's 00:32
+## ruling (A): *"a player learns this screen once instead of twice"*).
+##
+## **BOTH DIRECTIONS AND THE HOLDERS AS WELL AS THE ROWS.** A section whose rows are hidden under a
+## heading that is not is the ASSA-117 bug this very screen has had once already (`_show_log`), and it
+## passes any test that only asks the rows.
+##
+## **AND BLOCK 5 IS HIDDEN WHILE ASSEMBLING, WHICH IS ASSERTED AS A STATE AND NOT AS A TODO**: her
+## ruling makes that rect the mass/budget picture, so until it is drawn a heading reading `what you
+## get` over nothing is a labelled empty gap.
+func test_the_build_screen_swaps_block_three_between_making_and_assembling() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_some_ore(screen)
+	if ok:
+		var launcher := _make_launcher_for(screen, "ore")
+		if launcher == null:
+			ok = _fail("no menu row to open the screen on: %s" % _text_of(screen._make))
+		else:
+			launcher.pressed.emit()
+			if not screen._build_materials.visible:
+				ok = _fail("the material picker is hidden on the make path, where it IS the choice")
+			elif screen._build_slots.visible or screen._build_mounts.visible:
+				ok = _fail(("the make path shows the slots (%s) or the mount list (%s); a recipe has no "
+						+ "slots") % [screen._build_slots.visible, screen._build_mounts.visible])
+			elif not screen._build_detail.visible:
+				ok = _fail("block 5 is hidden on the make path, where it holds the one picture")
+			elif screen._build_title.text != "make":
+				ok = _fail("the make path's title reads `%s`" % screen._build_title.text)
+	if ok:
+		screen._build_verb = screen.BUILD_ASSEMBLE
+		screen._build_showing = screen.UNBUILT
+		screen._refresh_build_screen()
+		var heading: Label = screen._section_heading(screen._build_picker)
+		if screen._build_materials.visible:
+			ok = _fail("the material picker is shown while assembling; a design has no recipe material")
+		elif not screen._build_slots.visible or not screen._build_mounts.visible:
+			ok = _fail(("assembling shows the slots as %s and the mount list as %s; both are block 3 "
+					+ "under ruling (A)") % [screen._build_slots.visible, screen._build_mounts.visible])
+		elif screen._build_detail.visible:
+			ok = _fail("block 5 is shown while assembling and its picture is the next slice")
+		elif screen._build_title.text != "assemble":
+			ok = _fail("the assembly path's title reads `%s`" % screen._build_title.text)
+		elif heading == null or heading.text != "which frame":
+			ok = _fail(("block 2's heading reads `%s` over a list of frames; a heading is this file's "
+					+ "word for what is UNDER it") % [heading.text if heading != null else "<none>"])
+		else:
+			# AND WITH NOTHING IN THE PACK BOTH LISTS SAY SO RATHER THAN DRAWING NOTHING, which is this
+			# screen's own rule on the make path: absence is never a cue.
+			if not _text_of(screen._build_picker).contains("not carrying a frame"):
+				ok = _fail("the frame list with no frame in the pack says `%s`"
+						% _text_of(screen._build_picker))
+	if ok:
+		for rows in [screen._build_materials, screen._build_detail, screen._build_slots,
+				screen._build_mounts]:
+			var holder: Control = screen._section_holder(rows as Control)
+			if holder == null or holder.visible != (rows as Control).visible:
+				ok = _fail(("a section's rows are %s and its holder is %s, so a heading stands over a "
+						+ "block nobody can see (ASSA-117)")
+						% [(rows as Control).visible, "<none>" if holder == null else holder.visible])
+				break
+	screen.queue_free()
+	return ok
+
+
+## **A FRAME'S SLOTS ARE DRAWN AS A SHAPE, AND WHAT DOES NOT FIT IS DRAWN TOO** (ASSA-317 slice 2b;
+## `assay-build-screen` §3, and Maren's 00:32 consequence: *"switching the frame may never silently
+## unmount anything"*).
+##
+## **ONE BOX PER UNIT OF ROOM AND THE PARTS ARE ONE MORE THAN FITS**, so the overflow case is the
+## case under test rather than a lucky fixture: `room + 1` hoppers on a `room` frame must draw `room`
+## filled boxes and leave exactly one part with nowhere to stand.
+##
+## **THEN THE FRAME IS SWAPPED FOR THE ONE WITH THE LEAST ROOM AND NOTHING MAY VANISH.** The property
+## is stated as a literal count of `_building` -- the array is the design, and a client that dropped
+## the parts that no longer fit would leave a player's arrangement gone with no sentence anywhere
+## (the ASSA-116 shape). The DRAWN count is held against it separately, because a shape that silently
+## stopped drawing the extras would pass the first half.
+func test_a_frames_slots_are_drawn_as_a_shape_and_nothing_mounted_is_dropped() -> bool:
+	var screen := _joined()
+	var ok := true
+	var frame := _roomiest_frame()
+	if frame.is_empty() or int(frame.get("room", 0)) <= 0 or String(frame.get("mounts", "")) == "":
+		ok = _fail("the sim's catalogue offers no frame with room in it: %s" % [frame])
+	else:
+		var room := int(frame.get("room", 0))
+		var mounts := String(frame.get("mounts", ""))
+		screen._building = [_part_stack_of(String(frame.get("kind", "")))]
+		for _i in range(room + 1):
+			screen._building.append(_part_stack_of(mounts))
+		screen._rebuild_build_slots()
+		var rows := _slot_rows_of(screen)
+		var standing := _boxes_holding_parts(screen)
+		if not rows.has(mounts):
+			ok = _fail("the shape draws no row for the `%s` slots: rows are %s" % [mounts, rows])
+		elif int(rows.get(mounts, -1)) != room:
+			ok = _fail(("the `%s` row draws %d boxes and the sim gives that slot room for %d; the shape "
+					+ "is what states the limit") % [mounts, int(rows.get(mounts, -1)), room])
+		elif not rows.has("nowhere to stand"):
+			ok = _fail(("%d parts went onto a frame with room for %d and nothing is drawn as left over: "
+					+ "rows are %s") % [room + 1, room, rows])
+		elif int(rows.get("nowhere to stand", -1)) != 1:
+			ok = _fail("one part too many is drawn as %d boxes with nowhere to stand"
+					% int(rows.get("nowhere to stand", -1)))
+		elif standing != room + 1:
+			ok = _fail(("%d parts are mounted and %d boxes hold one; a part that is drawn nowhere is a "
+					+ "part the player has lost") % [room + 1, standing])
+		else:
+			var carried: int = screen._building.size()
+			var tight := _tightest_frame()
+			screen._choose_frame(_part_stack_of(String(tight.get("kind", ""))))
+			screen._rebuild_build_slots()
+			if screen._building.size() != carried:
+				ok = _fail(("the design held %d items and holds %d after the frame was swapped; switching "
+						+ "a frame may never silently unmount anything")
+						% [carried, screen._building.size()])
+			elif _boxes_holding_parts(screen) != carried - 1:
+				ok = _fail(("%d parts are mounted on the narrower frame and %d are drawn; the ones that no "
+						+ "longer fit must be visible, not dropped")
+						% [carried - 1, _boxes_holding_parts(screen)])
+	screen.queue_free()
+	return ok
+
+
+## The frame kind with the LEAST room, for the swap above.
+func _tightest_frame() -> Dictionary:
+	var best := {}
+	for entry in AssaySimHost.part_kinds():
+		var row: Dictionary = entry
+		if not bool(row.get("is_frame", false)):
+			continue
+		var boxes: int = AssayHud.slot_boxes(row.get("slots", []) as Array).size()
+		if best.is_empty() or boxes < int(best.get("boxes", 99)):
+			best = {"kind": String(row.get("name", "")), "boxes": boxes}
+	return best
+
+
+## Each labelled row of the drawn shape and how many BOXES it holds: the row's first child is its
+## label and the rest are boxes, which is `_slot_row`'s own order.
+func _slot_rows_of(screen: Node) -> Dictionary:
+	var rows := {}
+	for child in screen._build_slots.get_children():
+		var row := child as HBoxContainer
+		if row == null or row.get_child_count() == 0:
+			continue
+		var label := row.get_child(0) as Label
+		if label == null:
+			continue
+		rows[label.text] = row.get_child_count() - 1
+	return rows
+
+
+## How many drawn boxes hold a part. **Read off the tooltip rather than off a child count**, because
+## a box's picture is `null` for any kind the art pipeline has no sprite for -- counting children
+## would make this a test about `items.png` instead of about the fill.
+func _boxes_holding_parts(screen: Node) -> int:
+	var held := 0
+	for child in screen._build_slots.get_children():
+		for box in (child as Node).get_children():
+			var panel := box as Panel
+			if panel != null and not panel.tooltip_text.begins_with("room for"):
+				held += 1
+	return held
+
+
+## **THE COMMIT BAR ON A DESIGN IS THE SIM'S OWN WORD, AND IT MOVES ON EVERY CLICK** (ASSA-317 slice
+## 2b, over ASSA-325 and ASSA-329).
+##
+## **EQUALITY, NOT `contains`.** The bar must carry the sim's string and NOTHING ELSE on this path:
+## `contains` would pass a client that wrapped the verdict in a sentence of its own, which is the
+## ASSA-43/52 defect and the one rule ASSA-317 names as unbendable. So the drawn text is held equal
+## to the field the sim crossed.
+##
+## **AND THE TWO STATES ARE HELD APART.** A frame on its own is `unfinished` -- real numbers, a slot
+## still empty, the sim's `fault` where the verdict goes -- and mounting what it asks for turns that
+## into a verdict. A bar that printed one of them in both states would pass either half alone, so the
+## test also asserts the text CHANGED: that is the whole of "watch the numbers move".
+##
+## **NO MINING, DELIBERATELY.** `design_readout` takes no player and prices nothing (its docstring),
+## so a design the pack cannot pay for reads exactly the same -- which is why the pack's own cost is
+## block 6's job and a different item. A test that played the world to a real frame would be testing
+## worldgen's generosity.
+func test_the_commit_bar_on_a_design_is_the_sims_own_verdict_and_moves() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := true
+	var frame := _roomiest_frame()
+	var needs := ""
+	for entry in AssayHud.slot_boxes(frame.get("slots", []) as Array):
+		var box: Dictionary = entry
+		if bool(box.get("required", false)):
+			needs = String(box.get("name", ""))
+			break
+	if frame.is_empty() or needs == "":
+		ok = _fail("no frame in the sim's catalogue requires a part, so there is no unfinished state")
+	else:
+		screen._build_verb = screen.BUILD_ASSEMBLE
+		screen._building = [_part_stack_of(String(frame.get("kind", "")))]
+		screen._refresh_build_said()
+		var waiting: Dictionary = screen._design_readout()
+		var said := _only_said(screen)
+		if not bool(waiting.get("unfinished", false)):
+			ok = _fail(("a `%s` with its `%s` slot empty is not `unfinished` to the sim: %s -- so this "
+					+ "test is not reading the state it is about")
+					% [String(frame.get("kind", "")), needs, waiting])
+		elif String(waiting.get("fault", "")) == "":
+			ok = _fail("the sim names no fault for a design with an empty required slot: %s" % [waiting])
+		elif said != String(waiting.get("fault", "")):
+			ok = _fail(("the bar says `%s` and the sim's fault is `%s`; on this path the bar carries the "
+					+ "sim's string and nothing else") % [said, String(waiting.get("fault", ""))])
+		else:
+			screen._building.append(_part_stack_of(needs))
+			screen._refresh_build_said()
+			var whole: Dictionary = screen._design_readout()
+			var now := _only_said(screen)
+			if String(whole.get("verdict", "")) == "":
+				ok = _fail(("a `%s` with a `%s` mounted is still not a machine to the sim: %s")
+						% [String(frame.get("kind", "")), needs, whole])
+			elif now != String(whole.get("verdict", "")):
+				ok = _fail(("the bar says `%s` and the sim's verdict is `%s`")
+						% [now, String(whole.get("verdict", ""))])
+			elif now == said:
+				ok = _fail(("the bar reads `%s` both with and without the required part mounted, so it is "
+						+ "not live") % now)
+	screen.queue_free()
+	return ok
+
+
+## **PRESSING `Build` WHILE ASSEMBLING SENDS `Assemble`, AND AN EMPTY DESIGN IS ANSWERED** (ASSA-317
+## slice 2b).
+##
+## **THE PRESS IS THE REAL BUTTON**, not `_send_build` called by name: what makes this screen the
+## board's *interactive build screen* is that its one accent commits the design, and a wiring mistake
+## there is invisible to a test that calls the function the button was supposed to be connected to.
+##
+## **AND THE EMPTY CASE IS A STATE, NOT A GUARD I FANCIED.** A primary control that is never disabled
+## has to answer every press (ASSA-262's dead button in Mineralogy); `_assemble` returns silently on
+## an empty design because the bench's `Assemble` sits beside a sentence saying what is chosen, and
+## this one does not.
+func test_build_sends_assemble_on_the_assembly_path_and_answers_an_empty_design() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := true
+	screen._build_verb = screen.BUILD_ASSEMBLE
+	screen._building = []
+	_asked.clear()
+	screen._build_act.pressed.emit()
+	if not _asked.is_empty():
+		ok = _fail("pressing Build with no frame chosen submitted %s" % [_asked])
+	elif not screen._status.text.contains("frame"):
+		ok = _fail(("pressing Build with no frame chosen said `%s`; a control that is never disabled "
+				+ "has to answer every press") % screen._status.text)
+	else:
+		var frame := _part_stack_of(String(_roomiest_frame().get("kind", "")))
+		screen._building = [frame]
+		_asked.clear()
+		screen._build_act.pressed.emit()
+		# **COMPARED AGAINST `AssayActions`' OWN BUILDER, not against a payload typed here** (the `do`
+		# section's rule in this file): the point is that the accent reaches the one file that spells a
+		# command, not that I can spell one twice.
+		var want: Variant = AssayActions.assemble(AssayActions.item_of_stack(frame), [])
+		if _asked.size() != 1:
+			ok = _fail("Build on a one-part design asked for %d commands, not one: %s"
+					% [_asked.size(), _asked])
+		elif _asked[0] != want:
+			ok = _fail("Build submitted %s, not %s" % [_asked[0], want])
+		elif AssaySimHost.command_echo(_asked[0]) == "":
+			ok = _fail("Build submitted %s, which serde refuses" % [_asked[0]])
+		elif not screen._building.is_empty():
+			ok = _fail(("the design survived the press as %s; `_assemble` clears it either way, because "
+					+ "a half-chosen design left on screen after a refusal reads as a stuck button")
+					% [screen._building])
+	screen.queue_free()
+	return ok
+
+
+## **THE ONE LABEL IN THE COMMIT BAR, OR A COMPLAINT NAMING HOW MANY THERE ARE.**
+##
+## **NOT `_text_of`, AND THE REASON IS A NEAR-MISS RATHER THAN A PREFERENCE.** That helper joins with
+## ` · ` and appends each child's own recursion, so a single Label comes back as `<text> · ` -- a
+## trailing clause mark this file added, which read exactly like the client having composed one. The
+## count is asserted HERE because that is the half `contains` could never hold: a client that drew the
+## sim's string and a sentence of its own beside it is the ASSA-43/52 defect, and on this path the bar
+## carries one sim string and nothing else.
+func _only_said(screen: Node) -> String:
+	var labels := PackedStringArray()
+	for child in screen._build_said.get_children():
+		var label := child as Label
+		if label != null:
+			labels.append(label.text)
+	if labels.size() != 1:
+		return "<%d labels: %s>" % [labels.size(), labels]
+	return labels[0]
