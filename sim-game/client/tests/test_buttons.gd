@@ -165,16 +165,33 @@ func test_the_do_section_submits_the_sims_own_commands() -> bool:
 
 ## LEFT CLICK WALKS, RIGHT CLICK CHOOSES WHERE THE BUTTONS ACT. One mechanism for Place, Insert and
 ## Take, so a click never means two things -- and the tile it chose is SAID, not only drawn.
+##
+## **IT IS ALSO ASSA-366'S CONTROL, AND IT COULD NOT FAIL UNTIL THAT ITEM STRENGTHENED IT.** Opening a
+## machine's menu now AIMS at that machine, which is two assignments in `_open_machine_menu`; the same
+## two lines written one level up, in `_unhandled_input` before the branches, would aim at every tile a
+## player clicked -- including the one they only meant to walk to. This test asked what the left click
+## SUBMITTED and never what it left the cursor on, so that mutation walked straight past it. The clause
+## below is the one that reddens: on an EMPTY tile, left still only walks.
 func test_a_left_click_walks_and_a_right_click_chooses_the_target() -> bool:
 	var screen := _joined()
 	_tick(screen, 2)
 	var ok := true
 	var spawn: Vector2i = screen._sim.spawn_tile()
 	var walk_to := spawn + Vector2i(3, 2)
+	# NOTHING IS AIMED AT YET, which is what makes the clause below a control rather than a coincidence.
+	if screen._targeted:
+		screen.queue_free()
+		return _fail("a fresh screen already aims at %s" % screen._target_tile())
 	_asked.clear()
 	_click(screen, walk_to, MOUSE_BUTTON_LEFT)
 	if _asked.size() != 1 or _asked[0] != AssayActions.move_to(walk_to):
 		ok = _fail("a left click on %s asked for %s" % [walk_to, _asked])
+	elif screen._targeted:
+		# `_targeted` AND NOT THE TILE, because `_target_tile()` answers `_my_tile()` while nothing is
+		# chosen -- and this walk moves `_my_tile()`, so a tile comparison here would be a race.
+		ok = _fail(("a left click on the empty tile %s aimed the buttons at %s: an empty tile keeps "
+				+ "today's split exactly (ASSA-316 ruling 8, kept by ASSA-366)")
+				% [walk_to, screen._target_tile()])
 	else:
 		# And the sim actually walks us there, which is the only proof the tile was the right one.
 		_tick(screen, PATIENCE)
@@ -2721,19 +2738,28 @@ func test_a_slot_button_fuels_the_menus_machine_with_the_count_at_the_press() ->
 	return ok
 
 
-## **THE RING STAYS ON THE TILE THE VERBS ACT ON, WITH A MENU OPEN ON A MACHINE SOMEWHERE ELSE**
-## (ASSA-334; Maren reversing her ASSA-316 ruling 8, which had routed it to the menu's machine).
+## **OPENING A MACHINE'S MENU AIMS THE VERBS AT THAT MACHINE** (ASSA-366; Maren amending her ASSA-316
+## ruling 8: *"opening a machine's menu also targets that machine ... a mechanism no gesture invokes is
+## not a design, it is dead weight"*).
 ##
-## **THIS IS THE FIXTURE THAT SEPARATES THE TWO RULES, AND NO OTHER TEST IN THE FILE HAS IT.** Every
-## other menu test places its smelter on the targeted tile, so the acted-on tile and the menu's machine
-## are the same tile and both rules predict the same mark -- which is how ruling 8 shipped and was
-## measured green. Here the cursor is aimed at my own feet and the menu is opened on a machine one tile
-## away: the state Maren's shot caught, ring on (59, 61), the menu's smelter, while the column read
-## `acting on (57, 59) · on a deposit`.
+## **THIS IS THE FIXTURE THAT SEPARATES THE RULES, AND NO OTHER TEST IN THE FILE HAS IT.** Every other
+## menu test places its smelter on the targeted tile, so the acted-on tile and the menu's machine are
+## the same tile and every rule ever written here predicts the same mark -- which is how ruling 8
+## shipped and was measured green, and why no fixture could tell "the menu moves the target" from "the
+## menu leaves it alone". Here the cursor is aimed at my own feet FIRST and the menu is then opened on
+## a machine a tile away, so the assertion is about a target that MOVED.
 ##
-## THE ORDER OF THE TWO GESTURES IS FORCED by her own ruling 7 amendment: a right-click that dismisses
+## **IT ASSERTED THE OPPOSITE UNTIL ASSA-366 AND THE HISTORY IS THE POINT.** Under ruling 8 this read
+## *"the ring stays on the acted-on tile while a menu's machine is elsewhere"* -- and it was right about
+## the rule it was written for. What nobody had measured was the consequence: `_unhandled_input` returns
+## into the menu above the one line that assigns `_target`, so **a player could never aim at a standing
+## building at all**, and the "elsewhere" in the old name was the only reachable state rather than an
+## edge case. Maren amended her own ruling on ASSA-348 rather than let the mark keep a meaning no
+## gesture could produce.
+##
+## THE ORDER OF THE TWO GESTURES IS STILL FORCED by her ruling 7 amendment: a right-click that dismisses
 ## a menu still aims, so right-clicking AFTER opening would close the menu. Aim first, then open.
-func test_the_ring_stays_on_the_acted_on_tile_while_a_menus_machine_is_elsewhere() -> bool:
+func test_opening_a_menu_aims_the_verbs_at_that_machine() -> bool:
 	var screen := _joined()
 	var ok := true
 	var id := _a_placed_smelter(screen)
@@ -2746,20 +2772,122 @@ func test_the_ring_stays_on_the_acted_on_tile_while_a_menus_machine_is_elsewhere
 		screen.queue_free()
 		return _fail("the smelter stands on my own feet, so this fixture cannot tell the two apart")
 	_click(screen, feet, MOUSE_BUTTON_RIGHT)
+	# THE PREMISE, ASSERTED RATHER THAN ASSUMED: without this the test could pass on a client that never
+	# moved the target at all, if the smelter happened to be where the cursor already was.
+	if screen._target_tile() != feet:
+		screen.queue_free()
+		return _fail("aiming at my own feet %s left the cursor on %s" % [feet, screen._target_tile()])
 	_click(screen, machine, MOUSE_BUTTON_LEFT)
 	# **BOTH SIDES ARE `Rect2i` SINCE ASSA-348 AND THAT IS NOT A CAST.** The ring carries the subject's
-	# whole footprint now, so comparing it to a bare `Vector2i` would be false for both branches
-	# whatever the mark did -- a guard that can no longer fire. Asked of `_footprint_tiles`, which is
-	# the same sim crossing the screen itself uses.
+	# whole footprint now, so comparing it to a bare `Vector2i` would be false whatever the mark did --
+	# a guard that can no longer fire. Asked of `_footprint_tiles`, the same sim crossing the screen uses.
 	var machine_area: Rect2i = screen._footprint_tiles(machine)
-	var feet_area: Rect2i = screen._footprint_tiles(feet)
 	if screen._menu_at != id:
 		ok = _fail("the menu did not open on the machine at %s" % machine)
-	elif screen._world.selection == machine_area:
-		ok = _fail(("the ring is on %s, the menu's machine, and the verbs act on %s: one mark, two "
-				+ "subjects") % [machine_area, feet_area])
-	elif screen._world.selection != feet_area:
-		ok = _fail("the verbs act on %s and the ring is on %s" % [feet_area, screen._world.selection])
+	elif screen._target_tile() != machine:
+		ok = _fail(("the menu opened on the machine at %s and the verbs still act on %s: the one subject "
+				+ "three of the five verbs take is the one a player cannot aim at")
+				% [machine, screen._target_tile()])
+	elif screen._world.selection != machine_area:
+		ok = _fail("the verbs act on %s and the ring is on %s" % [machine_area, screen._world.selection])
+	# **AND THE `do` COLUMN NAMES THE SAME SUBJECT IN THE SAME FRAME** -- the half a `_refresh_world()`
+	# would miss. This is the defect ASSA-334 was filed for and it survived into my own 1x evidence
+	# (`nacre-assa334-anchor/14-machine-menu.png`: the panel said `Tonore smelter (A)` while the column
+	# said `acting on (57, 59) · on a deposit`), so it is asserted here rather than trusted to a refresh.
+	if ok:
+		var said := _text_of(screen._actions)
+		if not said.contains("%d, %d" % [machine.x, machine.y]):
+			ok = _fail(("the menu is open on the machine at %s and the `do` column says: %s")
+					% [machine, said])
+	screen.queue_free()
+	return ok
+
+
+## **CLOSING THE MENU LEAVES THE TARGET WHERE THE MENU PUT IT** (ASSA-366, Maren's condition 2: *"the
+## ring is the trace of what you were working on, and the `do` column's verbs still need somewhere to
+## point"*).
+##
+## **IT GUARDS A DECISION THAT IS CURRENTLY AN ABSENCE.** `_close_machine_menu` clears `_menu_at` and
+## nothing else, so condition 2 holds today by nobody having written a line -- and that is exactly the
+## kind of behaviour that gets "tidied" into a clear by the next person reading the open/close pair and
+## making them symmetrical. Her condition says they are not symmetrical on purpose.
+func test_closing_a_menu_leaves_the_verbs_aimed_at_its_machine() -> bool:
+	var screen := _joined()
+	var ok := true
+	var id := _a_placed_smelter(screen)
+	if id < 0:
+		screen.queue_free()
+		return false
+	var machine: Vector2i = screen._target_tile()
+	_click(screen, machine, MOUSE_BUTTON_LEFT)
+	if screen._menu_at != id:
+		screen.queue_free()
+		return _fail("the menu did not open on the machine at %s" % machine)
+	# **`close_text()` AND NOT THE STRING ITSELF** -- that function exists because a literal in two places
+	# is what ASSA-62 was, and a test matching a label by hand rots the same silent way a tool does.
+	var close := _find(screen._menu_box, AssayHud.close_text())
+	if close == null:
+		ok = _fail("the menu offers no named close: %s" % [_labels_of(screen._menu_box)])
+	else:
+		close.pressed.emit()
+		if screen._menu_at != -1:
+			ok = _fail("the named close left the menu open at %d" % screen._menu_at)
+		elif not screen._targeted or screen._target_tile() != machine:
+			ok = _fail(("closing the menu moved the verbs off %s to %s: the trace of what you were "
+					+ "working on is gone with the panel") % [machine, screen._target_tile()])
+		elif screen._world.selection != screen._footprint_tiles(machine):
+			ok = _fail("the menu closed and the ring went to %s" % [screen._world.selection])
+	screen.queue_free()
+	return ok
+
+
+## **PICK THE MACHINE UP AND THE RING COLLAPSES TO ONE TILE** (ASSA-366, and this is the MEASUREMENT I
+## handed Maren back instead of building her condition 1).
+##
+## Her condition was *"the ring may not outlive its subject"*, against the hazard that *"the first thing
+## a player does after picking a machine up is look at a footprint ring around bare ground"*. **That
+## cannot happen, and this is the proof rather than my say-so**: `_refresh_world` re-reads
+## `_footprint_tiles(_target)` every refresh and that function asks the sim what stands on the tile, so
+## the tick the building leaves, the ring is one tile -- which `_footprint_tiles`' own docstring calls
+## the right answer rather than a fallback, because `Place` carries a `TilePos`.
+##
+## **WHAT SURVIVES IS A PLACEMENT CURSOR ON THE TILE YOU JUST CLEARED**, indistinguishable from a
+## deliberate right-click there, and the state that lets you press `Place` and put the machine back.
+## Clearing it would send the next placement to your feet and would cost a new `_target_building` id to
+## compare against -- new state, which is what her own safety argument for this ruling rests on not
+## having. Hers to reverse; this test is what she would be reversing.
+func test_picking_a_machine_up_leaves_a_one_tile_cursor_and_not_a_ring_round_nothing() -> bool:
+	var screen := _joined()
+	var ok := true
+	var id := _a_placed_smelter(screen)
+	if id < 0:
+		screen.queue_free()
+		return false
+	var machine: Vector2i = screen._target_tile()
+	_click(screen, machine, MOUSE_BUTTON_LEFT)
+	var span: Rect2i = screen._footprint_tiles(machine)
+	# THE PREMISE: a 1x1 would make the collapse invisible, so the fixture is refused rather than passed.
+	if span.size == Vector2i.ONE:
+		screen.queue_free()
+		return _fail("the sim says this machine is one tile, so nothing can be seen to collapse")
+	if screen._world.selection != span:
+		ok = _fail("the menu is open and the ring is %s, not the footprint %s"
+				% [screen._world.selection, span])
+	var away := _find(screen._menu_box, "Pick up")
+	if away == null:
+		ok = _fail("the machine menu offers no Pick up: %s" % [_labels_of(screen._menu_box)])
+	elif ok:
+		away.pressed.emit()
+		_tick(screen, 8)
+		if screen._sim.tile_at(machine).get("building") != null:
+			ok = _fail("the sim still has a building on %s, so nothing was picked up" % machine)
+		elif screen._world.selection != Rect2i(machine, Vector2i.ONE):
+			ok = _fail(("the machine is gone and the ring is %s: a %s ring around bare ground is the "
+					+ "thing Maren's condition 1 was written against")
+					% [screen._world.selection, span.size])
+		elif screen._target_tile() != machine:
+			ok = _fail("the machine is gone and the placement cursor left %s for %s"
+					% [machine, screen._target_tile()])
 	screen.queue_free()
 	return ok
 

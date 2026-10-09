@@ -551,12 +551,15 @@ func _process(_delta: float) -> bool:
 		# turn. The menu is already closed above, which is what makes the outline the only mark in
 		# these two frames.
 		#
-		# **`_target` IS SET HERE RATHER THAN CLICKED, AND THAT IS A FINDING, NOT A SHORTCUT.** Every
-		# other leg in this file clicks, on purpose. A click cannot produce this state: a press on an
-		# occupied tile opens that machine's menu and returns (`main.gd::_unhandled_input`), so a
-		# player can only ever have a building selected in the instant after PLACING it. The report
-		# says so, because a frame that photographs an unreachable state must not be read as a
-		# photograph of a reachable one.
+		# **THIS LEG USED TO WRITE `_target` ITSELF, AND SAID SO, BECAUSE NO CLICK COULD PRODUCE THE
+		# STATE.** A press on an occupied tile opened that machine's menu and returned above the one line
+		# that aims, so a player could only ever have a building selected in the instant after PLACING it
+		# -- which is the finding that became ASSA-366.
+		#
+		# **IT CLICKS NOW, BECAUSE MAREN AMENDED THE RULING AND THE STATE IS REACHABLE** (ASSA-366):
+		# opening a machine's menu aims the verbs at it, and closing the menu leaves the aim where it was
+		# (her condition 2). These two frames are a state a player reaches in two presses, so the tool no
+		# longer has to disclaim them -- and the gesture is half of this item's own evidence.
 		Phase.SELECT_BIG:
 			var pair := _two_subjects()
 			if pair.is_empty():
@@ -565,14 +568,14 @@ func _process(_delta: float) -> bool:
 			else:
 				_subject_big = pair[0]
 				_subject_small = pair[1]
-				_aim_at(_subject_big)
+				_aim_by_clicking(_subject_big)
 				_phase = Phase.SETTLE_SELECT_BIG
 		Phase.SETTLE_SELECT_BIG:
 			_settle(Phase.SHOOT_SELECT_BIG)
 		Phase.SHOOT_SELECT_BIG:
 			_shoot("15-selection-2x2.png", PackedStringArray())
 			_selection_report("2x2", _subject_big)
-			_aim_at(_subject_small)
+			_aim_by_clicking(_subject_small)
 			_phase = Phase.SETTLE_SELECT_SMALL
 		Phase.SETTLE_SELECT_SMALL:
 			_settle(Phase.SHOOT_SELECT_SMALL)
@@ -1297,26 +1300,32 @@ func _a_machine_tile() -> Vector2i:
 	return Vector2i(-1, -1)
 
 
-## **AIM AT A TILE THE WAY THE RIGHT-CLICK BRANCH DOES, AND THE `_refresh()` IS THE WHOLE POINT**
-## (ASSA-348).
+## **AIM AT A STANDING MACHINE THE WAY A PLAYER NOW DOES: CLICK IT, THEN SHUT ITS MENU** (ASSA-366).
 ##
-## **THE FIRST VERSION OF THIS SET `_target` AND `_targeted` AND NOTHING ELSE, AND THE FRAME CAME
-## BACK WITH THE DEFECT ASSA-334 EXISTS TO KILL.** The outline sat on the smelter at (59, 61) while
-## the HUD column still read `acting on (57, 59) · on a deposit` -- a ring and a readout naming two
-## subjects, in the evidence frame for an item about marks agreeing. Every number in the report was
-## right; only the picture said so.
+## **THIS WAS `_aim_at`, WHICH WROTE `_target` AND `_targeted` ITSELF, AND IT HAD TO.** A press on an
+## occupied tile opened that machine's menu and RETURNED, above the one line in `main.gd` that aims,
+## so the state these two frames are about -- a building marked, with nothing else on screen -- was one
+## no gesture could produce. Maren amended that ruling on ASSA-348; opening the menu is what aims now,
+## and her condition 2 leaves the aim standing when the menu goes, so two presses reach it.
 ##
-## It was the probe, not the client: `main.gd::_unhandled_input` sets the two fields and then calls
-## `_refresh()` in the next line, so in real play the column cannot lag the ring. Setting the state
-## without the refresh photographs a screen no gesture can produce. **The toast is written too, so
-## the frame is the one a player would see if this gesture existed** -- which, per the item, it does
-## not: a click on an occupied tile opens that machine's menu and returns.
-func _aim_at(tile: Vector2i) -> void:
-	_screen._target = tile
-	_screen._targeted = true
-	_screen._say("acting on %d, %d" % [tile.x, tile.y], AssayHud.Say.JOINED)
-	_screen._refresh()
-	_screen.queue_redraw()
+## **ONE HALF IS A REAL PRESS AND ONE IS A CALL, SAID RATHER THAN BLURRED.** `AssayButtonPlay._click`
+## hands `_unhandled_input` a press at the tile's real screen position; the close is the function, the
+## same way the machine-menu leg above shuts its own. What a real press does NOT do is write the toast
+## the old `_aim_at` wrote -- a click on a machine says nothing, the menu is the announcement -- so if
+## one of these frames ever carries `acting on x, y` again, something put it there that is not a player.
+##
+## **THE LESSON THE OLD VERSION BOUGHT IS NOT LOST, IT MOVED INTO THE CLIENT.** Its first version set
+## the two fields and nothing else, and the frame came back with the ring on one machine while the HUD
+## column still named another -- every number in the report right, only the picture wrong. That refresh
+## is now `_open_machine_menu`'s own (`_refresh()`, not `_refresh_world()`), so this tool cannot have
+## the bug any more: it presses, and the screen does whatever the screen does.
+func _aim_by_clicking(tile: Vector2i) -> void:
+	_play._click(tile, MOUSE_BUTTON_LEFT)
+	print("  aim by clicking %s: menu on %d, target %s, targeted %s"
+			% [tile, _screen._menu_at, _screen._target, _screen._targeted])
+	_screen._close_machine_menu()
+	print("    menu shut: target %s, targeted %s (condition 2: the aim outlives the panel)"
+			% [_screen._target, _screen._targeted])
 
 
 ## **A 2x2 AND A 1x1 STANDING IN THIS WORLD, OR `[]`** (ASSA-348). Returns their `pos` tiles.
