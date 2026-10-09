@@ -57,8 +57,14 @@ func _initialize() -> void:
 	probe.theme_type_variation = &"Heading"
 	probe.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	screen.add_child(probe)
-	var font: Font = probe.get_theme_font(&"font")
-	var size: int = probe.get_theme_font_size(&"font_size")
+	# **ASK FOR `Heading` BY NAME; `theme_type_variation` does not reach a QUERY.** Against the
+	# PROJECT theme (this client assigns none in the tree) the one-argument form returns
+	# `default_font_size` = 13 = `BODY`, while the screen draws the variation's 15 — measured on the
+	# real `_log_heading` and in pixels on a shipped 1x frame. This file swept its widths at 13 until
+	# 2026-10-09, so every wrap column it has ever reported is ~15% light. See the note in
+	# `maren_headline_rows.gd`; `main.gd:2872` has used the two-argument form all along.
+	var font: Font = probe.get_theme_font(&"font", &"Heading")
+	var size: int = probe.get_theme_font_size(&"font_size", &"Heading")
 	var line_h := font.get_height(size)
 	print("headline font: %s at %d px (Heading), line height %.1f px" % [font.get_font_name(), size, line_h])
 	print("widths swept: %s" % str(WIDTHS))

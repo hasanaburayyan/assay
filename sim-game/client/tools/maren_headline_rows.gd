@@ -17,6 +17,11 @@ extends SceneTree
 ## lights` -- each reading now begins its row WITH the verdict it earns. The reorder costs a row only
 ## at a wrap width of 299-300 px; at 301+ and at 298- both orders wrap identically.
 ##
+## **THAT PARAGRAPH WAS MEASURED AT 13 px AND THE SCREEN DRAWS 15 (ASSA-392, 2026-10-09).** It is
+## quoted rather than deleted because it fed ASSA-272 box 7's ruling, which is being re-run: until
+## that lands, **the break positions above are not this surface's.** At 318 px the fixed tool cuts
+## after `... reactivity 51-75 · fuel`. The cause is the line below, not the sweep.
+##
 ## Flags come from `maren_headline_wrap.gd`'s `WORD_SMART_BREAKS` so the two instruments of this
 ## family cannot disagree about the surface -- which they did until 2026-10-08, when that file was
 ## passing `GRAPHEME_BOUND` and breaking inside words.
@@ -42,8 +47,17 @@ func _initialize() -> void:
 	var probe := Label.new()
 	probe.theme_type_variation = &"Heading"
 	screen.add_child(probe)
-	var font: Font = probe.get_theme_font(&"font")
-	var size: int = probe.get_theme_font_size(&"font_size")
+	# **ASK FOR `Heading` BY NAME. SETTING `theme_type_variation` IS NOT ENOUGH FOR A QUERY** — found
+	# by Nacre on 2026-10-09 and measured by Maren. This client assigns no theme in the tree
+	# (`project.godot` sets `gui/theme/custom`), and against the PROJECT theme the one-argument form
+	# returns `default_font_size` = 13 = `BODY` while the screen DRAWS the variation's 15. Measured
+	# both ways on the real `_log_heading` (one-arg 13, two-arg 15) and in pixels on the shipped 1x
+	# frame: `the frame's slots` is 120 px of ink, against 105 predicted at 13 and 121 at 15.
+	# So every Heading width quoted off this family before today is ~15% light. `main.gd` itself
+	# already uses the two-argument form (2872-2873), as does `_note`'s colour lookup, with the same
+	# reason written beside it: off-tree lookup reaches the project theme, asked, never assumed.
+	var font: Font = probe.get_theme_font(&"font", &"Heading")
+	var size: int = probe.get_theme_font_size(&"font_size", &"Heading")
 	var breaks: int = load("res://tools/maren_headline_wrap.gd").WORD_SMART_BREAKS
 	print("headline font: %s at %d px (Heading), break flags %d" % [font.get_font_name(), size, breaks])
 
