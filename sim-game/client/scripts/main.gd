@@ -1185,15 +1185,30 @@ func _build_ui() -> void:
 	_cred_cell.add_theme_constant_override("separation", 8)
 	_cred_cell.add_child(host_label)
 	_host.text = "localhost:%d" % AssayProtocol.DEFAULT_PORT
-	_host.custom_minimum_size = Vector2(240.0, 0.0)
+	# **WIDE ENOUGH FOR THE ADDRESS DECISION #40 SENDS A FRIEND** (ASSA-318, Maren's option 2). A
+	# tailnet name is what somebody called their computer, so no width is "enough" -- the bar is one
+	# NAMED string, `AssayHud.LONGEST_HOSTNAME`, measured in the live font rather than multiplied out
+	# of a px/char ratio. At 240 this held 34 narrow characters or 29 wide ones and clipped a MagicDNS
+	# name by 36 px.
+	#
+	# **AND NOTHING IS TAKEN FROM THE NAME FIELD TO PAY FOR IT, WHICH WAS MY OWN FINDING AND HER
+	# RULING.** I measured that the name field has nothing to give (120 usable, 105 spent by the
+	# shipped default). She then found the better reason: there is no card. `_front_door` is a centred
+	# VBox with no panel, the row is ~513 px of a 1280 px window, and `SURFACE` across that whole
+	# region is 171 px -- so the two fields were never sharing anything and option 1 was answering a
+	# scarcity neither of us had checked for.
+	_host.custom_minimum_size = Vector2(AssayHud.HOST_FIELD_PX, 0.0)
 	_host.tooltip_text = "host, host:port, or [v6]:port. A bare address uses 7777."
 	_cred_cell.add_child(_host)
 
 	var name_label := Label.new()
 	name_label.text = "name"
 	_cred_cell.add_child(name_label)
+	# **OUR OWN DEFAULT MUST NOT ARRIVE FULL**, which is the reason this number is not taste: the box
+	# already holds `$USER` before the player touches it, and at 140 that was 105 px of 120 usable --
+	# 87.5% full on arrival, with two more characters than the name we ship enough to scroll it.
 	_name.text = OS.get_environment("USER")
-	_name.custom_minimum_size = Vector2(140.0, 0.0)
+	_name.custom_minimum_size = Vector2(AssayHud.NAME_FIELD_PX, 0.0)
 	_cred_cell.add_child(_name)
 
 	_join_button.text = "Join"

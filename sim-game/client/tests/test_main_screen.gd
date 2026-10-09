@@ -73,6 +73,98 @@ func _screen() -> Node:
 	return node
 
 
+## **THE HOST FIELD FITS THE ADDRESS DECISION #40 SENDS A FRIEND** (ASSA-318, Maren's rewritten box
+## 3 and her option 2).
+##
+## **A NAMED STRING, NOT A CHARACTER COUNT, AND THAT IS THE WHOLE POINT OF THE REWRITE.** Her first
+## wording asked that the longest address a friend can be handed be fully visible -- unsatisfiable,
+## because a MagicDNS name is whatever somebody called their computer. So the bar is one address,
+## `AssayHud.LONGEST_HOSTNAME`, by value.
+##
+## **IN WORDS, BECAUSE IT IS A LIMIT AND NOT A FAILURE: AN ADDRESS LONGER THAN THIS ONE STILL
+## SCROLLS, AND NOTHING IS LOST WHEN IT DOES.** A `LineEdit` scrolls rather than truncates. What the
+## width buys is reading what you type *while* you type it; the "does this match what I was sent"
+## need is already served by `_join_address`'s `connecting to %s` Label and by `net_client`'s seven
+## failure sentences, which all carry `_where`.
+##
+## **MEASURED THE WAY `tools/limpet_host_fit.gd` MEASURES, so the suite and the instrument cannot
+## disagree:** usable width is the rect LESS the field's own `normal` stylebox content margins --
+## asked of the stylebox, because a `LineEdit` draws inside them and the rect is not the room.
+##
+## **AND IT REFUSES TO PASS WITHOUT A FONT.** A node that resolves none would make
+## `get_string_size` meaningless, and a test that measured nothing would go green for ever.
+##
+## **WHAT THIS TEST CANNOT BE THE AUTHORITY ON, SAID HERE RATHER THAN DISCOVERED LATER.** The suite
+## is headless, and headless font metrics in this project are not the window's -- a `Display` Label
+## measures 18 px here and 28 in a window (ASSA-363). A narrower headless font would make the string
+## measure SMALLER and this test pass more easily, so it is a floor and not the verdict. The verdict
+## is `tools/limpet_host_fit.gd` in a real 1280x720 window: **307 px of 340 usable, 33 px spare**,
+## and the name field's shipped default at **70.0%** of its room. Re-run that after moving either
+## constant; this test only catches someone moving one and not the other.
+func test_the_host_field_fits_the_address_decision_40_hands_out() -> bool:
+	var screen := _screen()
+	var ok := true
+	var box: LineEdit = screen._host
+	var named: LineEdit = screen._name
+	var font := box.get_theme_font(&"font")
+	var size := box.get_theme_font_size(&"font_size")
+	var style := box.get_theme_stylebox(&"normal")
+	var pad := 0.0 if style == null else style.get_margin(SIDE_LEFT) + style.get_margin(SIDE_RIGHT)
+	var usable := AssayHud.HOST_FIELD_PX - pad
+	if font == null:
+		ok = _fail("the host field resolves no font, so nothing below is a measurement")
+	elif box.custom_minimum_size.x != AssayHud.HOST_FIELD_PX:
+		ok = _fail("the host field asks for %.0f px, not `HOST_FIELD_PX` (%.0f)"
+				% [box.custom_minimum_size.x, AssayHud.HOST_FIELD_PX])
+	elif named.custom_minimum_size.x != AssayHud.NAME_FIELD_PX:
+		ok = _fail("the name field asks for %.0f px, not `NAME_FIELD_PX` (%.0f)"
+				% [named.custom_minimum_size.x, AssayHud.NAME_FIELD_PX])
+	else:
+		var wide: float = font.get_string_size(AssayHud.LONGEST_HOSTNAME,
+				HORIZONTAL_ALIGNMENT_LEFT, -1.0, size).x
+		# **THE DEFAULT MUST NOT ARRIVE FULL** -- her reason for the name field, held against a named
+		# value because the shipped default is `$USER` and is whatever this machine calls its account.
+		# `hasanaburayyan` is the one this item measured at 105 px of 120.
+		var mine: float = font.get_string_size("hasanaburayyan",
+				HORIZONTAL_ALIGNMENT_LEFT, -1.0, size).x
+		var room := AssayHud.NAME_FIELD_PX - pad
+		if wide > usable:
+			ok = _fail(("`%s` is %.0f px in the field's own font at size %d, and the field has %.0f "
+					+ "usable (%.0f rect less %.0f of stylebox margin): it CLIPS by %.0f")
+					% [AssayHud.LONGEST_HOSTNAME, wide, size, usable, AssayHud.HOST_FIELD_PX, pad,
+					wide - usable])
+		elif mine > room * 0.75:
+			ok = _fail(("a 14-character account name is %.0f px of the name field's %.0f usable "
+					+ "(%.0f%%); the default we ship must not arrive nearly full")
+					% [mine, room, 100.0 * mine / maxf(1.0, room)])
+	screen.queue_free()
+	return ok
+
+
+## **NO LITERAL CARD WIDTH ANYWHERE ON THE DOOR** (ASSA-318 box 5, which is ASSA-292's rule restated
+## and is what made the width change two constants instead of a layout).
+##
+## **THERE IS NO CARD AT ALL, AND THAT IS THE FINDING THIS GUARDS.** Maren wrote four options trading
+## width between the two fields, then read the constructor: `_front_door` is a centred VBox with no
+## panel, `_cred_cell` an HBox that derives its width from its children. So the row grows with the
+## fields and nothing has to be told a number. A `custom_minimum_size` appearing on either container
+## would quietly re-invent the scarcity both of us argued inside of for a day.
+func test_the_door_takes_its_width_from_its_children_and_not_from_a_number() -> bool:
+	var screen := _screen()
+	var ok := true
+	for entry in [["_cred_cell", screen._cred_cell], ["_front_door", screen._front_door],
+			["_door_secondary", screen._door_secondary]]:
+		var holder: Control = entry[1]
+		if holder == null:
+			ok = _fail("%s does not exist, so this test is guarding nothing" % entry[0])
+		elif holder.custom_minimum_size.x != 0.0:
+			ok = _fail(("%s carries a literal width of %.0f px; the row derives its width from its "
+					+ "children (ASSA-292) and a card width here is the scarcity ASSA-318 found was "
+					+ "invented") % [entry[0], holder.custom_minimum_size.x])
+	screen.queue_free()
+	return ok
+
+
 ## WHERE A SECTION ACTUALLY IS, in the screen's own coordinates.
 ##
 ## Positions are SUMMED UP THE ANCESTOR CHAIN rather than read off one node, because the HUD column
