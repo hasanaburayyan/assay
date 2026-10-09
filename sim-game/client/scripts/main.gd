@@ -4882,6 +4882,23 @@ func _refresh_build_screen() -> void:
 	_refresh_build_said()
 	_refresh_build_cost()
 	_place_build_screen()
+	# **AND AGAIN ONCE THE LAYOUT HAS SETTLED, WHICH IS THE WHOLE OF ASSA-377** (P0: with the world
+	# ticking, `Build` left the bottom of the window on the empty-pack assembly screen and could not
+	# be pressed at all). The call above runs in the SAME frame as `_rebuild_build_screen`, when the
+	# sentence's `Label`s have just been re-added and have no width yet. An autowrapped `Label`
+	# reports its height for the width it currently has, so at width 0 it answers the
+	# one-letter-per-row height -- `BuildScreenSaid`'s minimum width is **1** -- and the commit bar's
+	# minimum momentarily reads 570 on the assembly path (1365 on the make path) against its own 114.
+	# `set_size` CLAMPS UP to the minimum, so the `PanelContainer` is written 804 instead of the 588
+	# `build_screen_rect` asked for, which that function cannot even return (its ceiling here is 624).
+	# One frame later the minimum has relaxed to 348 and **nothing re-places the box**, so the screen
+	# keeps the oversized rect and the bar sits at y732 in a 720 px window.
+	#
+	# **MEASURED, NOT REASONED, AND THE PNG IS THE AUTHORITY.** With one tick per frame -- what a relay
+	# actually delivers -- `shared/assay/limpet-assa377-empty-pack/` holds the shot with no `Build` on
+	# it; a single `_place_build_screen()` on a frame carrying no refresh put the box back to 588 and
+	# `Build` back to y516 (`replace2.log`). Deferring is that frame, taken for free.
+	_place_build_screen.call_deferred()
 
 
 ## **WHERE THE SCREEN GOES, FROM A MEASUREMENT AND NOT FROM A CONSTANT** (ASSA-328).
