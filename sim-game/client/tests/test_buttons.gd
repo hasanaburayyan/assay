@@ -3071,6 +3071,107 @@ func test_the_output_picture_leaves_the_plate_the_pack_rows_keep() -> bool:
 	return ok
 
 
+## **THE OUTPUT PICTURE IS THE AUTHORED FRAME AT A WHOLE-NUMBER SCALE, AND THE SCALE IS THE ROOM'S
+## ANSWER AND NOT A NUMBER ANYONE TYPED** (ASSA-357 box 5; Maren's box 4 ruling, 3x today).
+##
+## **THE CLAIM IS THE RATIO, WHICH IS WHY THIS CANNOT BE SATISFIED BY A SECOND TYPED SIZE.** Until
+## tonight the box was `(ICON_PX, ICON_PX)` = 32x32 under a 64x96 frame -- `32/64` and `32/96`, two
+## different ratios, neither whole. Any box that is the frame times one whole number passes; any box
+## that is a size someone picked does not, because two axes of a 2:3 frame only agree when the
+## multiplier is the same on both.
+##
+## **AND THE 32x32 WAS NOT DRAWING AT 32 EITHER, WHICH IS WHY THE RATIO IS THE CLAIM AND NOT THE
+## SIZE.** `KEEP_ASPECT_CENTERED` fits by the smaller ratio, so the shipped box drew the frame at
+## 1/3; measured off the paint in a 1x window, the smelter's ink was **17 x 22 px**
+## (`shared/assay/limpet-assa363-centres/build-screen-14247.png`, x 675..691 y 146..167). A test that
+## asserted a SIZE would have gone green on a box whose contents were a third of it.
+##
+## **AND THE UPPER BOUND IS RE-DERIVED HERE RATHER THAN ASKED OF THE CODE UNDER TEST.** A test that
+## called `_build_picture_room` would assert only that the call site uses it. This walks the screen's
+## own rect, the panel's own padding and the crown's own minimum to the columns region, and asserts
+## block 5's whole content fits inside it -- which is ASSA-362's property, the P0 that says a
+## shrinking section's content is a hard floor under the window.
+func test_the_output_picture_is_the_authored_frame_at_a_whole_scale_of_its_room() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_some_ore(screen)
+	if ok:
+		var launcher := _make_launcher_for(screen, "smelter")
+		if launcher == null:
+			ok = _fail("no menu row offers a smelter: %s" % _text_of(screen._make))
+		else:
+			launcher.pressed.emit()
+			var art: TextureRect = null
+			for child in screen._build_detail.get_children():
+				var rect_node := child as TextureRect
+				if rect_node != null and rect_node.texture != null:
+					art = rect_node
+			if art == null:
+				ok = _fail(("block 5 holds no picture at all: %s. This block's whole job is showing "
+						+ "the object you are about to spend parts on")
+						% [screen._build_detail.get_children()])
+			else:
+				var frame := art.texture.get_size()
+				var box := art.custom_minimum_size
+				var across := box.x / frame.x
+				var down := box.y / frame.y
+				if not is_equal_approx(across, down):
+					ok = _fail(("the picture's box is %s under a %s frame -- %.3f across and %.3f "
+							+ "down. A box that is not the frame times ONE number is a size someone "
+							+ "picked, and `KEEP_ASPECT_CENTERED` then throws the larger ratio away")
+							% [box, frame, across, down])
+				elif not is_equal_approx(across, floorf(across)):
+					ok = _fail(("the picture's box is %s under a %s frame, which is %.3f x -- a "
+							+ "fractional scale is resampling, and Maren's ASSA-362 refusal is that "
+							+ "a layout number is never paid for by resampling art") % [box, frame,
+							across])
+				elif across < 2.0:
+					ok = _fail(("the picture is the frame at %.0fx (%s). Block 5 is the right "
+							+ "column's only visible section on the make path and the one picture the "
+							+ "screen is for; at 1x it is a pack row's icon") % [across, box])
+				else:
+					ok = _picture_fits_the_columns_region(screen, box)
+	screen.queue_free()
+	return ok
+
+
+## **BLOCK 5's WHOLE CONTENT INSIDE THE COLUMNS REGION, DERIVED FROM THE SCREEN'S RECT** (ASSA-357
+## box 5). Re-walked here on purpose -- see the test above -- out of `build_screen_rect`, the panel's
+## own content margin, the crown's own minimum, two gutters and `BUILD_COMMIT_BAR`.
+##
+## **WHY A CONTENT OVERFLOW IS THE FAILURE AND NOT A CLIPPED PICTURE**: block 5 is built
+## `fill := false`, so it is `SHRINK_BEGIN` with scrolling disabled and what stands in it is a FLOOR
+## under the section, the column and the whole screen (ASSA-362). An oversized picture does not get
+## cut off; it pushes `Build` off the window.
+func _picture_fits_the_columns_region(screen: Node, box: Vector2) -> bool:
+	var rect := AssayHud.build_screen_rect(AssayHud.world_rect(), screen._world_band_top())
+	var pad := Vector2.ZERO
+	var skin := (screen._build_box as Control).get_theme_stylebox(&"panel")
+	if skin != null:
+		pad = Vector2(skin.get_margin(SIDE_LEFT), skin.get_margin(SIDE_TOP))
+	var gutter := float(screen.BUILD_GUTTER)
+	var crown := (screen._build_crown as Control).get_combined_minimum_size().y
+	var columns := AssayHud.build_columns_height(rect, pad, crown, gutter)
+	var width := AssayHud.build_column_width(rect.size.x - pad.x * 2.0, screen.BUILD_COLUMNS,
+			screen.BUILD_COLUMNS.size() - 1, gutter)
+	if box.x > width:
+		return _fail(("the picture is %.0f px wide in a %.0f px column, so it is the thing that sets "
+				+ "the column's width") % [box.x, width])
+	# THE BLOCK'S CONTENT: the heading, every row, and a separation between each pair.
+	var air := float(screen._build_detail.get_theme_constant(&"separation"))
+	var content := (screen._build_detail_heading as Control).get_combined_minimum_size().y + air
+	var rows: Array = screen._build_detail.get_children()
+	for at in rows.size():
+		content += (rows[at] as Control).get_combined_minimum_size().y
+		if at > 0:
+			content += air
+	if content > columns:
+		return _fail(("block 5 asks for %.0f px inside a %.0f px columns region. A `SHRINK_BEGIN` "
+				+ "section with scrolling disabled is a floor under the screen, so this is ASSA-362's "
+				+ "P0 and it pushes `Build` off the window") % [content, columns])
+	return true
+
+
 ## Every node under `root` painted with `ink` as its `panel` stylebox, named. Reads the override
 ## rather than the resolved theme box: the plate is applied as a `StyleBoxFlat` override, and asking
 ## the theme would return whatever `Panel` inherits for every node that has no plate at all.

@@ -1152,6 +1152,73 @@ static func commit_sentence_width(bar_width: float, gutter: float) -> float:
 	return maxf(0.0, bar_width - BUILD_ACT_WIDTH - gutter)
 
 
+## **HOW WIDE ONE OF THE BUILD SCREEN'S COLUMNS IS, FROM THE SCREEN'S OWN WIDTH** (ASSA-357 box 5).
+##
+## `BUILD_COLUMNS` are shares of Maren's 863 and the gutters are NOT inside them: `287 + 304 + 240 =
+## 831` and `863 - 2 x 16 = 831`, so a share has to be taken against the shares' own total after the
+## gutters have been removed, exactly as `HBoxContainer` distributes `size_flags_stretch_ratio`.
+##
+## **IT FLOORS, AND THE CHECK ON IT IS ONE-SIDED, FOR `commit_sentence_width`'S REASON.** The engine
+## spreads the leftover pixel of `812 x 240 / 831 = 234.51` and hands the real column **235**
+## (`shared/assay/limpet-assa317-assembly/shot-report.txt`, a 1x window: `280 + 16 + 297 + 16 + 235 =
+## 844`). An equality would be red forever over one pixel nobody can see; a floor is a width the
+## column is never NARROWER than, which is the direction anything sized against it needs.
+static func build_column_width(inside_width: float, shares: Array, which: int,
+		gutter: float) -> float:
+	if shares.is_empty() or which < 0 or which >= shares.size():
+		return 0.0
+	var total := 0.0
+	for share in shares:
+		total += float(share)
+	if total <= 0.0:
+		return 0.0
+	var free := maxf(0.0, inside_width - gutter * float(shares.size() - 1))
+	return floorf(free * float(shares[which]) / total)
+
+
+## **HOW TALL THE THREE-COLUMN REGION IS, FROM THE SCREEN'S RECT AND NOTHING THAT STANDS IN IT**
+## (ASSA-357 box 5).
+##
+## `inside` is the rect less the panel's own content margin (`build_theme.gd`'s `PAD_X` 10, `PAD_Y`
+## 6), and `inside` is a `VBoxContainer` of three children — crown, columns, commit bar — with
+## `BUILD_GUTTER` between them. Against the 1x window that fits: `588 - 2 x 6 = 576`, and
+## `576 - 28 - 16 - 16 - 114 = 402`, which is the columns region Limpet's shot measured.
+##
+## **`crown` IS AN ARGUMENT BECAUSE IT IS A FONT METRIC AND NOT A NUMBER WE OWN** — a `Display` label
+## beside a `Quiet` button, which measures 28 laid out and may not measure 28 the day either moves.
+## **It is safe to read off the live control**, which `pad` and the rest of this is not: the crown is
+## the picture's SIBLING, so nothing the picture does can change it. Read the laid-out COLUMN instead
+## and the chain closes on itself — the picture's own minimum is the floor under the column it is
+## measured against (ASSA-362's mechanism), so the scale would ratchet upwards and never down.
+static func build_columns_height(rect: Rect2, pad: Vector2, crown: float, gutter: float) -> float:
+	var inside := rect.size.y - pad.y * 2.0
+	return maxf(0.0, inside - crown - gutter * 2.0 - BUILD_COMMIT_BAR)
+
+
+## **THE WHOLE-NUMBER SCALE AN AUTHORED FRAME IS DRAWN AT IN A GIVEN ROOM** (ASSA-357 box 5; Maren's
+## box 4 ruling, which is a RESULT and never a typed 2 or 3).
+##
+## `floor(min(room.x / frame.x, room.y / frame.y))`, clamped at 1. Whole numbers only, because the
+## frames are pixel art and a fractional scale is resampling — Maren's ASSA-362 refusal: *a layout
+## overflow is never paid for by resampling art*. Nothing here touches `ICON_PX`, which is the exact
+## 1/2 and 1/4 of the two sheets and is the pack's number, not this screen's.
+##
+## **TODAY IT ANSWERS 3 FOR BLOCK 5, AND THE CEILING IS THE WIDTH.** The authored item frame is 64x96
+## (`items.png`'s own `manifest.json`); block 5's room on the make path, where it is the right
+## column's only visible section (ASSA-341 hides `cost` there), is **234 x ~341** — so `234 / 64 =
+## 3.65` and `341 / 96 = 3.55`, both floor to 3. **4x dies on width before any height arithmetic:
+## `64 x 4 = 256` against a 235 px column.**
+##
+## **AND THE CLAMP IS WHY THIS IS SAFE TO PUT UNDER A SHRINKING SECTION.** Block 5 is built
+## `fill := false`, so its content's height is a hard floor under the whole screen (ASSA-362). A
+## picture sized from the room it is given can never be the thing that pushes `Build` off a window:
+## shrink the room and the scale shrinks with it, down to 1x, without anyone re-reading a comment.
+static func picture_scale(frame: Vector2, room: Vector2) -> int:
+	if frame.x <= 0.0 or frame.y <= 0.0:
+		return 1
+	return maxi(1, int(floorf(minf(room.x / frame.x, room.y / frame.y))))
+
+
 ## **THE SIM'S OWN BREAK POINT, AND THE ONLY ONE THIS CLIENT MAY WRAP A SIM SENTENCE AT** (ASSA-332;
 ## Maren's §5.4 ruling 2). The sentence's clauses are joined by this mark by the sim itself; the `+`
 ## inside the parts clause is **not** a break point.
