@@ -210,7 +210,15 @@ jobs:
       # `--push N` to drop every row). The check also refuses the instrument that
       # hid this -- `alpha > 0` calls six of seven rows full-bleed, because the
       # raw render carries a 1-4 sampling film to the frame edge. Stdlib only, ~2s.
-      - name: No icon frame has air above its art
+      #
+      # AND SINCE DECISION #52 IT CARRIES THE SIZE RULE TOO: art fills 100% of one
+      # axis of its frame, which is what ASSA-376's fit guarantees and what replaced
+      # `check_items_kinds.py`'s retired slot-fill floor. Its red control is the one
+      # Maren asked for -- every row redrawn at 3/4 size flush to the top must be
+      # caught (`--shrink 3/4` reads that path, exit 1 on all seven rows), and every
+      # row shortened on the axis it does NOT fill must still pass, or "fills an axis"
+      # would quietly mean "fills both".
+      - name: No icon frame has air above its art, and art fills an axis
         run: python3 art/check_items_top_band.py
       # GRADE-A ORE IS CLUMPED, AND NOTHING ELSE HERE CAN SEE THAT (ASSA-216).
       # Maren's ruling was arrangement, not value: the same rocks, the same
@@ -767,11 +775,19 @@ jobs:
       # where every item fills 24.7-35.2%. Maren ruled the fix: parts get rows on the
       # ITEMS sheet, drawn as loose things, and the assembly sheets are untouched.
       #
-      # TWO PROPERTIES, both hers: no row smaller in its slot than the SMALLEST ITEM --
-      # a floor read from the ore row in the same run, never a number in the check --
-      # and ASSA-111's conjunction on the new rows, using ASSA-111's own `verdict`
-      # imported rather than copied, because a loose drawing has no join to borrow its
-      # separation from.
+      # IT JUDGED TWO PROPERTIES AND NOW JUDGES ONE: ASSA-111's conjunction on the new
+      # rows, using ASSA-111's own `verdict` imported rather than copied, because a
+      # loose drawing has no join to borrow its separation from.
+      #
+      # THE OTHER WAS "no row smaller in its slot than the SMALLEST ITEM", a floor read
+      # off the ore row in the same run. DECISION #52 RETIRED IT (2026-10-09): ASSA-376
+      # fitted every frame to its art, so slot fill stopped measuring how big a row was
+      # drawn -- that is now forced to 100% of one axis -- and started measuring
+      # compactness, which a rod on a diagonal cannot win. The size rule is asserted
+      # absolutely by `check_items_top_band.py` above, where the sheet's own
+      # transparency can see it; the engine path here cannot, because its body mask is
+      # alpha >= 200 and the fitted top row of paint runs 127-194. The fill table is
+      # still printed as a report with no verdict on it.
       #
       # IT MEASURES THE SHEET, NOT THE CLIENT, and says so: `sprites.gd` still points
       # part rows at the assembly sheets, and that switch is its own item. The day it
@@ -779,10 +795,11 @@ jobs:
       #
       # TWO CONTROLS RUN INSIDE IT EVERY TIME: every kind is itself at IoU 1.000 / dE
       # 0.00 and the rows are not one picture, and on a copy of the real answer a
-      # substituted icon must be caught AND a kind drawn at half size must fall under
-      # the floor. Either failing exits 2. Proved red end to end too: `--shrink hopper`
-      # exits 1.
-      - name: A loose part fills a pack slot like an item
+      # substituted icon must be caught. Either failing exits 2. (The half-scale lever
+      # went with the floor: half scale still spans an axis, so it could only ever have
+      # passed.) The separation half has no CLI lever of its own: control 2 is its red
+      # proof, run on a copy of the real answer on every invocation.
+      - name: A loose part is its own object in a pack slot
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
             python3 art/check_items_kinds.py
