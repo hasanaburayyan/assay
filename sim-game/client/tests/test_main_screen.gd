@@ -4987,6 +4987,107 @@ func test_a_command_that_never_reached_the_wire_still_says_so() -> bool:
 	return ok
 
 
+## A HOST IN WHICH EXACTLY ONE BUILDING IS STOPPED, and nothing else is replaced.
+##
+## This file's `_SimSaying` idiom: one method overridden, so `_age_the_saying` runs the real decision
+## over an answer this test chooses. **Stubbed for one reason only** — the headless suite cannot reach
+## a world with a stalled building in it (the same limit `_rebuild_halt`'s tests are under), and both
+## directions of this decision have to be covered or the test could not tell "ages when the condition
+## clears" from "ages always". The real stall and the real recovery are measured end to end by
+## `tools/toast_stall_probe.gd`, against a real sim, which is ASSA-300's box 4.
+class _SimWhereOneBuildingIsStopped extends AssaySimHost:
+	var stopped := -1
+
+	func is_halted(building: int) -> bool:
+		return building == stopped
+
+
+## **A STALL SENTENCE COMES DOWN WHEN THE STALL DOES, AND A REFUSAL NEVER DOES** (ASSA-300, the Game
+## Director's §300 ruling).
+##
+## The bug this closes: nothing in this client could clear a `Say.FAILED` line at all, so fuelling a
+## smelter left `the Tonore smelter (A) stopped: no fuel` over the world while the pinned count beside
+## it had already dropped to zero — the screen contradicting itself, with the reason on the false
+## half.
+##
+## **FOUR MOMENTS, AND THE LAST IS THE ONE A CARELESS FIX LOSES.** A condition that holds must stay; a
+## condition that clears must go, on the first ask and with no dwell; an act must never go; and an act
+## said OVER a condition must survive that condition clearing. The fourth is only true because the
+## building is an argument to `_say` rather than a field something else sets — which is the difference
+## between a rule and two assignments that have to agree.
+func test_a_stall_sentence_comes_down_when_the_stall_does_and_a_refusal_never_does() -> bool:
+	var ok := true
+	var screen := _screen()
+	var sim := _SimWhereOneBuildingIsStopped.new()
+	sim.stopped = 3
+	screen._sim = sim
+	var notice := "the Tonore smelter (A) stopped: no fuel"
+
+	# 1. WHILE IT IS TRUE IT STAYS, asked many times. A sentence that went on the second look would
+	#    be a dwell wearing a condition's clothes.
+	screen._say(notice, AssayHud.Say.FAILED, 3)
+	for _i in range(5):
+		screen._age_the_saying()
+	if screen._status.text != notice:
+		ok = _fail(("a stall notice came down while the sim still called that building stopped: `%s`. "
+				+ "The one surface carrying the reason would go blank with the machine still cold.")
+				% screen._status.text)
+
+	# 2. THE TICK IT IS FIXED, IT GOES -- no dwell, because this is not about having been read. A
+	#    false sentence is worse the longer it is legible.
+	sim.stopped = -1
+	screen._age_the_saying()
+	if screen._status.text != "":
+		ok = _fail(("the smelter is working and the toast still reads `%s`. This is the whole of "
+				+ "ASSA-300: the pinned count has already dropped to zero.") % screen._status.text)
+
+	# 3. AN ACT IN THE SAME HEALTHY WORLD DOES NOT MOVE (ASSA-239: a failure that faded out would be
+	#    the one class of sentence a player cannot recover).
+	screen._say("refused: nothing there", AssayHud.Say.FAILED)
+	for _i in range(5):
+		screen._age_the_saying()
+	if screen._status.text == "":
+		ok = _fail("a refusal aged out of the toast because no building was stopped, so every "
+				+ "sentence in the client just became a condition")
+
+	# 4. AND AN ACT SAID OVER A CONDITION KEEPS ITS OWN KIND. Stall, then a refusal wins the line
+	#    (newest wins, `_remember_events`), then the stall clears: the refusal must still be there.
+	#    This is the leak a `_said_about_building` set anywhere but `_say` would have.
+	sim.stopped = 3
+	screen._say(notice, AssayHud.Say.FAILED, 3)
+	screen._say("refused: out of reach", AssayHud.Say.FAILED)
+	sim.stopped = -1
+	screen._age_the_saying()
+	if screen._status.text != "refused: out of reach":
+		ok = _fail(("a refusal said over a stall notice read `%s` after the stall cleared: the "
+				+ "sentence on screen was taken down by something that happened to a different "
+				+ "sentence") % screen._status.text)
+	screen.queue_free()
+	return ok
+
+
+## **AND THE JOINED DWELL IS UNTOUCHED BY ALL OF THAT.** `_age_the_saying` now has two clauses, and
+## the cheap mistake is to let the new one swallow the old: a `JOINED` line carries no building, so it
+## must still age on the dwell and not instantly.
+##
+## The control is in the same test: a `JOINED` line asked BEFORE the dwell is up must still be there.
+## Without it, "ages on the dwell" and "ages on the first ask" are the same green.
+func test_a_joined_line_still_ages_on_the_dwell_and_not_on_the_first_ask() -> bool:
+	var ok := true
+	var joined := _joined_screen()
+	joined._say("walking to 57, 59", AssayHud.Say.JOINED)
+	joined._age_the_saying()
+	if joined._status.text == "":
+		ok = _fail("a healthy sentence went on the first ask, so the dwell is gone and nothing on "
+				+ "this screen can be read before it disappears")
+	_step_the_world(joined, joined.SAYING_DWELL_TICKS + 1)
+	if joined._status.text != "":
+		ok = _fail("a healthy sentence outlived its dwell by the condition clause taking it over: `%s`"
+				% joined._status.text)
+	joined.queue_free()
+	return ok
+
+
 ## **THE POKE IN `_drawn_color` IS LOAD-BEARING, AND TODAY NO COLOUR CAN PROVE IT** (ASSA-246).
 ##
 ## Our theme is a PROJECT theme, and a control themed that way ignores its own

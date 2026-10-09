@@ -593,6 +593,32 @@ jobs:
           "$GODOT" --headless --path . --script res://tools/button_session.gd \
             -- offline 14247 0 break | tee session-break.log
           grep -q '^BUTTON SESSION OK · DESIGN BROKE' session-break.log
+      # A STALL SENTENCE COMES DOWN WHEN THE STALL DOES (ASSA-300). Before that
+      # item nothing in the client could clear a `Say.FAILED` line at all, so
+      # `the Tonore smelter (A) stopped: no fuel` stayed over the world after
+      # the smelter was fixed, beside a pinned count that had already dropped to
+      # zero. The probe watches the demo's own `NoFuel` stall -- loading the
+      # input before mining the fuel is a step of `button_play` -- and then has a
+      # SECOND player clear it on a tick bundle.
+      #
+      # THE SECOND PLAYER IS THE MEASUREMENT, NOT A CONVENIENCE. In solo play
+      # the fix is always the player's own command and `_act` echoes an
+      # acceptance on the same tick, so the notice is covered before it can be
+      # caught being false -- the first version of this probe passed with the
+      # fix REVERTED. The screen that is lied to is the screen that pressed
+      # nothing, which is co-op.
+      #
+      # Offline, no socket, no relay, one tick per frame, ~2s. The marker is
+      # printed LAST and only on success, which is the only thing a grep can
+      # trust when Godot exits 0 on a failed script. Exit 2 is NO VERDICT (a run
+      # in which nothing stalled), and it fails this step rather than passing.
+      - name: A stall sentence comes down when the stall does
+        working-directory: sim-game/client
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64"
+          "$GODOT" --headless --path . --script res://tools/toast_stall_probe.gd \
+            -- 14247 900 | tee toast-stall.log
+          grep -qx 'TOAST STALL PROBE OK' toast-stall.log
       # THE HUD'S OWN PROBE, IN A GATE FOR THE FIRST TIME (ASSA-238). ASSA-116's
       # box 6 is about the HUD panels, and the only instrument that reads them is
       # `client/tools/hud_probe.gd`, which until this step had ZERO references in

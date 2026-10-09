@@ -953,21 +953,81 @@ pub fn event_line(
 /// each of us reading the other's mistakes over our own. Machines have no
 /// player and belong to the world, so a stall is everybody's.
 pub fn event_needs_attention(me: Option<PlayerId>, event: &Event) -> bool {
+    attention(me, event).is_some()
+}
+
+/// What an attention line is ABOUT — **an act or a condition** (Game Director,
+/// ASSA-300 §300).
+///
+/// A host needs this to know whether a sentence may ever be taken down. Before
+/// it existed, nothing in the Godot client could clear a `Say.FAILED` line, so
+/// `the Tonore smelter (A) stopped: no fuel` stayed over the world after the
+/// smelter was refuelled — while the pinned count beside it had already dropped
+/// to zero. The screen contradicted itself and the false half was the half
+/// carrying the reason.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AttentionKind {
+    /// **SOMETHING THAT HAPPENED.** Nothing can un-happen it, so there is
+    /// nothing to re-ask and a host must never age it out — ASSA-239, where a
+    /// refusal that faded would be the one class of sentence a player cannot
+    /// recover.
+    Act,
+    /// **A CLAIM ABOUT NOW**, true of this building while the sim keeps saying
+    /// so. A host may take it down once the condition clears, and only then.
+    ///
+    /// The building is carried so the host asks the sim *"is that still true"*
+    /// rather than comparing sentences: the pinned list says `smelter 3 at
+    /// (12, 7) … stalled: the fuel will not light` where the toast says `the
+    /// Tonore smelter (A) stopped: no fuel`. Two wordings, one condition — any
+    /// matching of text is the client classifying by reading, which
+    /// `_remember_events` refuses by name (ASSA-67).
+    Condition { building: BuildingId },
+}
+
+/// Whether this event is an attention line for `me`, and if so what it is
+/// about.
+///
+/// **THE ONE DECISION** (ASSA-300). [`event_needs_attention`] is this function
+/// asked whether the answer is `Some`, so the set of loud lines and their kinds
+/// cannot drift apart — the same by-construction property the binding's
+/// `attention_lines` has against `event_lines`. Two functions each matching
+/// these arms is how one of them would quietly stop covering a variant.
+///
+/// Arm-by-arm reasoning lives on [`event_needs_attention`]; what is added here
+/// is only the kind, and **only the two stall events are conditions.** Every
+/// other loud line reports a moment: a refusal, a loss, an activity that
+/// stopped, a partial insert. None of those is a claim about now, so none of
+/// them may be aged.
+pub fn attention(me: Option<PlayerId>, event: &Event) -> Option<AttentionKind> {
     let mine = |p: &PlayerId| me.is_some() && me == Some(*p);
     match event {
         // THE WORLD REFUSED WHAT YOU ASKED FOR (ASSA-43, ASSA-70). The reason
         // this function exists at all: this is the only sentence in the game
         // that says why the button you pressed did nothing.
-        Event::CommandRejected { player, .. } => mine(player),
+        Event::CommandRejected { player, .. } => mine(player).then_some(AttentionKind::Act),
 
         // A MACHINE STOPPED AND WANTS A HAND (decision 9, ASSA-80). Emitted
         // once on the edge into the stall, so a notice cannot repeat every
         // tick -- that property is the event's, not this function's.
-        Event::MachineStalled { .. } | Event::SmelterStalled { .. } => true,
+        //
+        // **THE ONLY CONDITIONS IN THE GAME.** The event fires once, but what
+        // it reports goes on being true until somebody fixes it, which is
+        // exactly why a host must be able to ask again later.
+        Event::MachineStalled { building, .. } | Event::SmelterStalled { building, .. } => {
+            Some(AttentionKind::Condition {
+                building: *building,
+            })
+        }
 
         // YOU LOST SOMETHING (decision 11, decision 12). The most dramatic
         // moment in the game is a poor one to find out by scrolling.
-        Event::MachineBroke { player, .. } | Event::ToolWornOut { player, .. } => mine(player),
+        //
+        // An ACT and not a condition, which is worth saying because it is the
+        // tempting mistake: a broken machine IS gone for good, so there is no
+        // condition to re-ask and nothing that could ever clear the sentence.
+        Event::MachineBroke { player, .. } | Event::ToolWornOut { player, .. } => {
+            mine(player).then_some(AttentionKind::Act)
+        }
 
         // SOMETHING OF YOURS STOPPED WITHOUT YOU ASKING. A stop you asked for
         // is not news; a depleted deposit, a missing input or walking off the
@@ -975,13 +1035,15 @@ pub fn event_needs_attention(me: Option<PlayerId>, event: &Event) -> bool {
         Event::MiningStopped { player, reason, .. }
         | Event::AssayStopped { player, reason, .. }
         | Event::CraftingStopped { player, reason, .. } => {
-            mine(player) && *reason != StopReason::Stopped
+            (mine(player) && *reason != StopReason::Stopped).then_some(AttentionKind::Act)
         }
 
         // PART OF WHAT YOU ASKED FOR DID NOT FIT (ASSA-48). `left` is the
         // actionable half by that variant's own doc comment: "put 50 in" tells
         // a player nothing about why they still have 167.
-        Event::ItemsInserted { player, left, .. } => mine(player) && *left > 0,
+        Event::ItemsInserted { player, left, .. } => {
+            (mine(player) && *left > 0).then_some(AttentionKind::Act)
+        }
 
         // EVERY SUCCESS, WRITTEN OUT RATHER THAN DEFAULTED.
         //
@@ -1013,7 +1075,7 @@ pub fn event_needs_attention(me: Option<PlayerId>, event: &Event) -> bool {
         | Event::MachineMined { .. }
         | Event::MoveStarted { .. }
         | Event::PlayerArrived { .. }
-        | Event::PlayerStopped { .. } => false,
+        | Event::PlayerStopped { .. } => None,
     }
 }
 
