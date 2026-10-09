@@ -4501,6 +4501,26 @@ func _slot_facts(screen: Node) -> Dictionary:
 	return out
 
 
+## **A WALKABLE TILE FAR ENOUGH AWAY THAT NO READING OF `REACH` LETS YOU PUT ANYTHING IN.** Movement
+## is plain signum stepping with no obstacle test (`step.rs::move_players`), so the only thing that
+## can stop the walk is the world's edge -- which is why this picks a direction rather than trusting
+## one, and why the caller asserts arrival instead of counting ticks.
+##
+## `WELL_AWAY` is not the rule and is not asserted against: `REACH` is the sim's and this file may
+## not spell it. It is a distance comfortably past any value `REACH` could hold, and the test's real
+## premise is the measured pressability map, not this number.
+const WELL_AWAY := 9
+
+
+func _a_tile_well_away_from(screen: Node, tile: Vector2i) -> Vector2i:
+	var size: Vector2i = screen._sim.size_tiles()
+	for step in [Vector2i.RIGHT, Vector2i.LEFT, Vector2i.DOWN, Vector2i.UP]:
+		var there: Vector2i = tile + (step as Vector2i) * WELL_AWAY
+		if there.x >= 0 and there.y >= 0 and there.x < size.x and there.y < size.y:
+			return there
+	return Vector2i(-1, -1)
+
+
 ## How many put controls the sim would let a press through on, **PER SLOT, keyed by role.**
 ##
 ## **IT WAS ONE NUMBER FOR THE WHOLE MENU AND THAT MADE THE TEST BELOW PASS OVER ITS OWN BUG.**
@@ -4530,15 +4550,37 @@ func _pressable_by_role(screen: Node, building: int) -> Dictionary:
 ## `slots` contains or what order it comes in -- and that is exactly the kind of thing no one would
 ## notice."* This is the test for that, and nothing else.
 ##
-## **THE LEVER IS THE PACK, NOT THE SLOT.** Loading the fuel slot turns every other carried stack's
-## fuel control into a `SlotFull`, so the menu's set of pressable controls really does change. The
-## slots that act did not touch must come back byte for byte; the fuel slot is excluded by MEASURING
-## which slots moved rather than by naming one, because a row whose own numbers changed is SUPPOSED
-## to be redrawn and excluding it by name would also excuse a bug in it.
+## **THE LEVER IS THE PLAYER'S FEET, AND IT IS THE ONLY ONE THAT STAGES THE BOX.** The box asks for a
+## row that is the same WITH and WITHOUT a pressable offer, so the lever has to take a slot's
+## pressability to zero while that slot's own numbers stand perfectly still. **Measured, both ways
+## round, after an earlier version of this test went green over its own bug:**
 ##
-## **BOTH PREMISES FAIL LOUDLY.** A world that staged no change in pressability would pass this with
-## the readout wired straight to the refusal, and a fixture where every slot moved would compare
-## nothing at all. Neither is allowed to go quietly green.
+##     insert into FUEL:  input 2 -> 2, fuel 2 -> 0   (fuel excluded, its contents moved)
+##     insert into INPUT: input 2 -> 0, fuel 2 -> 2   (input excluded, its contents moved)
+##
+## A put is the wrong lever **in principle and not by bad luck**: the only slot whose pressability a
+## put really moves is the slot it fills, and that is the one slot a readout check must exclude,
+## because a row whose own numbers changed is SUPPOSED to be redrawn. The pack cannot reach the
+## others either -- `put all` is clamped to the room (ASSA-48), so the stack survives the insert and
+## goes on being offered; and the one stack a full insert does consume leaves the other species
+## behind, which is `2 -> 1` and would miss a readout wired to a bare *has anything to press*.
+##
+## **WALKING AWAY MOVES EVERY SLOT AT ONCE AND MOVES NO SLOT'S CONTENTS.** `OutOfReach` is tested at
+## `step.rs:706`, above every slot-specific rule, so it refuses all of them; it is contingent -- you
+## can walk back -- so by box 4's criterion every row keeps its place and simply stops being
+## pressable. That is `has -> has not`, on a slot holding something and on an empty one, with
+## `0/50/` and `5/50/<species>` identical on both sides of the act. It is also precisely Maren's
+## named failure mode: *"the one way it breaks is if the refusal crossing changes what `slots`
+## contains or what order it comes in."*
+##
+## The `MoveTo` is submitted rather than clicked **because a left click with a menu open is a
+## dismissing click** (ASSA-316) and would close the surface being measured. The click path is two
+## other tests' business; this one is about the row.
+##
+## **EVERY PREMISE FAILS LOUDLY.** A fixture that staged no change in pressability, or one where
+## every slot's contents moved, would pass this with the readout wired straight to the refusal -- so
+## zero compared rows is a failure that prints both maps, and a walk that did not happen is a
+## failure before anything is compared.
 func test_a_slots_readout_row_is_the_same_with_and_without_a_pressable_offer() -> bool:
 	var screen := _joined()
 	if not _mine_two_species(screen):
@@ -4550,6 +4592,16 @@ func test_a_slots_readout_row_is_the_same_with_and_without_a_pressable_offer() -
 		return false
 	_click(screen, screen._target_tile(), MOUSE_BUTTON_LEFT)
 
+	# PART-FILL THE FUEL SLOT FIRST, so one of the two compared rows carries a real band fill and a
+	# held name rather than three empty rows agreeing with each other. PART-fill: at the cap the slot
+	# answers `SlotFull` to everything and its pressability is already zero before the act.
+	var ore := _stack_of(screen, "ore")
+	if ore.is_empty():
+		screen.queue_free()
+		return _fail("no ore in the pack, so this menu has nothing to put anywhere")
+	screen._insert_into(id, ore, AssayActions.SLOT_FUEL, 5)
+	_tick(screen, 2)
+
 	var rows_before := _slot_readouts(screen)
 	var facts_before := _slot_facts(screen)
 	var live_before := _pressable_by_role(screen, id)
@@ -4557,23 +4609,19 @@ func test_a_slots_readout_row_is_the_same_with_and_without_a_pressable_offer() -
 		screen.queue_free()
 		return _fail("the menu drew no slot readout rows, so box 9 has nothing to compare")
 
-	# **THE ACT: ONE STACK INTO THE *INPUT* SLOT, AND WHICH SLOT IT IS, IS THE WHOLE TEST.**
-	#
-	# Measured, after this test passed over its own bug with the fuel slot: filling FUEL moves
-	# pressability only on the fuel slot, which the loop below skips because its contents changed --
-	# `input 2 -> 2, fuel 2 -> 0`, so every compared row was a row nothing put at risk, and the suite
-	# stayed green with the readout wired straight to the crossing.
-	#
-	# Filling INPUT inverts it. The input slot's own contents change, so it is excluded; the FUEL
-	# slot's contents do not move at all and its offers go from two to none, because the stack that
-	# was being offered to it is no longer in the pack. That is the row box 9 is about: same slot,
-	# same numbers, nothing left to press on it.
-	var ore := _stack_of(screen, "ore")
-	if ore.is_empty():
+	# **THE ACT: WALK OUT OF REACH WITH THE MENU OPEN.** Far enough that no reading of `REACH` makes
+	# it close, and the distance is not the assertion -- the pressability map is.
+	var away := _a_tile_well_away_from(screen, screen._menu_tile)
+	if away.x < 0:
 		screen.queue_free()
-		return _fail("no ore in the pack, so the pressability of this menu cannot be moved")
-	screen._insert_into(id, ore, AssayActions.SLOT_INPUT, 0)
-	_tick(screen, 2)
+		return _fail("no in-bounds tile %d away from the menu's building at %s to walk to"
+				% [WELL_AWAY, screen._menu_tile])
+	_asked.append(AssayActions.move_to(away))
+	_tick(screen, 2 * WELL_AWAY + 4)
+	if screen._my_tile() != away:
+		screen.queue_free()
+		return _fail(("walked off toward %s to put every offer out of reach and stopped at %s, so "
+				+ "the act never happened") % [away, screen._my_tile()])
 
 	var live_after := _pressable_by_role(screen, id)
 	var rows_after := _slot_readouts(screen)
@@ -4581,15 +4629,16 @@ func test_a_slots_readout_row_is_the_same_with_and_without_a_pressable_offer() -
 	var ok := true
 	var compared := 0
 	for role in facts_before.keys():
-		# Only the slots the insert did not move. A slot that now holds something has every right to
-		# a different row.
+		# Only the slots the act did not move. A slot whose own count, cap or held item changed has
+		# every right to a different row, and excluding it BY MEASURING rather than by naming it is
+		# what keeps this honest: a named exclusion would also excuse a real bug in that row.
 		if not facts_after.has(role) or facts_after[role] != facts_before[role]:
 			continue
 		# **AND ONLY THE SLOTS WHOSE PRESSABILITY ACTUALLY MOVED**, which is the premise this test
 		# lacked and quietly passed without. A row that was never at risk proves nothing about
 		# whether the readout depends on the crossing: with the readout deliberately wired to its
-		# slot's pressable count, the whole suite stayed green, because the only slot that changed
-		# was the fuel slot this loop skips.
+		# slot's pressable count, the whole suite stayed 516/0, because the only slot a put moved
+		# was the one slot this loop has to skip.
 		if int(live_after.get(role, 0)) == int(live_before.get(role, 0)):
 			continue
 		if not rows_after.has(role):
