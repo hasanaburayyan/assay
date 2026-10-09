@@ -250,6 +250,33 @@ func attention_lines(me: int) -> PackedStringArray:
 	return _sim.attention_lines(me) if _sim != null else PackedStringArray()
 
 
+## **WHAT EACH OF THOSE LINES IS A CLAIM ABOUT** (ASSA-300): the building of a CONDITION, or -1 for an
+## ACT. Element i belongs to element i of `attention_lines` — in Rust both are one `attention_pairs`
+## call, so the pairing is a property and not an agreement.
+##
+## THE CALLER MAY DO EXACTLY ONE THING WITH THE ID: ask `is_halted`. It is not a tile, a kind or a
+## state, because `halt_lines` was made a list of sentences rather than rows precisely so nothing in
+## this project could compose a sentence out of parts. The toast's words stay the sim's.
+##
+## EMPTY WITHOUT A WORLD, matching `attention_lines` — not a list of -1s, which would be a claim about
+## sentences that do not exist.
+func attention_conditions(me: int) -> PackedInt64Array:
+	return _sim.attention_conditions(me) if _sim != null else PackedInt64Array()
+
+
+## **IS THAT BUILDING STILL STOPPED?** `World::halted` asked about one building (ASSA-300).
+##
+## The only way a `Say.FAILED` line can ever come down. A stall EVENT is an edge — it fires once on
+## the way in and says nothing while the stall sits — so a sentence said from one has no way of
+## knowing it has stopped being true, and before this the toast read `the … smelter (A) stopped: no
+## fuel` after the smelter was refuelled, beside a pinned count that had already dropped to zero.
+##
+## `false` WITHOUT A WORLD, which is the safe answer in the only state that can ask it: a sentence
+## about a building in a world that has gone is not a sentence to keep.
+func is_halted(building: int) -> bool:
+	return bool(_sim.is_halted(building)) if _sim != null else false
+
+
 ## One player's stacks: `kind`, `species`, `species_name`, `grade` (a LETTER), `count`, and `name`,
 ## which is the sim's own wording for the item. Empty for a player the world does not have.
 func inventory_of(player: int) -> Array:

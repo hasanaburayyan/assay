@@ -871,19 +871,29 @@ fn over_a_real_run_some_events_need_attention_and_most_do_not() {
 /// Checked against this crate's own source, like the no-backtick guard at the
 /// top of this file, because the thing to prevent is the next arm rather than
 /// today's.
+///
+/// **THIS GUARD MOVED WITH THE MATCH IT GUARDS (ASSA-300), AND IT CAUGHT ITS
+/// OWN MOVE.** The arms used to live in `event_needs_attention`; they now live
+/// in `attention`, which that function asks for a `Some`. The slice below
+/// landed on a one-line body with no `Event::` arm in it and failed through its
+/// own "reading the wrong function" check at the bottom — which is the only
+/// reason this is a retarget with a sentence attached instead of a guard that
+/// kept passing over a function with nothing left to inspect. A source-scanning
+/// test that can be aimed at the wrong lines needs that self-check, and this is
+/// the second time this week one has earned it.
 #[test]
-fn event_needs_attention_has_no_catch_all_arm() {
+fn the_attention_match_has_no_catch_all_arm() {
     let start = DEBUG_RS
-        .find("pub fn event_needs_attention")
-        .expect("event_needs_attention is still called that");
+        .find("pub fn attention(")
+        .expect("the attention decision is still called that");
     let rest = &DEBUG_RS[start..];
     let end = rest[1..].find("\npub ").map_or(rest.len(), |i| i + 1 + 1);
     let body = &rest[..end];
     for (n, line) in body.lines().enumerate() {
         let code = line.split("//").next().unwrap_or("").trim();
         assert!(
-            !(code == "_ => false," || code == "_ => true," || code.starts_with("_ =>")),
-            "line {n} of event_needs_attention is a catch-all: {line}\nAn Event \
+            !(code == "_ => None," || code == "_ => false," || code.starts_with("_ =>")),
+            "line {n} of the attention match is a catch-all: {line}\nAn Event \
              variant nobody classified must break the build, not go quiet."
         );
     }

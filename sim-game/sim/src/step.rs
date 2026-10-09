@@ -1161,7 +1161,16 @@ fn run_smelters(world: &mut World, events: &mut Vec<Event>) {
         let out_have = match s.output {
             None => 0,
             Some(o) if o.item == out_item => o.count,
-            Some(_) => continue, // holds something else; wait to be emptied
+            // Holds something else, so nothing can be added to it. **THIS SKIP
+            // IS NOW SAID OUT LOUD** (ASSA-350): for as long as this comment
+            // read "wait to be emptied", there was a waiting condition in the
+            // rules and no surface in the game that named it —
+            // `World::smelter_state` answered `Working` forever and the window
+            // drew a fire on a smelter that was doing nothing. The condition
+            // is `World::smelter_output_conflict`, which both this loop and
+            // that function now ask, so the tick and the status line cannot
+            // disagree about which item is in the way.
+            Some(_) => continue,
         };
         if out_have + out_count > SMELTER_OUTPUT_CAP {
             continue;

@@ -2632,49 +2632,125 @@ func test_a_centred_label_is_asked_for_its_ink_and_not_its_width() -> bool:
 	return true
 
 
-## **THE MACHINE MENU GOES IN THE HALF ITS MACHINE IS NOT IN** (ASSA-316, Maren's ruling 1).
+## **A MACHINE MENU IS BESIDE ITS MACHINE AND NEVER OVER IT, AT EVERY POSITION A MACHINE CAN BE**
+## (ASSA-334, Maren's reversal of her ASSA-316 ruling 1).
 ##
-## **THE PROPERTY IS "NEVER COVERS THE MACHINE", AND IT IS CHECKED AGAINST THE TILE RATHER THAN AGAINST
-## A HALF I NAME HERE.** A test that asserted "x is 504 for a machine on the left" would pass a function
-## that had both halves swapped and a sign error cancelling out. So this walks the world's whole width,
-## asks for the room at every step, and requires that the machine's own column is outside it -- which is
-## the clause the ruling exists for and the one a reader can check by eye.
-func test_a_machine_menu_never_opens_over_its_own_machine() -> bool:
-	var world := AssayHud.world_rect()
-	var halves := {}
-	for step in range(0, 913, 8):
-		var middle := world.position.x + float(step)
-		var room := AssayHud.machine_menu_room(world, middle)
-		if room.position.x <= middle and middle <= room.end.x:
-			return _fail("a machine at x=%.0f is inside its own menu's room %s" % [middle, room])
-		if not world.encloses(room):
-			return _fail("the room %s for a machine at x=%.0f is not inside the world %s"
-					% [room, middle, world])
-		halves[room.position.x] = true
-	# **TWO PLACES A PLAYER CAN LEARN, AND NOT THREE.** Her ruling is one boolean; a function that
-	# slid the panel along with the machine would pass every check above and fail this one.
-	if halves.size() != 2:
-		return _fail("a menu opens in %d places across the world, not 2: %s"
-				% [halves.size(), halves.keys()])
+## **THE SWEEP IS THE TEST, NOT A COORDINATE I NAME HERE.** A check that asserted "x is 504 for a
+## machine on the left" would pass a function with both sides swapped and a sign error cancelling out.
+## So this walks the whole world in both axes, with the two footprints the game has and a menu at
+## Maren's cap, and asserts the clause the ruling exists for: the subject's own rectangle is outside
+## the menu's. **It sweeps y as well as x**, which the two-halves version did not have to: her ruling 1
+## kept the menu top-aligned and this one puts it at the machine's own height, so the vertical is now a
+## place the arithmetic can be wrong.
+##
+## **AND IT ASSERTS THE FLOOR IS REACHABLE EVERYWHERE, which is the half that makes "never covers it"
+## worth having.** The placement keeps its promise by CUTTING the width to the room on the side it
+## picks, so a geometry change that left no room anywhere would still pass the non-overlap clause --
+## with a 3 px menu. 343 px of content plus the panel's padding has to fit beside a machine wherever
+## the machine stands, or this goes red instead of going narrow.
+func test_a_machine_menu_is_anchored_beside_its_machine_and_never_over_it() -> bool:
+	# **THE ROOM THE CALLER ACTUALLY PASSES, AND NOT THE WHOLE WORLD** (`main.gd::_place_machine_menu`):
+	# the world less its pad and clear of the control band, because a menu drawn over the status toast
+	# is the defect the first real-window shot of this item found. The SUBJECTS still sweep the whole
+	# world -- a machine can stand anywhere, including outside the room, and that is what exercises the
+	# clamp at both ends.
+	var whole := AssayHud.world_rect()
+	var world := AssayHud.build_screen_rect(whole, whole.end.y - AssayHud.WORLD_CONTROLS_BAND)
+	var menu := Vector2(AssayHud.MENU_CAP_PX, 420.0)
+	var seen := {}
+	for span in [Vector2(32.0, 32.0), Vector2(64.0, 64.0)]:
+		for x in range(0, 913, 16):
+			for y in range(0, 673, 32):
+				var subject := Rect2(whole.position + Vector2(float(x), float(y)), span as Vector2)
+				var rect := AssayHud.machine_menu_rect(world, subject, menu)
+				if rect.intersects(subject):
+					return _fail("a %s machine at %s got a menu at %s, over itself"
+							% [span, subject.position, rect])
+				if not world.encloses(rect):
+					return _fail("the menu %s for a machine at %s is not inside the world %s"
+							% [rect, subject.position, world])
+				if rect.size.x < AssayHud.MENU_FLOOR_PX:
+					return _fail(("a %s machine at %s leaves only %.0f px beside it and the floor is "
+							+ "%.0f: the menu would be narrow rather than misplaced")
+							% [span, subject.position, rect.size.x, AssayHud.MENU_FLOOR_PX])
+				seen[rect.position.x > subject.end.x] = true
+	# **BOTH SIDES ARE REACHED, OR THE FLIP IS UNTESTED.** Every assertion above is satisfied by a
+	# function that only ever goes right and happens to fit; the flip is the clause that keeps a machine
+	# near the right edge from pushing its menu off screen, and it needs to have HAPPENED.
+	if seen.size() != 2:
+		return _fail("the menu only ever went to one side across the whole world: %s" % [seen.keys()])
 	return true
 
 
-## **THE CENTRE LINE IS DECIDED, NOT LEFT TO A FLOAT** (her "deterministic on the exact centre"), AND
-## THE CAP IS HALF THE WORLD LESS TWO PADS.
-func test_a_machine_menus_room_is_bounded_and_decided_on_the_boundary() -> bool:
+## **THE WIDTH IS FLOORED AND THEN CAPPED, AND THE ORDER IS THE ASSERTION** (ASSA-334 §6; ASSA-281's
+## lesson, which cost me a fix that silently stopped fixing).
+##
+## Three cases, because each one is a different mistake: content under the floor must come out AT the
+## floor, content over the cap must come out AT the cap, and content between them must come out
+## UNTOUCHED -- the last is what fails if a floor is applied as an equality or a cap as a default.
+func test_a_machine_menus_width_is_floored_then_capped() -> bool:
 	var world := AssayHud.world_rect()
-	var middle := world.get_center().x
-	var room := AssayHud.machine_menu_room(world, middle)
-	# Maren's test is `machine.centre.x < world.centre.x`, which is FALSE on the line: the machine
-	# counts as being in the right half, so the menu goes left.
-	if room.position.x > middle:
-		return _fail("a machine exactly on the centre line sent the menu right, to %s" % room)
-	# AND A HAIR EITHER SIDE MUST DISAGREE, or the branch above is vacuous.
-	if AssayHud.machine_menu_room(world, middle - 0.5).position.x <= middle:
-		return _fail("a machine just left of centre did not send the menu right")
-	var want := Vector2(world.size.x * 0.5, world.size.y) - AssayHud.MARGIN * 2.0
-	if not room.size.is_equal_approx(want):
-		return _fail("the room is %s and half the world less two pads is %s" % [room.size, want])
+	# A MACHINE AT THE WORLD'S LEFT EDGE, so the room on the right is the whole world less a footprint:
+	# this test is about the floor and the cap, not about a side that cannot hold them.
+	var subject := Rect2(world.position, Vector2(32.0, 32.0))
+	var middling := (AssayHud.MENU_FLOOR_PX + AssayHud.MENU_CAP_PX) * 0.5
+	for pair in [[80.0, AssayHud.MENU_FLOOR_PX], [900.0, AssayHud.MENU_CAP_PX],
+			[middling, middling]]:
+		var asked: float = pair[0]
+		var want: float = pair[1]
+		# THE FLOOR IS THE CONTENT'S AND `_place_machine_menu` ADDS THE PANEL'S PADDING, so what this
+		# function is handed is already floored; what it owns is the cap and the room. The floor is
+		# re-asserted here against the same number so a cap applied first could not swallow it.
+		var got := AssayHud.machine_menu_rect(world, subject,
+				Vector2(maxf(asked, AssayHud.MENU_FLOOR_PX), 100.0)).size.x
+		if absf(got - want) > 0.01:
+			return _fail("content of %.0f px came out %.1f wide, want %.1f" % [asked, got, want])
+	return true
+
+
+## **ONLY A STALL IS RED** (ASSA-334; the binding's own words for `state_line`: *"in `FAILED` when it is
+## a stall"*).
+##
+## **ALL THREE WORDS, BECAUSE A PREDICATE THAT WAS TRUE FOR EVERY CONDITION WOULD PASS ANY ONE OF
+## THEM** -- and would paint `mining Tonore` in the failure ink on a machine that is working perfectly,
+## on the screen the board judges. The three strings are the sim's: `BuildingFacts::state` publishes
+## exactly these and `sim-godot` asserts them against `BuildingState`.
+func test_only_a_stalled_machine_reads_as_a_failure() -> bool:
+	for state in ["working", "idle"]:
+		if AssayHud.state_is_failure(state):
+			return _fail("`%s` reads as a failure, so a working machine's menu goes red" % state)
+	if not AssayHud.state_is_failure("stalled"):
+		return _fail("`stalled` does not read as a failure, so nothing in this menu is ever red")
+	return true
+
+
+## **THE COUNTS COLUMN HOLDS THE WIDEST RATIO THE SIM CAN HAND IT** (ASSA-334), held the way
+## `AssayReadingRow.VALUE_W` is held: by the engine's own font metrics against the shipped theme, not by
+## my reading of a glyph table. 48 was one pixel short there and moved every track in the panel.
+##
+## **THE CANDIDATES ARE BOUNDS AND NOT A SEED'S NUMBERS.** A slot's cap is the sim's and a batch's total
+## is the sim's; both are small today (`5 of 5`, `56 of 100`), so a measurement over a real world would
+## pass with room to spare and say nothing about the day a hopper holds four digits. The widest pair this
+## row can ever be asked for is four digits of each.
+func test_the_counts_column_holds_the_widest_ratio_the_sim_can_hand_it() -> bool:
+	var theme: Theme = load("res://theme/assay.tres")
+	if theme == null:
+		return _fail("no theme/assay.tres to read the counts size out of")
+	var font := ThemeDB.fallback_font
+	var size := theme.get_font_size(&"font_size", &"Label")
+	var worst := ""
+	var worst_px := 0.0
+	for pair in [[5, 5], [56, 100], [999, 999], [9999, 9999]]:
+		var text := AssayHud.amount_counts_line(pair[0] as int, pair[1] as int)
+		var px := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size).x
+		if px > worst_px:
+			worst_px = px
+			worst = text
+	print("menu counts: %.0f px column holds `%s` at %.1f px"
+			% [AssayHud.MENU_COUNTS_W, worst, worst_px])
+	if worst_px > AssayHud.MENU_COUNTS_W:
+		return _fail(("`%s` wants %.1f px and the counts column is %.0f: a clipped number is worse "
+				+ "than no column at all") % [worst, worst_px, AssayHud.MENU_COUNTS_W])
 	return true
 
 
@@ -2717,7 +2793,10 @@ func test_a_slot_buttons_label_is_the_result_with_its_own_number() -> bool:
 			== AssayHud.insert_label(37, "Tonore ore", AssayActions.SLOT_INPUT):
 		return _fail("the fuel and input buttons for one stack read alike: `%s`"
 				% AssayHud.insert_label(37, "Tonore ore", AssayActions.SLOT_FUEL))
-	if AssayHud.insert_some_label(18) != "or 18":
+	# **`put 18` AND NOT `or 18`** (ASSA-334, Maren: *"`or 1` is not a sentence"*). The same rule as the
+	# slot inside the label above it: a control has to say what it does when it is read alone, and `or`
+	# says what it does only to somebody still holding the button above it in mind.
+	if AssayHud.insert_some_label(18) != "put 18":
 		return _fail("a fraction toggle reads `%s`" % AssayHud.insert_some_label(18))
 	return true
 
@@ -2813,6 +2892,68 @@ func test_the_build_screen_gives_back_whatever_the_control_band_takes() -> bool:
 	if free.end.y > world.end.y - AssayHud.MARGIN.y:
 		return _fail("with no band in the way the screen reaches %.0f and the world's pad ends at %.0f"
 				% [free.end.y, world.end.y - AssayHud.MARGIN.y])
+	return true
+
+
+## **THE OUTPUT PICTURE'S SCALE IS AN ARGMAX AND NOT A NUMBER, AND THAT IS THE WHOLE OF BOX 5**
+## (ASSA-357; Maren's box 4 ruling: *"my 3 is a result and not a number to type"*).
+##
+## **THE CASE THAT PINS TODAY IS THE 1x WINDOW'S OWN MEASUREMENTS, not the spec's.** Maren corrected
+## her own two numbers before I built to them: the right column is **235** and not the doc's 240, and
+## the columns region ~**402** and not 406 (`shared/assay/limpet-assa317-assembly/shot-report.txt`).
+## So the pinned inputs here are a rect of `864x588`, which is what that shot's screen measured.
+##
+## **AND THE LEVERS ARE WHAT MAKE IT AN ARGMAX RATHER THAN A COINCIDENCE**: one more step must NOT
+## fit, the width must be the axis that refuses 4x, a room that shrinks must take the scale with it,
+## and a room smaller than one frame must still answer 1 rather than 0.
+func test_the_output_pictures_scale_is_the_largest_whole_step_its_room_allows() -> bool:
+	var frame := Vector2(64.0, 96.0)
+	# THE ROOM, DERIVED THE WAY THE CLIENT DERIVES IT, off the 1x window's rect.
+	var rect := Rect2(Vector2.ZERO, Vector2(864.0, 588.0))
+	var pad := Vector2(10.0, 6.0)
+	var gutter := 16.0
+	var shares := [287.0 / 863.0, 304.0 / 863.0, 240.0 / 863.0]
+	var width := AssayHud.build_column_width(rect.size.x - pad.x * 2.0, shares, 2, gutter)
+	if width > 235.0 or width < 230.0:
+		return _fail(("the right column derives to %.0f and the 1x window measured 235; the share "
+				+ "arithmetic has stopped describing the layout") % width)
+	var columns := AssayHud.build_columns_height(rect, pad, 28.0, gutter)
+	if absf(columns - 402.0) > 2.0:
+		return _fail(("the columns region derives to %.0f and the 1x window measured ~402") % columns)
+	# BLOCK 5's FURNITURE on that window: a 31 px heading, a one-row 18 px clause, two 6 px separations.
+	var room := Vector2(width, columns - 31.0 - 18.0 - 12.0)
+	if AssayHud.picture_scale(frame, room) != 3:
+		return _fail(("a 64x96 frame in block 5's real room %s came out %dx; Maren's box 4 ruled 3x "
+				+ "off these very numbers") % [room, AssayHud.picture_scale(frame, room)])
+	# **ARGMAX: ONE MORE STEP MUST NOT FIT.** Without this the function could answer 3 by returning a
+	# constant, or by flooring a ratio it never took the minimum of.
+	if frame.x * 4.0 <= room.x and frame.y * 4.0 <= room.y:
+		return _fail("4x fits room %s, so 3 is not the largest step and this test is the wrong claim"
+				% room)
+	# **AND THE AXIS THAT REFUSES 4x IS THE WIDTH**, which is Maren's ceiling: 256 against 235. A room
+	# with unlimited height still answers 3.
+	if AssayHud.picture_scale(frame, Vector2(room.x, 100000.0)) != 3:
+		return _fail(("with unlimited height the width alone gave %dx; the ceiling is supposed to be "
+				+ "the 235 px column") % AssayHud.picture_scale(frame, Vector2(room.x, 100000.0)))
+	# **THE LEVER THAT MAKES IT A FUNCTION OF THE ROOM: SHRINK THE ROOM AND THE SCALE FOLLOWS DOWN.**
+	# This is what Maren asked the derived constant for (her 04:17 comment): the day `cost` comes back
+	# to the make path, or a window gets smaller, the picture gives way instead of becoming the floor
+	# that pushes `Build` off the screen (ASSA-362).
+	if AssayHud.picture_scale(frame, Vector2(room.x, 200.0)) != 2:
+		return _fail("a room only 200 px tall still drew %dx"
+				% AssayHud.picture_scale(frame, Vector2(room.x, 200.0)))
+	if AssayHud.picture_scale(frame, Vector2(130.0, room.y)) != 2:
+		return _fail("a 130 px column still drew %dx" % AssayHud.picture_scale(frame, Vector2(130.0,
+				room.y)))
+	# **AND A ROOM SMALLER THAN ONE FRAME ANSWERS 1, NOT 0.** A 0 is an invisible picture on the one
+	# surface whose job is to show you what you get, and it is what an unclamped floor returns.
+	for cramped in [Vector2(10.0, 10.0), Vector2(63.0, 95.0), Vector2.ZERO, Vector2(-5.0, -5.0)]:
+		if AssayHud.picture_scale(frame, cramped) != 1:
+			return _fail("a room of %s drew the picture at %dx"
+					% [cramped, AssayHud.picture_scale(frame, cramped)])
+	# A FRAME WITH NO SIZE CANNOT DIVIDE, and the answer is 1 rather than an error or an infinity.
+	if AssayHud.picture_scale(Vector2.ZERO, room) != 1:
+		return _fail("a frame of no size drew %dx" % AssayHud.picture_scale(Vector2.ZERO, room))
 	return true
 
 
