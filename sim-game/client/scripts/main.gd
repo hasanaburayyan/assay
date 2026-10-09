@@ -546,6 +546,10 @@ var _build_picker: VBoxContainer = null
 var _build_materials: VBoxContainer = null
 var _build_detail: VBoxContainer = null
 var _build_cost: VBoxContainer = null
+## Block 6's whole SECTION -- heading and scroll box, not just the rows. Held because the make path
+## hides the block entirely (ASSA-341) and a heading left standing over nothing is a labelled empty
+## gap, which is `_show_log`'s lesson on this same screen.
+var _build_cost_box: Control = null
 var _build_bar: HBoxContainer = null
 var _build_said: VBoxContainer = null
 var _build_act: Button = null
@@ -1773,6 +1777,11 @@ func _build_build_screen_over_the_map(world: Rect2) -> void:
 	# grew; her §5.5: need first, no slash, text, never a band).
 	_build_cost = _build_section(right, 1.0 - BUILD_READOUT_SHARE, "cost")
 	_build_cost.name = BUILD_COST
+	# **THE SECTION, NOT THE ROWS** -- `_build_section` builds holder -> scroll -> rows and returns the
+	# rows, so the heading is two parents up. The make path hides the whole thing (ASSA-341), and
+	# hiding the rows alone would leave the word `cost` standing over nothing: `_show_log`'s defect,
+	# on this same screen, which was a node answering honestly about a state the screen does not have.
+	_build_cost_box = _build_cost.get_parent().get_parent() as Control
 	# **BLOCK 7: THE COMMIT BAR -- THE SIM'S SENTENCE AND THE ONE ACT, IN ONE RECT** (ASSA-332; Maren's
 	# §5.4 ruling 3, which MOVED this rect after slice 1 shipped: *"block 7 becomes the COMMIT BAR,
 	# 863 x 112 at y 529..641"*, the sentence left, `Build` right-aligned and still the one accent).
@@ -4648,18 +4657,46 @@ func _refresh_build_said() -> void:
 ## why it is not in `_rebuild_build_screen`: `count` is what the pack holds AT THIS TICK and climbs
 ## every mining cycle, so a cost drawn once would be stale on the surface whose whole job is telling
 ## you whether you can afford something. It is Labels only, and a Label's text is idempotent and free.
+## **AND ON THE MAKE PATH THERE IS NO BLOCK 6 AT ALL ANY MORE** (ASSA-341 ruling 3; Maren's, off my
+## own 1x shot, with her own scope correction read first).
+##
+## **THE SHOT PRINTED `need 5 · have 19` TWICE VERBATIM AND THE SAME PAIR A THIRD TIME INSIDE THE
+## SIM'S SENTENCE.** It can never be otherwise here, and that is the shape of the type rather than a
+## thin recipe list: `sim/src/debug.rs`'s `MakeOffer` carries **`pub input: Item` -- singular**. One
+## offer is one recipe x one material, so there is one `cost` and one `have`, so this block can only
+## ever hold ONE entry and that entry is always the material row the player just selected. A second
+## copy of a sim sentence is the ASSA-43/52 defect quoted in `have_need_line`'s own docstring -- the
+## function I wrote.
+##
+## **WHAT STAYS, BECAUSE SHE RULED SO EXPLICITLY:** the sim's sentence in the commit bar (§5.4,
+## ASSA-88 ranks that clause highest and it is read before an irreversible press), and the material
+## column's counts -- *they are the picker, and comparing two materials must not cost two gestures*
+## (§3's Factorio borrowing). So the number does not leave the screen; its DUPLICATE does.
+##
+## **HIDING ALSO CURES ONE NOBODY FLAGGED:** `cost` sat under the `what you get` heading at the same
+## x, reading as the heading that governs it (11.36).
+##
+## **THE WIDGET SURVIVES AND THAT IS THE POINT OF HIDING RATHER THAN DELETING.** Her correction:
+## `AssemblyPlan::{Weighed,Unfinished}` carry `cost: Vec<ItemStack>` -- a real tallied list, frame +
+## head + handle (+ hoppers) -- so on the ASSEMBLY path this block holds several entries and earns
+## its 240x146. `_cost_entry` below is untouched and still tested without a world; slice 2 calls
+## `_show_build_cost(true)` and fills it once Marlow's binding call crosses `cost` and `missing`.
+## **If I had read ASSA-341's body before her ASSA-317 comment I would have deleted the thing slice 2
+## needs**, which is worth recording next to the code rather than only in the item.
 func _refresh_build_cost() -> void:
 	for child in _build_cost.get_children():
 		child.queue_free()
-	var offer := _chosen_offer()
-	if offer.is_empty():
-		_build_cost.add_child(_note("nothing chosen to cost"))
-		return
-	var mine := _pack_stack_of(offer)
-	var named := String(mine.get("name", "")) if not mine.is_empty() \
-			else String(offer.get("line", ""))
-	_build_cost.add_child(_cost_entry(named, int(offer.get("cost", 0)),
-			int(offer.get("count", 0))))
+	_show_build_cost(false)
+
+
+## **SHOW OR HIDE BLOCK 6, HEADING AND ALL, FROM ONE WRITER** (ASSA-341) -- `_show_log`'s shape and
+## for its reason: the rows are inside the section, so hiding the rows alone would leave every test,
+## probe and tool that asks `_build_cost.visible` reading `true` about a block nobody can see, which
+## is the bug ASSA-117 was. Both nodes move together or neither does.
+func _show_build_cost(shown: bool) -> void:
+	_build_cost.visible = shown
+	if is_instance_valid(_build_cost_box):
+		_build_cost_box.visible = shown
 
 
 ## **ONE COST ENTRY: THE NAME, THEN THE TWO COUNTS** (ASSA-332).
