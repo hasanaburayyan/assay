@@ -465,7 +465,11 @@ func test_machine_rims_then_players_then_bands() -> bool:
 	if source == "":
 		return _fail("main.gd could not be read, so the order scan says nothing")
 	var outward := source.find("frame_bands(shape[\"keyline_rect\"], AssayHud.MARK_KEYLINE_PX)")
-	var inward := source.find("frame_bands(shape[\"hole_rect\"], AssayHud.MARK_KEYLINE_PX)")
+	# **THE INWARD RIM IS A FILLED HOLE SINCE ASSA-273 box 1**, so this leg looks for the fill. The
+	# string moved and the assertion did not: it is still "the thing painted inside the band's inner
+	# edge goes before the people", and it matters MORE filled than lined -- 2 px of rim over a body
+	# is a trim and a 12x12 fill over a body is the body.
+	var inward := source.find("draw_rect(shape[\"hole_rect\"], AssayHud.mark_ink_of(")
 	var player := source.find("AssayHud.mark_ink_of(&\"player_mine\" if mine else &\"player_theirs\"")
 	var band_at := source.find("AssayHud.mark_ink_of(&\"building\", shape[\"colour\"])")
 	var legs := {"the outward rim": outward, "the inward rim": inward, "a player": player,
@@ -483,10 +487,13 @@ func test_machine_rims_then_players_then_bands() -> bool:
 				+ "partner's (ASSA-278 box 7). A separator goes before the people it stands among.")
 				% [outward, player])
 	if not (inward < player):
-		return _fail(("11.42: a machine's INWARD rim (@%d) is painted after a player (@%d). This is "
-				+ "the ring ASSA-278 shipped and it is the one that eats a person standing on a 1x1: "
-				+ "a partner kept 69.2%% of their cross without it and 38.5%% with it.")
-				% [inward, player])
+		return _fail(("11.42: a machine's HOLE FILL (@%d) is painted after a player (@%d). This is "
+				+ "ASSA-273's hole taking `MAP_BG` and it is the one that eats a person standing on "
+				+ "a 1x1: `PLAYER_MARK_PX` 16 against a 12 px hole, so after the people it buries a "
+				+ "player on their own machine instead of trimming them (11.14, Maren's condition "
+				+ "(i) on ASSA-273 box 1). It was a 2 px ring when ASSA-278 shipped it: a partner "
+				+ "kept 69.2%% of their cross without that ring and 38.5%% with it, and a FILL after "
+				+ "the people would leave 0%%.") % [inward, player])
 	if not (player < band_at):
 		return _fail(("11.42: a machine's BAND (@%d) is painted before a player (@%d). The band is the "
 				+ "mark's identity and goes last; moving it under the people hides the machine "
@@ -499,7 +506,7 @@ func test_machine_rims_then_players_then_bands() -> bool:
 	# the glyph pass repeats a lapped machine's band (ASSA-273 box 3), and a rim added beside it would
 	# land after every band in the frame and slip past all three legs. So this looks at the LAST rim.
 	var last_rim := maxi(source.rfind("frame_bands(shape[\"keyline_rect\"], AssayHud.MARK_KEYLINE_PX)"),
-			source.rfind("frame_bands(shape[\"hole_rect\"], AssayHud.MARK_KEYLINE_PX)"))
+			source.rfind("draw_rect(shape[\"hole_rect\"], AssayHud.mark_ink_of("))
 	if last_rim > band_at:
 		return _fail(("11.42: `_draw` paints a machine rim at %d, AFTER the first band at %d — a "
 				+ "second rim pass further down the frame. Every rim belongs in the one pass above "
@@ -1778,8 +1785,15 @@ func test_a_building_on_the_schematic_is_the_footprint_it_stands_on() -> bool:
 ## (`tools/person_under_machine.gd`, the real geometry at cell 9): `_draw` paints buildings AFTER
 ## players, so the rim lands on whoever is standing on the machine. A partner on a 1x1 keeps **69.2%
 ## of their cross without the rim and 38.5% with it**, and ASSA-236's whole case for the hollow frame
-## was that it ended that trade (25.3% -> 70.4%). So the hole must still have a middle, which is the
-## second assertion below -- and the hole's clear square is 8x8 px where it was 12x12.
+## was that it ended that trade (25.3% -> 70.4%).
+##
+## **THAT PARAGRAPH ENDED "SO THE HOLE MUST STILL HAVE A MIDDLE, WHICH IS THE SECOND ASSERTION
+## BELOW -- AND THE HOLE'S CLEAR SQUARE IS 8x8 PX WHERE IT WAS 12x12", AND BOTH HALVES ARE DEAD.**
+## 11.42 (ASSA-278 box 7) moved every rim BEFORE the people, so a machine paints nothing on a body
+## from inside its own hole and the 69.2/38.5 trade is not a trade any more; and ASSA-273 box 1
+## filled the hole, so its clear square is **0x0**. The assertion is gone, with the two tests that
+## carry its job named where it stood. The numbers above are kept because they are the measurement
+## that bought `BUILDING_MARK_PX` 20 -- they are history now, not a bar.
 ##
 ## **WHAT IT CANNOT SEE, the same gap every mark test here admits: whether `_draw` paints these three
 ## lists.** Nothing headless rasterises a `draw_rect`. The bands come out of `AssayHud` in the
@@ -1801,7 +1815,9 @@ func test_a_machines_band_has_a_dark_neighbour_on_both_of_its_edges() -> bool:
 		# and a polygon cannot be handed to `frame_bands`.
 		var band: Array[Rect2] = AssayHud.frame_bands(mark["rect"], float(mark["stroke"]))
 		var dark: Array[Rect2] = AssayHud.frame_bands(mark["keyline_rect"], AssayHud.MARK_KEYLINE_PX)
-		dark.append_array(AssayHud.frame_bands(mark["hole_rect"], AssayHud.MARK_KEYLINE_PX))
+		# THE WHOLE HOLE, not a ring inside it (ASSA-273 box 1): one filled rect is what `_draw`
+		# paints now, and it is a superset of the ring, so everything ASSA-278 bought is still bought.
+		dark.append(mark["hole_rect"] as Rect2)
 		# **AND THE TWO INKS MAKE A STEP, AS A NUMBER.** Without this the property above is satisfied
 		# by a rim in any colour at all -- including the band's own white, which is the shape of the
 		# defect: a neighbour that is not an edge.
@@ -1836,14 +1852,23 @@ func test_a_machines_band_has_a_dark_neighbour_on_both_of_its_edges() -> bool:
 		if seen == 0:
 			return _fail("a %s building's frame sampled 0 band pixels inside its own keyline rect %s, "
 					% [foot, outer] + "so this test looked at nothing")
-		# **AND THE HOLE STILL HAS A MIDDLE.** The rim is painted over a person standing on the
-		# machine (buildings go in after players), so a rim that closed the hole would be ASSA-203's
-		# 0.0% back by another route. 8x8 px of a 1x1's 12x12 hole, and the cost is in the docstring.
-		var centre: Vector2 = (mark["rect"] as Rect2).get_center()
-		if _in_any(band, centre) or _in_any(dark, centre):
-			return _fail(("a %s building's mark is ink at its own centre %s once the inward rim is "
-					+ "drawn: a person standing on this machine is painted out by it, which is the "
-					+ "trade the hollow frame was filed to end (ASSA-236)") % [foot, centre])
+		# **THIS IS WHERE "AND THE HOLE STILL HAS A MIDDLE" WAS, AND I DELETED IT RATHER THAN INVERT
+		# IT, BECAUSE ITS PREMISE DIED TWO ITEMS AGO.** It asserted the mark's own centre is not ink,
+		# and its reason was *"the rim is painted over a person standing on the machine (buildings go
+		# in after players), so a rim that closed the hole would be ASSA-203's 0.0% back by another
+		# route."* Since **11.42** (ASSA-278 box 7, two days ago) the rims pass runs BEFORE the
+		# people, so nothing a machine paints inside its own hole lands on a body at all -- the
+		# assertion had been holding a geometry rule up with an order that no longer existed. The
+		# hole is filled since ASSA-273 box 1 and its centre IS ink.
+		#
+		# WHAT COVERS THE THING IT WAS PROTECTING, by name, because an assertion removed with no
+		# replacement is a hole in the suite and not a tidy-up:
+		# - the FILL being under the people: the `inward < player` leg of
+		#   `test_machine_rims_then_players_then_bands`, which reddens naming 11.14 and Maren's
+		#   condition (i).
+		# - a person's BODY surviving what is painted after them:
+		#   `test_a_person_standing_on_a_machine_keeps_their_body`, which counts the band only and
+		#   says why.
 	return true
 
 
@@ -2022,14 +2047,32 @@ func test_a_person_standing_on_a_machine_keeps_their_body() -> bool:
 	# the tile you are STANDING on, so this is the normal case and not a contrived one.
 	var at := origin + (Vector2(tile) + Vector2(0.5, 0.5)) * cell
 	var mark := AssayHud.building_mark({"pos": tile, "footprint": Vector2i(1, 1)}, cell, origin)
-	# THE THREE LISTS `_draw` PAINTS FOR ONE MACHINE, in its order and from the same functions.
-	var ink: Array[Rect2] = AssayHud.frame_bands(mark["keyline_rect"], AssayHud.MARK_KEYLINE_PX)
-	ink.append_array(AssayHud.frame_bands(mark["rect"], float(mark["stroke"])))
-	ink.append_array(AssayHud.frame_bands(mark["hole_rect"], AssayHud.MARK_KEYLINE_PX))
-	# Maren's bar, as the shares she wrote. A floor and not an equality: a change that leaves MORE of
-	# a person is not a defect, and `is_equal_approx` on a sampled area would be a trap.
-	for case in [{"mine": true, "who": "you", "floor": 0.85}, {"mine": false, "who": "a partner",
-			"floor": 0.69}]:
+	# **WHAT COVERS A PERSON IS THE BAND, AND SINCE 11.42 IT IS THE ONLY THING A MACHINE PAINTS AFTER
+	# THEM.** This list was all three of a machine's rects — outward rim, band, inward rim — which was
+	# the right model on the day it was written and stopped being one when ASSA-278 box 7 moved every
+	# rim into pass 1, two days before ASSA-273 filled the hole. A model that counts separators
+	# painted UNDER a body as covering it does not merely under-report: handed a FILLED hole it
+	# reports a person at 0.0% and reddens on a change that cannot touch them.
+	#
+	# **SO THE ORDER IS NOT MODELLED HERE, IT IS ASSERTED ELSEWHERE, which is the only way round the
+	# circle.** This test owns the geometry (what the band takes off a body); the `inward < player`
+	# and `outward < player` legs of `test_machine_rims_then_players_then_bands` own the order that
+	# makes the other two rects harmless. Either test alone would be satisfiable by a defect.
+	var ink: Array[Rect2] = AssayHud.frame_bands(mark["rect"], float(mark["stroke"]))
+	# **THE FLOORS ARE MEASURED ON THIS MODEL AND THE OLD PAIR IS NAMED, NOT QUIETLY RAISED.** Maren's
+	# bar was `85.3 / 69.2` against all three rects; the band alone takes almost nothing off either
+	# body: measured, **100.0% and 100.0%**, because the band lives 8..10 px from the mark's centre
+	# and both bodies are built on `PLAYER_MARK_PX` 16 — so a diamond's and a cross's reach stop
+	# where the band starts. The old pair is NOT the bar any more and must not be read as one: it
+	# priced a rim over a body, and no rim is painted over a body.
+	#
+	# **AND THE BAR IS THE RULE RATHER THAN THE MEASUREMENT: 11.14 says NEVER, so the floor is 1.0.**
+	# It is met exactly at `BUILDING_MARK_PX` 20 and would redden on the way back to 16, where the
+	# band's inner edge sat inside a body's own reach (85.3% / 69.2%). A floor and not an equality
+	# test: a change that leaves more of a person is not a defect, and `is_equal_approx` on a sampled
+	# area would be a trap.
+	for case in [{"mine": true, "who": "you", "floor": 1.0}, {"mine": false, "who": "a partner",
+			"floor": 1.0}]:
 		var body: PackedVector2Array = AssayHud.player_mark(at, bool(case["mine"]))["points"]
 		var total := 0
 		var kept := 0
@@ -2053,6 +2096,10 @@ func test_a_person_standing_on_a_machine_keeps_their_body() -> bool:
 			return _fail("%s has a body of 0 sampled pixels, so this test looked at nothing"
 					% case["who"])
 		var share := float(kept) / float(total)
+		# PRINTED, because the floor is a floor and the SHARE is what the next ruling will want.
+		print("%s on a 1x1 machine keeps %.1f%% of their body against the band (%d of %d px); the "
+				% [case["who"], 100.0 * share, kept, total]
+				+ "all-three-rects model this test used until ASSA-273 said 85.3%/69.2%")
 		if share < float(case["floor"]):
 			return _fail(("%s standing on a 1x1 machine keeps %.1f%% of their body (%d of %d px) and "
 					+ "Maren's bar is %.0f%%. A machine's mark may take space from the GROUND for "
@@ -2060,6 +2107,74 @@ func test_a_person_standing_on_a_machine_keeps_their_body() -> bool:
 					+ "took a partner from 69.2%% to 38.5%%, which is the trade ASSA-236's hollow "
 					+ "frame was filed to END (ASSA-278)")
 					% [case["who"], 100.0 * share, kept, total, 100.0 * float(case["floor"])])
+	return true
+
+
+## **NO GROUND SHOWS THROUGH A MACHINE'S MARK, WHICH IS CROSS-SEED IDENTITY AS A PROPERTY**
+## (ASSA-273 box 1, Maren's condition (ii): *"render the same footprint on two worlds, assert the
+## mark's painted pixels are identical. Today it fails by 144 px²; after the fill it passes by
+## construction, and it is the only check that stops a future caller reopening the hole."*).
+##
+## **WHY THE DEFECT NEEDED A NEW SHAPE OF CHECK.** Every number this item ever had was WITHIN-seed —
+## the band's own ink 86.8% on 63 against 52.1% on 777042, longest unbroken run, hole area — and a
+## statistic about one frame cannot say that two frames disagree. What Marlow's cold read found,
+## unprompted, is that they do: *"in blind-63 the thing I think is built is wearing the ore costume
+## ... in blind-777042 the same thing is a small white-outlined box with no disc at all — so the two
+## pictures do not even agree with each other about what a machine looks like."* The mark is one ink
+## and one size on both; `hole disc` is 32.8% on BOTH. Only the VALUE showing through changed, and it
+## swung 7.5x (`disc:map` 11.58:1 against 1.54:1, `shared/assay/cove-assa273/costume/`).
+##
+## **SO THE PROPERTY IS "A MARK'S BOX CONTAINS NO PIXEL THE WORLD CHOSE", NOT A RATIO BETWEEN TWO
+## SEEDS.** A ratio needs two worlds and a renderer; this needs neither, and it is strictly stronger:
+## if every pixel inside the keyline is one of the mark's own three inks, then no seed can change the
+## picture, so all seeds paint the same machine. It reddens on 144 px² of a 1x1 the moment anyone
+## re-opens the hole, naming the pixel.
+##
+## WHAT IT CANNOT SEE, and it is the bigger half of the costume: **the SURROUND.** Maren's own ruling
+## says the ring outside the keyline tells a reader 2.7x more than the hole did (`ring disc` **88.0%**
+## on 63 against 31.7% on 777042, where the hole was 32.8% on both; 88.0 corrects an 89.3 I typed in
+## three places, against `shared/assay/cove-assa273/holefill/costume-filled.txt`). A mark whose box is
+## seed-identical can still stand in a bright plate on one world and on bare ground on another. This
+## check passes by construction and must not be quoted as closing box 1.
+func test_no_ground_shows_through_a_machines_mark() -> bool:
+	var origin := Vector2(24.0, 96.0)
+	# A 1x1 at cell 9 is the case that matters — its mark is `BUILDING_MARK_PX` 20 over a 9 px tile,
+	# so the hole is 12x12 of a 576 px² box — and the others are here because a footprint-sized mark
+	# must satisfy the same property with no floor doing the work.
+	for case in [{"foot": Vector2i(1, 1), "cell": 9.0}, {"foot": Vector2i(2, 2), "cell": 9.0},
+			{"foot": Vector2i(3, 2), "cell": 32.0}]:
+		var foot: Vector2i = case["foot"]
+		var cell: float = case["cell"]
+		var mark := AssayHud.building_mark({"pos": Vector2i(12, 7), "footprint": foot}, cell, origin)
+		# THE THREE LISTS `_draw` PAINTS FOR ONE MACHINE, from the same functions it asks, in its
+		# order: the outward rim, the filled hole (both pass 1), then the band (pass 3).
+		var painted: Array[Rect2] = AssayHud.frame_bands(mark["keyline_rect"],
+				AssayHud.MARK_KEYLINE_PX)
+		painted.append(mark["hole_rect"] as Rect2)
+		painted.append_array(AssayHud.frame_bands(mark["rect"], float(mark["stroke"])))
+		var outer: Rect2 = mark["keyline_rect"]
+		# Sampled at a quarter pixel, not a pixel centre: a 1x1's rects sit on half-pixels at cell 9
+		# and on integers at cell 32, and a sample that lands on an edge is a coin toss.
+		var seen := 0
+		var y := outer.position.y + 0.25
+		while y <= outer.end.y - 0.25:
+			var x := outer.position.x + 0.25
+			while x <= outer.end.x - 0.25:
+				var point := Vector2(x, y)
+				seen += 1
+				if not _in_any(painted, point):
+					return _fail(("a %s building's mark at %.0f px a tile leaves %s to the GROUND: "
+							+ "inside its own keyline rect %s, that pixel is whatever the worldgen "
+							+ "rolled. A 1x1 used to leave 144 px² of a 576 px² box that way — our "
+							+ "ink and the world's at 1.00:1, the world's half swinging 7.5x between "
+							+ "seeds — so two worlds painted two different machines (ASSA-273 box 1, "
+							+ "Marlow's cold read). Every pixel of a mark's box is a mark ink.")
+							% [foot, cell, point, outer])
+				x += 1.0
+			y += 1.0
+		if seen == 0:
+			return _fail("a %s building's mark sampled 0 pixels inside its own keyline rect %s, so "
+					% [foot, outer] + "this test looked at nothing")
 	return true
 
 
