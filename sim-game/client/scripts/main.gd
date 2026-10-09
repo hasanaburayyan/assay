@@ -4758,10 +4758,29 @@ func _rebuild_build_slots() -> void:
 
 ## ONE ROW OF THE SHAPE: what the boxes are, then the boxes. The label is the SIM's name for the slot
 ## kind, which is the same string `slot_fill` joined on.
+##
+## **THE KIND DOES NOT WRAP, AND THE DEFAULT WAS NOT "A BIT NARROW" -- IT WAS ONE LETTER PER ROW**
+## (ASSA-362). `_note` sets `AUTOWRAP_WORD_SMART`, which is right for every sentence on this screen
+## and wrong for a one-word label in an `HBoxContainer` that gives its width to the boxes: squeezed
+## under one character, WORD_SMART breaks anywhere, so the first 1x shot of this screen drew
+## `h`/`e`/`a`/`d` stacked vertically beside the head box and `h`/`o`/`p`/`p`/`e`/`r` beside the
+## hoppers. **A six-letter word then costs ~126 px of column height instead of 18.**
+##
+## **AND IT WAS NOT A COSMETIC BUG, WHICH IS WHY THE FIX IS HERE AND NOT IN A STYLESHEET.** This
+## block is the one section built `fill := false`, so its `ScrollContainer` cannot scroll and cannot
+## shrink and its content's height is a hard floor under the WHOLE screen. Six letters tall twice
+## over took the screen 137 px past the rect `build_screen_rect` computed, over the two world
+## controls Maren's §1 protects, and put `Build` off the bottom of a 720 px window.
+##
+## **NOT FIXED IN `_note`:** a note is a sentence and sentences must wrap. This is a label that
+## happens to be built by the same helper.
 func _slot_row(named: String) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
-	row.add_child(_note(named))
+	var kind := _note(named)
+	kind.autowrap_mode = TextServer.AUTOWRAP_OFF
+	kind.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(kind)
 	_build_slots.add_child(row)
 	return row
 

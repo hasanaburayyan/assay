@@ -20,6 +20,13 @@ extends RefCounted
 ## and a walk is a tile a tick, so this is generous rather than tight.
 const PATIENCE := 120
 
+## **ONE `BODY` ROW.** The number Maren's `BUILD_COMMIT_BAR` is six of (its own arithmetic:
+## `6 x 18 = 108`, plus the 6 px inset = 114), and the theme's `BODY` is a 13 pt face on an 18 px
+## line. It is a LITERAL on purpose: the thing it guards against is a slot label that is 126 px tall
+## instead of one row, and a bound derived from the same engine call the subject uses would move
+## with the defect. The 1x shot is its cross-check (ASSA-362).
+const BODY_ROW_PX := 18.0
+
 var runner = null
 ## Every command the screen asked its client to submit, in order. Collected through the real `asked`
 ## signal, which fires inside `submit` -- so a button wired to nothing collects nothing.
@@ -2973,6 +2980,72 @@ func test_a_frames_slots_are_drawn_as_a_shape_and_nothing_mounted_is_dropped() -
 				ok = _fail(("%d parts are mounted on the narrower frame and %d are drawn; the ones that no "
 						+ "longer fit must be visible, not dropped")
 						% [carried - 1, _boxes_holding_parts(screen)])
+	screen.queue_free()
+	return ok
+
+
+## **A SLOT KIND IS READ AS A WORD, NOT A COLUMN OF LETTERS** (ASSA-362).
+##
+## `_slot_row`'s label comes from `_note`, which sets `AUTOWRAP_WORD_SMART` -- right for every
+## sentence on this screen and wrong for a one-word label in an `HBoxContainer` that gives its width
+## to the boxes. Squeezed under one character, WORD_SMART breaks ANYWHERE: the first 1x shot of this
+## screen drew `h`/`e`/`a`/`d` stacked vertically beside the head box and `h`/`o`/`p`/`p`/`e`/`r`
+## beside the hoppers.
+##
+## **IT WAS NOT COSMETIC.** This block is the one section built `fill := false`, so its
+## `ScrollContainer` neither scrolls nor shrinks and its content is a hard floor under the whole
+## screen: six letters tall twice over took the screen to 864x729 against an 864x592 rect, over both
+## world controls, and put `Build` off the bottom of a 720 px window.
+##
+## **THE PROPERTY HELD IS THE MINIMUM WIDTH, AND THE FLAG IS CHECKED SECOND.** `AUTOWRAP_OFF` is the
+## mechanism; what actually stops the squeeze is that such a Label reports its WHOLE TEXT as its
+## minimum width, so no parent can give it less. A test on the flag alone would pass the day somebody
+## reached the same wrap through a different property -- the Game Director's own ASSA-341 box 9
+## ruling, that the flags which make a thing true are not the thing.
+##
+## **IT DOES NOT ASSERT THE SCREEN'S LAID-OUT HEIGHT AND DOES NOT PRETEND TO:** a container's minimum
+## is recalculated DEFERRED, so asking this block its height right after building it answers the old
+## number. The 137 px belongs to the 1x shot.
+func test_a_slot_kinds_label_is_a_word_and_not_a_column_of_letters() -> bool:
+	var screen := _joined()
+	var ok := true
+	var frame := _roomiest_frame()
+	if frame.is_empty() or String(frame.get("kind", "")) == "":
+		ok = _fail("the sim's catalogue offers no frame to draw slots for: %s" % [frame])
+	else:
+		screen._building = [_part_stack_of(String(frame.get("kind", "")))]
+		screen._rebuild_build_slots()
+		var checked := 0
+		for child in screen._build_slots.get_children():
+			var row := child as HBoxContainer
+			if row == null or row.get_child_count() == 0:
+				continue
+			var label := row.get_child(0) as Label
+			if label == null or label.text == "":
+				continue
+			checked += 1
+			# THE SAME WORD MEASURED BY THE FONT, not a width this test invented. Two different engine
+			# paths -- a Label's own minimum against `Font.get_string_size` -- so neither is checking
+			# itself.
+			var font := label.get_theme_font(&"font")
+			var pt := label.get_theme_font_size(&"font_size")
+			var word := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, pt).x
+			var least := label.get_minimum_size()
+			if least.x + 1.0 < word:
+				ok = _fail(("the `%s` slot label reports a %.0f px minimum width for a word that measures "
+						+ "%.0f: a parent can squeeze it below one word, which is how it came to be drawn "
+						+ "one letter per row") % [label.text, least.x, word])
+				break
+			elif least.y > BODY_ROW_PX + 1.0:
+				ok = _fail(("the `%s` slot label is already %.0f px tall before any parent squeezes it, "
+						+ "against one `BODY` row of %.0f") % [label.text, least.y, BODY_ROW_PX])
+				break
+			elif label.autowrap_mode != TextServer.AUTOWRAP_OFF:
+				ok = _fail(("the `%s` slot label wraps (mode %d): a slot kind is one of the sim's words and "
+						+ "must be read as one") % [label.text, label.autowrap_mode])
+				break
+		if ok and checked == 0:
+			ok = _fail("the shape drew no labelled slot row at all, so nothing was measured")
 	screen.queue_free()
 	return ok
 
