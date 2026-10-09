@@ -302,9 +302,15 @@ func _style_button(theme: Theme) -> void:
 ## action told apart only by hue is no primary action for the players Maren's contrast floor exists
 ## for. `BODY` against the default's `SMALL`.
 ##
-## **THE FOCUS RING INVERTS HERE, AND IT HAS TO.** Every other control rings itself in `ACCENT`
-## against a grey fill; on a button whose fill IS the accent that ring would be invisible. `INK`
-## instead, which is the same decision the default style makes -- ring in whatever the fill is not.
+## **THE FOCUS RING IS `INK`, AND SINCE ASSA-335 IT IS NO LONGER AN INVERSION.** This said *"the
+## focus ring INVERTS here, and it has to. Every other control rings itself in `ACCENT`"* -- true
+## when it was written and false now: `_style_line_edit`'s ring is `INK` too, by Maren's ruling that
+## a focus ring is not an act and so cannot hold the accent. So this value stopped being an
+## exception and became the rule arriving here first, which is the better reason to keep it.
+##
+## **STILL OPEN, AND NOT MINE TO CLOSE:** `Button` (line ~290) and `Quiet` (~399) still ring in
+## `ACCENT`, so tabbing from the host box to `Join` puts a second accent region on the door screen.
+## Recolouring is the Game Director's; measured and handed back on ASSA-335 rather than tidied here.
 func _style_primary_button(theme: Theme) -> void:
 	var name := &"Primary"
 	theme.add_type(name)
@@ -414,10 +420,16 @@ func _style_quiet_button(theme: Theme) -> void:
 ## **`font_selected_color` := `INK`, the same ink as unselected: a selection is a BED, not a second
 ## ink.** Selecting a word does not change what the word is.
 ##
-## **NOT `ACCENT`, for two reasons.** ASSA-224 is one accent, one meaning — *press this* — and the
+## **NOT `ACCENT`, AND THE REASON PRINTED HERE FOR TWO DAYS WAS FALSE** (ASSA-335). It read: *"the
 ## caret on this very control is already `ACCENT`, so an accent selection puts two accents on one
-## field, one of which cannot be pressed. The arithmetic agrees: `INK` on `ACCENT` is 1.27:1, the
-## text simply gone.
+## field, one of which cannot be pressed."* The shipped theme already drew two — the caret AND the
+## focus ring — so that sentence argued from a premise its own file falsified, and it shipped as the
+## stated justification for a line it did not justify.
+##
+## **THE CONCLUSION NEVER NEEDED IT: A BED IS NOT AN ACT.** `ACCENT` marks the one act a screen is
+## for, one region per screen (ASSA-224, ASSA-335 ruling 1). A selection highlight is a bed under
+## text — there is nothing there to press — so it is outside the accent's meaning whatever else is on
+## the control. The arithmetic still agrees: `INK` on `ACCENT` is 1.27:1, the text simply gone.
 ##
 ## **`font_uneditable_color` := `INK_MUTED`, and nothing in this client is uneditable today —
 ## WHICH IS THE REASON TO DECLARE IT.** An undeclared colour is an engine default waiting for the
@@ -431,12 +443,22 @@ func _style_line_edit(theme: Theme) -> void:
 	theme.set_font_size("font_size", "LineEdit", BODY)
 	theme.set_color("font_color", "LineEdit", INK)
 	theme.set_color("font_placeholder_color", "LineEdit", INK_MUTED)
-	theme.set_color("caret_color", "LineEdit", ACCENT)
+	theme.set_color("caret_color", "LineEdit", INK)
 	theme.set_color("selection_color", "LineEdit", BORDER)
 	theme.set_color("font_selected_color", "LineEdit", INK)
 	theme.set_color("font_uneditable_color", "LineEdit", INK_MUTED)
+	# **AN OUTLINE MATCHING ITS OWN INK CAN NEVER BE A SECOND COLOUR ON ANY BED** (ASSA-335 ruling 5).
+	# One matching a bed is wrong the moment the bed changes, and this control now has two beds: the
+	# well (`SURFACE.darkened(0.25)`) and the `BORDER` selection. Unreachable today -- nothing sets
+	# `outline_size` -- which is exactly why it is cheap to get right before something does.
+	theme.set_color("font_outline_color", "LineEdit", INK)
+	# THE CLEAR BUTTON, the other unreachable pair (nothing sets `clear_button_enabled`). The x is not
+	# the act the screen is for, so no accent; this is the placeholder-vs-text pair the theme already
+	# spends. Not `FAILED` -- that register paints text, never a control.
+	theme.set_color("clear_button_color", "LineEdit", INK_MUTED)
+	theme.set_color("clear_button_color_pressed", "LineEdit", INK)
 	theme.set_stylebox("normal", "LineEdit", _box(SURFACE.darkened(0.25), BORDER))
-	theme.set_stylebox("focus", "LineEdit", _box(SURFACE.darkened(0.25), ACCENT))
+	theme.set_stylebox("focus", "LineEdit", _box(SURFACE.darkened(0.25), INK))
 
 
 func _style_panel(theme: Theme) -> void:
