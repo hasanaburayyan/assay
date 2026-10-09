@@ -2366,11 +2366,15 @@ func test_either_click_on_a_machine_opens_a_menu_beside_it() -> bool:
 ##
 ## **AND THE WORST CASE IS CONSTRUCTED, NOT PLAYED.** A seed's menu is narrow -- short species names, a
 ## two-digit cap -- so a measurement of the real one passes and says nothing. Every string the sim can
-## hand this menu is re-texted here at its bound: a 20-char species (`sim::tuning::SPECIES_NAME_MAX`,
-## which is a COPY of a sim constant and the one thing in this test that could go stale; the binding
-## does not publish it and the ask is on ASSA-334), the longest item kind, and the longest stall
-## sentence the sim writes. **If that fails, the floor is wrong and the number goes to Maren** -- her
-## §6 budgeted 343 px of content for exactly this row.
+## hand this menu is re-texted here at its bound: a species name at the sim's own cap, the longest
+## item kind, and the longest stall sentence the sim writes. **If that fails, the floor is wrong and
+## the number goes to Maren** -- her §6 budgeted 343 px of content for exactly this row.
+##
+## **THE CAP IS ASKED OF THE SIM, NOT TYPED** (`AssaySim.species_name_max`, added for this test on
+## Marlow's call). It read `20` of its own until then, and the failure that shape makes is the one he
+## had just shipped and withdrawn: raise `SPECIES_NAME_MAX` and this "worst case" gets SHORTER than
+## the real one, the check stays green, and the row it exists to bound overflows in a real window
+## with nothing going red. A worst case that silently stops being the worst case is worse than none.
 func test_nothing_in_a_machine_menu_wraps_at_the_worst_strings_the_sim_can_write() -> bool:
 	var screen := _joined()
 	var ok := true
@@ -2408,10 +2412,14 @@ func test_nothing_in_a_machine_menu_wraps_at_the_worst_strings_the_sim_can_write
 		if kind == "":
 			screen.queue_free()
 			return _fail("no non-hand recipe in the sim's table, so nothing can be put in a slot")
-		# 20 IS `sim::tuning::SPECIES_NAME_MAX` AND IT IS A COPY. The binding does not publish it; the
-		# ask is on ASSA-334. If the sim raises the cap this measurement silently stops being the worst
-		# case, which is the one stale thing in this test and is written down rather than hidden.
-		var worst := "%s %s (A)" % ["W".repeat(20), kind]
+		# THE SIM'S OWN CAP, ASKED FOR RATHER THAN COPIED (`sim::tuning::SPECIES_NAME_MAX`). `W` is the
+		# worst letter and a real one: `mineral::validate_name` allows only ASCII letters, digits and
+		# hyphens, so no legal name is wider than this many Ws.
+		var cap: Variant = ClassDB.class_call_static("AssaySim", "species_name_max")
+		if typeof(cap) != TYPE_INT or int(cap) <= 0:
+			screen.queue_free()
+			return _fail("species_name_max answered %s, so the worst case has no bound" % [cap])
+		var worst := "%s %s (A)" % ["W".repeat(int(cap)), kind]
 		var probe := PanelContainer.new()
 		var inside := VBoxContainer.new()
 		probe.add_child(inside)
