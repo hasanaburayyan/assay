@@ -5938,8 +5938,34 @@ func _draw() -> void:
 		# so splitting them across the player pass would need a 22nd key row for an ink already in it.
 		for band: Rect2 in AssayHud.frame_bands(shape["keyline_rect"], AssayHud.MARK_KEYLINE_PX):
 			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
-		for band: Rect2 in AssayHud.frame_bands(shape["hole_rect"], AssayHud.MARK_KEYLINE_PX):
-			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
+		# **AND THE INWARD RIM IS THE WHOLE HOLE NOW, NOT A 2 PX RING INSIDE IT** (ASSA-273 box 1,
+		# Maren's ruling of 22:16Z: *"the hole takes `MAP_BG`, the bed already drawn 2 px deep inside
+		# it"*). Same ink, same key row, same pass, one `draw_rect` instead of four: everything
+		# ASSA-278 bought the band's inner edge is still bought, because a filled hole is a superset
+		# of the ring that used to line it.
+		#
+		# **WHAT IT BUYS IS THAT A MACHINE'S PICTURE STOPS BEING A PER-WORLD ROLL.** Of a 1x1's
+		# 24x24 = 576 px² box, 144 px² was the GROUND showing through the hole -- our ink and the
+		# world's at 1.00:1, and the world's half swinging 7.5x between seeds (`disc:map` 11.58:1 on
+		# seed 63 against 1.54:1 on 777042, `shared/assay/cove-assa273/costume/`). That is what
+		# Marlow's cold read named without a number: *"the two pictures do not even agree with each
+		# other about what a machine looks like."* Filled, every pixel of a mark's own box is a mark
+		# ink, so two worlds paint the same picture -- which is the one check this item never had, and
+		# `test_hud.gd`'s `no_ground_shows_through` is it.
+		#
+		# **IT IS IN THIS PASS AND NOT THE BAND PASS, AND THAT IS WHAT KEEPS IT LEGAL** (Maren's
+		# condition (i); 11.14, 11.42). `PLAYER_MARK_PX` 16 against a 12 px hole: painted after the
+		# people it would bury a player standing on their own machine. Painted with the rims it sits
+		# UNDER them, as the 2 px ring already did, and the order scan in `test_hud.gd` is the leg
+		# that holds it rather than this paragraph.
+		#
+		# **ONE THING THIS DOES NOT DO, SO NOBODY READS IT AS DONE: the surround is untouched.** The
+		# costume Marlow described is mostly OUTSIDE the keyline -- `ring disc` 89.3% on 63 against
+		# 31.7% on 777042, where `hole disc` was 32.8% on BOTH. Maren's own ruling says the surround
+		# tells a reader 2.7x more than the hole. This closes the rented quarter of the mark's box and
+		# leaves a machine still standing in whatever the worldgen rolled around it.
+		draw_rect(shape["hole_rect"], AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]),
+				true)
 
 	# **PASS 2 OF 3.** EVERY PLAYER, AT A SIZE THAT DOES NOT COME FROM THE TILE (ASSA-119 box 6,
 	# Maren's finding 1).

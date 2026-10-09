@@ -1722,6 +1722,13 @@ static func building_mark(building: Dictionary, cell: float, origin: Vector2) ->
 		# it asserts a neighbour rather than a ratio: *"every pixel of the band gets a dark neighbour
 		# on both sides, so the band stops renting its weight from the ground it stands on"*. A claim
 		# about the HOLE is a claim about one seed's disc; this one is true on any ore tint.
+		#
+		# **AND SINCE ASSA-273 THE PAINTER FILLS IT RATHER THAN LINING IT** (Maren, 22:16Z). The rim
+		# was 2 px of `MAP_BG` inside this rect and the remaining 12x12 was bare ground -- 144 px² of
+		# a 1x1's 576 px² box, so a quarter of a machine's picture was a value the worldgen rolled.
+		# Filled, a mark's box holds nothing but mark inks and two worlds paint the same machine.
+		# **A CLAIM ABOUT THE HOLE IS STILL A CLAIM ABOUT ONE SEED'S DISC, which is why the test is
+		# cross-seed IDENTITY and not a ratio:** `test_hud.gd`'s `no_ground_shows_through`.
 		"hole_rect": outer.grow(-BUILDING_STROKE_PX),
 		"rect": outer,
 		"stroke": BUILDING_STROKE_PX,
