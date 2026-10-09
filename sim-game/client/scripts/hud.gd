@@ -2317,28 +2317,21 @@ static func design_verbs(design: Dictionary) -> Array:
 	return [{"label": "Equip", "verb": "equip"}]
 
 
-## **WHICH OF A MACHINE'S SLOTS A STACK MAY ENTER, in the sim's own order** (ASSA-331). This is the
-## reading `stack_verbs` used to turn into the pack row's `Fuel` and `Smelt`; the buttons went and the
-## reading stayed, because it was never the part that was wrong.
+## **`insert_slots` WAS HERE AND IS GONE** (ASSA-351). It answered *which of a machine's slots a stack
+## may enter* by walking the recipe table for the stack's KIND and returning both slots for any kind
+## some non-hand recipe eats. Its defence was a ruling of Marlow's and it was half right:
+## *"which one a species is good for (hot enough fuel, or ore that melts) is a sheet reading and only
+## the sim has it. This client may not choose for the player."*
 ##
-## A recipe that is NOT hand-work happens inside a building, so a kind some non-hand recipe eats is a
-## kind a smelter eats -- **both slots, because which one a species is good for (hot enough fuel, or
-## ore that melts) is a sheet reading and only the sim has it.** This client may not choose for the
-## player and `sim::step` judges the Insert either way.
+## **THE HALF IT MISSED IS THAT A REFUSAL IS A SHEET READING TOO.** Grade (nothing refines above A),
+## the item already in the slot, reactivity at grade, the walls' heat tolerance: in the one 1x frame
+## anyone ever took of a machine menu, all four put controls were acts `sim::step` refuses, and they
+## were the four biggest shapes on the panel.
 ##
-## ONE PAIR AND NOT ONE PER RECIPE: `Refine` and `Resmelt` both eat ore-ish things, and two identical
-## rows beside each other is a menu that looks broken. Empty for a kind nothing smelts, which is how
-## the menu shows no slot row rather than an empty heading.
-static func insert_slots(stack: Dictionary, recipes: Array) -> PackedStringArray:
-	var kind := String(stack.get("kind", ""))
-	for entry in recipes:
-		var recipe: Dictionary = entry
-		if String(recipe.get("input", "")) != kind:
-			continue
-		if bool(recipe.get("hand", false)):
-			continue
-		return PackedStringArray([AssayActions.SLOT_FUEL, AssayActions.SLOT_INPUT])
-	return PackedStringArray()
+## It is **not replaced by a wider function here.** `AssaySimHost.insert_offers` crosses it in the
+## sim -- one predicate over `sim::step::insert_rejection`, the same function the press itself calls --
+## and `main.gd::_rebuild_machine_menu_rows` draws the list. A client that crossed three of the four
+## rules would ship the fourth as a dead button, which is how this happened once already.
 
 
 ## WHERE A BUTTON ACTS, said out loud. A target that is only drawn is a target a player has to infer,

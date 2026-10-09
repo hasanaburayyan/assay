@@ -3793,6 +3793,29 @@ func _pack_shape(stacks: Array) -> String:
 	return "|".join(shape)
 
 
+## WHAT A MACHINE'S SLOTS LOOK LIKE: which item is in each, and whether it is empty. **Not the
+## count**, which climbs and falls every tick a smelter runs; `SlotFull` turns on whether the slot
+## holds a DIFFERENT item or has no room at all, and a fill between 1 and cap-1 refuses nothing.
+##
+## **A SLOT GOING FROM FULL TO EMPTY HAS TO REBUILD THE ROWS** (ASSA-351). A dead `put` control over
+## a slot holding another item is correct until the fire burns that item away -- which happens with
+## no command from the player, so the pack's shape does not move and a key made of it alone would
+## leave the dead control standing. Counts are deliberately out: `at_cap` carries the only step of
+## the fill that changes an answer, so a running smelter does not rebuild a menu forty times a batch.
+func _slot_shape(building: Dictionary) -> String:
+	var shape := PackedStringArray()
+	for entry in building.get("slots", []) as Array:
+		var slot: Dictionary = entry
+		var held: Variant = slot.get("held")
+		var what := "-" if held == null else "%s/%d/%s" % [
+				String((held as Dictionary).get("kind", "?")),
+				int((held as Dictionary).get("species", -1)),
+				String((held as Dictionary).get("grade", "?"))]
+		var at_cap := int(slot.get("count", 0)) >= int(slot.get("cap", 0))
+		shape.append("%s%s" % [what, "!" if at_cap else ""])
+	return "|".join(shape)
+
+
 ## ONE ITEM'S ICON, PLATE AND ALL, or null when there is no art for it (ASSA-117).
 ##
 ## PULLED OUT OF `_rebuild_pack` BECAUSE THE CRAFTING MENU NEEDS THE SAME THING, and this body is
@@ -4181,11 +4204,19 @@ func _refresh_machine_menu() -> void:
 	# way here is a stale `libsim_godot.dylib`, and falling back to `kind` would look fine.
 	_menu_name.text = named if named != "" else "building %d" % _menu_at
 	_menu_state.text = String(it.get("status", ""))
-	var stacks := _sim.inventory_of(_client.player_id) if _client != null else []
-	var signature := "%d/%s" % [_menu_at, _pack_shape(stacks)]
+	var offers := _sim.insert_offers(_client.player_id, _menu_at) if _client != null else []
+	# **THE SLOTS ARE IN THIS KEY AND THEY WERE NOT, which is ASSA-353's shape in this function.**
+	# Cove found `_refresh_actions` caching on five terms, none of them the building under the target,
+	# so a drawn sentence froze. The rows below now draw a refusal, and `SlotFull` is a fact about what
+	# the slot HOLDS: a fire that burns its last fuel empties the slot without touching your pack, so a
+	# key made of the pack alone would leave a dead control standing over a slot that would now accept
+	# it. `_slot_shape` is in the key for the same reason `_pack_shape` is -- a term a drawn thing
+	# depends on.
+	var signature := "%d/%s/%s" % [_menu_at, _pack_shape(_sim.inventory_of(_client.player_id)
+			if _client != null else []), _slot_shape(it)]
 	if signature != _menu_showing:
 		_menu_showing = signature
-		_rebuild_machine_menu_rows(stacks)
+		_rebuild_machine_menu_rows(offers)
 	_place_machine_menu()
 
 
@@ -4195,17 +4226,26 @@ func _refresh_machine_menu() -> void:
 ## -- `put all 37 Tonore ore` -- so the common case is one gesture and the button says what it does. The
 ## column's old pair said `Fuel` and `Smelt` with the number hidden in a tooltip.
 ##
-## **WHICH SLOTS EXIST AND WHAT MAY GO IN THEM IS THE SIM'S ANSWER, ASKED PER STACK.**
-## `AssayHud.insert_slots` names the slots a kind some non-hand recipe eats may enter, out of the sim's
-## own recipe table -- *"which one a species is good for (hot enough fuel, or ore that melts) is a sheet
-## reading and only the sim has it"*. So this walks the pack and groups by the slot the sim named, rather
-## than this file knowing a smelter has two slots. **That reading used to arrive as the pack row's
-## `insert` verb descriptors and now has its own function** (ASSA-331): the buttons it fed were deleted,
-## and a menu asking `stack_verbs` for a verb no row draws would have been a dead argument away from
-## bringing them back.
+## **WHICH SLOTS EXIST, WHAT MAY GO IN THEM, AND WHETHER PRESSING DOES ANYTHING, IS THE SIM'S ANSWER**
+## (ASSA-351). `AssaySimHost.insert_offers` crosses every carried stack against every insertable slot
+## and hands back `refusal` -- absent when the press moves something, the sim's own sentence when it
+## does not. This file groups nothing and decides nothing; it draws the list it is given, in order.
 ##
-## **NOTHING IS EVER GREYED OUT AND NOTHING IS HIDDEN FOR BEING REFUSABLE** (ruling 4, ASSA-37): a stack
-## of 1 simply has no fractions to offer, which is a shorter row and not a disabled control.
+## **IT USED TO ASK `AssayHud.insert_slots`, WHICH KEYED ON THE ITEM'S KIND, AND IN THE ONLY 1x FRAME
+## WE HAD OF THIS MENU ALL FOUR PUT CONTROLS WERE ACTS `sim::step` REFUSES.** That function's defence
+## was true as far as it went -- *"which one a species is good for (hot enough fuel, or ore that melts)
+## is a sheet reading and only the sim has it"* -- and the thing it missed is that a REFUSAL is a sheet
+## reading too. Grade, the item already in the slot, reactivity at grade, the walls' heat tolerance:
+## four rules, and a client that crosses three of them ships the fourth as a dead button.
+##
+## **A REFUSED CONTROL IS PRESENT, DISABLED, WITH THE SIM'S REASON UNDER IT, AND THAT AMENDS RULING 4**
+## (ASSA-37's *"nothing is ever greyed out and nothing is hidden for being refusable"*). Maren's
+## ASSA-351 ruling draws the line that ruling 4 did not have to: *a control may offer an act that goes
+## BADLY; it may not offer an act that does NOTHING.* `Place` on an over-budget design stays live
+## because breaking is a mechanic that hands the parts back -- an outcome a player may choose to test.
+## A refused `Insert` has no outcome at all. Hiding it would be worse than either: a pack of grade-A
+## refined would open a smelter to an empty box, and a named dead end teaches the ladder where a silent
+## one teaches nothing (ASSA-301).
 ##
 ## **WHAT IS NOT HERE YET, SAID OUT LOUD RATHER THAN QUIETLY MISSING:** what is ALREADY in each slot
 ## and how far a batch has got, as the BANDS ruling 5 asks for. **THE REASON IN THIS DOCSTRING EXPIRED
@@ -4213,50 +4253,60 @@ func _refresh_machine_menu() -> void:
 ## ASSA-321 crossed them as data the same day: `slots[i].held.count` over `slots[i].cap` for a fill,
 ## `work.x` over `work.y` for a batch, `nil` when nothing is in front of the machine. So the numbers are
 ## one call away and the bands are simply unbuilt; the sentence above the rows carries them as prose.
-func _rebuild_machine_menu_rows(stacks: Array) -> void:
+func _rebuild_machine_menu_rows(offers: Array) -> void:
 	_clear(_menu_rows)
-	var recipes := AssaySimHost.recipes()
-	# THE SIM'S ORDER, NOT A SORT OF MINE: `AssayActions` names the two slots and `insert_slots` offers
-	# them in that order, so the rows read the same way every time whatever the pack happens to hold.
-	var slots := PackedStringArray()
-	var per_slot := {}
-	for entry in stacks:
-		var stack: Dictionary = entry
-		for slot in AssayHud.insert_slots(stack, recipes):
-			if not per_slot.has(slot):
-				per_slot[slot] = []
-				slots.append(slot)
-			(per_slot[slot] as Array).append(stack)
-	# **NO `Fuel slot` HEADING ABOVE THEM ANY MORE** (ASSA-331, and this is my reading of Maren's
-	# ruling rather than her sentence, so it is the thing to look at in the 1x shot). She ruled the slot
-	# into the BUTTON's label -- *"a button says what IT does, not what the heading above it does"* --
-	# and with every label naming its slot, a note above them repeating it is the same answer twice,
-	# which is her ruling 6. The grouping survives without it: the stacks of one slot are still
-	# consecutive, in the sim's slot order.
-	for slot in slots:
-		for entry in per_slot[slot] as Array:
+	# **NO `Fuel slot` HEADING ABOVE THEM** (ASSA-331, and this is my reading of Maren's ruling rather
+	# than her sentence, so it is the thing to look at in the 1x shot). She ruled the slot into the
+	# BUTTON's label -- *"a button says what IT does, not what the heading above it does"* -- and with
+	# every label naming its slot, a note above them repeating it is the same answer twice, which is her
+	# ruling 6. The grouping survives without it: the stacks of one slot are still consecutive, in the
+	# sim's slot order, because that is the order the binding crossed them in.
+	for group in offers:
+		var per_slot: Dictionary = group
+		var slot := String(per_slot.get("slot", ""))
+		for entry in per_slot.get("offers", []) as Array:
 			var stack: Dictionary = entry
 			var count := int(stack.get("count", 0))
 			var named := String(stack.get("name", "?"))
+			# **`has`, NOT `get(key, default)`.** A refusal of "" would be a disabled button with no
+			# reason beside it, and the binding deliberately omits the key rather than crossing an
+			# empty string for exactly that reason.
+			var refused := stack.has("refusal")
 			var row := VBoxContainer.new()
 			row.add_theme_constant_override("separation", 2)
-			row.add_child(_button(AssayHud.insert_label(count, named, slot),
+			# **THE LABEL IS THE SAME WHETHER OR NOT IT IS PRESSABLE.** A disabled button that also
+			# renamed itself would be two changes a player has to tell apart; the reason under it is
+			# where the difference belongs.
+			var put := _button(AssayHud.insert_label(count, named, slot),
 					func() -> void: _insert_into(_menu_at, stack, slot, 0),
-					"put everything you are carrying of this into the %s slot" % slot))
-			# THE FRACTIONS, AS A ROW OF QUIET BUTTONS THAT NAME WHAT YOU WILL GET. `or 1 · or 18`, never
-			# `or half`: a toggle that named a fraction would make the player do the arithmetic the stack
-			# already answers. Empty for a stack of 1, which adds no row at all.
-			var some := AssayHud.insert_fractions(count)
-			if not some.is_empty():
-				var fractions := HFlowContainer.new()
-				fractions.add_theme_constant_override("h_separation", 4)
-				for want in some:
-					var part := _button(AssayHud.insert_some_label(want),
-							func() -> void: _insert_into(_menu_at, stack, slot, want),
-							"put %d of your %d %s into the %s slot" % [want, count, named, slot])
-					part.theme_type_variation = &"Quiet"
-					fractions.add_child(part)
-				row.add_child(fractions)
+					"put everything you are carrying of this into the %s slot" % slot)
+			put.disabled = refused
+			row.add_child(put)
+			if refused:
+				# **THE SIM'S SENTENCE, UNCHANGED.** `sim::debug::insert_refusal` is the event log's own
+				# wording for this refusal, so the dead control and the log cannot disagree about why.
+				# Nothing is composed here and nothing is shortened.
+				row.add_child(_note(String(stack["refusal"])))
+			else:
+				# THE FRACTIONS, AS A ROW OF QUIET BUTTONS THAT NAME WHAT YOU WILL GET. `or 1 · or 18`,
+				# never `or half`: a toggle that named a fraction would make the player do the arithmetic
+				# the stack already answers. Empty for a stack of 1, which adds no row at all.
+				#
+				# **NONE OF THEM ON A REFUSED ROW**, and that is the sim's answer rather than a tidying:
+				# every reason that reaches here refuses the whole stack whatever the count, because the
+				# one reason a COUNT changes is the cap, and the cap clamps instead of refusing
+				# (ASSA-48). `put 1` into a slot that refuses `put all` is dead for the same reason.
+				var some := AssayHud.insert_fractions(count)
+				if not some.is_empty():
+					var fractions := HFlowContainer.new()
+					fractions.add_theme_constant_override("h_separation", 4)
+					for want in some:
+						var part := _button(AssayHud.insert_some_label(want),
+								func() -> void: _insert_into(_menu_at, stack, slot, want),
+								"put %d of your %d %s into the %s slot" % [want, count, named, slot])
+						part.theme_type_variation = &"Quiet"
+						fractions.add_child(part)
+					row.add_child(fractions)
 			_menu_rows.add_child(row)
 	# **THE TWO VERBS THAT LEFT `do` ON THIS COMMIT** (ruling 3). Their words are the ones the column
 	# used, because this item moves a control and does not retune a sentence.

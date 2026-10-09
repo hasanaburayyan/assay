@@ -467,7 +467,12 @@ func test_no_pack_row_press_is_answered_by_the_client_refusing_to_aim() -> bool:
 	var rows := 0
 	for entry in screen._sim.inventory_of(screen._client.player_id):
 		var stack: Dictionary = entry
-		if AssayHud.insert_slots(stack, recipes).is_empty():
+		# **THE TEST READS THE CATALOGUE; THE CLIENT MAY NOT** (ASSA-351). This asked
+		# `AssayHud.insert_slots`, which is deleted: deciding from a kind which slots to offer is the
+		# defect that item exists for. A harness is allowed the table -- it is picking which stacks
+		# this assertion is ABOUT, not drawing a control -- so the reading moved here, three lines,
+		# rather than keeping a function alive in the client for one caller in a test.
+		if not _eaten_in_a_building(String(stack.get("kind", "")), recipes):
 			continue
 		var row := _row_for(screen, AssayHud.stack_line(stack))
 		if row == null:
@@ -681,6 +686,45 @@ func _stack_of(screen: Node, kind: String) -> Dictionary:
 		if String(stack.get("kind", "")) == kind:
 			return stack
 	return {}
+
+
+## WHETHER SOME NON-HAND RECIPE EATS THIS KIND -- the reading `AssayHud.insert_slots` used to do for
+## the client, which ASSA-351 deleted. **A harness may read the catalogue; the client may not**, and
+## the difference is that this picks which stacks an assertion is about rather than drawing a control.
+##
+## Computed from the table, never a list of kind names: a sixth recipe arriving with no client edit
+## would walk straight past a hand-written list (ADR 0003).
+func _eaten_in_a_building(kind: String, recipes: Array) -> bool:
+	for entry in recipes:
+		var recipe: Dictionary = entry
+		if String(recipe.get("input", "")) != kind:
+			continue
+		if not bool(recipe.get("hand", false)):
+			return true
+	return false
+
+
+## WHETHER THE SIM SAYS THIS (STACK, SLOT) CONTROL WOULD MOVE SOMETHING (ASSA-351). `refusal` absent
+## means pressable; present carries the sim's own sentence for why nothing would happen.
+##
+## **MATCHED ON KIND, SPECIES AND GRADE, not on kind alone**, because two grades of one ore are two
+## stacks with two different answers -- grade A refined is dead in an input and grade B is not, which
+## is the defect this item is about.
+func _offer_is_pressable(screen: Node, building: int, slot: String, item: Dictionary) -> bool:
+	for entry in screen._sim.insert_offers(screen._client.player_id, building):
+		var group: Dictionary = entry
+		if String(group.get("slot", "")) != slot:
+			continue
+		for row in group.get("offers", []) as Array:
+			var offer: Dictionary = row
+			if String(offer.get("kind", "")) != String(item.get("kind", "")):
+				continue
+			if int(offer.get("species", -1)) != int(item.get("species", -1)):
+				continue
+			if String(offer.get("grade", "")) != String(item.get("grade", "")):
+				continue
+			return not offer.has("refusal")
+	return false
 
 
 ## HOW MANY OF THAT EXACT ITEM THE SIM SAYS WE HOLD, summed off the snapshot's own `count` fields.
@@ -2562,10 +2606,14 @@ func test_a_slot_button_fuels_the_menus_machine_with_the_count_at_the_press() ->
 		screen.queue_free()
 		return _fail("no ore in the pack to put into a slot")
 	var held := _counted(screen, ore)
-	if not Array(AssayHud.insert_slots(ore, AssaySimHost.recipes())).has(AssayActions.SLOT_FUEL):
+	# **THE PREMISE IS NOW STRONGER THAN IT WAS** (ASSA-351). This asked `insert_slots` whether a fuel
+	# slot exists for ore's KIND, which was true even when the press could only be refused. It now asks
+	# the sim whether THIS stack's fuel control is pressable -- `refusal` absent -- so a world whose ore
+	# will not burn fails the premise here instead of pressing a disabled button and passing.
+	if not _offer_is_pressable(screen, id, AssayActions.SLOT_FUEL, ore):
 		screen.queue_free()
-		return _fail("the sim offers ore no fuel slot, so this test is aimed at a button that cannot "
-				+ "exist")
+		return _fail(("the sim refuses this ore in the fuel slot, so this test is aimed at a control "
+				+ "that is drawn dead: %s") % [screen._sim.insert_offers(screen._client.player_id, id)])
 	var label := AssayHud.insert_label(held, String(ore.get("name", "?")), AssayActions.SLOT_FUEL)
 	var whole := _find(screen._menu_box, label)
 	if whole == null:

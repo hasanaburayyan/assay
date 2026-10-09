@@ -345,38 +345,35 @@ func test_a_stacks_verbs_come_from_the_sims_recipes_and_catalogue() -> bool:
 	return true
 
 
-## **THE SHEET READING OUTLIVED THE BUTTONS IT FED** (ASSA-331). `Fuel`/`Smelt` left the pack rows, and
-## *which slots of a machine this stack may enter* is still the sim's answer and still needed -- by the
-## machine menu, which is a surface that cannot be aimed at a deposit.
+## **THIS CLIENT NO LONGER HAS A SLOT READING TO TEST, AND THAT IS THE ASSERTION** (ASSA-351).
 ##
-## MEMBERSHIP IS COMPUTED FROM THE CATALOGUE, NOT LISTED HERE. The pair was derived from the recipe
-## table, so the test that it still is has to walk the same table: every kind some NON-hand recipe eats
-## has slots, every other kind has none. A kind name written into this file would pass over a sixth
-## recipe arriving with no client edit, which is ADR 0003's whole point.
-func test_which_slots_a_stack_may_enter_is_the_sims_reading_not_this_clients() -> bool:
-	var recipes := AssaySimHost.recipes()
-	var eaten_in_a_building := {}
-	var every_kind := {"ore": true, "refined": true, "gear": true, "smelter": true}
-	for entry in recipes:
-		var recipe: Dictionary = entry
-		var input := String(recipe.get("input", ""))
-		every_kind[input] = true
-		if not bool(recipe.get("hand", false)):
-			eaten_in_a_building[input] = true
-	for entry in AssaySimHost.part_kinds():
-		every_kind[String((entry as Dictionary).get("name", "?"))] = true
-	if eaten_in_a_building.is_empty():
-		return _fail("no recipe happens in a building, so this test measured nothing")
-	for kind in every_kind:
-		var slots := AssayHud.insert_slots(_stack(String(kind), 2, "C", 9), recipes)
-		if eaten_in_a_building.has(kind):
-			# ONE PAIR AND IN THE SIM'S ORDER. `Refine` and `Resmelt` both eat ore-ish things, so a
-			# reading that appended per recipe would draw the same two buttons twice.
-			if Array(slots) != [AssayActions.SLOT_FUEL, AssayActions.SLOT_INPUT]:
-				return _fail(("a building recipe eats `%s`, so it may go in fuel then input, and the "
-						+ "sim's reading says %s") % [kind, slots])
-		elif not slots.is_empty():
-			return _fail("nothing in a building eats `%s`, yet it is offered %s" % [kind, slots])
+## `test_which_slots_a_stack_may_enter_is_the_sims_reading_not_this_clients` stood here and walked the
+## recipe table against `AssayHud.insert_slots`, pinning: every kind some non-hand recipe eats may go
+## in fuel then input, every other kind in neither. **It was green the whole time the menu it fed was
+## offering four controls `sim::step` refuses**, because the thing it pinned was true and was not the
+## question. A kind-level reading cannot be wrong about kinds; it can only be the wrong reading.
+##
+## So the reading is deleted rather than widened, and `AssaySimHost.insert_offers` crosses the whole
+## answer in the sim -- membership, order AND whether each press would do anything -- over the same
+## `sim::step::insert_rejection` the press itself calls. The claims that test made now live where the
+## crossing does, in `sim-godot`'s
+## `a_refused_put_control_crosses_the_sims_own_sentence_and_a_pressable_one_crosses_none`: the
+## insertable slots in the sim's order, a refused stack keeping its row and its reason, a pressable one
+## crossing none, and the categorically wrong kind getting no row at all.
+##
+## **WHAT IS CHECKED HERE INSTEAD IS THAT THE OLD READING IS REALLY GONE.** A deleted function that
+## something still calls is a parse error, so the compile check covers that; what it does not cover is
+## this file quietly growing its own copy. `AssayActions` still names the two slots -- a command needs
+## their wire tags -- and naming them is all it may do.
+func test_this_client_names_the_slots_and_judges_neither() -> bool:
+	if AssayHud.has_method("insert_slots"):
+		return _fail("`AssayHud.insert_slots` is back: deciding from a kind which slots to offer is "
+				+ "the defect ASSA-351 deleted. The answer is `AssaySimHost.insert_offers`.")
+	# The wire tags survive and must: `AssayActions.insert` spells a command with one.
+	if AssayActions.SLOT_FUEL == "" or AssayActions.SLOT_INPUT == "":
+		return _fail("a slot's wire tag is empty, so no Insert this client sends can name a slot")
+	if AssayActions.SLOT_FUEL == AssayActions.SLOT_INPUT:
+		return _fail("both slots carry one tag, so every put lands in the same place")
 	return true
 
 

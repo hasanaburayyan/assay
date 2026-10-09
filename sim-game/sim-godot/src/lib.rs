@@ -2274,9 +2274,12 @@ pub struct SlotOffersFacts {
     /// name it in prose rather than in a command.
     pub role: String,
     /// In the pack's own order, which is `Inventory`'s sorted order and so the
-    /// same on every peer. **Every carried stack appears, refused or not**: a
-    /// pack of only grade-A refined must still open a menu with a named reason
-    /// rather than an empty box (ASSA-301).
+    /// same on every peer. **Every carried stack appears, refused or not —
+    /// except the categorically wrong kind**: a pack of only grade-A refined
+    /// must still open a menu with a named reason rather than an empty box
+    /// (ASSA-301), but a gear is not a rung of any ladder and gets no row. See
+    /// the `WrongItem` note in `insert_offer_facts`, which is the one
+    /// judgement on this item the Game Director may want back.
     pub offers: Vec<InsertOfferFacts>,
 }
 
@@ -2662,28 +2665,69 @@ impl AssaySim {
             };
             let offers = stacks
                 .iter()
-                .map(|stack| InsertOfferFacts {
-                    stack: StackFacts {
-                        kind: stack.item.kind.name().to_string(),
-                        species: stack.item.species.0 as i64,
-                        species_name: self.world.species(stack.item.species).name().to_string(),
-                        grade: stack.item.grade.letter().to_string(),
-                        count: stack.count as i64,
-                        name: self.world.item_name(stack.item),
-                    },
+                .filter_map(|stack| {
                     // **THE WHOLE OFFER, NOT ONE UNIT.** The control a player
                     // presses is `put all N`, so the question asked here is
                     // the one the button sends. A clamp is not a refusal
                     // (ASSA-48), so `put all 50` at a slot with room for 3
-                    // still answers `None` and still inserts 3.
-                    refusal: sim::debug::insert_refusal(
+                    // answers `None` and still inserts 3.
+                    let reason = sim::step::insert_rejection(
                         &self.world,
                         player,
                         id,
                         slot,
                         stack.item,
                         stack.count,
-                    ),
+                    );
+                    // **`WrongItem` IS THE ONE REFUSAL THAT GETS NO ROW, and
+                    // this is my narrowing of the Game Director's box 4 — it
+                    // is the thing on this item to disagree with.** She ruled
+                    // no refused control hidden, so that a pack of grade-A
+                    // refined opens a menu with a named reason rather than an
+                    // empty box. Read literally over every carried stack it
+                    // also draws your gears, your spare smelter and your pick
+                    // handle as dead fuel controls, two rows each: ten dead
+                    // rows to teach the ladder with two, which is the hierarchy
+                    // complaint that made this P1, inverted again.
+                    //
+                    // `WrongItem` is the only reason that is CATEGORICAL — no
+                    // grade, no world state and no emptying of a slot makes a
+                    // gear smelter input, which is what `plan_refusal_phrase`
+                    // says about `NotAPart` in the same words. Every other
+                    // reason is a rung: `AlreadyBestGrade` says you are at the
+                    // top of one, `TooHotForWalls` says build a better smelter,
+                    // `NotFuel` says this rock will not burn, `SlotFull` says
+                    // empty it. Those teach; "a gear is not ore" does not.
+                    //
+                    // This is still the sim's judgement and not a kind filter
+                    // come back: the client no longer reads the recipe table at
+                    // all, and `WrongItem` is the rules' own word for the
+                    // categorical case. Choosing AMONG the sim's answers is a
+                    // caller's business; deriving one is not (`designs_of`).
+                    if matches!(reason, Some(sim::RejectReason::WrongItem)) {
+                        return None;
+                    }
+                    Some(InsertOfferFacts {
+                        stack: StackFacts {
+                            kind: stack.item.kind.name().to_string(),
+                            species: stack.item.species.0 as i64,
+                            species_name: self.world.species(stack.item.species).name().to_string(),
+                            grade: stack.item.grade.letter().to_string(),
+                            count: stack.count as i64,
+                            name: self.world.item_name(stack.item),
+                        },
+                        refusal: reason.map(|_| {
+                            sim::debug::insert_refusal(
+                                &self.world,
+                                player,
+                                id,
+                                slot,
+                                stack.item,
+                                stack.count,
+                            )
+                            .expect("the chain just returned a reason for this very press")
+                        }),
+                    })
                 })
                 .collect();
             out.push(SlotOffersFacts {
@@ -5541,11 +5585,15 @@ mod tests {
         let smelter = Item::new(sim::ItemKind::Smelter, rock, sim::Grade::B);
         let ore = Item::new(sim::ItemKind::Ore, rock, sim::Grade::A);
         let best = Item::new(sim::ItemKind::Refined, rock, sim::Grade::A);
+        // Categorically not smelter input and not fuel: the one stack that must
+        // get NO row in either slot.
+        let gear = Item::new(sim::ItemKind::Gear, rock, sim::Grade::B);
         {
             let p = sim.world.player_mut(me).expect("the player exists");
             p.inventory.add(smelter, 1);
             p.inventory.add(ore, 7);
             p.inventory.add(best, 2);
+            p.inventory.add(gear, 3);
         }
         let at = sim.world().player(me).expect("exists").pos;
         let spot = sim::TilePos::new(at.x + 1, at.y);
@@ -5568,18 +5616,16 @@ mod tests {
         );
 
         let input = &crossed[0];
-        let carried = sim
-            .world()
-            .player(me)
-            .expect("exists")
-            .inventory
-            .stacks()
-            .len();
+        let kinds: Vec<&str> = input.offers.iter().map(|o| o.stack.kind.as_str()).collect();
         assert_eq!(
-            input.offers.len(),
-            carried,
-            "EVERY carried stack gets a row, refused or not: a pack of only \
-             refused stacks must open a menu with reasons, not an empty box"
+            kinds,
+            vec!["ore", "refined"],
+            "a refused stack still gets a row -- the refined is grade A and \
+             dead -- but the gear is categorically not input and gets none"
+        );
+        assert!(
+            crossed[1].offers.iter().all(|o| o.stack.kind != "gear"),
+            "and the gear is no more fuel than it is input"
         );
 
         let dead = input
