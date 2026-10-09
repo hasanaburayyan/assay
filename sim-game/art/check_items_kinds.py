@@ -1,23 +1,42 @@
 #!/usr/bin/env python3
-"""IS A LOOSE PART AS MUCH OF AN OBJECT AS AN ORE CHUNK? (ASSA-112)
+"""IS A LOOSE PART ITS OWN OBJECT IN A PACK SLOT? (ASSA-112)
 
     art/check_items_kinds.py              # the guard
-    art/check_items_kinds.py --shrink K   # prove it red: draw kind K at half size
 
-TWO PROPERTIES, BOTH OF THEM MAREN'S ASKS ON ASSA-112, measured on the ITEMS sheet at
-the size a pack slot draws it:
+ONE JUDGED PROPERTY SINCE DECISION #52, AND ONE REPORT. Measured on the ITEMS sheet
+at the size a pack slot draws it:
 
-  A. THE FLOOR. "No loose part reads smaller in its slot than the smallest ITEM does."
-     The floor is not a number in this file: it is the smallest fill among the rows
-     that were already items before this work (`ore`, `refined`, `smelter`), computed
-     in the same run from the same pixels. If the ore chunk is redrawn tomorrow the
-     floor moves with it, which is what "as much of an object as my ore" means.
+  A. THE FLOOR -- RETIRED BY DECISION #52 (2026-10-09), AND THE SENTENCE IT STOOD FOR
+     IS NOW ASSERTED HARDER ELSEWHERE. It said: "no loose part reads smaller in its
+     slot than the smallest ITEM does", with the floor read off `ore`/`refined`/
+     `smelter` in the same run rather than typed here, and with Maren's escape (a
+     measured argument, never a stretch, and never the floor moving).
 
-     AND THE ESCAPE IS HERS TOO, so it is written here rather than argued later: "a
-     kind that cannot reach it is argued down with a measurement and a drawing choice,
-     never stretched." A kind under the floor turns this red; the answer to red may be
-     a drawing, or it may be the Director accepting a measured argument and this file
-     learning the exception BY NAME. It may never be the floor moving.
+     WHY IT WENT. ASSA-376 fitted every frame of this sheet to its art, so a row's
+     size in its slot no longer measures how big it was DRAWN -- that is now forced to
+     100% of one axis. What a slot fill measures after the fit is COMPACTNESS: a rock
+     fills its bbox, a rod on a diagonal cannot. The three part rows came out under
+     `ore`'s fill (handle 28.9%, head 36.0%, hopper 39.5% against 43.0%) while
+     `hopper`'s ink was byte-identical and NOTHING had got smaller -- the floor itself
+     had risen 24.7 -> 43.0, because the floor IS ore's number. The hazard the floor
+     guarded -- a part drawn small or lazily in its frame -- cannot happen any more,
+     and a guard against an impossible hazard is not a guard.
+
+     WHERE THE RULE LIVES NOW: `check_items_top_band.py`, as "art fills 100% of one
+     axis of its frame", with the red control Decision #52 §5 asked for (art short on
+     BOTH axes must fail, and art short on the axis it does not fill must still pass).
+     IT IS NOT REIMPLEMENTED HERE, and not because of tidiness: this file's surface is
+     the real engine path, and that path CANNOT carry the question. `drawn_icon`'s body
+     mask is source alpha >= 200 (ASSA-111's correction), while the fitted frames'
+     outermost paint runs 127-194 after the downscale -- so measured through the engine
+     all seven rows report a body bbox inside their 32x48 slot and a "fills an axis"
+     judge here would fail every row the fit made perfect. The sheet's own transparency
+     is the only instrument that can answer it. Numbers:
+     `shared/assay/cove-assa376-items-fill/`.
+
+     THE FILL TABLE IS STILL PRINTED, as a report with no verdict on it, because the
+     number is worth seeing and because a reader who remembers the floor should find
+     out here that it is gone.
 
   B. THE SEPARATION, which is ASSA-111's property on a second surface and therefore
      ASSA-111's JUDGE: `verdict` is imported from `check_icon_kinds`, not
@@ -46,14 +65,16 @@ ever been an opinion:
   1. WIRING -- every kind against itself must come back IoU 1.000 / dE 0.00, and the
      rows must not all be the same picture.
   2. THE VERDICT CAN FAIL -- on a COPY of the real answer, one kind's icon is
-     substituted for another's and must be caught, and one kind is redrawn at half
-     scale and must fall under the floor.
+     substituted for another's and must be caught.
+     (This control had a second half, "and one kind redrawn at half scale must fall
+     under the floor", which went with the floor. Half scale still spans an axis, so
+     kept here it would have been a lever that can only pass -- vacuous, which is the
+     shape of defect `--shrink` was written to prevent.)
   Neither holding is a pass: both exit 2.
 
 EXIT CODES
-  0 PASS       -- every kind clears the floor and no pair is close on colour.
-  1 FAIL       -- some kind is smaller than the smallest item, or some pair is close
-                  on colour.
+  0 PASS       -- no pair of kinds is close on colour.
+  1 FAIL       -- some pair is close on colour.
   2 NO VERDICT -- could not ask the engine, a control did not hold, or there was
                   nothing to measure. Never a pass.
 """
@@ -76,8 +97,9 @@ WHY_THE_ENGINE = ("the plate box, the tint and the drawn size are the client's, 
                   "fill measured against numbers typed in here would be a fact about this\n"
                   "file rather than about the pack.")
 
-# The rows that were items before ASSA-112. The floor is the smallest of THEIR fills --
-# this list says whose question it is, not what the answer is.
+# The rows that were items before ASSA-112. The retired floor was the smallest of THEIR
+# fills; the fill table still marks them, because "as much of an object as my ore" is
+# what a reader of this table is comparing against even now that nothing is judged by it.
 ALREADY_ITEMS = ("ore", "refined", "smelter")
 
 
@@ -110,18 +132,9 @@ def row_entries(layout, man):
     return out, template
 
 
-def icons_of(entries, sprites, shrink=None, backend=StdlibBackend):
+def icons_of(entries, sprites, backend=StdlibBackend):
     """kind -> (plate image, body mask), drawn the way the engine draws one."""
-    icons = {}
-    for kind, entry in entries.items():
-        if shrink == kind:
-            # THE RED CONTROL for the floor: the same sprite drawn at half the size the
-            # engine chose. Nothing on disk is touched.
-            e = json.loads(json.dumps(entry))
-            e["icon"]["drawn"] = [max(1, int(v // 2)) for v in entry["icon"]["drawn"]]
-            entry = e
-        icons[kind] = drawn_icon(entry, sprites, backend)
-    return icons
+    return {kind: drawn_icon(entry, sprites, backend) for kind, entry in entries.items()}
 
 
 def fills(icons, box):
@@ -157,7 +170,6 @@ def picture(icons, pct, box, path):
 
 
 def main(argv):
-    shrink = argv[argv.index("--shrink") + 1] if "--shrink" in argv else None
     pic = argv[argv.index("--picture") + 1] if "--picture" in argv else None
     man = json.load(open(os.path.join(SPRITES, "manifest.json")))["items"]
     layout = ask_the_engine(WHY_THE_ENGINE)
@@ -166,12 +178,7 @@ def main(argv):
         raise CannotCheck("%d rows on the items sheet: a separation between one thing and\n"
                           "itself is not a property." % len(entries))
     have = [k for k in ALREADY_ITEMS if k in entries]
-    if not have:
-        raise CannotCheck("none of %s is on the items sheet any more, so there is nothing to\n"
-                          "take the floor from. The floor is another row's measurement, never\n"
-                          "a number in this file." % (ALREADY_ITEMS,))
-
-    icons = icons_of(entries, SPRITES, shrink=shrink)
+    icons = icons_of(entries, SPRITES)
     box = template["icon"]["plate_rect"] or template["icon"]["rect"]
     box = [int(round(v)) for v in box]
     pct = fills(icons, box)
@@ -197,26 +204,16 @@ def main(argv):
     if not any({x[3], x[4]} == {a, b} for x in red):
         raise CannotCheck("RED CONTROL FAILED: with %s's icon substituted for %s's, the\n"
                           "separation verdict did not catch them." % (a, b))
-    half = icons_of({a: entries[a]}, SPRITES, shrink=a)
-    floor_now = min(pct[k] for k in have)
-    if fills(half, box)[a] >= floor_now:
-        raise CannotCheck("RED CONTROL FAILED: %s drawn at HALF the engine's size still fills\n"
-                          "%.1f%% of the slot, at or over the floor of %.1f%%. A floor nothing\n"
-                          "can fall under is not a floor."
-                          % (a, fills(half, box)[a], floor_now))
-    print("CONTROL 2 holds: substituting %s's icon for %s's is caught, and %s at half size\n"
-          "falls under the floor." % (a, b, a))
+    print("CONTROL 2 holds: substituting %s's icon for %s's is caught." % (a, b))
 
-    # ---------------------------------------------------------------- A. the floor
-    floor_kind = min(have, key=lambda k: pct[k])
-    floor = pct[floor_kind]
-    print("\nSLOT FILL, and the floor is the smallest row that was already an item:")
+    # -------------------------------------------- A. RETIRED (Decision #52): a report
+    print("\nSLOT FILL -- A REPORT, JUDGED BY NOTHING. Property A ('no part smaller in its\n"
+          "slot than the smallest item') was retired by Decision #52: after ASSA-376's fit\n"
+          "this number measures COMPACTNESS, not size, and the size rule it stood for is\n"
+          "asserted absolutely by art/check_items_top_band.py -- 100% of one axis of the\n"
+          "frame, with its own both-axes red control.")
     for k in sorted(pct, key=lambda k: -pct[k]):
-        mark = "  <- the floor" if k == floor_kind else ("  (item)" if k in have else "")
-        print("  %-8s %5.1f%%%s" % (k, pct[k], mark))
-    under = sorted(k for k in pct if k not in have and pct[k] < floor)
-    print("  FLOOR %.1f%% (%s). Not a number in this file: another row's measurement."
-          % (floor, floor_kind))
+        print("  %-8s %5.1f%%%s" % (k, pct[k], "  (item before ASSA-112)" if k in have else ""))
 
     # ------------------------------------------------------------ B. the separation
     failures, table = verdict(icons)
@@ -232,14 +229,6 @@ def main(argv):
               "  DISTINCT %.2f -- Maren's, from colour.py." % (worst[0], worst[1], worst[2], DISTINCT))
 
     bad = 0
-    if under:
-        bad = 1
-        print("\n%d KIND(S) UNDER THE FLOOR -- smaller in a slot than the smallest item:" % len(under))
-        for k in under:
-            print("  %s %.1f%% < %.1f%% (%s)" % (k, pct[k], floor, floor_kind))
-        print("Draw it bigger, or take Maren's escape: a measurement and a drawing choice\n"
-              "that says why this shape cannot reach it -- never a stretch, and never by\n"
-              "moving the floor, which belongs to another row.")
     if failures:
         bad = 1
         print("\n%d PAIR(S) CLOSE ON COLOUR -- a player tells these apart by shape alone:"
@@ -253,8 +242,8 @@ def main(argv):
     if bad:
         print("\nVERDICT: FAIL (exit 1).")
         return 1
-    print("\nVERDICT: PASS (exit 0). Every row fills its slot at least as well as the\n"
-          "smallest item does, and no pair of kinds is close on colour.")
+    print("\nVERDICT: PASS (exit 0). No pair of kinds is close on colour. (Size is no longer\n"
+          "judged here: see property A above and check_items_top_band.py.)")
     if pic:
         from pack_icon_draw import PillowBackend
         picture(icons_of(entries, SPRITES, backend=PillowBackend), pct, box, pic)
