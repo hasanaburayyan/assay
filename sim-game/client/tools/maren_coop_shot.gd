@@ -214,6 +214,11 @@ var _walk_note := ""
 var _retakes := 0
 var _retake_wait := 0
 var _shot_note := ""
+## FALSE until the saved close-up has been checked against the frame the run is in, and the reason
+## `CO-OP SHOT OK` is not printed when it stays false. **SAME RULE AS ASSA-383 ON THE OTHER SHOT
+## TOOL:** a tool that hands back a picture it could not verify may not also hand back the sentence
+## everyone greps for.
+var _shot_verified := false
 
 ## THE CATCH-UP WAIT: whether it has finished, when it began, when it gives up, and its sentence.
 var _caught := false
@@ -863,6 +868,7 @@ func _shoot_the_close_up() -> bool:
 		_shot_note = ("  the saved close-up IS this frame: %d px of MINE inside the foot rect the"
 				+ " painter published, %d in the control rect %d tiles south (%d retake(s))") % [
 				ink.x, ink.y, int(CONTROL_TILES_SOUTH), _retakes]
+		_shot_verified = true
 		return true
 	_retakes += 1
 	if _retakes > MAX_RETAKES:
@@ -946,6 +952,10 @@ func _report() -> void:
 	print("  said: %s" % " | ".join(_said))
 	if _is_empty_pair():
 		print("CO-OP SHOT FAILED: fewer than two players, so neither picture is about co-op")
+		_finish(1)
+		return
+	if not _shot_verified:
+		print("CO-OP SHOT FAILED: the close-up was never shown to be the frame this run is in")
 		_finish(1)
 		return
 	print("CO-OP SHOT OK")
