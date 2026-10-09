@@ -23,22 +23,29 @@
 #
 # IT WALKS TWO ROOTS, AND THE SECOND ONE IS A SHIPPED FAILURE, NOT A PRECAUTION
 # (asked for twice by Marlow). This script used to `find .` from `client/`, so
-# "every .gd file" meant every .gd file INSIDE the Godot project: 110 of the
-# repo's 113. The other three live in `sim-game/art/`, they `extends SceneTree`,
+# "every .gd file" meant every .gd file INSIDE the Godot project -- all but three
+# of the repo's. Those three live in `sim-game/art/`, they `extends SceneTree`,
 # and they import the project's own `class_name` libraries from outside it --
 # which is exactly what makes them break when a client API changes. On
 # 2026-10-08 a narrowed `part_layout` signature left `art/pack_icon_layout.gd`
-# calling the old one while all 110 client scripts compiled green through this
+# calling the old one while every client script compiled green through this
 # gate. Two red CI runs and three sheets to redraw found it; this gate could
 # have, and did not, because the file was not in its tree.
 #
-# WHY THE ROOTS ARE NAMED IN THE COUNT RATHER THAN SUMMED. "113 compile" cannot
-# tell "110 + 3" from "113 + 0": if the art glob ever matches nothing -- the
-# directory moves, the files are renamed, somebody runs this from a tarball --
-# the number barely moves and the gate quietly stops gating. So each root is
-# counted separately, named in the success line and named on every failure, and
-# A ROOT MATCHING ZERO FILES IS EXIT 2, NO VERDICT. A second root that silently
-# matches nothing is worse than no second root: it reads as covered.
+# WHY THE ROOTS ARE NAMED IN THE COUNT RATHER THAN SUMMED. One total cannot tell
+# `n + 3` from `n+3 + 0`: if the art glob ever matches nothing -- the directory
+# moves, the files are renamed, somebody runs this from a tarball -- the number
+# barely moves and the gate quietly stops gating. So each root is counted
+# separately, named in the success line and named on every failure, and A ROOT
+# MATCHING ZERO FILES IS EXIT 2, NO VERDICT. A second root that silently matches
+# nothing is worse than no second root: it reads as covered.
+#
+# NO TOTAL IS WRITTEN DOWN HERE ON PURPOSE. The first draft of this comment said
+# "110 of the repo's 113", measured an hour earlier on a feature branch; main had
+# 111 by the time it ran, because two of Limpet's PRs merged in between. A number
+# in a comment that every new script falsifies is the thing this file exists to
+# warn about. The only count stated is the art root's THREE, and the zero guard
+# below is what holds that one to the tree.
 #
 # COMPILE-ONLY, AND THAT IS MARLOW'S CONDITION, NOT AN ACCIDENT. `--check-only`
 # parses and type-checks and never reaches `_init()`, so these three -- one of
