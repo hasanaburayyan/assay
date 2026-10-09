@@ -159,9 +159,32 @@ func _draw() -> void:
 		drawn_foot = AssayScene.foot_mark(me, view.get("origin", Vector2.ZERO))
 		draw_rect(drawn_foot,
 				Color(AssayHud.MINE.r, AssayHud.MINE.g, AssayHud.MINE.b, 0.55), true)
+	# **THE STANDING LAYER IS DRAWN IN TWO PHASES WITH THE MARK BETWEEN THEM** (ASSA-361). The
+	# second phase is whoever must be in front of the mark, and `AssayScene.over_mark` is the one
+	# that decides: a person the mark would otherwise delete, plus anything in front of them. The
+	# split is named in the data for `layer`'s reason -- this file reads no asset names and knows no
+	# depth. With nothing selected it is empty and this is the single loop it has always been.
+	var standing: Array[Dictionary] = []
 	for place in all:
 		if int(place.get("layer", AssayScene.FLOOR)) == AssayScene.STANDING:
-			_blit(place)
+			standing.append(place)
+	var halos: Array[Rect2] = []
+	var edges: Array[Rect2] = []
+	# BOTH LISTS, AND THE HALO IS NOT OPTIONAL: it was 39 of the 81 px of body the mark deleted, so
+	# a phase asked about the bars alone would hold a body back off the bar and leave the keyline
+	# painted through it -- half a fix reported as a whole one.
+	var painted: Array[Rect2] = []
+	if selection != null:
+		var area: Rect2i = selection
+		var corner: Vector2 = view.get("origin", Vector2.ZERO)
+		halos = AssayScene.selection_keyline(area, corner)
+		edges = AssayScene.selection_mark(area, corner)
+		painted.append_array(halos)
+		painted.append_array(edges)
+	var over := AssayScene.over_mark(standing, painted)
+	for i in range(standing.size()):
+		if not over.has(i):
+			_blit(standing[i])
 	# **WHAT THE BUTTONS ACT ON (ASSA-276 move 4), AND IT IS DRAWN LAST, WHICH IS THE OPPOSITE OF
 	# THE DESTINATION ABOVE.** That one goes under the standing layer because it marks the GROUND a
 	# body is walking to. This one marks the SUBJECT of the next button press, and that subject is
@@ -184,15 +207,24 @@ func _draw() -> void:
 		# -- and a second one of those, added here, silently became the line it inspected. The first
 		# run of this change turned that test red, which is the scan doing its job. Two source scans
 		# over one function need two names, or the newer mark quietly answers for the older one.
-		for halo in AssayScene.selection_keyline(at, from):
+		#
+		# **THE TWO LISTS ARE THE ONES `over_mark` WAS ASKED ABOUT, not a second pair built here.**
+		# A rebuild would be two arithmetics for one mark -- ASSA-348's hazard one line down -- and
+		# the failure would be silent in the worst way: the phase would hold back a body for a bar
+		# that is no longer where it was told.
+		for halo in halos:
 			draw_rect(halo, AssayHud.MAP_BG, true)
-		for edge in AssayScene.selection_mark(at, from):
+		for edge in edges:
 			draw_rect(edge, AssayHud.mark_ink(&"target"), true)
 		# THE UNION OF THE BARS, ASKED OF THE SAME FUNCTION THAT MADE THEM (ASSA-348). This line used
 		# to rebuild the rect out of the tile and `TILE_PX`, which is a second arithmetic for one
 		# rectangle: the bars could trace a quarter of a smelter while this went on reporting the
 		# whole of it, and the probe that reads this would have proved the defect correct.
 		drawn_selection = AssayScene.selection_box(at, from)
+	# **AND NOW WHOEVER THE MARK WOULD HAVE DELETED** (ASSA-361). In `standing`'s own order, so the
+	# sprites in this phase keep every relation they had to each other.
+	for i in over:
+		_blit(standing[i])
 
 
 ## ONE SPRITE. Nothing is decided here; `src`, `dest` and `tint` all arrive worked out.

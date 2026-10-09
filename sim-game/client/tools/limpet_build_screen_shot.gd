@@ -697,6 +697,7 @@ func _measure() -> void:
 		"show the map key (K)": _screen._map_key_toggle,
 		"the status toast": _screen._says_toast,
 	}
+	var frame := root.get_texture().get_image()
 	for named in watched:
 		var node := watched[named] as Control
 		var rect := Rect2(node.global_position, node.size)
@@ -713,8 +714,7 @@ func _measure() -> void:
 			_faults.append("%s reports no size in a laid-out window, so nothing was measured"
 					% named)
 		elif over.size.x > 0.0 and over.size.y > 0.0:
-			_faults.append("the screen covers %s by %.0f x %.0f px"
-					% [named, over.size.x, over.size.y])
+			_decide_overlap(named, node, rect, over, frame)
 	# **AND THE CONSTANT IS COMPARED TO THE MEASUREMENT, which is the whole reason this tool exists.**
 	# The band's real top is the highest of the visible controls; `WORLD_CONTROLS_BAND` is what the
 	# headless suite believes. A drift is not a failure -- the constant is deliberately generous -- but
@@ -737,6 +737,124 @@ func _measure() -> void:
 				+ "headless answer would put the screen over a control")
 				% [AssayHud.WORLD_CONTROLS_BAND, world.end.y - top])
 	_measure_commit_bar(screen_rect)
+
+
+## **A "COVERS" LINE IS A RECT INTERSECTION, NOT A DELETION** (ASSA-384; Maren's ASSA-377 11:13Z).
+##
+## This tool used to fault on `screen_rect.intersection(rect)` alone, and **two of the three failures
+## in `shot-report-refuse.txt` were false alarms because of it**: the status toast and
+## `whole world (V)` both draw ON TOP of the modal and were completely legible. Maren counted 464 px
+## of the toast's pill keyline and 119 px of its label ink inside its own rect and withdrew a
+## severity she had hung on that line. Which surface wins an overlap is PAINT ORDER, and only the
+## frame knows it. `hud.gd:300-330` records the same distinction for ASSA-326/289 in its own words --
+## *"the cost is a READING and not a DELETION"*, where two published percentages were *"both rect
+## intersections reported as deletions."*
+##
+## **IT MATTERS BECAUSE OF WHAT THE OLD LINE TAUGHT.** Those two lines sat beside the one real fault
+## -- *"the box is 864 x 804"* -- for five hours while the Game Director certified that pair clean,
+## and a tool that prints FAIL against a frame which looks fine teaches its reader to disbelieve it.
+##
+## **THE CONTROL'S OWN COLOURS ARE ASKED OF THE CONTROL, NOT TYPED HERE.** Its keyline comes from its
+## own `StyleBoxFlat.border_color` and its ink from its own `font_color`, read off the live node the
+## way `main.gd:5572` reads this panel's padding -- so a theme change moves both the screen and this
+## instrument together, and there is no second copy of the palette to rot (ASSA-320's defect).
+##
+## **AND THE MODAL'S OWN FILL IS EXCLUDED, WHICH IS THE PAIRING AND IS NOT HYPOTHETICAL.** Measured on
+## the 864x804 frame: **79.3% of the toast's own rect is `SURFACE` (37,40,48)** -- the modal's fill
+## AND the toast's own background are the same colour, so "is anything of the toast still here?" is
+## unanswerable on background alone. What decides it is the toast's **keyline 464 px (74,79,92)** and
+## its **label ink 119 px (167,176,190)**; after the press, 482 px of keyline and 101 px of the
+## `FAILED` red. **Those are Maren's hand-counted numbers, reproduced here to the pixel** -- a control
+## for this instrument that I did not make.
+##
+## **ONLY THE KEYLINE AND THE LABEL COUNT, NEVER THE BACKGROUND.** A control's `bg_color` is not its
+## ink, and counting it read **3178 px of a 3584 px overlap** as surviving ink on `whole world (V)` --
+## 89%, which would have passed any covering at all.
+##
+## **AND "0 px OF ITS OWN INK" IS NOT REACHABLE, WHICH IS A CORRECTION TO THE ASK.** With the modal
+## forced above the controls in paint order, the count falls to **28 px** on `whole world (V)` and
+## **32 px** on the toast -- in both cases exactly the overlap's HEIGHT, i.e. one surviving column.
+## That column is the **modal's own border**, and `BORDER (74,79,92)` is the same colour as these
+## controls' keyline, so a fully painted-over control can never read zero. A `> 0` test is therefore
+## a check that cannot fail, which is the shape this file keeps catching.
+##
+## **SO THE VERDICT IS A DENSITY AGAINST THE CONTROL'S OWN UNCOVERED PART.** Measured on the 864x804
+## frame, ink per px of area inside the overlap, with the same control painted over as the lever:
+##
+##                      legible   painted over   its own uncovered part
+##     the toast          6.43%          0.46%                    9.38%
+##     whole world (V)    7.98%          0.78%                    8.93%
+##
+## **LEGIBLE READS WITHIN A SIXTH OF THE CONTROL'S OWN UNCOVERED DENSITY; PAINTED OVER IS 10-13x
+## BELOW IT.** The quarter-of-outside floor sits an order of magnitude from both readings rather than
+## being tuned to either, and **both numbers are printed on every line** so a reader checks the
+## verdict instead of trusting it. A control with no uncovered part is reported as undecidable.
+func _decide_overlap(named: String, node: Control, rect: Rect2, over: Rect2, frame: Image) -> void:
+	var fill := Color.MAGENTA
+	var skin: StyleBox = _screen._build_box.get_theme_stylebox(&"panel")
+	if skin is StyleBoxFlat:
+		fill = (skin as StyleBoxFlat).bg_color
+	var reference := {}
+	for entry in [&"panel", &"normal"]:
+		if not node.has_theme_stylebox(entry):
+			continue
+		var own: StyleBox = node.get_theme_stylebox(entry)
+		if own is StyleBoxFlat and not _near((own as StyleBoxFlat).border_color, fill):
+			reference[_key((own as StyleBoxFlat).border_color)] = true
+	if node.has_theme_color(&"font_color"):
+		var pen := node.get_theme_color(&"font_color")
+		if not _near(pen, fill):
+			reference[_key(pen)] = true
+	if reference.is_empty():
+		_faults.append(("%s paints no keyline or label this tool can tell apart from the screen's "
+				+ "own fill, so the overlap cannot be decided: give it a reference colour rather "
+				+ "than a pass") % named)
+		return
+	var ink_in := 0
+	var area_in := 0
+	var ink_out := 0
+	var area_out := 0
+	var x0 := int(maxf(rect.position.x, 0.0))
+	var y0 := int(maxf(rect.position.y, 0.0))
+	var x1 := int(minf(rect.end.x, float(frame.get_width())))
+	var y1 := int(minf(rect.end.y, float(frame.get_height())))
+	for y in range(y0, y1):
+		for x in range(x0, x1):
+			var lit := reference.has(_key(frame.get_pixel(x, y)))
+			if over.has_point(Vector2(float(x) + 0.5, float(y) + 0.5)):
+				area_in += 1
+				ink_in += 1 if lit else 0
+			else:
+				area_out += 1
+				ink_out += 1 if lit else 0
+	if area_out == 0:
+		_faults.append(("%s is wholly inside the screen's rect, so there is no uncovered part of it "
+				+ "to compare against and this frame cannot decide the overlap") % named)
+		return
+	var dense_in := float(ink_in) / float(maxi(area_in, 1))
+	var dense_out := float(ink_out) / float(maxi(area_out, 1))
+	print(("    covered (rect) %.0f x %.0f · its own ink %d of %d px (%.2f%%) in there against "
+			+ "%d of %d px (%.2f%%) in the part the screen does not reach")
+			% [over.size.x, over.size.y, ink_in, area_in, 100.0 * dense_in,
+			ink_out, area_out, 100.0 * dense_out])
+	if dense_in >= dense_out * 0.25:
+		print("    LEGIBLE: it draws over the screen and wins the overlap, so this is not a fault")
+		return
+	_faults.append(("the screen covers %s by %.0f x %.0f px and its own ink there is %.2f%% against "
+			+ "%.2f%% where the screen does not reach: it is painted over, which is a deletion "
+			+ "rather than a reading") % [named, over.size.x, over.size.y,
+			100.0 * dense_in, 100.0 * dense_out])
+
+
+## Colours compared at 8 bits, because a PNG round-trip and the engine's own blending both move the
+## last fractional bit and a float-exact match would answer 0 for every possible frame.
+func _key(colour: Color) -> int:
+	return (int(colour.r8) << 16) | (int(colour.g8) << 8) | int(colour.b8)
+
+
+func _near(a: Color, b: Color) -> bool:
+	return absi(int(a.r8) - int(b.r8)) <= 2 and absi(int(a.g8) - int(b.g8)) <= 2 \
+			and absi(int(a.b8) - int(b.b8)) <= 2
 
 
 ## **THE COMMIT BAR, IN A LAID-OUT WINDOW** (ASSA-332; Maren's §5.4 ruling 3: *"the COMMIT BAR,

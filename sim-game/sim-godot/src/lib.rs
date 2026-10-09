@@ -1668,7 +1668,7 @@ fn building_fact(world: &World, building: &sim::building::Building) -> BuildingF
         state: match world.building_state(building) {
             sim::BuildingState::Smelter(sim::SmelterState::Working { .. })
             | sim::BuildingState::Machine(sim::MachineState::Working { .. }) => "working",
-            sim::BuildingState::Smelter(sim::SmelterState::Idle)
+            sim::BuildingState::Smelter(sim::SmelterState::Idle(_))
             | sim::BuildingState::Machine(sim::MachineState::Idle(_)) => "idle",
             sim::BuildingState::Smelter(sim::SmelterState::Stalled(_))
             | sim::BuildingState::Machine(sim::MachineState::Stalled(_)) => "stalled",
@@ -6272,6 +6272,117 @@ mod tests {
             fuel.offers.iter().all(|o| o.refusal.is_some()),
             "reactivity 1 is below the fuel threshold for every stack here"
         );
+    }
+
+    /// **A SMELTER HOLDING LESS THAN ONE BATCH READS COLD, AND UNTIL ASSA-322 IT
+    /// READ LIT.**
+    ///
+    /// This is the half of ASSA-322 that was never a sentence. `lit` is
+    /// `matches!(smelter_state, Working { .. })` and Cove's sheet ships a `cold`
+    /// row and a `lit` row (ASSA-126), so while `smelter_state` answered
+    /// `Working` for a short slot the window drew **a burning fire on a smelter
+    /// that had never lit a unit and never would** — `run_smelters` `continue`s
+    /// on the batch check, which is upstream of everything that touches fuel, so
+    /// `burn_left` stays 0 and not one unit is spent. The item called the bug
+    /// "the SENTENCE beside it, not the number". It was also the picture.
+    ///
+    /// The fire is real otherwise: lightable fuel, hot enough for this ore,
+    /// nothing arranged by hand. Take the batch check out of
+    /// `World::smelter_state` and this test reds on `lit`.
+    #[test]
+    fn a_smelter_holding_part_of_a_batch_reads_cold_and_idle() {
+        let (mut sim, me) = with_a_player("marlow");
+        let rock = sim.world().species[0].id;
+        let coal = sim.world().species[1].id;
+        sim.world.species_mut(rock).sheet = sim::Sheet {
+            density: 50,
+            strength: 50,
+            hardness: 30,
+            heat_tolerance: 60,
+            reactivity: 1,
+            conductivity: 50,
+        };
+        // Lights from cold by hand, and burns hot enough for the rock above.
+        sim.world.species_mut(coal).sheet = sim::Sheet {
+            density: 50,
+            strength: 50,
+            hardness: 30,
+            heat_tolerance: sim::tuning::HAND_SPARK_TEMPERATURE as u8,
+            reactivity: 60,
+            conductivity: 50,
+        };
+        let smelter = Item::new(sim::ItemKind::Smelter, rock, sim::Grade::B);
+        let fuel = Item::new(sim::ItemKind::Ore, coal, sim::Grade::A);
+        // A resmelt eats three. Two is short, and two is what a player has the
+        // first time they try it.
+        let short = sim::RecipeId::Resmelt.recipe().input.1 - 1;
+        let refined = Item::new(sim::ItemKind::Refined, rock, sim::Grade::B);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.inventory.add(smelter, 1);
+            p.inventory.add(refined, short);
+            p.inventory.add(fuel, 4);
+        }
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 1, at.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place {
+                item: smelter,
+                pos: spot,
+            },
+        )]);
+        let id = sim.world().building_at(spot).expect("placed").id;
+        sim.step_with(&[
+            Input::player(
+                me,
+                sim::PlayerCommand::Insert {
+                    building: id,
+                    slot: sim::Slot::Input,
+                    item: refined,
+                    count: short,
+                },
+            ),
+            Input::player(
+                me,
+                sim::PlayerCommand::Insert {
+                    building: id,
+                    slot: sim::Slot::Fuel,
+                    item: fuel,
+                    count: 4,
+                },
+            ),
+        ]);
+        // Long enough that a working smelter would have finished a batch.
+        for _ in 0..sim::RecipeId::Resmelt.recipe().ticks * 2 {
+            sim.step_with(&[]);
+        }
+
+        let facts = sim.building_facts();
+        let smelter_facts = &facts[0];
+        assert!(
+            !smelter_facts.lit,
+            "nothing is burning in it, so the window must draw the cold row"
+        );
+        assert_eq!(smelter_facts.state, "idle");
+        assert_eq!(
+            smelter_facts.state_line, "idle: needs 3 to resmelt, holding 2",
+            "the Game Director's sentence, crossing as data"
+        );
+        assert!(
+            !smelter_facts.stopped,
+            "a short batch is not something to fix: it is where every bulk load ends"
+        );
+        assert_eq!(
+            smelter_facts.work, None,
+            "no batch is in front of it, so there is no bar to draw"
+        );
+        // The premise, asserted so a fixture that simply failed to light cannot
+        // pass this test: the fuel is still sitting there untouched.
+        let slots = &smelter_facts.slots;
+        assert_eq!(slots[0].count, i64::from(short), "nothing was consumed");
+        assert_eq!(slots[1].count, 4, "and not one unit of fuel was spent");
+        assert!(slots[2].held.is_none(), "and nothing was produced");
     }
 
     /// **A MACHINE'S ONE HOLDER IS BOUNDED BY ITS OWN PARTS**, not by a tuning
