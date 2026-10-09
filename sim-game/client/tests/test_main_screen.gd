@@ -5703,6 +5703,14 @@ func test_the_build_screen_is_replaced_when_its_own_minimum_moves() -> bool:
 ## day the body font changes this says *"the theme now measures 20 and 32, so the inset should be 6"*
 ## instead of passing quietly on numbers that no longer describe the screen.
 ##
+## **AND IT HELD ONE ROW-1 KIND WHILE THE SCREEN HAD TWO, WHICH IS ASSA-363** (Maren's ruling: *"a
+## literal cannot satisfy ruling 4 on the assembly path TODAY"*). `_said_about_design` draws row 1 at
+## `Display` for the sim's verdict word and at `BODY` for its fault, so the old `inset == 6` was
+## correct for the path I measured and 5 px wrong on the other -- green, on a screen where `Build` did
+## not sit on row 1. **So the relation is now held on BOTH kinds and against BOTH buttons** (the
+## window's ruled 30 and the engine's headless 28), the inset's own value is never asserted, and the
+## 6 survives as `commit_inset`'s worked example with literals on both sides.
+##
 ## **AND BOX 9 IS HELD STRUCTURALLY, WHICH IS THE ONLY HONEST WAY HEADLESS.** The reason `Build`'s y
 ## cannot move is that both controls anchor to the bar's TOP: `SHRINK_CENTER` was centred in whatever
 ## the bar grew to, so six rows of sentence moved the button and one row did not. The flag is the
@@ -5715,10 +5723,36 @@ func test_build_sits_on_the_sentences_first_row_at_one_row_and_at_six() -> bool:
 	screen._build_said.add_child(probe)
 	var row: float = probe.get_combined_minimum_size().y
 	var act: float = screen._build_act.get_combined_minimum_size().y
-	var inset: float = AssayHud.BUILD_SENTENCE_INSET
-	if row <= 0.0 or act <= 0.0:
-		ok = _fail(("the theme reports a %0.f px row and a %0.f px button headless, so every "
-				+ "comparison in this test would be 0 against 0") % [row, act])
+	# **ROW 1's OTHER KIND, WHICH IS THE WHOLE OF ASSA-363 -- AND THIS SUITE CANNOT MEASURE IT.**
+	# `_said_about_design` gives row 1 the `Display` variation when the sim has a verdict word, so the
+	# screen has two row-1 heights. **Measured, both instruments: this suite reports 18 px for a
+	# `Display` Label and the 1x shot reports 28.** A node whose theme owner was never assigned -- and
+	# nothing here is inside the tree, as `_screen`'s own docstring says -- resolves against the
+	# DEFAULT theme, where the variation does not exist. So the verdict row's geometry below comes from
+	# the window's ruled 28 and NOT from this probe, and the probe stays as the assertion that says so.
+	var verdict := Label.new()
+	verdict.text = "WILL BREAK"
+	verdict.theme_type_variation = &"Display"
+	screen._build_said.add_child(verdict)
+	var tall: float = verdict.get_combined_minimum_size().y
+	# **THE RULED `Display` ROW, FROM THE 1x SHOT** (`shared/assay/limpet-assa362-after/`: `1 row(s)
+	# Display`, row 1 is 28 px tall, against the same frame's 18 px `BODY` row).
+	var window_tall := 28.0
+	# **`Build`'s HEIGHT IN A REAL WINDOW, AS THE RULED LITERAL** -- `limpet_build_screen_shot.gd`
+	# measures 53x30 at 1x and the headless minimum of the same button is 28, so the arithmetic Maren
+	# ruled is about this number and not about `act` below. The pair is asserted together: `act` is
+	# what the engine will lay out from if this suite's numbers ever become the window's.
+	var window_act := 30.0
+	if row <= 0.0 or act <= 0.0 or tall <= 0.0:
+		ok = _fail(("the theme reports a %0.f px row, a %0.f px verdict row and a %0.f px button "
+				+ "headless, so every comparison in this test would be 0 against 0")
+				% [row, act, tall])
+	elif not is_equal_approx(tall, row):
+		# **THE DAY THIS GOES RED IS A GOOD DAY: the suite can see the variation.** Then the verdict
+		# row's relation should be measured off `tall` instead of taken from the shot's 28.
+		ok = _fail(("a `Display` row measures %.0f px here against a `BODY` row's %.0f, so this suite "
+				+ "can now resolve the variation: measure the verdict row rather than using the 1x "
+				+ "shot's 28") % [tall, row])
 	elif screen._build_act.size_flags_vertical != Control.SIZE_SHRINK_BEGIN:
 		ok = _fail(("`Build` has vertical flags %d; centred in the bar it drifts down as the sentence "
 				+ "grows, which moves a control under the cursor while you mine (ASSA-213)")
@@ -5727,27 +5761,55 @@ func test_build_sits_on_the_sentences_first_row_at_one_row_and_at_six() -> bool:
 		ok = _fail(("the sentence's rows are separated by %d px; they are ONE sentence broken at the "
 				+ "sim's own mark, and paragraph air inside it says the clauses are separate items")
 				% screen._build_said.get_theme_constant(&"separation"))
-	elif absf((inset + row / 2.0) - act / 2.0) > 2.0:
-		# Row 1's centre is `inset + row / 2` from the bar's top and `Build`'s is `act / 2`, because
-		# both are anchored to that top. Her box asks for 2 px.
-		ok = _fail(("row 1's centre is %.1f px down the bar and `Build`'s is %.1f; the ruling is that "
-				+ "they meet within 2 px") % [inset + row / 2.0, act / 2.0])
-	elif AssayHud.BUILD_COMMIT_BAR < inset + 6.0 * row:
+	elif not _centres_meet(window_act, row):
+		# Row 1's centre is `commit_inset(Build, row) + row / 2` from the bar's top and `Build`'s is
+		# `Build / 2`, because the button carries no margin and both are anchored to that top. Her box
+		# asks for 2 px. **THREE PAIRS, NOT ONE**: the window's button against both row-1 kinds, which
+		# is the ruling, and the engine's own button against the one row kind this suite can actually
+		# measure, which is what a theme change would move first.
+		ok = _fail(_centres_said("the make path, in the window", window_act, row))
+	elif not _centres_meet(window_act, window_tall):
+		ok = _fail(_centres_said("the assembly path's verdict row, in the window",
+				window_act, window_tall))
+	elif not _centres_meet(act, row):
+		ok = _fail(_centres_said("the make path, on the engine's headless numbers", act, row))
+	elif not is_equal_approx(AssayHud.commit_inset(row, window_act), 0.0):
+		# **THE CLAMP, WHICH IS THE ONE HALF OF HER RULING NO SCREEN CAN REACH.** She ruled "inset
+		# whichever is shorter, clamped at 0"; `Build` is 30 and both row kinds are under it, so the
+		# mirror never runs in the layout and this is the only place it is held. Without the clamp a
+		# taller row would hand the sentence a NEGATIVE margin and push it out of the bar.
+		ok = _fail("a %.0f px row against a %.0f px button insets by %.1f; a row taller than `Build` "
+				% [row, window_act, AssayHud.commit_inset(row, window_act)]
+				+ "may not hand the sentence a negative margin")
+	elif AssayHud.BUILD_COMMIT_BAR < AssayHud.commit_inset(window_act, row) + 6.0 * row:
 		ok = _fail(("six rows and the inset need %.0f px and the bar asks for %.0f; the sentence is "
-				+ "drawn whole and never scrolls (§5.4)") % [inset + 6.0 * row, AssayHud.BUILD_COMMIT_BAR])
-	# **HER TWO NUMBERS AS PLAIN LITERALS, AND THE REASON THEY ARE NOT DERIVED FROM `act` IS A
-	# MEASUREMENT THAT DISAGREES WITH ITSELF.** Her arithmetic uses a **30 px** `Build`, which is what
-	# `limpet_build_screen_shot.gd` measured in a real window (53x30). Headless the same button's
-	# minimum is **28**, so `(act - row) / 2` here would say 5 and the real window says 6. The ruling
-	# is about the window, so the constants are asserted as the ruled literals and the engine's own
-	# numbers are the 2 px cross-check above — which holds under both (15.0 against 14.0).
+				+ "drawn whole and never scrolls (§5.4)")
+				% [AssayHud.commit_inset(window_act, row) + 6.0 * row, AssayHud.BUILD_COMMIT_BAR])
+	# **HER WORKED EXAMPLES AS PLAIN LITERALS ON BOTH SIDES, WHICH IS WHAT THE OLD `inset == 6` WAS
+	# FOR AND IS THE ONE THING ASSA-363 DID NOT TAKE AWAY** (her ruling 5: *"my 6 does not leave; it
+	# becomes the worked example"*). Literal in, literal out: a `commit_inset` that compared itself
+	# with itself, or that lost its `/ 2`, is red here and not merely inconsistent elsewhere.
 	#
-	# **A GUARD OF `act == 30.0` IS WHAT THIS USED TO BE, AND IT WAS DEAD CODE**: headless never
-	# measures 30, so the branch could not run, and a mutation of either constant would have slipped
-	# past it. Found by reading WHICH number a mutation printed, not by re-reading the test.
-	elif not is_equal_approx(inset, 6.0):
-		ok = _fail(("the sentence is inset %.1f px; Maren ruled 6, being (30 - 18) / 2 on the real "
-				+ "window's 30 px button") % inset)
+	# **AND THE SECOND EXAMPLE IS THE DEFECT'S OWN NUMBER.** `commit_inset(30, 28)` is 1; the constant
+	# this replaced said 6 on that path, and 6 - 1 is the 5 px the 1x shot measured.
+	#
+	# **THE THEME IS HELD AGAINST THOSE LITERALS RATHER THAN DERIVED FROM, which is the pairing the
+	# old test had and the reason it is still worth having.** The 6 and the 1 are written for an 18 px
+	# `BODY` row and a 28 px `Display` row; if the theme moves, the relation checks above still pass
+	# (that is the point of deriving the inset) and nothing would ever tell us the docstring's
+	# arithmetic had stopped describing this screen. This says it.
+	elif not is_equal_approx(AssayHud.commit_inset(30.0, 18.0), 6.0):
+		ok = _fail(("`commit_inset(30, 18)` is %.1f; Maren's worked example is (30 - 18) / 2 = 6, the "
+				+ "make path's inset and the number `BUILD_COMMIT_BAR` is built from")
+				% AssayHud.commit_inset(30.0, 18.0))
+	elif not is_equal_approx(AssayHud.commit_inset(30.0, 28.0), 1.0):
+		ok = _fail(("`commit_inset(30, 28)` is %.1f; a `Display` row 1 insets by (30 - 28) / 2 = 1, "
+				+ "and the 6 this replaced is the 5 px ASSA-363 measured at 1x")
+				% AssayHud.commit_inset(30.0, 28.0))
+	elif not is_equal_approx(row, 18.0):
+		ok = _fail(("a `BODY` row measures %.0f px; `commit_inset`'s worked examples are written for "
+				+ "an 18 px row and a 28 px `Display` row, so the 6 and the 1 above -- and its "
+				+ "docstring -- describe a screen this no longer is") % row)
 	elif not is_equal_approx(AssayHud.BUILD_COMMIT_BAR, 114.0):
 		ok = _fail("6 x 18 + 6 is 114 and the bar asks for %.0f" % AssayHud.BUILD_COMMIT_BAR)
 	if ok:
@@ -5772,3 +5834,112 @@ func test_build_sits_on_the_sentences_first_row_at_one_row_and_at_six() -> bool:
 					% screen._build_said.size_flags_vertical)
 	screen.queue_free()
 	return ok
+
+
+## **DO ROW 1 AND `Build` MEET AT THEIR CENTRES, GIVEN A BUTTON AND A ROW HEIGHT** (ASSA-363; Maren's
+## ruling 4, her 2 px). Row 1's centre is the derived inset plus half the row; `Build`'s is half the
+## button, because the button carries no margin of its own -- `commit_inset`'s docstring says why the
+## mirror direction cannot be reached. **The relation, never the inset's value**, which is her box 4.
+func _centres_meet(act: float, row: float) -> bool:
+	return absf((AssayHud.commit_inset(act, row) + row / 2.0) - act / 2.0) <= 2.0
+
+
+## The failure sentence for the above, carrying which pair it was about and both centres.
+func _centres_said(which: String, act: float, row: float) -> String:
+	return (("on %s: a %.0f px row 1 insets by %.1f so its centre is %.1f px down the bar, and a %.0f "
+			+ "px `Build` centres at %.1f -- the ruling is that they meet within 2 px")
+			% [which, row, AssayHud.commit_inset(act, row),
+			AssayHud.commit_inset(act, row) + row / 2.0, act, act / 2.0])
+
+
+## **THE INSET IS WRITTEN FROM THE HEIGHTS THE ENGINE LAID OUT, AND IT CHANGES WHEN ROW 1's KIND
+## CHANGES** (ASSA-363; Maren: *"compute it at layout time, never precomputed and never off a headless
+## read"*).
+##
+## **THE BUTTON'S 30 IS FORCED, AND THAT IS WHAT PUTS THIS TEST ON THE RULING'S NUMBERS.** Nothing in
+## this suite lays anything out, so `_build_act.size.y` is 0 here and every margin the screen writes
+## would be `commit_inset(0, row)` = 0 -- a test green about nothing, the shape this file keeps
+## finding. Assigning 30 (over this environment's 28) is allowed by `Control.size`'s clamp.
+##
+## **THE SIGNAL IS HELD AS A CONNECTION AND THE ALIGNER IS THEN CALLED, BECAUSE A `resized` DOES NOT
+## FIRE OUT HERE.** I wrote this the other way first -- assign the size and let the real signal run
+## the aligner -- and it went red on row 1's connection: nothing is inside the tree in this suite
+## (`_screen`'s own docstring), so the size is assigned and no notification follows. **So the hook is
+## asserted as a connection, the arithmetic is asserted by calling the same function the hook calls,
+## and the proof that the two meet in a window is the 1x shot, which reads 0 px apart on both paths.**
+##
+## **THE VERDICT ROW'S HEIGHT IS HANDED IN, BECAUSE NOTHING HERE CAN PRODUCE ONE.** Measured, twice:
+## a `Display` Label answers 18 px in this suite and 28 in the 1x shot, and a local
+## `font_size` override does not move it either -- a Label's height out here does not respond to a font
+## at all. Nothing is inside the tree (`_screen`'s own docstring), so no theme owner is ever assigned.
+## **Both of my first two attempts were therefore the `BODY` case held twice, which is exactly how the
+## constant ASSA-363 replaces shipped, and both were caught by the guard that compares the two rows.**
+## So `_write_commit_inset` exists to take the pair, and the verdict row's 28 comes from the shot.
+##
+## **THE EXPECTED CENTRES ARE COMPUTED FROM `get_combined_minimum_size`, NOT FROM `get_line_height`.**
+## The screen derives the inset from the line height, so a test that measured row 1 the same way would
+## be the function agreeing with itself; these two numbers are equal for a one-row label and the
+## assertion below says so by name if they ever stop being.
+##
+## **AND THE MUTATION THAT MATTERS IS THE OLD CODE.** A constant 6 passes the `BODY` half of this test
+## and fails the tall half by exactly the difference, which is the defect, measured at 1x, that
+## ASSA-363 is.
+func test_the_commit_bars_inset_is_derived_from_the_rendered_heights() -> bool:
+	var screen := _screen()
+	var ok := true
+	var probe := Label.new()
+	probe.text = "it needs at least 1 head and has 0"
+	screen._build_said.add_child(probe)
+	var row: float = probe.get_combined_minimum_size().y
+	screen._build_act.size.y = 30.0
+	var act: float = screen._build_act.size.y
+	screen._align_commit_row()
+	var inset: float = float(screen._build_said_inset.get_theme_constant(&"margin_top"))
+	if not is_equal_approx(act, 30.0):
+		ok = _fail(("`Build` reports %.0f px after being told 30; this test cannot stand on the "
+				+ "window's own number and everything below it would be about a 0 px button") % act)
+	elif not is_equal_approx(row, float(probe.get_line_height())):
+		ok = _fail(("row 1's minimum is %.0f px and its line height is %.0f; the screen insets by the "
+				+ "line height, so this test must measure the same row it does") % [row,
+				probe.get_line_height()])
+	elif not screen._build_act.resized.is_connected(screen._align_commit_row):
+		ok = _fail("nothing re-derives the inset when `Build` is given its size, so the only number "
+				+ "the screen could use is one measured before any layout -- 28 against a window's 30")
+	elif not probe.resized.is_connected(screen._align_commit_row):
+		ok = _fail("row 1's own `resized` is not connected, so a sentence laid out after the button "
+				+ "keeps the previous row kind's inset")
+	elif not absf((inset + row / 2.0) - act / 2.0) <= 2.0:
+		ok = _fail("with a %.0f px `BODY` row 1 " % row + _centres_said_measured(inset, act, row))
+	else:
+		# **NOW THE VERDICT ROW, AS THE WINDOW MEASURES IT.** `_said_about_design` puts a `Display`
+		# label where the `BODY` one was and `_refresh_build_said` ends by aligning; what this suite
+		# cannot do is make that label 28 px tall. So the pair goes straight to the writer, with the
+		# 28 off `shared/assay/limpet-assa362-after/` and the 30 off the same frame.
+		var tall := 28.0
+		screen._write_commit_inset(act, tall)
+		inset = float(screen._build_said_inset.get_theme_constant(&"margin_top"))
+		if tall <= row:
+			ok = _fail(("the verdict row is %.0f px against a `BODY` row's %.0f, so this test holds "
+					+ "one row height twice") % [tall, row])
+		elif not absf((inset + tall / 2.0) - act / 2.0) <= 2.0:
+			ok = _fail("with a %.0f px verdict row 1 " % tall
+					+ _centres_said_measured(inset, act, tall))
+		else:
+			# **AND NO SENTENCE AT ALL INSETS BY NOTHING**, which is not the same as the screen's
+			# inset being 0: there is no row to align to, and half of `Build` would be 15 px of air
+			# above an empty block.
+			screen._clear(screen._build_said)
+			screen._align_commit_row()
+			var empty: int = screen._build_said_inset.get_theme_constant(&"margin_top")
+			if empty != 0:
+				ok = _fail(("with no sentence the bar insets by %d px; there is no row 1 to align to "
+						+ "and `commit_inset` would otherwise be given a 0 px row") % empty)
+	screen.queue_free()
+	return ok
+
+
+## The failure sentence for a margin the screen really wrote, as against one derived in the test.
+func _centres_said_measured(inset: float, act: float, row: float) -> String:
+	return (("the screen inset the sentence by %.0f px, which puts row 1's centre %.1f px down the bar "
+			+ "against `Build`'s %.1f; her ruling is 2 px, and `commit_inset` says %.1f")
+			% [inset, inset + row / 2.0, act / 2.0, AssayHud.commit_inset(act, row)])

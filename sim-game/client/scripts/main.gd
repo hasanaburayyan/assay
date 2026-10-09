@@ -1854,14 +1854,19 @@ func _build_build_screen_over_the_map(world: Rect2) -> void:
 	# THE SENTENCE, TOP-LEFT, GROWING DOWNWARD. Top rather than centred because it is up to six rows in
 	# the catalogue's worst case and a block that grows from its middle moves its own first row.
 	#
-	# **INSET FROM THE BAR'S TOP BY `BUILD_SENTENCE_INSET`, WHICH IS WHAT PUTS `Build` ON ROW 1**
-	# (ASSA-341 box 8; Maren's ruling 4). A `MarginContainer` rather than a spacer child, because the
-	# children of this block ARE the sentence -- `_refresh_build_said` walks them and a test re-joins
-	# them against the sim's own string, so a padding node among them would be a clause that is not
-	# one. The margin is on the sentence and not on the bar: `Build` must stay at the bar's top.
+	# **INSET FROM THE BAR'S TOP SO THAT `Build` SITS ON ROW 1** (ASSA-341 box 8; Maren's ruling 4). A
+	# `MarginContainer` rather than a spacer child, because the children of this block ARE the sentence
+	# -- `_refresh_build_said` walks them and a test re-joins them against the sim's own string, so a
+	# padding node among them would be a clause that is not one. The margin is on the sentence and not
+	# on the bar: `Build` must stay at the bar's top.
+	#
+	# **THE MARGIN STARTS AT 0 AND IS WRITTEN BY `_align_commit_row` FROM THE HEIGHTS THIS WINDOW
+	# RENDERED** (ASSA-363). It used to be `AssayHud.BUILD_SENTENCE_INSET`, a 6 derived from a `BODY`
+	# row, and a 1x shot measured `Build` 5 px off row 1 on the assembly path, where row 1 is a
+	# `Display`. A zero here is not the screen's inset: it is the value before the first layout, and
+	# there is nothing to align to until a row exists.
 	_build_said_inset = MarginContainer.new()
-	_build_said_inset.add_theme_constant_override("margin_top",
-			int(AssayHud.BUILD_SENTENCE_INSET))
+	_build_said_inset.add_theme_constant_override("margin_top", 0)
 	_build_said_inset.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_build_said_inset.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	_build_bar.add_child(_build_said_inset)
@@ -1901,6 +1906,11 @@ func _build_build_screen_over_the_map(world: Rect2) -> void:
 	# neither y is a function of the other's height.
 	_build_act.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	_build_bar.add_child(_build_act)
+	# **AND THE ALIGNMENT IS RE-DERIVED WHENEVER THE ENGINE GIVES THIS BUTTON A SIZE** (ASSA-363;
+	# Maren: *"compute it at layout time, never precomputed and never off a headless read"*). This is
+	# the only moment the window's own 30 px exists -- before any layout the same button measures 28 --
+	# so the inset is written from here and from row 1's own `resized`, never from a constant.
+	_build_act.resized.connect(_align_commit_row)
 
 
 ## ONE OF THE SCREEN'S COLUMNS: a heading, then a scroll box for its rows. Factored because the three
@@ -4971,11 +4981,24 @@ func _rebuild_build_detail() -> void:
 ## **IT WAS INVISIBLE BECAUSE EVERY TEST OF THIS BLOCK USED `contains`.** A joined readout containing
 ## the sim's sentence is satisfied by a block that also contains yesterday's; the slice-2b test holds
 ## the LABEL COUNT at one, and that is the assertion that went red.
+## **AND IT ENDS BY ALIGNING `Build` TO WHATEVER ROW 1 TURNED OUT TO BE** (ASSA-363). The two halves
+## below draw row 1 at two different heights -- a clause at `BODY` on the make path, the sim's verdict
+## word at `Display` on the assembly path -- so the inset is a function of which half just ran, and
+## the one writer that knows that is this one.
 func _refresh_build_said() -> void:
 	_clear(_build_said)
 	if _assembling_mode():
 		_said_about_design()
-		return
+	else:
+		_said_about_offer()
+	_align_commit_row()
+
+
+## **THE MAKE PATH'S HALF OF `_refresh_build_said`** -- its docstring above covers both halves and the
+## reasons for every line here. Split out in ASSA-363 only so that the alignment at the end of the
+## writer cannot be skipped by an early return, which is how the old constant's two paths diverged in
+## the first place.
+func _said_about_offer() -> void:
 	var offer := _chosen_offer()
 	if offer.is_empty():
 		return
@@ -5029,6 +5052,70 @@ func _said_about_design() -> void:
 			said.add_theme_color_override(&"font_color",
 					AssayHud.status_color(AssayHud.Say.FAILED))
 	_build_said.add_child(said)
+
+
+## **`Build` AND THE SENTENCE'S FIRST ROW MEET AT THEIR CENTRES, FROM THE HEIGHTS THIS WINDOW
+## RENDERED** (ASSA-363; Maren's ruling: *"inset whichever of `Build` and row 1 is shorter, by half
+## the difference, from the heights actually rendered... compute it at layout time, never precomputed
+## and never off a headless read"*).
+##
+## **ROW 1 IS THE FIRST LABEL'S LINE HEIGHT AND NOT ITS RECT**, which matters the moment a clause
+## wraps: a two-row clause is 36 px tall and `Build` aligns to the first of those rows, not to the
+## middle of both. `get_line_height()` is the engine's own answer to "how tall is one row of this
+## label", and it is the same number `tools/limpet_build_screen_shot.gd` prints as `row 1 is N px
+## tall`, so the tool and the layout cannot disagree about what they are measuring.
+##
+## **IT WIRES ITSELF TO ROW 1 RATHER THAN TRUSTING ITS CALLERS.** The rows are rebuilt from scratch on
+## every refresh, so each row 1 is a different node and its `resized` -- the one moment its laid-out
+## height exists -- has to be connected again. Doing that here means no refresh path can forget it,
+## which is exactly how this defect got in: two paths, each correct for the one its author measured.
+func _align_commit_row() -> void:
+	if _build_said_inset == null or _build_said == null or _build_act == null:
+		return
+	var row := _row_one()
+	if row != null and not row.resized.is_connected(_align_commit_row):
+		row.resized.connect(_align_commit_row)
+	_write_commit_inset(_build_act.size.y,
+			float(row.get_line_height()) if row != null else 0.0)
+
+
+## **THE INSET ITSELF, GIVEN THE TWO HEIGHTS** (ASSA-363). Split from the measuring above for a reason
+## that is a finding and not a convenience: **no test outside a window can produce a `Display` row.** A
+## variation does not resolve in the suite at all -- nothing there is inside the tree, so no theme owner
+## is ever assigned and a `Display` Label measures the same 18 px as a `BODY` one, while the 1x shot
+## measures 28. A font-size override does not move it either. So a test that drove this through
+## `_align_commit_row` alone could only ever hold the `BODY` case, held twice, which is exactly how the
+## constant this replaces shipped. Handing the window's own measured pair in is the honest form.
+##
+## **ONLY THE SENTENCE IS EVER INSET, AND THAT IS THE CLAMP RATHER THAN HALF A RULING** (named because
+## her ruling covers both directions). `Build` renders at 30 and row 1 at 18 (`BODY`) or 28
+## (`Display`), so the button is the taller control on every path that exists; `commit_inset` returns 0
+## for the other direction and nothing moves. A second `MarginContainer` around `Build` would be a
+## branch no screen can reach today -- and it would falsify the bar's own structural test, which holds
+## that the bar's two children ARE the sentence and the button. If a row-1 kind ever measures over 30,
+## this is where the mirror goes.
+##
+## **A 0 px ROW MEANS THERE IS NO SENTENCE**, which is not the same as an inset of 0 being right for a
+## row: with nothing to align to, half of `Build` would be 15 px of air above an empty block.
+##
+## **ASSIGNED ONLY WHEN IT MOVES**, because writing a theme constant re-lays the bar out, which is what
+## calls this back.
+func _write_commit_inset(act_height: float, row_height: float) -> void:
+	var inset := 0
+	if row_height > 0.0:
+		inset = int(roundf(AssayHud.commit_inset(act_height, row_height)))
+	if _build_said_inset.get_theme_constant(&"margin_top") != inset:
+		_build_said_inset.add_theme_constant_override("margin_top", inset)
+
+
+## **THE SENTENCE'S FIRST ROW, WHICH IS ITS FIRST `Label` AND NOT ITS FIRST CHILD** (ASSA-363). Null
+## when the sim offers no sentence.
+func _row_one() -> Label:
+	for child in _build_said.get_children():
+		var text := child as Label
+		if text != null:
+			return text
+	return null
 
 
 ## **WHAT THE SIM SAYS ABOUT THE DESIGN ON THE SCREEN RIGHT NOW** (ASSA-317 slice 2b). `{}` before a
