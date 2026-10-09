@@ -5976,9 +5976,18 @@ func test_the_commit_bar_holds_the_sentence_left_and_build_right() -> bool:
 ## the height). What a headless test CAN hold is the connection itself, because the way this defect
 ## comes back is somebody deleting a line whose comment they do not believe.
 ##
-## **AND IT IS `minimum_size_changed` RATHER THAN `call_deferred`, WHICH I MEASURED AS NO FIX**: the
+## **AND IT IS `minimum_size_changed` RATHER THAN `call_deferred`, WHICH I MEASURED AS NO FIX** -- the
 ## minimum's own recalculation is deferred too, so a deferred placement can run before it and be
 ## clamped by the same stale number.
+##
+## **THAT LAST SENTENCE WAS TRUE OF THIS DEFECT AND I WROTE IT AS A FACT ABOUT `call_deferred`, WHICH
+## ASSA-377 FALSIFIED WITH MY OWN PATCH** (#485, and I shipped it without coming back here). On the
+## assembly path the box kept a size of 864x804 while its minimum relaxed to 348 UNDERNEATH it, so
+## `minimum_size_changed` did not re-place the screen and one deferred `_place_build_screen` did --
+## measured both ways in `shared/assay/limpet-assa377-empty-pack/`. The reading that survives both
+## items is narrower than either sentence: **a deferred placement is clamped by whatever the minimum
+## is on the frame it lands on, which is stale in ASSA-332's case and relaxed in ASSA-377's.** Two
+## frames, two lines, neither one sufficient. The sibling below holds the other one.
 func test_the_build_screen_is_replaced_when_its_own_minimum_moves() -> bool:
 	var screen := _screen()
 	var ok := true
@@ -5991,6 +6000,78 @@ func test_the_build_screen_is_replaced_when_its_own_minimum_moves() -> bool:
 				+ "rect of 864x592, over the status toast")
 	screen.queue_free()
 	return ok
+
+
+## **THE SCREEN IS PLACED AGAIN ON A LATER FRAME, AND THAT ONE LINE IS THE WHOLE OF ASSA-377**
+## (P0: with the world ticking, `Build` left the bottom of the window on the assembly path and could
+## not be pressed at all).
+##
+## **WHAT THIS HOLDS, SAID BEFORE WHAT IT DOES NOT: that the call is WRITTEN, in the function whose
+## frame is the problem.** Maren asked for the real assertion -- one frame after a refresh, the
+## panel's actual size equals `build_screen_rect(world, band)` -- and that cannot be written in this
+## suite. **Measured, not assumed:** a `test_*` method that awaits `process_frame` is called by
+## `run_tests.gd:49` as `suite.call(mname)`, which raises `Trying to call an async function without
+## "await"` and leaves `_initialize` WITHOUT REACHING `quit()`. The headless process then sits there
+## forever with no count printed -- the exact hang `run_tests.gd`'s own docstring documents for a
+## parse error, and in CI the job's whole timeout. So an awaiting test here is not merely a check
+## that cannot fail; it is a check that stops every check after it. Proof log:
+## `shared/assay/limpet-assa377-unfinished/no-frame-boundary-proof.log`.
+##
+## **SO THE PIXELS ARE THE SHOT TOOL'S JOB, AND IT IS A CHECK SOMEBODY RUNS RATHER THAN A PNG
+## SOMEBODY REMEMBERS.** `tools/limpet_build_screen_shot.gd::_measure` compares the box's real
+## `size` against `AssayHud.build_screen_rect` read off the LIVE band and faults on the difference,
+## printing the chain of minimums that paid for the height:
+##
+##     godot --path client --script res://tools/limpet_build_screen_shot.gd -- <dir> 14247 2000 refuse
+##
+## **ITS COMPARISON IS ONE-SIDED ON PURPOSE AND I AM NOT WIDENING IT TO LOOK LIKE AN EQUALITY.**
+## `_place_build_screen` assigns `rect.size` outright, and a `Control` clamps UP to its combined
+## minimum and never down, so actual-smaller-than-asked has no mechanism -- asserting it would add a
+## branch nothing can reach, which is the defect shape this file keeps finding.
+##
+## **AND THE SIBLING ABOVE IS NOT THIS CHECK.** `minimum_size_changed` fires when the minimum MOVES;
+## ASSA-377's box kept an 804 px size while its minimum relaxed to 348 under it, so the connection
+## demonstrably did not re-place this screen. Both lines are load-bearing now, for different frames.
+func test_the_build_screen_is_placed_again_on_a_later_frame() -> bool:
+	var source := FileAccess.get_file_as_string("res://scripts/main.gd")
+	if source == "":
+		return _fail("could not read main.gd, so this scan proves nothing")
+	# **THE CALL HAS TO BE INSIDE `_refresh_build_screen`, WHICH IS THE PAIRING.** A file-wide
+	# `contains` is satisfied by this line living anywhere -- including in a comment discussing it, or
+	# in some other function that does not run on a rebuild. The defect is a frame, so the function
+	# the frame belongs to is half of the claim.
+	var lines := source.split("\n")
+	var inside := false
+	var deferred := false
+	var immediate := false
+	for raw in lines:
+		var line := String(raw)
+		var code := line.strip_edges()
+		if code.begins_with("func "):
+			# The body ends at the next function, whichever one that is.
+			inside = code.begins_with("func _refresh_build_screen(")
+			continue
+		if not inside or code.begins_with("#"):
+			continue
+		if code.contains("_place_build_screen.call_deferred("):
+			deferred = true
+		elif code.contains("_place_build_screen("):
+			immediate = true
+	if not inside and not deferred:
+		return _fail("main.gd has no `_refresh_build_screen` for this scan to read; if it was "
+				+ "renamed, re-point this test rather than deleting it")
+	if not deferred:
+		return _fail("`_refresh_build_screen` no longer re-places the build screen deferred. That "
+				+ "single line is what keeps `Build` on the window: the placement beside it runs in "
+				+ "the same frame as `_rebuild_build_screen`, when the sentence's re-added "
+				+ "autowrapped `Label`s have no width and report one letter per row, and `set_size` "
+				+ "clamps the panel UP to that minimum -- measured at 864x804 in an 864x592 rect, "
+				+ "bar at y732 in a 720 px window, no `Build` on the screen at all (ASSA-377)")
+	if not immediate:
+		return _fail("the same-frame `_place_build_screen()` is gone from `_refresh_build_screen`, "
+				+ "so the screen is unplaced for one frame after every rebuild. The deferred call is "
+				+ "an ADDITION to it (ASSA-377), not a replacement")
+	return true
 
 
 ## **`Build` SITS ON THE SENTENCE'S FIRST ROW, AND ITS y DOES NOT MOVE WHEN THE SENTENCE GROWS**
