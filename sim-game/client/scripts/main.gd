@@ -4074,13 +4074,35 @@ func _refresh_pack() -> void:
 ##
 ## **THE HELD ITEM'S NAME IS SHAPE AND ITS COUNT IS NOT**, which is the one judgement in here. Swapping
 ## what a slot holds changes a LINE on screen, so it has to rebuild; burning through it does not.
+##
+## **AND IT CARRIES THE REFUSAL'S TERMS AS WELL AS THE ROW'S** (ASSA-351; this merged two functions of
+## this name, one per side, and the union is the point). ASSA-339 keyed on what the readout DRAWS --
+## role, cap, the held item's name. ASSA-353 keyed on what a REFUSAL turns on -- the held item's
+## identity and whether the slot has room. Neither set contains the other, and a key missing a term a
+## drawn thing depends on is the family those two items are both instances of:
+##
+## - `SlotFull` turns on the slot holding a DIFFERENT item, so `kind/species/grade` are in, not just
+##   the name: two species can share neither and still print one word apart.
+## - `SlotFull` ALSO turns on there being no room at all, so `at_cap` is in. A fill between 1 and
+##   cap-1 refuses nothing, which is why the COUNT stays out: `at_cap` is the only step of the fill
+##   that changes an answer, so a running smelter does not rebuild its menu forty times a batch.
+## - **A SLOT GOING FROM FULL TO EMPTY HAS TO REBUILD THE ROWS.** A dead `put` control over a slot
+##   holding another item is correct until the fire burns that item away -- which happens with no
+##   command from the player, so the PACK's shape does not move, and a key made of it alone would
+##   leave the dead control standing over a slot that would now accept the stack.
 func _slot_shape(it: Dictionary) -> String:
 	var shape := PackedStringArray()
 	for entry in it.get("slots", []) as Array:
 		var slot: Dictionary = entry
 		var held: Variant = slot.get("held")
-		shape.append("%s/%d/%s" % [String(slot.get("role", "?")), int(slot.get("cap", 0)),
-				String((held as Dictionary).get("name", "?")) if held != null else ""])
+		var what := "-"
+		if held != null:
+			var h: Dictionary = held
+			what = "%s/%d/%s/%s" % [String(h.get("kind", "?")), int(h.get("species", -1)),
+					String(h.get("grade", "?")), String(h.get("name", "?"))]
+		var at_cap := int(slot.get("count", 0)) >= int(slot.get("cap", 0))
+		shape.append("%s/%d/%s%s" % [String(slot.get("role", "?")), int(slot.get("cap", 0)),
+				what, "!" if at_cap else ""])
 	return "|".join(shape)
 
 
@@ -4569,15 +4591,26 @@ func _refresh_machine_menu() -> void:
 	var batch: Vector2i = work if work != null else Vector2i.ZERO
 	_set_amount_row(_menu_work, String(clause) if clause != null else "", batch.x, batch.y)
 	var stacks := _sim.inventory_of(_client.player_id) if _client != null else []
-	# **THE SLOTS ARE IN THE SIGNATURE NOW AND THE REASON IS THE BANDS** (ASSA-339). The rows used to
-	# depend on the pack alone; a slot's fill is a row too, and its CAP and its contents' NAME change
-	# only when something moves in or out. `_slot_shape` is counts-free for `_pack_shape`'s reason -- a
-	# smelter burning through a stack would otherwise free the button under the player's cursor four
-	# times a second -- so the FILL itself is re-texted below, outside the rebuild.
+	# **WHICH OF THOSE STACKS MAY ENTER WHICH SLOT, AND WHY NOT, IS CROSSED BY THE SIM** (ASSA-351).
+	# The rows below are drawn from this and never from the pack plus a rule: `insert_offers` walks the
+	# machine's own insertable slots and asks `step::insert_rejection` per (stack, slot), so one fact
+	# covers all nine refusals instead of this file learning three of them and shipping the fourth as
+	# a dead button, which is how ASSA-351 happened.
+	var offers := _sim.insert_offers(_client.player_id, _menu_at) if _client != null else []
+	# **THE SLOTS ARE IN THE SIGNATURE AND THERE ARE NOW TWO REASONS FOR IT** (ASSA-339, ASSA-353).
+	# ASSA-339's: the rows used to depend on the pack alone; a slot's fill is a row too, and its CAP
+	# and its contents' NAME change only when something moves in or out. ASSA-353's, which is the one
+	# that would bite harder here: the rows draw a REFUSAL now, and `SlotFull` is a fact about what the
+	# slot HOLDS -- a fire that burns its last fuel empties the slot without touching your pack, so a
+	# key made of the pack alone would leave a dead control standing over a slot that would now accept
+	# it. A cache key missing a term a drawn thing depends on is the family, not the bug.
+	# `_slot_shape` is counts-free for `_pack_shape`'s reason -- a smelter burning through a stack
+	# would otherwise free the button under the player's cursor four times a second -- so the FILL
+	# itself is re-texted below, outside the rebuild.
 	var signature := "%d/%s/%s" % [_menu_at, _pack_shape(stacks), _slot_shape(it)]
 	if signature != _menu_showing:
 		_menu_showing = signature
-		_rebuild_machine_menu_rows(stacks, it)
+		_rebuild_machine_menu_rows(offers, it)
 	_refresh_machine_slot_fills(it)
 	_place_machine_menu()
 
@@ -4588,17 +4621,26 @@ func _refresh_machine_menu() -> void:
 ## -- `put all 37 Tonore ore` -- so the common case is one gesture and the button says what it does. The
 ## column's old pair said `Fuel` and `Smelt` with the number hidden in a tooltip.
 ##
-## **WHICH SLOTS EXIST AND WHAT MAY GO IN THEM IS THE SIM'S ANSWER, ASKED PER STACK.**
-## `AssayHud.insert_slots` names the slots a kind some non-hand recipe eats may enter, out of the sim's
-## own recipe table -- *"which one a species is good for (hot enough fuel, or ore that melts) is a sheet
-## reading and only the sim has it"*. So this walks the pack and groups by the slot the sim named, rather
-## than this file knowing a smelter has two slots. **That reading used to arrive as the pack row's
-## `insert` verb descriptors and now has its own function** (ASSA-331): the buttons it fed were deleted,
-## and a menu asking `stack_verbs` for a verb no row draws would have been a dead argument away from
-## bringing them back.
+## **WHICH SLOTS EXIST, WHAT MAY GO IN THEM, AND WHETHER PRESSING DOES ANYTHING, IS THE SIM'S ANSWER**
+## (ASSA-351). `AssaySimHost.insert_offers` crosses every carried stack against every insertable slot
+## and hands back `refusal` -- absent when the press moves something, the sim's own sentence when it
+## does not. This file groups nothing and decides nothing; it draws the list it is given, in order.
 ##
-## **NOTHING IS EVER GREYED OUT AND NOTHING IS HIDDEN FOR BEING REFUSABLE** (ruling 4, ASSA-37): a stack
-## of 1 simply has no fractions to offer, which is a shorter row and not a disabled control.
+## **IT USED TO ASK `AssayHud.insert_slots`, WHICH KEYED ON THE ITEM'S KIND, AND IN THE ONLY 1x FRAME
+## WE HAD OF THIS MENU ALL FOUR PUT CONTROLS WERE ACTS `sim::step` REFUSES.** That function's defence
+## was true as far as it went -- *"which one a species is good for (hot enough fuel, or ore that melts)
+## is a sheet reading and only the sim has it"* -- and the thing it missed is that a REFUSAL is a sheet
+## reading too. Grade, the item already in the slot, reactivity at grade, the walls' heat tolerance:
+## four rules, and a client that crosses three of them ships the fourth as a dead button.
+##
+## **A REFUSED CONTROL IS PRESENT, DISABLED, WITH THE SIM'S REASON UNDER IT, AND THAT AMENDS RULING 4**
+## (ASSA-37's *"nothing is ever greyed out and nothing is hidden for being refusable"*). Maren's
+## ASSA-351 ruling draws the line that ruling 4 did not have to: *a control may offer an act that goes
+## BADLY; it may not offer an act that does NOTHING.* `Place` on an over-budget design stays live
+## because breaking is a mechanic that hands the parts back -- an outcome a player may choose to test.
+## A refused `Insert` has no outcome at all. Hiding it would be worse than either: a pack of grade-A
+## refined would open a smelter to an empty box, and a named dead end teaches the ladder where a silent
+## one teaches nothing (ASSA-301).
 ##
 ## **AND EVERY SLOT THE MACHINE HAS SAYS WHAT IS IN IT, AS A BAND** (ASSA-339, ASSA-334; ruling 5:
 ## *"a slot's fill and a burn's progress are RATIOS, so they take ASSA-276 move 3's band grammar. A
@@ -4618,10 +4660,23 @@ func _refresh_machine_menu() -> void:
 ## which is ruling 6. This row is a READOUT: the slot, how full it is, and what is in it, none of which
 ## any button says. The grouping comes back for free, and the buttons still name their own slot, so
 ## each one survives being read alone.
-func _rebuild_machine_menu_rows(stacks: Array, it: Dictionary) -> void:
+## **AND WHICH STACKS EACH SLOT OFFERS IS READ, NOT DERIVED** (ASSA-351). This walked the pack and
+## asked `AssayHud.insert_slots(stack, recipes)` -- the kind-keyed function that put four dead controls
+## in the only 1x frame we had of this menu. It is gone, and `offers` is the sim's crossing: one
+## per-slot group, in the sim's slot order, each carrying the stacks that slot would take and a
+## `refusal` sentence on the ones it would not. **This file no longer reads the recipe table at all.**
+func _rebuild_machine_menu_rows(offers: Array, it: Dictionary) -> void:
 	_clear(_menu_rows)
 	_menu_slot_rows = {}
-	var recipes := AssaySimHost.recipes()
+	# **THE CROSSING, INDEXED BY THE SIM'S OWN TAG.** `insert_offers` walks the same `insert_tag` the
+	# slot spine below walks (`sim-godot::insert_offer_facts`), so this dictionary is a lookup and not
+	# a second opinion about which slots exist: a slot the sim crossed no offers for is simply absent
+	# and draws its readout with no controls, which is a state Maren has ruled on (a pack of only parts
+	# answers `WrongItem` on both slots, and `WrongItem` is the one refusal that gets no row).
+	var by_tag := {}
+	for crossed in offers:
+		var per_slot: Dictionary = crossed
+		by_tag[String(per_slot.get("slot", ""))] = per_slot.get("offers", []) as Array
 	# **THE MACHINE'S OWN SLOTS, IN THE SIM'S ORDER, AND THAT IS A CHANGE FROM ASSA-316.** The rows used
 	# to be built by walking the PACK and asking each stack which slots would take it, so a machine's
 	# slots appeared in the order your pack happened to be sorted in and a slot nothing could go into
@@ -4655,31 +4710,53 @@ func _rebuild_machine_menu_rows(stacks: Array, it: Dictionary) -> void:
 		if tag == null:
 			continue
 		var into := String(tag)
-		for carried in stacks:
-			var stack: Dictionary = carried
-			if not AssayHud.insert_slots(stack, recipes).has(into):
-				continue
+		# **NO `Fuel slot` HEADING IS INVENTED HERE** (ASSA-331): the readout row above already names
+		# the slot, and every button's own label names it too, so nothing repeats it a third time. The
+		# grouping is the sim's slot order, which is the order both this spine and `insert_offers`
+		# walk.
+		for offered in by_tag.get(into, []) as Array:
+			var stack: Dictionary = offered
 			var count := int(stack.get("count", 0))
 			var named := String(stack.get("name", "?"))
+			# **`has`, NOT `get(key, default)`.** A refusal of "" would be a disabled button with no
+			# reason beside it, and the binding deliberately omits the key rather than crossing an
+			# empty string for exactly that reason.
+			var refused := stack.has("refusal")
 			var row := VBoxContainer.new()
 			row.add_theme_constant_override("separation", 2)
-			row.add_child(_button(AssayHud.insert_label(count, named, into),
+			# **THE LABEL IS THE SAME WHETHER OR NOT IT IS PRESSABLE.** A disabled button that also
+			# renamed itself would be two changes a player has to tell apart; the reason under it is
+			# where the difference belongs.
+			var put := _button(AssayHud.insert_label(count, named, into),
 					func() -> void: _insert_into(_menu_at, stack, into, 0),
-					"put everything you are carrying of this into the %s slot" % into))
-			# THE FRACTIONS, AS A ROW OF QUIET BUTTONS THAT NAME WHAT YOU WILL GET. `put 1 · put 18`,
-			# never `put half`: a toggle that named a fraction would make the player do the arithmetic the
-			# stack already answers. Empty for a stack of 1, which adds no row at all.
-			var some := AssayHud.insert_fractions(count)
-			if not some.is_empty():
-				var fractions := HFlowContainer.new()
-				fractions.add_theme_constant_override("h_separation", 4)
-				for want in some:
-					var part := _button(AssayHud.insert_some_label(want),
-							func() -> void: _insert_into(_menu_at, stack, into, want),
-							"put %d of your %d %s into the %s slot" % [want, count, named, into])
-					part.theme_type_variation = &"Quiet"
-					fractions.add_child(part)
-				row.add_child(fractions)
+					"put everything you are carrying of this into the %s slot" % into)
+			put.disabled = refused
+			row.add_child(put)
+			if refused:
+				# **THE SIM'S SENTENCE, UNCHANGED.** `sim::debug::insert_refusal` is the event log's own
+				# wording for this refusal, so the dead control and the log cannot disagree about why.
+				# Nothing is composed here and nothing is shortened.
+				row.add_child(_note(String(stack["refusal"])))
+			else:
+				# THE FRACTIONS, AS A ROW OF QUIET BUTTONS THAT NAME WHAT YOU WILL GET. `or 1 · or 18`,
+				# never `or half`: a toggle that named a fraction would make the player do the arithmetic
+				# the stack already answers. Empty for a stack of 1, which adds no row at all.
+				#
+				# **NONE OF THEM ON A REFUSED ROW**, and that is the sim's answer rather than a tidying:
+				# every reason that reaches here refuses the whole stack whatever the count, because the
+				# one reason a COUNT changes is the cap, and the cap clamps instead of refusing
+				# (ASSA-48). `put 1` into a slot that refuses `put all` is dead for the same reason.
+				var some := AssayHud.insert_fractions(count)
+				if not some.is_empty():
+					var fractions := HFlowContainer.new()
+					fractions.add_theme_constant_override("h_separation", 4)
+					for want in some:
+						var part := _button(AssayHud.insert_some_label(want),
+								func() -> void: _insert_into(_menu_at, stack, into, want),
+								"put %d of your %d %s into the %s slot" % [want, count, named, into])
+						part.theme_type_variation = &"Quiet"
+						fractions.add_child(part)
+					row.add_child(fractions)
 			_menu_rows.add_child(row)
 	# **THE TWO VERBS THAT LEFT `do` ON ASSA-316's COMMIT, AND THEY ACT ON THE MACHINE** (ruling 3).
 	# Their words are the ones the column used, because that item moved a control and did not retune a

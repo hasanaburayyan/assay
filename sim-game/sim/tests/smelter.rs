@@ -1124,6 +1124,280 @@ fn inserting_is_validated() {
     ));
 }
 
+/// **THE PREDICATE A MACHINE MENU PRESSES ON, HELD AGAINST THE PRESS ITSELF**
+/// (ASSA-351). `hud.gd::insert_slots` keyed on the item's kind and offered both
+/// slots, so in the one 1x frame we have of a machine menu all four put
+/// controls were acts `step` refuses. `debug::insert_refusal` is the fact it
+/// should have been reading, and the only interesting property of it is that it
+/// **cannot disagree with what pressing the button does**.
+///
+/// So this asks the predicate BEFORE each press and compares its answer to the
+/// reason the press actually produces. Asserting the sentence alone would pass
+/// over a predicate that refuses the wrong things; asserting the reason alone
+/// would pass over one that refuses the right things for a wording no player
+/// ever reads.
+#[test]
+fn insert_refusal_and_the_press_never_disagree() {
+    let (mut world, me, id, _) = world_with_smelter();
+    let refined_a = Item::new(ItemKind::Refined, WALLS, Grade::A);
+    let gear = Item::new(ItemKind::Gear, WALLS, Grade::A);
+    give(&mut world, me, refined_a, 5);
+    give(&mut world, me, gear, 1);
+    give(&mut world, me, ore(WALLS), 60);
+    give(&mut world, me, ore(FUEL), 60);
+    give(&mut world, me, ore(HOT), 2);
+    give(&mut world, me, ore(INERT), 2);
+
+    // Every reason `Insert` can reach that this fixture can stage, each named
+    // so a failure says which rule moved. `HOT` ore needs more heat than a
+    // WALLS smelter's walls survive; `INERT` is below the fuel threshold.
+    let cases: Vec<(&str, PlayerCommand, RejectReason)> = vec![
+        (
+            "a count of nothing",
+            insert(id, Slot::Input, ore(WALLS), 0),
+            RejectReason::ZeroCount,
+        ),
+        (
+            "no building has that id",
+            insert(BuildingId(99), Slot::Input, ore(WALLS), 1),
+            RejectReason::UnknownBuilding,
+        ),
+        (
+            "a gear is not smelter input",
+            insert(id, Slot::Input, gear, 1),
+            RejectReason::WrongItem,
+        ),
+        (
+            "a gear does not burn",
+            insert(id, Slot::Fuel, gear, 1),
+            RejectReason::WrongItem,
+        ),
+        (
+            "grade A refined cannot be refined again (the frame's Input control)",
+            insert(id, Slot::Input, refined_a, 1),
+            RejectReason::AlreadyBestGrade,
+        ),
+        (
+            "hotter than these walls survive",
+            insert(id, Slot::Input, ore(HOT), 1),
+            RejectReason::TooHotForWalls,
+        ),
+        (
+            "too unreactive to be fuel",
+            insert(id, Slot::Fuel, ore(INERT), 1),
+            RejectReason::NotFuel,
+        ),
+        (
+            "you are not carrying that",
+            insert(id, Slot::Fuel, ore(HOT_FUEL), 1),
+            RejectReason::MissingItems(ore(HOT_FUEL)),
+        ),
+    ];
+
+    for (what, command, reason) in &cases {
+        let PlayerCommand::Insert {
+            building,
+            slot,
+            item,
+            count,
+        } = command.clone()
+        else {
+            panic!("{what}: this table is Insert commands only")
+        };
+        let asked = sim::step::insert_rejection(&world, me, building, slot, item, count);
+        assert_eq!(
+            asked,
+            Some(*reason),
+            "{what}: the predicate a menu reads before the press"
+        );
+        let events = run(&mut world, &[Input::player(me, command.clone())], 1);
+        assert_eq!(
+            events,
+            vec![Event::CommandRejected {
+                player: me,
+                command: command.clone(),
+                reason: *reason,
+            }],
+            "{what}: the press itself"
+        );
+        // The sentence is the event log's own, byte for byte — the whole
+        // reason `refusal_phrase` moved out of `event_line`. A host drawing a
+        // dead control beside a string it composed would be free to disagree
+        // with the log about the same refusal.
+        let sentence = sim::debug::insert_refusal(&world, me, building, slot, item, count)
+            .unwrap_or_else(|| panic!("{what}: refused by step, so it has a sentence"));
+        let logged = sim::debug::event_line(
+            &world,
+            Some(me),
+            &Event::CommandRejected {
+                player: me,
+                command: command.clone(),
+                reason: *reason,
+            },
+            sim::debug::Audience::Pointed,
+        );
+        assert!(
+            logged.ends_with(&sentence),
+            "{what}: menu said {sentence:?}, log said {logged:?}"
+        );
+    }
+
+    // **THE SLOT HOLDING SOMETHING ELSE, which is the frame's other two dead
+    // controls.** Staged last because it needs the fuel slot loaded, and the
+    // cases above must run against an empty one.
+    //
+    // **IT HAS TO BE A STACK THAT WOULD OTHERWISE BURN.** My first version of
+    // this used INERT and asserted `SlotFull`; the chain answered `NotFuel`,
+    // because an unreactive rock is refused before the slot's contents are
+    // looked at — and that order is the better one to show a player. `SlotFull`
+    // on INERT would say emptying the slot helps, and nothing would make that
+    // rock fuel. So the case the board's frame actually hit needs HOT_FUEL:
+    // real fuel, wrong item for this slot.
+    give(&mut world, me, ore(HOT_FUEL), 4);
+    run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Fuel, ore(FUEL), 3))],
+        1,
+    );
+    let held_by_another = sim::step::insert_rejection(&world, me, id, Slot::Fuel, ore(HOT_FUEL), 1);
+    assert_eq!(
+        held_by_another,
+        Some(RejectReason::SlotFull),
+        "the fuel slot holds FUEL ore; HOT_FUEL ore burns but is a different item"
+    );
+    // And the sentence a player would read beside that dead control.
+    let said = sim::debug::insert_refusal(&world, me, id, Slot::Fuel, ore(HOT_FUEL), 1)
+        .expect("a slot holding another item refuses");
+    assert!(
+        said.contains("different item"),
+        "the SlotFull sentence, which is the event log's: {said:?}"
+    );
+
+    // **AND THE CONTROL THAT WORKS IS STILL PRESSABLE.** Without this the
+    // whole table is satisfied by a predicate that refuses everything.
+    let pressable = sim::step::insert_rejection(&world, me, id, Slot::Input, ore(WALLS), 4);
+    assert_eq!(pressable, None, "WALLS ore into a WALLS smelter's input");
+    assert_eq!(
+        sim::debug::insert_refusal(&world, me, id, Slot::Input, ore(WALLS), 4),
+        None,
+        "a pressable control has no refusal to draw"
+    );
+    let events = run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Input, ore(WALLS), 4))],
+        1,
+    );
+    assert!(
+        matches!(
+            events[..],
+            [Event::ItemsInserted {
+                count: 4,
+                left: 0,
+                ..
+            }]
+        ),
+        "the working path still moves items: {events:?}"
+    );
+
+    // SELF-CHECK ON THIS TEST'S OWN AIM. A table that lost its cases, or one
+    // whose reasons collapsed onto each other, would pass every assertion
+    // above having proved nothing about coverage.
+    let mut reasons: Vec<String> = cases.iter().map(|(_, _, r)| format!("{r:?}")).collect();
+    reasons.sort();
+    reasons.dedup();
+    assert_eq!(
+        reasons.len(),
+        7,
+        "the table has to stage seven distinct reasons, not {reasons:?}"
+    );
+}
+
+/// **A CLAMP IS NOT A REFUSAL, AND THE PREDICATE MUST NOT MAKE IT ONE**
+/// (ASSA-48, the Game Director's ruling, re-asserted one layer out).
+///
+/// `insert_rejection` answers *would nothing move*, never *would this be
+/// clamped*. Offering fifty units at a slot with room for three is an act with
+/// an outcome — three go in, `ItemsInserted.left` says what stayed behind — so
+/// the control stays pressable. The one case it refuses is no room at all.
+///
+/// This is the test the fix is most likely to break, because "the sim says
+/// whether this is allowed" reads like it should include the cap.
+#[test]
+fn a_part_insert_stays_pressable_and_only_a_full_slot_refuses() {
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(WALLS), SMELTER_INPUT_CAP + 20);
+    let room_for = 3;
+    run(
+        &mut world,
+        &[Input::player(
+            me,
+            insert(id, Slot::Input, ore(WALLS), SMELTER_INPUT_CAP - room_for),
+        )],
+        1,
+    );
+    assert_eq!(
+        smelter_of(&world, id).input.unwrap().count,
+        SMELTER_INPUT_CAP - room_for
+    );
+
+    assert_eq!(
+        sim::step::insert_rejection(&world, me, id, Slot::Input, ore(WALLS), 20),
+        None,
+        "room for {room_for} and an offer of 20 is a press that moves {room_for}"
+    );
+    assert_eq!(
+        sim::debug::insert_refusal(&world, me, id, Slot::Input, ore(WALLS), 20),
+        None,
+        "a menu must not draw a refusal over a press that inserts"
+    );
+    let events = run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Input, ore(WALLS), 20))],
+        1,
+    );
+    assert!(
+        matches!(
+            events[..],
+            [Event::ItemsInserted {
+                count: 3,
+                left: 17,
+                ..
+            }]
+        ),
+        "the clamp the predicate promised: {events:?}"
+    );
+
+    // NOW it is full, and now "nothing happens" is true.
+    assert_eq!(
+        sim::step::insert_rejection(&world, me, id, Slot::Input, ore(WALLS), 1),
+        Some(RejectReason::SlotFull),
+        "a slot at cap has no room for even one"
+    );
+    let full = sim::debug::insert_refusal(&world, me, id, Slot::Input, ore(WALLS), 1)
+        .expect("a full slot refuses, so it has a sentence");
+    assert!(
+        !full.is_empty(),
+        "an unpressable control with no reason teaches nothing (ASSA-301)"
+    );
+}
+
+/// The sentence on a dead control is the SIM'S, and for grade-A refined it is
+/// the one `best_grade_note` already wrote (ASSA-351 box 5). **No new string is
+/// authored by this item**: if this assertion needs changing, a wording moved
+/// and the event log moved with it.
+#[test]
+fn the_dead_input_control_reads_the_sims_own_grade_sentence() {
+    let (mut world, me, id, _) = world_with_smelter();
+    let refined_a = Item::new(ItemKind::Refined, WALLS, Grade::A);
+    give(&mut world, me, refined_a, 2);
+    let said = sim::debug::insert_refusal(&world, me, id, Slot::Input, refined_a, 2)
+        .expect("grade A refined cannot enter an input");
+    assert!(
+        said.contains(sim::debug::best_grade_note()),
+        "the menu's reason has to be the sim's: {said:?}"
+    );
+}
+
 #[test]
 fn pickup_returns_the_building_and_everything_in_it() {
     let (mut world, me, id, pos) = world_with_smelter();

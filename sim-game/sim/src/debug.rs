@@ -798,117 +798,7 @@ pub fn event_line(
             command,
             reason,
         } => {
-            let why = match reason {
-                RejectReason::NotOnDeposit => {
-                    "you're not standing on a deposit; walk onto one first".to_string()
-                }
-                RejectReason::DepositDepleted => "that deposit is already depleted".to_string(),
-                // "DRILLS COME LATER" WAS FALSE (ASSA-43). Decision 7 holds
-                // `mine_by_machine` to the same gate, so this ore is out of
-                // reach of everything the game can build — and this sentence
-                // was the only thing the game said about reach at all, which
-                // made our one explanation a promise we break.
-                //
-                // AND IT MUST NOT SAY "YET" EITHER (Game Director's wording
-                // ruling). The first fix read "so nothing reaches it yet",
-                // which is the same promise in one word: "yet" says a later
-                // thing arrives, and decision 7 says none does. The guard in
-                // `tests/reach.rs` now refuses a set of future-tense words
-                // rather than the one phrase we had already deleted.
-                //
-                // THIS IS THE STRONGEST OF THE THREE REACH SENTENCES ON
-                // PURPOSE: it is the only one a player reads at the moment
-                // they acted, so it carries the whole fact rather than the
-                // short form.
-                RejectReason::TooHardForHands => format!(
-                    "nothing can mine that: hardness is over {}, and a drill mines faster, \
-                     not harder",
-                    crate::tuning::HAND_MINE_MAX_HARDNESS
-                ),
-                RejectReason::UnknownPlayer => "no such player".to_string(),
-                RejectReason::ZeroCount => "the count must be at least 1".to_string(),
-                RejectReason::NotHandCraftable => {
-                    "that needs a machine to make, not bare hands".to_string()
-                }
-                // **SAID ONCE, FOR BOTH MOMENTS** (ASSA-324). These four are
-                // the whole vocabulary `assembly::plan` refuses with, so they
-                // are worded in `plan_refusal_phrase` where a host asking
-                // BEFORE the press can reach them too. Kept as named arms
-                // rather than a catch-all so a new `RejectReason` still fails
-                // this match to compile.
-                RejectReason::UnknownSpecies
-                | RejectReason::NotAPart(_)
-                | RejectReason::BadAssembly(_)
-                | RejectReason::MissingItems(_) => {
-                    plan_refusal_phrase(world, Some(*player), *reason)
-                        .expect("every reason on this arm is one the plan can return")
-                }
-                RejectReason::AlreadyAssayed => {
-                    "that species is already assayed, so its sheet already reads exact"
-                        .to_string()
-                }
-                RejectReason::NotDiscovered => {
-                    "nobody has mined or assayed that species yet, so nobody may name it"
-                        .to_string()
-                }
-                RejectReason::NotDiscoverer => {
-                    "only its discoverer (or someone they granted) may do that".to_string()
-                }
-                RejectReason::BadName(e) => match e {
-                    NameError::Empty => "the name is empty".to_string(),
-                    NameError::TooLong => format!(
-                        "names are at most {} characters",
-                        crate::tuning::SPECIES_NAME_MAX
-                    ),
-                    NameError::BadCharacter => {
-                        "names use letters, digits and hyphens only".to_string()
-                    }
-                },
-                RejectReason::NoSuchPlayer => "nobody in this world has that name".to_string(),
-                RejectReason::AlreadyGranted => "they can already rename it".to_string(),
-                RejectReason::WrongItem => "that's the wrong kind of item for this".to_string(),
-                RejectReason::AlreadyBestGrade => best_grade_note().to_string(),
-                RejectReason::RequirementNotMet(property, min) => format!(
-                    "its {} is below {min} at that grade",
-                    property.name()
-                ),
-                RejectReason::OutOfBounds => match command {
-                    PlayerCommand::MoveTo { target } => off_map(world, *target),
-                    _ => "that's off the map".to_string(),
-                },
-                RejectReason::UnknownBuilding => {
-                    "nothing is built with that id".to_string()
-                }
-                RejectReason::OutOfReach => format!(
-                    "too far away; get within {} tiles of it",
-                    crate::tuning::REACH
-                ),
-                RejectReason::TileOccupied => "another building is in the way".to_string(),
-                RejectReason::NotPlaceable => "that item is not a building".to_string(),
-                RejectReason::TooHotForWalls => {
-                    "that ore needs more heat than this smelter's walls survive; build one from a more heat-tolerant species".to_string()
-                }
-                RejectReason::NotFuel => format!(
-                    "that doesn't burn well enough to be fuel (reactivity below {} at that grade)",
-                    crate::tuning::FUEL_MIN_REACTIVITY
-                ),
-                RejectReason::SlotFull => {
-                    "that slot is full or holds a different item".to_string()
-                }
-                RejectReason::NothingToTake => "it has nothing waiting to be taken".to_string(),
-                RejectReason::NoSuchAssembly => {
-                    "you have not built that design".to_string()
-                }
-                RejectReason::WrongMount => {
-                    "a handle is held and a frame is planted; you asked for the other one"
-                        .to_string()
-                }
-                RejectReason::NothingEquipped => "you have nothing in hand".to_string(),
-                RejectReason::NotInsertable => {
-                    "that machine takes nothing in; it only gives out what it has mined"
-                        .to_string()
-                }
-            };
+            let why = refusal_phrase(world, *player, command, *reason);
             let whose = if me == Some(*player) {
                 String::new()
             } else {
@@ -924,6 +814,193 @@ pub fn event_line(
             )
         }
     }
+}
+
+/// The sentence a `RejectReason` reads as: the `why` half of every refusal,
+/// for every command, in one place.
+///
+/// **ONE WORDING, TWO MOMENTS — and this is the second time we have had to say
+/// so** (ASSA-351, after ASSA-324). This match used to live inside
+/// [`event_line`]'s arm for a `CommandRejected` that had *already happened*, so
+/// a host asking whether a press would be refused could not reach any of it.
+/// [`plan_refusal_phrase`] exists because of that, and its own docstring
+/// records the cost: the second copy got written anyway, three times, and the
+/// fourth was written in GDScript and got two verdicts out of three wrong.
+/// `hud.gd::insert_slots` then did it again for `Insert` — guessing from the
+/// item's kind, offering four controls `step` refuses. So the match moved out
+/// here rather than growing an eleventh wording beside it:
+/// [`insert_refusal`] returns *these* strings, not ones like them.
+///
+/// `command` is read by exactly one arm (`OutOfBounds`, which names the tile
+/// that is off the map); every other reason words itself from the world and the
+/// reason alone.
+pub fn refusal_phrase(
+    world: &World,
+    player: PlayerId,
+    command: &PlayerCommand,
+    reason: RejectReason,
+) -> String {
+    match reason {
+        RejectReason::NotOnDeposit => {
+            "you're not standing on a deposit; walk onto one first".to_string()
+        }
+        RejectReason::DepositDepleted => "that deposit is already depleted".to_string(),
+        // "DRILLS COME LATER" WAS FALSE (ASSA-43). Decision 7 holds
+        // `mine_by_machine` to the same gate, so this ore is out of
+        // reach of everything the game can build — and this sentence
+        // was the only thing the game said about reach at all, which
+        // made our one explanation a promise we break.
+        //
+        // AND IT MUST NOT SAY "YET" EITHER (Game Director's wording
+        // ruling). The first fix read "so nothing reaches it yet",
+        // which is the same promise in one word: "yet" says a later
+        // thing arrives, and decision 7 says none does. The guard in
+        // `tests/reach.rs` now refuses a set of future-tense words
+        // rather than the one phrase we had already deleted.
+        //
+        // THIS IS THE STRONGEST OF THE THREE REACH SENTENCES ON
+        // PURPOSE: it is the only one a player reads at the moment
+        // they acted, so it carries the whole fact rather than the
+        // short form.
+        RejectReason::TooHardForHands => format!(
+            "nothing can mine that: hardness is over {}, and a drill mines faster, \
+             not harder",
+            crate::tuning::HAND_MINE_MAX_HARDNESS
+        ),
+        RejectReason::UnknownPlayer => "no such player".to_string(),
+        RejectReason::ZeroCount => "the count must be at least 1".to_string(),
+        RejectReason::NotHandCraftable => {
+            "that needs a machine to make, not bare hands".to_string()
+        }
+        // **SAID ONCE, FOR BOTH MOMENTS** (ASSA-324). These four are
+        // the whole vocabulary `assembly::plan` refuses with, so they
+        // are worded in `plan_refusal_phrase` where a host asking
+        // BEFORE the press can reach them too. Kept as named arms
+        // rather than a catch-all so a new `RejectReason` still fails
+        // this match to compile.
+        RejectReason::UnknownSpecies
+        | RejectReason::NotAPart(_)
+        | RejectReason::BadAssembly(_)
+        | RejectReason::MissingItems(_) => {
+            plan_refusal_phrase(world, Some(player), reason)
+                .expect("every reason on this arm is one the plan can return")
+        }
+        RejectReason::AlreadyAssayed => {
+            "that species is already assayed, so its sheet already reads exact"
+                .to_string()
+        }
+        RejectReason::NotDiscovered => {
+            "nobody has mined or assayed that species yet, so nobody may name it"
+                .to_string()
+        }
+        RejectReason::NotDiscoverer => {
+            "only its discoverer (or someone they granted) may do that".to_string()
+        }
+        RejectReason::BadName(e) => match e {
+            NameError::Empty => "the name is empty".to_string(),
+            NameError::TooLong => format!(
+                "names are at most {} characters",
+                crate::tuning::SPECIES_NAME_MAX
+            ),
+            NameError::BadCharacter => {
+                "names use letters, digits and hyphens only".to_string()
+            }
+        },
+        RejectReason::NoSuchPlayer => "nobody in this world has that name".to_string(),
+        RejectReason::AlreadyGranted => "they can already rename it".to_string(),
+        RejectReason::WrongItem => "that's the wrong kind of item for this".to_string(),
+        RejectReason::AlreadyBestGrade => best_grade_note().to_string(),
+        RejectReason::RequirementNotMet(property, min) => format!(
+            "its {} is below {min} at that grade",
+            property.name()
+        ),
+        RejectReason::OutOfBounds => match command {
+            PlayerCommand::MoveTo { target } => off_map(world, *target),
+            _ => "that's off the map".to_string(),
+        },
+        RejectReason::UnknownBuilding => {
+            "nothing is built with that id".to_string()
+        }
+        RejectReason::OutOfReach => format!(
+            "too far away; get within {} tiles of it",
+            crate::tuning::REACH
+        ),
+        RejectReason::TileOccupied => "another building is in the way".to_string(),
+        RejectReason::NotPlaceable => "that item is not a building".to_string(),
+        RejectReason::TooHotForWalls => {
+            "that ore needs more heat than this smelter's walls survive; build one from a more heat-tolerant species".to_string()
+        }
+        RejectReason::NotFuel => format!(
+            "that doesn't burn well enough to be fuel (reactivity below {} at that grade)",
+            crate::tuning::FUEL_MIN_REACTIVITY
+        ),
+        RejectReason::SlotFull => {
+            "that slot is full or holds a different item".to_string()
+        }
+        RejectReason::NothingToTake => "it has nothing waiting to be taken".to_string(),
+        RejectReason::NoSuchAssembly => {
+            "you have not built that design".to_string()
+        }
+        RejectReason::WrongMount => {
+            "a handle is held and a frame is planted; you asked for the other one"
+                .to_string()
+        }
+        RejectReason::NothingEquipped => "you have nothing in hand".to_string(),
+        RejectReason::NotInsertable => {
+            "that machine takes nothing in; it only gives out what it has mined"
+                .to_string()
+        }
+    }
+}
+
+/// Why this `Insert` would do nothing, as a sentence, or `None` if it would
+/// move something. **The one fact a machine menu needs to know whether a put
+/// control is pressable** (ASSA-351).
+///
+/// The Game Director's standing rule: *a control may offer an act that goes
+/// badly; it may not offer an act that does nothing.* `Place` on an
+/// over-budget design stays pressable because breaking is a mechanic that
+/// hands the parts back; a refused `Insert` has no outcome at all — nothing
+/// moves, nothing is spent, you get a sentence. So a host draws the control
+/// unpressable and draws **this string** beside it.
+///
+/// **ONE PREDICATE PER (STACK, SLOT), NOT A RULE THE CLIENT LEARNS.**
+/// `hud.gd::insert_slots` keyed on the item's KIND and offered both slots,
+/// which is right about neither: it got grade (`AlreadyBestGrade`) and the
+/// held item (`SlotFull`) wrong in the one 1x frame we have of a machine menu,
+/// all four controls dead. It could in principle have crossed those two — it
+/// prints the `(A)` and it draws the held stack — but `TooHotForWalls` is a
+/// sheet reading against the smelter's own material and `NotFuel` is
+/// reactivity at grade, so a client doing this itself learns three rules and
+/// misses the fourth. Nine reasons, one answer.
+///
+/// **A CLAMP IS NOT A REFUSAL** (ASSA-48): see [`crate::step::insert_rejection`],
+/// which this is the wording of. `put all 50` at a slot with room for 3 is
+/// pressable and inserts 3.
+///
+/// The sentence is [`refusal_phrase`]'s, which is the event log's, byte for
+/// byte — the whole point of moving that match out of [`event_line`]. A host
+/// that wants the louder form composes it from this; it never writes its own.
+pub fn insert_refusal(
+    world: &World,
+    player: PlayerId,
+    building: BuildingId,
+    slot: Slot,
+    item: Item,
+    count: u32,
+) -> Option<String> {
+    let reason = crate::step::insert_rejection(world, player, building, slot, item, count)?;
+    Some(refusal_phrase(
+        world,
+        player,
+        &PlayerCommand::Insert {
+            building,
+            slot,
+            item,
+            count,
+        },
+        reason,
+    ))
 }
 
 /// WHETHER A PLAYER MUST SEE THIS EVENT EVEN WITH THE EVENT LOG HIDDEN
