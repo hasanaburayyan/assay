@@ -6027,9 +6027,24 @@ func _row_one() -> Label:
 ## number 0, so this asks for 0 of 0 and `AssayTrack` draws nothing -- its documented answer for an
 ## absent fact, reached by the same code path as every other caller. Keeping numbers alive for a
 ## design the sim throws out would be the screen disagreeing with its own `Build`.
+## **AND THE ROW CARRIES NO LABEL, BECAUSE THE HEADING ALREADY NAMES THE QUANTITY** (Maren's ruling,
+## 2026-10-09 16:09):
+##
+## > *"Under a heading that NAMES THE QUANTITY, a row label names its SUBJECT -- never the quantity
+## > again. With one row and no second subject to tell it from, there is no label at all."*
+##
+## `mass against the frame's budget` over a row reading `mass` is the quantity twice, one line apart
+## -- ASSA-328 §2, one fact one home, the same rule that sent the figures to the commit bar. The
+## heading is the more informative of the two, so the row label is the copy that goes.
+##
+## **AND IT DOES NOT COME BACK AS `mass` WHEN BOX 6 LANDS, WHICH IS WHERE SHE RULED AGAINST MY OWN
+## SUGGESTION.** I offered to keep the word until the per-part floats named the rows by part; she
+## refused: under this heading **every row is a mass**, so the total row's subject is the DESIGN and
+## its label is `total`. Keeping `mass` would preserve a quantity-name in a column of subject-names
+## -- wrong today and still wrong later.
 func _design_mass_row(readout: Dictionary) -> AssayReadingRow:
 	var row := AssayReadingRow.new()
-	row.show_amount("mass", int(readout.get("mass_high", 0)), int(readout.get("budget_low", 0)))
+	row.show_amount("", int(readout.get("mass_high", 0)), int(readout.get("budget_low", 0)))
 	return row
 
 

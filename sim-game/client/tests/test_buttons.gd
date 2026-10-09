@@ -5263,3 +5263,60 @@ func test_block_fives_heading_names_what_is_under_it_on_both_paths() -> bool:
 		return _fail(("block 5's heading on the assembly path is `%s` and the rect under it is a "
 				+ "mass against a budget") % assembling.text)
 	return true
+
+
+## **AND THE ROW UNDER THAT HEADING NAMES NO SUBJECT** (ASSA-369; Maren's 16:09 ruling: *"under a
+## heading that NAMES THE QUANTITY, a row label names its SUBJECT -- never the quantity again. With
+## one row and no second subject to tell it from, there is no label at all."*).
+##
+## **THE HEADING IS ASSERTED IN THE SAME TEST, BECAUSE HER RULING IS CONDITIONAL.** A label goes
+## *under a heading that names the quantity*; a test that only checked the label were empty would
+## stay green on a screen whose heading had gone back to `what you get` -- the one state in which the
+## word `mass` was RIGHT. Both halves, one test, so neither can drift without the other noticing.
+##
+## **AND THE COLUMN IS RESERVED, NOT RECLAIMED, WHICH IS THE HALF A BLANK LABEL CANNOT SHOW ON ITS
+## OWN.** Two rows are built here rather than measured off the screen's, because
+## `get_combined_minimum_size` caches: an empty word and the longest property name the sim publishes
+## must give the same minimum, which is what keeps the axis at the x every other reading row in the
+## game puts it at (move 3's rule 2) and what the per-part floats of box 6 will be compared down.
+## Whether that reserved air should instead go to the axis is Maren's, waits on the 1x rect she asked
+## for, and is deliberately NOT asserted here.
+func test_block_fives_row_names_no_subject_under_a_quantity_heading() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var frame := _roomiest_frame()
+	if frame.is_empty():
+		screen.queue_free()
+		return _fail("the sim's catalogue has no frame, so block 5 draws no row to read")
+	screen._build_verb = screen.BUILD_ASSEMBLE
+	screen._building = [_part_stack_of(String(frame.get("kind", "")))]
+	screen._build_showing = screen.UNBUILT
+	screen._refresh_build_screen()
+	var ok := true
+	var heading: Label = screen._section_heading(screen._build_detail)
+	var row := _mass_row(screen)
+	if heading == null or row == null:
+		ok = _fail("block 5 has no heading (%s) or no reading row (%s)" % [heading, row])
+	elif not heading.text.to_lower().contains("mass"):
+		ok = _fail(("block 5's heading reads `%s`, which does not name the quantity -- so the "
+				+ "condition her ruling rests on is gone and a blank row label is no longer what it "
+				+ "asks for") % heading.text)
+	elif row.label_text() != "":
+		ok = _fail(("block 5's row is labelled `%s` under a heading reading `%s`: the quantity "
+				+ "twice, one line apart (ASSA-328 §2, one fact one home)")
+				% [row.label_text(), heading.text])
+	else:
+		var blank := AssayReadingRow.new()
+		blank.show_amount("", 3, 4)
+		var named := AssayReadingRow.new()
+		named.show_amount("heat tolerance", 3, 4)
+		if not is_equal_approx(blank.get_combined_minimum_size().x,
+				named.get_combined_minimum_size().x):
+			ok = _fail(("a row with no label asks for %.1f px and one labelled `heat tolerance` asks "
+					+ "for %.1f: the label column is sized by its word, so dropping the word moved "
+					+ "the axis instead of leaving it where every other row in the game puts it")
+					% [blank.get_combined_minimum_size().x, named.get_combined_minimum_size().x])
+		blank.free()
+		named.free()
+	screen.queue_free()
+	return ok

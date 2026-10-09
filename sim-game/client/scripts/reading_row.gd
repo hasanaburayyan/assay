@@ -113,6 +113,15 @@ func show_reading(property: String, text: String, low: int, high: int, scale: Ve
 ## other row in the game puts it at, which is the whole of move 3's rule 2 and the only reason the
 ## per-part mass floats of this item's second box can be compared down the column when they land.
 ##
+## **AND `property` MAY BE EMPTY, WHICH IS A SUBJECT THIS ROW DOES NOT HAVE** (Maren's ruling, ASSA-369
+## 16:09: *"under a heading that NAMES THE QUANTITY, a row label names its SUBJECT -- never the
+## quantity again. With one row and no second subject to tell it from, there is no label at all."*).
+## An empty word leaves the label column **reserved and blank**, exactly as the value column already
+## is: a `clip_text` Label reports a minimum width of 1 for its text, so the custom minimum is all
+## that holds the column open and the track cannot move because a word left it. That the air is
+## reserved rather than reclaimed is the half of her ruling she would not spec without seeing the
+## rect, and it is measured on the 1x shot rather than decided here.
+##
 ## **THE TRACK DECIDES WHAT AN ABSENT FACT LOOKS LIKE, NOT THIS ROW.** `total <= 0` draws nothing
 ## (`AssayTrack.show_amount`), which is the state a refused design is in -- and leaving that to the
 ## track is what makes it uniform rather than a case this screen invented for itself.
