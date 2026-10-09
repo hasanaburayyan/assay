@@ -4384,7 +4384,18 @@ func _refresh_actions() -> void:
 		# missing id just keeps the old value, and that file already pushes the error.
 		if b.has("id"):
 			building_here = int(b["id"])
-	var signature := "%s/%s/%s/%s/%s/%s" % [target, _targeted, _building, minable, live, building_here]
+	# **AND WHETHER A POP-UP IS HOLDING THE ACCENT, FOR THE THIRD TIME THE REASON ABOVE IS WRITTEN**
+	# (ASSA-374). `Mine` stands down while the build screen is up, and opening or closing that screen
+	# moves NONE of the other terms here -- not the target, not the cursor, not the rock, not the
+	# link. Left out, the row keeps the accent it had when the pop-up opened and gets it back only
+	# when something unrelated happens to move, which is `minable`'s defect and `live`'s defect again.
+	#
+	# **MEASURED: the guard below was CORRECT and did nothing without this term.** With the `if`
+	# already asking `_popup_holds_the_accent` and this signature unchanged, the test read two
+	# `Primary` controls with the build screen open -- the row simply never rebuilt.
+	var accented := _popup_holds_the_accent()
+	var signature := "%s/%s/%s/%s/%s/%s/%s" % [target, _targeted, _building, minable, live,
+			building_here, accented]
 	if signature == _actions_showing:
 		return
 	_actions_showing = signature
@@ -4431,7 +4442,7 @@ func _refresh_actions() -> void:
 	# pop-up is which.
 	var mine_button := _button("Mine", func() -> void: _act("Mine", AssayActions.mine()),
 			"hand-mine the deposit under you. Keeps swinging until you Stop.")
-	if minable and live and not _popup_holds_the_accent():
+	if minable and live and not accented:
 		mine_button.theme_type_variation = &"Primary"
 	here.add_child(mine_button)
 	here.add_child(_button("Stop", func() -> void: _act("Stop", AssayActions.stop()),
