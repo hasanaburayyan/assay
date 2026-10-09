@@ -777,7 +777,7 @@ pub fn event_line(
         // CONDITION"*. This is the moment — the edge into the stall, said once —
         // so it keeps a sentence's order. Only the noun and the id change.
         Event::SmelterStalled { building, why } => {
-            format!("{} stopped: {}", site(building), stall_reason(*why))
+            format!("{} stopped: {}", site(building), stall_reason(world, *why))
         }
         Event::MoveStarted { player, from, to } => format!(
             "{} started walking from ({}, {}) to ({}, {})",
@@ -2407,13 +2407,30 @@ pub fn not_a_part_phrase(what: &str) -> String {
 /// event log are two surfaces and this is one sentence, so a player who reads
 /// the log and then hovers the building is told the same thing twice rather
 /// than two things once.
-pub fn stall_reason(why: SmelterStall) -> String {
+/// **IT TAKES THE WORLD BECAUSE ONE REASON NAMES AN ITEM** (ASSA-350). Every
+/// other arm is numbers and fixed words; `OutputHoldsAnother` has to spell the
+/// material sitting in the slot, and the only acceptable spelling is
+/// `World::item_name` — character for character the one the machine menu draws
+/// on that slot's `held` line. A player reads the sentence and then looks at
+/// the slot; two spellings of one item is ASSA-43/52.
+pub fn stall_reason(world: &World, why: SmelterStall) -> String {
     match why {
         SmelterStall::OutputFull => "output full".to_string(),
         SmelterStall::NoFuel => "no fuel".to_string(),
         SmelterStall::FuelWontLight => "fuel won't light from cold".to_string(),
         SmelterStall::FireTooCool { fire, needs } => {
             format!("fire {fire} too cool for ore needing {needs}")
+        }
+        // **THE GAME DIRECTOR'S WORDING, VERBATIM** (ASSA-350): one clause, no
+        // `·` — §305's top-level mark is for a sentence with more than one —
+        // and **no instruction clause**. Not "take it out": `Take` is a button
+        // in that menu and the sim does not tell a player which to press.
+        //
+        // `still` is the word doing the work. It says the bar is left over
+        // rather than newly made, which is what distinguishes this from an
+        // output filling up normally (the `OutputFull` arm above).
+        SmelterStall::OutputHoldsAnother(item) => {
+            format!("output still holds {}", world.item_name(item))
         }
     }
 }
@@ -2423,10 +2440,10 @@ pub fn stall_reason(why: SmelterStall) -> String {
 /// to live here, which left `step` no way to know a smelter had stalled except
 /// by re-deriving it, and a second copy of a decision is how ASSA-43 and
 /// ASSA-52 happened.
-pub fn smelter_state_line(state: SmelterState) -> String {
+pub fn smelter_state_line(world: &World, state: SmelterState) -> String {
     match state {
         SmelterState::Idle => "idle: nothing to refine".to_string(),
-        SmelterState::Stalled(why) => format!("stalled: {}", stall_reason(why)),
+        SmelterState::Stalled(why) => format!("stalled: {}", stall_reason(world, why)),
         SmelterState::Working { at } => format!("working at {at}"),
     }
 }
@@ -2497,7 +2514,7 @@ pub fn work_clause(world: &World, b: &Building) -> Option<String> {
 /// its own.
 pub fn building_state_line(world: &World, b: &Building) -> String {
     match world.building_state(b) {
-        BuildingState::Smelter(s) => smelter_state_line(s),
+        BuildingState::Smelter(s) => smelter_state_line(world, s),
         BuildingState::Machine(m) => machine_state_line(world, m),
     }
 }
@@ -2536,7 +2553,7 @@ pub fn building_status(world: &World, b: &Building) -> String {
         BuildingKind::Machine(m) => return machine_status(world, b, m),
     };
     let walls = world.max_temperature(b);
-    let state = smelter_state_line(world.smelter_state(b));
+    let state = smelter_state_line(world, world.smelter_state(b));
     // THE BATCH BEFORE THE CONDITION, because a stall is read as "what do I do
     // about it" and the progress is what says whether fixing it resumes or
     // restarts (`World::building_work`). Absent, not zero, when no batch is in

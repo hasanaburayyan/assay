@@ -5867,6 +5867,100 @@ mod tests {
         assert_eq!((facts[0].burn_left, facts[0].burn_temperature), (0, 0));
     }
 
+    /// **A SMELTER BLOCKED ON ITS OUTPUT CROSSES AS `stalled`, `stopped`, AND
+    /// COLD** (ASSA-350). The window drew a burning fire on this machine for as
+    /// long as the condition existed, because `lit` is only
+    /// `matches!(state, Working { .. })` and `smelter_state` said `Working`
+    /// forever.
+    ///
+    /// **THIS NEEDS NO BINDING EDIT AND THAT IS THE CLAIM BEING TESTED.** The
+    /// `state` arm is a wildcard on the stall reason
+    /// (`SmelterState::Stalled(_) => "stalled"`), so a new variant arrives as
+    /// the tag a client already reads, `stopped` follows `halted()`, and `lit`
+    /// goes false because nothing is burning. I told the Game Director I would
+    /// read these three rather than assume them; this is the reading, asserted.
+    #[test]
+    fn a_smelter_blocked_on_its_output_crosses_as_stalled_stopped_and_cold() {
+        let (mut sim, me) = with_a_player("nacre");
+        let rock = sim.world().species[0].id;
+        let other = sim.world().species[1].id;
+        let smelter = Item::new(sim::ItemKind::Smelter, rock, sim::Grade::B);
+        sim.world
+            .player_mut(me)
+            .expect("the player exists")
+            .inventory
+            .add(smelter, 1);
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 1, at.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place {
+                item: smelter,
+                pos: spot,
+            },
+        )]);
+        let id = sim.world().building_at(spot).expect("placed").id;
+
+        // Set the slots directly: what is under test is the three fields a
+        // window reads, not the rules that get a smelter here (sim's own
+        // `smelter.rs` pins those). A burning fire, ore of `rock` in the input,
+        // and a bar of refined `other` in the way.
+        {
+            let b = sim.world.building_mut(id).expect("placed");
+            let sim::building::BuildingKind::Smelter(s) = &mut b.kind else {
+                panic!("the fixture places a smelter")
+            };
+            s.input = Some(sim::ItemStack::new(
+                Item::new(sim::ItemKind::Ore, rock, sim::Grade::A),
+                5,
+            ));
+            s.output = Some(sim::ItemStack::new(
+                Item::new(sim::ItemKind::Refined, other, sim::Grade::A),
+                1,
+            ));
+            s.burn_left = 10;
+            s.burn_temperature = 100;
+        }
+
+        let facts = sim.building_facts();
+        assert_eq!(
+            facts[0].state, "stalled",
+            "a new stall reason arrives as the tag a client already reads"
+        );
+        assert!(
+            facts[0].stopped,
+            "a conflict no supply resolves is something to fix, so it joins halt_lines"
+        );
+        assert!(
+            !facts[0].lit,
+            "NOTHING IS BURNING IN IT: the window drew a fire on this machine \
+             for as long as smelter_state said Working"
+        );
+        assert_eq!(
+            facts[0].state_line,
+            sim::debug::building_state_line(sim.world(), sim.world().building(id).unwrap()),
+            "the sentence is the sim's one wording, not a second copy"
+        );
+        assert!(
+            facts[0].state_line.contains("output still holds"),
+            "and it names the condition the player has to clear: {}",
+            facts[0].state_line
+        );
+        // THE ITEM IS SPELLED AS THE SLOT SPELLS IT. A player reads the
+        // sentence and then looks at the slot; two spellings of one item is
+        // ASSA-43/52, which is why the sentence calls `item_name`.
+        let held = facts[0].slots[2]
+            .held
+            .as_ref()
+            .expect("the output slot holds the bar this test put there");
+        assert!(
+            facts[0].state_line.contains(&held.name),
+            "the stall names {:?} and the slot row says {:?}",
+            facts[0].state_line,
+            held.name
+        );
+    }
+
     /// The batch crosses as the pair the sim decided, and keeps crossing while
     /// the smelter is STOPPED — the reading a player needs to know that feeding
     /// it resumes rather than restarts.

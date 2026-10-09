@@ -292,7 +292,7 @@ fn a_cold_smelter_is_still_reported_long_after_its_event_has_scrolled_away() {
         reason_in(&lines[0]),
         format!(
             "stalled: {}",
-            sim::debug::stall_reason(SmelterStall::FuelWontLight)
+            sim::debug::stall_reason(&world, SmelterStall::FuelWontLight)
         ),
         "the reason is stall_reason's own words, never a second wording"
     );
