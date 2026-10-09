@@ -869,34 +869,132 @@ static func map_key_rect(key: Vector2) -> Rect2:
 	return Rect2(Vector2(world.position.x, world.end.y - key.y), key)
 
 
-## **WHERE A MACHINE'S MENU IS ALLOWED TO BE: the half of the world the machine is NOT in, inset by
-## one pad** (ASSA-316, Maren's ruling 1).
+## **HOW MUCH CLEAR AIR AN ANCHORED MENU KEEPS OFF THE MACHINE IT IS ABOUT** (ASSA-334).
 ##
-## **THE HALVES ARE THE WHOLE MECHANISM AND THAT IS WHY THE VERTICAL NEVER MOVES.** Her words: *"the
-## menu opens in the half of the world rect the machine is not in ... horizontal halves alone
-## guarantee the machine is never covered, so the vertical never has to move. One boolean, one
-## assertion, two places a player can learn."* So this returns a rect in one of exactly two places,
-## top-aligned, and the menu is never anchored to the machine -- the 2 px INK ring on the acted-on
-## tile (ASSA-276 move 4) is the tether, and anchoring would buy a link we already own at the price of
-## a learnable position.
+## **PROXIMITY IS THE WHOLE TETHER NOW, SO THE GAP IS THE ONE NUMBER THAT CARRIES IT.** It has to be
+## small enough that the panel reads as belonging to the footprint beside it and large enough that a
+## panel edge never touches the sprite -- and a sprite MAY overhang its tile (`sim-game/CLAUDE.md`:
+## *"a sprite may overhang its tile"*), so zero would put a machine's shoulder under a panel border.
 ##
-## **IT IS THE ROOM, NOT THE MENU.** The menu's own width is DERIVED from its widest row by the engine
-## (`main.gd::_place_machine_menu`, the door card's rule in ASSA-292: no literal width anywhere), and
-## this rect is the CAP that derivation may not exceed -- half the world less two pads, and the
-## world's height less two pads. A region of this size with `clip_contents` is what makes "it never
-## covers the machine" true of the pixels rather than of the arithmetic.
+## **IT IS NOT `MARGIN` AND IT IS NOT `BUILD_SCREEN_CLEARANCE`, THOUGH IT EQUALS THE SECOND.**
+## `MARGIN` is 24, the air the WINDOW keeps round the world, and at that size the menu reads as parked
+## near the machine rather than attached to it. 12 is the same clear air the build screen keeps off the
+## control band it may not cover, and it is declared separately because those are two rulings that
+## agree today: one constant would make them one decision, and the next person to retune the band
+## would move a machine menu.
+const MENU_ANCHOR_GAP := 12.0
+
+## **THE MACHINE MENU'S WIDTH FLOOR AND CAP, BOTH MAREN'S AND BOTH MEASURED** (ASSA-334 §6).
 ##
-## `middle` IS THE MACHINE'S CENTRE IN SCREEN PIXELS (`main.gd::point_of_tile`), not a tile: the two
-## views draw a tile at different scales and the comparison has to be made in the space the halves are
-## measured in. **THE BOUNDARY IS DECIDED RATHER THAN LEFT TO A FLOAT** (her "deterministic on the
-## exact centre"): a machine standing exactly on the world's centre line counts as being in the RIGHT
-## half -- Maren's test is `machine.centre.x < world.centre.x` and that is false there -- so the menu
-## goes LEFT, and the same machine never flickers between two answers.
-static func machine_menu_room(world: Rect2, middle: float) -> Rect2:
-	var half := world.size.x * 0.5
-	var at := world.position.x if middle >= world.position.x + half else world.position.x + half
-	return Rect2(Vector2(at, world.position.y) + MARGIN,
-			Vector2(half, world.size.y) - MARGIN * 2.0)
+## **THE CAP IS HERS FROM ASSA-316 RULING 1** (408, half the world less two pads, which is what the
+## two-halves room was). **THE FLOOR IS THE ONE SHE RETRACTED AND REMEASURED.** Her first floor was
+## *"the width at which the longest STATE SENTENCE the sim can produce takes at most two lines"*; she
+## measured it at **847 px**, which fits nowhere in a 912 px world, and the reason it was impossible is
+## that the menu was drawing `building_status`'s whole paragraph. Drawn as ASSA-321's DATA the widest
+## thing the menu is ever handed is one slot-named put button -- **343 px** at `BODY` 13 -- so that is
+## the floor: §11.41, the longest thing a player is HANDED, not the longest sentence the sim can write.
+##
+## **IT IS THE CONTENT'S FLOOR AND NOT THE BOX'S**, which is why `main.gd::_place_machine_menu` adds
+## the panel's own padding out of the theme instead of this number carrying it. A floor with the
+## padding baked in would be wrong the day the panel's stylebox changes, and nothing would say so.
+const MENU_FLOOR_PX := 343.0
+
+## **THE CAP IS THE RATCHET, AND THAT IS MAREN'S ONE CONDITION FOR RAISING IT** (ASSA-334 box 8).
+##
+## It was 408 -- her ASSA-316 ruling 1, half the world less two pads. The worst case then measured
+## **452**, so the widest control the menu can be handed was being CLIPPED by the cap meant to protect
+## it. She ruled the cap up: *"It was never a taste number and you measured the thing it was made of
+## ... The cap's reason survives at the new number, so the number moves."*
+##
+## **WRITTEN AS THE CONSTANT AND NOT AS `452.0`, WHICH IS THE WHOLE CONDITION SHE ATTACHED:** *"the
+## sweep must read `MENU_WORST_CONTENT_PX`, not a literal 452. If the ratchet and the clearance proof
+## can drift apart, the ratchet records a number nothing checks."* `test_hud.gd`'s anchoring sweep
+## sweeps at `MENU_CAP_PX`, so defining the cap AS the ratchet is what wires the two together: the day
+## the worst case grows, the sweep proves clearance at the NEW width or it reddens. Two literals that
+## happened to agree would have let the proof go stale in silence.
+const MENU_CAP_PX := MENU_WORST_CONTENT_PX
+
+## **WHAT THE WORST CASE ACTUALLY MEASURES -- AND SINCE MAREN RULED BOX 8, IT IS ALSO THE CAP**
+## (ASSA-334). For one day this sat 44 px ABOVE the cap, which meant the widest control the menu can
+## be handed was clipped by the number meant to protect it. She chose the first of the three ways out
+## below; `MENU_CAP_PX` is now defined as this constant, so the two cannot drift.
+##
+## **A MEASUREMENT ON RECORD, NOT A SECOND CAP.** Maren's §6 floor is 343 px for the widest string the
+## sim can hand this menu. Measured here from the sim's own bounds -- a four-digit stack, a
+## `SPECIES_NAME_MAX` species, and the longest kind any NON-HAND recipe eats (which is what
+## `insert_slots` will offer a put for) -- that string is **412 px**, and in a real `Button` inside a
+## real `PanelContainer` the box needs **452 px**. The 40 px on top is the two styleboxes; the 69 px
+## between 343 and 412 is a longer worst case than hers, not a disagreement about a measurement.
+##
+## **THE FLOOR COULD NOT PAY FOR THE CAP AT THE WORST CASE, AND THE CAP WAS HERS TO MOVE.** Today's
+## real menu is 254 px; the overflow needs a 20-char species AND a four-digit stack at once. Three
+## ways out were put to her and **she took the first: raise the cap to 452**, every anchor position
+## still holding it -- the sweep in `test_hud.gd` passes at 452 in a 912 px world. Not the ellipsis,
+## in her words, because *"the put button is the one control §11.41 sizes, and a clipped label is the
+## one thing a player is handed and cannot read"*; not a shorter label, because that undoes ruling 5.
+##
+## **IT IS STILL A RATCHET, AND BEING THE CAP TOO IS WHAT GIVES IT TEETH.** `test_buttons.gd` asserts
+## the worst case is no WIDER than this, so the day a label grows the suite reddens rather than the menu
+## quietly overflowing -- ASSA-287's treatment of a number we do not like but must not lose. Raising it
+## to absorb such a growth now also widens the menu and re-runs the clearance sweep at the new width,
+## which is the coupling Maren asked for: the number cannot be bumped without re-proving the geometry.
+const MENU_WORST_CONTENT_PX := 452.0
+
+## **THE COUNTS COLUMN IN A MENU'S RATIO ROW, FIXED FOR `AssayReadingRow.VALUE_W`'S REASON** (ASSA-334,
+## ASSA-288): a column that sized itself to its digits would put every band at its own x, and *"a
+## position encoding whose axes are not aligned cannot be compared down the column, which is the only
+## thing it is for"* (Maren, ASSA-288 rule 2). Here the rows are a slot's fill and a batch's progress,
+## and comparing them down the column is how you see which slot is the empty one.
+##
+## **HELD BY A MEASUREMENT AND NOT BY MY READING OF A GLYPH TABLE**, which is the lesson VALUE_W cost:
+## 48 was one pixel short of `100-100` and `test_track.gd` caught it. `test_hud.gd` measures the widest
+## counts line the sim can hand this row at the theme's `BODY` size and goes red rather than clipping a
+## number on screen -- and a clipped number, as that constant's docstring says, is worse than no column.
+const MENU_COUNTS_W := 80.0
+
+
+## **WHERE AN ANCHORED MACHINE MENU GOES: beside its machine's footprint, never over it** (ASSA-334,
+## Maren's reversal of her own ASSA-316 ruling 1).
+##
+## **WHY THE TWO HALVES WENT.** Her ruling 1 put the menu in the half of the world its machine is not
+## in, and its argument was that anchoring *"buys a link we already own -- the 2 px INK ring on the
+## acted-on tile"*. **That ring already had a job.** Her ruling 8 then routed it to the MENU's machine,
+## so `_target` lost it; the shot showed a menu pinned top-left 314 px from the smelter it was about,
+## with nothing in the frame saying whose menu it was. Anchoring makes POSITION the tie and gives the
+## ring back (`main.gd:_refresh_world`), which is one mark for one subject rather than two subjects
+## sharing one.
+##
+## **THE NO-OVERLAP INVARIANT HOLDS BY CONSTRUCTION, NOT BY CARE.** The width is cut to the room on
+## the side it is placed, so there is no argument in which this returns a rect over its own subject --
+## the degenerate case comes out NARROW, which is visible, rather than COVERING, which is the one
+## thing the ruling exists to prevent. `test_hud.gd` sweeps every position in the world and asserts
+## both the non-overlap and that the floor is reachable everywhere, so "narrow" cannot arrive quietly.
+##
+## **RIGHT FIRST, AND THE TIE-BREAK IS THE SIDE WITH MORE ROOM.** A machine in open ground always gets
+## the same side, so the position is learnable in Maren's sense; the flip happens only when the right
+## cannot hold the menu. **THE VERTICAL IS A CLAMP AND NOT A FLIP**, which is the one place this reads
+## her ruling rather than quoting it: with the side chosen for clearance the vertical has no subject to
+## avoid, so "above or below" has nothing to decide, and a clamp is the only rule that cannot leave the
+## box off screen when the menu is taller than the air above the machine. Top-aligned with the
+## footprint is the preferred answer -- the menu starts where its machine starts.
+##
+## `subject` IS THE FOOTPRINT IN SCREEN PIXELS (`main.gd::_footprint_rect`), not tiles: the two views
+## draw a tile at different scales, and a 2x2 smelter is 64 px of close-up and ~14 px of whole world.
+## It may lie partly or wholly outside `world` -- the close-up scrolls -- so the result is clamped into
+## the world at both ends, which cannot re-introduce an overlap (a subject off the left edge is left of
+## everything the clamp can reach).
+static func machine_menu_rect(world: Rect2, subject: Rect2, menu: Vector2) -> Rect2:
+	var room_left := maxf(0.0, subject.position.x - MENU_ANCHOR_GAP - world.position.x)
+	var room_right := maxf(0.0, world.end.x - subject.end.x - MENU_ANCHOR_GAP)
+	# THE CAP IS APPLIED BEFORE THE ROOM, so a menu that wants more than Maren's 408 is cut to 408 and
+	# then to whatever the side holds -- never widened by a side that happens to be roomy.
+	var want := minf(menu.x, MENU_CAP_PX)
+	var on_right := want <= room_right or room_right >= room_left
+	var w := minf(want, room_right if on_right else room_left)
+	var h := minf(menu.y, world.size.y)
+	var x := subject.end.x + MENU_ANCHOR_GAP if on_right else subject.position.x - MENU_ANCHOR_GAP - w
+	return Rect2(Vector2(clampf(x, world.position.x, world.end.x - w),
+			clampf(subject.position.y, world.position.y, world.end.y - h)), Vector2(w, h))
 
 
 ## **HOW FAR UP THE WORLD'S OWN CONTROL BAND REACHES, WHEN NOTHING HAS LAID OUT** (ASSA-328).
@@ -1126,6 +1224,44 @@ static func cost_counts_line(need: int, have: int) -> String:
 	return "need %d · have %d" % [need, have]
 
 
+## **THE TWO NUMBERS BESIDE A RATIO'S BAND** (ASSA-334, ASSA-339; Maren's ASSA-316 ruling 5: *"a
+## slot's fill and a burn's progress are RATIOS, so they take ASSA-276 move 3's band grammar"*).
+##
+## **THE BAND ANSWERS "HOW FULL" AND CANNOT ANSWER "HOW MANY", WHICH IS `AssayReadingRow`'S OWN
+## RULING** (ASSA-288: *"they are two questions ... dropping the text to make room for the bar would
+## trade a readable number for a pretty one"*). So a slot row carries both, and this is the text half.
+##
+## **`of` AND NOT A SLASH, WHICH IS MAREN'S ASSA-332 §5.5 RULING APPLIED WHERE IT IS TRUE INSTEAD OF
+## REVERSED.** She removed the slash from a cost pair because *"a slash is a ratio's mark and a ratio
+## needs left <= right"*, and `2/1` of an affordable cost is the normal case. Here left <= right is
+## guaranteed by the sim -- a slot cannot hold more than its cap and a batch cannot be further on than
+## its total -- so this IS a ratio, and it reads with the sim's own word for one: `holding 2 of 60`,
+## `56 of 100 work` (`debug::building_status`, `debug::work_clause`).
+##
+## **IT NAMES NOTHING, WHICH IS WHAT KEEPS IT OUT OF ASSA-136's TERRITORY.** Two numbers and the word
+## between them; the thing they are about is named by the sim, on the label beside it.
+static func amount_counts_line(have: int, total: int) -> String:
+	return "%d of %d" % [have, total]
+
+
+## **WHETHER A BUILDING'S CONDITION IS THE BAD ONE, so the state line can be drawn in `FAILED`**
+## (ASSA-334; Maren's ASSA-316 ruling 5, written into the binding by Marlow: `state_line` is *"the
+## condition on its own line, in `FAILED` when it is a stall"*).
+##
+## **THE CLIENT MAY NOT REACH THIS VERDICT ANY OTHER WAY, WHICH IS THE WHOLE REASON FOR THE
+## FUNCTION.** `state` is one of three words the sim publishes for exactly this -- and the binding's
+## own docstring says the two neighbouring fields deliberately disagree with it: `stopped` is *"the
+## sim's judgement about whether a person is needed"*, and a smelter's `idle` is not a problem while a
+## machine's always is. A menu that painted `not stopped` or `not working` red would re-litigate
+## ASSA-80's ruling in GDScript and turn `idle: nothing to refine` into an alarm.
+##
+## **SO ONLY A STALL IS RED.** `idle` is a machine waiting, which is a sentence and not a failure;
+## `working` is the good case. `test_hud.gd` asserts all three words, because a predicate that was
+## `true` for every condition would paint a working machine's menu red and pass any single assertion.
+static func state_is_failure(state: String) -> bool:
+	return state == "stalled"
+
+
 ## **WHETHER A COST ENTRY IS SHORT, so the WHOLE entry can be drawn in `FAILED`** (ASSA-332; Maren's
 ## §5.5: *"the whole entry in `FAILED` when have < need"*, and `need 1 · have 0` reads as an
 ## instruction).
@@ -1292,9 +1428,20 @@ static func insert_label(count: int, name: String, slot: String) -> String:
 
 
 ## The quiet line under a slot's buttons. **A TOGGLE NAMES WHAT YOU WILL GET**, so it carries its own
-## number and not a fraction: `or 1 · or 18`, never `or half`.
+## number and not a fraction: `put 1 · put 18`, never `put half`.
+##
+## **IT SAID `or 1` UNTIL ASSA-334 AND MAREN RULED THAT IS NOT A SENTENCE** -- the same rule that put
+## the slot inside `insert_label`: *"a button says what IT does"*, and `or` says what it does only to
+## a reader who still has the button above it in mind. A control has to survive being read alone,
+## because a player's attention is one gesture at a time.
+##
+## **IT DOES NOT NAME THE SLOT, AND THAT IS NOT THE SAME GAP.** `insert_label`'s two buttons were
+## identical to each other; these sit under one slot's own button and differ from it only in the
+## count, which is the thing they say. Naming the slot here would make the common row
+## `put all 37 Tonore ore in the Fuel slot / put 1 in the Fuel slot / put 18 in the Fuel slot` --
+## ruling 6's "same answer three times" with the width bill from §6 attached.
 static func insert_some_label(count: int) -> String:
-	return "or %d" % count
+	return "put %d" % count
 
 
 ## **THE WAY OUT OF A SURFACE THAT OPENED OVER THE WORLD** -- the build screen's and the machine

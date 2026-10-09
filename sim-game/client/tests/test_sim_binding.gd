@@ -32,6 +32,10 @@ const REQUIRED_METHODS := [
 	"protocol_version",
 	# The roster size, so the client's species colour table is checked against the sim's own count.
 	"species_per_world",
+	# THE LONGEST NAME A SPECIES CAN CARRY, so the machine menu's width bound is measured against
+	# the sim's own cap. A rename here does not empty a panel: `test_buttons.gd`'s worst case would
+	# fall back to a shorter string, stay green, and stop bounding the row it exists to bound.
+	"species_name_max",
 	# The scripted demo session's two: the pair the world guarantees, and serde's own spelling of an
 	# item, which is what the session's commands are checked against.
 	"starter_pair", "item_json", "item_echo",

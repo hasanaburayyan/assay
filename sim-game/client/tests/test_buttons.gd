@@ -2400,37 +2400,70 @@ func test_either_click_on_a_machine_opens_a_menu_beside_it() -> bool:
 		if not screen._menu_box.visible:
 			ok = _fail("the menu is open at %d and its panel is not visible" % screen._menu_at)
 			break
-		# **THE RING IS THE TETHER** (ruling 8): the menu is not anchored to the machine, so the mark on
-		# the tile is the only thing joining the two.
-		if screen._world.selection != spot:
-			ok = _fail("the menu is open on %s and the selection ring is on %s"
-					% [spot, screen._world.selection])
+		# **THE POSITION IS THE TETHER SINCE ASSA-334** (Maren reversing ruling 1), SO THE RING IS NOT.
+		# Ruling 8 gave the menu's machine the mark ASSA-276 move 4 had put on the acted-on tile; with
+		# the panel beside its machine, the ring goes back to `_target` and tracks it whatever menu is
+		# open. **THIS TEST CANNOT TELL THE TWO RULES APART AND SAYS SO**: the smelter was placed on the
+		# targeted tile, so here the acted-on tile IS the menu's machine and both rules predict the same
+		# mark. `test_the_ring_stays_on_the_acted_on_tile_while_a_menus_machine_is_elsewhere` is the one
+		# that separates them.
+		var want: Variant = screen._target if screen._targeted else null
+		if screen._world.selection != want:
+			ok = _fail("the ring is on %s and the acted-on tile is %s"
+					% [screen._world.selection, want])
 			break
-		# **AND IT IS IN THE HALF THE MACHINE IS NOT IN, ASKED OF THE SCREEN'S OWN GEOMETRY** (ruling 1).
-		var middle: float = screen.point_of_tile(spot).x
-		var room: Rect2 = screen._menu_region.get_rect()
-		if room.position.x <= middle and middle <= room.end.x:
-			ok = _fail("the machine at x=%.0f stands inside its own menu's region %s" % [middle, room])
+		# **AND THE PANEL IS BESIDE ITS MACHINE, ASKED OF THE SCREEN'S OWN GEOMETRY** -- the box's rect
+		# and not the region's, which is the whole world now and exists to clip.
+		var footprint: Rect2 = screen._footprint_rect()
+		# THE REGION'S OWN POSITION PLUS THE BOX'S, AND NOT `global_position`: this screen is not in a
+		# window, so the only positions that mean anything are the ones `_place_machine_menu` WROTE.
+		var box := Rect2(screen._menu_region.position + screen._menu_box.position,
+				screen._menu_box.size)
+		if box.intersects(footprint):
+			ok = _fail("the menu %s is drawn over its own machine's footprint %s" % [box, footprint])
+			break
+		if box.size.x <= 0.0 or box.size.y <= 0.0:
+			ok = _fail("the menu measures %s, so the check above asserts nothing" % box.size)
+			break
+		# IT TOUCHES ITS MACHINE, which is the half "never over it" does not say: a panel parked in the
+		# far corner also never covers anything. One gap either side is the most it may be away.
+		var gap: float = minf(absf(box.position.x - footprint.end.x),
+				absf(footprint.position.x - box.end.x))
+		if gap > AssayHud.MENU_ANCHOR_GAP + 0.01:
+			ok = _fail("the menu %s stands %.0f px from its machine %s, not beside it"
+					% [box, gap, footprint])
 			break
 		# NEVER OVER THE HUD COLUMN (ruling 2): a menu over the log hides the only answer the sim's
 		# refusals get.
-		if not AssayHud.world_rect().encloses(room):
-			ok = _fail("the menu's region %s is not inside the world %s"
-					% [room, AssayHud.world_rect()])
+		if not AssayHud.world_rect().encloses(box):
+			ok = _fail("the menu's box %s is not inside the world %s"
+					% [box, AssayHud.world_rect()])
 			break
 	screen.queue_free()
 	return ok
 
 
-## **THE MENU'S CONTENT STAYS INSIDE THE ROOM IT IS GIVEN** (ASSA-316). Maren's ruling 1 says the menu
-## scrolls inside itself past the room rather than growing; nothing reaches that today, so the bound is
-## this test and the `ScrollContainer` is the day it goes red.
+## **NOTHING IN THE MENU WRAPS AND NOTHING OVERFLOWS IT, ON THE WORST STRINGS THE SIM CAN HAND IT**
+## (ASSA-334 §6; Maren's floor and cap). Her rule is that past its room it SCROLLS; nothing reaches
+## that today, so the bound is this test and the `ScrollContainer` is the day it goes red.
 ##
 ## **IT ASSERTS THE SIZE IS NOT ZERO FIRST, WHICH IS THE WHOLE POINT.** A headless suite lays nothing
 ## out, so `size <= room` would be the greenest and most worthless check in the file -- the exact shape
 ## of the fold probe I had to withdraw on ASSA-247. The minimum size is the engine's answer about
 ## content and is available with no window, so that is what is measured.
-func test_a_machine_menus_content_fits_the_room_it_is_given() -> bool:
+##
+## **AND THE WORST CASE IS CONSTRUCTED, NOT PLAYED.** A seed's menu is narrow -- short species names, a
+## two-digit cap -- so a measurement of the real one passes and says nothing. Every string the sim can
+## hand this menu is re-texted here at its bound: a species name at the sim's own cap, the longest
+## item kind, and the longest stall sentence the sim writes. **If that fails, the floor is wrong and
+## the number goes to Maren** -- her §6 budgeted 343 px of content for exactly this row.
+##
+## **THE CAP IS ASKED OF THE SIM, NOT TYPED** (`AssaySim.species_name_max`, added for this test on
+## Marlow's call). It read `20` of its own until then, and the failure that shape makes is the one he
+## had just shipped and withdrawn: raise `SPECIES_NAME_MAX` and this "worst case" gets SHORTER than
+## the real one, the check stays green, and the row it exists to bound overflows in a real window
+## with nothing going red. A worst case that silently stops being the worst case is worse than none.
+func test_nothing_in_a_machine_menu_wraps_at_the_worst_strings_the_sim_can_write() -> bool:
 	var screen := _joined()
 	var ok := true
 	var id := _a_placed_smelter(screen)
@@ -2439,12 +2472,83 @@ func test_a_machine_menus_content_fits_the_room_it_is_given() -> bool:
 		return false
 	_click(screen, screen._target_tile(), MOUSE_BUTTON_LEFT)
 	var want: Vector2 = screen._menu_box.get_combined_minimum_size()
-	var room: Rect2 = screen._menu_region.get_rect()
 	if want.x <= 0.0 or want.y <= 0.0:
 		ok = _fail("the menu's content measures %s, so this check asserts nothing" % want)
-	elif want.x > room.size.x or want.y > room.size.y:
-		ok = _fail("the menu's content is %s in a room of %s: it needs the scroll box"
-				% [want, room.size])
+	# **THE REAL MENU FIRST, THEN THE WORST ONE**, so a failure says which of the two it was.
+	elif want.x > AssayHud.MENU_CAP_PX:
+		ok = _fail("the menu a real smelter draws is %.0f px wide and the cap is %.0f"
+				% [want.x, AssayHud.MENU_CAP_PX])
+	if ok:
+		# **A FRESH PANEL AND NOT THE LIVE ONE RE-TEXTED, BECAUSE THE LIVE ONE'S ANSWER IS CACHED.**
+		# The first version of this test set the real controls' text to the worst strings and asked the
+		# box again: `Control.update_minimum_size` queues its recalculation for a frame, and this harness
+		# runs inside `_initialize` where no frame ever comes, so it returned the number it had computed
+		# BEFORE the stretch -- real 254, "worst case" 254, a check that could not fail. A fresh tree is
+		# measured on its first ask, which is how `test_track.gd` compares two rows.
+		# **THE KIND COMES OUT OF THE SIM'S RECIPE TABLE, NOT OFF THE TOP OF MY HEAD.** The first
+		# version of this measurement used `smelter`, which is the longest ITEM kind in the game and
+		# cannot reach a slot: `insert_slots` offers a put only for a kind some NON-HAND recipe eats, so
+		# the widest put button is bounded by the longest of THOSE. It made the number I was about to
+		# hand Maren 28 px too dear, which is the mistake I made once before in her disfavour -- an
+		# inflated number is as bad as no number.
+		var kind := ""
+		for entry in AssaySimHost.recipes():
+			var recipe: Dictionary = entry
+			if not bool(recipe.get("hand", false)) \
+					and String(recipe.get("input", "")).length() > kind.length():
+				kind = String(recipe.get("input", ""))
+		if kind == "":
+			screen.queue_free()
+			return _fail("no non-hand recipe in the sim's table, so nothing can be put in a slot")
+		# THE SIM'S OWN CAP, ASKED FOR RATHER THAN COPIED (`sim::tuning::SPECIES_NAME_MAX`). `W` is the
+		# worst letter and a real one: `mineral::validate_name` allows only ASCII letters, digits and
+		# hyphens, so no legal name is wider than this many Ws.
+		var cap: Variant = ClassDB.class_call_static("AssaySim", "species_name_max")
+		if typeof(cap) != TYPE_INT or int(cap) <= 0:
+			screen.queue_free()
+			return _fail("species_name_max answered %s, so the worst case has no bound" % [cap])
+		var worst := "%s %s (A)" % ["W".repeat(int(cap)), kind]
+		var probe := PanelContainer.new()
+		var inside := VBoxContainer.new()
+		probe.add_child(inside)
+		# EVERY KIND OF LINE THE MENU HAS, AT ITS BOUND: the sim's longest stall sentence, a slot's own
+		# ratio row, the sim's longest item name on the line under it, and the widest put button a
+		# `SPECIES_NAME_MAX` species and a four-digit stack can produce.
+		var state := Label.new()
+		state.text = "stalled: fire 9999 too cool for ore needing 9999"
+		inside.add_child(state)
+		var row: HBoxContainer = screen._amount_row()
+		(row.get_node(screen.ROW_WORDS) as Label).text = "output"
+		(row.get_node(screen.ROW_COUNTS) as Label).text = AssayHud.amount_counts_line(9999, 9999)
+		inside.add_child(row)
+		var what := Label.new()
+		what.text = worst
+		inside.add_child(what)
+		var put := Button.new()
+		put.text = AssayHud.insert_label(9999, worst, AssayActions.SLOT_FUEL)
+		inside.add_child(put)
+		var stretched: Vector2 = probe.get_combined_minimum_size()
+		# THE DECOMPOSITION, SO THE NUMBER HANDED TO MAREN IS NOT JUST A TOTAL: her 343 is the string
+		# and the rest is furniture she never measured because nothing asked.
+		var font := ThemeDB.fallback_font
+		var theme: Theme = load("res://theme/assay.tres")
+		var words := font.get_string_size(put.text, HORIZONTAL_ALIGNMENT_LEFT, -1.0,
+				theme.get_font_size(&"font_size", &"Button") if theme != null else 13).x \
+				if theme != null else 0.0
+		print(("menu width: real %.0f px, worst case %.0f px (widest string %.0f + %.0f of button and "
+				+ "panel padding), floor %.0f, cap %.0f")
+				% [want.x, stretched.x, words, stretched.x - words, AssayHud.MENU_FLOOR_PX,
+				AssayHud.MENU_CAP_PX])
+		probe.free()
+		# **THE RATCHET, NOT THE CAP, AND THE DIFFERENCE IS WHOSE DECISION IT IS.** The worst case
+		# measures 455 px against Maren's 408 -- her floor is a STRING width and this is the control's,
+		# with 112 px of button and panel padding between them. The cap is hers to move, so this asserts
+		# the number does not get WORSE (`MENU_WORST_CONTENT_PX`, where the three ways out are written
+		# down) and the gap itself is reported on the item rather than silently chosen here.
+		if stretched.x > AssayHud.MENU_WORST_CONTENT_PX:
+			ok = _fail(("the worst case now wants %.0f px and the number on record is %.0f: a label "
+					+ "grew, and the overflow past Maren's %.0f cap grew with it")
+					% [stretched.x, AssayHud.MENU_WORST_CONTENT_PX, AssayHud.MENU_CAP_PX])
 	screen.queue_free()
 	return ok
 
@@ -2586,13 +2690,15 @@ func test_a_slot_button_fuels_the_menus_machine_with_the_count_at_the_press() ->
 			ok = _fail("a slot button asked for %s" % [_asked])
 		elif _asked[0] != want:
 			ok = _fail("`%s` asked for %s, not %s" % [label, _asked[0], want])
-	# THE FRACTION SENDS ITS OWN NUMBER. `or 1` is the one count every stack of two or more offers.
+	# THE FRACTION SENDS ITS OWN NUMBER. `put 1` is the one count every stack of two or more offers.
 	#
 	# **THE FRACTIONS STILL DO NOT NAME THEIR SLOT, SO THIS HALF KEEPS THE HEDGE ON PURPOSE** -- the two
-	# `or 1` buttons under the two slot rows read alike, and the one found here is whichever the sim's
-	# slot order put first. That is the open half of Maren's ASSA-331 label ruling: a fraction is a
-	# continuation of the button above it, and naming the slot in each would make it the longest row in
-	# the menu. Filed for her; if she rules the slot in, this hedge is what should tighten.
+	# `put 1` buttons under the two slot rows read alike, and the one found here is whichever the sim's
+	# slot order put first. Maren's ASSA-334 §5 renamed them (`or 1` is not a sentence) and did NOT ask
+	# for the slot in them, while her acceptance box asks that no two buttons in the menu read alike;
+	# those two cannot both hold here, and the reason I kept her sentence over her box is her own ruling
+	# 6: with the slot in the row's own button, repeating it twice more under it is the same answer three
+	# times. It is cheap to reverse -- one argument to `insert_some_label` -- and it is hers.
 	if ok and AssayHud.insert_fractions(held).size() > 0:
 		var some := _find(screen._menu_box, AssayHud.insert_some_label(1))
 		if some == null:
@@ -2605,10 +2711,200 @@ func test_a_slot_button_fuels_the_menus_machine_with_the_count_at_the_press() ->
 			var one_in: Variant = AssayActions.insert(id, AssayActions.SLOT_INPUT,
 					AssayActions.item_of_stack(ore), 1)
 			if _asked.size() != 1:
-				ok = _fail("`or 1` asked for %s" % [_asked])
+				ok = _fail("`put 1` asked for %s" % [_asked])
 			elif _asked[0] != one and _asked[0] != one_in:
-				ok = _fail("`or 1` asked for %s, not an Insert of 1 into building %d"
+				ok = _fail("`put 1` asked for %s, not an Insert of 1 into building %d"
 						% [_asked[0], id])
+	screen.queue_free()
+	return ok
+
+
+## **THE RING STAYS ON THE TILE THE VERBS ACT ON, WITH A MENU OPEN ON A MACHINE SOMEWHERE ELSE**
+## (ASSA-334; Maren reversing her ASSA-316 ruling 8, which had routed it to the menu's machine).
+##
+## **THIS IS THE FIXTURE THAT SEPARATES THE TWO RULES, AND NO OTHER TEST IN THE FILE HAS IT.** Every
+## other menu test places its smelter on the targeted tile, so the acted-on tile and the menu's machine
+## are the same tile and both rules predict the same mark -- which is how ruling 8 shipped and was
+## measured green. Here the cursor is aimed at my own feet and the menu is opened on a machine one tile
+## away: the state Maren's shot caught, ring on (59, 61), the menu's smelter, while the column read
+## `acting on (57, 59) · on a deposit`.
+##
+## THE ORDER OF THE TWO GESTURES IS FORCED by her own ruling 7 amendment: a right-click that dismisses
+## a menu still aims, so right-clicking AFTER opening would close the menu. Aim first, then open.
+func test_the_ring_stays_on_the_acted_on_tile_while_a_menus_machine_is_elsewhere() -> bool:
+	var screen := _joined()
+	var ok := true
+	var id := _a_placed_smelter(screen)
+	if id < 0:
+		screen.queue_free()
+		return false
+	var machine: Vector2i = screen._target_tile()
+	var feet: Vector2i = screen._my_tile()
+	if machine == feet:
+		screen.queue_free()
+		return _fail("the smelter stands on my own feet, so this fixture cannot tell the two apart")
+	_click(screen, feet, MOUSE_BUTTON_RIGHT)
+	_click(screen, machine, MOUSE_BUTTON_LEFT)
+	if screen._menu_at != id:
+		ok = _fail("the menu did not open on the machine at %s" % machine)
+	elif screen._world.selection == machine:
+		ok = _fail(("the ring is on %s, the menu's machine, and the verbs act on %s: one mark, two "
+				+ "subjects") % [machine, feet])
+	elif screen._world.selection != feet:
+		ok = _fail("the verbs act on %s and the ring is on %s" % [feet, screen._world.selection])
+	screen.queue_free()
+	return ok
+
+
+## **THE STATE LINE COMES BACK OUT OF `FAILED` WHEN THE MACHINE STOPS BEING STALLED** (ASSA-334).
+##
+## **THE BUG THIS CLOSES REACHED A SCREENSHOT AND NO NUMBER SAW IT.** The refresh read the ordinary
+## ink back off the Label with `get_theme_color`, which answers out of that node's OWN overrides
+## first -- so after one stall the colour it restored was the `FAILED` it had just written, and the
+## line stayed red for the rest of the session. `nacre-assa334-anchor/14-machine-menu.png` had
+## `idle: nothing to refine` in (242,102,89) on a smelter the sim called idle.
+##
+## **IT FORCES THE RED RATHER THAN WAITING FOR A STALL**, which is the honest way to test a
+## transition whose other half needs fuel, a fire and twenty ticks: the defect is in the RESTORE, so
+## the fixture is "red is on the node, now refresh an idle machine".
+func test_an_idle_machines_state_line_is_not_left_in_the_failure_ink() -> bool:
+	var screen := _joined()
+	var ok := true
+	if _a_placed_smelter(screen) < 0:
+		screen.queue_free()
+		return false
+	_click(screen, screen._target_tile(), MOUSE_BUTTON_LEFT)
+	var failed := AssayHud.status_color(AssayHud.Say.FAILED)
+	var facts: Dictionary = screen._sim.tile_at(screen._menu_tile).get("building", {})
+	if AssayHud.state_is_failure(String(facts.get("state", ""))):
+		screen.queue_free()
+		return _fail("this smelter IS stalled (%s), so the restore is not what is being tested"
+				% facts.get("state"))
+	screen._menu_state.add_theme_color_override(&"font_color", failed)
+	screen._refresh_machine_menu()
+	var got: Color = screen._menu_state.get_theme_color(&"font_color")
+	if got == failed:
+		ok = _fail("the machine is `%s` and its line is still drawn in FAILED %s"
+				% [facts.get("state"), got])
+	# AND THE CONTROL: a stall must still be able to turn it red, or the check above passes on a menu
+	# that never uses the failure ink at all.
+	screen._menu_state.add_theme_color_override(&"font_color",
+			AssayHud.status_color(AssayHud.Say.FAILED) \
+			if AssayHud.state_is_failure("stalled") else screen._menu_state_ink)
+	if ok and screen._menu_state.get_theme_color(&"font_color") != failed:
+		ok = _fail("a stalled machine's line does not reach the failure ink either")
+	screen.queue_free()
+	return ok
+
+
+## **EVERY SLOT THE MACHINE HAS DRAWS ITS FILL AS A BAND, AND A MACHINE WITH NO BATCH DRAWS NONE**
+## (ASSA-339; Maren's ASSA-316 ruling 5, and Marlow's two conditions on it).
+##
+## **THE SLOT LIST IS THE SIM'S AND THE TEST WALKS IT**, so a menu that drew two of the three slots a
+## smelter has would fail rather than look complete. `output` takes no insert and still gets a row: it
+## is the slot that answers *is there anything for Take*, and under ASSA-316 it had no line at all.
+##
+## **THE NIL CASE IS THE ONE MARLOW NAMED AND IT IS ASSERTED AS NIL, NOT AS ZERO** -- *"`0 of 100` on a
+## drill standing on bare ground is a number that reads as a promise"*. A fresh smelter has nothing in
+## front of it, so `work` is nil and the batch row must be ABSENT; the control is that the slot bands,
+## on the same surface in the same grammar, are present in the same frame. Without that control a menu
+## that drew no bands at all would pass the half this test exists for.
+func test_every_slot_draws_a_band_and_a_machine_with_no_batch_draws_none() -> bool:
+	var screen := _joined()
+	var ok := true
+	if _a_placed_smelter(screen) < 0:
+		screen.queue_free()
+		return false
+	_click(screen, screen._target_tile(), MOUSE_BUTTON_LEFT)
+	var facts: Dictionary = screen._sim.tile_at(screen._menu_tile).get("building", {})
+	var slots: Array = facts.get("slots", [])
+	if slots.is_empty():
+		screen.queue_free()
+		return _fail("the sim gives this smelter no slots, so this test asserts nothing")
+	for entry in slots:
+		var slot: Dictionary = entry
+		var role := String(slot.get("role", "?"))
+		var row: Variant = screen._menu_slot_rows.get(role)
+		if row == null:
+			ok = _fail("the `%s` slot has no row in the menu: %s"
+					% [role, screen._menu_slot_rows.keys()])
+			break
+		var band := (row as Node).get_node(screen.ROW_BAND) as AssayTrack
+		var counts := ((row as Node).get_node(screen.ROW_COUNTS) as Label).text
+		if band.grammar() != AssayTrack.Grammar.AMOUNT:
+			ok = _fail("the `%s` slot's band is grammar %d, not an amount" % [role, band.grammar()])
+			break
+		# THE NUMBERS ARE THE SIM'S PAIR AND NOT A RATIO THIS CLIENT WORKED OUT.
+		var want := AssayHud.amount_counts_line(int(slot.get("count", 0)), int(slot.get("cap", 0)))
+		if counts != want:
+			ok = _fail("the `%s` slot reads `%s` and the sim says `%s`" % [role, counts, want])
+			break
+	if ok and facts.get("work") != null:
+		ok = _fail("a freshly placed smelter reports a batch (%s), so the nil case is untested here"
+				% [facts.get("work")])
+	if ok and screen._menu_work.visible:
+		ok = _fail("there is no batch and the menu draws a row for it: `%s`"
+				% (screen._menu_work.get_node(screen.ROW_COUNTS) as Label).text)
+	if ok and (screen._menu_work.get_node(screen.ROW_BAND) as AssayTrack).grammar() \
+			!= AssayTrack.Grammar.NOTHING:
+		ok = _fail("there is no batch and its band has a grammar, so something is drawn for it")
+	# **AND THE BURN STAYS TEXT, WHICH IS MARLOW'S RULING AND IS HERE SO NOBODY ADDS IT AS AN
+	# OVERSIGHT.** A fire's denominator is `reactivity * BURN_TICKS_PER_REACTIVITY`, a sim rule, and a
+	# host multiplying it out would be writing that rule in GDScript. So `burn_left` gets no band: the
+	# only bands in this menu are the slots' fills and the batch, one per slot plus at most one.
+	if ok:
+		var bands := 0
+		for node in _tracks_of(screen._menu_box):
+			bands += 1 if (node as AssayTrack).grammar() != AssayTrack.Grammar.NOTHING else 0
+		if bands != slots.size():
+			ok = _fail(("%d bands are drawn for %d slots and no batch: a burn band is Marlow's to add "
+					+ "in the sim, not this file's to divide") % [bands, slots.size()])
+	screen.queue_free()
+	return ok
+
+
+## EVERY `AssayTrack` UNDER A NODE, so a band count is a fact about the tree rather than about the
+## names this test remembers.
+func _tracks_of(node: Node) -> Array:
+	var out := []
+	for child in node.get_children():
+		if child is AssayTrack:
+			out.append(child)
+		out.append_array(_tracks_of(child))
+	return out
+
+
+## **NO TWO `put all` BUTTONS IN THE MENU READ ALIKE** (ASSA-334 §5; Maren: *"two buttons both reading
+## `put all 2 Tonore refined (A)`, told apart only by the heading above them, are one label twice"*).
+##
+## **IT IS THE `put all` BUTTONS AND NOT EVERY BUTTON, WHICH IS A READING OF HER RULING RATHER THAN HER
+## BOX.** Her acceptance asks that no two buttons in the menu carry identical labels; the fraction
+## toggles under one slot's button are `put 1` and `put 18`, and they repeat under the next slot. Her
+## own §5 sentence renamed them and did not ask for the slot in them -- and naming the slot in a
+## fraction would put it three times in three consecutive lines, which is her ruling 6. Said here
+## because this test is where somebody would come looking for it.
+func test_no_two_put_all_buttons_in_a_machine_menu_read_alike() -> bool:
+	var screen := _joined()
+	var ok := true
+	if _a_placed_smelter(screen) < 0:
+		screen.queue_free()
+		return false
+	_click(screen, screen._target_tile(), MOUSE_BUTTON_LEFT)
+	var seen := {}
+	var puts := 0
+	for label in _labels_of(screen._menu_box):
+		if not label.begins_with("put all"):
+			continue
+		puts += 1
+		if seen.has(label):
+			ok = _fail("two buttons in the menu read `%s`" % label)
+			break
+		seen[label] = true
+	# **A STACK THE SIM TAKES AS EITHER FUEL OR INPUT IS WHAT THE RULING IS ABOUT**, so one button is
+	# not evidence: with a single slot row the check above cannot fail.
+	if ok and puts < 2:
+		ok = _fail("only %d `put all` button(s) in this menu, so two cannot be compared: %s"
+				% [puts, _labels_of(screen._menu_box)])
 	screen.queue_free()
 	return ok
 

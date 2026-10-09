@@ -1177,6 +1177,28 @@ impl AssaySim {
         sim::tuning::SPECIES_PER_WORLD as i64
     }
 
+    /// THE LONGEST NAME A SPECIES CAN CARRY (`sim::tuning::SPECIES_NAME_MAX`),
+    /// in characters — `mineral::validate_name` counts `chars`, not bytes, and
+    /// allows only ASCII letters, digits and hyphens, which is what makes
+    /// `"W"` repeated to this length a real worst case rather than a guess.
+    ///
+    /// **HERE BECAUSE A WORST CASE THAT STOPS BEING THE WORST CASE FAILS
+    /// SILENTLY.** The window sizes the machine menu against the widest line
+    /// the sim can hand it, and the widest line is a full-length species name
+    /// (`test_buttons.gd`'s menu-width bound, ASSA-334). That test wrote `20`
+    /// of its own: raise the cap in `tuning.rs` and the test's "worst case"
+    /// gets SHORTER than the real one, the check stays green, and the row
+    /// overflows in a real window with nothing going red. A constant the test
+    /// and the rule both read cannot drift that way.
+    ///
+    /// STATIC, like [`AssaySim::species_per_world`]: it is a tuning constant,
+    /// not a fact about one world, so a test should not need a `Welcome` to
+    /// ask for it. It is NOT on `building_facts` for the same reason.
+    #[func]
+    pub fn species_name_max() -> i64 {
+        sim::tuning::SPECIES_NAME_MAX as i64
+    }
+
     /// The word the sim puts in front of a dead end, so the window labels one
     /// the way the terminal already does (ASSA-158).
     ///
@@ -1531,6 +1553,7 @@ fn building_fact(world: &World, building: &sim::building::Building) -> BuildingF
         work: world
             .building_work(building)
             .map(|w| (i64::from(w.done), i64::from(w.total))),
+        work_clause: sim::debug::work_clause(world, building),
         burn_left,
         burn_temperature,
     }
@@ -1562,6 +1585,13 @@ fn building_dict(building: &BuildingFacts) -> VarDictionary {
         // standing on bare ground is a number that reads as a promise.
         "work" => &match building.work {
             Some((done, total)) => Vector2i::new(done as i32, total as i32).to_variant(),
+            None => Variant::nil(),
+        },
+        // `nil` AND NOT `""`, for `work`'s own reason one line up: an empty
+        // string is a label a row would draw as a blank, and the absence of a
+        // batch is a fact the menu has to branch on rather than render.
+        "work_clause" => &match &building.work_clause {
+            Some(clause) => gstring(clause).to_variant(),
             None => Variant::nil(),
         },
         "burn_left" => building.burn_left,
@@ -2105,6 +2135,21 @@ pub struct BuildingFacts {
     /// when there is none — `World::building_work`. See [`sim::WorkReading`]
     /// for why it is a pair and never a fraction.
     pub work: Option<(i64, i64)>,
+    /// That same batch as the sentence the sim writes for it
+    /// (`debug::work_clause`) — `56 of 100 work toward the next unit`, `12 of
+    /// 20 ticks into this batch` — or `None` exactly when [`Self::work`] is.
+    ///
+    /// **IT CROSSES BECAUSE THE NOUN IS A SIM DECISION AND A HOST MUST NOT
+    /// PICK IT.** `work_clause`'s own docstring says so: *"a smelter's progress
+    /// is ticks of a recipe and a drill's is work ... a host that picked the
+    /// noun would be deciding which."* The machine menu draws the batch as a
+    /// band off the pair (ASSA-339) and needs a label for it; with only the
+    /// pair crossed, the only labels available to GDScript were a noun it had
+    /// invented or no noun at all. Maren's ASSA-334 §6 measured this clause at
+    /// 191 px and budgeted the row for it, so the words were always the plan —
+    /// nothing had asked the binding for them. The pair STAYS: a band needs two
+    /// numbers and this is one string.
+    pub work_clause: Option<String>,
     /// Ticks of burn left in the unit currently in the fire, and how hot it is.
     /// Both zero when cold, and on a machine.
     ///
@@ -5461,6 +5506,13 @@ mod tests {
             facts[0].work, None,
             "nothing is in front of it, so there is no batch to report"
         );
+        // AND NO SENTENCE FOR THE BATCH THAT IS NOT THERE (ASSA-334): the menu
+        // branches on this to draw no band at all, so an empty string here
+        // would reach the screen as a blank row.
+        assert_eq!(
+            facts[0].work_clause, None,
+            "no batch, so no clause: `0 of 20 ticks` on an empty smelter reads as a promise"
+        );
         assert_eq!((facts[0].burn_left, facts[0].burn_temperature), (0, 0));
     }
 
@@ -5556,6 +5608,33 @@ mod tests {
         assert_eq!(
             (done, total),
             (i64::from(theirs.done), i64::from(theirs.total))
+        );
+        // AND THE WORDS FOR IT ARE THE SIM'S TOO (ASSA-334). The menu draws a
+        // band off the pair and needs a label; the noun is a sim decision
+        // (`work_clause`: "a host that picked the noun would be deciding
+        // which"), so the clause crosses rather than being composed in
+        // GDScript. **ASSERTED AS PRESENT FIRST**: `Option == Option` is
+        // satisfied by two `None`s, and a field that crossed nothing at all
+        // would pass a bare `assert_eq!` here on every building in the game.
+        assert_eq!(
+            working.work_clause,
+            sim::debug::work_clause(sim.world(), sim.world().building(id).expect("standing")),
+            "the clause is the sim's one wording, not a second copy"
+        );
+        assert!(
+            working
+                .work_clause
+                .as_deref()
+                .is_some_and(|clause| clause.contains("of")),
+            "a working smelter has a clause with its two numbers in it: {:?}",
+            working.work_clause
+        );
+        // **NONE EXACTLY WHEN THE PAIR IS NONE**, which is the branch the menu
+        // reads: no batch draws no band and no label, never an empty one.
+        assert_eq!(
+            stalled.work.is_some(),
+            stalled.work_clause.is_some(),
+            "the pair and the clause disagree about whether there is a batch"
         );
     }
 
