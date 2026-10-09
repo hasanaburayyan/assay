@@ -3430,53 +3430,39 @@ func test_a_player_at_a_lit_smelters_bottom_edge_is_drawn_over_its_fire() -> boo
 	return true
 
 
-## **AND THE SAME EDGE WITH A 1x1 MACHINE: YOU ARE DRAWN OVER THE THING YOU STAND ON.** This is the
-## building tie, and it was decided by the length of the array until ASSA-361: `sort_custom` is free
-## to swap equal elements, so the frame Maren measured (a 1x1 drill on the player's own tile) could
-## have come out either way on either run.
-##
-## The direction is the spawn pad's own finding with a body on it: *"you spawn on spawn, so that was
-## the whole of your first second in the game: a world with no player in it"*. A machine is smaller
-## than a pad and deletes less of you, which makes it quieter and not better.
-func test_a_player_standing_on_a_one_tile_machine_is_drawn_over_it() -> bool:
-	var tile := Vector2i(12, 7)
-	var view := _view({"buildings": [_drill(tile, 1)],
-			"players": [{"at": Vector2(tile), "facing": "S", "moving": false}]})
-	var places := AssayScene.placements(view)
-	var machine := -1
-	var body := -1
-	for i in range(places.size()):
-		var place: Dictionary = places[i]
-		if bool(place.get("composite", false)):
-			machine = i
-		elif String(place.get("asset", "")) == "player":
-			body = i
-	if machine < 0 or body < 0:
-		return _fail("the fixture drew machine %d and body %d, so this test proves nothing"
-				% [machine, body])
-	if machine > body:
-		return _fail(("a 1x1 machine on the tile a body stands on is drawn at %d, after the body "
-				+ "at %d. The thing you stand on may not delete you") % [machine, body])
-	return true
-
-
 ## **THE MARK WAITS FOR THE PERSON STANDING IN IT, AND FOR NOBODY ELSE.** `over_mark` names the
 ## placements drawn after the mark; with a body on the marked tile that is the body, and the machine
 ## it stands on is NOT in the list -- which is box 4, the mark staying visible on the thing it names.
+##
+## **IT SWEEPS ARRAY LENGTHS, AND THERE IS A TEST I DELETED BEHIND THAT.** A person on a 1x1
+## machine's tile shares its bottom edge exactly, so this answer depends on the two being ordered at
+## all -- and until ASSA-361 that was `sort_custom`'s treatment of two equal elements, which ASSA-137
+## recorded as varying with the length of the array. I wrote a test asserting the machine is drawn
+## first and it **passed with the ladder taken out**, at every one of fourteen array lengths: today's
+## `sort_custom` happens to keep the input order, so the direction has no detector and I will not
+## keep a test that agrees with the defect. What is left is the sweep, here, where a flip at any
+## length has a visible consequence -- the body stops waiting and the mark goes back through it.
 func test_the_mark_is_drawn_under_the_body_on_its_tile_and_over_the_machine() -> bool:
 	var tile := Vector2i(12, 7)
-	var view := _view({"buildings": [_drill(tile, 1)],
-			"players": [{"at": Vector2(tile), "facing": "S", "moving": false}]})
-	var standing := _standing_of(view)
-	var over := AssayScene.over_mark(standing, _mark_rects(Rect2i(tile, Vector2i.ONE)))
-	if over.is_empty():
-		return _fail("nothing waits for the mark, so the bar and its halo are painted through the "
-				+ "body standing on the selected tile -- the 81 px ASSA-361 measured")
-	for i in over:
-		if String((standing[i] as Dictionary).get("asset", "")) != "player":
-			return _fail(("placement %d (`%s`) is drawn after the mark. Only a person may be, and "
-					+ "whatever is in front of them: a machine lifted over it would hide the "
-					+ "outline on exactly the thing it points at") % [i, standing[i]])
+	for n in range(14):
+		# A WORLD WITH n EXTRA MACHINES, none on the marked tile and none sharing its bottom edge,
+		# so the only thing changing between runs is how many things the sort has to order.
+		var buildings: Array = [_drill(tile, 1)]
+		for i in range(n):
+			buildings.append(_drill(Vector2i(i % 7, 1 + i / 7), 1))
+		var view := _view({"buildings": buildings,
+				"players": [{"at": Vector2(tile), "facing": "S", "moving": false}]})
+		var standing := _standing_of(view)
+		var over := AssayScene.over_mark(standing, _mark_rects(Rect2i(tile, Vector2i.ONE)))
+		if over.is_empty():
+			return _fail(("with %d extra machines on the scene nothing waits for the mark, so the "
+					+ "bar and its halo are painted through the body standing on the selected tile "
+					+ "-- the 81 px ASSA-361 measured") % n)
+		for i in over:
+			if String((standing[i] as Dictionary).get("asset", "")) != "player":
+				return _fail(("placement %d (`%s`) is drawn after the mark. Only a person may be, "
+						+ "and whatever is in front of them: a machine lifted over it would hide "
+						+ "the outline on exactly the thing it points at") % [i, standing[i]])
 	return true
 
 
