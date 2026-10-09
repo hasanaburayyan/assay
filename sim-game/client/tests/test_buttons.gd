@@ -3755,6 +3755,18 @@ func test_the_commit_bar_on_a_design_is_the_sims_own_verdict_and_moves() -> bool
 ## has to answer every press (ASSA-262's dead button in Mineralogy); `_assemble` returns silently on
 ## an empty design because the bench's `Assemble` sits beside a sentence saying what is chosen, and
 ## this one does not.
+##
+## **THE DESIGN THIS PRESSES IS A FINISHED ONE SINCE ASSA-373, AND THE OLD FIXTURE WAS THE DEFECT
+## WRITTEN DOWN AS CORRECT.** It pressed `Build` on a frame ALONE and then asserted both that the
+## command went out and that `_building` came back empty -- and a frame alone is exactly the
+## `unfinished` design Maren found the client eating. So this test was the harm's own regression
+## guard, pointing the wrong way: my fix for ASSA-373 reddened it, which is the only reason I read it.
+## It keeps its subject -- the accent reaching the one file that spells a command -- on a design the
+## sim would actually accept, and the refusal case is
+## `test_build_refuses_an_unfinished_design_without_eating_it` below.
+##
+## **THE PREMISE IS ASSERTED RATHER THAN ASSUMED**: if the completed design were still `unfinished`
+## to the sim, the press would take the refusal path and every assertion here would be about nothing.
 func test_build_sends_assemble_on_the_assembly_path_and_answers_an_empty_design() -> bool:
 	var screen := _joined()
 	_tick(screen, 2)
@@ -3769,27 +3781,137 @@ func test_build_sends_assemble_on_the_assembly_path_and_answers_an_empty_design(
 		ok = _fail(("pressing Build with no frame chosen said `%s`; a control that is never disabled "
 				+ "has to answer every press") % screen._status.text)
 	else:
-		var frame := _part_stack_of(String(_roomiest_frame().get("kind", "")))
-		screen._building = [frame]
-		_asked.clear()
-		screen._build_act.pressed.emit()
-		# **COMPARED AGAINST `AssayActions`' OWN BUILDER, not against a payload typed here** (the `do`
-		# section's rule in this file): the point is that the accent reaches the one file that spells a
-		# command, not that I can spell one twice.
-		var want: Variant = AssayActions.assemble(AssayActions.item_of_stack(frame), [])
-		if _asked.size() != 1:
-			ok = _fail("Build on a one-part design asked for %d commands, not one: %s"
-					% [_asked.size(), _asked])
-		elif _asked[0] != want:
-			ok = _fail("Build submitted %s, not %s" % [_asked[0], want])
-		elif AssaySimHost.command_echo(_asked[0]) == "":
-			ok = _fail("Build submitted %s, which serde refuses" % [_asked[0]])
-		elif not screen._building.is_empty():
-			ok = _fail(("the design survived the press as %s; `_assemble` clears it either way, because "
-					+ "a half-chosen design left on screen after a refusal reads as a stuck button")
-					% [screen._building])
+		var roomy := _roomiest_frame()
+		var needs := _required_slot_of(roomy)
+		var frame := _part_stack_of(String(roomy.get("kind", "")))
+		if needs == "":
+			ok = _fail(("no slot of `%s` is required, so nothing mounted on it can finish the design "
+					+ "and this half would be pressing the refusal path") % [roomy])
+		else:
+			var fills := _part_stack_of(needs)
+			screen._building = [frame, fills]
+			screen._refresh_build_said()
+			var whole: Dictionary = screen._design_readout()
+			if bool(whole.get("unfinished", false)):
+				ok = _fail(("a `%s` with its `%s` mounted is still `unfinished` to the sim (%s), so this "
+						+ "press takes ASSA-373's refusal path and proves nothing about submitting")
+						% [String(roomy.get("kind", "")), needs, whole])
+			else:
+				_asked.clear()
+				screen._build_act.pressed.emit()
+				# **COMPARED AGAINST `AssayActions`' OWN BUILDER, not against a payload typed here** (the
+				# `do` section's rule in this file): the point is that the accent reaches the one file that
+				# spells a command, not that I can spell one twice.
+				var want: Variant = AssayActions.assemble(AssayActions.item_of_stack(frame),
+						[AssayActions.item_of_stack(fills)])
+				if _asked.size() != 1:
+					ok = _fail("Build on a finished design asked for %d commands, not one: %s"
+							% [_asked.size(), _asked])
+				elif _asked[0] != want:
+					ok = _fail("Build submitted %s, not %s" % [_asked[0], want])
+				elif AssaySimHost.command_echo(_asked[0]) == "":
+					ok = _fail("Build submitted %s, which serde refuses" % [_asked[0]])
+				elif not screen._building.is_empty():
+					# **STILL CLEARED ON THE SUBMISSION, AND ASSA-373 PART 2 IS WHY THAT IS NOT YET A
+					# DEFECT HERE**: this design is one the sim accepts, so clearing it is right. Clearing
+					# a design the sim REFUSES is the part that is still wrong, and it is blocked on an
+					# outcome crossing the binding -- see `_assemble`'s docstring.
+					ok = _fail(("a design the sim accepts survived the press as %s; `_assemble` clears on "
+							+ "the submission") % [screen._building])
 	screen.queue_free()
 	return ok
+
+
+## **A REFUSAL MAY COST YOU A PRESS. IT MAY NEVER COST YOU YOUR WORK** (ASSA-373 part 1; Maren's
+## rule, found by reading `limpet-assa362-after/build-screen-14247-slots-empty.png` cold).
+##
+## Mount four optional parts on a frame whose required slot is still empty -- the bar is already
+## saying so -- and press the one accent on the screen. It used to submit an `Assemble` the sim
+## refuses and then clear `_building` anyway, so **the bad press cost every good one**: word for word
+## the harm `_choose_part`'s docstring records as fixed for part presses.
+##
+## **FOUR MOUNTS AND NOT ONE, BECAUSE THE CLAIM IS ABOUT LOSING WORK.** A one-part design loses
+## nothing a player would miss; the defect is the four hoppers coming off. So the fixture mounts the
+## roomiest slot to its limit and the assertion is on the parts BY KIND, not on `_building.size()` --
+## a client that cleared the array and re-appended the frame would pass a size check.
+##
+## **EVERY GESTURE HERE IS ONE A PLAYER MAKES.** `_open_assembly_screen` is the pack row's press and
+## `_choose_part` is the mount press, so each part goes in through `part_press_refusal` rather than
+## being assigned into `_building` -- which is what makes the premise ("the sim accepted these four")
+## a measurement rather than my assumption.
+##
+## **AND IT ASSERTS WHAT WAS NOT SENT, THROUGH THE REAL `asked` SIGNAL.** `_asked` fires inside
+## `submit`, so an empty `_asked` is the wire staying quiet and not an inference from the toast.
+func test_build_refuses_an_unfinished_design_without_eating_it() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := true
+	var roomy := _roomiest_frame()
+	var needs := _required_slot_of(roomy)
+	var spare := String(roomy.get("mounts", ""))
+	var room := int(roomy.get("room", 0))
+	if needs == "" or spare == "" or spare == needs or room < 2:
+		screen.queue_free()
+		return _fail(("premise: `%s` needs `%s` and has %d of `%s` to spare -- this test wants a frame "
+				+ "with a required slot AND a roomier optional one") % [roomy, needs, room, spare])
+	screen._open_assembly_screen(_part_stack_of(String(roomy.get("kind", ""))))
+	for _i in range(room):
+		screen._choose_part(_part_stack_of(spare))
+	var mounted := PackedStringArray()
+	for entry in screen._building:
+		mounted.append(String((entry as Dictionary).get("kind", "")))
+	var readout: Dictionary = screen._design_readout()
+	var fault := String(readout.get("fault", ""))
+	if not screen._assembling_mode():
+		ok = _fail("the pack row's press did not put the screen in assembling mode")
+	elif mounted.size() != room + 1:
+		ok = _fail(("the sim accepted %d of the %d presses (%s), so this design is not the one the test "
+				+ "is about") % [mounted.size() - 1, room, mounted])
+	elif not bool(readout.get("unfinished", false)):
+		ok = _fail(("a `%s` with its `%s` slot empty is not `unfinished` to the sim (%s), so the press "
+				+ "below takes a different branch and proves nothing") % [roomy, needs, readout])
+	elif fault == "":
+		# THE SENTENCE THE PRESS MUST SAY HAS TO EXIST, or the fix would be a silent refusal -- which
+		# is the dead button ASSA-262 found, reached by a different road.
+		ok = _fail("the sim names no fault for an unfinished design (%s), so there is nothing to say"
+				% [readout])
+	else:
+		_asked.clear()
+		screen._build_act.pressed.emit()
+		var after := PackedStringArray()
+		for entry in screen._building:
+			after.append(String((entry as Dictionary).get("kind", "")))
+		if not _asked.is_empty():
+			ok = _fail(("Build submitted %s for a design the sim calls unfinished; the flag exists to be "
+					+ "read before the wire") % [_asked])
+		elif after != mounted:
+			ok = _fail(("the press changed the design from %s to %s; the sim spends nothing on a refusal, "
+					+ "so the client must take nothing") % [mounted, after])
+		elif screen._status.text != fault:
+			ok = _fail(("the press said `%s`; the sim's own fault is `%s`, and a refusal in this client's "
+					+ "own words is ASSA-43/52") % [screen._status.text, fault])
+		elif screen._base_level != AssayHud.Say.FAILED:
+			ok = _fail("the refusal was said at level %d, not FAILED (%d) the way a refused part press is"
+					% [screen._base_level, AssayHud.Say.FAILED])
+		elif screen._build_act.disabled:
+			ok = _fail("the refusal disabled `Build`; ASSA-316 ruling 2 says the sim does the refusing")
+		elif screen._build_act.theme_type_variation != &"Primary":
+			ok = _fail("the refusal took `Build` out of the accent (`%s`)"
+					% screen._build_act.theme_type_variation)
+	screen.queue_free()
+	return ok
+
+
+## **THE NAME OF ONE SLOT THIS FRAME REQUIRES, OR `""`** -- out of `slot_boxes`, which is the same
+## walk the screen draws the shape from, so a test and the picture cannot disagree about which boxes
+## are required. `required` is per BOX (`i < min`), not per kind, so the first required box's name is
+## the kind a design cannot be finished without.
+func _required_slot_of(frame: Dictionary) -> String:
+	for entry in AssayHud.slot_boxes(frame.get("slots", []) as Array):
+		var box: Dictionary = entry
+		if bool(box.get("required", false)):
+			return String(box.get("name", ""))
+	return ""
 
 
 ## **THE ONE LABEL IN THE COMMIT BAR, OR A COMPLAINT NAMING HOW MANY THERE ARE.**
