@@ -699,9 +699,13 @@ fn a_part_batch_makes_no_progress_and_the_state_line_does_not_know_it() {
 /// nothing happens, ever; the only thing that clears it is a hand in the output
 /// slot. So `halted()` must be true here and must not be on 322.
 ///
-/// That cost `PROTOCOL_VERSION` 10 → 11, because `SmelterStall` derives
-/// `Serialize` and rides `Event::SmelterStalled`. Her words: *"the protocol
-/// bump is the price of telling the truth, not an argument against it."*
+/// That cost `PROTOCOL_VERSION` 10 → 11, because `Event::SmelterStalled`
+/// changed shape and the code rulebook counts an event. Her words: *"the
+/// protocol bump is the price of telling the truth, not an argument against
+/// it."* **Not because it crosses the wire — it never has.** `SmelterStall`
+/// derives `Serialize`, which is what I first gave as the reason, but no
+/// message carries an `Event`: lockstep ships inputs and each peer computes
+/// its own events. See `sim_net::PROTOCOL_VERSION` for the correction.
 #[test]
 fn a_smelter_whose_output_holds_another_material_says_so_and_counts_as_halted() {
     let (mut world, me, id, _) = world_with_smelter();
@@ -1643,5 +1647,123 @@ fn fuel_that_cannot_light_from_cold_still_says_so_once() {
     assert!(
         status.contains("stalled: fuel won't light from cold"),
         "{status}"
+    );
+}
+
+/// **ASSA-350 BOX 5's CRY-WOLF HALF, ON THE NEW ARM, THROUGH THE REAL
+/// COMMANDS.** The Game Director's standing test of a new stall is *a check we
+/// have only ever seen fire when it is false is worse than no check* — so this
+/// drives a smelter into `OutputHoldsAnother` the way a player reaches it
+/// (refine a rock, leave the bar, load another species) and pins both halves of
+/// her ASSA-80 rule 2: announced once on the edge in, then nothing while it
+/// sits.
+///
+/// **THE LAST BLOCK IS A MEASUREMENT I EXPECTED TO GO THE OTHER WAY**, and it
+/// is why box 5 can be ticked rather than left open on ASSA-364. Maren's
+/// ASSA-364 is real — `announce_new_stalls` keys on a `bool`, so a stall that
+/// becomes a *different* stall emits nothing and the old sentence cannot be
+/// retired. I assumed this arm fed that edge: `Take` the bar and a smelter with
+/// no fuel would fall from `OutputHoldsAnother` straight into `NoFuel`,
+/// silently. **It does not, and `burn_left`'s own docstring says why** —
+/// *"only counts down while smelting"* — so a fire lit to refine the first rock
+/// is still lit, and the act that clears this conflict leaves the smelter
+/// WORKING. Asserted below rather than argued, because the whole point of the
+/// block is that the reasoning was wrong.
+#[test]
+fn a_smelter_blocked_on_its_output_announces_itself_once_and_then_goes_quiet() {
+    let (mut world, me, id, _) = world_with_smelter();
+    let first = ore(WALLS);
+    let second = ore(INERT);
+    give(&mut world, me, first, 1);
+    give(&mut world, me, second, 1);
+    give(&mut world, me, ore(FUEL), 4);
+
+    // Refine the first rock and leave the bar where it lands.
+    let setup = run(
+        &mut world,
+        &[
+            Input::player(me, insert(id, Slot::Input, first, 1)),
+            Input::player(me, insert(id, Slot::Fuel, ore(FUEL), 4)),
+        ],
+        RecipeId::Refine.recipe().ticks * 2,
+    );
+    let bar = smelter_of(&world, id).output.expect("one bar came out");
+
+    // **THE PREMISE, ASSERTED AS A FAILURE.** If anything were stalled already
+    // the line below would not be an edge and this test would prove nothing:
+    // an emptied input is `idle: nothing to refine`, which is never announced.
+    assert_eq!(
+        stalls(&setup),
+        vec![],
+        "nothing stalls during setup: {setup:?}"
+    );
+    assert!(
+        world
+            .smelter_state(world.building(id).unwrap())
+            .stall()
+            .is_none(),
+        "the smelter is idle, not stalled, before the edge"
+    );
+
+    // **THE EDGE IN, ON ONE TICK.** Loading a second species over the bar is
+    // the whole defect, and it is announced naming the material in the way.
+    let events = run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Input, second, 1))],
+        1,
+    );
+    assert_eq!(
+        stalls(&events),
+        vec![SmelterStall::OutputHoldsAnother(bar.item)],
+        "entering this stall is said once, with the item that is blocking it: {events:?}"
+    );
+
+    // **AND THEN SILENCE** — the arm a per-tick emitter fails, and the reason
+    // the log stays readable.
+    let later = run(&mut world, &[], 80);
+    assert_eq!(
+        stalls(&later),
+        vec![],
+        "a smelter sitting in this stall must not shout: {later:?}"
+    );
+    // Silence because it is still stuck, not because it quietly recovered.
+    // Without this the assertion above passes on a smelter that got better.
+    assert_eq!(
+        world.smelter_state(world.building(id).unwrap()),
+        SmelterState::Stalled(SmelterStall::OutputHoldsAnother(bar.item)),
+        "80 silent ticks and the condition is unchanged"
+    );
+
+    // **CLEARING IT: WHERE THIS ARM MEETS ASSA-364, MEASURED.** `Take` empties
+    // the output, which is the one act that resolves this conflict.
+    let cleared = run(
+        &mut world,
+        &[Input::player(me, PlayerCommand::Take { building: id })],
+        1,
+    );
+    assert_eq!(
+        smelter_of(&world, id).output,
+        None,
+        "premise: the bar really left the slot"
+    );
+    let after = world.smelter_state(world.building(id).unwrap());
+    assert!(
+        after.stall().is_none(),
+        "the act that clears this conflict does not land in another stall, so this \
+         arm never reaches ASSA-364's silent stall-to-stall edge; it is {after:?}"
+    );
+    // And the stronger claim the docstring actually makes, because "not
+    // stalled" would also be true of an idle smelter and would leave the
+    // mechanism unproven: the fire lit for the first rock is still burning, so
+    // the second species starts refining the moment the slot is free.
+    assert!(
+        matches!(after, SmelterState::Working { .. }),
+        "the fire never went out while it sat blocked, so clearing the slot resumes \
+         work rather than exposing a fuel stall; it is {after:?}"
+    );
+    assert_eq!(
+        stalls(&cleared),
+        vec![],
+        "and nothing is announced on the way out, because leaving a stall is not entering one"
     );
 }

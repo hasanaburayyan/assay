@@ -28,18 +28,28 @@ use sim::{Input, PlayerCommand, PlayerId, World};
 /// protocol 6 against 8 — so this one was spent on purpose on the night
 /// `RULES_ID` had already moved twice and every peer owed a rebuild anyway.
 ///
-/// 10 → 11 (ASSA-350): `sim::SmelterStall` grew `OutputHoldsAnother(Item)`,
-/// which rides [`ServerMsg::Tick`] inside `Event::SmelterStalled`. **The Game
-/// Director priced this deliberately** — *"the protocol bump is the price of
-/// telling the truth, not an argument against it"* — rather than call a
-/// blockage an idle to save the coordination.
+/// 10 → 11 (ASSA-350): `sim::SmelterStall` grew `OutputHoldsAnother(Item)`, so
+/// `Event::SmelterStalled` changed shape — which `sim-game/CLAUDE.md` makes a
+/// bump: *"whenever `World`, a command, an event or a message changes shape."*
+/// **The Game Director priced it deliberately** — *"the protocol bump is the
+/// price of telling the truth, not an argument against it"* — rather than call
+/// a blockage an idle to save the coordination.
 ///
-/// **THE COORDINATION THIS COSTS, SAID HERE BECAUSE A CONSTANT IS WHERE PEOPLE
-/// LOOK:** a relay already running speaks the old number and refuses every
-/// client built after this, so **the relay has to come back up from this commit
-/// or later, and any demo build has to be cut after it** — relay and client
-/// from one commit. That is one condition on the merge, not a reason to delay
-/// it.
+/// **AND THE MECHANISM IS NOT THE ONE I FIRST WROTE HERE.** This comment said
+/// the variant *"rides [`ServerMsg::Tick`] inside `Event::SmelterStalled`"*. It
+/// does not. [`TickBundle`] carries `inputs`, and no message in this file
+/// carries an `Event` at all: lockstep sends inputs and every peer computes its
+/// own events, so no `SmelterStall` has ever crossed this wire. The bump is
+/// owed to the rule above — which counts an event as part of the shape because
+/// both hosts render one — and not to a byte on a socket.
+///
+/// **WHICH MOVES THE COORDINATION ONTO [`RULES_ID`] AND MAKES IT STANDING
+/// RATHER THAN THIS ITEM'S.** A running relay refuses every client built after
+/// *any* edit under `sim/src`, because the fingerprint moves (`sim/build.rs`).
+/// So **the relay has to come back up from the merge commit or later and any
+/// demo build has to be cut after it — relay and client from one commit — and
+/// that is true of every sim change we merge.** I told the team it was the
+/// price of this bump; it is the price of touching the rules at all.
 pub const PROTOCOL_VERSION: u32 = 11;
 
 /// The rules this build runs, re-exported so a host has one place to look.
