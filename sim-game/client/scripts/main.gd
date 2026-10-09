@@ -5492,10 +5492,39 @@ func _slot_row(named: String) -> HBoxContainer:
 ## draws slots as a shape instead of printing `hopper 0-4`. The engine's own `Panel` draws it, so the
 ## edge is the theme's `BORDER` and this file invents no ink.
 ##
-## **ICON_PX SQUARE, WHICH KEEPS THE PART SHEET'S EXACT 1/4** (ASSA-65, and ASSA-343's reasoning on
-## this screen's one picture): `STRETCH_KEEP_ASPECT_CENTERED` scales by `min(32/128, 32/102)` = 1/4
-## for a 128x102 part cell, so the width is what binds and nothing is resampled. A box of
-## `ICON_BOX_PX`'s 48 height would be the pack ROW's number, which this is not.
+## **THE PLATE IS `ICON_PX` SQUARE AND THE PICTURE IN IT IS NOT** (ASSA-388). This said:
+##
+## > *ICON_PX SQUARE, WHICH KEEPS THE PART SHEET'S EXACT 1/4 (ASSA-65, and ASSA-343's reasoning on
+## > this screen's one picture): `STRETCH_KEEP_ASPECT_CENTERED` scales by `min(32/128, 32/102)` = 1/4
+## > for a 128x102 part cell, so the width is what binds and nothing is resampled. A box of
+## > `ICON_BOX_PX`'s 48 height would be the pack ROW's number, which this is not.*
+##
+## **EVERY TERM OF THAT IS A MEASUREMENT OF A SHEET THIS BOX DOES NOT DRAW.** `_icon_box` below calls
+## `AssaySprites.icon_for`, which reads `SHEET_OF` -- and **ASSA-121 moved all four part kinds out of
+## `ASSEMBLY_SHEET_OF` and onto the items sheet**, because a part in your pack is a loose thing. The
+## 128x102 assembly cell is still real and is still what a PLANTED machine composites from; it is not
+## what arrives here. Read off the shipped `manifest.json` and the real `AtlasTexture` regions
+## (`client/tools/cove_slot_box_scale.gd`): the frame is **64x96 for every row**, so the mode picks
+## **1/3, the HEIGHT binds, and `64/3 = 21.33` is a fractional width with a half-pixel offset** --
+## which is the one thing "nothing is resampled" was asserting.
+##
+## **AND THE PICTURE IS NOT 1/3 EITHER, BECAUSE IT IS NOT IN THIS BOX.** `_icon_box` stamps
+## `ICON_BOX_PX` (32x48, the pack ROW's number) on the `TextureRect` as a MINIMUM size, and
+## `PRESET_FULL_RECT` anchors a control -- it cannot shrink one below its minimum. So the picture is
+## laid out 32x48 inside a 32x32 plate at scale 1/2, and **a tall part hangs out of the bottom of its
+## own plate.** Measured on a 1x window, not argued (`art/slot_plate_probe.py` on
+## `shared/assay/cove-assa388-slot-plate/`, seed 14247, flood-filled per sprite so neighbouring
+## plates cannot contaminate a bbox):
+##
+##     head    ink 21x39 at y136..174, plate 32x32 at y136..167  ->  7 px of PAINT below the plate
+##     hopper  ink 24x28 at y175..202, plate 32x32 at y174..205  ->  inside, because its art is short
+##
+## So the plate's square is not keeping any ratio exact; it is clipping nothing and containing
+## nothing. **The box's SHAPE is a design call and it is the Game Director's** -- confining the
+## picture to 32x32 shrinks every part picture, and growing the plate to `ICON_BOX_PX` is the thing
+## the sentence above rejected for a reason that turned out to be about another sheet. ASSA-388
+## carries both options rendered at 1x. Nothing here is changed until she rules; what is changed is
+## that the file no longer says the opposite of what the window shows.
 ##
 ## **NO PLATE UNDER THE SPRITE** (ASSA-341, Maren's ruling off my own 1x shot): a part on the panel's
 ## `SURFACE` measures 5.57:1 and on the pack's plate 1.24:1, and ASSA-71's one-surface reason is about
