@@ -3737,7 +3737,20 @@ func _pack_shape(stacks: Array) -> String:
 ## in `art/` are drawn from it -- changing them without redrawing `pack_icons.png`, `pack_rows.png`
 ## and `pack_icon_kinds.png` turns CI's "A review sheet is still a picture of the client it drew"
 ## red. That half is pipeline work with its own cost, written down on ASSA-240; this half is free.
-func _icon_box(stack: Dictionary, reserve := false) -> Control:
+##
+## **`plated` IS WHICH GROUND THE SPRITE STANDS ON, AND IT IS A CONTRAST BAR RATHER THAN A TASTE**
+## (ASSA-341; Maren's ruling off my own 1x shot). ASSA-71 put the ground sheet's median under pack
+## icons *"so the spread between species closes BECAUSE they all sit on one surface"* -- a reason
+## about a LIST of ore. The build screen's one picture has nothing to compare itself to, and a
+## smelter is not ore: on that olive plate it measures **1.24:1**, below 11.9's 3:1 for a mark and
+## below the board's standing 4.091:1. On the panel's own `SURFACE` the same sprite is **5.57:1**.
+##
+## **HER RULE IS THE BAR, NOT THE GEOMETRY: any sprite placed on that plate must clear 3:1 against
+## it.** So the plate survives wherever it earns its 3:1 -- which is the whole pack, unchanged, where
+## the species spread is the thing it was measured on -- and a caller whose sprite does not clear the
+## bar passes `false` and takes the panel's ground instead. Defaulted to `true` so ASSA-71 holds for
+## every existing caller without a word changing at their call sites.
+func _icon_box(stack: Dictionary, reserve := false, plated := true) -> Control:
 	# THE ICON IS REDUNDANT AND MOST ROWS DO NOT GET ONE. `items.png` carries ore, refined and
 	# smelter, so a gear comes back null; the four part kinds have a row per grade. Every sentence
 	# beside one of these reads completely without it, which is Maren's rule and the same one the
@@ -3789,12 +3802,32 @@ func _icon_box(stack: Dictionary, reserve := false) -> Control:
 	# judged on. One colour for every species and grade; it never carries information. The colour
 	# comes from the pipeline (`ui_theme.json`), never a hex here.
 	#
-	# A PANEL AROUND THE RECT, NOT A RESIZE OF IT. The box stays exactly `ICON_BOX_PX` and the
-	# TextureRect fills it, so the scale ASSA-65 made exact (1/2 for an item, 1/4 for a part) is
-	# untouched -- a container with content margins would have quietly eaten it, which is the same
-	# bug ASSA-65 fixed.
-	var plate := AssaySprites.pack_icon_plate()
+	# A PANEL AROUND THE RECT, NOT A CONTAINER WITH MARGINS. The `Panel` adds no content margin, so
+	# the TextureRect fills it exactly and the scale ASSA-65 made exact (1/2 for an item, 1/4 for a
+	# part) is untouched -- a `MarginContainer` or a `PanelContainer` would have quietly eaten it,
+	# which is the bug ASSA-65 fixed.
+	#
+	# **THIS NO LONGER CLAIMS THE BOX STAYS EXACTLY `ICON_BOX_PX`, BECAUSE THAT SENTENCE WAS FALSE**
+	# (ASSA-341 box 3, Maren's: *"a docstring that is false on its only call path"*). Two separate
+	# reasons, and only the first is fixed:
+	#
+	# 1. Nothing here sets `size_flags_horizontal`, and a `VBoxContainer` child FILLS horizontally by
+	#    default -- so in the build screen's column this plate stretched to 235 px while staying 48
+	#    tall and read as a progress bar. **ASSA-343 fixed that at the call site** (`SHRINK_BEGIN`
+	#    plus a square box), so her measurement is no longer reproducible on main.
+	# 2. And the fix means the sentence is still false, now deliberately: that caller RESIZES the box
+	#    it is handed. A docstring promising callers cannot do the thing a caller does is worth less
+	#    than no docstring, so it says what is actually invariant -- the margins -- and leaves the
+	#    box's size to whoever lays it out.
+	var plate := AssaySprites.pack_icon_plate() if plated else Color(0, 0, 0, 0)
 	if plate.a <= 0.0:
+		# NO PLATE MEANS THE PANEL'S OWN GROUND, and the two ways here are not the same thing: a
+		# `plated := false` caller is choosing it (ASSA-341's 3:1 bar), while a transparent
+		# `pack_icon_plate()` means `ui_theme.json` is missing. Both want the bare art, so they share
+		# this line -- but the horizontal flag has to be set here too, or the no-plate path rebuilds
+		# ASSA-343's defect one branch over: a bare `TextureRect` in a VBox fills just as a `Panel`
+		# does, and nothing in the suite would say so because nothing headless has a size.
+		art.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		return art
 	var slot := Panel.new()
 	slot.custom_minimum_size = ICON_BOX_PX
@@ -4505,7 +4538,18 @@ func _rebuild_build_detail() -> void:
 		_build_detail.add_child(_note("the sim no longer offers this in that material"))
 		return
 	var makes: Dictionary = offer.get("makes", {}) as Dictionary
-	var picture := _icon_box(makes, true)
+	# **NO PLATE: THE ONE PICTURE ON THIS SCREEN READS AT 1.24:1 ON IT** (ASSA-341; Maren's ruling off
+	# my own 1x shot, and the plate was her ASSA-71 ruling, so she overturned herself here).
+	#
+	# ASSA-71's reason is that a LIST of ore closes its species spread by sitting on one surface. This
+	# is one picture of a smelter with nothing beside it to compare, so the reason does not travel and
+	# the 1.24:1 is paid for nothing: the plate samples (130,149,99) at 91% uniform and the sprite is
+	# (238,119,181). On the panel's own `SURFACE` the same sprite measures **5.57:1**.
+	#
+	# **ASSA-71 IS UNTOUCHED FOR THE PACK**, which is the half of her ruling that still holds and the
+	# reason `plated` defaults to `true`: every pack row keeps its plate and its one-colour-per-species
+	# reason, because that is the surface the 3:1 bar was measured on and passes.
+	var picture := _icon_box(makes, true, false)
 	if picture != null:
 		# **A PLATE IS SIZED BY WHAT STANDS ON IT, NOT BY THE COLUMN IT SITS IN** (ASSA-343; Maren's
 		# ASSA-328 ruling 2, confirmed off the shot: *"a pale olive band the full width of the column

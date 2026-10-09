@@ -2643,3 +2643,67 @@ func test_a_cost_entry_is_two_rows_and_goes_failed_whole_when_short() -> bool:
 	plenty.free()
 	screen.queue_free()
 	return ok
+
+
+## **THE OUTPUT PICTURE LEAVES THE PLATE THAT THE PACK ROWS KEEP** (ASSA-341 boxes 1 and 2; Maren's
+## ruling off my own 1x shot, overturning the half of her own ASSA-71 that does not travel).
+##
+## The sprite measures **1.24:1** on the olive plate and **5.57:1** on the panel's own ground. Her
+## rule is a bar -- *any sprite placed on that plate must clear 3:1 against it* -- so ASSA-71 stands
+## for the pack, where a LIST of ore is both what the plate was measured on and what it is for.
+##
+## **BOTH HALVES IN ONE TEST, BECAUSE EITHER ONE ALONE IS SATISFIED BY DELETING THE PLATE ENTIRELY.**
+## A test that only asserted the build screen has no plate would go green if `plated` were ignored
+## and `pack_icon_plate` returned transparent -- which is the ruling inverted, the pack losing the one
+## surface its species spread needs. So the assertion is the PAIRING: gone here, still there.
+##
+## **AND IT IS ABOUT THE COLOUR THAT IS PAINTED, NOT ABOUT A NODE CLASS.** Wrapping the art in some
+## other container that draws the same ink would be a different implementation of the same defect,
+## and a class check would call it fixed.
+func test_the_output_picture_leaves_the_plate_the_pack_rows_keep() -> bool:
+	var plate := AssaySprites.pack_icon_plate()
+	if plate.a <= 0.0:
+		# NOT A VERDICT ABOUT THE SCREEN. With no plate colour at all the two grounds ARE the same
+		# ground, so this test cannot tell them apart; it names the thing that is missing rather than
+		# reporting a contrast win it never measured.
+		return _fail(("`pack_icon_plate()` is %s -- transparent, so nothing here draws the plate and "
+				+ "this test cannot tell the pack's ground from the panel's. `ui_theme.json` is "
+				+ "missing from `res://`, which is its own defect.") % [plate])
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_some_ore(screen)
+	if ok:
+		var launcher := _make_launcher_for(screen, "smelter")
+		if launcher == null:
+			ok = _fail("no menu row offers a smelter: %s" % _text_of(screen._make))
+		else:
+			launcher.pressed.emit()
+			var on_plate := _nodes_on_plate(screen._build_detail, plate)
+			if not on_plate.is_empty():
+				ok = _fail(("the build screen's picture still stands on the pack plate %s (%s); the "
+						+ "sprite reads 1.24:1 on it and 5.57:1 on the panel's own ground")
+						% [plate, on_plate])
+			# THE OTHER HALF: the pack still stands on it, or ASSA-71 was deleted rather than scoped.
+			if ok and _nodes_on_plate(screen._carrying, plate).is_empty():
+				ok = _fail(("no pack row stands on the plate %s any more. ASSA-71 is unchanged for the "
+						+ "pack -- the species spread closes BECAUSE the list sits on one surface, and "
+						+ "only the build screen's single picture was exempted") % [plate])
+	screen.queue_free()
+	return ok
+
+
+## Every node under `root` painted with `ink` as its `panel` stylebox, named. Reads the override
+## rather than the resolved theme box: the plate is applied as a `StyleBoxFlat` override, and asking
+## the theme would return whatever `Panel` inherits for every node that has no plate at all.
+func _nodes_on_plate(root: Node, ink: Color) -> PackedStringArray:
+	var found := PackedStringArray()
+	if root == null:
+		return found
+	var control := root as Control
+	if control != null and control.has_theme_stylebox_override(&"panel"):
+		var flat := control.get_theme_stylebox(&"panel") as StyleBoxFlat
+		if flat != null and flat.bg_color.is_equal_approx(ink):
+			found.append("%s (%s)" % [control.name, control.get_class()])
+	for child in root.get_children():
+		found.append_array(_nodes_on_plate(child, ink))
+	return found
