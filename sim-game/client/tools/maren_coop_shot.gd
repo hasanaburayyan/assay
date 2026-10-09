@@ -735,7 +735,12 @@ func _catch_up_then(next: int) -> void:
 			_catch_from = _now()
 			_catch_until = _now() + CATCH_DEADLINE
 		var gap := _drawing_gap()
-		if gap >= 0.0 and gap <= CATCH_EPSILON:
+		# **AND NOBODY MID-STRIDE, WHICH IS ABOUT THE JUDGEMENT AND NOT THE ARITHMETIC** (ASSA-385
+		# box 3). A frame holding one idle body and one walking one hands a cold reader a difference
+		# that is not an identity device at all -- `player_row` picks `walk_*` over `idle_*` and the
+		# gait is plainly visible at 1x -- so "which one is yours" could be answered off the one
+		# thing the picture is not asking about. Both bodies still, or it is not the picture.
+		if gap >= 0.0 and gap <= CATCH_EPSILON and not _anyone_mid_stride():
 			_caught = true
 			_catch_note = ("  the drawing caught up %.2fs after the walk (worst body %.3f tiles"
 					+ " from its own sim tile, buffer %.2f ticks deep)") % [
@@ -753,6 +758,15 @@ func _catch_up_then(next: int) -> void:
 		# of. Captured here, with the numbers it was judged on.
 		_catch_note += "\n" + _drawn_and_sim()
 	_settle_then(next)
+
+
+## TRUE while any drawn body is still being given a `walk_*` row. The view's own word, not a guess
+## from positions: `main.gd` sets `moving` from whether the playout segment moved that body at all.
+func _anyone_mid_stride() -> bool:
+	for entry in _screen._world.view.get("players", []):
+		if bool((entry as Dictionary).get("moving", false)):
+			return true
+	return false
 
 
 ## THE THREE LISTS SIDE BY SIDE: what the sim holds, what the view was given, and **what the painter
