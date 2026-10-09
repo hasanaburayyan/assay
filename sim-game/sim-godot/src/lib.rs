@@ -21,6 +21,7 @@
 
 use godot::prelude::*;
 use sim::assembly::{Assembly, Built, Mount, PartKind};
+use sim::building::BuildingId;
 use sim::command::{Event, Input};
 use sim::hash::fnv64;
 use sim::item::{Item, ItemKind};
@@ -200,12 +201,67 @@ impl AssaySim {
     /// pressed did nothing.
     #[func]
     pub fn attention_lines(&self, me: i64) -> PackedStringArray {
-        let who = player_id_of(me);
-        self.last_events
+        self.attention_pairs(player_id_of(me))
             .iter()
-            .filter(|event| sim::debug::event_needs_attention(who, event))
-            .map(|event| gstring(&self.describe(who, event)))
+            .map(|(line, _)| gstring(line))
             .collect()
+    }
+
+    /// **WHAT EACH ATTENTION LINE IS ABOUT** — the building of a CONDITION, or
+    /// `-1` for an ACT (ASSA-300, the Game Director's §300 ruling: *"a sentence
+    /// about a condition comes down when the condition does; a sentence about
+    /// an act does not"*).
+    ///
+    /// Element `i` belongs to element `i` of [`AssaySim::attention_lines`], and
+    /// **the pairing is by construction**: both are one `attention_pairs` call,
+    /// so there is no second filter to drift and no way for a line and its kind
+    /// to come from different events. A host still asks for them separately
+    /// because a `Dictionary` field is invisible to Rust (ASSA-105), and the
+    /// kind is exactly the field whose silence would reinstate this bug.
+    ///
+    /// **`-1` IS THE SAFE ANSWER AND THAT IS WHY IT IS THE ACT.** A host that
+    /// reads past the end of this array gets `0` out of GDScript, and `0` must
+    /// not mean "a condition about building 0" — that would let a *refusal*
+    /// fade, which ASSA-239 calls the one class of sentence a player cannot
+    /// recover. The out-of-range answer has to be "never take it down".
+    ///
+    /// The id is a handle and not an address: the only thing a host may do with
+    /// it is ask [`AssaySim::is_halted`] whether the condition still holds. It
+    /// is deliberately not the tile, the kind or the state — `halt_lines` was
+    /// made a list of sentences rather than rows precisely so nothing in
+    /// `hud.gd` could compose a sentence out of parts, and the Game Director
+    /// restated it on this item: *"the toast's sentence stays the sim's"*.
+    #[func]
+    pub fn attention_conditions(&self, me: i64) -> PackedInt64Array {
+        self.attention_pairs(player_id_of(me))
+            .iter()
+            .map(|(_, about)| about.map_or(-1, |id| i64::from(id.0)))
+            .collect()
+    }
+
+    /// **IS THIS BUILDING STILL STOPPED?** `World::halted`, asked about one
+    /// building instead of listed (ASSA-300).
+    ///
+    /// The question a host has to be able to ask on any later tick, because the
+    /// stall EVENT is an edge — `announce_new_stalls` fires once on the way in
+    /// and says nothing while the stall sits — so a sentence said from that
+    /// event has no way of knowing it has stopped being true. Before this, the
+    /// Godot client had none: `the Tonore smelter (A) stopped: no fuel` stayed
+    /// over the world after the smelter was refuelled, while the pinned count
+    /// beside it had already dropped to zero.
+    ///
+    /// **THE SAME PREDICATE THE PINNED BLOCK IS BUILT FROM**, which is what
+    /// makes the toast and the count unable to disagree about whether anything
+    /// is stopped (ASSA-300 box 6): `halt_lines` is `World::halted` worded, and
+    /// this is `World::halted` asked. A finer question — *is it still in the
+    /// stall it reported* — would let the toast go down while that building was
+    /// still in the block, so this is the coarser one on purpose.
+    ///
+    /// An unknown id answers `false`: a building that no longer exists is not
+    /// stopped, and a picked-up machine's sentence should go.
+    #[func]
+    pub fn is_halted(&self, building: i64) -> bool {
+        self.world.halted().any(|b| i64::from(b.id.0) == building)
     }
 
     /// **EVERYTHING THAT HAS STOPPED AND NEEDS A PERSON**, one worded line per
@@ -745,6 +801,51 @@ impl AssaySim {
         }
     }
 
+    /// **WHAT THIS DESIGN WOULD COST THIS PLAYER** — block 6 of the build
+    /// screen on the assembly path (ASSA-347, the Game Director's (A) on
+    /// ASSA-317).
+    ///
+    /// `entries` is one row per TALLIED stack (frame first, then the mounted
+    /// parts) carrying `need`, `have`, and `blocks` for the one stack the sim
+    /// says is in the way. `refusal` is the sim's sentence for a pack too thin,
+    /// or `""`. See [`DesignCost`] and [`CostEntry`]: every judgement in here is
+    /// `sim::assembly::plan`'s, which is the function `PlayerCommand::Assemble`
+    /// asks, so a bill and the press it predicts cannot drift.
+    ///
+    /// **A SECOND CALL AND NOT A PLAYER ARGUMENT ON `design_readout`.** Those
+    /// five bars have no pack in them — a design reads the same whoever is
+    /// looking at it — and that signature is shipped and called. The two
+    /// questions are "what is this machine" and "can I pay for it".
+    ///
+    /// **NO PACK IS NOT AN ERROR HERE.** A design you cannot afford still bills
+    /// in full, with `blocks` on the stack you are short of: pricing a design
+    /// before you can build it is what the Game Director paid for this for
+    /// (§5.3), and `plan` was written for it.
+    #[func]
+    pub fn design_cost(
+        &self,
+        player: i64,
+        frame: GString,
+        mounted: PackedStringArray,
+    ) -> VarDictionary {
+        let mounted: Vec<String> = mounted.as_slice().iter().map(ToString::to_string).collect();
+        let facts = design_cost_facts(
+            &self.world,
+            player_id_of(player),
+            &frame.to_string(),
+            &mounted,
+        );
+        vdict! {
+            "entries" => &facts
+                .entries
+                .iter()
+                .map(cost_entry_dict)
+                .collect::<Array<VarDictionary>>()
+                .to_variant(),
+            "refusal" => &gstring(&facts.refusal).to_variant(),
+        }
+    }
+
     /// **A COUNT AND ITS NOUN, AGREEING**, from the sim (ASSA-145).
     ///
     /// `sim::debug::counted` and not a GDScript twin, so the window and
@@ -1002,7 +1103,8 @@ impl AssaySim {
     /// it submits a `MakePart` with the wrong kind and checks the sim refuses.
     pub const PART_MATERIAL: sim::ItemKind = sim::ItemKind::Refined;
 
-    /// EVERY PART THE CATALOGUE HOLDS: `name`, `size`, `material` and `tag`.
+    /// EVERY PART THE CATALOGUE HOLDS: `name`, `size`, `material`, `tag`,
+    /// `is_frame` and `slots`.
     ///
     /// So the client's "make a part" buttons are the sim's list rather than four
     /// strings typed into GDScript. ADR 0003's consequence is that a new part
@@ -1015,17 +1117,52 @@ impl AssaySim {
     /// `PartKind::Frame(Mount)` is an enum inside an enum. GDScript neither
     /// builds that nor parses it — parsing would be the double trap again — it
     /// passes this value straight into the command.
+    ///
+    /// **`slots` IS WHAT A FRAME ACCEPTS, AS THREE NUMBERS AND A NAME PER SLOT
+    /// AND NEVER AS A SENTENCE** (ASSA-340, for `assay-build-screen` §3's take
+    /// from Satisfactory: *"slots drawn as a shape, not listed as rows … a list
+    /// hides a limit that a drawn shape states"*). One entry per `SlotLimit` in
+    /// the catalogue's order, each `{name, min, max}`; empty for every kind
+    /// that is not a frame, which is `PartSpec::slots`' own rule (*"Only a
+    /// frame offers any"*). The build screen draws `max` boxes and marks the
+    /// first `min` of them required, so the limit is stated by the shape — the
+    /// alternative was four numbers typed into GDScript, which ASSA-317 forbids
+    /// by name. `sim::debug::slots_phrase` is where the WORDS live if a surface
+    /// ever needs them; `part_table`'s `accepts` column is the headless one.
+    ///
+    /// **`name` IS THE SLOT KIND'S OWN ITEM NAME, WHICH IS WHAT `inventory_of`
+    /// ALREADY CALLS A PART IN THE PACK** (`ItemKind::Part(k).name()` is
+    /// `k.name()`), so a client matches a pack row to a slot by comparing two
+    /// strings the sim wrote and parses nothing.
+    ///
+    /// **AND THERE IS NO `tag` ON A SLOT, DELIBERATELY.** Nothing ever sends a
+    /// slot to the sim: `Assemble` carries an ordered list of items, not slot
+    /// indices, and whether a part may join a design is `part_press_refusal`'s
+    /// answer rather than a comparison the client makes. A crossed field with
+    /// no reader is ASSA-173's defect, so it is absent until something asks.
     #[func]
     pub fn part_kinds() -> Array<VarDictionary> {
         PartKind::ALL
             .iter()
             .filter_map(|kind| {
                 let tag = tag_variant(&serde_json::to_value(kind).ok()?)?;
+                let slots: Array<VarDictionary> = sim::assembly::spec(*kind)
+                    .slots
+                    .iter()
+                    .map(|slot| {
+                        vdict! {
+                            "name" => &gstring(slot.kind.name()).to_variant(),
+                            "min" => &(i64::from(slot.min)).to_variant(),
+                            "max" => &(i64::from(slot.max)).to_variant(),
+                        }
+                    })
+                    .collect();
                 Some(vdict! {
                     "name" => &gstring(kind.name()).to_variant(),
                     "size" => &(sim::assembly::spec(*kind).size as i64).to_variant(),
                     "material" => &gstring(Self::PART_MATERIAL.name()).to_variant(),
                     "tag" => &tag,
+                    "slots" => &slots.to_variant(),
                     // **THE WORD ON A PART ROW'S BUTTON IS A PROPERTY OF THE
                     // KIND** (Game Director, ASSA-86 ruling 1): a frame kind
                     // says `Frame` forever and every other kind says `Mount`
@@ -1139,6 +1276,28 @@ impl AssaySim {
     #[func]
     pub fn species_per_world() -> i64 {
         sim::tuning::SPECIES_PER_WORLD as i64
+    }
+
+    /// THE LONGEST NAME A SPECIES CAN CARRY (`sim::tuning::SPECIES_NAME_MAX`),
+    /// in characters — `mineral::validate_name` counts `chars`, not bytes, and
+    /// allows only ASCII letters, digits and hyphens, which is what makes
+    /// `"W"` repeated to this length a real worst case rather than a guess.
+    ///
+    /// **HERE BECAUSE A WORST CASE THAT STOPS BEING THE WORST CASE FAILS
+    /// SILENTLY.** The window sizes the machine menu against the widest line
+    /// the sim can hand it, and the widest line is a full-length species name
+    /// (`test_buttons.gd`'s menu-width bound, ASSA-334). That test wrote `20`
+    /// of its own: raise the cap in `tuning.rs` and the test's "worst case"
+    /// gets SHORTER than the real one, the check stays green, and the row
+    /// overflows in a real window with nothing going red. A constant the test
+    /// and the rule both read cannot drift that way.
+    ///
+    /// STATIC, like [`AssaySim::species_per_world`]: it is a tuning constant,
+    /// not a fact about one world, so a test should not need a `Welcome` to
+    /// ask for it. It is NOT on `building_facts` for the same reason.
+    #[func]
+    pub fn species_name_max() -> i64 {
+        sim::tuning::SPECIES_NAME_MAX as i64
     }
 
     /// The word the sim puts in front of a dead end, so the window labels one
@@ -1495,6 +1654,7 @@ fn building_fact(world: &World, building: &sim::building::Building) -> BuildingF
         work: world
             .building_work(building)
             .map(|w| (i64::from(w.done), i64::from(w.total))),
+        work_clause: sim::debug::work_clause(world, building),
         burn_left,
         burn_temperature,
     }
@@ -1528,6 +1688,13 @@ fn building_dict(building: &BuildingFacts) -> VarDictionary {
             Some((done, total)) => Vector2i::new(done as i32, total as i32).to_variant(),
             None => Variant::nil(),
         },
+        // `nil` AND NOT `""`, for `work`'s own reason one line up: an empty
+        // string is a label a row would draw as a blank, and the absence of a
+        // batch is a fact the menu has to branch on rather than render.
+        "work_clause" => &match &building.work_clause {
+            Some(clause) => gstring(clause).to_variant(),
+            None => Variant::nil(),
+        },
         "burn_left" => building.burn_left,
         "burn_temperature" => building.burn_temperature,
     }
@@ -1550,6 +1717,22 @@ fn stack_dict(stack: &StackFacts) -> VarDictionary {
         "grade" => &gstring(&stack.grade).to_variant(),
         "count" => stack.count,
         "name" => &gstring(&stack.name).to_variant(),
+    }
+}
+
+/// One row of block 6. The item's five keys are `stack_dict`'s, so a pack row
+/// and a cost row are read by one function in GDScript; see [`CostEntry`] for
+/// why `count` is not among them and `need` / `have` are.
+fn cost_entry_dict(entry: &CostEntry) -> VarDictionary {
+    vdict! {
+        "kind" => &gstring(&entry.kind).to_variant(),
+        "species" => entry.species,
+        "species_name" => &gstring(&entry.species_name).to_variant(),
+        "grade" => &gstring(&entry.grade).to_variant(),
+        "name" => &gstring(&entry.name).to_variant(),
+        "need" => entry.need,
+        "have" => entry.have,
+        "blocks" => entry.blocks,
     }
 }
 
@@ -1778,6 +1961,143 @@ pub fn design_readout_facts(world: &World, frame: &str, mounted: &[String]) -> D
         capacity_high: range.high.capacity as i64,
         held: assembly.mount() == Some(Mount::Held),
         unfinished: unfinished.is_some(),
+    }
+}
+
+/// ONE TALLIED STACK OF A DESIGN'S BILL, with the pack's answer beside it
+/// (ASSA-347, for block 6 of the build screen).
+///
+/// **TALLIED AND NOT PER SLOT**: two hoppers of one material are one entry
+/// needing two, because `Assemble` spends all-or-nothing and a screen that
+/// listed them twice would show two rows a player can half-afford.
+///
+/// The five item fields are spelled exactly as [`stack_dict`] spells a pack
+/// stack — `item_of_stack` builds a command's item out of either with no second
+/// rearranging function (ASSA-146) — and
+/// `an_entry_spells_its_item_the_way_the_pack_row_does` holds that against
+/// `inventory_facts` rather than against my memory of it.
+///
+/// **`count` IS NOT ONE OF THEM, ON PURPOSE.** A stack has one count; a cost
+/// entry has two numbers about one item, so they are named for the question
+/// they answer and in the Game Director's own words: `need 1 · have 2`
+/// (§5.5), which is also what `AssayHud.cost_counts_line(need, have)` already
+/// calls them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CostEntry {
+    pub kind: String,
+    pub species: i64,
+    pub species_name: String,
+    pub grade: String,
+    pub name: String,
+    /// How many of this item the press would spend.
+    pub need: i64,
+    /// How many are in the pack now (`Inventory::count`).
+    pub have: i64,
+    /// **THE SIM'S BLOCKER, PROJECTED ONTO THE ROW THAT IS AT FAULT.**
+    ///
+    /// `plan` picks it with `cost.iter().find(…)` — the FIRST entry the pack
+    /// cannot cover — and `AssemblyPlan`'s own docstring says centralising that
+    /// exists to stop a preview "disagreeing about WHICH item is missing". So
+    /// this crosses as a flag rather than leaving GDScript to compare items:
+    /// the client marks where it is true and never works out where that is.
+    ///
+    /// **At most one entry carries it**, which is the shape of
+    /// `missing: Option<Item>` and the reason it is a flag and not a count of
+    /// shortfalls. The obvious wrong client (loop the bill, red every row whose
+    /// `have` is short) looks identical until two rows are short, and
+    /// `only_the_sims_own_blocker_is_marked_even_when_two_rows_are_short` is
+    /// the test that tells them apart.
+    pub blocks: bool,
+}
+
+/// WHAT A DESIGN WOULD COST ONE PLAYER, and the sentence the pack earns if it
+/// cannot pay (ASSA-347).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DesignCost {
+    /// One entry per tallied stack, in `Assembly::part_items` order: the frame
+    /// first, then the mounted parts. **Empty means there is no design to
+    /// price** — not a free one. A legal design always costs its frame.
+    pub entries: Vec<CostEntry>,
+    /// [`sim::debug::pack_refusal_phrase`], or `""` when the pack covers it.
+    ///
+    /// **THE SIM'S SENTENCE AND ONLY THIS ONE.** A design the rules throw out
+    /// (not a part, no such slot, five hoppers on a four-hopper frame) is worded
+    /// by `design_readout`'s `fault` and gets no entries and no refusal here:
+    /// one sentence, one home. A caller that printed a slot fault in a
+    /// have/need block would be telling a player their pack is the problem.
+    pub refusal: String,
+}
+
+/// **WHAT A DESIGN WOULD COST THE PLAYER WHO IS HOLDING THE PARTS**, tallied by
+/// `assembly::plan` and priced against their own inventory (ASSA-347).
+///
+/// `design_readout_facts` deliberately passes an EMPTY pack — the five bars are
+/// the same whatever you hold — so nothing in the binding could price an
+/// assembly at all, and `make_offers.cost` is the recipe's cost on the make
+/// path. This is the other half, and it is a view of something already paid
+/// for: both arms of [`sim::assembly::plan`] have carried `cost` and `missing`
+/// since ASSA-324.
+///
+/// **A DESIGN STILL BEING PLACED IS PRICED TOO** (`plan`'s `Unfinished`): it
+/// bills what is selected so far, so block 6's numbers move with every click
+/// instead of appearing on the last one. That is ASSA-329's rule applied to the
+/// bill rather than to the bars.
+///
+/// Engine-free so `cargo test` pins it against `plan` and `Inventory::count`,
+/// the same split `design_readout_facts` and `inventory_facts` use.
+pub fn design_cost_facts(
+    world: &World,
+    player: Option<PlayerId>,
+    frame: &str,
+    mounted: &[String],
+) -> DesignCost {
+    // An unknown player is an empty answer and not a panic, exactly as
+    // `inventory_facts` has it: a client asks this every frame and may ask it
+    // one frame before its `Welcome`.
+    let Some(p) = player.and_then(|id| world.player(id)) else {
+        return DesignCost::default();
+    };
+    let read = |text: &str| serde_json::from_str::<Item>(text).ok();
+    let Some(frame_item) = read(frame) else {
+        return DesignCost::default();
+    };
+    let mut items = Vec::with_capacity(mounted.len());
+    for text in mounted {
+        let Some(item) = read(text) else {
+            return DesignCost::default();
+        };
+        items.push(item);
+    }
+    // STEP'S OWN FUNCTION, so the bill and the press cannot disagree about what
+    // a design costs or about which stack blocks it. The species gate lives in
+    // here too (`design_readout` panicked on a made-up index before ASSA-324
+    // moved this call), and `item_json` will spell species 200 for anyone who
+    // asks.
+    let planned = sim::assembly::plan(frame_item, &items, &world.species, &p.inventory);
+    let (cost, missing) = match &planned {
+        sim::assembly::AssemblyPlan::Weighed { cost, missing, .. } => (cost, *missing),
+        sim::assembly::AssemblyPlan::Unfinished { cost, missing, .. } => (cost, *missing),
+        sim::assembly::AssemblyPlan::Refused(_) => return DesignCost::default(),
+    };
+    DesignCost {
+        entries: cost
+            .iter()
+            .map(|stack| CostEntry {
+                kind: stack.item.kind.name().to_string(),
+                species: stack.item.species.0 as i64,
+                species_name: world.species(stack.item.species).name().to_string(),
+                grade: stack.item.grade.letter().to_string(),
+                name: world.item_name(stack.item),
+                need: stack.count as i64,
+                have: p.inventory.count(stack.item) as i64,
+                // The sim's choice, matched rather than recomputed: `plan`
+                // tallies, so one item is one entry and this marks one row.
+                blocks: missing == Some(stack.item),
+            })
+            .collect(),
+        refusal: missing.map_or_else(String::new, |item| {
+            sim::debug::pack_refusal_phrase(world, item)
+        }),
     }
 }
 
@@ -2069,6 +2389,21 @@ pub struct BuildingFacts {
     /// when there is none — `World::building_work`. See [`sim::WorkReading`]
     /// for why it is a pair and never a fraction.
     pub work: Option<(i64, i64)>,
+    /// That same batch as the sentence the sim writes for it
+    /// (`debug::work_clause`) — `56 of 100 work toward the next unit`, `12 of
+    /// 20 ticks into this batch` — or `None` exactly when [`Self::work`] is.
+    ///
+    /// **IT CROSSES BECAUSE THE NOUN IS A SIM DECISION AND A HOST MUST NOT
+    /// PICK IT.** `work_clause`'s own docstring says so: *"a smelter's progress
+    /// is ticks of a recipe and a drill's is work ... a host that picked the
+    /// noun would be deciding which."* The machine menu draws the batch as a
+    /// band off the pair (ASSA-339) and needs a label for it; with only the
+    /// pair crossed, the only labels available to GDScript were a noun it had
+    /// invented or no noun at all. Maren's ASSA-334 §6 measured this clause at
+    /// 191 px and budgeted the row for it, so the words were always the plan —
+    /// nothing had asked the binding for them. The pair STAYS: a band needs two
+    /// numbers and this is one string.
+    pub work_clause: Option<String>,
     /// Ticks of burn left in the unit currently in the fire, and how hot it is.
     /// Both zero when cold, and on a machine.
     ///
@@ -2511,6 +2846,33 @@ impl AssaySim {
     /// type it into. The tile stays — that is how you find the thing.
     pub fn halt_line_texts(&self) -> Vec<String> {
         sim::debug::halt_lines(&self.world, sim::debug::Audience::Pointed)
+    }
+
+    /// Engine-free half of [`AssaySim::attention_lines`] and
+    /// [`AssaySim::attention_conditions`] **at once, which is the whole point**
+    /// (ASSA-300).
+    ///
+    /// The two `#[func]`s above are each one `map` over this, so a line and its
+    /// kind are produced by the same `filter_map` over the same event. The
+    /// alternative — two functions each matching the loud set — is how one of
+    /// them quietly stops covering a variant, which is the mistake
+    /// `event_needs_attention` was collapsed into `sim::debug::attention` to
+    /// prevent one layer down.
+    ///
+    /// `None` is an ACT: something that happened, which nothing can un-happen,
+    /// so there is nothing to re-ask and no host may age it out (ASSA-239).
+    pub fn attention_pairs(&self, who: Option<PlayerId>) -> Vec<(String, Option<BuildingId>)> {
+        self.last_events
+            .iter()
+            .filter_map(|event| {
+                let kind = sim::debug::attention(who, event)?;
+                let about = match kind {
+                    sim::debug::AttentionKind::Act => None,
+                    sim::debug::AttentionKind::Condition { building } => Some(building),
+                };
+                Some((self.describe(who, event), about))
+            })
+            .collect()
     }
 
     /// EVERY BUILDING IN THE WORLD, FOR DRAWING, in the world's own order.
@@ -5145,6 +5507,274 @@ mod tests {
         );
     }
 
+    /// **A STALL AND ITS RECOVERY, DRIVEN THROUGH `step`** — the one case
+    /// ASSA-300 exists for, and the only one that proves a host has a way back.
+    ///
+    /// Before this, the Godot client had nothing to ask: the stall event is an
+    /// edge, so `the … smelter (A) stopped: no fuel` sat over the world after
+    /// the smelter was refuelled while the pinned count beside it had already
+    /// dropped to zero. The three facts a host needs are asserted at three
+    /// moments of one real world, not arranged by hand.
+    #[test]
+    fn a_stall_arrives_as_a_condition_about_a_building_and_stops_being_halted_when_it_is_fixed() {
+        let (mut sim, me) = with_a_player("marlow");
+        let rock = sim.world().species[0].id;
+        let fuel_species = sim.world().species[1].id;
+        // The same two sheets `a_smelter_reads_lit_only_…` sets, and for the
+        // same reason: ore these walls can take, and a fuel that lights from a
+        // hand spark. Worldgen rolls a roster per seed; this test is not about
+        // which one it rolled.
+        sim.world.species_mut(rock).sheet = sim::Sheet {
+            density: 50,
+            strength: 50,
+            hardness: 30,
+            heat_tolerance: 60,
+            reactivity: 1,
+            conductivity: 50,
+        };
+        sim.world.species_mut(fuel_species).sheet = sim::Sheet {
+            density: 50,
+            strength: 50,
+            hardness: 30,
+            heat_tolerance: sim::tuning::HAND_SPARK_TEMPERATURE as u8,
+            reactivity: 60,
+            conductivity: 50,
+        };
+        let smelter = Item::new(sim::ItemKind::Smelter, rock, sim::Grade::B);
+        let ore = Item::new(sim::ItemKind::Ore, rock, sim::Grade::A);
+        let fuel = Item::new(sim::ItemKind::Ore, fuel_species, sim::Grade::A);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.inventory.add(smelter, 1);
+            p.inventory.add(ore, 15);
+            p.inventory.add(fuel, 3);
+        }
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 1, at.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place {
+                item: smelter,
+                pos: spot,
+            },
+        )]);
+        let id = sim
+            .world()
+            .building_at(spot)
+            .expect("the smelter was placed")
+            .id;
+
+        // 1. AN EMPTY SMELTER IS NOT A CONDITION. `Idle` is what follows every
+        //    finished batch, so a surface that listed it would cry wolf.
+        assert!(
+            !sim.is_halted(i64::from(id.0)),
+            "an empty smelter is idle, which the sim refuses to call a stall"
+        );
+
+        // 2. ORE IN, NOTHING TO BURN: the stall fires, and it arrives as a
+        //    CONDITION carrying this building.
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Insert {
+                building: id,
+                slot: sim::Slot::Input,
+                item: ore,
+                count: 15,
+            },
+        )]);
+        let pairs = sim.attention_pairs(Some(me));
+        let about: Vec<Option<BuildingId>> = pairs.iter().map(|(_, b)| *b).collect();
+        assert!(
+            about.contains(&Some(id)),
+            "premise: the stall edge has to be in this tick's events at all: {pairs:?}"
+        );
+        let said = pairs
+            .iter()
+            .find(|(_, b)| *b == Some(id))
+            .map(|(line, _)| line.clone())
+            .expect("just asserted");
+        assert!(
+            sim.is_halted(i64::from(id.0)),
+            "the condition is true on the tick its sentence is said: {said}"
+        );
+
+        // **AND THE TWO WORDINGS DO NOT MATCH, WHICH IS WHY THE ID IS CARRIED**
+        // (ASSA-67): a host that compared the toast with the pinned list would
+        // never clear anything. This fails if they ever converge, which would
+        // be a design change and not a pass.
+        let pinned = sim.halt_line_texts();
+        assert!(
+            !pinned.contains(&said),
+            "the notice and the pinned line are two wordings of one condition; \
+             if they are now identical, the id this test guards is no longer needed: \
+             {said:?} vs {pinned:?}"
+        );
+
+        // 3. FUEL IN: the condition is gone on the tick it is fixed, so the
+        //    sentence has somewhere to go. This is the half that did not exist.
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Insert {
+                building: id,
+                slot: sim::Slot::Fuel,
+                item: fuel,
+                count: 3,
+            },
+        )]);
+        assert!(
+            !sim.is_halted(i64::from(id.0)),
+            "refuelled and working, so nothing about it is still stopped: {:?}",
+            sim.building_facts()[0].status
+        );
+        // AND THE PINNED BLOCK AGREES, because both are `World::halted`
+        // (ASSA-300 box 6: the toast and the count never disagree about
+        // whether anything is stopped).
+        assert!(
+            sim.halt_line_texts().is_empty(),
+            "a host keying the toast on `is_halted` and the block on `halt_lines` \
+             must not be able to disagree: {:?}",
+            sim.halt_line_texts()
+        );
+    }
+
+    /// **A REFUSAL IS AN ACT AND MUST NEVER BE AGEABLE** (ASSA-239: a failure
+    /// that faded out would be the one class of sentence a player cannot
+    /// recover).
+    ///
+    /// `-1` and not the building it was about, even when the refused command
+    /// names one: the act happened, nothing can un-happen it, so there is no
+    /// condition to re-ask. A host handed an id here would take the sentence
+    /// down the moment that building was healthy — which it already is, because
+    /// the refusal was about the player's reach, not the machine.
+    #[test]
+    fn a_refusal_is_an_act_with_no_building_to_re_ask() {
+        let (mut sim, me) = with_a_player("marlow");
+        let species = sim.world().species[0].id;
+        let ore = Item::new(sim::ItemKind::Ore, species, sim::Grade::C);
+        // Insert into a building that does not exist: rejected, and the command
+        // names a `BuildingId` so this is the arm where carrying one would look
+        // reasonable.
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Insert {
+                building: BuildingId(7),
+                slot: sim::Slot::Input,
+                item: ore,
+                count: 1,
+            },
+        )]);
+        let pairs = sim.attention_pairs(Some(me));
+        assert_eq!(
+            pairs.len(),
+            1,
+            "premise: a refused command has to be one attention line: {pairs:?}"
+        );
+        assert_eq!(
+            pairs[0].1, None,
+            "a refusal is an ACT: {:?} must never carry a building a host could \
+             watch go healthy",
+            pairs[0]
+        );
+    }
+
+    /// **THE LINE AND ITS KIND COME FROM THE SAME EVENT, INDEX FOR INDEX.**
+    ///
+    /// The two `#[func]`s a host calls are each one `map` over `attention_pairs`,
+    /// so this is a property rather than an agreement — but it is the property
+    /// the whole fix rests on, and a future hand that reintroduced a second
+    /// filter would break it silently. Driven over a tick carrying BOTH kinds
+    /// at once, because a fixture with one of them cannot tell a correct
+    /// pairing from a constant.
+    #[test]
+    fn an_act_and_a_condition_in_one_tick_keep_their_own_kinds() {
+        let (mut sim, me) = with_a_player("marlow");
+        let rock = sim.world().species[0].id;
+        sim.world.species_mut(rock).sheet = sim::Sheet {
+            density: 50,
+            strength: 50,
+            hardness: 30,
+            heat_tolerance: 60,
+            reactivity: 1,
+            conductivity: 50,
+        };
+        let smelter = Item::new(sim::ItemKind::Smelter, rock, sim::Grade::B);
+        let ore = Item::new(sim::ItemKind::Ore, rock, sim::Grade::A);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.inventory.add(smelter, 1);
+            p.inventory.add(ore, 15);
+        }
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 1, at.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place {
+                item: smelter,
+                pos: spot,
+            },
+        )]);
+        let id = sim
+            .world()
+            .building_at(spot)
+            .expect("the smelter was placed")
+            .id;
+        // One tick, two inputs: the ore that stalls it, and a second insert into
+        // a building that is not there, which is refused.
+        sim.step_with(&[
+            Input::player(
+                me,
+                sim::PlayerCommand::Insert {
+                    building: id,
+                    slot: sim::Slot::Input,
+                    item: ore,
+                    count: 15,
+                },
+            ),
+            Input::player(
+                me,
+                sim::PlayerCommand::Insert {
+                    building: BuildingId(9999),
+                    slot: sim::Slot::Input,
+                    item: ore,
+                    count: 1,
+                },
+            ),
+        ]);
+        let pairs = sim.attention_pairs(Some(me));
+        let acts = pairs.iter().filter(|(_, b)| b.is_none()).count();
+        let conditions = pairs.iter().filter(|(_, b)| *b == Some(id)).count();
+        assert_eq!(
+            (acts, conditions),
+            (1, 1),
+            "premise: this tick must carry one of each kind, or the test cannot \
+             tell a pairing from a constant: {pairs:?}"
+        );
+        // AND THE SENTENCES ARE NOT SWAPPED. The condition's line is the one
+        // the sim says about the machine; the act's is the refusal.
+        for (line, about) in &pairs {
+            match about {
+                Some(_) => assert!(
+                    !line.contains("refused"),
+                    "a refusal arrived carrying a building: {line}"
+                ),
+                None => assert!(
+                    line.contains("refused"),
+                    "a machine's condition arrived as an act: {line}"
+                ),
+            }
+        }
+    }
+
+    /// An id nothing in the world answers to is not stopped. A machine that has
+    /// been picked up cannot keep a sentence on screen for ever.
+    #[test]
+    fn an_unknown_building_is_not_halted() {
+        let sim = AssaySim::from_world(fresh());
+        assert!(!sim.is_halted(0));
+        assert!(!sim.is_halted(9999));
+        assert!(!sim.is_halted(-1));
+    }
+
     /// A MACHINE CARRIES ITS PARTS IN `Assembly::parts()` ORDER, FRAME FIRST.
     ///
     /// A machine has no single drawing: `art/rig.py` rule 2 is that one is drawn
@@ -5425,7 +6055,108 @@ mod tests {
             facts[0].work, None,
             "nothing is in front of it, so there is no batch to report"
         );
+        // AND NO SENTENCE FOR THE BATCH THAT IS NOT THERE (ASSA-334): the menu
+        // branches on this to draw no band at all, so an empty string here
+        // would reach the screen as a blank row.
+        assert_eq!(
+            facts[0].work_clause, None,
+            "no batch, so no clause: `0 of 20 ticks` on an empty smelter reads as a promise"
+        );
         assert_eq!((facts[0].burn_left, facts[0].burn_temperature), (0, 0));
+    }
+
+    /// **A SMELTER BLOCKED ON ITS OUTPUT CROSSES AS `stalled`, `stopped`, AND
+    /// COLD** (ASSA-350). The window drew a burning fire on this machine for as
+    /// long as the condition existed, because `lit` is only
+    /// `matches!(state, Working { .. })` and `smelter_state` said `Working`
+    /// forever.
+    ///
+    /// **THIS NEEDS NO BINDING EDIT AND THAT IS THE CLAIM BEING TESTED.** The
+    /// `state` arm is a wildcard on the stall reason
+    /// (`SmelterState::Stalled(_) => "stalled"`), so a new variant arrives as
+    /// the tag a client already reads, `stopped` follows `halted()`, and `lit`
+    /// goes false because nothing is burning. I told the Game Director I would
+    /// read these three rather than assume them; this is the reading, asserted.
+    #[test]
+    fn a_smelter_blocked_on_its_output_crosses_as_stalled_stopped_and_cold() {
+        let (mut sim, me) = with_a_player("nacre");
+        let rock = sim.world().species[0].id;
+        let other = sim.world().species[1].id;
+        let smelter = Item::new(sim::ItemKind::Smelter, rock, sim::Grade::B);
+        sim.world
+            .player_mut(me)
+            .expect("the player exists")
+            .inventory
+            .add(smelter, 1);
+        let at = sim.world().player(me).expect("exists").pos;
+        let spot = sim::TilePos::new(at.x + 1, at.y);
+        sim.step_with(&[Input::player(
+            me,
+            sim::PlayerCommand::Place {
+                item: smelter,
+                pos: spot,
+            },
+        )]);
+        let id = sim.world().building_at(spot).expect("placed").id;
+
+        // Set the slots directly: what is under test is the three fields a
+        // window reads, not the rules that get a smelter here (sim's own
+        // `smelter.rs` pins those). A burning fire, ore of `rock` in the input,
+        // and a bar of refined `other` in the way.
+        {
+            let b = sim.world.building_mut(id).expect("placed");
+            let sim::building::BuildingKind::Smelter(s) = &mut b.kind else {
+                panic!("the fixture places a smelter")
+            };
+            s.input = Some(sim::ItemStack::new(
+                Item::new(sim::ItemKind::Ore, rock, sim::Grade::A),
+                5,
+            ));
+            s.output = Some(sim::ItemStack::new(
+                Item::new(sim::ItemKind::Refined, other, sim::Grade::A),
+                1,
+            ));
+            s.burn_left = 10;
+            s.burn_temperature = 100;
+        }
+
+        let facts = sim.building_facts();
+        assert_eq!(
+            facts[0].state, "stalled",
+            "a new stall reason arrives as the tag a client already reads"
+        );
+        assert!(
+            facts[0].stopped,
+            "a conflict no supply resolves is something to fix, so it joins halt_lines"
+        );
+        assert!(
+            !facts[0].lit,
+            "NOTHING IS BURNING IN IT: the window drew a fire on this machine \
+             for as long as smelter_state said Working"
+        );
+        assert_eq!(
+            facts[0].state_line,
+            sim::debug::building_state_line(sim.world(), sim.world().building(id).unwrap()),
+            "the sentence is the sim's one wording, not a second copy"
+        );
+        assert!(
+            facts[0].state_line.contains("output still holds"),
+            "and it names the condition the player has to clear: {}",
+            facts[0].state_line
+        );
+        // THE ITEM IS SPELLED AS THE SLOT SPELLS IT. A player reads the
+        // sentence and then looks at the slot; two spellings of one item is
+        // ASSA-43/52, which is why the sentence calls `item_name`.
+        let held = facts[0].slots[2]
+            .held
+            .as_ref()
+            .expect("the output slot holds the bar this test put there");
+        assert!(
+            facts[0].state_line.contains(&held.name),
+            "the stall names {:?} and the slot row says {:?}",
+            facts[0].state_line,
+            held.name
+        );
     }
 
     /// The batch crosses as the pair the sim decided, and keeps crossing while
@@ -5520,6 +6251,33 @@ mod tests {
         assert_eq!(
             (done, total),
             (i64::from(theirs.done), i64::from(theirs.total))
+        );
+        // AND THE WORDS FOR IT ARE THE SIM'S TOO (ASSA-334). The menu draws a
+        // band off the pair and needs a label; the noun is a sim decision
+        // (`work_clause`: "a host that picked the noun would be deciding
+        // which"), so the clause crosses rather than being composed in
+        // GDScript. **ASSERTED AS PRESENT FIRST**: `Option == Option` is
+        // satisfied by two `None`s, and a field that crossed nothing at all
+        // would pass a bare `assert_eq!` here on every building in the game.
+        assert_eq!(
+            working.work_clause,
+            sim::debug::work_clause(sim.world(), sim.world().building(id).expect("standing")),
+            "the clause is the sim's one wording, not a second copy"
+        );
+        assert!(
+            working
+                .work_clause
+                .as_deref()
+                .is_some_and(|clause| clause.contains("of")),
+            "a working smelter has a clause with its two numbers in it: {:?}",
+            working.work_clause
+        );
+        // **NONE EXACTLY WHEN THE PAIR IS NONE**, which is the branch the menu
+        // reads: no batch draws no band and no label, never an empty one.
+        assert_eq!(
+            stalled.work.is_some(),
+            stalled.work_clause.is_some(),
+            "the pair and the clause disagree about whether there is a batch"
         );
     }
 
@@ -6224,6 +6982,336 @@ mod tests {
         assert!(
             drill.capacity_high > 0,
             "a drill buffers something: {drill:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // ASSA-347: block 6 on the assembly path. What a design costs THIS pack,
+    // and which one stack the sim says is in the way.
+    // -----------------------------------------------------------------------
+
+    /// One part as a pack holds it, for stocking a fixture.
+    fn part_stack(kind: sim::PartKind, species: sim::SpeciesId, grade: sim::Grade) -> Item {
+        Item::new(ItemKind::Part(kind), species, grade)
+    }
+
+    /// `(frame, mounted)` texts parsed back into the items `plan` takes, so a
+    /// test can ask the sim the same question the binding was asked.
+    fn items_of(frame: &str, mounted: &[String]) -> (Item, Vec<Item>) {
+        let read = |t: &str| serde_json::from_str::<Item>(t).expect("the fixture spells items");
+        (read(frame), mounted.iter().map(|t| read(t)).collect())
+    }
+
+    /// **THE BILL IS `plan`'S OWN TALLY AND THE PACK COLUMN IS
+    /// `Inventory::count`** — asked of the sim separately and compared row for
+    /// row, so this crate cannot grow a second opinion about what a press
+    /// spends.
+    ///
+    /// The fixture is deliberately a tally AND a shortfall at once: two hoppers
+    /// of one material must be ONE entry needing two (the spend is
+    /// all-or-nothing, so two rows a player can half-afford would be a lie),
+    /// and the pack holds one of them, which is the only row `blocks` may land
+    /// on here.
+    #[test]
+    fn the_bill_is_plans_own_tally_and_the_pack_is_inventory_count() {
+        let (mut sim, me) = with_a_player("limpet");
+        let rock = sim.world().species[0].id;
+        let grade = sim::Grade::B;
+        let planted = sim::PartKind::Frame(Mount::Planted);
+        let (frame, mounted, _) = design_of(&[
+            (planted, rock, grade),
+            (sim::PartKind::Head, rock, grade),
+            (sim::PartKind::Hopper, rock, grade),
+            (sim::PartKind::Hopper, rock, grade),
+        ]);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.inventory.add(part_stack(planted, rock, grade), 1);
+            p.inventory
+                .add(part_stack(sim::PartKind::Head, rock, grade), 1);
+            p.inventory
+                .add(part_stack(sim::PartKind::Hopper, rock, grade), 1);
+        }
+        let got = design_cost_facts(sim.world(), Some(me), &frame, &mounted);
+
+        let (frame_item, mounted_items) = items_of(&frame, &mounted);
+        let pack = &sim.world().player(me).expect("exists").inventory;
+        let plan = sim::assembly::plan(frame_item, &mounted_items, &sim.world().species, pack);
+        let sim::assembly::AssemblyPlan::Weighed { cost, missing, .. } = &plan else {
+            panic!("a planted frame with a head and hoppers is a machine: {plan:?}");
+        };
+        assert_eq!(
+            cost.len(),
+            3,
+            "the premise: two hoppers tally into one stack, so this is three \
+             rows and not four: {cost:?}"
+        );
+        let billed: Vec<(String, i64, i64, bool)> = got
+            .entries
+            .iter()
+            .map(|e| (e.name.clone(), e.need, e.have, e.blocks))
+            .collect();
+        let planned: Vec<(String, i64, i64, bool)> = cost
+            .iter()
+            .map(|s| {
+                (
+                    sim.world().item_name(s.item),
+                    i64::from(s.count),
+                    i64::from(pack.count(s.item)),
+                    *missing == Some(s.item),
+                )
+            })
+            .collect();
+        assert_eq!(
+            billed, planned,
+            "the bill is the plan's, row for row and in `part_items` order: {got:?}"
+        );
+        let hopper = got
+            .entries
+            .iter()
+            .find(|e| e.kind == "hopper")
+            .unwrap_or_else(|| panic!("the hoppers are a row: {got:?}"));
+        assert_eq!(
+            (hopper.need, hopper.have, hopper.blocks),
+            (2, 1, true),
+            "the premise: this fixture has to hold a tally and a shortfall at \
+             once, or it agrees with anything: {got:?}"
+        );
+        assert!(
+            got.refusal.contains(&sim.world().item_name(part_stack(
+                sim::PartKind::Hopper,
+                rock,
+                grade
+            ))),
+            "the sim's sentence names the stack it stopped at: {got:?}"
+        );
+    }
+
+    /// **ONLY THE SIM'S BLOCKER IS MARKED, AND IT IS NOT THE LAST SHORT ROW.**
+    ///
+    /// The Game Director's second condition on ASSA-317 (A): `missing` is
+    /// `Option<Item>` — the FIRST uncovered stack — so a screen marks ONE
+    /// blocker and may not fake the rest. The obvious wrong client loops the
+    /// bill and reds every row whose `have` is short, which looks identical
+    /// until two rows are short; this pack holds the hoppers and neither the
+    /// frame nor the head, so the right answer is the frame alone and the wrong
+    /// one is two rows.
+    ///
+    /// It pins the SENTENCE the same way: it names the frame and must not name
+    /// the head, which is what `cost.iter().find(…)` picked and what a client
+    /// composing its own sentence off the last shortfall would get wrong.
+    #[test]
+    fn only_the_sims_own_blocker_is_marked_even_when_two_rows_are_short() {
+        let (mut sim, me) = with_a_player("limpet");
+        let rock = sim.world().species[0].id;
+        let grade = sim::Grade::B;
+        let planted = sim::PartKind::Frame(Mount::Planted);
+        let (frame, mounted, _) = design_of(&[
+            (planted, rock, grade),
+            (sim::PartKind::Head, rock, grade),
+            (sim::PartKind::Hopper, rock, grade),
+            (sim::PartKind::Hopper, rock, grade),
+        ]);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.inventory
+                .add(part_stack(sim::PartKind::Hopper, rock, grade), 2);
+        }
+        let got = design_cost_facts(sim.world(), Some(me), &frame, &mounted);
+
+        let marked: Vec<&CostEntry> = got.entries.iter().filter(|e| e.blocks).collect();
+        assert_eq!(
+            marked.len(),
+            1,
+            "exactly one row may be marked, whatever the pack is short of: {got:?}"
+        );
+        assert_eq!(
+            marked[0].kind, "frame",
+            "the frame is the FIRST stack the pack cannot cover: {got:?}"
+        );
+        let head = got
+            .entries
+            .iter()
+            .find(|e| e.kind == "head")
+            .unwrap_or_else(|| panic!("the head is a row: {got:?}"));
+        assert!(
+            head.have < head.need && !head.blocks,
+            "the premise AND the claim: the head is short too and is still not \
+             the blocker, so reddening every short row is a different answer \
+             from this one: {got:?}"
+        );
+        assert!(
+            got.refusal
+                .contains(&sim.world().item_name(part_stack(planted, rock, grade)))
+                && !got.refusal.contains(&sim.world().item_name(part_stack(
+                    sim::PartKind::Head,
+                    rock,
+                    grade
+                ))),
+            "the sentence blames `plan`'s choice, not the last short row: {got:?}"
+        );
+    }
+
+    /// **A COST ROW SPELLS ITS ITEM EXACTLY AS A PACK ROW DOES** (ASSA-146).
+    ///
+    /// `item_of_stack` in GDScript builds a command's item out of a pack stack,
+    /// and block 6's rows are the same items one layer over; a second spelling
+    /// of grade or of the species name is how two surfaces stop agreeing about
+    /// one item. Held against `inventory_facts` — the function `inventory_of`
+    /// crosses — rather than against the keys I remember writing.
+    #[test]
+    fn an_entry_spells_its_item_the_way_the_pack_row_does() {
+        let (mut sim, me) = with_a_player("limpet");
+        let rock = sim.world().species[0].id;
+        let grade = sim::Grade::C;
+        let held = sim::PartKind::Frame(Mount::Held);
+        let (frame, mounted, _) =
+            design_of(&[(held, rock, grade), (sim::PartKind::Head, rock, grade)]);
+        {
+            let p = sim.world.player_mut(me).expect("the player exists");
+            p.inventory.add(part_stack(held, rock, grade), 1);
+            p.inventory
+                .add(part_stack(sim::PartKind::Head, rock, grade), 1);
+        }
+        let got = design_cost_facts(sim.world(), Some(me), &frame, &mounted);
+        let pack = sim.inventory_facts(Some(me));
+
+        assert_eq!(got.entries.len(), 2, "a pick is two parts: {got:?}");
+        assert_eq!(
+            pack.len(),
+            got.entries.len(),
+            "the premise: the pack holds exactly this design's parts, so every \
+             row has a twin to be compared with: {pack:?}"
+        );
+        for entry in &got.entries {
+            let twin = pack
+                .iter()
+                .find(|s| s.name == entry.name)
+                .unwrap_or_else(|| panic!("no pack row for {}: {pack:?}", entry.name));
+            assert_eq!(
+                (
+                    entry.kind.as_str(),
+                    entry.species,
+                    entry.species_name.as_str(),
+                    entry.grade.as_str(),
+                ),
+                (
+                    twin.kind.as_str(),
+                    twin.species,
+                    twin.species_name.as_str(),
+                    twin.grade.as_str(),
+                ),
+                "a cost row and a pack row spell one item two ways: {entry:?} \
+                 against {twin:?}"
+            );
+        }
+    }
+
+    /// **A DESIGN STILL BEING PLACED IS BILLED FOR WHAT IS SELECTED SO FAR**,
+    /// which is what makes block 6 move with every click instead of appearing
+    /// on the last one (ASSA-329's rule, applied to the bill).
+    ///
+    /// And the two calls a build screen makes have to agree about the state:
+    /// `design_readout` says `unfinished` for this same selection, so a screen
+    /// cannot read "not a machine" beside a bill, or a bill beside nothing.
+    #[test]
+    fn a_design_still_being_placed_bills_what_is_selected_so_far() {
+        let (sim, me) = with_a_player("limpet");
+        let rock = sim.world().species[0].id;
+        let grade = sim::Grade::A;
+        let held = sim::PartKind::Frame(Mount::Held);
+        let (frame, none, _) = design_of(&[(held, rock, grade)]);
+        assert!(none.is_empty(), "a bare frame mounts nothing");
+
+        let placing = design_cost_facts(sim.world(), Some(me), &frame, &none);
+        assert!(
+            design_readout_facts(sim.world(), &frame, &none).unfinished,
+            "the premise: a handle with no head is the half-placed state"
+        );
+        assert_eq!(
+            placing
+                .entries
+                .iter()
+                .map(|e| (e.kind.as_str(), e.need, e.have, e.blocks))
+                .collect::<Vec<_>>(),
+            vec![("handle", 1, 0, true)],
+            "a half-placed design bills the frame it already has: {placing:?}"
+        );
+        assert!(
+            !placing.refusal.is_empty(),
+            "an empty pack cannot pay for it, and that is the sim's sentence: {placing:?}"
+        );
+
+        // One more click, one more row: the bill grows with the selection.
+        let (frame, mounted, _) =
+            design_of(&[(held, rock, grade), (sim::PartKind::Head, rock, grade)]);
+        let done = design_cost_facts(sim.world(), Some(me), &frame, &mounted);
+        assert_eq!(
+            done.entries.len(),
+            2,
+            "mounting the head adds its row: {done:?}"
+        );
+    }
+
+    /// **A DESIGN THE RULES THROW OUT IS NOT BILLED AT ALL, and its sentence
+    /// has one home.** `design_readout`'s `fault` words a slot fault; a
+    /// have/need block that repeated it would be telling a player their pack is
+    /// the problem when it is not.
+    ///
+    /// The three ways a caller can ask nothing — no player yet (the frame
+    /// before a `Welcome`), a player this world does not have, and text that is
+    /// not an item — are an empty answer rather than a panic, which is
+    /// `inventory_facts`' rule and the one `design_readout` learned the
+    /// expensive way (species 200 indexed the roster raw and panicked).
+    #[test]
+    fn a_design_the_rules_throw_out_is_not_billed_at_all() {
+        let (sim, me) = with_a_player("limpet");
+        let rock = sim.world().species[0].id;
+        let grade = sim::Grade::B;
+        // A handle has no hopper slot at all: nothing a later click can rescue.
+        let (frame, mounted, _) = design_of(&[
+            (sim::PartKind::Frame(Mount::Held), rock, grade),
+            (sim::PartKind::Hopper, rock, grade),
+        ]);
+        let refused = design_cost_facts(sim.world(), Some(me), &frame, &mounted);
+        assert_eq!(
+            refused,
+            DesignCost::default(),
+            "a refused design has no bill and no pack sentence: {refused:?}"
+        );
+        assert!(
+            !design_readout_facts(sim.world(), &frame, &mounted)
+                .fault
+                .is_empty(),
+            "the premise: the sentence for this design lives on the readout, \
+             which is why there is none here"
+        );
+
+        let (good, mounted, _) = design_of(&[
+            (sim::PartKind::Frame(Mount::Held), rock, grade),
+            (sim::PartKind::Head, rock, grade),
+        ]);
+        assert_eq!(
+            design_cost_facts(sim.world(), None, &good, &mounted),
+            DesignCost::default(),
+            "a client with no player id yet asks for nothing"
+        );
+        assert_eq!(
+            design_cost_facts(sim.world(), Some(PlayerId(9999)), &good, &mounted),
+            DesignCost::default(),
+            "a player this world does not have is an empty answer, not a panic"
+        );
+        assert_eq!(
+            design_cost_facts(sim.world(), Some(me), "not an item", &mounted),
+            DesignCost::default(),
+            "text that is not an item is refused by serde, not guessed at"
+        );
+        assert!(
+            !design_cost_facts(sim.world(), Some(me), &good, &mounted)
+                .entries
+                .is_empty(),
+            "the premise: this same design DOES bill, so the empties above are \
+             the refusals and not the fixture"
         );
     }
 

@@ -40,6 +40,10 @@ const SETTLE_FRAMES := 6
 ## the font's WIDE glyphs -- `m`, `w`, `b` -- because her point is that a px/char ratio taken off
 ## `localhost:7777` is the narrowest the font gets and the real answer is below it.
 const CANDIDATES := [
+	# **THE ONE THE WIDTH IS SIZED TO** (ASSA-318, Maren's rewritten box 3). Read from `AssayHud` and
+	# not copied, so this instrument measures the string the client is built around rather than my
+	# memory of it -- the two agreeing by construction is the point.
+	AssayHud.LONGEST_HOSTNAME,
 	"localhost:7777",
 	"192.168.1.42:7777",
 	"100.101.102.103:7777",

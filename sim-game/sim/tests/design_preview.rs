@@ -752,6 +752,137 @@ fn a_permanently_faulted_design_keeps_todays_refusal_and_no_numbers() {
     }
 }
 
+/// **A HALF-PLACED DESIGN GETS EVERY FIGURE AND NO VERDICT** (Game Director,
+/// ASSA-352). The figures stay; the blame goes.
+///
+/// `missing` is carried by `Weighed` and `Unfinished` alike, so this clause used
+/// to print on both — and a design with an empty slot AND a thin pack read its
+/// `fault` ("it needs at least 1 head and has 0") and "assembling it would be
+/// refused" underneath it. **Two verdicts, and the second one blames the pack
+/// when `step` refuses the SLOT first.** The sentence was true and its blame was
+/// wrong, which is the worse of the two: a player reads it and goes mining when
+/// what they need is a head.
+///
+/// **THE PREMISE IS ASSERTED, because a fixture with a full pack would pass this
+/// with the guard gone.** The pack has to be short for the suppressed clause to
+/// have been reachable at all, so the shortfall is checked first — off the
+/// INVENTORY, not off the readout's wording (ASSA-338 re-spelled the pack as a
+/// list and `1/2 ` stopped appearing; a premise keyed on that phrase would have
+/// gone green over a deleted guard) — and the refusal `step` really answers that
+/// press with is checked last, so the test says what is being suppressed rather
+/// than that nothing was there.
+#[test]
+fn a_half_placed_design_shows_its_shortfall_as_a_figure_and_blames_the_slot() {
+    let (mut world, me) = world_with_player();
+    let frame = part_item(PLANTED, LIGHT);
+    let hopper = part_item(PartKind::Hopper, LIGHT);
+    // ONE hopper in the pack against two asked for, and no head at all: both
+    // blockers live at once, which is the only state this item is about.
+    give(&mut world, me, frame, 1);
+    give(&mut world, me, hopper, 1);
+
+    let planned = preview(&world, me, frame, &[hopper, hopper]);
+    assert!(
+        planned.unfinished().is_some(),
+        "premise: a planted frame with no head has to be UNFINISHED, or this \
+         test is about the other arm: {planned:?}"
+    );
+    let line = debug::design_preview(&world, me, frame, &[hopper, hopper]);
+    // **THE PREMISE IS ON THE PACK, NOT ON A SPELLING OF IT** (ASSA-338). This
+    // read `line.contains("1/2 ")`, the one-line pack's wording; the list form
+    // spells the same shortfall `need 2 · have 1` on the hopper's own row, so a
+    // premise keyed on the old phrase would have gone quietly green with the
+    // guard under test removed — a premise that cannot fail is not a premise.
+    // Asked of the inventory, which no re-wording reaches.
+    assert_eq!(
+        world.player(me).map(|p| p.inventory.count(hopper)),
+        Some(1),
+        "premise: the pack has to be short of the two hoppers this design asks \
+         for, or the clause under test was never reachable here"
+    );
+    // And the FIGURE is still printed, which is the half ASSA-352 keeps when it
+    // drops the blame: *"the shortfall is visible as a figure and nothing
+    // actionable is lost"*. That claim IS about the wording, so it is keyed on
+    // the wording deliberately.
+    assert!(
+        line.contains("need 2 · have 1"),
+        "the shortfall survives as a figure on the hopper's row: {line}"
+    );
+    assert!(
+        line.starts_with("it needs at least 1 head and has 0 · "),
+        "the blocker that outranks is the empty slot, in the sim's own phrase: {line}"
+    );
+    assert!(
+        !line.contains("not enough") && !line.contains("would be refused"),
+        "a half-placed design must not also blame the pack: {line}"
+    );
+
+    // AND THAT IS NOT THE PRESS BEING WRONG ABOUT ITSELF. `step` refuses this
+    // for the SLOT, not for the pack, which is why naming the pack was the
+    // misattribution rather than a second true sentence.
+    let events = send(
+        &mut world,
+        me,
+        PlayerCommand::Assemble {
+            frame,
+            mounted: vec![hopper, hopper],
+        },
+    );
+    assert_eq!(
+        rejection(&events),
+        Some(RejectReason::BadAssembly(AssemblyError::TooFew {
+            kind: PartKind::Head,
+            have: 0,
+            min: 1,
+        })),
+        "the slot is what the press refuses on, so the slot is what the \
+         preview may blame"
+    );
+}
+
+/// **AND THE WORKING PATH IS UNTOUCHED**, which is the half a guard deletes by
+/// accident. A `Weighed` design short of one stack still predicts the refusal in
+/// the same words and the same position — this is the control for the test above,
+/// and without it "blames the slot" and "says nothing" are the same green.
+///
+/// `a_thin_pack_is_counted_in_the_preview_and_the_refusal_is_predicted`
+/// (`assemble.rs`) asks the same thing from the press's side; this one asks it
+/// from the arm the guard reads, so the guard being keyed on the wrong arm reds
+/// here rather than nowhere.
+#[test]
+fn a_whole_design_with_a_thin_pack_still_predicts_the_refusal() {
+    let (mut world, me) = world_with_player();
+    let frame = part_item(PLANTED, LIGHT);
+    let head = part_item(PartKind::Head, LIGHT);
+    let hopper = part_item(PartKind::Hopper, LIGHT);
+    give(&mut world, me, frame, 1);
+    give(&mut world, me, head, 1);
+    give(&mut world, me, hopper, 1);
+
+    let planned = preview(&world, me, frame, &[head, hopper, hopper]);
+    assert!(
+        planned.unfinished().is_none(),
+        "premise: every slot this frame requires is filled, so it is WEIGHED: {planned:?}"
+    );
+    let line = debug::design_preview(&world, me, frame, &[head, hopper, hopper]);
+    // Premise on the pack rather than on the pack LINE's wording, for the
+    // reason written out in the test above.
+    assert_eq!(
+        world.player(me).map(|p| p.inventory.count(hopper)),
+        Some(1),
+        "premise: the pack still has to be short of the two hoppers asked for"
+    );
+    assert!(
+        line.contains("need 2 · have 1"),
+        "and the shortfall is still a figure on the hopper's row: {line}"
+    );
+    assert!(
+        line.contains("not enough") && line.contains("assembling it would be refused"),
+        "a whole design short of a stack is refused FOR the pack, so the pack \
+         is what it may blame: {line}"
+    );
+}
+
 /// The two readouts are **one sentence with one word swapped**, which is what
 /// makes a live readout read as one thing changing rather than two screens.
 ///

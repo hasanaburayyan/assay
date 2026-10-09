@@ -1257,25 +1257,61 @@ const SELECTION_INSET_PX := 1.0
 const SELECTION_KEYLINE_PX := 1.0
 
 
-static func selection_mark(tile: Vector2i, origin: Vector2) -> Array[Rect2]:
-	var side := TILE_PX - SELECTION_INSET_PX * 2.0
-	var box := Rect2(Vector2(tile) * TILE_PX - origin + Vector2.ONE * SELECTION_INSET_PX,
-			Vector2(side, side))
-	var thick := minf(SELECTION_THICK_PX, side * 0.5)
+## **`area` IS IN TILES AND IT IS THE SUBJECT'S WHOLE FOOTPRINT, NOT THE TILE THAT WAS CLICKED**
+## (ASSA-348). `position` is the subject's top-left tile and `size` its span, so a 1x1 is
+## `Rect2i(tile, Vector2i.ONE)` and a smelter is `Rect2i(building.pos, Vector2i(2, 2))`.
+##
+## **WHY A SPAN AT ALL, WHEN THE MARK WAS A TILE FOR TWO WEEKS.** The sim splits its verbs the other
+## way round from this mark (`sim/src/command.rs`): `Take`, `Pickup` and `Insert` all carry a
+## `BuildingId`, so on three of the five verbs the SUBJECT IS A WHOLE BUILDING, and a smelter is 2x2.
+## Click any quarter of one and press Pick up and the sim takes the building while a one-tile outline
+## claims a quarter of it. `Place` and `PlaceAssembly` carry a `TilePos` and there the subject really
+## is one tile, which is why the span is a parameter and not a constant.
+##
+## **NO DEFAULT ARGUMENT, DELIBERATELY.** A `span := Vector2i.ONE` would let a call site keep the old
+## behaviour by saying nothing, and every test would stay green over it -- the "fix that silently
+## stops fixing" shape. Every caller states the span it means.
+static func selection_mark(area: Rect2i, origin: Vector2) -> Array[Rect2]:
+	var span := Vector2(maxi(1, area.size.x), maxi(1, area.size.y))
+	var inner := span * TILE_PX - Vector2.ONE * (SELECTION_INSET_PX * 2.0)
+	var box := Rect2(Vector2(area.position) * TILE_PX - origin
+			+ Vector2.ONE * SELECTION_INSET_PX, inner)
+	# THE BAR IS CAPPED AT HALF THE SHORTER SIDE, not half `side`: on a 1-wide, 4-tall footprint two
+	# 2 px uprights would meet and the outline would be a filled column -- which is the one thing the
+	# middle-open rule forbids. There is no such footprint today; the cap costs nothing and means a
+	# 1xN kind added later cannot quietly fill its own subject.
+	var thick := minf(SELECTION_THICK_PX, minf(inner.x, inner.y) * 0.5)
 	return [
-		Rect2(box.position, Vector2(side, thick)),
-		Rect2(Vector2(box.position.x, box.end.y - thick), Vector2(side, thick)),
-		Rect2(box.position, Vector2(thick, side)),
-		Rect2(Vector2(box.end.x - thick, box.position.y), Vector2(thick, side)),
+		Rect2(box.position, Vector2(inner.x, thick)),
+		Rect2(Vector2(box.position.x, box.end.y - thick), Vector2(inner.x, thick)),
+		Rect2(box.position, Vector2(thick, inner.y)),
+		Rect2(Vector2(box.end.x - thick, box.position.y), Vector2(thick, inner.y)),
 	] as Array[Rect2]
 
 
 ## THE SAME FOUR BARS, ONE PIXEL BIGGER ALL ROUND, to be painted in `MAP_BG` underneath them.
 ## Separate from the mark for `destination_keyline`'s reason: `world_layer.gd` holds no geometry.
-static func selection_keyline(tile: Vector2i, origin: Vector2) -> Array[Rect2]:
+static func selection_keyline(area: Rect2i, origin: Vector2) -> Array[Rect2]:
 	var out: Array[Rect2] = []
-	for bar in selection_mark(tile, origin):
+	for bar in selection_mark(area, origin):
 		out.append(bar.grow(SELECTION_KEYLINE_PX))
+	return out
+
+
+## **THE RECT THE OUTLINE ACTUALLY OCCUPIES, DERIVED FROM THE BARS AND NOT RE-DERIVED FROM `area`**
+## (ASSA-348's hazard box). `world_layer.gd::drawn_selection` is what a probe reads to prove what was
+## painted, and it used to be built from the TILE while the bars were built from the geometry above.
+## Two arithmetics for one rectangle is how a source-scanning test proves the wrong box: trace one
+## tile under a 2x2 and a `drawn_selection` computed from `area` would happily keep reporting 2x2.
+##
+## Taking the union of the bars means this CANNOT disagree with what was drawn -- if the bars shrink,
+## so does this. Note it is the INSET box (1 px in from the footprint on every side), because that is
+## the rect the ink really covers.
+static func selection_box(area: Rect2i, origin: Vector2) -> Rect2:
+	var bars := selection_mark(area, origin)
+	var out: Rect2 = bars[0]
+	for i in range(1, bars.size()):
+		out = out.merge(bars[i])
 	return out
 
 

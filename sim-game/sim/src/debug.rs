@@ -4,7 +4,8 @@
 use std::fmt::Write;
 
 use crate::assembly::{
-    Assembly, AssemblyError, AssemblyPlan, BreakVerdict, Built, Mount, PART_SPECS, PartKind, Source,
+    Assembly, AssemblyError, AssemblyPlan, BreakVerdict, Built, Mount, PART_SPECS, PartKind,
+    SlotLimit, Source,
 };
 use crate::building::{
     Building, BuildingId, BuildingKind, BuildingState, Machine, MachineIdle, MachineStall,
@@ -776,7 +777,7 @@ pub fn event_line(
         // CONDITION"*. This is the moment — the edge into the stall, said once —
         // so it keeps a sentence's order. Only the noun and the id change.
         Event::SmelterStalled { building, why } => {
-            format!("{} stopped: {}", site(building), stall_reason(*why))
+            format!("{} stopped: {}", site(building), stall_reason(world, *why))
         }
         Event::MoveStarted { player, from, to } => format!(
             "{} started walking from ({}, {}) to ({}, {})",
@@ -952,21 +953,81 @@ pub fn event_line(
 /// each of us reading the other's mistakes over our own. Machines have no
 /// player and belong to the world, so a stall is everybody's.
 pub fn event_needs_attention(me: Option<PlayerId>, event: &Event) -> bool {
+    attention(me, event).is_some()
+}
+
+/// What an attention line is ABOUT — **an act or a condition** (Game Director,
+/// ASSA-300 §300).
+///
+/// A host needs this to know whether a sentence may ever be taken down. Before
+/// it existed, nothing in the Godot client could clear a `Say.FAILED` line, so
+/// `the Tonore smelter (A) stopped: no fuel` stayed over the world after the
+/// smelter was refuelled — while the pinned count beside it had already dropped
+/// to zero. The screen contradicted itself and the false half was the half
+/// carrying the reason.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AttentionKind {
+    /// **SOMETHING THAT HAPPENED.** Nothing can un-happen it, so there is
+    /// nothing to re-ask and a host must never age it out — ASSA-239, where a
+    /// refusal that faded would be the one class of sentence a player cannot
+    /// recover.
+    Act,
+    /// **A CLAIM ABOUT NOW**, true of this building while the sim keeps saying
+    /// so. A host may take it down once the condition clears, and only then.
+    ///
+    /// The building is carried so the host asks the sim *"is that still true"*
+    /// rather than comparing sentences: the pinned list says `smelter 3 at
+    /// (12, 7) … stalled: the fuel will not light` where the toast says `the
+    /// Tonore smelter (A) stopped: no fuel`. Two wordings, one condition — any
+    /// matching of text is the client classifying by reading, which
+    /// `_remember_events` refuses by name (ASSA-67).
+    Condition { building: BuildingId },
+}
+
+/// Whether this event is an attention line for `me`, and if so what it is
+/// about.
+///
+/// **THE ONE DECISION** (ASSA-300). [`event_needs_attention`] is this function
+/// asked whether the answer is `Some`, so the set of loud lines and their kinds
+/// cannot drift apart — the same by-construction property the binding's
+/// `attention_lines` has against `event_lines`. Two functions each matching
+/// these arms is how one of them would quietly stop covering a variant.
+///
+/// Arm-by-arm reasoning lives on [`event_needs_attention`]; what is added here
+/// is only the kind, and **only the two stall events are conditions.** Every
+/// other loud line reports a moment: a refusal, a loss, an activity that
+/// stopped, a partial insert. None of those is a claim about now, so none of
+/// them may be aged.
+pub fn attention(me: Option<PlayerId>, event: &Event) -> Option<AttentionKind> {
     let mine = |p: &PlayerId| me.is_some() && me == Some(*p);
     match event {
         // THE WORLD REFUSED WHAT YOU ASKED FOR (ASSA-43, ASSA-70). The reason
         // this function exists at all: this is the only sentence in the game
         // that says why the button you pressed did nothing.
-        Event::CommandRejected { player, .. } => mine(player),
+        Event::CommandRejected { player, .. } => mine(player).then_some(AttentionKind::Act),
 
         // A MACHINE STOPPED AND WANTS A HAND (decision 9, ASSA-80). Emitted
         // once on the edge into the stall, so a notice cannot repeat every
         // tick -- that property is the event's, not this function's.
-        Event::MachineStalled { .. } | Event::SmelterStalled { .. } => true,
+        //
+        // **THE ONLY CONDITIONS IN THE GAME.** The event fires once, but what
+        // it reports goes on being true until somebody fixes it, which is
+        // exactly why a host must be able to ask again later.
+        Event::MachineStalled { building, .. } | Event::SmelterStalled { building, .. } => {
+            Some(AttentionKind::Condition {
+                building: *building,
+            })
+        }
 
         // YOU LOST SOMETHING (decision 11, decision 12). The most dramatic
         // moment in the game is a poor one to find out by scrolling.
-        Event::MachineBroke { player, .. } | Event::ToolWornOut { player, .. } => mine(player),
+        //
+        // An ACT and not a condition, which is worth saying because it is the
+        // tempting mistake: a broken machine IS gone for good, so there is no
+        // condition to re-ask and nothing that could ever clear the sentence.
+        Event::MachineBroke { player, .. } | Event::ToolWornOut { player, .. } => {
+            mine(player).then_some(AttentionKind::Act)
+        }
 
         // SOMETHING OF YOURS STOPPED WITHOUT YOU ASKING. A stop you asked for
         // is not news; a depleted deposit, a missing input or walking off the
@@ -974,13 +1035,15 @@ pub fn event_needs_attention(me: Option<PlayerId>, event: &Event) -> bool {
         Event::MiningStopped { player, reason, .. }
         | Event::AssayStopped { player, reason, .. }
         | Event::CraftingStopped { player, reason, .. } => {
-            mine(player) && *reason != StopReason::Stopped
+            (mine(player) && *reason != StopReason::Stopped).then_some(AttentionKind::Act)
         }
 
         // PART OF WHAT YOU ASKED FOR DID NOT FIT (ASSA-48). `left` is the
         // actionable half by that variant's own doc comment: "put 50 in" tells
         // a player nothing about why they still have 167.
-        Event::ItemsInserted { player, left, .. } => mine(player) && *left > 0,
+        Event::ItemsInserted { player, left, .. } => {
+            (mine(player) && *left > 0).then_some(AttentionKind::Act)
+        }
 
         // EVERY SUCCESS, WRITTEN OUT RATHER THAN DEFAULTED.
         //
@@ -1012,7 +1075,7 @@ pub fn event_needs_attention(me: Option<PlayerId>, event: &Event) -> bool {
         | Event::MachineMined { .. }
         | Event::MoveStarted { .. }
         | Event::PlayerArrived { .. }
-        | Event::PlayerStopped { .. } => false,
+        | Event::PlayerStopped { .. } => None,
     }
 }
 
@@ -2344,13 +2407,30 @@ pub fn not_a_part_phrase(what: &str) -> String {
 /// event log are two surfaces and this is one sentence, so a player who reads
 /// the log and then hovers the building is told the same thing twice rather
 /// than two things once.
-pub fn stall_reason(why: SmelterStall) -> String {
+/// **IT TAKES THE WORLD BECAUSE ONE REASON NAMES AN ITEM** (ASSA-350). Every
+/// other arm is numbers and fixed words; `OutputHoldsAnother` has to spell the
+/// material sitting in the slot, and the only acceptable spelling is
+/// `World::item_name` — character for character the one the machine menu draws
+/// on that slot's `held` line. A player reads the sentence and then looks at
+/// the slot; two spellings of one item is ASSA-43/52.
+pub fn stall_reason(world: &World, why: SmelterStall) -> String {
     match why {
         SmelterStall::OutputFull => "output full".to_string(),
         SmelterStall::NoFuel => "no fuel".to_string(),
         SmelterStall::FuelWontLight => "fuel won't light from cold".to_string(),
         SmelterStall::FireTooCool { fire, needs } => {
             format!("fire {fire} too cool for ore needing {needs}")
+        }
+        // **THE GAME DIRECTOR'S WORDING, VERBATIM** (ASSA-350): one clause, no
+        // `·` — §305's top-level mark is for a sentence with more than one —
+        // and **no instruction clause**. Not "take it out": `Take` is a button
+        // in that menu and the sim does not tell a player which to press.
+        //
+        // `still` is the word doing the work. It says the bar is left over
+        // rather than newly made, which is what distinguishes this from an
+        // output filling up normally (the `OutputFull` arm above).
+        SmelterStall::OutputHoldsAnother(item) => {
+            format!("output still holds {}", world.item_name(item))
         }
     }
 }
@@ -2360,10 +2440,10 @@ pub fn stall_reason(why: SmelterStall) -> String {
 /// to live here, which left `step` no way to know a smelter had stalled except
 /// by re-deriving it, and a second copy of a decision is how ASSA-43 and
 /// ASSA-52 happened.
-pub fn smelter_state_line(state: SmelterState) -> String {
+pub fn smelter_state_line(world: &World, state: SmelterState) -> String {
     match state {
         SmelterState::Idle => "idle: nothing to refine".to_string(),
-        SmelterState::Stalled(why) => format!("stalled: {}", stall_reason(why)),
+        SmelterState::Stalled(why) => format!("stalled: {}", stall_reason(world, why)),
         SmelterState::Working { at } => format!("working at {at}"),
     }
 }
@@ -2434,7 +2514,7 @@ pub fn work_clause(world: &World, b: &Building) -> Option<String> {
 /// its own.
 pub fn building_state_line(world: &World, b: &Building) -> String {
     match world.building_state(b) {
-        BuildingState::Smelter(s) => smelter_state_line(s),
+        BuildingState::Smelter(s) => smelter_state_line(world, s),
         BuildingState::Machine(m) => machine_state_line(world, m),
     }
 }
@@ -2473,7 +2553,7 @@ pub fn building_status(world: &World, b: &Building) -> String {
         BuildingKind::Machine(m) => return machine_status(world, b, m),
     };
     let walls = world.max_temperature(b);
-    let state = smelter_state_line(world.smelter_state(b));
+    let state = smelter_state_line(world, world.smelter_state(b));
     // THE BATCH BEFORE THE CONDITION, because a stall is read as "what do I do
     // about it" and the progress is what says whether fixing it resumes or
     // restarts (`World::building_work`). Absent, not zero, when no batch is in
@@ -2662,12 +2742,56 @@ pub fn building_table(world: &World) -> String {
     out
 }
 
-/// The part catalogue: every row, what it costs, and what it contributes.
+/// What a frame accepts, read off its own slot limits: `head 1`, or
+/// `head 1, hopper 0-4`. `""` for a part that offers no slots at all.
+///
+/// **A RANGE ONLY WHERE THERE IS A RANGE.** `min == max` is a count, not a
+/// span, and `head 1-1` invites the reader to wonder what the other number is
+/// for. The two frames differ in exactly this way today — a held frame takes
+/// one head and nothing else; a planted one takes up to
+/// `MAX_HOPPER_SLOTS` — so both forms are reachable from the shipped
+/// catalogue rather than being defence against a case nobody has.
+///
+/// Generated from the spec and naming no kind, which is `part_table`'s own
+/// rule: a fifth part kind, or a frame with a different slot list, is
+/// described here without this function being touched.
+///
+/// **PUBLIC SO THAT NO HOST EVER WORDS A SLOT LIMIT ITSELF** (ASSA-43/52). The
+/// build screen draws the limits as a SHAPE and so needs the numbers rather
+/// than this sentence — `AssaySim::part_kinds` crosses `min` and `max` as data
+/// — but the day any surface says one in words, this is where the words are.
+pub fn slots_phrase(slots: &[SlotLimit]) -> String {
+    slots
+        .iter()
+        .map(|slot| {
+            if slot.min == slot.max {
+                format!("{} {}", slot.kind.name(), slot.max)
+            } else {
+                format!("{} {}-{}", slot.kind.name(), slot.min, slot.max)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The part catalogue: every row, what it costs, what it accepts, and what it
+/// contributes.
 ///
 /// Generated from `PART_SPECS` and naming no kind, so a row added to the
 /// catalogue appears here without this function being touched.
+///
+/// **`accepts` IS HERE BECAUSE A SLOT LIMIT WAS A RULE WITH NO HEADLESS
+/// SURFACE** (ASSA-340). A handle takes one head and offers no hopper slot at
+/// all; a planted frame takes up to four hoppers. Until this column a
+/// `sim-cli` player learned either fact by being refused at `assemble`, and
+/// the build screen was about to draw the same limits as a shape in the Godot
+/// window — which would have made a rule visible only with graphics, the one
+/// thing this repo's `CLAUDE.md` says is never done.
 pub fn part_table() -> String {
-    let mut out = format!("{:<8} {:<9} {:>5}  contributes\n", "name", "mount", "size");
+    let mut out = format!(
+        "{:<8} {:<9} {:>5}  {:<18} contributes\n",
+        "name", "mount", "size", "accepts"
+    );
     for s in &PART_SPECS {
         let mount = match s.kind {
             PartKind::Frame(Mount::Held) => "held",
@@ -2683,14 +2807,22 @@ pub fn part_table() -> String {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        let _ = writeln!(out, "{:<8} {mount:<9} {:>5}  {gives}", s.name, s.size);
+        let _ = writeln!(
+            out,
+            "{:<8} {mount:<9} {:>5}  {:<18} {gives}",
+            s.name,
+            s.size,
+            slots_phrase(s.slots)
+        );
     }
     let _ = write!(
         out,
         "\nsize is both the refined cost and how much stuff the part is made of for\n\
          mass. A frame carries mass = size x strength x {}; over that, the design\n\
-         breaks when it is planted or first used. `make <part> <refined>` then\n\
-         `assemble <frame> <part>...`.\n",
+         breaks when it is planted or first used. accepts is what may be mounted\n\
+         on a frame and how many: a count, or a range where there is one, and a\n\
+         minimum above zero is a slot the design is not finished without.\n\
+         `make <part> <refined>` then `assemble <frame> <part>...`.\n",
         crate::tuning::FRAME_BUDGET_PER_STRENGTH
     );
     out
@@ -3051,24 +3183,78 @@ pub fn design_preview(world: &World, player: PlayerId, frame: Item, mounted: &[I
             p.inventory.count(s.item)
         );
     }
-    if let Some(item) = missing {
+    // **THE FIGURES ON BOTH ARMS, THE VERDICT ON ONE** (Game Director, ASSA-352).
+    //
+    // `missing` is carried by `Weighed` and `Unfinished` alike, so this clause
+    // used to print on a half-placed design too — and then a design with an
+    // empty slot and a thin pack read its `fault` (*"no head yet"*) and
+    // *"assembling it would be refused"* underneath it. Two verdicts, and the
+    // second one blames the pack when `step` refuses the SLOT first. The
+    // sentence was true and its blame was wrong, which is the worse of the two:
+    // a player reads it and goes mining when what they need is a head.
+    //
+    // **THE COMMENT TWENTY LINES UP HAD ALREADY RULED IT** — *"the middle one
+    // gets every number and no verdict"* — and this function contradicted it
+    // just far enough down to read as separate code. The pack LIST stays on
+    // both arms: every entry already spells `need 2 · have 1`, so the shortfall
+    // is visible as a FIGURE and nothing actionable is lost. Only the blame
+    // goes. (ASSA-352 wrote this about the one-line `your pack: {counts}`;
+    // ASSA-338 turned that into the list above and the ruling is unchanged by
+    // the shape.)
+    //
+    // ASSA-88 in one line: a disqualifier outranks a figure, and the
+    // disqualifier here is the empty slot, which `unfinished_readout` names. One
+    // blocker, named once. "A refusal sits below the figures" is not weakened —
+    // the refusal is still last; it is simply not claimed when something
+    // outranks it.
+    if let (Some(item), None) = (missing, unfinished) {
         let item = *item;
         // The sentence `step` would answer the press with, said before it.
         //
-        // **ITS OWN LINE, AT THE HEADER'S INDENT AND NOT THE ENTRIES'.** It
-        // used to trail the counts, which worked only while they were one line.
-        // It is not a fourth entry and must not read as one: it is a verdict on
-        // the whole list, and `plan` picks it with `cost.iter().find(…)` — the
+        // The sentence is [`pack_refusal_phrase`]'s and the JOINT is this
+        // caller's — one spelling of the refusal, so this surface and the
+        // window cannot drift (ASSA-43/52). This line held its own `format!` of
+        // the same words on the ASSA-338 branch; the extraction landed first on
+        // ASSA-352 and the duplicate died here, in the merge.
+        //
+        // **ITS OWN LINE, AT THE HEADER'S INDENT AND NOT THE ENTRIES'**, and so
+        // no em-dash, which is what the window has always done. It used to
+        // trail the counts, which worked only while they were one line. It is
+        // not a fourth entry and must not read as one: it is a verdict on the
+        // whole list, and `plan` picks it with `cost.iter().find(…)` — the
         // FIRST entry the pack cannot pay for, which is not in general the last
         // one printed, so trailing it on the final row would have hung it off a
         // number that is not the one at fault.
-        let _ = write!(
-            out,
-            "\n      not enough {}: assembling it would be refused",
-            world.item_name(item)
-        );
+        let _ = write!(out, "\n      {}", pack_refusal_phrase(world, item));
     }
     out
+}
+
+/// **THE THIN PACK, PREDICTED BESIDE A LIST THAT ALREADY PRINTS THE FIGURES.**
+///
+/// [`plan_refusal_phrase`] words this same refusal for the moment it HAPPENS and
+/// carries the count with it (`not enough X (you have 1)`), which is right in an
+/// event log where no column says what you hold. Here the counts are printed
+/// beside it, so a count in the clause would be the third copy of one number on
+/// one surface (ASSA-43/52), and what is left to say is the consequence: the
+/// press would be refused.
+///
+/// **THE SENTENCE IS HERE AND THE JOINT IS THE CALLER'S** — ` — ` in
+/// `design_preview` today, a line of its own after ASSA-338, nothing at all in
+/// the window's block 6.
+///
+/// **Public because the Godot build screen has to say it too** (ASSA-347, the
+/// Game Director's (A) on ASSA-317's block 6, which prices a design the pack
+/// cannot pay for). `AssaySim::design_cost` crosses this string; it does not
+/// compose one. The window's block 6 and `sim-cli`'s `your pack:` list are the
+/// same list of counts, and this morning ASSA-338 was what two wordings of one
+/// pack fact cost — the window had the Game Director's `need 1 · have 2` while
+/// the reference client still printed `2/1`.
+pub fn pack_refusal_phrase(world: &World, item: Item) -> String {
+    format!(
+        "not enough {}: assembling it would be refused",
+        world.item_name(item)
+    )
 }
 
 /// A design the rules throw out, said in a way that cannot be read as a

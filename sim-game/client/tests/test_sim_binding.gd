@@ -28,10 +28,21 @@ const REQUIRED_METHODS := [
 	# is the only route a refusal has to the screen: a rename here would not empty a panel, it would
 	# make the client silent about the one thing it must say, which looks like nothing at all.
 	"attention_lines",
+	# AND WHAT EACH OF THOSE LINES IS ABOUT (ASSA-300). A rename here fails in the direction that
+	# reinstated the bug: `_remember_events` would see the sizes disagree, call everything an act, and
+	# a stall sentence would go back to outliving the stall with nothing saying so.
+	"attention_conditions",
+	# WHETHER THE CONDITION A SENTENCE IS ABOUT IS STILL TRUE (ASSA-300). This is the only way a
+	# `Say.FAILED` line can ever come down; a rename makes the toast permanent again.
+	"is_halted",
 	# The wire's own number, so no GDScript file has to keep a copy of it.
 	"protocol_version",
 	# The roster size, so the client's species colour table is checked against the sim's own count.
 	"species_per_world",
+	# THE LONGEST NAME A SPECIES CAN CARRY, so the machine menu's width bound is measured against
+	# the sim's own cap. A rename here does not empty a panel: `test_buttons.gd`'s worst case would
+	# fall back to a shorter string, stay green, and stop bounding the row it exists to bound.
+	"species_name_max",
 	# The scripted demo session's two: the pair the world guarantees, and serde's own spelling of an
 	# item, which is what the session's commands are checked against.
 	"starter_pair", "item_json", "item_echo",
@@ -341,6 +352,62 @@ func test_a_world_with_nothing_built_reports_nothing_stopped() -> bool:
 		return _fail(("a world with nothing built reports %s stopped: %s. A surface that speaks "
 				+ "when the factory is healthy is the cry-wolf failure one step removed.")
 				% [(stopped as PackedStringArray).size(), stopped])
+	return true
+
+
+## **AN ACT CROSSES AS -1, ASKED OF THE LIBRARY THAT IS ACTUALLY LOADED** (ASSA-300).
+##
+## The Rust side guards `attention_pairs`, which is where the kinds are decided; nothing in Rust can
+## see the Variant marshalling, and a `PackedInt64Array` cannot be built in a unit test at all. This
+## is the half that can only be asked here — and it is the half whose quiet failure is worst, because
+## `0` out of this array means "a condition about building 0" and would let a refusal fade, which
+## ASSA-239 calls the one class of sentence a player cannot recover.
+##
+## **A REAL REFUSAL THROUGH A REAL TICK, not a fixture.** `Insert` into a building that does not
+## exist is the one attention line a world with nothing built can produce in a single bundle, and it
+## is the arm where carrying an id would look reasonable: the command names one.
+func test_a_refusal_crosses_as_an_act_and_the_two_arrays_are_the_same_length() -> bool:
+	if not ClassDB.class_exists("AssaySim"):
+		return _fail("no AssaySim class; see the failure above")
+	var sim := AssaySimHost.new()
+	if not sim.start(AssaySimHost.fresh_welcome_json("777042", "marlow")):
+		return _fail("could not make a world to ask: %s" % sim.fail_reason)
+	var refused := {"Player": {"player": 0, "command":
+			{"Insert": {"building": 9999, "slot": "Input",
+			"item": {"kind": "Ore", "species": 0, "grade": "C"}, "count": 1}}}}
+	var bundle := JSON.stringify({"Tick": {"tick": sim.tick(), "inputs": [refused]}})
+	var was: int = sim.tick()
+	# `apply` returns the hash message to send, which is "" on most ticks, so the tick is what says
+	# the bundle landed. A bundle the binding refuses changes nothing at all and would leave every
+	# assertion below reading an empty event list.
+	sim.apply(bundle)
+	if sim.tick() == was:
+		return _fail("the binding refused the bundle, so no event was produced: %s" % bundle)
+	var lines: PackedStringArray = sim.attention_lines(0)
+	# NO `typeof` CHECK HERE, AND THAT IS DELIBERATE: `AssaySimHost.attention_conditions` declares
+	# `PackedInt64Array`, so a `typeof` on what comes back could never disagree with me — the wrapper
+	# would have thrown first. A vacuous assertion beside a real one is worse than none.
+	var kinds: PackedInt64Array = sim.attention_conditions(0)
+	if lines.size() != 1:
+		return _fail(("premise: one refused command has to make exactly one attention line, or this "
+				+ "test is measuring a quiet world. Got %s") % [lines])
+	if kinds.size() != lines.size():
+		return _fail(("%d lines and %d kinds. `_remember_events` pairs them by index, and the two "
+				+ "are one `attention_pairs` call in Rust, so this can only differ if a second "
+				+ "filter was reintroduced: %s vs %s") % [lines.size(), kinds.size(), lines, kinds])
+	if kinds[0] != -1:
+		return _fail(("a refusal crossed as a condition about building %d. Nothing can un-happen an "
+				+ "act, so there is nothing to re-ask -- and a host watching that building go "
+				+ "healthy would fade the sentence (ASSA-239). The line was %s")
+				% [kinds[0], lines[0]])
+	# AND THE WORLD IT WAS REFUSED IN HAS NOTHING STOPPED IN IT, which is the other half of the pair:
+	# `is_halted` has to be able to say no, or the toast would never come down for the opposite reason.
+	for id in [0, 1, 9999]:
+		if sim.is_halted(id):
+			return _fail(("is_halted(%d) is true in a world with nothing built. The toast keys on "
+					+ "this, so a predicate that always says yes makes every stall sentence "
+					+ "permanent again.") % id)
+	print("    refusal: %s  kinds %s" % [lines[0], kinds])
 	return true
 
 
