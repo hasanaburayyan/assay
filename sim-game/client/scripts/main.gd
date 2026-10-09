@@ -5492,7 +5492,41 @@ func _slot_row(named: String) -> HBoxContainer:
 ## draws slots as a shape instead of printing `hopper 0-4`. The engine's own `Panel` draws it, so the
 ## edge is the theme's `BORDER` and this file invents no ink.
 ##
-## **THE PLATE IS `ICON_PX` SQUARE AND THE PICTURE IN IT IS NOT** (ASSA-388). This said:
+## **THE PLATE IS THE BOX ITS PICTURE IS DRAWN IN, AND THAT BOX IS `ICON_BOX_PX`** (ASSA-388,
+## Maren's ruling, built after both options were rendered at 1x).
+##
+## > **A BOX THAT HOLDS A PICTURE IS SIZED BY THE PICTURE'S OWN BOX, NEVER BY THE SPACE AROUND IT.
+## > Two surfaces showing one picture use one box number; a second number IS the bug, and shrinking
+## > the picture to fit the smaller one hides that bug behind a resample.**
+##
+## `_icon_box` below stamps `ICON_BOX_PX` on every picture it builds, as a MINIMUM, deliberately and
+## in one place. A plate of `ICON_PX` square was a SECOND number for the same picture, and
+## `PRESET_FULL_RECT` anchors a control without being able to shrink it below its minimum — so the
+## picture was laid out 32x48 inside a 32x32 plate and a tall part hung **7 px of paint below its
+## own plate** on a 1x window (`head` ink 21x39 against a plate at y136..167; four `hopper` plates
+## were inside only because their art is short). It was **9 px before ASSA-376's items fit**, so the
+## fit shrank it and did not cause it.
+##
+## **THE OPTION NOT TAKEN, AND WHY, BECAUSE IT COSTS ZERO PIXELS AND IS STILL WRONG.** Confining the
+## picture to the square keeps both numbers and bends the art to the smaller: `head` goes 21x39 ->
+## **14x26**, 44% of its area, on the only surface that says which part a slot holds — and `64/3 =
+## 21.33` is a fractional width with a half-pixel offset, so pixel art would be **resampled** here
+## where today it is not. `GAME.md`'s art rule is readability at 1x; tidiness bought with a resample
+## is paid in the one currency this project has said it will not spend.
+##
+## **WHAT THIS COSTS, MEASURED BY MAREN ON THE THREE 1x FRAMES AND NOT BY ME:** the slot block goes
+## y136..205 to y136..237, **+32 px — two slot rows at 16, not the 16 I first wrote** — and it is
+## paid out of air: the commit bar (2344 ink px at y516..545) and the modal floor (y635..639) are
+## **identical** in all three frames. 151 px of empty modal between the column's last ink and the
+## bar becomes 119. `assembly.rs::PART_SPECS` ships at most **two** slot kinds, so two rows is this
+## game's worst case and not a lower bound.
+##
+## **AND A SHORT PART NOW GETS A PLATE A THIRD EMPTY — taken knowingly, and it is right.** A slot
+## plate is a SOCKET, not a picture frame: parts differ in height, sockets do not. The pack row has
+## drawn those same hoppers in that same box since `ICON_BOX_PX` existed, so this makes two surfaces
+## agree rather than inventing a third.
+##
+## **THE SENTENCE THAT USED TO BE HERE WAS ARITHMETIC FOR A SHEET THIS BOX DOES NOT DRAW.** It said:
 ##
 ## > *ICON_PX SQUARE, WHICH KEEPS THE PART SHEET'S EXACT 1/4 (ASSA-65, and ASSA-343's reasoning on
 ## > this screen's one picture): `STRETCH_KEEP_ASPECT_CENTERED` scales by `min(32/128, 32/102)` = 1/4
@@ -5536,7 +5570,9 @@ func _slot_row(named: String) -> HBoxContainer:
 ## the end of a night.
 func _slot_box(box: Dictionary) -> Control:
 	var plate := Panel.new()
-	plate.custom_minimum_size = Vector2(ICON_PX, ICON_PX)
+	# THE SAME CONSTANT `_icon_box` STAMPS ON THE PICTURE, so the plate and the thing standing in it
+	# are one number. See the ruling at the top of this function before changing it to a second one.
+	plate.custom_minimum_size = ICON_BOX_PX
 	plate.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var part := box.get("part", {}) as Dictionary
 	if part.is_empty():

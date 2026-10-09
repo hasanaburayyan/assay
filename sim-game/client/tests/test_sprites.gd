@@ -383,7 +383,7 @@ func test_a_part_draws_from_items_in_the_pack_and_its_own_sheet_in_a_machine() -
 ## Director's; ASSA-388 carries both options rendered. **Clause 3 is written as the GAP on purpose:
 ## the day the two are reconciled this test fails, which is the reminder to rewrite the doc with the
 ## fix instead of leaving a third stale sentence beside this box.**
-func test_a_part_in_a_square_slot_plate_binds_on_height_and_overruns_it() -> bool:
+func test_a_parts_pack_frame_is_portrait_and_fits_its_box_exactly() -> bool:
 	var main_consts: Dictionary = (load("res://scripts/main.gd") as GDScript).get_script_constant_map()
 	var icon_px: float = main_consts.get("ICON_PX", 0.0)
 	var icon_box: Vector2 = main_consts.get("ICON_BOX_PX", Vector2.ZERO)
@@ -397,21 +397,30 @@ func test_a_part_in_a_square_slot_plate_binds_on_height_and_overruns_it() -> boo
 			return _fail("`%s` got no pack icon" % kind)
 		var frame := icon.region.size
 		if frame.x >= frame.y:
-			return _fail(("`%s`'s pack frame is %s -- landscape or square. `_slot_box`'s doc is "
-					+ "written for a PORTRAIT frame, where the HEIGHT binds in a square plate and "
-					+ "64/3 is fractional. Rewrite it.") % [kind, frame])
-		# 2. AND THE PICTURE'S OWN MINIMUM IS TALLER THAN THE PLATE IT IS ANCHORED INTO -- the gap
-		#    that makes a tall part overrun its plate. Read the note above before "fixing" this.
-		if icon_box.y <= icon_px:
-			return _fail(("ICON_BOX_PX is %s and the slot plate is %dpx square, so the pack row's "
-					+ "box no longer overruns it. ASSA-388's overflow is gone: say so in "
-					+ "`_slot_box`'s doc and retire this clause.") % [icon_box, int(icon_px)])
-		# 3. **NOT "THE HEIGHT BINDS", WHICH WOULD BE VACUOUS HERE**: in a SQUARE box a portrait
-		#    frame always binds on height, so clause 1 already decided it and no mutation could
-		#    reach a separate assertion. What is not implied is that `ICON_BOX_PX` fits this frame
-		#    EXACTLY -- 32x48 and 64x96 are both 2:3, so neither axis binds and the scale is a clean
-		#    1/2. That is why the overflowing picture is 32x48 of crisp art rather than a resample,
-		#    and it is the one number `_slot_box`'s doc would need if the plate grew to meet it.
+			return _fail(("`%s`'s pack frame is %s -- landscape or square. Every doc on this path "
+					+ "is written for a PORTRAIT frame sharing `ICON_BOX_PX`'s 2:3; a landscape "
+					+ "cell would be the assembly sheet, which belongs to a planted machine and "
+					+ "not to a pack row (ASSA-121). Rewrite them.") % [kind, frame])
+		# 2. **RETIRED, AND NAMED RATHER THAN DELETED.** This clause asserted
+		#    `icon_box.y > icon_px` -- "the pack row's box is taller than the plate it is anchored
+		#    into" -- as a pin on ASSA-388's overflow while the plate's shape was the Game
+		#    Director's to rule. She ruled: the plate IS `ICON_BOX_PX` now, so there is no second
+		#    number and the gap is not a fact about this screen any more.
+		#
+		#    **IT ALSO WOULD NOT HAVE REDDENED ON THE FIX, WHICH IS THE WORSE HALF.** It compared
+		#    two CONSTANTS, and the fix changed neither: it changed which constant `_slot_box`
+		#    reaches for. I wrote it expecting it to catch exactly this change and it would have
+		#    sat green through it. What replaces it asks the laid-out plate instead --
+		#    `test_a_slot_plate_is_the_box_its_picture_is_drawn_in` in `test_buttons.gd`, which is
+		#    red on the old line and green on the new one.
+		# 3. **NOT "THE HEIGHT BINDS", WHICH WOULD BE VACUOUS**: in a SQUARE box a portrait frame
+		#    always binds on height, so clause 1 would already have decided it and no mutation
+		#    could reach a separate assertion. What no earlier clause implies is that
+		#    `ICON_BOX_PX` fits this frame EXACTLY -- 32x48 and 64x96 are both 2:3, so NEITHER
+		#    axis binds and the scale is a clean 1/2. **That is the whole reason the slot plate
+		#    could be grown to meet the picture instead of the picture shrunk to meet the plate**
+		#    (ASSA-388): one box, no resample. If these two ever stop sharing an aspect, every pack
+		#    icon in the game starts being resampled and this is the line that says so.
 		if not is_equal_approx(icon_box.x / frame.x, icon_box.y / frame.y):
 			return _fail(("`%s` %s does not fit ICON_BOX_PX %s exactly: %.4f by width, %.4f by "
 					+ "height. The pack row's box and the authored frame have stopped sharing an "
