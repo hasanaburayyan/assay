@@ -4645,13 +4645,16 @@ func test_a_slots_readout_row_is_the_same_with_and_without_a_pressable_offer() -
 			ok = _fail(("the `%s` slot's own numbers did not change and its readout row is GONE: "
 					+ "the crossing changed what `slots` contains, which is the one way box 9 "
 					+ "breaks. rows now: %s") % [role, rows_after.keys()])
-			break
+			continue
+		# **EVERY OFFENDING ROW IS NAMED, NOT THE FIRST.** This stopped at the first failure and the
+		# empty `input` row sorts ahead of the part-filled `fuel` one, so a lever reddening both read
+		# as a lever reddening one -- and I could not tell from the output whether the row carrying a
+		# real band fill and a held name was being compared at all. It is: both levers name both.
 		compared += 1
 		if rows_after[role] != rows_before[role]:
 			ok = _fail(("the `%s` slot holds exactly what it held (%s) and its readout row changed "
 					+ "when the menu's pressable controls did.\nbefore: %s\nafter:  %s")
 					% [role, facts_before[role], rows_before[role], rows_after[role]])
-			break
 	if ok and compared == 0:
 		ok = _fail(("NO ROW WAS COMPARED, so the box is untested rather than passing: this needs one "
 				+ "slot whose own contents stayed put AND whose pressable offers changed. slot "
