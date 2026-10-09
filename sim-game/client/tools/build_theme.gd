@@ -407,7 +407,17 @@ func _style_button(theme: Theme) -> void:
 	theme.set_stylebox("disabled", "Button", _box(SURFACE, BORDER.darkened(0.3)))
 	# A FOCUS RING THAT IS VISIBLE, because keyboard focus is the half nobody looks at. Godot's
 	# default focus box is a flat outline that vanishes on a dark panel.
-	theme.set_stylebox("focus", "Button", _box(RAISED, ACCENT))
+	#
+	# **INK AND NOT ACCENT** (ASSA-367, applying ASSA-335 ruling 1 where it already read): the
+	# accent marks the ONE ACT a screen is for, one region per screen, and **a focus ring is not an
+	# act**. Tabbing from the host box to `Join` used to put a second accent region on the front
+	# door, which is ASSA-335's own defect one control over. A 2 px `INK` ring already means *the
+	# thing your input addresses* (ASSA-276 move 4, on the acted-on tile), and keyboard focus is
+	# that fact for the keyboard.
+	#
+	# **THE RING GETS BRIGHTER, so "a focus ring must be loud" buys nothing from the accent:**
+	# `ACCENT` on `RAISED` is 7.46:1 and `INK` on `RAISED` is 9.50:1, both over the 3:1 a mark owes.
+	theme.set_stylebox("focus", "Button", _box(RAISED, INK))
 	_style_primary_button(theme)
 	_style_quiet_button(theme)
 
@@ -538,7 +548,10 @@ func _style_quiet_button(theme: Theme) -> void:
 	theme.set_stylebox("hover", name, _box(SURFACE, BORDER))
 	theme.set_stylebox("pressed", name, _box(SURFACE.darkened(0.15), BORDER))
 	theme.set_stylebox("disabled", name, _box(SURFACE, SURFACE))
-	theme.set_stylebox("focus", name, _box(SURFACE, ACCENT))
+	# **INK, FOR `Button`'s REASON ONE SCREEN UP** (ASSA-367, ASSA-335 ruling 1): a focus ring is
+	# not an act, so it does not hold the accent. `ACCENT` on `SURFACE` is 9.51:1 and `INK` on
+	# `SURFACE` is 12.12:1 -- the ring gets louder, not quieter.
+	theme.set_stylebox("focus", name, _box(SURFACE, INK))
 
 
 ## **THE THREE COLOURS THIS USED TO LEAVE TO THE ENGINE** (ASSA-315, Game Director's ruling in the
