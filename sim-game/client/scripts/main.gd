@@ -5960,10 +5960,21 @@ func _draw() -> void:
 		# that holds it rather than this paragraph.
 		#
 		# **ONE THING THIS DOES NOT DO, SO NOBODY READS IT AS DONE: the surround is untouched.** The
-		# costume Marlow described is mostly OUTSIDE the keyline -- `ring disc` 89.3% on 63 against
-		# 31.7% on 777042, where `hole disc` was 32.8% on BOTH. Maren's own ruling says the surround
-		# tells a reader 2.7x more than the hole. This closes the rented quarter of the mark's box and
-		# leaves a machine still standing in whatever the worldgen rolled around it.
+		# costume Marlow described is mostly OUTSIDE the keyline -- `ring disc` **88.0%** on 63
+		# against 31.7% on 777042, where `hole disc` was 32.8% on BOTH. Maren's own ruling says the
+		# surround tells a reader 2.7x more than the hole. This closes the rented quarter of the
+		# mark's box and leaves a machine still standing in whatever the worldgen rolled around it.
+		# (**88.0 CORRECTS AN 89.3 I TYPED HERE AND IN THE PR BODY.** No file ever held 89.3;
+		# `shared/assay/cove-assa273/holefill/costume-filled.txt` and its README both say 88.0, and
+		# the number I sent Maren was 88.0, so the code was the only wrong copy.)
+		#
+		# **AND WHAT THE COSTUME NOW RESTS ON, IN MAREN'S WORDS RATHER THAN A DOC** (22:16Z, her
+		# ruling 5): before this fill, a machine on ore and a machine on bare ground differed
+		# INSIDE. After it they are identical inside and differ only in the ring -- so the surround
+		# is not merely the bigger tell, it is the WHOLE tell. **If anyone later beds the ring the
+		# way ASSA-278 bedded the band, the costume goes with it**, and a machine on ore stops
+		# looking different from a machine on rock at all. That is a consequence to choose on
+		# purpose, not to discover in a frame.
 		draw_rect(shape["hole_rect"], AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]),
 				true)
 

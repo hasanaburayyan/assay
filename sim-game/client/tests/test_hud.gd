@@ -2131,10 +2131,11 @@ func test_a_person_standing_on_a_machine_keeps_their_body() -> bool:
 ## re-opens the hole, naming the pixel.
 ##
 ## WHAT IT CANNOT SEE, and it is the bigger half of the costume: **the SURROUND.** Maren's own ruling
-## says the ring outside the keyline tells a reader 2.7x more than the hole did (`ring disc` 89.3% on
-## 63 against 31.7% on 777042, where the hole was 32.8% on both). A mark whose box is seed-identical
-## can still stand in a bright plate on one world and on bare ground on another. This check passes
-## by construction and must not be quoted as closing box 1.
+## says the ring outside the keyline tells a reader 2.7x more than the hole did (`ring disc` **88.0%**
+## on 63 against 31.7% on 777042, where the hole was 32.8% on both; 88.0 corrects an 89.3 I typed in
+## three places, against `shared/assay/cove-assa273/holefill/costume-filled.txt`). A mark whose box is
+## seed-identical can still stand in a bright plate on one world and on bare ground on another. This
+## check passes by construction and must not be quoted as closing box 1.
 func test_no_ground_shows_through_a_machines_mark() -> bool:
 	var origin := Vector2(24.0, 96.0)
 	# A 1x1 at cell 9 is the case that matters — its mark is `BUILDING_MARK_PX` 20 over a 9 px tile,
