@@ -2956,3 +2956,46 @@ func test_the_commit_bar_leaves_the_sentence_the_width_it_was_measured_at() -> b
 		return _fail("a 100 px bar left the sentence %.0f px"
 				% AssayHud.commit_sentence_width(100.0, 16.0))
 	return true
+
+
+## **A PACK STACK FINDS ITS OWN CATALOGUE ROW, AND AN ORE STACK FINDS NONE** (ASSA-317 slice 2b).
+##
+## **THE CATALOGUE HERE IS A LITERAL AND NOT `part_kinds()`**, which is the whole point: the join is
+## what is under test, so a fixture read out of the sim would be the function agreeing with its own
+## input. The names are shaped like the sim's, not taken from it.
+##
+## **AND THEN THE REAL CATALOGUE IS WALKED ANYWAY**, for the half a literal cannot hold: every kind
+## the sim names must find itself through this function, which is what goes red the day
+## `part_kinds().name` stops being the `kind` string `inventory_of` writes on a pack stack. That drift
+## is silent -- the build screen would offer a frame no slots and nothing would fail.
+func test_a_pack_stack_finds_its_own_part_kind_and_ore_finds_none() -> bool:
+	var kinds := [
+			{"name": "handle", "is_frame": true, "slots": [{"name": "head", "min": 1, "max": 1}]},
+			{"name": "head", "is_frame": false, "slots": []},
+	]
+	var head := AssayHud.part_kind_of({"kind": "head", "species": 0, "grade": "C"}, kinds)
+	if String(head.get("name", "")) != "head":
+		return _fail("a head stack found %s in a catalogue of handle and head" % [head])
+	if bool(head.get("is_frame", true)):
+		return _fail("the row found for a head says it is a frame: %s" % [head])
+	var handle := AssayHud.part_kind_of({"kind": "handle", "species": 3, "grade": "A"}, kinds)
+	if not bool(handle.get("is_frame", false)):
+		return _fail("the row found for a handle says it is not a frame: %s" % [handle])
+	if (handle.get("slots", []) as Array).size() != 1:
+		return _fail("the handle's row carries %s slots; the fixture gives it one"
+				% [(handle.get("slots", []) as Array).size()])
+	var ore := AssayHud.part_kind_of({"kind": "ore", "species": 0, "grade": "C"}, kinds)
+	if not ore.is_empty():
+		return _fail(("an ore stack found the part row %s; the pack holds plenty that is not a part "
+				+ "and a client that drew slots for it would draw a frame's shape over an ore") % [ore])
+	var catalogue := AssaySimHost.part_kinds()
+	if catalogue.is_empty():
+		return _fail("the sim names no part kinds at all, so the join below is untested")
+	for entry in catalogue:
+		var row: Dictionary = entry
+		var kind := String(row.get("name", ""))
+		var found := AssayHud.part_kind_of({"kind": kind, "species": 0, "grade": "C"}, catalogue)
+		if String(found.get("name", "")) != kind:
+			return _fail(("the sim names a part kind `%s` and a pack stack of it finds %s -- the `name` "
+					+ "join has drifted from `ItemKind::Part(k).name()`") % [kind, found])
+	return true

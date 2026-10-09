@@ -268,6 +268,25 @@ func make_offers(player: int) -> Array:
 	return _sim.make_offers(player) if _sim != null else []
 
 
+## **EVERY NUMBER THE BUILD SCREEN'S READOUT DRAWS, FOR A DESIGN NOBODY HAS BUILT** (ASSA-325, read
+## by ASSA-317 slice 2b): `verdict` (`SAFE` / `UNCERTAIN` / `WILL BREAK`, or empty), `fault` (the
+## sim's own phrase for an empty slot or a refusal), `unfinished`, `held`, and the five banded pairs
+## -- `mass`, `budget`, `speed`, `swings`, `capacity` -- plus `hand_speed`.
+##
+## **THREE STATES AND THE CLIENT TESTS NONE OF THEM AGAINST TEXT** (ASSA-329): `verdict` non-empty is
+## a machine; `unfinished` is a design still being placed, with REAL numbers and `fault` naming what
+## is missing; and neither is a selection the rules throw out, where every number is zero. The flag
+## crosses as a bool for exactly that reason.
+##
+## `frame` and `mounted` are ITEM JSON (`item_json`), not stacks: a design is a list of items and the
+## wire has no notion of a slot index (`part_kinds`' docstring).
+##
+## `{}` with no world, which a caller must treat as "ask again later" rather than as a refusal: a
+## design with no numbers and no fault is a thing the sim never says.
+func design_readout(frame: String, mounted: PackedStringArray) -> Dictionary:
+	return _sim.design_readout(frame, mounted) if _sim != null else {}
+
+
 ## THE SIM'S OWN LABEL FOR A DEAD END (ASSA-158), so the window says it the way the terminal's
 ## catalogue has since ASSA-122 and this client composes no voice of its own.
 ##

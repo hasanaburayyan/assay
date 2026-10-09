@@ -1177,6 +1177,29 @@ static func slot_boxes(slots: Array) -> Array:
 ##
 ## **FIRST-COME WITHIN A KIND, AND THE ORDER IS THE CATALOGUE'S.** A player put those hoppers down in
 ## that order; a shape that re-sorted them would move a part under the cursor that just placed it.
+## **THE CATALOGUE ROW FOR WHAT A PLAYER IS CARRYING, OR `{}` WHEN THAT ITEM IS NOT A PART**
+## (ASSA-317 slice 2b).
+##
+## **THE JOIN IS ONE SIM STRING, THE SAME ONE `slot_fill` BELOW JOINS ON.** `part_kinds().name` is
+## `PartKind::name()` and a pack stack's `kind` is `ItemKind::Part(k) => k.name()` -- both
+## `spec(self).name`, read at `sim/src/item.rs:52` rather than assumed. A client that matched on
+## anything else would offer a frame's slots for an ore stack and nothing would fail.
+##
+## **IT EXISTS BECAUSE THE SAME LOOKUP HAD TWO CALLERS COMING** -- `stack_verbs` below, which needs
+## `is_frame` for a row's word, and the build screen's assembly path, which needs `slots` for the
+## shape it draws. Two copies of one join is the ASSA-43/52 shape with a string comparison in place
+## of a sentence: they agree until the day one of them is updated.
+##
+## Ore and refined answer `{}`, which is not an error: the pack holds plenty that is not a part.
+static func part_kind_of(stack: Dictionary, part_kinds: Array) -> Dictionary:
+	var kind := String(stack.get("kind", ""))
+	for entry in part_kinds:
+		var part: Dictionary = entry
+		if String(part.get("name", "")) == kind:
+			return part
+	return {}
+
+
 static func slot_fill(slots: Array, mounted: Array) -> Dictionary:
 	var boxes := slot_boxes(slots)
 	var taken := {}
@@ -2204,12 +2227,15 @@ static func empty_map_line() -> String:
 ## invitation to start reading it again.
 ## `footprint` is `AssaySimHost.footprint_of_item`, so "is this placeable" is also the sim's answer.
 static func stack_verbs(stack: Dictionary, part_kinds: Array, footprint: Vector2i) -> Array:
-	var kind := String(stack.get("kind", ""))
 	var verbs := []
 	if footprint.x > 0 and footprint.y > 0:
 		verbs.append({"label": "Place", "verb": "place"})
-	for entry in part_kinds:
-		var part: Dictionary = entry
+	# **THE LOOKUP IS `part_kind_of`'S, NOT A SECOND WALK OF THE CATALOGUE** (ASSA-317 slice 2b): the
+	# build screen's assembly path needs the same row for its `slots`, and one join on one sim string
+	# is the rule that function was pulled out to keep. The paragraphs below are why this button
+	# exists and what its word means, which did not change.
+	var part := part_kind_of(stack, part_kinds)
+	if not part.is_empty():
 		# ONE `Make` PER PART KIND THE CATALOGUE HOLDS, on the row whose item is the material a part
 		# is made of. `material` is the sim's answer (`step.rs`: "a part is made of refined material
 		# and nothing else"), so a row only grows these buttons because the sim would accept them --
@@ -2221,20 +2247,19 @@ static func stack_verbs(stack: Dictionary, part_kinds: Array, footprint: Vector2
 		#
 		# And the row for a part itself offers the way into an `Assemble`. The first part added is
 		# the frame, so the word changes rather than the button.
-		if String(part.get("name", "")) == kind:
-			# **THE WORD BELONGS TO THE KIND, NOT TO WHERE THE PLAYER HAS GOT TO** (Maren, ASSA-103).
-			# This read `"Mount" if building else "Frame"`, so a head said `Frame` until something was
-			# chosen and `Mount` afterwards -- and both were refused, because a head is never a frame
-			# and a frame is never mounted. Cove's `pack_rows.png` showed it as a swap: in each state
-			# exactly two of four rows are pressable and never the same two.
-			#
-			# `is_frame` IS THE SIM'S FIELD (ASSA-102), so this derives nothing and a fifth part kind
-			# labels itself. It is carried into the descriptor as well, because the button's tooltip
-			# makes the same claim in a longer sentence and two renderings of one fact must not be
-			# free to disagree.
-			var is_frame := bool(part.get("is_frame", false))
-			verbs.append({"label": "Frame" if is_frame else "Mount", "verb": "build",
-					"is_frame": is_frame})
+		# **THE WORD BELONGS TO THE KIND, NOT TO WHERE THE PLAYER HAS GOT TO** (Maren, ASSA-103).
+		# This read `"Mount" if building else "Frame"`, so a head said `Frame` until something was
+		# chosen and `Mount` afterwards -- and both were refused, because a head is never a frame
+		# and a frame is never mounted. Cove's `pack_rows.png` showed it as a swap: in each state
+		# exactly two of four rows are pressable and never the same two.
+		#
+		# `is_frame` IS THE SIM'S FIELD (ASSA-102), so this derives nothing and a fifth part kind
+		# labels itself. It is carried into the descriptor as well, because the button's tooltip
+		# makes the same claim in a longer sentence and two renderings of one fact must not be
+		# free to disagree.
+		var is_frame := bool(part.get("is_frame", false))
+		verbs.append({"label": "Frame" if is_frame else "Mount", "verb": "build",
+				"is_frame": is_frame})
 	return verbs
 
 
