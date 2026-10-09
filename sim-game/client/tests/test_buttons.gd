@@ -2264,11 +2264,13 @@ func test_the_close_up_is_given_the_tile_the_buttons_act_on() -> bool:
 	if screen._world.selection == null:
 		ok = _fail("a right click chose %s and the close-up was told nothing: the only thing on "
 				% chosen + "screen naming the subject of the next press is a line of text")
-	elif (screen._world.selection as Vector2i) != chosen:
-		ok = _fail("a right click on %s marked %s instead" % [chosen, screen._world.selection])
-	elif screen._target_tile() != (screen._world.selection as Vector2i):
-		ok = _fail(("the mark is on %s and the buttons act on %s. A mark that names a different "
-				+ "tile from the one the verb uses is worse than no mark")
+	elif (screen._world.selection as Rect2i) != Rect2i(chosen, Vector2i.ONE):
+		ok = _fail(("a right click on %s marked %s instead. This tile is bare, and a bare tile is "
+				+ "exactly one tile: `Place` and `PlaceAssembly` carry a `TilePos`, so the subject "
+				+ "really is the tile here (ASSA-348)") % [chosen, screen._world.selection])
+	elif not (screen._world.selection as Rect2i).has_point(screen._target_tile()):
+		ok = _fail(("the mark is on %s and the buttons act on %s. A mark that does not even cover "
+				+ "the tile the verb uses is worse than no mark")
 				% [screen._world.selection, screen._target_tile()])
 	# THE SESSION DIES. The selection was made in a world that is gone.
 	screen._session_ended()
@@ -2319,9 +2321,9 @@ func test_either_click_on_a_machine_opens_a_menu_beside_it() -> bool:
 		# targeted tile, so here the acted-on tile IS the menu's machine and both rules predict the same
 		# mark. `test_the_ring_stays_on_the_acted_on_tile_while_a_menus_machine_is_elsewhere` is the one
 		# that separates them.
-		var want: Variant = screen._target if screen._targeted else null
+		var want: Variant = screen._footprint_tiles(screen._target) if screen._targeted else null
 		if screen._world.selection != want:
-			ok = _fail("the ring is on %s and the acted-on tile is %s"
+			ok = _fail("the ring is on %s and the acted-on subject is %s"
 					% [screen._world.selection, want])
 			break
 		# **AND THE PANEL IS BESIDE ITS MACHINE, ASKED OF THE SCREEN'S OWN GEOMETRY** -- the box's rect
@@ -2649,13 +2651,76 @@ func test_the_ring_stays_on_the_acted_on_tile_while_a_menus_machine_is_elsewhere
 		return _fail("the smelter stands on my own feet, so this fixture cannot tell the two apart")
 	_click(screen, feet, MOUSE_BUTTON_RIGHT)
 	_click(screen, machine, MOUSE_BUTTON_LEFT)
+	# **BOTH SIDES ARE `Rect2i` SINCE ASSA-348 AND THAT IS NOT A CAST.** The ring carries the subject's
+	# whole footprint now, so comparing it to a bare `Vector2i` would be false for both branches
+	# whatever the mark did -- a guard that can no longer fire. Asked of `_footprint_tiles`, which is
+	# the same sim crossing the screen itself uses.
+	var machine_area: Rect2i = screen._footprint_tiles(machine)
+	var feet_area: Rect2i = screen._footprint_tiles(feet)
 	if screen._menu_at != id:
 		ok = _fail("the menu did not open on the machine at %s" % machine)
-	elif screen._world.selection == machine:
+	elif screen._world.selection == machine_area:
 		ok = _fail(("the ring is on %s, the menu's machine, and the verbs act on %s: one mark, two "
-				+ "subjects") % [machine, feet])
-	elif screen._world.selection != feet:
-		ok = _fail("the verbs act on %s and the ring is on %s" % [feet, screen._world.selection])
+				+ "subjects") % [machine_area, feet_area])
+	elif screen._world.selection != feet_area:
+		ok = _fail("the verbs act on %s and the ring is on %s" % [feet_area, screen._world.selection])
+	screen.queue_free()
+	return ok
+
+
+## **A SMELTER IS OUTLINED WHOLE, AND THE QUARTER THAT WAS CLICKED IS NOT THE SUBJECT** (ASSA-348;
+## Maren: *"the outline follows the subject, and the sim says what the subject is"*).
+##
+## `Take`, `Pickup` and `Insert` all carry a `BuildingId` (`sim/src/command.rs`), so on three of the
+## five verbs the subject is a whole building and a smelter covers four tiles. Before this the ring
+## marked one of them -- and since the menus shipped, the anchored panel and the ring were two marks
+## on screen disagreeing about the extent of one machine.
+##
+## **THE SECOND HALF IS ASKED OF A QUARTER THE PLAYER CANNOT CURRENTLY TARGET, AND THAT IS DELIBERATE
+## RATHER THAN THOROUGH.** A click on an occupied tile opens that machine's menu and returns
+## (`_unhandled_input`), so `_target` only ever lands on a building at its placement anchor, where
+## `pos` and the clicked tile are the same tile and the two rules cannot be told apart -- the exact
+## shape of ruling 8 shipping green. `_footprint_tiles` is asked about the far quarter directly,
+## against the same live sim, so the fixture's blind spot is named instead of being mistaken for
+## coverage.
+func test_a_smelters_outline_is_its_whole_footprint_and_not_one_quarter() -> bool:
+	var screen := _joined()
+	var ok := true
+	if _a_placed_smelter(screen) < 0:
+		screen.queue_free()
+		return false
+	_tick(screen, 1)
+	var spot: Vector2i = screen._target_tile()
+	var building: Variant = screen._sim.tile_at(spot).get("building")
+	if building == null:
+		screen.queue_free()
+		return _fail("no smelter at the targeted tile %s" % spot)
+	var at: Dictionary = building
+	var pos: Vector2i = at.get("pos", spot)
+	var span: Vector2i = at.get("footprint", Vector2i.ONE)
+	# THE FIXTURE ONLY MEANS SOMETHING IF THE SIM REALLY CALLS THIS THING 2x2.
+	if span != Vector2i(2, 2):
+		ok = _fail("the sim says this smelter is %s, so it cannot show a 2x2 outlined whole" % span)
+	elif screen._world.selection != Rect2i(pos, span):
+		ok = _fail(("the ring is %s and the sim says the building is %s at %s: press Pick up and the "
+				+ "sim takes the whole smelter while the mark claims a quarter of it")
+				% [screen._world.selection, span, pos])
+	# EVERY QUARTER ANSWERS THE SAME BUILDING, asked of the sim crossing the screen itself uses.
+	for quarter in [Vector2i.ZERO, Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)]:
+		var got: Rect2i = screen._footprint_tiles(pos + (quarter as Vector2i))
+		if got != Rect2i(pos, Vector2i(2, 2)):
+			ok = _fail("the quarter at %s reports the subject %s, not the whole smelter at %s"
+					% [pos + (quarter as Vector2i), got, pos])
+			break
+	# AND THE CONTROL: BARE GROUND IS STILL EXACTLY ONE TILE. `Place` and `PlaceAssembly` carry a
+	# `TilePos`, so a footprint there would overstate the subject as badly as a quarter understates
+	# it -- and without this clause a `_footprint_tiles` that returned 2x2 for everything would pass.
+	var bare: Vector2i = screen._my_tile()
+	if screen._sim.tile_at(bare).get("building") == null:
+		var one: Rect2i = screen._footprint_tiles(bare)
+		if one != Rect2i(bare, Vector2i.ONE):
+			ok = _fail("bare ground at %s reports the subject %s; `Place` takes a TilePos, so one "
+					% [bare, one] + "tile is the right answer there and not a fallback")
 	screen.queue_free()
 	return ok
 
