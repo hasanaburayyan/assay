@@ -27,7 +27,20 @@ use sim::{Input, PlayerCommand, PlayerId, World};
 /// coordination event, not a line of code — Decision #41 was a build dying at
 /// protocol 6 against 8 — so this one was spent on purpose on the night
 /// `RULES_ID` had already moved twice and every peer owed a rebuild anyway.
-pub const PROTOCOL_VERSION: u32 = 10;
+///
+/// 10 → 11 (ASSA-350): `sim::SmelterStall` grew `OutputHoldsAnother(Item)`,
+/// which rides [`ServerMsg::Tick`] inside `Event::SmelterStalled`. **The Game
+/// Director priced this deliberately** — *"the protocol bump is the price of
+/// telling the truth, not an argument against it"* — rather than call a
+/// blockage an idle to save the coordination.
+///
+/// **THE COORDINATION THIS COSTS, SAID HERE BECAUSE A CONSTANT IS WHERE PEOPLE
+/// LOOK:** a relay already running speaks the old number and refuses every
+/// client built after this, so **the relay has to come back up from this commit
+/// or later, and any demo build has to be cut after it** — relay and client
+/// from one commit. That is one condition on the merge, not a reason to delay
+/// it.
+pub const PROTOCOL_VERSION: u32 = 11;
 
 /// The rules this build runs, re-exported so a host has one place to look.
 pub const RULES_ID: &str = sim::RULES_ID;

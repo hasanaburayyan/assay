@@ -686,15 +686,24 @@ fn a_part_batch_makes_no_progress_and_the_state_line_does_not_know_it() {
 /// input empties and one bar sits in the output — then load the next rock. That
 /// is tidying, and it is what anyone smelting two species in one smelter does.
 ///
-/// **THIS TEST PINS THE DISAGREEMENT RATHER THAN FIXING IT**, the way ASSA-322
-/// was itself born. Unlike a short batch, this is something the player MUST act
-/// on and it never resolves itself, which by the Game Director's ASSA-80
-/// criterion makes it a *stall* — and `SmelterStall` does derive `Serialize` and
-/// rides `Event::SmelterStalled`, so the fix carries `PROTOCOL_VERSION` 10 → 11.
-/// The wording and the stall-vs-idle call are hers; this only proves the hole is
-/// real. **The day the fix lands, this test names exactly what changed.**
+/// **THIS TEST WAS WRITTEN AS A PIN AND IS NOW THE ASSERTION** (PR #460 → this
+/// one). It passed on main 0d17524 asserting `Working` and `halted() == false`,
+/// and its passing was the finding. Both of those lines are inverted below and
+/// nothing else about the fixture moved, so the diff on this function *is* the
+/// behaviour change.
+///
+/// **RULED A STALL** by the Game Director, on a criterion she sharpened in order
+/// to split it from ASSA-322: *an idle is waiting for SUPPLY; a stall is blocked
+/// by a CONFLICT no supply resolves.* Pour more ore into a short batch and it
+/// runs — the remainder is the rules' own doing. Pour more ore into this and
+/// nothing happens, ever; the only thing that clears it is a hand in the output
+/// slot. So `halted()` must be true here and must not be on 322.
+///
+/// That cost `PROTOCOL_VERSION` 10 → 11, because `SmelterStall` derives
+/// `Serialize` and rides `Event::SmelterStalled`. Her words: *"the protocol
+/// bump is the price of telling the truth, not an argument against it."*
 #[test]
-fn a_smelter_whose_output_holds_another_material_claims_to_be_working() {
+fn a_smelter_whose_output_holds_another_material_says_so_and_counts_as_halted() {
     let (mut world, me, id, _) = world_with_smelter();
     // WALLS (heat 60) and INERT (heat 20) both smelt inside WALLS' walls, so the
     // skip under test cannot be confused with TooHotForWalls.
@@ -733,15 +742,108 @@ fn a_smelter_whose_output_holds_another_material_claims_to_be_working() {
     assert_eq!(s.output, Some(bar), "and nothing was produced");
     assert_eq!(s.progress, 0, "because the step loop never reached it");
 
-    // The half that is wrong, recorded as wrong.
+    // **THE TWO LINES THAT WERE INVERTED.** They asserted `Working` and
+    // `!halted()` and passed, which was the whole finding.
     let state = world.smelter_state(world.building(id).unwrap());
-    assert!(
-        matches!(state, SmelterState::Working { .. }),
-        "ASSA-350: the state line claims it is working. It is not. Got {state:?}"
+    assert_eq!(
+        state,
+        SmelterState::Stalled(SmelterStall::OutputHoldsAnother(bar.item)),
+        "the state names the material in the way, not a temperature"
     );
     assert!(
-        !world.building_state(world.building(id).unwrap()).halted(),
-        "and it is not reported as something to fix, which it is"
+        world.building_state(world.building(id).unwrap()).halted(),
+        "a conflict no supply resolves is something to fix, so it joins halt_lines"
+    );
+
+    // **AND THE SENTENCE, WHICH IS THE GAME DIRECTOR'S, WITH THE SIM'S OWN
+    // SPELLING OF THE ITEM.** Built from `item_name` rather than typed here: a
+    // literal would pass while the menu's `held` line said something else,
+    // which is the two-spellings defect (ASSA-43/52) this wording exists to
+    // avoid. One clause, no `·`, and no instruction to press anything.
+    let said = sim::debug::stall_reason(&world, SmelterStall::OutputHoldsAnother(bar.item));
+    assert_eq!(
+        said,
+        format!("output still holds {}", world.item_name(bar.item))
+    );
+    assert!(
+        !said.contains('·') && !said.contains("take"),
+        "one clause, no top-level mark, and the sim does not name a button: {said:?}"
+    );
+    assert_eq!(
+        sim::debug::smelter_state_line(&world, state),
+        format!("stalled: {said}"),
+        "the status line is the `stalled:` prefix and this reason, nothing else"
+    );
+
+    // **THE PROGRESS CLAUSE IS PRESENT AND READS `0 of 20`, AND I HAD THIS
+    // BACKWARDS.** I first asserted `None` here, from `building_status`'s rule
+    // that the clause is *"absent, not zero, when no batch is in front of it:
+    // an empty smelter saying `0 of 20` would be inviting a wait"* — and
+    // measuring said `Some(0 of 20)`.
+    //
+    // **The code is right and my assertion was wrong.** A batch IS in front of
+    // this smelter: a recipe's worth of ore is sitting in the input slot. What
+    // is absent is not the batch but any progress on it, and that is exactly
+    // what `0 of 20` says. The same docstring gives the reason it belongs here:
+    // *"a stall is read as 'what do I do about it' and the progress is what
+    // says whether fixing it resumes or restarts."* Take the bar out and this
+    // batch starts from 0 — the number is the honest answer to that question,
+    // and the stall sentence beside it is what stops it reading as a wait.
+    assert_eq!(
+        world
+            .building_work(world.building(id).unwrap())
+            .map(|w| (w.done, w.total)),
+        Some((0, RecipeId::Refine.recipe().ticks)),
+        "a loaded batch that cannot start is `0 of 20`, not absent"
+    );
+}
+
+/// **THE ARM MUST NOT FIRE ON A SMELTER THAT IS SIMPLY RUNNING** — the cry-wolf
+/// half, and the reason ASSA-322 had to be an idle. A smelter refining a second
+/// batch of the SAME material has a loaded output slot and is working perfectly;
+/// if this stall reached that, every bulk resmelt would end in a false alarm and
+/// `SmelterState::Idle`'s own docstring rule would be broken from the other side.
+#[test]
+fn an_output_holding_more_of_the_same_material_is_not_a_stall() {
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(WALLS), 6);
+    give(&mut world, me, ore(FUEL), 8);
+    run(
+        &mut world,
+        &[
+            Input::player(me, insert(id, Slot::Input, ore(WALLS), 1)),
+            Input::player(me, insert(id, Slot::Fuel, ore(FUEL), 8)),
+        ],
+        RecipeId::Refine.recipe().ticks * 2,
+    );
+    let bar = smelter_of(&world, id).output.expect("one bar came out");
+
+    // Load MORE of the same rock over that bar: same output item, so no conflict.
+    run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Input, ore(WALLS), 1))],
+        1,
+    );
+    let state = world.smelter_state(world.building(id).unwrap());
+    assert!(
+        !matches!(
+            state,
+            SmelterState::Stalled(SmelterStall::OutputHoldsAnother(_))
+        ),
+        "the output holds {} and the batch makes the same thing: {state:?}",
+        world.item_name(bar.item)
+    );
+    assert!(
+        matches!(state, SmelterState::Working { .. }),
+        "it is refining, so it says so: {state:?}"
+    );
+
+    // AND THE CONFLICT GATE ITSELF AGREES, asked directly rather than through
+    // the state chain, so a reordering of those arms cannot hide this.
+    assert_eq!(
+        world.smelter_output_conflict(smelter_of(&world, id)),
+        None,
+        "same item in the slot is not a conflict"
     );
 }
 
@@ -1246,14 +1348,23 @@ fn a_smelter_entering_a_stall_says_so_once_and_then_stops_talking() {
     assert!(status.contains("stalled: no fuel"), "{status}");
 }
 
-/// **ALL FOUR STALLS, EACH BY ITS OWN SENTENCE, AND THE TWO SURFACES HELD
+/// **ALL FIVE STALLS, EACH BY ITS OWN SENTENCE, AND THE TWO SURFACES HELD
 /// EQUAL.** A state-to-words mapping test: the slots are set directly rather
 /// than driven, because what is under test is that one decision reaches both
 /// the log and the status line saying the same thing — not the rules that get
 /// a smelter into each state, which the tests above already pin.
+///
+/// **IT WAS FOUR UNTIL ASSA-350.** A new `SmelterStall` variant that skipped
+/// this test would be a stall whose two surfaces are free to disagree, which is
+/// the defect this function exists to prevent — so the count is in the heading
+/// and asserted at the bottom against the list, not left as prose.
 #[test]
 fn every_stall_reason_says_the_same_thing_in_the_log_and_on_the_status_line() {
-    let cases: [(SmelterStall, &str); 4] = [
+    // The material the `OutputHoldsAnother` case leaves in the output slot:
+    // refined INERT, while the input is WALLS ore, so the batch would make
+    // refined WALLS and cannot add to it.
+    let in_the_way = Item::new(ItemKind::Refined, INERT, Grade::A);
+    let cases: [(SmelterStall, &str); 5] = [
         (SmelterStall::OutputFull, "output full"),
         (SmelterStall::NoFuel, "no fuel"),
         (SmelterStall::FuelWontLight, "fuel won't light from cold"),
@@ -1264,8 +1375,14 @@ fn every_stall_reason_says_the_same_thing_in_the_log_and_on_the_status_line() {
             },
             "fire 60 too cool for ore needing 90",
         ),
+        // The sentence is built from the world inside the loop, because it
+        // names an item and a literal here would pass while the machine menu's
+        // own `held` line said something else (ASSA-43/52).
+        (SmelterStall::OutputHoldsAnother(in_the_way), ""),
     ];
+    let mut covered = 0;
     for (why, sentence) in cases {
+        covered += 1;
         let (mut world, me, id, _) = world_with_smelter();
         // Walls hot enough that the fire, not the walls, is the limit in the
         // FireTooCool case; harmless for the others.
@@ -1301,6 +1418,13 @@ fn every_stall_reason_says_the_same_thing_in_the_log_and_on_the_status_line() {
                     s.burn_left = 10;
                     s.burn_temperature = 60;
                 }
+                // A burning fire and one bar of the WRONG material: the stall
+                // has to come from the output slot and not from the fuel.
+                SmelterStall::OutputHoldsAnother(item) => {
+                    s.output = Some(sim::ItemStack::new(item, 1));
+                    s.burn_left = 10;
+                    s.burn_temperature = 100;
+                }
             }
         }
         let b = world.building(id).unwrap();
@@ -1308,6 +1432,18 @@ fn every_stall_reason_says_the_same_thing_in_the_log_and_on_the_status_line() {
             world.smelter_state(b).stall(),
             Some(why),
             "the state this test set up is not the one it is about"
+        );
+
+        // The one reason whose words come from the world rather than the table.
+        let sentence = match why {
+            SmelterStall::OutputHoldsAnother(item) => {
+                format!("output still holds {}", world.item_name(item))
+            }
+            _ => sentence.to_string(),
+        };
+        assert!(
+            !sentence.is_empty(),
+            "every case has to arrive here with a sentence to compare: {why:?}"
         );
 
         let status = sim::debug::building_status(&world, b);
@@ -1322,10 +1458,18 @@ fn every_stall_reason_says_the_same_thing_in_the_log_and_on_the_status_line() {
             sim::debug::Audience::Typed,
         );
         assert!(
-            line.contains(sentence),
+            line.contains(&sentence),
             "and the log must say the same thing, not a second wording: {line}"
         );
     }
+    // **THE SELF-CHECK ON THIS TEST'S OWN AIM.** The table is a hand-written
+    // list and a new `SmelterStall` variant does not force its way in, so the
+    // one thing that catches a sixth reason shipping unheld is this count read
+    // against the heading. If it fails, add the case — do not raise the number.
+    assert_eq!(
+        covered, 5,
+        "five stall reasons exist and this test holds all of them equal"
+    );
 }
 
 /// **IDLE IS NOT A STALL AND IS NEVER ANNOUNCED** (Game Director's rule 2). A
