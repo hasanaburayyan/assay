@@ -117,6 +117,42 @@ func _click(screen: Node, tile: Vector2i, button: int) -> void:
 		screen._show_close_up(was)
 
 
+## **A SLOT PLATE IS THE BOX ITS PICTURE IS DRAWN IN** (ASSA-388; Maren's standing ruling: *"a box
+## that holds a picture is sized by the picture's own box, never by the space around it"*).
+##
+## **THIS IS THE GUARD THE DEFECT GOT PAST, AND IT HAD TO BE ON A LAID-OUT CONTROL TO CATCH IT.**
+## `_icon_box` stamps `ICON_BOX_PX` on every picture as a MINIMUM; `_slot_box` plated it at
+## `ICON_PX` square and anchored the picture with `PRESET_FULL_RECT`, which cannot shrink a control
+## below its minimum. **Two numbers for one picture**, and the result was 7 px of a `head`'s paint
+## hanging below its own plate on a 1x window. Nothing in the suite could see it: my first attempt
+## asserted the two CONSTANTS against each other, which stays true however the plate is sized. The
+## only thing that reddens is asking the plate the picture actually stands in.
+func test_a_slot_plate_is_the_box_its_picture_is_drawn_in() -> bool:
+	var consts: Dictionary = (load("res://scripts/main.gd") as GDScript).get_script_constant_map()
+	var icon_box: Vector2 = consts.get("ICON_BOX_PX", Vector2.ZERO)
+	var screen := _joined()
+	var part := {"kind": "hopper", "species": 0, "grade": "B", "count": 1}
+	var plate: Control = screen._slot_box({"part": part, "name": "hopper"})
+	var ok := true
+	if plate == null or plate.get_child_count() == 0:
+		ok = _fail("a filled slot box drew no picture at all, so this guard would assert nothing")
+	else:
+		var art := plate.get_child(0) as Control
+		if art == null:
+			ok = _fail("the slot box's child is not a Control, so it has no box to compare")
+		elif art.custom_minimum_size != plate.custom_minimum_size:
+			ok = _fail(("the slot plate is %s and the picture standing in it is %s. Two numbers for "
+					+ "one picture: `PRESET_FULL_RECT` cannot shrink the picture to the smaller, so "
+					+ "the taller parts hang out of their own plate (ASSA-388).")
+					% [plate.custom_minimum_size, art.custom_minimum_size])
+		elif plate.custom_minimum_size != icon_box:
+			ok = _fail(("plate and picture agree on %s, which is not `ICON_BOX_PX` %s. They are one "
+					+ "box now; if that box moves, it moves at the constant.")
+					% [plate.custom_minimum_size, icon_box])
+	screen.queue_free()
+	return ok
+
+
 ## THERE IS A WORLD, AND IT IS THE SIM'S. Everything below leans on this, so it is asserted on its
 ## own: a harness that quietly failed to start a world would make every test after it vacuous.
 func test_an_offline_client_is_welcomed_into_a_world_the_sim_built() -> bool:
