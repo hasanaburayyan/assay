@@ -3219,3 +3219,124 @@ func _only_said(screen: Node) -> String:
 	if labels.size() != 1:
 		return "<%d labels: %s>" % [labels.size(), labels]
 	return labels[0]
+
+
+## THE `acting on` SENTENCE AS IT IS DRAWN, off the `do` column's own labels, or "".
+##
+## NOT `_text_of`: that joins every label in the column with ` · `, and this sentence's own clause
+## mark is ` · `, so a frozen line and a fresh one appended beside it would read as one string.
+func _acting_on_line(screen: Node) -> String:
+	for label in screen._actions.find_children("*", "Label", true, false):
+		var text: String = (label as Label).text
+		if text.begins_with("acting on ("):
+			return text
+	return ""
+
+
+## **THE SENTENCE THAT SAYS WHERE THE BUTTONS ACT FOLLOWS THE TILE, NOT THE LAST TIME ANYONE CHOSE
+## IT** (ASSA-353; the guard Marlow asked me to write before he takes the fix).
+##
+## **FOUND BY A COLD READER AND BY NO TEST.** Nacre, reading an ASSA-326 frame blind for a different
+## question, reported *"the line reads `acting on (74, 36) · chosen · on a deposit` ... that says the
+## tile in the white box is not a building"* -- and a machine stood on (74, 36).
+##
+## `_refresh_actions`'s signature holds `target/_targeted/_building/minable/live` and nothing about
+## the building ON the target: the ID left with `Take` and `Pick up` (ASSA-316, Maren's ruling 3,
+## which she stands by). **The premise bolted to that ruling is what was false** -- *"a term in a
+## cache key that no drawn thing depends on"* -- because `target_line` is drawn thirty-seven lines
+## below the key and reads `facts.building`. So the building clause is frozen at whatever stood on the
+## tile when the tile was last chosen.
+##
+## **BOTH DIRECTIONS IN ONE RUN, AND EACH IS THE OTHER'S CONTROL** (acceptance 1 and 2): a line
+## frozen on the ground fails the arrival, a line frozen on a machine that has been picked up fails
+## the removal. The target tile is asserted not to have moved between them, because a re-chosen
+## target rebuilds the row for the ordinary reason and would make either half vacuous.
+##
+## **THE EXPECTATION IS `target_line`'s OWN ANSWER FOR THE TILE'S CURRENT FACTS, never a phrase typed
+## here.** `test_actions.gd` once pinned `smelter 3` out of a hand-built dict and froze the defect
+## (ASSA-244); the wording is Maren's to rule and box 6 of this item leaves it exactly as it is.
+##
+## **RED ON MAIN AT 3747eba**, both halves, with the sentence it drew instead.
+func test_the_acting_on_line_follows_the_building_on_the_chosen_tile() -> bool:
+	var screen := _joined()
+	var ok := true
+	# The same four presses as `_a_placed_smelter`, inlined for one reason: the line has to be READ
+	# between the right-click that chooses the tile and the Place that builds on it.
+	var smelter := _a_smelter_in_the_pack(screen)
+	var spot := Vector2i(-1, -1)
+	if not smelter.is_empty():
+		var me: Vector2i = screen._my_tile()
+		spot = AssayDemoPlan.smelter_spot(me, screen._sim.size_tiles(), _buildings_near(screen, me))
+		if spot.x < 0:
+			ok = _fail("no free 2x2 within reach of %s for a smelter" % me)
+	else:
+		ok = false
+	var before := ""
+	if ok:
+		_click(screen, spot, MOUSE_BUTTON_RIGHT)
+		before = _acting_on_line(screen)
+		# THE CONTROL, ASSERTED RATHER THAN ASSUMED: at this moment the tile is bare and the line
+		# must say so. If it already named a building, the arrival below could not be seen.
+		if not (before.ends_with("clear ground") or before.ends_with("on a deposit")):
+			ok = _fail(("the chosen tile %s does not read as bare ground before anything is built, "
+					+ "so the arrival below is not a change: \"%s\"") % [spot, before])
+	if ok:
+		var place: Button = _button_on_row(screen, smelter, "Place")
+		if place == null:
+			ok = false
+		else:
+			place.pressed.emit()
+			_tick(screen, 4)
+	var named := ""
+	if ok:
+		var facts: Dictionary = screen._sim.tile_at(spot)
+		var building: Variant = facts.get("building")
+		if building == null:
+			ok = _fail("pressed `Place` for a smelter at %s and nothing stands there" % spot)
+		else:
+			named = String((building as Dictionary).get("name", ""))
+		if ok and named == "":
+			ok = _fail("the binding gave a building with no `name`; run `make client-lib`")
+		if ok and screen._target_tile() != spot:
+			ok = _fail(("the target moved to %s while the smelter was built, so neither half of this "
+					+ "test is about a stale row") % screen._target_tile())
+		if ok:
+			var drawn := _acting_on_line(screen)
+			var fresh: String = AssayHud.target_line(spot, true, facts)
+			if drawn == "":
+				ok = _fail("no `acting on` line in the do column: %s" % _text_of(screen._actions))
+			elif drawn == before:
+				ok = _fail(("a %s stands on the chosen tile %s and the line has not moved since the "
+						+ "tile was chosen (ASSA-353).\ndrawn: %s\nwanted: %s")
+						% [named, spot, drawn, fresh])
+			elif drawn != fresh:
+				ok = _fail("the drawn line is not the one these facts make.\ndrawn: %s\nwanted: %s"
+						% [drawn, fresh])
+	# **AND THE REVERSE, WHICH IS THE WORSE ONE: the machine is gone and the line goes on naming it.**
+	# Pick up lives in the machine's own menu since ASSA-316; opening that menu does not move the
+	# target (`main.gd:6208-6212` returns before the line that sets it), so the row's key is as still
+	# here as it was on the way in.
+	if ok:
+		_click(screen, spot, MOUSE_BUTTON_LEFT)
+		var away := _find(screen._menu_box, "Pick up")
+		if away == null:
+			ok = _fail("the machine menu offers no Pick up: %s" % [_labels_of(screen._menu_box)])
+		else:
+			away.pressed.emit()
+			_tick(screen, 8)
+			var after: Dictionary = screen._sim.tile_at(spot)
+			if after.get("building") != null:
+				ok = _fail("pressed `Pick up` and the sim still has a building on %s" % spot)
+			elif screen._target_tile() != spot:
+				ok = _fail("the target moved to %s during the pick up" % screen._target_tile())
+			else:
+				var drawn := _acting_on_line(screen)
+				var fresh: String = AssayHud.target_line(spot, true, after)
+				if drawn.contains(named):
+					ok = _fail(("the %s was picked up off the chosen tile and the line still names "
+							+ "it (ASSA-353).\ndrawn: %s\nwanted: %s") % [named, drawn, fresh])
+				elif drawn != fresh:
+					ok = _fail(("the drawn line is not the one the emptied tile makes.\ndrawn: %s"
+							+ "\nwanted: %s") % [drawn, fresh])
+	screen.queue_free()
+	return ok
