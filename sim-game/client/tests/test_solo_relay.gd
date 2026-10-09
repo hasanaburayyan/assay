@@ -218,9 +218,38 @@ func test_a_silent_relay_times_out_says_so_and_is_not_left_running() -> bool:
 			ok = _fail("a silent relay never timed out; the window would hang here")
 		elif not solo.failure.contains("ready"):
 			ok = _fail("the sentence does not say what was waited for: %s" % solo.failure)
+		# **IT NAMES WHAT WOULD NOT SPEAK** (ASSA-345). The sentence used to begin `it did not say it
+		# was ready`, with no subject at all — and this is the one branch a quarantined `sim-relay`
+		# reaches, measured 2 of 2 on the shipped zip. A player looking at a folder of files was told
+		# that something in it was quiet.
+		elif not solo.failure.contains("sh"):
+			ok = _fail("the sentence does not name what would not speak: %s" % solo.failure)
+		# **AND THE CLEARING COMMAND IS HERE, NOT ONLY ON THE SIBLING BRANCH** (ASSA-345). A
+		# quarantined binary HANGS rather than exiting, so `has_exited()` is false and the `did not
+		# run` branch that carries this clause is never reached. Same guard in both directions as that
+		# branch's test: a Windows or Linux player told about `xattr` is sent to a command that does
+		# not exist on their machine.
+		elif OS.get_name() == "macOS" and not solo.failure.contains("quarantine"):
+			ok = _fail("macOS and no quarantine clause on the one sentence a quarantined relay "
+					+ "reaches: %s" % solo.failure)
+		elif OS.get_name() != "macOS" and solo.failure.contains("quarantine"):
+			ok = _fail("%s and a macOS-only clause: %s" % [OS.get_name(), solo.failure])
 		# **THE ONE SENTENCE THAT MAY SAY `PRESS PLAY SOLO AGAIN`**, and the `stop()` four lines
 		# below is what earns it: the process is gone, so a second press starts from clean ground.
+		# It stays LAST: a slow relay is the other thing this branch catches, and a second press is
+		# honest for that one.
 		elif not _check_shape("a silent relay", solo.failure, AssaySoloRelay.SOLO_AGAIN):
+			ok = false
+		# **AND THE SHAPE GUARD IS ASKED ABOUT THE NAME THAT SHIPS, NOT THE STAND-IN'S** (ASSA-345).
+		# Every stand-in in this file is `/bin/sh`, so `_check_shape`'s rule — *`sim-relay` may be
+		# named only in a clause that is about the file* — has never once been applied to a sentence
+		# containing the word `sim-relay`. The shipped sentence does contain it. Substituting the real
+		# file name is synthetic and I would rather say so than keep a proxy that cannot fire: without
+		# it, a sentence reading `sim-relay did not say it was ready` would pass every check here and
+		# break the rule in the player's window.
+		elif not _check_shape("a silent relay named as it ships",
+				solo.failure.replace("the sh file", "the sim-relay file"),
+				AssaySoloRelay.SOLO_AGAIN):
 			ok = false
 		elif took > 3000:
 			ok = _fail("the deadline was 300ms and it took %dms to give up" % took)
