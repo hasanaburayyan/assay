@@ -11,6 +11,12 @@ extends SceneTree
 ## that mode picks, which axis binds, and the drawn rect inside both candidate boxes.
 ##
 ## Run: $GODOT --headless --path sim-game/client --script res://tools/cove_slot_box_scale.gd
+##
+## CI: local -- it PRINTS a table and judges nothing, so a gate could only assert the numbers it
+## prints, and those are already asserted where they belong:
+## `test_a_part_in_a_square_slot_plate_binds_on_height_and_overruns_it` in tests/test_sprites.gd
+## reads the same regions and the same main.gd constants and reddens on all three of them. A second
+## reader of one quad is the thing `pack_icon_draw.py` exists to prevent.
 
 const ICON_PX := 32.0
 const ICON_BOX_PX := Vector2(32.0, 48.0)
