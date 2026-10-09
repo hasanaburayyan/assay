@@ -3625,9 +3625,13 @@ func _roomiest_frame() -> Dictionary:
 ## heading that is not is the ASSA-117 bug this very screen has had once already (`_show_log`), and it
 ## passes any test that only asks the rows.
 ##
-## **AND BLOCK 5 IS HIDDEN WHILE ASSEMBLING, WHICH IS ASSERTED AS A STATE AND NOT AS A TODO**: her
-## ruling makes that rect the mass/budget picture, so until it is drawn a heading reading `what you
-## get` over nothing is a labelled empty gap.
+## **AND BLOCK 5 IS HIDDEN HERE FOR A REASON THAT CHANGED UNDER THIS TEST** (ASSA-369). It used to
+## be *"her ruling makes that rect the mass/budget picture, so until it is drawn a heading reading
+## `what you get` over nothing is a labelled empty gap"* -- the picture is drawn now, and this
+## assertion still holds because **the pack in this fixture has no frame in it**, so the sim answers
+## `{}` and there is no design for the rect to be about. The rule is the same one; what satisfies it
+## is a missing FACT rather than a missing feature. `test_the_mass_fill...` below is the positive
+## case, and without it this line would quietly become a guard against the fill ever appearing.
 func test_the_build_screen_swaps_block_three_between_making_and_assembling() -> bool:
 	var screen := _joined()
 	_tick(screen, 2)
@@ -3658,7 +3662,9 @@ func test_the_build_screen_swaps_block_three_between_making_and_assembling() -> 
 			ok = _fail(("assembling shows the slots as %s and the mount list as %s; both are block 3 "
 					+ "under ruling (A)") % [screen._build_slots.visible, screen._build_mounts.visible])
 		elif screen._build_detail.visible:
-			ok = _fail("block 5 is shown while assembling and its picture is the next slice")
+			ok = _fail("block 5 is shown while assembling with NO FRAME in the pack: the sim answers "
+					+ "nothing about a design that does not exist, so `what you get` stands over a "
+					+ "labelled empty gap")
 		elif screen._build_title.text != "assemble":
 			ok = _fail("the assembly path's title reads `%s`" % screen._build_title.text)
 		elif heading == null or heading.text != "which frame":
@@ -4305,3 +4311,224 @@ func test_the_acting_on_line_follows_the_building_on_the_chosen_tile() -> bool:
 							+ "\nwanted: %s") % [drawn, fresh])
 	screen.queue_free()
 	return ok
+
+
+## ------------------------------------------------------------------------------------------------
+## BLOCK 5 ON THE ASSEMBLY PATH: THE MASS/BUDGET FILL (ASSA-369 box 1)
+##
+## Maren's §5.1: *"Mass against the frame's budget — a RATIO with a hard end. A ratio fill; the
+## axis's end is the budget. When mass is over, the fill is full and the sim's verdict supplies the
+## word. The client never colours this red by arithmetic."*
+## ------------------------------------------------------------------------------------------------
+
+## The one row block 5 draws while assembling, or null.
+func _mass_row(screen: Node) -> AssayReadingRow:
+	for child in screen._build_detail.get_children():
+		if child is AssayReadingRow:
+			return child
+	return null
+
+
+## **THE FILL IS FULL WHEN AND ONLY WHEN THE SIM STOPS SAYING `SAFE`, AND THAT IS THE WHOLE CLAIM.**
+##
+## **ASSERTED AGAINST THE SIM'S OWN WORD, NEVER AGAINST A WIDTH I TYPED.** The client holds four
+## numbers it is forbidden to compare (`design_readout`'s standing warning), so the only honest
+## statement about this picture is that it agrees with the comparison the sim already published:
+## `SAFE` is `mass_high <= budget_low` (`assembly.rs::StatRange::verdict`), which is exactly the
+## pair the fill is fed. A test asserting "the fill is 0.42 of the track" would be asserting the
+## value I set — this asserts the property.
+##
+## **AND IT CHECKS THE VALUE COLUMN IS EMPTY** (box 4): the figures live in the commit bar, and one
+## fact with two homes is the defect ASSA-316 ruling 6 names.
+func test_the_mass_fill_agrees_with_the_sims_own_verdict() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var frame := _roomiest_frame()
+	if frame.is_empty():
+		return _fail("the sim's catalogue has no frame, so this test proves nothing")
+	screen._build_verb = screen.BUILD_ASSEMBLE
+	screen._building = [_part_stack_of(String(frame.get("kind", "")))]
+	screen._rebuild_build_detail()
+	if not screen._build_detail.visible:
+		return _fail("block 5 is hidden with a frame chosen, so the half of the screen this item is "
+				+ "about still says nothing")
+	var row := _mass_row(screen)
+	if row == null:
+		return _fail("block 5 draws no reading row on the assembly path: %s"
+				% [screen._build_detail.get_children()])
+	if row.value_text() != "":
+		return _fail(("the fill carries the text `%s`. The relationship is this rect's job and the "
+				+ "figures are the bar's: one fact, one home") % row.value_text())
+	var track := row.track()
+	if track.grammar() != AssayTrack.Grammar.AMOUNT:
+		return _fail(("the mass mark is grammar %s. Mass against a budget is a RATIO with a hard "
+				+ "end, not a reading float") % track.grammar())
+	var readout: Dictionary = screen._design_readout()
+	var verdict := String(readout.get("verdict", ""))
+	if verdict == "" and not bool(readout.get("unfinished", false)):
+		return _fail("the sim says neither a verdict nor `unfinished` about this design: %s"
+				% [readout])
+	# THE TWO SIDES OF THE ONE CLAIM. `full` is the track's own geometry; `safe` is the sim's word.
+	var full: bool = track.mark_rect().size.x >= AssayTrack.WIDTH_PX
+	var safe := int(readout.get("mass_high", 0)) <= int(readout.get("budget_low", 0))
+	if verdict != "" and safe != (verdict == "SAFE"):
+		return _fail(("the sim says `%s` but mass_high %d against budget_low %d reads %s: this "
+				+ "test's premise about which pair decides SAFE is wrong, not the fill")
+				% [verdict, int(readout.get("mass_high", 0)), int(readout.get("budget_low", 0)),
+				"safe" if safe else "not safe"])
+	if full == safe:
+		return _fail(("the fill is %s while the sim's own comparison says %s (mass_high %d of "
+				+ "budget_low %d, verdict `%s`). A full fill must mean exactly what losing `SAFE` "
+				+ "means, or the picture and the word in the bar disagree")
+				% ["full" if full else "not full", "safe" if safe else "not safe",
+				int(readout.get("mass_high", 0)), int(readout.get("budget_low", 0)), verdict])
+	return true
+
+
+## **IT IS LIVE: MOUNTING A PART MOVES THE FILL** (box 3). The board's own complaint about this
+## screen was *watch the numbers move*, and the right column was measured identical to the pixel
+## across a mount that flips the bar's verdict.
+##
+## **THE CONTROL IS THE SIM, AGAIN.** A mount that the sim says adds no mass could not move it and
+## would be a true failure of this test to report, so the sim's own `mass_high` is read before and
+## after and the test refuses to run if the two agree — rather than passing because nothing happened
+## twice.
+func test_the_mass_fill_moves_when_a_part_is_mounted() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var frame := _roomiest_frame()
+	var mounts := String(frame.get("mounts", ""))
+	if frame.is_empty() or mounts == "":
+		return _fail("no frame in the sim's catalogue takes a part, so there is nothing to mount")
+	screen._build_verb = screen.BUILD_ASSEMBLE
+	screen._building = [_part_stack_of(String(frame.get("kind", "")))]
+	screen._rebuild_build_detail()
+	var bare := _mass_row(screen)
+	if bare == null:
+		return _fail("block 5 draws no row for a bare frame")
+	var before: float = bare.track().mark_rect().size.x
+	var mass_before := int((screen._design_readout() as Dictionary).get("mass_high", 0))
+	screen._building.append(_part_stack_of(mounts))
+	screen._rebuild_build_detail()
+	var loaded := _mass_row(screen)
+	if loaded == null:
+		return _fail("block 5 draws no row once a `%s` is mounted" % mounts)
+	var after: float = loaded.track().mark_rect().size.x
+	var mass_after := int((screen._design_readout() as Dictionary).get("mass_high", 0))
+	if mass_after == mass_before:
+		return _fail(("mounting a `%s` leaves the sim's own mass at %d, so a fill that did not move "
+				+ "would be right and this test proves nothing") % [mounts, mass_after])
+	if is_equal_approx(after, before):
+		return _fail(("the fill is %.1f px wide with a bare frame and %.1f px with a `%s` mounted, "
+				+ "while the sim's mass went %d -> %d. The one column of this screen a player's own "
+				+ "press should move does not move") % [before, after, mounts, mass_before,
+				mass_after])
+	return true
+
+
+## **AND A FRAME SWITCH MOVES IT TOO** (box 3's second half), because the axis's END is the frame's
+## budget: the same parts under a roomier frame are a smaller share of it.
+##
+## **THE PARTS ARE HELD AND ONLY THE FRAME CHANGES, AND THE FIRST VERSION OF THIS TEST DID NOT DO
+## THAT.** It switched between two BARE frames, found both drawing the same 47.8 px fill, and called
+## the axis broken. It is not: a bare frame's mass is `size x density` and its budget is
+## `size x strength x FRAME_BUDGET_PER_STRENGTH` (`assembly.rs::PART_SPECS`), **so the frame's size
+## cancels and the ratio is a fact about the MATERIAL, identical for every frame made of it.** Worth
+## knowing rather than asserting around: until something is mounted, this fill does not tell two
+## frames apart, and it cannot be made to without the client inventing a number.
+##
+## Both frames in the catalogue require exactly one `head`, which is what makes the numerator
+## holdable across the switch.
+func test_the_mass_fill_moves_when_the_frame_is_switched() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	screen._build_verb = screen.BUILD_ASSEMBLE
+	var frames := PackedStringArray()
+	var shared := ""
+	for entry in AssaySimHost.part_kinds():
+		var row: Dictionary = entry
+		if not bool(row.get("is_frame", false)):
+			continue
+		frames.append(String(row.get("name", "")))
+		# THE PART EVERY FRAME REQUIRES, out of the sim's own slot table rather than typed: that is
+		# the only part that can be mounted on all of them, so it is the only honest way to hold the
+		# numerator still while the denominator moves.
+		var needs := PackedStringArray()
+		for slot in (row.get("slots", []) as Array):
+			var limit: Dictionary = slot
+			if int(limit.get("min", 0)) >= 1:
+				needs.append(String(limit.get("name", "")))
+		if shared == "":
+			shared = needs[0] if needs.size() > 0 else ""
+		elif not needs.has(shared):
+			shared = ""
+	if frames.size() < 2:
+		return _fail("the sim's catalogue has %d frame(s), so there is no frame switch to watch"
+				% frames.size())
+	if shared == "":
+		return _fail(("no one part is required by every frame in %s, so the design's mass cannot "
+				+ "be held across the switch and this test cannot isolate the budget") % [frames])
+	var seen := {}
+	for kind in frames:
+		screen._building = [_part_stack_of(kind), _part_stack_of(shared)]
+		screen._rebuild_build_detail()
+		var drawn := _mass_row(screen)
+		if drawn == null:
+			return _fail("block 5 draws no row for frame `%s` with a `%s` on it" % [kind, shared])
+		var readout: Dictionary = screen._design_readout()
+		seen[kind] = {"budget": int(readout.get("budget_low", 0)),
+				"mass": int(readout.get("mass_high", 0)),
+				"fill": drawn.track().mark_rect().size.x}
+	var budgets := {}
+	for kind in seen:
+		budgets[int((seen[kind] as Dictionary)["budget"])] = kind
+	if budgets.size() < 2:
+		return _fail(("every frame in the catalogue reads budget %s, so a fill that ignored the "
+				+ "frame entirely would pass this test") % [budgets.keys()])
+	var fills := {}
+	for kind in seen:
+		fills[(seen[kind] as Dictionary)["fill"]] = kind
+	if fills.size() < 2:
+		return _fail(("%d frames carrying the same `%s` read %d different budgets and draw the "
+				+ "same fill %s: the axis's end is not the frame's budget. Readings: %s")
+				% [seen.size(), shared, budgets.size(), fills.keys(), seen])
+	return true
+
+
+## **A DESIGN THE SIM REFUSES DRAWS NO FILL, AND IT IS NOT SPECIAL-CASED** (box 5).
+##
+## Park one part too many and `design_readout` answers every number 0. The fill then asks for 0 of 0
+## and `AssayTrack` draws nothing — its own documented answer for an absent fact, reached through
+## the same call every other caller makes. **The screen must agree with its own `Build`**: keeping a
+## number alive for a design the rules throw out is the screen telling a player something the press
+## will not honour.
+##
+## The failure this guards is the tempting one: a client that clamped `budget <= 0` to "full" would
+## paint a confident full bar for a design nobody can build.
+func test_an_over_full_design_draws_no_fill_rather_than_a_confident_one() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var frame := _roomiest_frame()
+	var mounts := String(frame.get("mounts", ""))
+	var room := int(frame.get("room", 0))
+	if frame.is_empty() or mounts == "" or room <= 0:
+		return _fail("no frame in the sim's catalogue has a bounded slot, so nothing can be parked")
+	screen._build_verb = screen.BUILD_ASSEMBLE
+	screen._building = [_part_stack_of(String(frame.get("kind", "")))]
+	for _i in range(room + 1):
+		screen._building.append(_part_stack_of(mounts))
+	screen._rebuild_build_detail()
+	var readout: Dictionary = screen._design_readout()
+	if int(readout.get("budget_low", 0)) != 0 or int(readout.get("mass_high", 0)) != 0:
+		return _fail(("the sim still prices a `%s` with %d `%s` on a slot that takes %d: %s. This "
+				+ "test is not in the refused state it is about")
+				% [String(frame.get("kind", "")), room + 1, mounts, room, readout])
+	var row := _mass_row(screen)
+	if row == null:
+		return _fail("block 5 draws no row at all for a refused design; the heading is shown, so "
+				+ "the row is what says the sim has no position to report")
+	if row.track().grammar() != AssayTrack.Grammar.NOTHING:
+		return _fail(("a refused design draws grammar %s with a %.1f px mark. 0 of 0 is an absent "
+				+ "fact, and a fill drawn for it is the screen disagreeing with its own Build")
+				% [row.track().grammar(), row.track().mark_rect().size.x])
+	return true

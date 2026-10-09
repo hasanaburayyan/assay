@@ -104,6 +104,24 @@ func show_reading(property: String, text: String, low: int, high: int, scale: Ve
 	_track.show_reading(low, high, scale, assayed)
 
 
+## **A RATIO FILL, WITH NO NUMBER BESIDE IT** (ASSA-369; Maren's §5.1 and her 00:32 ruling that block
+## 5 is *"the relationship, not the figures"*).
+##
+## `value` and `total` are both the sim's. **THE VALUE COLUMN IS DELIBERATELY EMPTY** and that is the
+## item's box 4, not an omission: the design's figures live in the commit bar, and one fact with two
+## homes is ASSA-316 ruling 6. The column is still RESERVED -- it keeps the track at the x every
+## other row in the game puts it at, which is the whole of move 3's rule 2 and the only reason the
+## per-part mass floats of this item's second box can be compared down the column when they land.
+##
+## **THE TRACK DECIDES WHAT AN ABSENT FACT LOOKS LIKE, NOT THIS ROW.** `total <= 0` draws nothing
+## (`AssayTrack.show_amount`), which is the state a refused design is in -- and leaving that to the
+## track is what makes it uniform rather than a case this screen invented for itself.
+func show_amount(property: String, value: int, total: int) -> void:
+	_label.text = property
+	_value.text = ""
+	_track.show_amount(value, total)
+
+
 ## **THE SIM'S WORDS WITH NO AXIS UNDER THEM**, for a property the binding sent a reading for and no
 ## range. Not a styling choice: the row keeps the number it was given and withholds the position it
 ## was not. See `main.gd::_readings_table` for the default that made this a function instead of a

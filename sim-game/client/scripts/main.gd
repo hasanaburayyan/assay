@@ -5421,23 +5421,36 @@ func _choose_build_material(offer: Dictionary) -> void:
 ## in the commit bar (Maren's §5.4 ruling 3), because both are about the irreversible act rather than
 ## about the thing produced. One fact, one home (ASSA-316 ruling 6) -- they are not drawn twice.
 ##
-## **AND WHAT IS NOT HERE IS SAID OUT LOUD RATHER THAN QUIETLY MISSING:** the RATIO fill of mass
-## against budget and the SAFE / UNCERTAIN / WILL BREAK verdict her §5 specifies belong to the
-## ASSEMBLY flow, which is slice 2/3. A recipe is not a design: it has no frame, no budget and no
-## parts, so there is nothing for those marks to be about. Drawing them here would mean inventing
-## numbers in GDScript, which is the one rule this item says does not bend.
+## **AND WHAT IS NOT ON THE MAKE PATH IS SAID OUT LOUD RATHER THAN QUIETLY MISSING:** the RATIO fill
+## of mass against budget and the SAFE / UNCERTAIN / WILL BREAK verdict her §5 specifies are about a
+## DESIGN. A recipe is not one: it has no frame, no budget and no parts, so there is nothing for
+## those marks to be about here. Drawing them on this path would mean inventing numbers in GDScript,
+## which is the one rule this item says does not bend.
+##
+## **THE FILL IS BUILT, ON THE OTHER PATH** (ASSA-369). This paragraph used to end *"which is slice
+## 2/3"* -- true until the slice landed, and a sentence that goes on calling a built thing pending is
+## how the next reader re-derives a gap that is closed. `_design_mass_row` is where it lives; the
+## verdict still belongs to the bar, because it is about the irreversible act.
 func _rebuild_build_detail() -> void:
 	_clear(_build_detail)
-	# **BLOCK 5 IS HIDDEN ON THE ASSEMBLY PATH AND THAT IS A SLICE BOUNDARY, NOT A DECISION** (ASSA-317
-	# slice 2b). Maren's 00:32 ruling makes this rect *"the relationship -- the mass/budget fill, each
-	# part's mass a float on that one axis"*, and NOT the figures, which live in the bar. That picture
-	# is the next slice; drawing anything else under `what you get` meanwhile would be me specifying a
-	# rect she has already specified. **Hidden rather than left empty** for `_show_log`'s reason on
-	# this same screen: a heading over nothing is a labelled empty gap, and a stranger reads it as the
-	# game having nothing to say.
-	_show_section(_build_detail, not _assembling_mode())
+	# **BLOCK 5 IS DRAWN ON BOTH PATHS SINCE ASSA-369, AND IT USED TO BE HIDDEN ON THIS ONE.** The
+	# old reason -- *"that picture is the next slice; drawing anything else under `what you get`
+	# would be me specifying a rect she has already specified"* -- was right on the day and is
+	# spent: Maren's 00:32 ruling makes this rect *"the relationship, not the figures"*, and the
+	# first half of that relationship needs nothing new across the binding. `design_readout` has
+	# carried `mass_low/high` and `budget_low/high` all along.
+	#
+	# **WHAT IS STILL HIDDEN, AND IT IS THE SAME RULE RATHER THAN A LEFTOVER:** with no frame chosen
+	# the sim answers `{}` -- a design with neither numbers nor a fault is a thing it never answers
+	# -- and a `what you get` heading over that is `_show_log`'s labelled empty gap. So the section
+	# follows the FACT, not the path.
 	if _assembling_mode():
+		var design := _design_readout()
+		_show_section(_build_detail, not design.is_empty())
+		if not design.is_empty():
+			_build_detail.add_child(_design_mass_row(design))
 		return
+	_show_section(_build_detail, true)
 	var offer := _chosen_offer()
 	if offer.is_empty():
 		# **THE SCREEN SAYS THE SIM HAS STOPPED OFFERING THIS, WHICH IS THE STATE AFTER A SUCCESSFUL
@@ -5757,6 +5770,29 @@ func _row_one() -> Label:
 		if text != null:
 			return text
 	return null
+
+
+## **BLOCK 5 ON THE ASSEMBLY PATH: THE DESIGN'S MASS AGAINST ITS FRAME'S BUDGET, AS A FILL**
+## (ASSA-369 box 1; Maren's §5.1 -- *"a RATIO with a hard end. A ratio fill; the axis's end is the
+## budget. When mass is over, the fill is full and the sim's verdict supplies the word"*).
+##
+## **WHICH TWO OF THE FOUR NUMBERS, AND WHY IT IS NOT A CHOICE I MADE.** Mass and budget both cross
+## as RANGES, because density is read in 25-wide bands until the species is assayed. The sim's own
+## verdict is decided on one pair of them (`assembly.rs::StatRange::verdict`): **`SAFE` is exactly
+## `mass_high <= budget_low`** -- *"the heaviest this can be still fits the smallest budget it can
+## have"*. Feeding the fill that same pair makes it full **when and only when the sim stops saying
+## `SAFE`**, so the picture and the word in the bar can never disagree. Any other pairing would be
+## this file inventing a second opinion about a comparison the sim already owns, which is
+## `design_readout`'s own standing warning.
+##
+## **NO SPECIAL CASE FOR A REFUSED DESIGN** (box 5). With an extra part parked the sim answers every
+## number 0, so this asks for 0 of 0 and `AssayTrack` draws nothing -- its documented answer for an
+## absent fact, reached by the same code path as every other caller. Keeping numbers alive for a
+## design the sim throws out would be the screen disagreeing with its own `Build`.
+func _design_mass_row(readout: Dictionary) -> AssayReadingRow:
+	var row := AssayReadingRow.new()
+	row.show_amount("mass", int(readout.get("mass_high", 0)), int(readout.get("budget_low", 0)))
+	return row
 
 
 ## **WHAT THE SIM SAYS ABOUT THE DESIGN ON THE SCREEN RIGHT NOW** (ASSA-317 slice 2b). `{}` before a
