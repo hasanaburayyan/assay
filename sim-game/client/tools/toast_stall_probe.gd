@@ -215,13 +215,20 @@ func _rescue_inputs() -> Array:
 
 ## **WHAT THE SCREEN SAYS AND WHETHER IT IS TRUE, ONE TICK AT A TIME.**
 ##
-## Asked of `_said_about_building` and `is_halted`, never of the sentence's words: the pinned list says
+## Asked of `_standing_building` and `is_halted`, never of the sentence's words: the pinned list says
 ## `smelter 3 at (12, 7) … stalled: the fuel will not light` where the toast says `the Tonore smelter
 ## (A) stopped: no fuel`, so a probe that matched text would agree with a client that could never
 ## clear anything (ASSA-67).
+##
+## **AND WHAT THE TOAST SAYS IS `_shown_line()`, NOT `_base_line`** (ASSA-370). The client holds two
+## sentences and draws one: a standing condition notice, and the transient line a receipt or a refusal
+## draws over it. `_base_line` is the transient alone, so a probe reading it would call a COVERED
+## notice gone and the covering is legal. `tools/toast_cover_probe.gd` is the instrument for the cover
+## and the uncovering; this one is about a condition ending.
 func _sample() -> void:
 	var sim: AssaySimHost = _screen._sim
 	var at: int = sim.tick()
+	var shown: String = _screen._shown_line()
 	var stopped: PackedStringArray = sim.halt_lines()
 	if not stopped.is_empty():
 		_halted_ticks += 1
@@ -233,13 +240,13 @@ func _sample() -> void:
 		var line: String = _watch["line"]
 		var since: int = _watch["since"]
 		if not sim.is_halted(building):
-			if _screen._base_line == line:
+			if shown == line:
 				# **THE BUG.** The sim has stopped reporting the stall and the sentence is still on
 				# screen, beside a pinned count that has already dropped to zero.
 				_outlived.append(("tick %d: `%s` outlived its condition by %d ticks "
 						+ "(building %d, said at tick %d)")
 						% [at, line, at - since, building, since])
-			elif _screen._base_line == "":
+			elif shown == "":
 				_aged.append({
 					"building": building, "line": line, "said_at": since, "cleared_at": at,
 				})
@@ -247,7 +254,7 @@ func _sample() -> void:
 			else:
 				_replaced.append(("tick %d: the condition cleared but the toast already read `%s`, "
 						+ "so nothing was proved about `%s`")
-						% [at, _screen._base_line, line])
+						% [at, shown, line])
 				_watch = {}
 		else:
 			_held_for = maxi(_held_for, at - since)
@@ -258,20 +265,25 @@ func _sample() -> void:
 				_note("tick %d: `%s` is on the toast and building %d really is stopped"
 						% [at, line, building])
 
-	var about: int = _screen._said_about_building
-	if about == _screen.NOT_A_CONDITION or _screen._base_line == "":
+	var about: int = _screen._standing_building
+	if about == _screen.NOT_A_CONDITION or _screen._standing_line == "":
+		return
+	# **COVERED IS NOT GONE, AND IT IS NOT A FINDING** (ASSA-370). A transient of this player's own is
+	# drawn over the notice; this frame claims nothing about the condition, so the checks below would
+	# be reading a receipt. The cover and the uncovering are `tools/toast_cover_probe.gd`.
+	if shown != _screen._standing_line:
 		return
 	# THE TOAST IS CARRYING A CONDITION. Every claim about that state is checked here.
-	if _screen._base_level != AssayHud.Say.FAILED:
+	if _screen._standing_level != AssayHud.Say.FAILED:
 		_disagreed.append("tick %d: a condition is on the toast at level %d, not FAILED"
-				% [at, _screen._base_level])
+				% [at, _screen._standing_level])
 	if stopped.is_empty():
 		_disagreed.append(("tick %d: the toast says `%s` and `halt_lines()` is EMPTY, so the pinned "
-				+ "count reads nothing stopped on the same frame") % [at, _screen._base_line])
-	if _notices.find(_screen._base_line) < 0:
-		_notices.append(_screen._base_line)
-	if _watch.is_empty() or _watch["line"] != _screen._base_line:
-		_watch = {"building": about, "line": _screen._base_line, "since": at}
+				+ "count reads nothing stopped on the same frame") % [at, shown])
+	if _notices.find(shown) < 0:
+		_notices.append(shown)
+	if _watch.is_empty() or _watch["line"] != shown:
+		_watch = {"building": about, "line": shown, "since": at}
 
 
 func _report(why: String) -> void:

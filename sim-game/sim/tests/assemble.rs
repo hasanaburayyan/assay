@@ -1688,10 +1688,20 @@ fn safe_and_will_break_are_both_readable_before_anything_is_built() {
 ///
 /// This is the one place the preview deliberately differs from `step`: a thin
 /// pack is not a refusal here, because a build screen has to show the verdict
-/// for the design you are saving up for, with have/need beside it (the Game
-/// Director's §5.3 — counts are text, have on the left). So the counts print
-/// either way and the refusal is PREDICTED in words. The press is sent in the
-/// same test to prove the prediction is true and not decoration.
+/// for the design you are saving up for, with the counts beside it (the Game
+/// Director's §5.5 — counts are text, `need 2 · have 1`, both numbers always,
+/// need first and no slash; she reversed §5.3's "have on the left" and
+/// ASSA-338 moved the sim's words with her). So the counts print either way
+/// and the refusal is PREDICTED in words. The press is sent in the same test
+/// to prove the prediction is true and not decoration.
+///
+/// **THIS IS ALSO THE SUITE'S SHARPEST PIN ON THE ORDER OF THOSE TWO
+/// NUMBERS**, and it got there by accident: a design wanting TWO of something
+/// is the only fixture in the sim's tests where need and have differ, so
+/// `need 2 · have 1` is the one string that does not survive the pair being
+/// swapped. It is why ASSA-338's green is worth reading. The surplus direction
+/// — `need 1 · have 2`, which is the case §5.5's reasoning is actually about —
+/// is pinned beside it in `tests/design_preview.rs`.
 #[test]
 fn a_thin_pack_is_counted_in_the_preview_and_the_refusal_is_predicted() {
     let (mut world, me) = world_with_player();
@@ -1702,8 +1712,8 @@ fn a_thin_pack_is_counted_in_the_preview_and_the_refusal_is_predicted() {
 
     let thin = preview_of(&world, me, &design);
     assert!(
-        thin.contains("1/2 "),
-        "one hopper against two needed must read 1/2: {thin}"
+        thin.contains("need 2 · have 1"),
+        "one hopper against two needed must read `need 2 · have 1`: {thin}"
     );
     assert!(
         thin.contains("not enough"),
@@ -1726,7 +1736,7 @@ fn a_thin_pack_is_counted_in_the_preview_and_the_refusal_is_predicted() {
     give(&mut world, me, hopper, 1);
     let full = preview_of(&world, me, &design);
     assert!(
-        full.contains("2/2 "),
+        full.contains("need 2 · have 2"),
         "the second hopper must show up in the count: {full}"
     );
     assert!(

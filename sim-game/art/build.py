@@ -179,6 +179,56 @@ def darken_rim(im, width, k):
     return out
 
 
+# A FRAME'S OWN TRANSPARENCY IS AIR. (ASSA-376, Maren's rule, one level down from ASSA-328)
+#
+# `rig.Asset(fill="top")` means: this sheet's frames are ICON BOXES, so fit each frame's
+# paint to its box -- aspect preserved, top edge at y=0, slack at the BOTTOM. See
+# `rig.Asset.fill` for which assets may say it and why `items` qualifies.
+#
+# THE FLOOR IS THE WHOLE INSTRUMENT, AND `alpha > 0` IS THE TRAP IT EXISTS TO AVOID.
+# Every raw frame on this sheet carries a film of alpha 1-4 over the ENTIRE 256x384 --
+# Cycles sampling noise on a transparent film -- so `alpha > 0` puts six of seven items
+# rows at a full-bleed 64x96 and reports a 40 px band of air as no band at all. That
+# artefact is what my own ASSA-357 "six of seven rows are full-bleed" measurement counted,
+# and it is why ASSA-376's first acceptance box was green on the day it was written.
+#
+# 4 of 255, the same number and the same reasoning as LIGHT_FLOOR above: the worst a
+# discarded pixel can be wrong by is the floor itself, which over the panel's own SURFACE
+# (37,40,48) is a shift of under one step of the 8-bit ramp. And the answer does not rest
+# on it -- measured on the shipped sheet, every floor from 1 to 200 puts each row's top
+# within 2 px of every other floor's, because the art goes from 0 to 255 in two rows.
+PAINT_FLOOR = 4
+
+
+def fit_to_frame(im, fw, fh, floor=PAINT_FLOOR):
+    """Crop `im` to its paint and scale that into `fw x fh`, top-aligned, centred in x.
+
+    One axis lands exactly on the frame; the other rounds, so the aspect error is at
+    most half a pixel on the rounded axis and nothing is stretched. Done on the RAW
+    render rather than after the downscale, so the fit is a resample of the 4x source
+    and not a resize of a resize.
+    """
+    px = im.load()
+    w, h = im.size
+    x0 = y0 = None; x1 = y1 = -1
+    for y in range(h):
+        for x in range(w):
+            if px[x, y][3] > floor:
+                if x0 is None or x < x0: x0 = x
+                if x > x1: x1 = x
+                if y0 is None: y0 = y
+                y1 = y
+    if y1 < 0:
+        raise SystemExit("fit_to_frame: a frame with no paint above alpha %d" % floor)
+    bw, bh = x1 - x0 + 1, y1 - y0 + 1
+    s = min(fw / bw, fh / bh)
+    nw, nh = max(1, min(fw, int(round(bw * s)))), max(1, min(fh, int(round(bh * s))))
+    out = Image.new("RGBA", (fw, fh), (0, 0, 0, 0))
+    out.alpha_composite(im.crop((x0, y0, x1 + 1, y1 + 1)).resize((nw, nh), Image.LANCZOS),
+                        ((fw - nw) // 2, 0))
+    return out
+
+
 def pack(name):
     meta = json.load(open(os.path.join(OUT, name, "asset.json")))
     fw, fh = meta["frame_px"]
@@ -212,10 +262,25 @@ def pack(name):
             cx, cy = i % bw, i // bw
             cells[f"v{i}"] = whole.crop((cx * fw, cy * fh, (cx + 1) * fw, (cy + 1) * fh))
 
+    # Popped like `rim`: an instruction to this function, not part of the client's
+    # contract. REFUSED on the three shapes whose frames are not independent pictures --
+    # a per-frame fit would scale two frames of one animation differently (jitter), the
+    # two halves of a light-row derivation differently (the subtraction stops meaning
+    # anything), and the cells of a block out of register with each other.
+    fill = meta.pop("fill", None)
+    if fill and fill != "top":
+        sys.exit("%s: fill=%r is not a rule pack() knows (only \"top\")" % (name, fill))
+    if fill and (sliced or meta.get("block") or derived
+                 or any(r["frames"] > 1 for r in meta["rows"])):
+        sys.exit("%s: fill=\"top\" needs one independent frame per row -- no slice, no "
+                 "block, no derived light row, no animation. See fit_to_frame." % name)
+
     def authored(row, f):
         if row in cells:
             return cells[row]
         im = Image.open(os.path.join(OUT, name, f"{row}_{f:02d}.png")).convert("RGBA")
+        if fill:
+            return fit_to_frame(im, fw, fh)
         return im.resize((fw, fh), Image.LANCZOS)
 
     # The rim is a property of the SHEET, so it is applied here and not in the asset

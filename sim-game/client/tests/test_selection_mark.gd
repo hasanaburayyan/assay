@@ -193,9 +193,17 @@ func test_the_mark_moves_with_the_camera_and_not_with_the_world() -> bool:
 ## would be invisible exactly when it matters. It can sit on top without hiding anything only
 ## because the test above holds the middle of the tile open.
 ##
+## **"ON TOP" HAS ONE EXCEPTION SINCE ASSA-361 AND THIS PROSE HAS TO CARRY IT, or the next reader
+## deletes the phase below as a thing nobody asked for.** The standing layer is drawn in two phases
+## with the mark between them: the mark is over the machines it names, and a person the mark would
+## otherwise delete (81 px of body, measured) is drawn after it. `AssayScene.over_mark` decides who,
+## and `test_scene_view.gd` owns that arithmetic. What is scanned here is that both halves are in
+## the painter at all and in this order.
+##
 ## A source scan, with `test_click_echo.gd`'s caveat in full: it cannot tell you the call ran. What
-## it holds is the two things a picture would not show as broken for a week -- the paint order, and
-## that the ink is the map's own `target` token rather than a 22nd colour literal.
+## it holds is the three things a picture would not show as broken for a week -- the paint order, the
+## phase after it, and that the ink is the map's own `target` token rather than a 22nd colour
+## literal.
 func test_the_selection_is_painted_over_what_stands_on_the_tile() -> bool:
 	var source := FileAccess.get_file_as_string("res://scripts/world_layer.gd")
 	if source.is_empty():
@@ -246,4 +254,16 @@ func test_the_selection_is_painted_over_what_stands_on_the_tile() -> bool:
 				+ "`AssayScene.selection_box(...)`, which is defined as the union of the very bars "
 				+ "drawn above, so a mark that shrinks cannot keep reporting the size it had")
 				% reported)
+	# **AND THE SECOND PHASE IS AFTER THE INK** (ASSA-361). `over_mark` names the placements drawn
+	# over the mark, and a phase computed and then blitted BEFORE the bars would be a no-op the
+	# arithmetic in `test_scene_view.gd` could not see: that file asks who should wait, this line
+	# asks whether the painter actually makes them wait. The two together are the claim.
+	var phase := body.find("for i in over:")
+	var ink := body.find("draw_rect(edge,")
+	if phase < 0:
+		return _fail("no `for i in over:` phase in _draw: nothing is drawn after the mark, so the "
+				+ "bar and its halo are painted through the body standing on the selected tile")
+	if phase < ink:
+		return _fail(("the phase that draws over the mark is at %d, before the ink at %d: it would "
+				+ "blit those bodies and then paint the mark through them anyway") % [phase, ink])
 	return true

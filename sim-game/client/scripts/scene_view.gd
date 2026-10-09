@@ -40,6 +40,24 @@ const TILE_PX := 32.0
 const FLOOR := 0
 const STANDING := 1
 
+## **THE LADDER INSIDE ONE BOTTOM EDGE** (`above`, ASSA-137 then ASSA-361). The standing layer is
+## sorted by bottom edge, and a building, its own fire and a person can share one exactly; `bottom`
+## alone leaves those ties to `sort_custom`, which is not stable, so the picture would change with
+## the length of the array. This is the second key, and it is a statement about depth rather than a
+## tie-breaker of convenience:
+##
+## **A BUILDING'S WALLS, THEN ITS FIRE, THEN ANY PERSON ON THAT EDGE.** The fire is on the walls
+## because it burns inside them. A person is in front of both because a body whose feet are on a
+## building's bottom edge is standing at that building's FRONT FACE (Maren, ASSA-361) -- and because
+## the thing you stand on may not delete you, which is the spawn pad's finding with a body on it.
+##
+## NOT AN ENUM AND NOT A BARE 1: every placement that says nothing is `ABOVE_BODY` through
+## `Dictionary.get`'s default, so the ladder reads as one list in one place instead of a literal per
+## call site. A test asserts the ORDER of the three, never their values.
+const ABOVE_BODY := 0
+const ABOVE_FIRE := 1
+const ABOVE_PERSON := 2
+
 ## HOW FAR BEHIND THE NEWEST PRODUCED POSITION THE PLAYOUT CLOCK RUNS, in ticks (ASSA-197).
 ##
 ## THIS IS THE ONE NUMBER THAT COSTS SOMETHING. Every tick of buffer is 100 ms of latency on your own
@@ -1079,31 +1097,40 @@ static func placements(view: Dictionary) -> Array[Dictionary]:
 		# placements share a bottom edge exactly, and a sort that is free to swap equal elements is
 		# free to draw the body over its own fire -- intermittently, on some array lengths and not
 		# others, which is the worst kind of wrong picture to be handed. It is a second sort key and
-		# not a hope: everything else leaves it 0.
-		#
-		# WHAT IT DOES NOT FIX, said out loud: it is a key on the whole standing list, so a PLAYER
-		# whose bottom edge is exactly a lit smelter's now sorts under that smelter's fire. Equal
-		# bottoms were already arbitrary there and this makes them at least deterministic; a wall
-		# over its own fire is the worse of the two and the one with a cause.
+		# not a hope.
 		if bool(building["lit"]):
 			var light := light_row(manifest, kind, "body")
 			if light != "":
 				standing.append({
 					"asset": kind, "row": light, "corner": Vector2(at), "tint": Color.WHITE,
-					"bottom": float(at.y) + float(foot.y), "above": 1,
+					"bottom": float(at.y) + float(foot.y), "above": ABOVE_FIRE,
 				})
 
 	for entry in view["players"]:
 		var player: Dictionary = entry
 		var row := player_row(String(player["facing"]), bool(player["moving"]))
-		standing.append(_standing(manifest, "player", row, player["at"],
-				Color.WHITE, false))
+		var body := _standing(manifest, "player", row, player["at"], Color.WHITE, false)
+		if not body.is_empty():
+			# **A PERSON AT A BUILDING'S OWN BOTTOM EDGE IS IN FRONT OF IT** (ASSA-361, Maren
+			# 2026-10-09: *"a body at a smelter's bottom edge stands at its front face, so it is
+			# nearer. That is depth, not 11.14"*). This block used to say out loud what `above` did
+			# NOT fix -- *"a PLAYER whose bottom edge is exactly a lit smelter's now sorts under
+			# that smelter's fire"*, accepted on ASSA-137 as merely deterministic rather than
+			# right. It is fixed here, and it is a reorder of ART, so it is ruled and not assumed.
+			#
+			# IT IS ALSO WHAT MAKES THE BUILDING TIE DECIDED RATHER THAN ARBITRARY. A 1x1 machine on
+			# the tile you stand on shares your bottom edge exactly, and until this line which of
+			# the two was drawn second depended on the length of the array. The direction is the
+			# spawn pad's own argument (`THE SPAWN PAD IS FLOOR`, four screens up): the thing you
+			# stand ON may not delete you.
+			body["above"] = ABOVE_PERSON
+			standing.append(body)
 	standing.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		var ab := float(a.get("bottom", 0.0))
 		var bb := float(b.get("bottom", 0.0))
 		if ab != bb:
 			return ab < bb
-		return int(a.get("above", 0)) < int(b.get("above", 0)))
+		return int(a.get("above", ABOVE_BODY)) < int(b.get("above", ABOVE_BODY)))
 	for entry in standing:
 		if entry.is_empty():
 			continue
@@ -1313,6 +1340,97 @@ static func selection_box(area: Rect2i, origin: Vector2) -> Rect2:
 	for i in range(1, bars.size()):
 		out = out.merge(bars[i])
 	return out
+
+
+## **WHO IS DRAWN AFTER THE SELECTION MARK, AND THEREFORE OVER IT** (ASSA-361). Indices into
+## `standing` -- the STANDING placements in the order `placements` sorted them -- of the ones that
+## must wait for the mark to be painted. Everything not named here is drawn before it, as always.
+##
+## **THE RULING (Maren, 2026-10-09): `DRAWN LAST WINS: PEOPLE > THE MARK > BUILDINGS ON THE MARK'S
+## TILE`.** The mark must be over the machine it names (or it is invisible on exactly the thing it
+## points at) and under the body standing in it (11.14 -- a mark never takes space from a person;
+## measured at 81 px of body deleted by the bar and its halo).
+##
+## **WHY THIS IS A PHASE AND NOT A SORT KEY, which is a ruling of Maren's that replaced her own.**
+## She first ruled the mark into the sort at its tile's bottom edge, after buildings and before
+## people, as two explicit keys. **That cannot be built.** A person's key is a float -- `at.y +
+## span.y` on the UNFLOORED tile, deliberately (ASSA-197) -- while a building's and a mark's are
+## whole numbers. A body walking onto the marked tile from the north has a bottom edge strictly
+## LESS than the tile's, so no ordering by bottom-then-rank can put it in front of the mark; and a
+## person standing on a 1x1 machine's tile must be over a mark that is itself over that machine,
+## while machine and person share that edge to within a fraction. One key cannot say both.
+##
+## **THE SCOPE IS THE WHOLE OF THE CARE HERE.** Lifting every person over the mark lifts them over
+## the machines they stand behind -- a player painted in front of the smelter they are behind, which
+## is a worse picture than the one this fixes. So a person waits for the mark only when **nothing
+## stands in front of them where the mark lands**, and then **anything in front of THEM comes with
+## them**, so no sprite relation is reordered by this at all. What that costs, said out loud: a body
+## the marked machine is drawn over -- walking onto its tile from the north, or standing on the back
+## row of a 2x2 -- is NOT lifted, because the machine, not the mark, is what covers it there.
+##
+## `mark` is the bars AND their keyline, in map pixels: the halo was 39 of the 81 px, so a function
+## handed only the bars would fix half of this and report a whole fix.
+static func over_mark(standing: Array[Dictionary], mark: Array[Rect2]) -> PackedInt32Array:
+	var over := PackedInt32Array()
+	if mark.is_empty():
+		return over
+	for i in range(standing.size()):
+		var place: Dictionary = standing[i]
+		var dest: Rect2 = place.get("dest", Rect2())
+		# IN FRONT OF SOMEONE WHO IS WAITING, so it waits too -- and this is tested before the
+		# person test, because it applies to buildings and bodies alike. Only later indices can be
+		# carried, which is why one forward pass closes it: `over` is in draw order throughout.
+		if _carried(standing, over, dest):
+			over.append(i)
+			continue
+		if String(place.get("asset", "")) != "player":
+			continue
+		# THE PERSON'S OWN PIXELS THE MARK LANDS ON, and not the mark's whole box: an occluder that
+		# covers a body's head while the bar crosses its feet occludes nothing that matters here.
+		var hot := _mark_on(dest, mark)
+		if hot.is_empty():
+			continue
+		if _shaded(standing, i, hot):
+			continue
+		over.append(i)
+	return over
+
+
+## THE PARTS OF ONE SPRITE'S RECTANGLE THAT THE MARK IS PAINTED ON. Empty when the mark misses it.
+static func _mark_on(dest: Rect2, mark: Array[Rect2]) -> Array[Rect2]:
+	var hot: Array[Rect2] = []
+	for bar in mark:
+		var bit := dest.intersection(bar)
+		if bit.size.x > 0.0 and bit.size.y > 0.0:
+			hot.append(bit)
+	return hot
+
+
+## IS SOMETHING DRAWN IN FRONT OF THIS BODY WHERE THE MARK LANDS ON IT?
+##
+## **A PERSON IN FRONT IS NOT AN OCCLUDER HERE**, which is the one subtlety: they are carried over
+## the mark by `_carried` the moment this body waits, so they stay in front of it. Counting them
+## would switch the whole fix off whenever a partner stood on the next tile south -- a fix that
+## silently stops fixing.
+static func _shaded(standing: Array[Dictionary], who: int, hot: Array[Rect2]) -> bool:
+	for j in range(who + 1, standing.size()):
+		var place: Dictionary = standing[j]
+		if String(place.get("asset", "")) == "player":
+			continue
+		var dest: Rect2 = place.get("dest", Rect2())
+		for bit in hot:
+			if dest.intersects(bit):
+				return true
+	return false
+
+
+## IS THIS RECTANGLE OVERLAPPED BY ANYTHING ALREADY WAITING FOR THE MARK?
+static func _carried(standing: Array[Dictionary], over: PackedInt32Array, dest: Rect2) -> bool:
+	for j in over:
+		var place: Dictionary = standing[j]
+		if dest.intersects(place.get("dest", Rect2())):
+			return true
+	return false
 
 
 ## WHICH TILE THE CLICK ECHO IS ON AFTER ONE FRAME OF SIM FACTS, or `{}` for no mark (ASSA-215).

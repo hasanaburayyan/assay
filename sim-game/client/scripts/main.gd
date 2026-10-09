@@ -160,16 +160,35 @@ var _base_level: int = AssayHud.Say.IDLE
 ## The world's tick when `_base_line` was said, or -1 if there was no world then. See
 ## `_age_the_saying`, which is what stops a healthy sentence becoming a permanent one.
 var _said_at_tick := -1
-## **WHAT `_base_line` IS A CLAIM ABOUT**: the building of a CONDITION, or `NOT_A_CONDITION` for an
-## act (ASSA-300). The sim decides which — `attention_conditions`, beside the sentence itself — and
-## this client never reads a word of the line to find out, because the wording moved thirteen times in
-## one afternoon on ASSA-67.
+## **THE STANDING NOTICE, UNDER THE LINE ABOVE** (ASSA-370, the Game Director's amendment to her own
+## ASSA-300 ruling: *"A TRANSIENT LINE MAY COVER A STANDING NOTICE. IT MAY NEVER DESTROY ONE. A
+## CONDITION NOTICE'S LIFETIME BELONGS TO ITS CONDITION, SO NOTHING WHOSE OWN LIFETIME IS A TIMER MAY
+## END IT."*).
 ##
-## **SET BY `_say` AND NOWHERE ELSE, WHICH IS THE WHOLE REASON IT IS AN ARGUMENT.** A second setter
-## could leave the previous sentence's building attached to a new line, and then `_age_the_saying`
-## would take down a refusal because some machine got fixed. Every `_say` states it; the default is
-## "nothing to re-ask".
-var _said_about_building := NOT_A_CONDITION
+## **ONE VISIBLE SLOT, TWO STORED LINES, AND THIS IS THE LOWER ONE.** `_base_*` above is the
+## transient: a receipt, a refusal, a connection state. This is a claim about a machine *now*, and the
+## bug that bought it is that every accepted command used to overwrite the triple outright — so a
+## routine `Mine` press wiped a live stall warning and then aged out on its own 20-tick dwell, leaving
+## the toast silent while the pinned count still read `1 of 1 buildings stopped`. A notice whose
+## duration says nothing about its subject teaches a player to ignore notice durations.
+##
+## **NO `_said_at_tick` HERE, AND THAT IS THE RULING AND NOT A SAVING.** A standing notice has no
+## stamp because nothing may end it on a timer; it ends when `is_halted` says its building is working,
+## and that is the only way out. The transient keeps the stamp, because being read IS its lifetime.
+var _standing_line := ""
+var _standing_level: int = AssayHud.Say.IDLE
+## **WHAT `_standing_line` IS A CLAIM ABOUT**: the building of a CONDITION, or `NOT_A_CONDITION` when
+## there is no standing notice at all (ASSA-300). The sim decides which — `attention_conditions`,
+## beside the sentence itself — and this client never reads a word of the line to find out, because
+## the wording moved thirteen times in one afternoon on ASSA-67.
+##
+## **SET BY `_stand` AND NOWHERE ELSE, WHICH IS WHY IT IS AN ARGUMENT TO IT.** ASSA-300 made this an
+## argument to `_say` for exactly this reason and the property survives the split: a second setter
+## could leave one sentence's building attached to another, and then `_age_the_saying` would take down
+## a refusal because some machine got fixed. What the split changes is that an ordinary `_say` no
+## longer resets it — that reset WAS the bug — so the guarantee moves from "every sentence restates
+## it" to "only its own condition can end it", which is the ruling in one line of state.
+var _standing_building := NOT_A_CONDITION
 ## **NO BUILDING TO RE-ASK**, which is what every sentence in this client is except a stall notice:
 ## a refusal, a loss, a join, a connection state.
 ##
@@ -2641,6 +2660,11 @@ func _forget_click() -> void:
 ## THE RAW TEXT GOES TO THE SIM, the dictionary does not. By the time a `Welcome` is a Godot
 ## Dictionary its numbers have been through a double, so the world is built from the bytes.
 func _on_welcomed(player: int, _world: Dictionary, raw: String) -> void:
+	# **THE PREVIOUS WORLD'S STANDING NOTICE DOES NOT CROSS INTO THIS ONE** (ASSA-370). A `Welcome`
+	# replaces the world, so a sentence about building 3 being stopped is about a building that no
+	# longer exists and nothing will ever retire it. Before both branches: a `Welcome` we cannot
+	# simulate has also replaced the world.
+	_forget_the_standing_notice()
 	if not _sim.start(raw):
 		_say("joined as player %d, but cannot simulate: %s" % [player, _sim.fail_reason],
 				AssayHud.Say.FAILED)
@@ -2724,7 +2748,14 @@ func _remember_events() -> void:
 		# is what happens if that ever stops being true in a shipped build.
 		var kind: int = (about[notices.size() - 1] if about.size() == notices.size()
 				else NOT_A_CONDITION)
-		_say(notices[notices.size() - 1], AssayHud.Say.FAILED, kind)
+		# **AND THE KIND CHOOSES THE SLOT, WHICH IS THE WHOLE OF ASSA-370** (the Game Director's
+		# amendment). A condition goes to the standing notice, where only its own condition can end it.
+		# An act — a refusal, with no building — goes to the transient line over it, where the next
+		# thing that happens to this player replaces it and nothing re-asks the sim about it.
+		if kind == NOT_A_CONDITION:
+			_say(notices[notices.size() - 1], AssayHud.Say.FAILED)
+		else:
+			_stand(notices[notices.size() - 1], AssayHud.Say.FAILED, kind)
 
 
 ## THE EVENT LOG, NEWEST FIRST AND BRIGHTEST FIRST (ASSA-117, box 1).
@@ -2995,20 +3026,56 @@ func _rebuild_running(lines: PackedStringArray) -> void:
 		rows.add_child(_note(line))
 
 
-## **`about_building` IS THE SIM'S ANSWER, NEVER THIS FILE'S GUESS** (ASSA-300). It is defaulted
-## rather than required because all but one caller is saying something about an act or a connection,
-## and the default is the one that can never go wrong: a line with no condition attached is a line
-## nothing will ever take down.
-func _say(line: String, level: int, about_building := NOT_A_CONDITION) -> void:
+## **THE TRANSIENT LINE, AND IT NO LONGER TAKES A BUILDING** (ASSA-370). ASSA-300 gave this function a
+## third argument so the sim's answer to *what is this a claim about* could never be set by anything
+## else; the argument has moved to `_stand`, which is now the only setter of that triple, so the
+## property is intact and the thing that caused ASSA-370 is gone: **a sentence about an act cannot
+## reach the standing notice at all, not even to clear it.**
+##
+## Everything that comes through here is about a moment — a receipt, a refusal, a connection state —
+## and it is DRAWN OVER whatever standing notice exists. It never destroys one.
+func _say(line: String, level: int) -> void:
 	_base_line = line
 	_base_level = level
-	_said_about_building = about_building
 	# WHEN, IN THE WORLD'S OWN CLOCK, so `_age_the_saying` can let a healthy line go. -1 while there is
 	# no world: a sentence said during the handshake has no tick to be older than, and it is cleared by
 	# the world arriving rather than by ageing.
 	_said_at_tick = _sim.tick() if _sim != null else -1
 	_render_status()
 	print(line)
+
+
+## **THE STANDING NOTICE, AND `about_building` IS THE SIM'S ANSWER, NEVER THIS FILE'S GUESS**
+## (ASSA-300 for the question, ASSA-370 for the separate home). The only caller is `_remember_events`,
+## handing over the sentence and the building `attention_conditions` crossed with it.
+##
+## **PRINTED ONLY WHEN THE SENTENCE CHANGES, BECAUSE THIS ONE CAN BE RE-SAID.** The transient above is
+## said once per thing that happened; a standing notice can arrive again for a condition already
+## standing (the sim's attention list is re-read whenever it is non-empty), and an unguarded `print`
+## would put the same line in the console as fast as bundles land and bury the one that matters. Same
+## reason `_refresh`'s `joined at tick N, but no world` branch is guarded.
+func _stand(line: String, level: int, about_building: int) -> void:
+	var changed := line != _standing_line
+	_standing_line = line
+	_standing_level = level
+	_standing_building = about_building
+	_render_status()
+	if changed and line != "":
+		print(line)
+
+
+## **A NOTICE ABOUT A BUILDING IN A WORLD THAT IS GOING AWAY GOES WITH IT** (ASSA-370). Not an ageing
+## rule: the condition is not resolved, the subject has ceased to exist, and a sentence about a
+## building in a replaced world is false in the only way that matters — nothing can ever retire it,
+## because `is_halted` will be answering about a different world's buildings.
+##
+## **REACHABLE, AND I ONLY SAW IT BECAUSE THE SLOTS SPLIT.** Before the split every world-death path
+## set a non-empty FAILED transient over the triple, so a stranded notice was permanently covered and
+## nothing showed. Afterwards `_on_welcomed`'s `joined as player N` is a JOINED transient that AGES —
+## so a drop, a second Join, and two seconds later the previous world's stall sentence would surface
+## over a fresh world.
+func _forget_the_standing_notice() -> void:
+	_stand("", AssayHud.Say.IDLE, NOT_A_CONDITION)
 
 
 ## **A HEALTHY SENTENCE GETS A MOMENT AND THEN THE SCREEN GOES QUIET** (ASSA-239, Maren's ruling on
@@ -3063,14 +3130,25 @@ func _say(line: String, level: int, about_building := NOT_A_CONDITION) -> void:
 ## been replaced. That is the coarse answer on purpose: the fine one would take the toast down while
 ## that building was still listed in the block, and the block carries the live reason. A moment's
 ## sentence may be out of date; the standing surface may not.
+## **AND THE TWO CLAUSES ARE ASKED INDEPENDENTLY, WHICH IS ASSA-370 IN THE CONTROL FLOW** (the Game
+## Director's amendment: *"a transient line may COVER a standing notice. It may never DESTROY one"*).
+##
+## This used to be one chain with an early return: a line carrying a building took the condition
+## clause and nothing else, a line without one took the dwell. That was correct while the two kinds
+## shared a slot, and the sharing was the bug. Now the standing notice and the transient over it are
+## separate state, so **both can need ending on the same tick** — the smelter you just fuelled, and
+## the receipt for having fuelled it — and a chain would silently do only the first.
 func _age_the_saying() -> void:
+	# THE CONDITION FIRST, SO AN UNCOVERING FRAME CANNOT SHOW A SENTENCE THAT IS ALREADY FALSE. If the
+	# transient went first, this function's own two writes would leave one frame's worth of
+	# `_render_status` drawing a stall notice whose building is working again — and the uncovering tick
+	# is exactly the tick a player is looking at the toast.
+	#
+	# `_sim` is non-null here: a building id only ever arrives from `attention_conditions`, which needs
+	# a world to have answered.
+	if _standing_building != NOT_A_CONDITION and not _sim.is_halted(_standing_building):
+		_forget_the_standing_notice()
 	if _base_line == "":
-		return
-	if _said_about_building != NOT_A_CONDITION:
-		# `_sim` is non-null here: a building id only ever arrives from `attention_conditions`, which
-		# needs a world to have answered.
-		if not _sim.is_halted(_said_about_building):
-			_say("", AssayHud.Say.IDLE)
 		return
 	if _base_level != AssayHud.Say.JOINED:
 		return
@@ -3100,9 +3178,32 @@ func _render_status() -> void:
 		_say_in(AssayHud.Say.CONNECTING)
 		_place_says_toast()
 		return
-	_status.text = _base_line
-	_say_in(_base_level)
+	_status.text = _shown_line()
+	_say_in(_shown_level())
 	_place_says_toast()
+
+
+## **THE ONE VISIBLE SLOT, DERIVED FROM THE TWO STORED LINES** (ASSA-370). A pair of accessors rather
+## than a third pair of fields, for the same reason the status label is derived from `_base_line`
+## instead of being saved and restored: the cover rule is then a RULE, in one place, and not two
+## assignments somewhere that have to agree.
+##
+## **THE TRANSIENT WINS WHILE IT EXISTS, WHATEVER ARRIVED LAST.** Not newest-wins: a standing notice
+## that displaced a receipt would make the receipt channel unreliable exactly while a machine is
+## stopped, which is the trade the Game Director refused in shape (a). The transient is covering
+## furniture with a short life of its own; when it goes, the condition underneath is still true,
+## because `_age_the_saying` has been re-asking the sim about it the whole time.
+##
+## **AND A REFUSAL COVERS INDEFINITELY, WHICH IS CORRECT AND NOT A GAP** (her section 4): a refusal is
+## about an act of yours and never ages, so it holds this slot for as long as it is the last thing
+## that happened to you. A standing fact about a machine has the pinned block and the `bench` list; a
+## refusal has nowhere else to be.
+func _shown_line() -> String:
+	return _base_line if _base_line != "" else _standing_line
+
+
+func _shown_level() -> int:
+	return _base_level if _base_line != "" else _standing_level
 
 
 ## **STATE THE COLOUR, NEVER MULTIPLY THE INK** (ASSA-251, Maren's ruling being applied for the third
@@ -3973,13 +4074,35 @@ func _refresh_pack() -> void:
 ##
 ## **THE HELD ITEM'S NAME IS SHAPE AND ITS COUNT IS NOT**, which is the one judgement in here. Swapping
 ## what a slot holds changes a LINE on screen, so it has to rebuild; burning through it does not.
+##
+## **AND IT CARRIES THE REFUSAL'S TERMS AS WELL AS THE ROW'S** (ASSA-351; this merged two functions of
+## this name, one per side, and the union is the point). ASSA-339 keyed on what the readout DRAWS --
+## role, cap, the held item's name. ASSA-353 keyed on what a REFUSAL turns on -- the held item's
+## identity and whether the slot has room. Neither set contains the other, and a key missing a term a
+## drawn thing depends on is the family those two items are both instances of:
+##
+## - `SlotFull` turns on the slot holding a DIFFERENT item, so `kind/species/grade` are in, not just
+##   the name: two species can share neither and still print one word apart.
+## - `SlotFull` ALSO turns on there being no room at all, so `at_cap` is in. A fill between 1 and
+##   cap-1 refuses nothing, which is why the COUNT stays out: `at_cap` is the only step of the fill
+##   that changes an answer, so a running smelter does not rebuild its menu forty times a batch.
+## - **A SLOT GOING FROM FULL TO EMPTY HAS TO REBUILD THE ROWS.** A dead `put` control over a slot
+##   holding another item is correct until the fire burns that item away -- which happens with no
+##   command from the player, so the PACK's shape does not move, and a key made of it alone would
+##   leave the dead control standing over a slot that would now accept the stack.
 func _slot_shape(it: Dictionary) -> String:
 	var shape := PackedStringArray()
 	for entry in it.get("slots", []) as Array:
 		var slot: Dictionary = entry
 		var held: Variant = slot.get("held")
-		shape.append("%s/%d/%s" % [String(slot.get("role", "?")), int(slot.get("cap", 0)),
-				String((held as Dictionary).get("name", "?")) if held != null else ""])
+		var what := "-"
+		if held != null:
+			var h: Dictionary = held
+			what = "%s/%d/%s/%s" % [String(h.get("kind", "?")), int(h.get("species", -1)),
+					String(h.get("grade", "?")), String(h.get("name", "?"))]
+		var at_cap := int(slot.get("count", 0)) >= int(slot.get("cap", 0))
+		shape.append("%s/%d/%s%s" % [String(slot.get("role", "?")), int(slot.get("cap", 0)),
+				what, "!" if at_cap else ""])
 	return "|".join(shape)
 
 
@@ -4253,11 +4376,37 @@ func _refresh_actions() -> void:
 	# signature changes, and a dropped link moves none of the other terms, so the button would keep
 	# an accent that no longer means anything until something else happened to move.
 	var live := _client.stage == AssayNetClient.Stage.JOINED
-	# **THE BUILDING'S ID LEFT THIS SIGNATURE WITH THE TWO BUTTONS IT WAS FOR** (ASSA-316, Maren's
-	# ruling 3). It was here for `Take` and `Pick up`, which now live in the machine's own menu; a term
-	# in a cache key that no drawn thing depends on is a rebuild nobody asked for, every time a machine
-	# under the cursor changes -- the exact note `_pack_shape` carries one section away.
-	var signature := "%s/%s/%s/%s/%s" % [target, _targeted, _building, minable, live]
+	# **THE BUILDING'S ID IS BACK, AND THE PREMISE THAT TOOK IT OUT WAS FALSE WHEN IT WAS WRITTEN**
+	# (ASSA-353, found by Cove off a 1x frame; the reader was Nacre, who did not know this line
+	# existed). This comment used to say: *"it was here for `Take` and `Pick up`, which now live in
+	# the machine's own menu; a term in a cache key that no drawn thing depends on is a rebuild
+	# nobody asked for."* **Maren's ruling 3 is sound -- those two acts do belong in the menu -- but
+	# a drawn thing does depend on it:** `AssayHud.target_line`, thirty-five lines below at the
+	# bottom of this very function, names the building standing on the target. With the id gone its
+	# clause froze at whatever stood there when the target was last chosen, so a machine you had just
+	# placed was described as the bare rock it replaced.
+	#
+	# **AND ON MAIN THAT CLAUSE WAS ONLY EVER DRAWN WHILE IT WAS WRONG** (Cove's second measurement,
+	# which is why this is a behaviour fix and not a tidy-up). A right-click on a tile carrying a
+	# building opens that building's MENU and returns before `_target` is set, so no gesture could
+	# ever point this sentence at a standing building on purpose: the only way it named one was the
+	# stale path, and `clear ground` after a `Pick up` was right by cancellation rather than by
+	# refresh. This is the first state of the client in which the building clause can be true.
+	#
+	# **THE ID, NEVER THE STATUS**, which is the docstring's rule above and is why this is one term
+	# and not `facts` itself: a smelter's status sentence changes every tick while it burns, and
+	# rebuilding on that would free the Take button four times a second. `-1` is safe as the absent
+	# value because `BuildingId` is a `u32` counting from zero.
+	var standing: Variant = facts.get("building")
+	var building_here := -1
+	if standing != null:
+		var b := standing as Dictionary
+		# `building_dict` always sets `id`; an absent one means a stale `libsim_godot.dylib`, the
+		# same cause `target_line` names when `name` is missing. Loud there, harmless here -- a
+		# missing id just keeps the old value, and that file already pushes the error.
+		if b.has("id"):
+			building_here = int(b["id"])
+	var signature := "%s/%s/%s/%s/%s/%s" % [target, _targeted, _building, minable, live, building_here]
 	if signature == _actions_showing:
 		return
 	_actions_showing = signature
@@ -4442,15 +4591,26 @@ func _refresh_machine_menu() -> void:
 	var batch: Vector2i = work if work != null else Vector2i.ZERO
 	_set_amount_row(_menu_work, String(clause) if clause != null else "", batch.x, batch.y)
 	var stacks := _sim.inventory_of(_client.player_id) if _client != null else []
-	# **THE SLOTS ARE IN THE SIGNATURE NOW AND THE REASON IS THE BANDS** (ASSA-339). The rows used to
-	# depend on the pack alone; a slot's fill is a row too, and its CAP and its contents' NAME change
-	# only when something moves in or out. `_slot_shape` is counts-free for `_pack_shape`'s reason -- a
-	# smelter burning through a stack would otherwise free the button under the player's cursor four
-	# times a second -- so the FILL itself is re-texted below, outside the rebuild.
+	# **WHICH OF THOSE STACKS MAY ENTER WHICH SLOT, AND WHY NOT, IS CROSSED BY THE SIM** (ASSA-351).
+	# The rows below are drawn from this and never from the pack plus a rule: `insert_offers` walks the
+	# machine's own insertable slots and asks `step::insert_rejection` per (stack, slot), so one fact
+	# covers all nine refusals instead of this file learning three of them and shipping the fourth as
+	# a dead button, which is how ASSA-351 happened.
+	var offers := _sim.insert_offers(_client.player_id, _menu_at) if _client != null else []
+	# **THE SLOTS ARE IN THE SIGNATURE AND THERE ARE NOW TWO REASONS FOR IT** (ASSA-339, ASSA-353).
+	# ASSA-339's: the rows used to depend on the pack alone; a slot's fill is a row too, and its CAP
+	# and its contents' NAME change only when something moves in or out. ASSA-353's, which is the one
+	# that would bite harder here: the rows draw a REFUSAL now, and `SlotFull` is a fact about what the
+	# slot HOLDS -- a fire that burns its last fuel empties the slot without touching your pack, so a
+	# key made of the pack alone would leave a dead control standing over a slot that would now accept
+	# it. A cache key missing a term a drawn thing depends on is the family, not the bug.
+	# `_slot_shape` is counts-free for `_pack_shape`'s reason -- a smelter burning through a stack
+	# would otherwise free the button under the player's cursor four times a second -- so the FILL
+	# itself is re-texted below, outside the rebuild.
 	var signature := "%d/%s/%s" % [_menu_at, _pack_shape(stacks), _slot_shape(it)]
 	if signature != _menu_showing:
 		_menu_showing = signature
-		_rebuild_machine_menu_rows(stacks, it)
+		_rebuild_machine_menu_rows(offers, it)
 	_refresh_machine_slot_fills(it)
 	_place_machine_menu()
 
@@ -4461,17 +4621,26 @@ func _refresh_machine_menu() -> void:
 ## -- `put all 37 Tonore ore` -- so the common case is one gesture and the button says what it does. The
 ## column's old pair said `Fuel` and `Smelt` with the number hidden in a tooltip.
 ##
-## **WHICH SLOTS EXIST AND WHAT MAY GO IN THEM IS THE SIM'S ANSWER, ASKED PER STACK.**
-## `AssayHud.insert_slots` names the slots a kind some non-hand recipe eats may enter, out of the sim's
-## own recipe table -- *"which one a species is good for (hot enough fuel, or ore that melts) is a sheet
-## reading and only the sim has it"*. So this walks the pack and groups by the slot the sim named, rather
-## than this file knowing a smelter has two slots. **That reading used to arrive as the pack row's
-## `insert` verb descriptors and now has its own function** (ASSA-331): the buttons it fed were deleted,
-## and a menu asking `stack_verbs` for a verb no row draws would have been a dead argument away from
-## bringing them back.
+## **WHICH SLOTS EXIST, WHAT MAY GO IN THEM, AND WHETHER PRESSING DOES ANYTHING, IS THE SIM'S ANSWER**
+## (ASSA-351). `AssaySimHost.insert_offers` crosses every carried stack against every insertable slot
+## and hands back `refusal` -- absent when the press moves something, the sim's own sentence when it
+## does not. This file groups nothing and decides nothing; it draws the list it is given, in order.
 ##
-## **NOTHING IS EVER GREYED OUT AND NOTHING IS HIDDEN FOR BEING REFUSABLE** (ruling 4, ASSA-37): a stack
-## of 1 simply has no fractions to offer, which is a shorter row and not a disabled control.
+## **IT USED TO ASK `AssayHud.insert_slots`, WHICH KEYED ON THE ITEM'S KIND, AND IN THE ONLY 1x FRAME
+## WE HAD OF THIS MENU ALL FOUR PUT CONTROLS WERE ACTS `sim::step` REFUSES.** That function's defence
+## was true as far as it went -- *"which one a species is good for (hot enough fuel, or ore that melts)
+## is a sheet reading and only the sim has it"* -- and the thing it missed is that a REFUSAL is a sheet
+## reading too. Grade, the item already in the slot, reactivity at grade, the walls' heat tolerance:
+## four rules, and a client that crosses three of them ships the fourth as a dead button.
+##
+## **A REFUSED CONTROL IS PRESENT, DISABLED, WITH THE SIM'S REASON UNDER IT, AND THAT AMENDS RULING 4**
+## (ASSA-37's *"nothing is ever greyed out and nothing is hidden for being refusable"*). Maren's
+## ASSA-351 ruling draws the line that ruling 4 did not have to: *a control may offer an act that goes
+## BADLY; it may not offer an act that does NOTHING.* `Place` on an over-budget design stays live
+## because breaking is a mechanic that hands the parts back -- an outcome a player may choose to test.
+## A refused `Insert` has no outcome at all. Hiding it would be worse than either: a pack of grade-A
+## refined would open a smelter to an empty box, and a named dead end teaches the ladder where a silent
+## one teaches nothing (ASSA-301).
 ##
 ## **AND EVERY SLOT THE MACHINE HAS SAYS WHAT IS IN IT, AS A BAND** (ASSA-339, ASSA-334; ruling 5:
 ## *"a slot's fill and a burn's progress are RATIOS, so they take ASSA-276 move 3's band grammar. A
@@ -4491,10 +4660,23 @@ func _refresh_machine_menu() -> void:
 ## which is ruling 6. This row is a READOUT: the slot, how full it is, and what is in it, none of which
 ## any button says. The grouping comes back for free, and the buttons still name their own slot, so
 ## each one survives being read alone.
-func _rebuild_machine_menu_rows(stacks: Array, it: Dictionary) -> void:
+## **AND WHICH STACKS EACH SLOT OFFERS IS READ, NOT DERIVED** (ASSA-351). This walked the pack and
+## asked `AssayHud.insert_slots(stack, recipes)` -- the kind-keyed function that put four dead controls
+## in the only 1x frame we had of this menu. It is gone, and `offers` is the sim's crossing: one
+## per-slot group, in the sim's slot order, each carrying the stacks that slot would take and a
+## `refusal` sentence on the ones it would not. **This file no longer reads the recipe table at all.**
+func _rebuild_machine_menu_rows(offers: Array, it: Dictionary) -> void:
 	_clear(_menu_rows)
 	_menu_slot_rows = {}
-	var recipes := AssaySimHost.recipes()
+	# **THE CROSSING, INDEXED BY THE SIM'S OWN TAG.** `insert_offers` walks the same `insert_tag` the
+	# slot spine below walks (`sim-godot::insert_offer_facts`), so this dictionary is a lookup and not
+	# a second opinion about which slots exist: a slot the sim crossed no offers for is simply absent
+	# and draws its readout with no controls, which is a state Maren has ruled on (a pack of only parts
+	# answers `WrongItem` on both slots, and `WrongItem` is the one refusal that gets no row).
+	var by_tag := {}
+	for crossed in offers:
+		var per_slot: Dictionary = crossed
+		by_tag[String(per_slot.get("slot", ""))] = per_slot.get("offers", []) as Array
 	# **THE MACHINE'S OWN SLOTS, IN THE SIM'S ORDER, AND THAT IS A CHANGE FROM ASSA-316.** The rows used
 	# to be built by walking the PACK and asking each stack which slots would take it, so a machine's
 	# slots appeared in the order your pack happened to be sorted in and a slot nothing could go into
@@ -4528,31 +4710,53 @@ func _rebuild_machine_menu_rows(stacks: Array, it: Dictionary) -> void:
 		if tag == null:
 			continue
 		var into := String(tag)
-		for carried in stacks:
-			var stack: Dictionary = carried
-			if not AssayHud.insert_slots(stack, recipes).has(into):
-				continue
+		# **NO `Fuel slot` HEADING IS INVENTED HERE** (ASSA-331): the readout row above already names
+		# the slot, and every button's own label names it too, so nothing repeats it a third time. The
+		# grouping is the sim's slot order, which is the order both this spine and `insert_offers`
+		# walk.
+		for offered in by_tag.get(into, []) as Array:
+			var stack: Dictionary = offered
 			var count := int(stack.get("count", 0))
 			var named := String(stack.get("name", "?"))
+			# **`has`, NOT `get(key, default)`.** A refusal of "" would be a disabled button with no
+			# reason beside it, and the binding deliberately omits the key rather than crossing an
+			# empty string for exactly that reason.
+			var refused := stack.has("refusal")
 			var row := VBoxContainer.new()
 			row.add_theme_constant_override("separation", 2)
-			row.add_child(_button(AssayHud.insert_label(count, named, into),
+			# **THE LABEL IS THE SAME WHETHER OR NOT IT IS PRESSABLE.** A disabled button that also
+			# renamed itself would be two changes a player has to tell apart; the reason under it is
+			# where the difference belongs.
+			var put := _button(AssayHud.insert_label(count, named, into),
 					func() -> void: _insert_into(_menu_at, stack, into, 0),
-					"put everything you are carrying of this into the %s slot" % into))
-			# THE FRACTIONS, AS A ROW OF QUIET BUTTONS THAT NAME WHAT YOU WILL GET. `put 1 · put 18`,
-			# never `put half`: a toggle that named a fraction would make the player do the arithmetic the
-			# stack already answers. Empty for a stack of 1, which adds no row at all.
-			var some := AssayHud.insert_fractions(count)
-			if not some.is_empty():
-				var fractions := HFlowContainer.new()
-				fractions.add_theme_constant_override("h_separation", 4)
-				for want in some:
-					var part := _button(AssayHud.insert_some_label(want),
-							func() -> void: _insert_into(_menu_at, stack, into, want),
-							"put %d of your %d %s into the %s slot" % [want, count, named, into])
-					part.theme_type_variation = &"Quiet"
-					fractions.add_child(part)
-				row.add_child(fractions)
+					"put everything you are carrying of this into the %s slot" % into)
+			put.disabled = refused
+			row.add_child(put)
+			if refused:
+				# **THE SIM'S SENTENCE, UNCHANGED.** `sim::debug::insert_refusal` is the event log's own
+				# wording for this refusal, so the dead control and the log cannot disagree about why.
+				# Nothing is composed here and nothing is shortened.
+				row.add_child(_note(String(stack["refusal"])))
+			else:
+				# THE FRACTIONS, AS A ROW OF QUIET BUTTONS THAT NAME WHAT YOU WILL GET. `or 1 · or 18`,
+				# never `or half`: a toggle that named a fraction would make the player do the arithmetic
+				# the stack already answers. Empty for a stack of 1, which adds no row at all.
+				#
+				# **NONE OF THEM ON A REFUSED ROW**, and that is the sim's answer rather than a tidying:
+				# every reason that reaches here refuses the whole stack whatever the count, because the
+				# one reason a COUNT changes is the cap, and the cap clamps instead of refusing
+				# (ASSA-48). `put 1` into a slot that refuses `put all` is dead for the same reason.
+				var some := AssayHud.insert_fractions(count)
+				if not some.is_empty():
+					var fractions := HFlowContainer.new()
+					fractions.add_theme_constant_override("h_separation", 4)
+					for want in some:
+						var part := _button(AssayHud.insert_some_label(want),
+								func() -> void: _insert_into(_menu_at, stack, into, want),
+								"put %d of your %d %s into the %s slot" % [want, count, named, into])
+						part.theme_type_variation = &"Quiet"
+						fractions.add_child(part)
+					row.add_child(fractions)
 			_menu_rows.add_child(row)
 	# **THE TWO VERBS THAT LEFT `do` ON ASSA-316's COMMIT, AND THEY ACT ON THE MACHINE** (ruling 3).
 	# Their words are the ones the column used, because that item moved a control and did not retune a
@@ -4882,6 +5086,23 @@ func _refresh_build_screen() -> void:
 	_refresh_build_said()
 	_refresh_build_cost()
 	_place_build_screen()
+	# **AND AGAIN ONCE THE LAYOUT HAS SETTLED, WHICH IS THE WHOLE OF ASSA-377** (P0: with the world
+	# ticking, `Build` left the bottom of the window on the empty-pack assembly screen and could not
+	# be pressed at all). The call above runs in the SAME frame as `_rebuild_build_screen`, when the
+	# sentence's `Label`s have just been re-added and have no width yet. An autowrapped `Label`
+	# reports its height for the width it currently has, so at width 0 it answers the
+	# one-letter-per-row height -- `BuildScreenSaid`'s minimum width is **1** -- and the commit bar's
+	# minimum momentarily reads 570 on the assembly path (1365 on the make path) against its own 114.
+	# `set_size` CLAMPS UP to the minimum, so the `PanelContainer` is written 804 instead of the 588
+	# `build_screen_rect` asked for, which that function cannot even return (its ceiling here is 624).
+	# One frame later the minimum has relaxed to 348 and **nothing re-places the box**, so the screen
+	# keeps the oversized rect and the bar sits at y732 in a 720 px window.
+	#
+	# **MEASURED, NOT REASONED, AND THE PNG IS THE AUTHORITY.** With one tick per frame -- what a relay
+	# actually delivers -- `shared/assay/limpet-assa377-empty-pack/` holds the shot with no `Build` on
+	# it; a single `_place_build_screen()` on a frame carrying no refresh put the box back to 588 and
+	# `Build` back to y516 (`replace2.log`). Deferring is that frame, taken for free.
+	_place_build_screen.call_deferred()
 
 
 ## **WHERE THE SCREEN GOES, FROM A MEASUREMENT AND NOT FROM A CONSTANT** (ASSA-328).
@@ -5241,9 +5462,35 @@ func _slot_box(box: Dictionary) -> Control:
 ## **THE PRESS IS `_choose_part`, WHICH ASKS THE SIM FIRST** (ASSA-86 ruling 2): a press that could
 ## never lead to a machine is refused in the sim's own sentence, at the press, rather than confirmed
 ## here and refused at `Assemble` -- which clears the whole design and loses the good presses too.
+##
+## **AND THE SAME QUESTION IS NOW ASKED BEFORE THE ROW IS DRAWN, NOT ONLY AT THE PRESS** (ASSA-371,
+## Maren reading the `slots-full` frame cold). On a full frame every row in this list was a live
+## control whose only outcome was a refusal: press `2 x Tonore head (A)` with the head box filled and
+## `fault_adding` answers `TooMany`, the toast says so, and nothing is appended. Nothing lied -- but
+## **learning it cost a press**, which ASSA-316 ruling 2 forbids: *the reason is always reachable and
+## reaching it must never cost a press.* This is ASSA-351's defect one screen over, and the remedy is
+## ASSA-351's: the sim's own refusal chain as a predicate, asked before the control is drawn.
+##
+## **THE ROW STAYS, WHICH IS THE HALF THAT IS A RULING RATHER THAN AN IMPLEMENTATION.** A pack stack
+## vanishing from this list because the design happens to be full is a list that changes membership
+## for a reason the player cannot see -- and it would come back on the next unmount, which reads as
+## the game forgetting what you are carrying. So a refused kind is drawn present, not pressable, and
+## **carries `part_press_refusal`'s sentence verbatim** under it. Both the contingent refusal
+## (`TooMany`, cured by taking a hopper off) and the frame-permanent one (`NoSuchSlot`) SHOW, per
+## ASSA-351 box 4: the lever for both is on this screen, one click away in block 2.
+##
+## **THE SENTENCE IS NEVER COMPOSED HERE AND THE LABEL IS NEVER TOUCHED.** The refusal goes in its own
+## `_note`, not appended to the button's text, because `stack_line` IS that button's text and three
+## instruments look rows up by it (`tools/limpet_build_screen_shot.gd::_mount_one` among them). A
+## reason glued onto a label would have broken the lookup and read as a missing row.
 func _rebuild_build_mounts() -> void:
 	_clear(_build_mounts)
 	var kinds := AssaySimHost.part_kinds()
+	# **THE SAME `chosen` `_choose_part` BUILDS AT THE PRESS**, frame included, so the control and its
+	# press are asking the sim one question and cannot disagree about the answer.
+	var chosen := PackedStringArray()
+	for entry in _building:
+		chosen.append(String((entry as Dictionary).get("kind", "")))
 	var offered := 0
 	for entry in (_sim.inventory_of(_client.player_id) if _client != null else []):
 		var stack: Dictionary = entry
@@ -5251,9 +5498,22 @@ func _rebuild_build_mounts() -> void:
 		if part.is_empty() or bool(part.get("is_frame", false)):
 			continue
 		offered += 1
-		_build_mounts.add_child(_button(AssayHud.stack_line(stack),
+		var refusal := AssaySimHost.part_press_refusal(chosen, String(stack.get("kind", "")))
+		var row := _button(AssayHud.stack_line(stack),
 				func() -> void: _choose_part(stack),
-				"mount one on the frame you are building on"))
+				"mount one on the frame you are building on" if refusal == "" else refusal)
+		if refusal == "":
+			_build_mounts.add_child(row)
+			continue
+		# **THE PRESS STAYS CONNECTED UNDER THE DISABLED FLAG.** ASSA-37's rule was that the sim does
+		# the refusing, and that is still true one layer down: if anything ever reaches this control
+		# anyway -- a synthetic `pressed.emit()`, a future keyboard path -- `_choose_part` asks the
+		# same question again and still refuses. Disabling is what saves the press, not what decides.
+		row.disabled = true
+		var held := VBoxContainer.new()
+		held.add_child(row)
+		held.add_child(_note(refusal))
+		_build_mounts.add_child(held)
 	if offered == 0:
 		_build_mounts.add_child(_note("you are not carrying anything that mounts on a frame"))
 
@@ -5277,23 +5537,36 @@ func _choose_build_material(offer: Dictionary) -> void:
 ## in the commit bar (Maren's §5.4 ruling 3), because both are about the irreversible act rather than
 ## about the thing produced. One fact, one home (ASSA-316 ruling 6) -- they are not drawn twice.
 ##
-## **AND WHAT IS NOT HERE IS SAID OUT LOUD RATHER THAN QUIETLY MISSING:** the RATIO fill of mass
-## against budget and the SAFE / UNCERTAIN / WILL BREAK verdict her §5 specifies belong to the
-## ASSEMBLY flow, which is slice 2/3. A recipe is not a design: it has no frame, no budget and no
-## parts, so there is nothing for those marks to be about. Drawing them here would mean inventing
-## numbers in GDScript, which is the one rule this item says does not bend.
+## **AND WHAT IS NOT ON THE MAKE PATH IS SAID OUT LOUD RATHER THAN QUIETLY MISSING:** the RATIO fill
+## of mass against budget and the SAFE / UNCERTAIN / WILL BREAK verdict her §5 specifies are about a
+## DESIGN. A recipe is not one: it has no frame, no budget and no parts, so there is nothing for
+## those marks to be about here. Drawing them on this path would mean inventing numbers in GDScript,
+## which is the one rule this item says does not bend.
+##
+## **THE FILL IS BUILT, ON THE OTHER PATH** (ASSA-369). This paragraph used to end *"which is slice
+## 2/3"* -- true until the slice landed, and a sentence that goes on calling a built thing pending is
+## how the next reader re-derives a gap that is closed. `_design_mass_row` is where it lives; the
+## verdict still belongs to the bar, because it is about the irreversible act.
 func _rebuild_build_detail() -> void:
 	_clear(_build_detail)
-	# **BLOCK 5 IS HIDDEN ON THE ASSEMBLY PATH AND THAT IS A SLICE BOUNDARY, NOT A DECISION** (ASSA-317
-	# slice 2b). Maren's 00:32 ruling makes this rect *"the relationship -- the mass/budget fill, each
-	# part's mass a float on that one axis"*, and NOT the figures, which live in the bar. That picture
-	# is the next slice; drawing anything else under `what you get` meanwhile would be me specifying a
-	# rect she has already specified. **Hidden rather than left empty** for `_show_log`'s reason on
-	# this same screen: a heading over nothing is a labelled empty gap, and a stranger reads it as the
-	# game having nothing to say.
-	_show_section(_build_detail, not _assembling_mode())
+	# **BLOCK 5 IS DRAWN ON BOTH PATHS SINCE ASSA-369, AND IT USED TO BE HIDDEN ON THIS ONE.** The
+	# old reason -- *"that picture is the next slice; drawing anything else under `what you get`
+	# would be me specifying a rect she has already specified"* -- was right on the day and is
+	# spent: Maren's 00:32 ruling makes this rect *"the relationship, not the figures"*, and the
+	# first half of that relationship needs nothing new across the binding. `design_readout` has
+	# carried `mass_low/high` and `budget_low/high` all along.
+	#
+	# **WHAT IS STILL HIDDEN, AND IT IS THE SAME RULE RATHER THAN A LEFTOVER:** with no frame chosen
+	# the sim answers `{}` -- a design with neither numbers nor a fault is a thing it never answers
+	# -- and a `what you get` heading over that is `_show_log`'s labelled empty gap. So the section
+	# follows the FACT, not the path.
 	if _assembling_mode():
+		var design := _design_readout()
+		_show_section(_build_detail, not design.is_empty())
+		if not design.is_empty():
+			_build_detail.add_child(_design_mass_row(design))
 		return
+	_show_section(_build_detail, true)
 	var offer := _chosen_offer()
 	if offer.is_empty():
 		# **THE SCREEN SAYS THE SIM HAS STOPPED OFFERING THIS, WHICH IS THE STATE AFTER A SUCCESSFUL
@@ -5613,6 +5886,29 @@ func _row_one() -> Label:
 		if text != null:
 			return text
 	return null
+
+
+## **BLOCK 5 ON THE ASSEMBLY PATH: THE DESIGN'S MASS AGAINST ITS FRAME'S BUDGET, AS A FILL**
+## (ASSA-369 box 1; Maren's §5.1 -- *"a RATIO with a hard end. A ratio fill; the axis's end is the
+## budget. When mass is over, the fill is full and the sim's verdict supplies the word"*).
+##
+## **WHICH TWO OF THE FOUR NUMBERS, AND WHY IT IS NOT A CHOICE I MADE.** Mass and budget both cross
+## as RANGES, because density is read in 25-wide bands until the species is assayed. The sim's own
+## verdict is decided on one pair of them (`assembly.rs::StatRange::verdict`): **`SAFE` is exactly
+## `mass_high <= budget_low`** -- *"the heaviest this can be still fits the smallest budget it can
+## have"*. Feeding the fill that same pair makes it full **when and only when the sim stops saying
+## `SAFE`**, so the picture and the word in the bar can never disagree. Any other pairing would be
+## this file inventing a second opinion about a comparison the sim already owns, which is
+## `design_readout`'s own standing warning.
+##
+## **NO SPECIAL CASE FOR A REFUSED DESIGN** (box 5). With an extra part parked the sim answers every
+## number 0, so this asks for 0 of 0 and `AssayTrack` draws nothing -- its documented answer for an
+## absent fact, reached by the same code path as every other caller. Keeping numbers alive for a
+## design the sim throws out would be the screen disagreeing with its own `Build`.
+func _design_mass_row(readout: Dictionary) -> AssayReadingRow:
+	var row := AssayReadingRow.new()
+	row.show_amount("mass", int(readout.get("mass_high", 0)), int(readout.get("budget_low", 0)))
+	return row
 
 
 ## **WHAT THE SIM SAYS ABOUT THE DESIGN ON THE SCREEN RIGHT NOW** (ASSA-317 slice 2b). `{}` before a
@@ -5941,6 +6237,14 @@ func _insert_into(at: int, stack: Dictionary, slot: String, want: int) -> void:
 ## sim's own wording (ASSA-102); a design that is merely half built answers `""`, because the
 ## recoverable/permanent line is a rule in there and not something GDScript gets to guess at.
 ## Nothing is disabled either (ASSA-37): the button stays pressable and the sim does the refusing.
+##
+## **THAT LAST SENTENCE IS NARROWED BY ASSA-371 AND I AM NOT DELETING IT, BECAUSE ITS REASON STILL
+## HOLDS WHERE IT WAS WRITTEN.** `what to mount` now disables a row the sim would refuse and draws
+## the refusal under it, so on that list the reason no longer costs a press (ASSA-316 ruling 2).
+## **What has not changed is who decides:** the predicate `_rebuild_build_mounts` asks is this same
+## `part_press_refusal`, the press stays connected beneath the disabled flag, and this function
+## refuses again if anything reaches it. ASSA-37's rule was that GDScript may not invent a limit;
+## disabling a control whose refusal the SIM has already stated is not inventing one.
 func _choose_part(stack: Dictionary) -> void:
 	var chosen := PackedStringArray()
 	for entry in _building:

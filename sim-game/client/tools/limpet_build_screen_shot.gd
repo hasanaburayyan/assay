@@ -115,6 +115,10 @@ var _mounting := false
 var _refusing := false
 ## The shot armed by `_arm`, taken once `_settle` has run out. `""` when none is waiting.
 var _pending := ""
+## Quiet ticks still owed before the armed shot settles, one per frame; see `_arm`.
+var _quiet_left := 0
+## Which shot the quiet drain is running for, moved into `_pending` when the drain empties.
+var _quiet_for := ""
 ## What the design and the bar said BEFORE the press, so `_report_press` compares two readings of the
 ## same screen rather than one reading and a memory of the other.
 var _before_parts := PackedStringArray()
@@ -135,6 +139,14 @@ func _initialize() -> void:
 		_finish(false, "mode is one of %s, not `%s`"
 				% [[MODE_MAKE, MODE_ASSEMBLE, MODE_REFUSE], _mode])
 		return
+	# **AN EXPLICIT TICK COUNT DISPLACES THE MODE'S BUDGET ENTIRELY, AND THAT COST A TEAMMATE A RUN**
+	# (ASSA-383). `make` is built around `DEFAULT_TICKS`; `assemble`/`refuse` need parts in the pack
+	# and want `ASSEMBLE_TICK_CEILING`. Hand `make` the assembly number and it plays 33x longer than
+	# the mode intends, walks the catalogue to a recipe nothing uses, and shoots a frame whose block 5
+	# -- the make path's whole subject -- draws nothing. QA hit exactly that at `14247 2000 make` and
+	# could neither confirm nor deny the thing they were sent to check. **The override stays** --
+	# `assemble` legitimately wants a big number and ASSA-377's evidence was taken at 2000 -- so the
+	# protection is `_report_make_subject`, which refuses the shot instead of letting it look green.
 	var budget := ASSEMBLE_TICK_CEILING if _needs_pack() else DEFAULT_TICKS
 	_left = int(argv[2]) if argv.size() > 2 else budget
 	_ticks_asked = _left
@@ -182,6 +194,23 @@ func _process(_delta: float) -> bool:
 		return false
 	if _settle > 0:
 		_settle -= 1
+		return false
+	# **ONE TICK PER FRAME, BECAUSE THAT IS WHAT A RELAY DELIVERS** (ASSA-377). `_arm` used to feed
+	# `TICKS_PER_FRAME` ticks inside ONE `_process` call, and that is not a faster relay -- it is ten
+	# refreshes with no layout pass between them. Each refresh re-adds the commit sentence's labels,
+	# and an autowrapped `Label`'s minimum is evaluated against a width that is only valid after the
+	# parent has been sized, so it answers the one-letter-per-row height (ASSA-362's mechanism). Ten
+	# of those stack: the bar's minimum read **570** on the assembly path and **1365** on the make
+	# path against its own 114, the `PanelContainer` was clamped up to them, and the clamp relaxed a
+	# frame later with nothing left to re-place the box. The relay sends one bundle per frame at 10/s
+	# against 60 fps, so the pile never forms.
+	if _quiet_left > 0:
+		_quiet_left -= 1
+		_tick_quiet(1)
+		if _quiet_left == 0:
+			_settle = SETTLE_FRAMES
+			_pending = _quiet_for
+			_quiet_for = ""
 		return false
 	# **EVERY SHOT IS TAKEN A SETTLE AFTER THE LAST THING THAT COULD MOVE THE TREE** (ASSA-373). The
 	# stages below only ever ARM a shot; `_pending` is fired here, after `_settle` has run out above.
@@ -309,10 +338,11 @@ func _tick_some() -> void:
 ## **ARM A SHOT: TICK THE WORLD, THEN WAIT A SETTLE, THEN TAKE IT.** The two halves are one call
 ## because they are one rule -- a shot must be of a tree that has stopped moving, and a tick is the
 ## thing that moves it. Splitting them is how the first version of this measured mid-layout.
+## **AND THE TICKS ARE SPREAD OVER FRAMES RATHER THAN SPENT IN THIS CALL** (ASSA-377): `_arm` only
+## sets the drain going, and `_process` lands one tick per frame before the settle and the shot.
 func _arm(what: String) -> void:
-	_tick_quiet(TICKS_PER_FRAME)
-	_settle = SETTLE_FRAMES
-	_pending = what
+	_quiet_left = TICKS_PER_FRAME
+	_quiet_for = what
 
 
 ## **TICKS WITH NOTHING IN THEM, SO THE SCREEN REFRESHES WITHOUT THE DEMO LOOP TOUCHING THE DESIGN.**
@@ -675,6 +705,7 @@ func _measure() -> void:
 		"show the map key (K)": _screen._map_key_toggle,
 		"the status toast": _screen._says_toast,
 	}
+	var frame := root.get_texture().get_image()
 	for named in watched:
 		var node := watched[named] as Control
 		var rect := Rect2(node.global_position, node.size)
@@ -691,8 +722,7 @@ func _measure() -> void:
 			_faults.append("%s reports no size in a laid-out window, so nothing was measured"
 					% named)
 		elif over.size.x > 0.0 and over.size.y > 0.0:
-			_faults.append("the screen covers %s by %.0f x %.0f px"
-					% [named, over.size.x, over.size.y])
+			_decide_overlap(named, node, rect, over, frame)
 	# **AND THE CONSTANT IS COMPARED TO THE MEASUREMENT, which is the whole reason this tool exists.**
 	# The band's real top is the highest of the visible controls; `WORLD_CONTROLS_BAND` is what the
 	# headless suite believes. A drift is not a failure -- the constant is deliberately generous -- but
@@ -714,7 +744,235 @@ func _measure() -> void:
 		_faults.append(("WORLD_CONTROLS_BAND is %.0f and the real band is %.0f px tall, so the "
 				+ "headless answer would put the screen over a control")
 				% [AssayHud.WORLD_CONTROLS_BAND, world.end.y - top])
+	_report_mount_rows()
+	_report_make_subject()
 	_measure_commit_bar(screen_rect)
+
+
+## **A MAKE-PATH SHOT WHOSE SUBJECT IS ABSENT MAY NOT SAY `SHOT OK`** (ASSA-383).
+##
+## `_measure`'s own docstring already holds the principle one level up: *"a laid-out window that
+## reports a control with no size is itself the finding: it means this tool measured nothing and must
+## not say so in green."* Block 5 IS the make path -- it is what `what you get` is for, and it is the
+## surface ASSA-357's scale ruling was measured on. A frame where it draws nothing is not evidence
+## about it, whatever the rects say.
+##
+## **THIS IS NOT HYPOTHETICAL AND IT COST A TEAMMATE A RUN.** Nerite re-shot the make path at
+## `14247 2000 make` to answer a Game Director question, landed on *"dead end: nothing uses a gear"*
+## with block 5 completely empty, and reported they could not confirm or deny -- while the tool
+## printed its ordinary report and the answer was the tool's own `DEFAULT_TICKS`, which their
+## explicit argument had silently displaced. They then spent further tries hunting a combination.
+##
+## **MODELLED ON `refuse` MODE'S OWN GUARD**, which refuses a run the sim does not call `unfinished`
+## rather than shooting it: a run that is not the state the mode is about is refused, not reported.
+##
+## **THE PICTURE IS READ OFF THE NODE, NOT OFF THE OFFER.** `_icon_box`'s reserve arm returns a bare
+## `Control` drawing nothing when there is no art, so "the offer has a `makes`" and "a picture is on
+## the screen" are different claims and only the second one is this tool's business.
+func _report_make_subject() -> void:
+	if _mode != MODE_MAKE:
+		return
+	var drawn := 0
+	for child in _screen._build_detail.find_children("*", "TextureRect", true, false):
+		if (child as TextureRect).texture != null:
+			drawn += 1
+	var offer: Dictionary = _screen._chosen_offer()
+	var row := String(offer.get("line", offer.get("name", "")))
+	var dead_end := String(offer.get("dead_end", ""))
+	print("MAKE     block 5 draws %d picture(s) · row `%s` · dead end `%s`" % [drawn, row, dead_end])
+	if drawn > 0:
+		return
+	var why := "the sim still offers it, so the empty box is not a dead end"
+	if dead_end != "":
+		why = "%s%s" % [_screen._sim.dead_end_label(), dead_end]
+	elif offer.is_empty():
+		why = "the sim offers nothing in this material any more"
+	_faults.append(("block 5 draws NO PICTURE, so this frame is not evidence about the make path: "
+			+ "the chosen row is `%s` and %s. This run asked for %d ticks and `make` is built around "
+			+ "%d (`DEFAULT_TICKS`); an explicit tick count displaces the mode's budget, and a bigger "
+			+ "one walks the catalogue past the recipes that have an output (ASSA-383)")
+			% [row, why, _ticks_asked, DEFAULT_TICKS])
+
+
+## **NO `what to mount` ROW OFFERS AN ACT THE SIM WOULD REFUSE** (ASSA-371).
+##
+## Maren read the `slots-full` frame cold and found every row in that list a live control whose only
+## outcome was a refusal: a full frame still offered `2 x Tonore head (A)`, and pressing it got
+## `TooMany` from the sim and nothing else. **Learning that cost a press**, which ASSA-316 ruling 2
+## forbids.
+##
+## **THIS IS THE HALF A SHOT CANNOT SHOW AND THE CLIENT SUITE CANNOT REACH.** A PNG shows a row
+## greyed; it cannot show that the grey AGREES with the sim. And the suite cannot build this list at
+## all -- it reads `inventory_of`, so it needs real parts in the pack, which needs the whole
+## mine-smelt-craft chain. So the pairing is asserted here, where the pack is real: for every row,
+## the control's `disabled` flag against `part_press_refusal`'s own answer for that kind, on the same
+## `chosen` array `_choose_part` builds. **A row live where the sim refuses, or dead where the sim
+## allows, is a fault either way** -- the second direction is what stops this from being a check that
+## only ever confirms greying.
+func _report_mount_rows() -> void:
+	if not _screen._build_mounts.visible:
+		return
+	var chosen := PackedStringArray()
+	for entry in _screen._building:
+		chosen.append(String((entry as Dictionary).get("kind", "")))
+	var kinds := AssaySimHost.part_kinds()
+	var rows := 0
+	for held in _screen._sim.inventory_of(_screen._client.player_id):
+		var stack: Dictionary = held
+		var part := AssayHud.part_kind_of(stack, kinds)
+		if part.is_empty() or bool(part.get("is_frame", false)):
+			continue
+		rows += 1
+		var line := AssayHud.stack_line(stack)
+		var refusal := AssaySimHost.part_press_refusal(chosen, String(stack.get("kind", "")))
+		var button := _find(_screen._build_mounts, line)
+		if button == null:
+			_faults.append(("`what to mount` has no row for %s, which the player is carrying: a "
+					+ "stack dropped from this list because the design is full is a list that "
+					+ "changes membership for a reason the player cannot see") % line)
+			continue
+		print("MOUNT ROW  %-26s disabled=%s · sim says `%s`" % [line, button.disabled, refusal])
+		if refusal != "" and not button.disabled:
+			_faults.append(("`what to mount` offers %s as a live control and the sim refuses it: "
+					+ "`%s`. Learning that costs a press (ASSA-371)") % [line, refusal])
+		elif refusal == "" and button.disabled:
+			_faults.append(("`what to mount` greys out %s and the sim allows it, so a mount the "
+					+ "player could make is unreachable (ASSA-371)") % line)
+		if refusal == "":
+			continue
+		# **AND THE REASON IS ON THE SCREEN, IN THE SIM'S WORDS, WITHOUT A PRESS.** A disabled row
+		# that says nothing is the silent refusal ASSA-316 ruling 2 forbids; a row wording it itself
+		# is the ASSA-43/52 shape where two surfaces drift on the Game Director's wording.
+		var said := false
+		var holder := button.get_parent()
+		if holder != null:
+			for child in holder.find_children("*", "Label", true, false):
+				if (child as Label).text == refusal:
+					said = true
+		if not said:
+			_faults.append(("%s is correctly not pressable but its reason is not drawn beside it: "
+					+ "the sim's sentence `%s` has to be reachable without a press (ASSA-371)")
+					% [line, refusal])
+	if rows == 0:
+		print("MOUNT ROW  the pack carries no mountable part, so this list was not measured")
+
+
+## **A "COVERS" LINE IS A RECT INTERSECTION, NOT A DELETION** (ASSA-384; Maren's ASSA-377 11:13Z).
+##
+## This tool used to fault on `screen_rect.intersection(rect)` alone, and **two of the three failures
+## in `shot-report-refuse.txt` were false alarms because of it**: the status toast and
+## `whole world (V)` both draw ON TOP of the modal and were completely legible. Maren counted 464 px
+## of the toast's pill keyline and 119 px of its label ink inside its own rect and withdrew a
+## severity she had hung on that line. Which surface wins an overlap is PAINT ORDER, and only the
+## frame knows it. `hud.gd:300-330` records the same distinction for ASSA-326/289 in its own words --
+## *"the cost is a READING and not a DELETION"*, where two published percentages were *"both rect
+## intersections reported as deletions."*
+##
+## **IT MATTERS BECAUSE OF WHAT THE OLD LINE TAUGHT.** Those two lines sat beside the one real fault
+## -- *"the box is 864 x 804"* -- for five hours while the Game Director certified that pair clean,
+## and a tool that prints FAIL against a frame which looks fine teaches its reader to disbelieve it.
+##
+## **THE CONTROL'S OWN COLOURS ARE ASKED OF THE CONTROL, NOT TYPED HERE.** Its keyline comes from its
+## own `StyleBoxFlat.border_color` and its ink from its own `font_color`, read off the live node the
+## way `main.gd:5572` reads this panel's padding -- so a theme change moves both the screen and this
+## instrument together, and there is no second copy of the palette to rot (ASSA-320's defect).
+##
+## **AND THE MODAL'S OWN FILL IS EXCLUDED, WHICH IS THE PAIRING AND IS NOT HYPOTHETICAL.** Measured on
+## the 864x804 frame: **79.3% of the toast's own rect is `SURFACE` (37,40,48)** -- the modal's fill
+## AND the toast's own background are the same colour, so "is anything of the toast still here?" is
+## unanswerable on background alone. What decides it is the toast's **keyline 464 px (74,79,92)** and
+## its **label ink 119 px (167,176,190)**; after the press, 482 px of keyline and 101 px of the
+## `FAILED` red. **Those are Maren's hand-counted numbers, reproduced here to the pixel** -- a control
+## for this instrument that I did not make.
+##
+## **ONLY THE KEYLINE AND THE LABEL COUNT, NEVER THE BACKGROUND.** A control's `bg_color` is not its
+## ink, and counting it read **3178 px of a 3584 px overlap** as surviving ink on `whole world (V)` --
+## 89%, which would have passed any covering at all.
+##
+## **AND "0 px OF ITS OWN INK" IS NOT REACHABLE, WHICH IS A CORRECTION TO THE ASK.** With the modal
+## forced above the controls in paint order, the count falls to **28 px** on `whole world (V)` and
+## **32 px** on the toast -- in both cases exactly the overlap's HEIGHT, i.e. one surviving column.
+## That column is the **modal's own border**, and `BORDER (74,79,92)` is the same colour as these
+## controls' keyline, so a fully painted-over control can never read zero. A `> 0` test is therefore
+## a check that cannot fail, which is the shape this file keeps catching.
+##
+## **SO THE VERDICT IS A DENSITY AGAINST THE CONTROL'S OWN UNCOVERED PART.** Measured on the 864x804
+## frame, ink per px of area inside the overlap, with the same control painted over as the lever:
+##
+##                      legible   painted over   its own uncovered part
+##     the toast          6.43%          0.46%                    9.38%
+##     whole world (V)    7.98%          0.78%                    8.93%
+##
+## **LEGIBLE READS WITHIN A SIXTH OF THE CONTROL'S OWN UNCOVERED DENSITY; PAINTED OVER IS 10-13x
+## BELOW IT.** The quarter-of-outside floor sits an order of magnitude from both readings rather than
+## being tuned to either, and **both numbers are printed on every line** so a reader checks the
+## verdict instead of trusting it. A control with no uncovered part is reported as undecidable.
+func _decide_overlap(named: String, node: Control, rect: Rect2, over: Rect2, frame: Image) -> void:
+	var fill := Color.MAGENTA
+	var skin: StyleBox = _screen._build_box.get_theme_stylebox(&"panel")
+	if skin is StyleBoxFlat:
+		fill = (skin as StyleBoxFlat).bg_color
+	var reference := {}
+	for entry in [&"panel", &"normal"]:
+		if not node.has_theme_stylebox(entry):
+			continue
+		var own: StyleBox = node.get_theme_stylebox(entry)
+		if own is StyleBoxFlat and not _near((own as StyleBoxFlat).border_color, fill):
+			reference[_key((own as StyleBoxFlat).border_color)] = true
+	if node.has_theme_color(&"font_color"):
+		var pen := node.get_theme_color(&"font_color")
+		if not _near(pen, fill):
+			reference[_key(pen)] = true
+	if reference.is_empty():
+		_faults.append(("%s paints no keyline or label this tool can tell apart from the screen's "
+				+ "own fill, so the overlap cannot be decided: give it a reference colour rather "
+				+ "than a pass") % named)
+		return
+	var ink_in := 0
+	var area_in := 0
+	var ink_out := 0
+	var area_out := 0
+	var x0 := int(maxf(rect.position.x, 0.0))
+	var y0 := int(maxf(rect.position.y, 0.0))
+	var x1 := int(minf(rect.end.x, float(frame.get_width())))
+	var y1 := int(minf(rect.end.y, float(frame.get_height())))
+	for y in range(y0, y1):
+		for x in range(x0, x1):
+			var lit := reference.has(_key(frame.get_pixel(x, y)))
+			if over.has_point(Vector2(float(x) + 0.5, float(y) + 0.5)):
+				area_in += 1
+				ink_in += 1 if lit else 0
+			else:
+				area_out += 1
+				ink_out += 1 if lit else 0
+	if area_out == 0:
+		_faults.append(("%s is wholly inside the screen's rect, so there is no uncovered part of it "
+				+ "to compare against and this frame cannot decide the overlap") % named)
+		return
+	var dense_in := float(ink_in) / float(maxi(area_in, 1))
+	var dense_out := float(ink_out) / float(maxi(area_out, 1))
+	print(("    covered (rect) %.0f x %.0f · its own ink %d of %d px (%.2f%%) in there against "
+			+ "%d of %d px (%.2f%%) in the part the screen does not reach")
+			% [over.size.x, over.size.y, ink_in, area_in, 100.0 * dense_in,
+			ink_out, area_out, 100.0 * dense_out])
+	if dense_in >= dense_out * 0.25:
+		print("    LEGIBLE: it draws over the screen and wins the overlap, so this is not a fault")
+		return
+	_faults.append(("the screen covers %s by %.0f x %.0f px and its own ink there is %.2f%% against "
+			+ "%.2f%% where the screen does not reach: it is painted over, which is a deletion "
+			+ "rather than a reading") % [named, over.size.x, over.size.y,
+			100.0 * dense_in, 100.0 * dense_out])
+
+
+## Colours compared at 8 bits, because a PNG round-trip and the engine's own blending both move the
+## last fractional bit and a float-exact match would answer 0 for every possible frame.
+func _key(colour: Color) -> int:
+	return (int(colour.r8) << 16) | (int(colour.g8) << 8) | int(colour.b8)
+
+
+func _near(a: Color, b: Color) -> bool:
+	return absi(int(a.r8) - int(b.r8)) <= 2 and absi(int(a.g8) - int(b.g8)) <= 2 \
+			and absi(int(a.b8) - int(b.b8)) <= 2
 
 
 ## **THE COMMIT BAR, IN A LAID-OUT WINDOW** (ASSA-332; Maren's §5.4 ruling 3: *"the COMMIT BAR,

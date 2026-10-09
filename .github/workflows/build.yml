@@ -167,6 +167,23 @@ jobs:
       # earn the green. Stdlib only, no Godot, milliseconds.
       - name: The theme poke lives in exactly one place
         run: python3 client/tools/check_one_theme_poke.py
+      # A TOOL WHOSE PRODUCT IS SILENCE NEEDS A GATE OF ITS OWN (ASSA-375).
+      # `client/tools/cache_blind.py` reads every `_refresh_*` with a cache key
+      # and reports what the gated region draws that the key cannot see move --
+      # ASSA-353's family, which no test can find because the defect is an
+      # ABSENCE: there is no state in which a green assertion would have been
+      # red. Once a clean run exists nobody reads those functions by hand again,
+      # so this holds the walk to the two cases Marlow commissioned it against
+      # (ASSA-353 on this tree, his `_refresh_machine_menu` on a declared
+      # replica) plus the three properties that make its classes mean anything.
+      # ASSA-320 is the cost of skipping this: a renamed loop made the
+      # paint-order pin assert nothing for a week, green the whole time.
+      # It also pins a LIMIT on purpose -- the slots in Marlow's key enter
+      # through the sim, so the tool names his function and cannot see his fix,
+      # and that sentence is an assertion rather than a footnote. Stdlib only,
+      # no Godot, ~0.3s.
+      - name: The cache-blind walk still answers both knowns
+        run: python3 client/tools/check_cache_blind.py
       # ONE SPECIES PALETTE, WRITTEN DOWN TWICE. The Blender pipeline tints the
       # ore sprite from `art/species_tints.py`; the Godot client fills a deposit
       # from a const in `client/scripts/hud.gd`. Neither language can read the
@@ -199,6 +216,27 @@ jobs:
       # with 25 rows over, player/walk_SW worst at 47.6%. Stdlib only, ~3s.
       - name: No shipped surface sits on the ceiling
         run: python3 art/check_headroom.py
+      # AN ICON FRAME CARRIES NO BAND OF AIR ABOVE ITS ART (ASSA-376, Maren's
+      # rule one level below ASSA-328). Nothing else here can see this: the band
+      # is a frame's own transparency, so no panel layout can reach it, and at 1x
+      # it is invisible -- it became a defect only when ASSA-357 earned the build
+      # screen's output picture a 3x scale and 27 px of padding came out as 81 px
+      # between a label and the thing it labels. Proved red before it was trusted
+      # green: run against the sheet as it shipped on main it fails all seven
+      # rows, `refined` worst at 40 px (`cp` an old items.png in and re-run, or
+      # `--push N` to drop every row). The check also refuses the instrument that
+      # hid this -- `alpha > 0` calls six of seven rows full-bleed, because the
+      # raw render carries a 1-4 sampling film to the frame edge. Stdlib only, ~2s.
+      #
+      # AND SINCE DECISION #52 IT CARRIES THE SIZE RULE TOO: art fills 100% of one
+      # axis of its frame, which is what ASSA-376's fit guarantees and what replaced
+      # `check_items_kinds.py`'s retired slot-fill floor. Its red control is the one
+      # Maren asked for -- every row redrawn at 3/4 size flush to the top must be
+      # caught (`--shrink 3/4` reads that path, exit 1 on all seven rows), and every
+      # row shortened on the axis it does NOT fill must still pass, or "fills an axis"
+      # would quietly mean "fills both".
+      - name: No icon frame has air above its art, and art fills an axis
+        run: python3 art/check_items_top_band.py
       # GRADE-A ORE IS CLUMPED, AND NOTHING ELSE HERE CAN SEE THAT (ASSA-216).
       # Maren's ruling was arrangement, not value: the same rocks, the same
       # sizes, the same colours and -- since `relax()` -- the same coverage,
@@ -619,6 +657,28 @@ jobs:
           "$GODOT" --headless --path . --script res://tools/toast_stall_probe.gd \
             -- 14247 900 | tee toast-stall.log
           grep -qx 'TOAST STALL PROBE OK' toast-stall.log
+      # AND A PRESS COVERS THAT SENTENCE RATHER THAN DESTROYING IT (ASSA-370).
+      # The step above buys its answer by FREEZING player 0 the moment a stall
+      # reaches the toast -- the screen that is lied to is the screen that
+      # pressed nothing. This one needs the opposite: player 0 presses a real
+      # button while the stall is live, which is the premise the other probe
+      # spends. Two claims, two instruments, so each can fail honestly.
+      #
+      # QA FOUND THIS WITH A CAMERA, not a test: every accepted command used to
+      # overwrite the stall sentence and the building it was about, so the
+      # warning vanished within two seconds of the next press whatever the
+      # machine was doing. The notice must come back when the receipt ages.
+      #
+      # Offline, no socket, no relay, one tick per frame, ~2s. Marker printed
+      # LAST and only on success; exit 2 is NO VERDICT and fails this step
+      # rather than passing.
+      - name: A press covers a stall sentence and gives it back
+        working-directory: sim-game/client
+        run: |
+          GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64"
+          "$GODOT" --headless --path . --script res://tools/toast_cover_probe.gd \
+            -- 14247 900 | tee toast-cover.log
+          grep -qx 'TOAST COVER PROBE OK' toast-cover.log
       # THE HUD'S OWN PROBE, IN A GATE FOR THE FIRST TIME (ASSA-238). ASSA-116's
       # box 6 is about the HUD panels, and the only instrument that reads them is
       # `client/tools/hud_probe.gd`, which until this step had ZERO references in
@@ -780,11 +840,19 @@ jobs:
       # where every item fills 24.7-35.2%. Maren ruled the fix: parts get rows on the
       # ITEMS sheet, drawn as loose things, and the assembly sheets are untouched.
       #
-      # TWO PROPERTIES, both hers: no row smaller in its slot than the SMALLEST ITEM --
-      # a floor read from the ore row in the same run, never a number in the check --
-      # and ASSA-111's conjunction on the new rows, using ASSA-111's own `verdict`
-      # imported rather than copied, because a loose drawing has no join to borrow its
-      # separation from.
+      # IT JUDGED TWO PROPERTIES AND NOW JUDGES ONE: ASSA-111's conjunction on the new
+      # rows, using ASSA-111's own `verdict` imported rather than copied, because a
+      # loose drawing has no join to borrow its separation from.
+      #
+      # THE OTHER WAS "no row smaller in its slot than the SMALLEST ITEM", a floor read
+      # off the ore row in the same run. DECISION #52 RETIRED IT (2026-10-09): ASSA-376
+      # fitted every frame to its art, so slot fill stopped measuring how big a row was
+      # drawn -- that is now forced to 100% of one axis -- and started measuring
+      # compactness, which a rod on a diagonal cannot win. The size rule is asserted
+      # absolutely by `check_items_top_band.py` above, where the sheet's own
+      # transparency can see it; the engine path here cannot, because its body mask is
+      # alpha >= 200 and the fitted top row of paint runs 127-194. The fill table is
+      # still printed as a report with no verdict on it.
       #
       # IT MEASURES THE SHEET, NOT THE CLIENT, and says so: `sprites.gd` still points
       # part rows at the assembly sheets, and that switch is its own item. The day it
@@ -792,10 +860,11 @@ jobs:
       #
       # TWO CONTROLS RUN INSIDE IT EVERY TIME: every kind is itself at IoU 1.000 / dE
       # 0.00 and the rows are not one picture, and on a copy of the real answer a
-      # substituted icon must be caught AND a kind drawn at half size must fall under
-      # the floor. Either failing exits 2. Proved red end to end too: `--shrink hopper`
-      # exits 1.
-      - name: A loose part fills a pack slot like an item
+      # substituted icon must be caught. Either failing exits 2. (The half-scale lever
+      # went with the floor: half scale still spans an axis, so it could only ever have
+      # passed.) The separation half has no CLI lever of its own: control 2 is its red
+      # proof, run on a copy of the real answer on every invocation.
+      - name: A loose part is its own object in a pack slot
         run: |
           GODOT="$GITHUB_WORKSPACE/sim-game/godot/Godot_v${GODOT_VERSION}_linux.x86_64" \
             python3 art/check_items_kinds.py

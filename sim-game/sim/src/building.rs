@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::assembly::Assembly;
 use crate::item::{Item, ItemKind, ItemStack};
 use crate::mineral::{Grade, SpeciesId};
+use crate::recipe::RecipeId;
 use crate::types::{DepositId, TilePos};
 
 /// Stable ID for a building. Unlike deposits, buildings come and go, so IDs
@@ -146,6 +147,51 @@ pub enum SmelterStall {
     /// Burning, and not hot enough for this ore. `fire` is already capped by
     /// the walls, which is what makes the smelter's own material matter.
     FireTooCool { fire: u32, needs: u32 },
+    /// **THE OUTPUT SLOT HOLDS A MATERIAL THIS BATCH CANNOT ADD TO** (ASSA-350).
+    /// Refine one species, leave the bar, load another: `run_smelters` has
+    /// skipped that smelter on every tick since ASSA-43 with the comment *"wait
+    /// to be emptied"*, and nothing in the game said so. `smelter_state` read
+    /// `Working` forever and the window drew a fire on it.
+    ///
+    /// **A STALL AND NOT AN IDLE, on the Game Director's ASSA-350 criterion:**
+    /// *an idle is waiting for SUPPLY; a stall is blocked by a CONFLICT no
+    /// supply resolves.* Pour more ore into a short batch and it runs. Pour
+    /// more ore into this and nothing happens, ever — the only thing that
+    /// clears it is a hand in the output slot.
+    ///
+    /// Carries the item so the sentence can name it with the sim's own
+    /// `item_name`, character for character the one the machine menu draws on
+    /// that slot's `held` line (ASSA-43/52: two spellings of one item is how a
+    /// player stops trusting either).
+    OutputHoldsAnother(crate::item::Item),
+}
+
+/// Why a smelter has no batch in front of it. **NEITHER ARM IS A STALL** and
+/// neither is ever reported as one — see [`SmelterState::halted`].
+///
+/// Two arms rather than one wordless `Idle`, because the second one carries
+/// numbers (Game Director, ASSA-322). Her standing ruling is that *an absent
+/// part gives an absent number, never a 0*, so `Empty` stays wordless and
+/// `ShortBatch` is the only arm allowed to print a count — `holding 0` is a
+/// sentence this shape cannot say.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SmelterIdle {
+    /// The input slot is empty. Follows every finished batch.
+    Empty,
+    /// The input slot holds less than one batch, so `run_smelters` skips it
+    /// and goes on skipping it until somebody adds more. Reachable with no
+    /// mistake in it: `run_smelters` leaves the remainder and
+    /// `SMELTER_INPUT_CAP` is not a multiple of a resmelt, so any bulk load
+    /// ends here.
+    ///
+    /// **THE RECIPE, NOT THE TWO NUMBERS** (ASSA-322). `recipe.recipe().input.1`
+    /// is the batch size and `recipe.name()` is the verb, both read off
+    /// [`crate::recipe::RECIPES`] where the sentence is built. A `needs` field
+    /// beside `holding` would be the batch size written down twice, free to
+    /// disagree with the table the day one changes — which is ASSA-59's whole
+    /// point. `holding` is here because it is a fact about this smelter and is
+    /// nowhere else.
+    ShortBatch { recipe: RecipeId, holding: u32 },
 }
 
 /// What a smelter is doing. **DECIDED IN ONE PLACE** (`World::smelter_state`):
@@ -154,10 +200,10 @@ pub enum SmelterStall {
 /// of the four this is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SmelterState {
-    /// Nothing to refine. **Not a stall**: it is something the player has not
-    /// fed yet, not something they must fix (Game Director, ASSA-80), and it
-    /// happens after every finished batch.
-    Idle,
+    /// Nothing to refine, and why. **Not a stall**: it is something the player
+    /// has not fed yet, not something they must fix (Game Director, ASSA-80),
+    /// and it happens after every finished batch.
+    Idle(SmelterIdle),
     Stalled(SmelterStall),
     /// Making progress, at this temperature.
     Working {
@@ -181,6 +227,13 @@ impl SmelterState {
     /// finished batch, so a surface that listed it would cry wolf after every
     /// successful smelt. The asymmetry with [`MachineState::halted`] — where
     /// idle *is* reported — is explained there.
+    ///
+    /// **THAT COVERS BOTH ARMS, AND THE SECOND ONE IS WHY `ShortBatch` IS AN
+    /// IDLE AT ALL** (Game Director, ASSA-322). `run_smelters` keeps the
+    /// remainder of a batch, so a short slot is what every bulk load ends in —
+    /// drop 50 refined, get 16 bars, hold 2 — and a stall arm here would fire
+    /// `SmelterStalled` at the tail of most resmelt runs a player ever does.
+    /// Same cry-wolf, one slot over.
     pub const fn halted(self) -> bool {
         self.stall().is_some()
     }

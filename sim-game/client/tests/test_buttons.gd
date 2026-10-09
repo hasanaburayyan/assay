@@ -491,7 +491,12 @@ func test_no_pack_row_press_is_answered_by_the_client_refusing_to_aim() -> bool:
 	var rows := 0
 	for entry in screen._sim.inventory_of(screen._client.player_id):
 		var stack: Dictionary = entry
-		if AssayHud.insert_slots(stack, recipes).is_empty():
+		# **THE TEST READS THE CATALOGUE; THE CLIENT MAY NOT** (ASSA-351). This asked
+		# `AssayHud.insert_slots`, which is deleted: deciding from a kind which slots to offer is the
+		# defect that item exists for. A harness is allowed the table -- it is picking which stacks
+		# this assertion is ABOUT, not drawing a control -- so the reading moved here, three lines,
+		# rather than keeping a function alive in the client for one caller in a test.
+		if not _eaten_in_a_building(String(stack.get("kind", "")), recipes):
 			continue
 		var row := _row_for(screen, AssayHud.stack_line(stack))
 		if row == null:
@@ -705,6 +710,45 @@ func _stack_of(screen: Node, kind: String) -> Dictionary:
 		if String(stack.get("kind", "")) == kind:
 			return stack
 	return {}
+
+
+## WHETHER SOME NON-HAND RECIPE EATS THIS KIND -- the reading `AssayHud.insert_slots` used to do for
+## the client, which ASSA-351 deleted. **A harness may read the catalogue; the client may not**, and
+## the difference is that this picks which stacks an assertion is about rather than drawing a control.
+##
+## Computed from the table, never a list of kind names: a sixth recipe arriving with no client edit
+## would walk straight past a hand-written list (ADR 0003).
+func _eaten_in_a_building(kind: String, recipes: Array) -> bool:
+	for entry in recipes:
+		var recipe: Dictionary = entry
+		if String(recipe.get("input", "")) != kind:
+			continue
+		if not bool(recipe.get("hand", false)):
+			return true
+	return false
+
+
+## WHETHER THE SIM SAYS THIS (STACK, SLOT) CONTROL WOULD MOVE SOMETHING (ASSA-351). `refusal` absent
+## means pressable; present carries the sim's own sentence for why nothing would happen.
+##
+## **MATCHED ON KIND, SPECIES AND GRADE, not on kind alone**, because two grades of one ore are two
+## stacks with two different answers -- grade A refined is dead in an input and grade B is not, which
+## is the defect this item is about.
+func _offer_is_pressable(screen: Node, building: int, slot: String, item: Dictionary) -> bool:
+	for entry in screen._sim.insert_offers(screen._client.player_id, building):
+		var group: Dictionary = entry
+		if String(group.get("slot", "")) != slot:
+			continue
+		for row in group.get("offers", []) as Array:
+			var offer: Dictionary = row
+			if String(offer.get("kind", "")) != String(item.get("kind", "")):
+				continue
+			if int(offer.get("species", -1)) != int(item.get("species", -1)):
+				continue
+			if String(offer.get("grade", "")) != String(item.get("grade", "")):
+				continue
+			return not offer.has("refusal")
+	return false
 
 
 ## HOW MANY OF THAT EXACT ITEM THE SIM SAYS WE HOLD, summed off the snapshot's own `count` fields.
@@ -1511,6 +1555,43 @@ func test_no_menu_button_label_carries_what_the_row_makes() -> bool:
 			ok = _fail("the menu's button says %s" % JSON.stringify(labels.keys()))
 	screen.queue_free()
 	return ok
+
+
+## **THE SIM'S OWN STATUS SENTENCE FOR WHATEVER STANDS ON A TILE**, or `""`. Read off `tile_at` rather
+## than off any drawn label: the whole point of the test below is to compare what the SIM says against
+## what the screen rebuilt.
+func _status_of(screen: Node, spot: Vector2i) -> String:
+	var building: Variant = screen._sim.tile_at(spot).get("building")
+	if building == null:
+		return ""
+	return String((building as Dictionary).get("status", ""))
+
+
+## **PUT ORE IN BOTH OF A MACHINE'S SLOTS THROUGH THE MENU'S OWN BUTTONS**, so it lights and smelts.
+## False having already failed the run.
+##
+## ONE STACK FILLS BOTH, and that is a fact about this world rather than a shortcut: `starter_pair()`
+## is `[material, fuel]` and nothing stops one species being both — in the offline test world it is,
+## which is the finding `_mine_two_species`' docstring carries.
+##
+## THE LABEL IS RECOMPUTED BETWEEN THE TWO PRESSES. `insert_label` carries the count read at the
+## press (ASSA-55), so after the fuel goes in, the input slot's button is a different sentence. A test
+## that cached the first label would press nothing the second time and still be green about a smelter
+## that never lit.
+func _fill_both_slots(screen: Node, id: int) -> bool:
+	for slot in [AssayActions.SLOT_FUEL, AssayActions.SLOT_INPUT]:
+		var ore := _stack_of(screen, "ore")
+		if ore.is_empty():
+			return _fail("no ore left in the pack for the %s slot" % slot)
+		var held := _counted(screen, ore)
+		var label := AssayHud.insert_label(held, String(ore.get("name", "?")), slot)
+		var button := _find(screen._menu_box, label)
+		if button == null:
+			return _fail("no `%s` button in building %d's menu: %s"
+					% [label, id, _labels_of(screen._menu_box)])
+		button.pressed.emit()
+		_tick(screen, 2)
+	return true
 
 
 ## MINE TWO DIFFERENT SPECIES OF ORE, so the pack holds two stacks.
@@ -2676,6 +2757,64 @@ func test_esc_closes_a_menu_and_a_dismissing_click_does_not_walk() -> bool:
 ## that ore is fuel. Maren's ASSA-331 label ruling put the slot IN the label, so the press can be aimed
 ## at the fuel slot and the command checked against it -- the hedge was a cost of the wording, not a
 ## principle. Which slots exist is still asked of the sim (`insert_slots`), never assumed.
+## **A BURNING SMELTER DOES NOT REBUILD THE ACTING-ON ROW** (ASSA-353 box 3, which names a BEHAVIOUR
+## and is why "the signature has no status term" does not close it — that is the implementation
+## restating itself).
+##
+## **THE OTHER HALF OF THE FIX, AND THE EXPENSIVE ONE TO GET WRONG.** The defect was the building's
+## **identity** missing from `_refresh_actions`' cache key; the trap next door is putting its
+## **status** in instead. `_refresh_actions`' own docstring rules it out — *"a smelter's status
+## sentence changes every tick while it burns, and rebuilding on that would free the Take button four
+## times a second"* — and nothing measured it until this test. A row that rebuilt ten times a second
+## would take the buttons out from under a pressing finger.
+##
+## **BUILT, NOT PLANTED, AND THE SMELTER REALLY BURNS.** Mined, crafted, right-clicked, `Place`d, then
+## fuel and ore through the menu's own slot buttons. One species fills both slots because
+## `starter_pair()` is `[material, fuel]` and in this world they are the same rock.
+##
+## **THE PREMISE IS ASSERTED AS A FAILURE, which is the lesson ASSA-300 cost me:** the run must prove
+## the sim's `status` MOVED over the window with no command submitted. Without that, a smelter that
+## never lit gives a frozen status, an unchanged signature, and a green that means nothing at all.
+func test_a_burning_smelters_status_does_not_rebuild_the_acting_on_row() -> bool:
+	var screen := _joined()
+	var ok := true
+	var id := _a_placed_smelter(screen)
+	if id < 0:
+		screen.queue_free()
+		return false
+	var spot: Vector2i = screen._target_tile()
+	# THE MENU IS THE ONLY DOOR FOR AN INSERT (ASSA-331), and opening it on the machine is also what
+	# aims the acting-on row at a building at all (ASSA-366, Maren amending her ruling 8).
+	_click(screen, spot, MOUSE_BUTTON_LEFT)
+	if not _fill_both_slots(screen, id):
+		screen.queue_free()
+		return false
+	# LONG ENOUGH TO LIGHT AND START CONSUMING. Lighting from cold is a rule in the fuel's own heat
+	# tolerance, so this waits rather than asserting a tick count.
+	_tick(screen, 30)
+	var before := _status_of(screen, spot)
+	var showing: String = screen._actions_showing
+	# **NOT ONE PRESS IN THIS WINDOW.** `_tick` feeds whatever `_asked` holds and nothing has been
+	# pressed, so every change from here is the world's own doing — which is the only way this test
+	# can tell "the row ignores a status" from "nothing happened".
+	_tick(screen, 20)
+	var after := _status_of(screen, spot)
+	if before == "" or after == "":
+		ok = _fail("premise: nothing stands on %s to have a status (`%s` then `%s`)"
+				% [spot, before, after])
+	elif after == before:
+		ok = _fail(("premise: the smelter's status did not move across 20 ticks (`%s` both times), "
+				+ "so this run says nothing about a status that changes with no command. The fuel "
+				+ "may never have lit.") % before)
+	elif screen._actions_showing != showing:
+		ok = _fail(("the acting-on row rebuilt because a smelter's status moved (`%s` -> `%s`). "
+				+ "The key went `%s` -> `%s`: a burning machine would rebuild that row four times a "
+				+ "second and take its buttons out from under a pressing finger.")
+				% [before, after, showing, screen._actions_showing])
+	screen.queue_free()
+	return ok
+
+
 func test_a_slot_button_fuels_the_menus_machine_with_the_count_at_the_press() -> bool:
 	var screen := _joined()
 	var ok := true
@@ -2692,10 +2831,14 @@ func test_a_slot_button_fuels_the_menus_machine_with_the_count_at_the_press() ->
 		screen.queue_free()
 		return _fail("no ore in the pack to put into a slot")
 	var held := _counted(screen, ore)
-	if not Array(AssayHud.insert_slots(ore, AssaySimHost.recipes())).has(AssayActions.SLOT_FUEL):
+	# **THE PREMISE IS NOW STRONGER THAN IT WAS** (ASSA-351). This asked `insert_slots` whether a fuel
+	# slot exists for ore's KIND, which was true even when the press could only be refused. It now asks
+	# the sim whether THIS stack's fuel control is pressable -- `refusal` absent -- so a world whose ore
+	# will not burn fails the premise here instead of pressing a disabled button and passing.
+	if not _offer_is_pressable(screen, id, AssayActions.SLOT_FUEL, ore):
 		screen.queue_free()
-		return _fail("the sim offers ore no fuel slot, so this test is aimed at a button that cannot "
-				+ "exist")
+		return _fail(("the sim refuses this ore in the fuel slot, so this test is aimed at a control "
+				+ "that is drawn dead: %s") % [screen._sim.insert_offers(screen._client.player_id, id)])
 	var label := AssayHud.insert_label(held, String(ore.get("name", "?")), AssayActions.SLOT_FUEL)
 	var whole := _find(screen._menu_box, label)
 	if whole == null:
@@ -2736,6 +2879,111 @@ func test_a_slot_button_fuels_the_menus_machine_with_the_count_at_the_press() ->
 						% [_asked[0], id])
 	screen.queue_free()
 	return ok
+
+
+## **A REFUSED PUT CONTROL IS DRAWN DEAD WITH THE SIM'S OWN REASON UNDER IT** (ASSA-351 box 3).
+##
+## **THIS TEST EXISTS BECAUSE THE SIM HALF DOES NOT TICK THIS BOX.** Maren's ASSA-300 ruling: *"a
+## mechanism is not a behaviour, and the box names the behaviour."* `debug::insert_refusal` returning
+## the right sentence is the mechanism; the box says the CONTROL is present, not pressable, and
+## carries that sentence. Only a real menu, built by the real refresh, can say so.
+##
+## **THE REFUSAL IS ASKED OF THE SIM, NOT CHOSEN BY ME.** Which reason this seeded world can stage
+## depends on its roster -- whether the second species burns, whether it is too hot for the first
+## one's walls -- and a test that demanded `SlotFull` specifically would be red for a reason that is
+## not a defect. So it asks `insert_offers` for any refused offer and any pressable one, and if the
+## world hands it no refused offer it LOADS the fuel slot to make one. **If it still cannot, it
+## fails**: a premise that quietly goes missing is how a green test ends up proving nothing.
+##
+## ONE OF EACH, IN ONE MENU. Without the pressable half this passes over a client that disabled every
+## control it drew.
+func test_a_refused_put_control_is_drawn_dead_with_the_sims_own_reason() -> bool:
+	var screen := _joined()
+	if not _mine_two_species(screen):
+		screen.queue_free()
+		return false
+	var id := _a_placed_smelter(screen)
+	if id < 0:
+		screen.queue_free()
+		return false
+	var spot: Vector2i = screen._target_tile()
+	_click(screen, screen._my_tile(), MOUSE_BUTTON_RIGHT)
+	_click(screen, spot, MOUSE_BUTTON_LEFT)
+
+	var refused := _an_offer(screen, id, true)
+	if refused.is_empty():
+		# Nothing is refused yet, so make something be: fill the fuel slot with one stack and every
+		# OTHER stack's fuel control becomes a `SlotFull`. This is the board's frame exactly.
+		var ore := _stack_of(screen, "ore")
+		if not ore.is_empty():
+			screen._insert_into(id, ore, AssayActions.SLOT_FUEL, 0)
+			_tick(screen, 2)
+		refused = _an_offer(screen, id, true)
+	var pressable := _an_offer(screen, id, false)
+	if refused.is_empty() or pressable.is_empty():
+		screen.queue_free()
+		return _fail(("this world staged no refused+pressable pair, so the box is untested rather "
+				+ "than passing: %s") % [screen._sim.insert_offers(screen._client.player_id, id)])
+
+	var ok := true
+	var dead_label := AssayHud.insert_label(int(refused.get("count", 0)),
+			String(refused.get("name", "?")), String(refused.get("slot", "")))
+	var dead := _find(screen._menu_box, dead_label)
+	if dead == null:
+		ok = _fail(("the sim refuses `%s` and the menu draws NO control for it -- a hidden dead end "
+				+ "teaches nothing (ASSA-301): %s") % [dead_label, _labels_of(screen._menu_box)])
+	elif not dead.disabled:
+		ok = _fail("`%s` is refused by the sim (%s) and is still pressable"
+				% [dead_label, refused.get("refusal", "")])
+	else:
+		# AND THE REASON IS BESIDE IT, WORD FOR WORD. A disabled button with no sentence is the state
+		# Maren called worse than the bug: a player learns the act is impossible and not why.
+		var said := _note_beside(dead)
+		if said != String(refused.get("refusal", "")):
+			ok = _fail("`%s` is dead and reads %s; the sim says %s"
+					% [dead_label, said, refused.get("refusal", "")])
+
+	if ok:
+		var live_label := AssayHud.insert_label(int(pressable.get("count", 0)),
+				String(pressable.get("name", "?")), String(pressable.get("slot", "")))
+		var live := _find(screen._menu_box, live_label)
+		if live == null:
+			ok = _fail("the sim would accept `%s` and the menu draws no control for it: %s"
+					% [live_label, _labels_of(screen._menu_box)])
+		elif live.disabled:
+			ok = _fail("`%s` is accepted by the sim and is drawn dead; the fix disabled a working path"
+					% live_label)
+	screen.queue_free()
+	return ok
+
+
+## THE FIRST OFFER THE SIM REPORTS AS REFUSED (`want_refused`) OR AS PRESSABLE, flattened with its
+## slot so the caller can rebuild the button's label. `{}` when there is none, which the caller is
+## expected to treat as a missing premise rather than a pass.
+func _an_offer(screen: Node, building: int, want_refused: bool) -> Dictionary:
+	for entry in screen._sim.insert_offers(screen._client.player_id, building):
+		var group: Dictionary = entry
+		for row in group.get("offers", []) as Array:
+			var offer: Dictionary = row
+			if offer.has("refusal") != want_refused:
+				continue
+			var out := offer.duplicate()
+			out["slot"] = String(group.get("slot", ""))
+			return out
+	return {}
+
+
+## THE SMALL PRINT DIRECTLY UNDER A BUTTON, as `_rebuild_machine_menu_rows` stacks it: the row is a
+## VBoxContainer holding the button and then the note. Read off the live tree rather than rebuilt
+## here, because the thing being tested is what the window actually put on screen.
+func _note_beside(button: Button) -> String:
+	var row := button.get_parent()
+	if row == null:
+		return ""
+	for child in row.get_children():
+		if child is Label:
+			return (child as Label).text
+	return ""
 
 
 ## **OPENING A MACHINE'S MENU AIMS THE VERBS AT THAT MACHINE** (ASSA-366; Maren amending her ASSA-316
@@ -3530,9 +3778,13 @@ func _roomiest_frame() -> Dictionary:
 ## heading that is not is the ASSA-117 bug this very screen has had once already (`_show_log`), and it
 ## passes any test that only asks the rows.
 ##
-## **AND BLOCK 5 IS HIDDEN WHILE ASSEMBLING, WHICH IS ASSERTED AS A STATE AND NOT AS A TODO**: her
-## ruling makes that rect the mass/budget picture, so until it is drawn a heading reading `what you
-## get` over nothing is a labelled empty gap.
+## **AND BLOCK 5 IS HIDDEN HERE FOR A REASON THAT CHANGED UNDER THIS TEST** (ASSA-369). It used to
+## be *"her ruling makes that rect the mass/budget picture, so until it is drawn a heading reading
+## `what you get` over nothing is a labelled empty gap"* -- the picture is drawn now, and this
+## assertion still holds because **the pack in this fixture has no frame in it**, so the sim answers
+## `{}` and there is no design for the rect to be about. The rule is the same one; what satisfies it
+## is a missing FACT rather than a missing feature. `test_the_mass_fill...` below is the positive
+## case, and without it this line would quietly become a guard against the fill ever appearing.
 func test_the_build_screen_swaps_block_three_between_making_and_assembling() -> bool:
 	var screen := _joined()
 	_tick(screen, 2)
@@ -3563,7 +3815,9 @@ func test_the_build_screen_swaps_block_three_between_making_and_assembling() -> 
 			ok = _fail(("assembling shows the slots as %s and the mount list as %s; both are block 3 "
 					+ "under ruling (A)") % [screen._build_slots.visible, screen._build_mounts.visible])
 		elif screen._build_detail.visible:
-			ok = _fail("block 5 is shown while assembling and its picture is the next slice")
+			ok = _fail("block 5 is shown while assembling with NO FRAME in the pack: the sim answers "
+					+ "nothing about a design that does not exist, so `what you get` stands over a "
+					+ "labelled empty gap")
 		elif screen._build_title.text != "assemble":
 			ok = _fail("the assembly path's title reads `%s`" % screen._build_title.text)
 		elif heading == null or heading.text != "which frame":
@@ -4066,3 +4320,589 @@ func _only_said(screen: Node) -> String:
 	if labels.size() != 1:
 		return "<%d labels: %s>" % [labels.size(), labels]
 	return labels[0]
+
+
+## THE `acting on` SENTENCE AS IT IS DRAWN, off the `do` column's own labels, or "".
+##
+## NOT `_text_of`: that joins every label in the column with ` · `, and this sentence's own clause
+## mark is ` · `, so a frozen line and a fresh one appended beside it would read as one string.
+func _acting_on_line(screen: Node) -> String:
+	for label in screen._actions.find_children("*", "Label", true, false):
+		var text: String = (label as Label).text
+		if text.begins_with("acting on ("):
+			return text
+	return ""
+
+
+## **THE SENTENCE THAT SAYS WHERE THE BUTTONS ACT FOLLOWS THE TILE, NOT THE LAST TIME ANYONE CHOSE
+## IT** (ASSA-353; the guard Marlow asked me to write before he takes the fix).
+##
+## **FOUND BY A COLD READER AND BY NO TEST.** Nacre, reading an ASSA-326 frame blind for a different
+## question, reported *"the line reads `acting on (74, 36) · chosen · on a deposit` ... that says the
+## tile in the white box is not a building"* -- and a machine stood on (74, 36).
+##
+## `_refresh_actions`'s signature holds `target/_targeted/_building/minable/live` and nothing about
+## the building ON the target: the ID left with `Take` and `Pick up` (ASSA-316, Maren's ruling 3,
+## which she stands by). **The premise bolted to that ruling is what was false** -- *"a term in a
+## cache key that no drawn thing depends on"* -- because `target_line` is drawn thirty-seven lines
+## below the key and reads `facts.building`. So the building clause is frozen at whatever stood on the
+## tile when the tile was last chosen.
+##
+## **BOTH DIRECTIONS IN ONE RUN** (acceptance 1 and 2): a building arrives on the chosen tile, then
+## is picked up off it. The target tile is asserted not to have moved across either, because a target
+## re-chosen at the wrong moment rebuilds the row for the ordinary reason and would make that half
+## vacuous. **Only the arrival is red on main**, for the two reasons below.
+##
+## **THE REMOVAL HALF CANNOT RED ON MAIN, AND BOTH REASONS ARE MEASURED RATHER THAN ARGUED.** It is
+## written anyway, because the fix must carry both directions and this is where that is held.
+##
+## 1. **THE DEFECT CANCELS ITSELF.** A probe printed the row's own key and the drawn line either side
+##    of the pickup: `key=(76, 38)/true/[]/true/true` both times, line `… · clear ground` both times.
+##    The sentence was already frozen at the bare ground from before the `Place`, so taking the
+##    building away made the frozen sentence true again.
+## 2. **AND THE HONEST IN-BETWEEN STATE IS NOT REACHABLE BY ANY GESTURE ON MAIN.** The obvious cure --
+##    re-choose the target so the line names the machine, then remove it -- cannot be played:
+##    `main.gd:6227-6231` answers a right-click on a tile carrying a building with that building's
+##    MENU and returns, before the branch that sets `_target` (ASSA-316 rulings 7/8; the same return
+##    Maren recorded on ASSA-326 at 02:55 for the ring). So on main the building clause of
+##    `target_line` is only ever drawn while it is WRONG.
+##
+## That is worth saying beyond this file: Maren's box 6 confirms the line names the building when one
+## stands on the chosen tile, and **no player has ever seen it do that in a state that was true.**
+##
+## **THE EXPECTATION IS `target_line`'s OWN ANSWER FOR THE TILE'S CURRENT FACTS, never a phrase typed
+## here.** `test_actions.gd` once pinned `smelter 3` out of a hand-built dict and froze the defect
+## (ASSA-244); the wording is Maren's to rule and box 6 of this item leaves it exactly as it is.
+##
+## **RED ON MAIN AT 3747eba** on the arrival, with the sentence it drew instead of the one the tile's
+## own facts make.
+func test_the_acting_on_line_follows_the_building_on_the_chosen_tile() -> bool:
+	var screen := _joined()
+	var ok := true
+	# The same four presses as `_a_placed_smelter`, inlined for one reason: the line has to be READ
+	# between the right-click that chooses the tile and the Place that builds on it.
+	var smelter := _a_smelter_in_the_pack(screen)
+	var spot := Vector2i(-1, -1)
+	var me := Vector2i(-1, -1)
+	if not smelter.is_empty():
+		me = screen._my_tile()
+		spot = AssayDemoPlan.smelter_spot(me, screen._sim.size_tiles(), _buildings_near(screen, me))
+		if spot.x < 0:
+			ok = _fail("no free 2x2 within reach of %s for a smelter" % me)
+	else:
+		ok = false
+	var before := ""
+	if ok:
+		_click(screen, spot, MOUSE_BUTTON_RIGHT)
+		before = _acting_on_line(screen)
+		# THE CONTROL, ASSERTED RATHER THAN ASSUMED: at this moment the tile is bare and the line
+		# must say so. If it already named a building, the arrival below could not be seen.
+		if not (before.ends_with("clear ground") or before.ends_with("on a deposit")):
+			ok = _fail(("the chosen tile %s does not read as bare ground before anything is built, "
+					+ "so the arrival below is not a change: \"%s\"") % [spot, before])
+	if ok:
+		var place: Button = _button_on_row(screen, smelter, "Place")
+		if place == null:
+			ok = false
+		else:
+			place.pressed.emit()
+			_tick(screen, 4)
+	var named := ""
+	if ok:
+		var facts: Dictionary = screen._sim.tile_at(spot)
+		var building: Variant = facts.get("building")
+		if building == null:
+			ok = _fail("pressed `Place` for a smelter at %s and nothing stands there" % spot)
+		else:
+			named = String((building as Dictionary).get("name", ""))
+		if ok and named == "":
+			ok = _fail("the binding gave a building with no `name`; run `make client-lib`")
+		if ok and screen._target_tile() != spot:
+			ok = _fail(("the target moved to %s while the smelter was built, so neither half of this "
+					+ "test is about a stale row") % screen._target_tile())
+		if ok:
+			var drawn := _acting_on_line(screen)
+			var fresh: String = AssayHud.target_line(spot, true, facts)
+			if drawn == "":
+				ok = _fail("no `acting on` line in the do column: %s" % _text_of(screen._actions))
+			elif drawn == before:
+				ok = _fail(("a %s stands on the chosen tile %s and the line has not moved since the "
+						+ "tile was chosen (ASSA-353).\ndrawn: %s\nwanted: %s")
+						% [named, spot, drawn, fresh])
+			elif drawn != fresh:
+				ok = _fail("the drawn line is not the one these facts make.\ndrawn: %s\nwanted: %s"
+						% [drawn, fresh])
+	# **AND THE REVERSE, WHICH IS THE WORSE ONE: the machine is gone and the line goes on naming it.**
+	# Pick up lives in the machine's own menu since ASSA-316; opening that menu does not move the
+	# target (`main.gd:6227-6231` returns before the branch at `:6251` that sets it), so the row's key
+	# is as still here as it was on the way in.
+	#
+	# **IT ONLY HAS TEETH ONCE THE ARRIVAL IS HONEST, AND THAT IS NOT A WEAKNESS OF THE TEST -- IT IS A
+	# FACT ABOUT MAIN.** See the docstring: on main the row is already frozen at `clear ground`, so
+	# removing the building makes the frozen sentence true again and this half cannot see anything.
+	if ok:
+		_click(screen, spot, MOUSE_BUTTON_LEFT)
+		var away := _find(screen._menu_box, "Pick up")
+		if away == null:
+			ok = _fail("the machine menu offers no Pick up: %s" % [_labels_of(screen._menu_box)])
+		else:
+			away.pressed.emit()
+			_tick(screen, 8)
+			var after: Dictionary = screen._sim.tile_at(spot)
+			if after.get("building") != null:
+				ok = _fail("pressed `Pick up` and the sim still has a building on %s" % spot)
+			elif screen._target_tile() != spot:
+				ok = _fail("the target moved to %s during the pick up" % screen._target_tile())
+			else:
+				var drawn := _acting_on_line(screen)
+				var fresh: String = AssayHud.target_line(spot, true, after)
+				if drawn.contains(named):
+					ok = _fail(("the %s was picked up off the chosen tile and the line still names "
+							+ "it (ASSA-353).\ndrawn: %s\nwanted: %s") % [named, drawn, fresh])
+				elif drawn != fresh:
+					ok = _fail(("the drawn line is not the one the emptied tile makes.\ndrawn: %s"
+							+ "\nwanted: %s") % [drawn, fresh])
+	screen.queue_free()
+	return ok
+
+
+## Every slot's DRAWN readout: role -> one comparable string carrying all three things ASSA-351 box 9
+## names (the band, `N of cap`, the held name) plus whether the row is shown at all.
+##
+## **THE BAND IS ITS MARK RECT AND NOT ITS GRAMMAR ALONE.** A band that kept its grammar and moved
+## its fill would be a changed readout that a grammar check calls identical, and the fill is the half
+## a player reads at a glance.
+func _slot_readouts(screen: Node) -> Dictionary:
+	var out := {}
+	for role in screen._menu_slot_rows.keys():
+		var row: Node = screen._menu_slot_rows[role]
+		var band := row.get_node(screen.ROW_BAND) as AssayTrack
+		# THE HELD LINE IS A SIBLING OF THE ROW, not a child of it: `_rebuild_machine_menu_rows` puts
+		# the name on its own line under the fill (a long species was being clipped to an ellipsis in
+		# the fill's own label column), so the group is what carries both.
+		var held := ""
+		for child in row.get_parent().get_children():
+			if child != row and child is Label:
+				held += String((child as Label).text)
+		out[role] = "%s|%s|%s|%d|%s|%s" % [
+				"shown" if (row as Control).visible else "hidden",
+				(row.get_node(screen.ROW_WORDS) as Label).text,
+				(row.get_node(screen.ROW_COUNTS) as Label).text,
+				band.grammar(), band.mark_rect(), held]
+	return out
+
+
+## Every slot's SIM facts: role -> the three numbers a readout is ALLOWED to depend on. Used to find
+## the slots an act did not touch, rather than naming them -- a role spelled here would be a constant
+## this file keeps in step with `SlotRole::name`.
+func _slot_facts(screen: Node) -> Dictionary:
+	var out := {}
+	var facts: Dictionary = screen._sim.tile_at(screen._menu_tile).get("building", {})
+	for entry in facts.get("slots", []) as Array:
+		var slot: Dictionary = entry
+		var held: Variant = slot.get("held")
+		out[String(slot.get("role", "?"))] = "%d/%d/%s" % [int(slot.get("count", 0)),
+				int(slot.get("cap", 0)),
+				String((held as Dictionary).get("name", "")) if held != null else ""]
+	return out
+
+
+## **A WALKABLE TILE FAR ENOUGH AWAY THAT NO READING OF `REACH` LETS YOU PUT ANYTHING IN.** Movement
+## is plain signum stepping with no obstacle test (`step.rs::move_players`), so the only thing that
+## can stop the walk is the world's edge -- which is why this picks a direction rather than trusting
+## one, and why the caller asserts arrival instead of counting ticks.
+##
+## `WELL_AWAY` is not the rule and is not asserted against: `REACH` is the sim's and this file may
+## not spell it. It is a distance comfortably past any value `REACH` could hold, and the test's real
+## premise is the measured pressability map, not this number.
+const WELL_AWAY := 9
+
+
+func _a_tile_well_away_from(screen: Node, tile: Vector2i) -> Vector2i:
+	var size: Vector2i = screen._sim.size_tiles()
+	for step in [Vector2i.RIGHT, Vector2i.LEFT, Vector2i.DOWN, Vector2i.UP]:
+		var there: Vector2i = tile + (step as Vector2i) * WELL_AWAY
+		if there.x >= 0 and there.y >= 0 and there.x < size.x and there.y < size.y:
+			return there
+	return Vector2i(-1, -1)
+
+
+## How many put controls the sim would let a press through on, **PER SLOT, keyed by role.**
+##
+## **IT WAS ONE NUMBER FOR THE WHOLE MENU AND THAT MADE THE TEST BELOW PASS OVER ITS OWN BUG.**
+## Measured, not reasoned: with the readout deliberately wired to `+` when its slot had a pressable
+## offer, the suite stayed 516/0. The reason is that loading the fuel slot moves pressability on the
+## FUEL slot -- the one slot the comparison excludes, because its own contents changed -- while the
+## input slot kept a pressable offer throughout (`_mine_two_species` leaves a second ore stack in the
+## pack). So every row being compared was a row nothing had put at risk. A per-slot count lets the
+## test require the change where it is actually looking.
+func _pressable_by_role(screen: Node, building: int) -> Dictionary:
+	var out := {}
+	for crossed in screen._sim.insert_offers(screen._client.player_id, building):
+		var per_slot: Dictionary = crossed
+		var n := 0
+		for offer in per_slot.get("offers", []) as Array:
+			n += 0 if (offer as Dictionary).has("refusal") else 1
+		out[String(per_slot.get("role", "?"))] = n
+	return out
+
+
+## **A SLOT'S READOUT ROW IS THE SAME WHETHER OR NOT THAT SLOT HAS ANYTHING TO PRESS** (ASSA-351
+## box 9, re-asked by Maren at 05:57 once ASSA-334's spine was on main).
+##
+## **IT IS CLOSE TO TRUE BY CONSTRUCTION, WHICH IS THE REASON TO ASSERT IT RATHER THAN NOT TO.**
+## `_refresh_machine_slot_fills` reads `role`, `count` and `cap` off the sim's slot entry and never
+## consults a refusal, so Maren named the only way it breaks: *"if the refusal crossing changes what
+## `slots` contains or what order it comes in -- and that is exactly the kind of thing no one would
+## notice."* This is the test for that, and nothing else.
+##
+## **THE LEVER IS THE PLAYER'S FEET, AND IT IS THE ONLY ONE THAT STAGES THE BOX.** The box asks for a
+## row that is the same WITH and WITHOUT a pressable offer, so the lever has to take a slot's
+## pressability to zero while that slot's own numbers stand perfectly still. **Measured, both ways
+## round, after an earlier version of this test went green over its own bug:**
+##
+##     insert into FUEL:  input 2 -> 2, fuel 2 -> 0   (fuel excluded, its contents moved)
+##     insert into INPUT: input 2 -> 0, fuel 2 -> 2   (input excluded, its contents moved)
+##
+## A put is the wrong lever **in principle and not by bad luck**: the only slot whose pressability a
+## put really moves is the slot it fills, and that is the one slot a readout check must exclude,
+## because a row whose own numbers changed is SUPPOSED to be redrawn. The pack cannot reach the
+## others either -- `put all` is clamped to the room (ASSA-48), so the stack survives the insert and
+## goes on being offered; and the one stack a full insert does consume leaves the other species
+## behind, which is `2 -> 1` and would miss a readout wired to a bare *has anything to press*.
+##
+## **WALKING AWAY MOVES EVERY SLOT AT ONCE AND MOVES NO SLOT'S CONTENTS.** `OutOfReach` is tested at
+## `step.rs:706`, above every slot-specific rule, so it refuses all of them; it is contingent -- you
+## can walk back -- so by box 4's criterion every row keeps its place and simply stops being
+## pressable. That is `has -> has not`, on a slot holding something and on an empty one, with
+## `0/50/` and `5/50/<species>` identical on both sides of the act. It is also precisely Maren's
+## named failure mode: *"the one way it breaks is if the refusal crossing changes what `slots`
+## contains or what order it comes in."*
+##
+## The `MoveTo` is submitted rather than clicked **because a left click with a menu open is a
+## dismissing click** (ASSA-316) and would close the surface being measured. The click path is two
+## other tests' business; this one is about the row.
+##
+## **EVERY PREMISE FAILS LOUDLY.** A fixture that staged no change in pressability, or one where
+## every slot's contents moved, would pass this with the readout wired straight to the refusal -- so
+## zero compared rows is a failure that prints both maps, and a walk that did not happen is a
+## failure before anything is compared.
+func test_a_slots_readout_row_is_the_same_with_and_without_a_pressable_offer() -> bool:
+	var screen := _joined()
+	if not _mine_two_species(screen):
+		screen.queue_free()
+		return false
+	var id := _a_placed_smelter(screen)
+	if id < 0:
+		screen.queue_free()
+		return false
+	_click(screen, screen._target_tile(), MOUSE_BUTTON_LEFT)
+
+	# PART-FILL THE FUEL SLOT FIRST, so one of the two compared rows carries a real band fill and a
+	# held name rather than three empty rows agreeing with each other. PART-fill: at the cap the slot
+	# answers `SlotFull` to everything and its pressability is already zero before the act.
+	var ore := _stack_of(screen, "ore")
+	if ore.is_empty():
+		screen.queue_free()
+		return _fail("no ore in the pack, so this menu has nothing to put anywhere")
+	screen._insert_into(id, ore, AssayActions.SLOT_FUEL, 5)
+	_tick(screen, 2)
+
+	var rows_before := _slot_readouts(screen)
+	var facts_before := _slot_facts(screen)
+	var live_before := _pressable_by_role(screen, id)
+	if rows_before.is_empty():
+		screen.queue_free()
+		return _fail("the menu drew no slot readout rows, so box 9 has nothing to compare")
+
+	# **THE ACT: WALK OUT OF REACH WITH THE MENU OPEN.** Far enough that no reading of `REACH` makes
+	# it close, and the distance is not the assertion -- the pressability map is.
+	var away := _a_tile_well_away_from(screen, screen._menu_tile)
+	if away.x < 0:
+		screen.queue_free()
+		return _fail("no in-bounds tile %d away from the menu's building at %s to walk to"
+				% [WELL_AWAY, screen._menu_tile])
+	_asked.append(AssayActions.move_to(away))
+	_tick(screen, 2 * WELL_AWAY + 4)
+	if screen._my_tile() != away:
+		screen.queue_free()
+		return _fail(("walked off toward %s to put every offer out of reach and stopped at %s, so "
+				+ "the act never happened") % [away, screen._my_tile()])
+
+	var live_after := _pressable_by_role(screen, id)
+	var rows_after := _slot_readouts(screen)
+	var facts_after := _slot_facts(screen)
+	var ok := true
+	var compared := 0
+	for role in facts_before.keys():
+		# Only the slots the act did not move. A slot whose own count, cap or held item changed has
+		# every right to a different row, and excluding it BY MEASURING rather than by naming it is
+		# what keeps this honest: a named exclusion would also excuse a real bug in that row.
+		if not facts_after.has(role) or facts_after[role] != facts_before[role]:
+			continue
+		# **AND ONLY THE SLOTS WHOSE PRESSABILITY ACTUALLY MOVED**, which is the premise this test
+		# lacked and quietly passed without. A row that was never at risk proves nothing about
+		# whether the readout depends on the crossing: with the readout deliberately wired to its
+		# slot's pressable count, the whole suite stayed 516/0, because the only slot a put moved
+		# was the one slot this loop has to skip.
+		if int(live_after.get(role, 0)) == int(live_before.get(role, 0)):
+			continue
+		if not rows_after.has(role):
+			ok = _fail(("the `%s` slot's own numbers did not change and its readout row is GONE: "
+					+ "the crossing changed what `slots` contains, which is the one way box 9 "
+					+ "breaks. rows now: %s") % [role, rows_after.keys()])
+			continue
+		# **EVERY OFFENDING ROW IS NAMED, NOT THE FIRST.** This stopped at the first failure and the
+		# empty `input` row sorts ahead of the part-filled `fuel` one, so a lever reddening both read
+		# as a lever reddening one -- and I could not tell from the output whether the row carrying a
+		# real band fill and a held name was being compared at all. It is: both levers name both.
+		compared += 1
+		if rows_after[role] != rows_before[role]:
+			ok = _fail(("the `%s` slot holds exactly what it held (%s) and its readout row changed "
+					+ "when the menu's pressable controls did.\nbefore: %s\nafter:  %s")
+					% [role, facts_before[role], rows_before[role], rows_after[role]])
+	if ok and compared == 0:
+		ok = _fail(("NO ROW WAS COMPARED, so the box is untested rather than passing: this needs one "
+				+ "slot whose own contents stayed put AND whose pressable offers changed. slot "
+				+ "facts %s -> %s, pressable per role %s -> %s")
+				% [facts_before, facts_after, live_before, live_after])
+	screen.queue_free()
+	return ok
+
+
+## ------------------------------------------------------------------------------------------------
+## BLOCK 5 ON THE ASSEMBLY PATH: THE MASS/BUDGET FILL (ASSA-369 box 1)
+##
+## Maren's §5.1: *"Mass against the frame's budget — a RATIO with a hard end. A ratio fill; the
+## axis's end is the budget. When mass is over, the fill is full and the sim's verdict supplies the
+## word. The client never colours this red by arithmetic."*
+## ------------------------------------------------------------------------------------------------
+
+## The one row block 5 draws while assembling, or null.
+func _mass_row(screen: Node) -> AssayReadingRow:
+	for child in screen._build_detail.get_children():
+		if child is AssayReadingRow:
+			return child
+	return null
+
+
+## **THE FILL IS FULL WHEN AND ONLY WHEN THE SIM STOPS SAYING `SAFE`, AND THAT IS THE WHOLE CLAIM.**
+##
+## **ASSERTED AGAINST THE SIM'S OWN WORD, NEVER AGAINST A WIDTH I TYPED.** The client holds four
+## numbers it is forbidden to compare (`design_readout`'s standing warning), so the only honest
+## statement about this picture is that it agrees with the comparison the sim already published:
+## `SAFE` is `mass_high <= budget_low` (`assembly.rs::StatRange::verdict`), which is exactly the
+## pair the fill is fed. A test asserting "the fill is 0.42 of the track" would be asserting the
+## value I set — this asserts the property.
+##
+## **AND IT CHECKS THE VALUE COLUMN IS EMPTY** (box 4): the figures live in the commit bar, and one
+## fact with two homes is the defect ASSA-316 ruling 6 names.
+func test_the_mass_fill_agrees_with_the_sims_own_verdict() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var frame := _roomiest_frame()
+	if frame.is_empty():
+		return _fail("the sim's catalogue has no frame, so this test proves nothing")
+	screen._build_verb = screen.BUILD_ASSEMBLE
+	screen._building = [_part_stack_of(String(frame.get("kind", "")))]
+	screen._rebuild_build_detail()
+	if not screen._build_detail.visible:
+		return _fail("block 5 is hidden with a frame chosen, so the half of the screen this item is "
+				+ "about still says nothing")
+	var row := _mass_row(screen)
+	if row == null:
+		return _fail("block 5 draws no reading row on the assembly path: %s"
+				% [screen._build_detail.get_children()])
+	if row.value_text() != "":
+		return _fail(("the fill carries the text `%s`. The relationship is this rect's job and the "
+				+ "figures are the bar's: one fact, one home") % row.value_text())
+	var track := row.track()
+	if track.grammar() != AssayTrack.Grammar.AMOUNT:
+		return _fail(("the mass mark is grammar %s. Mass against a budget is a RATIO with a hard "
+				+ "end, not a reading float") % track.grammar())
+	var readout: Dictionary = screen._design_readout()
+	var verdict := String(readout.get("verdict", ""))
+	if verdict == "" and not bool(readout.get("unfinished", false)):
+		return _fail("the sim says neither a verdict nor `unfinished` about this design: %s"
+				% [readout])
+	# THE TWO SIDES OF THE ONE CLAIM. `full` is the track's own geometry; `safe` is the sim's word.
+	var full: bool = track.mark_rect().size.x >= AssayTrack.WIDTH_PX
+	var safe := int(readout.get("mass_high", 0)) <= int(readout.get("budget_low", 0))
+	if verdict != "" and safe != (verdict == "SAFE"):
+		return _fail(("the sim says `%s` but mass_high %d against budget_low %d reads %s: this "
+				+ "test's premise about which pair decides SAFE is wrong, not the fill")
+				% [verdict, int(readout.get("mass_high", 0)), int(readout.get("budget_low", 0)),
+				"safe" if safe else "not safe"])
+	if full == safe:
+		return _fail(("the fill is %s while the sim's own comparison says %s (mass_high %d of "
+				+ "budget_low %d, verdict `%s`). A full fill must mean exactly what losing `SAFE` "
+				+ "means, or the picture and the word in the bar disagree")
+				% ["full" if full else "not full", "safe" if safe else "not safe",
+				int(readout.get("mass_high", 0)), int(readout.get("budget_low", 0)), verdict])
+	# **AND THE WIDTH ITSELF, BECAUSE THE CLAUSE ABOVE CANNOT FAIL ON ITS OWN.** `full` is a
+	# boolean: a design comfortably inside its budget reads "not full" under EITHER pairing of the
+	# four numbers, so swapping in `mass_low`/`budget_high` -- the pair `WILL BREAK` turns on --
+	# left the whole suite green when I levered it. A test that agrees with the mutation it exists
+	# to catch is one more thing agreeing with me.
+	#
+	# This asks the track's own arithmetic for the width those two sim numbers imply and compares
+	# it to the mark that was drawn. It is not re-deriving the fill: it is checking WHICH PAIR the
+	# row was fed, which is the one decision this client makes here.
+	var want := AssayTrack.amount_width(int(readout.get("mass_high", 0)),
+			int(readout.get("budget_low", 0)), AssayTrack.WIDTH_PX)
+	if not is_equal_approx(track.mark_rect().size.x, want):
+		return _fail(("the fill is %.2f px and mass_high %d of budget_low %d is %.2f px. The fill "
+				+ "is fed some other pair of the four numbers the sim crossed, and the one it must "
+				+ "be fed is the one `SAFE` is decided on. Readout: %s")
+				% [track.mark_rect().size.x, int(readout.get("mass_high", 0)),
+				int(readout.get("budget_low", 0)), want, readout])
+	return true
+
+
+## **IT IS LIVE: MOUNTING A PART MOVES THE FILL** (box 3). The board's own complaint about this
+## screen was *watch the numbers move*, and the right column was measured identical to the pixel
+## across a mount that flips the bar's verdict.
+##
+## **THE CONTROL IS THE SIM, AGAIN.** A mount that the sim says adds no mass could not move it and
+## would be a true failure of this test to report, so the sim's own `mass_high` is read before and
+## after and the test refuses to run if the two agree — rather than passing because nothing happened
+## twice.
+func test_the_mass_fill_moves_when_a_part_is_mounted() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var frame := _roomiest_frame()
+	var mounts := String(frame.get("mounts", ""))
+	if frame.is_empty() or mounts == "":
+		return _fail("no frame in the sim's catalogue takes a part, so there is nothing to mount")
+	screen._build_verb = screen.BUILD_ASSEMBLE
+	screen._building = [_part_stack_of(String(frame.get("kind", "")))]
+	screen._rebuild_build_detail()
+	var bare := _mass_row(screen)
+	if bare == null:
+		return _fail("block 5 draws no row for a bare frame")
+	var before: float = bare.track().mark_rect().size.x
+	var mass_before := int((screen._design_readout() as Dictionary).get("mass_high", 0))
+	screen._building.append(_part_stack_of(mounts))
+	screen._rebuild_build_detail()
+	var loaded := _mass_row(screen)
+	if loaded == null:
+		return _fail("block 5 draws no row once a `%s` is mounted" % mounts)
+	var after: float = loaded.track().mark_rect().size.x
+	var mass_after := int((screen._design_readout() as Dictionary).get("mass_high", 0))
+	if mass_after == mass_before:
+		return _fail(("mounting a `%s` leaves the sim's own mass at %d, so a fill that did not move "
+				+ "would be right and this test proves nothing") % [mounts, mass_after])
+	if is_equal_approx(after, before):
+		return _fail(("the fill is %.1f px wide with a bare frame and %.1f px with a `%s` mounted, "
+				+ "while the sim's mass went %d -> %d. The one column of this screen a player's own "
+				+ "press should move does not move") % [before, after, mounts, mass_before,
+				mass_after])
+	return true
+
+
+## **AND A FRAME SWITCH MOVES IT TOO** (box 3's second half), because the axis's END is the frame's
+## budget: the same parts under a roomier frame are a smaller share of it.
+##
+## **THE PARTS ARE HELD AND ONLY THE FRAME CHANGES, AND THE FIRST VERSION OF THIS TEST DID NOT DO
+## THAT.** It switched between two BARE frames, found both drawing the same 47.8 px fill, and called
+## the axis broken. It is not: a bare frame's mass is `size x density` and its budget is
+## `size x strength x FRAME_BUDGET_PER_STRENGTH` (`assembly.rs::PART_SPECS`), **so the frame's size
+## cancels and the ratio is a fact about the MATERIAL, identical for every frame made of it.** Worth
+## knowing rather than asserting around: until something is mounted, this fill does not tell two
+## frames apart, and it cannot be made to without the client inventing a number.
+##
+## Both frames in the catalogue require exactly one `head`, which is what makes the numerator
+## holdable across the switch.
+func test_the_mass_fill_moves_when_the_frame_is_switched() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	screen._build_verb = screen.BUILD_ASSEMBLE
+	var frames := PackedStringArray()
+	var shared := ""
+	for entry in AssaySimHost.part_kinds():
+		var row: Dictionary = entry
+		if not bool(row.get("is_frame", false)):
+			continue
+		frames.append(String(row.get("name", "")))
+		# THE PART EVERY FRAME REQUIRES, out of the sim's own slot table rather than typed: that is
+		# the only part that can be mounted on all of them, so it is the only honest way to hold the
+		# numerator still while the denominator moves.
+		var needs := PackedStringArray()
+		for slot in (row.get("slots", []) as Array):
+			var limit: Dictionary = slot
+			if int(limit.get("min", 0)) >= 1:
+				needs.append(String(limit.get("name", "")))
+		if shared == "":
+			shared = needs[0] if needs.size() > 0 else ""
+		elif not needs.has(shared):
+			shared = ""
+	if frames.size() < 2:
+		return _fail("the sim's catalogue has %d frame(s), so there is no frame switch to watch"
+				% frames.size())
+	if shared == "":
+		return _fail(("no one part is required by every frame in %s, so the design's mass cannot "
+				+ "be held across the switch and this test cannot isolate the budget") % [frames])
+	var seen := {}
+	for kind in frames:
+		screen._building = [_part_stack_of(kind), _part_stack_of(shared)]
+		screen._rebuild_build_detail()
+		var drawn := _mass_row(screen)
+		if drawn == null:
+			return _fail("block 5 draws no row for frame `%s` with a `%s` on it" % [kind, shared])
+		var readout: Dictionary = screen._design_readout()
+		seen[kind] = {"budget": int(readout.get("budget_low", 0)),
+				"mass": int(readout.get("mass_high", 0)),
+				"fill": drawn.track().mark_rect().size.x}
+	var budgets := {}
+	for kind in seen:
+		budgets[int((seen[kind] as Dictionary)["budget"])] = kind
+	if budgets.size() < 2:
+		return _fail(("every frame in the catalogue reads budget %s, so a fill that ignored the "
+				+ "frame entirely would pass this test") % [budgets.keys()])
+	var fills := {}
+	for kind in seen:
+		fills[(seen[kind] as Dictionary)["fill"]] = kind
+	if fills.size() < 2:
+		return _fail(("%d frames carrying the same `%s` read %d different budgets and draw the "
+				+ "same fill %s: the axis's end is not the frame's budget. Readings: %s")
+				% [seen.size(), shared, budgets.size(), fills.keys(), seen])
+	return true
+
+
+## **A DESIGN THE SIM REFUSES DRAWS NO FILL, AND IT IS NOT SPECIAL-CASED** (box 5).
+##
+## Park one part too many and `design_readout` answers every number 0. The fill then asks for 0 of 0
+## and `AssayTrack` draws nothing — its own documented answer for an absent fact, reached through
+## the same call every other caller makes. **The screen must agree with its own `Build`**: keeping a
+## number alive for a design the rules throw out is the screen telling a player something the press
+## will not honour.
+##
+## The failure this guards is the tempting one: a client that clamped `budget <= 0` to "full" would
+## paint a confident full bar for a design nobody can build.
+func test_an_over_full_design_draws_no_fill_rather_than_a_confident_one() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var frame := _roomiest_frame()
+	var mounts := String(frame.get("mounts", ""))
+	var room := int(frame.get("room", 0))
+	if frame.is_empty() or mounts == "" or room <= 0:
+		return _fail("no frame in the sim's catalogue has a bounded slot, so nothing can be parked")
+	screen._build_verb = screen.BUILD_ASSEMBLE
+	screen._building = [_part_stack_of(String(frame.get("kind", "")))]
+	for _i in range(room + 1):
+		screen._building.append(_part_stack_of(mounts))
+	screen._rebuild_build_detail()
+	var readout: Dictionary = screen._design_readout()
+	if int(readout.get("budget_low", 0)) != 0 or int(readout.get("mass_high", 0)) != 0:
+		return _fail(("the sim still prices a `%s` with %d `%s` on a slot that takes %d: %s. This "
+				+ "test is not in the refused state it is about")
+				% [String(frame.get("kind", "")), room + 1, mounts, room, readout])
+	var row := _mass_row(screen)
+	if row == null:
+		return _fail("block 5 draws no row at all for a refused design; the heading is shown, so "
+				+ "the row is what says the sim has no position to report")
+	if row.track().grammar() != AssayTrack.Grammar.NOTHING:
+		return _fail(("a refused design draws grammar %s with a %.1f px mark. 0 of 0 is an absent "
+				+ "fact, and a fill drawn for it is the screen disagreeing with its own Build")
+				% [row.track().grammar(), row.track().mark_rect().size.x])
+	return true

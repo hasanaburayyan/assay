@@ -17,8 +17,8 @@ use sim::tuning::{HAND_MINE_MAX_HARDNESS, YIELD_BY_GRADE};
 use sim::{
     Assembly, BuildingId, BuildingKind, DepositId, Event, Grade, Input, Item, ItemKind,
     MachineIdle, MachineStall, MachineState, Mount, PART_SPECS, Part, PartKind, PlayerCommand,
-    PlayerId, Sheet, Slot, SmelterStall, SmelterState, Source, SpeciesId, Stat, SystemCommand,
-    TilePos, World, WorldConfig, step,
+    PlayerId, Sheet, Slot, SmelterIdle, SmelterStall, SmelterState, Source, SpeciesId, Stat,
+    SystemCommand, TilePos, World, WorldConfig, step,
 };
 
 const WALLS: SpeciesId = SpeciesId(0); // smelter material, and the ore it can take
@@ -292,7 +292,7 @@ fn a_cold_smelter_is_still_reported_long_after_its_event_has_scrolled_away() {
         reason_in(&lines[0]),
         format!(
             "stalled: {}",
-            sim::debug::stall_reason(SmelterStall::FuelWontLight)
+            sim::debug::stall_reason(&world, SmelterStall::FuelWontLight)
         ),
         "the reason is stall_reason's own words, never a second wording"
     );
@@ -324,7 +324,7 @@ fn a_smelter_with_nothing_in_it_is_not_something_to_fix() {
     let b = world.building(BuildingId(0)).unwrap();
     assert_eq!(
         world.smelter_state(b),
-        SmelterState::Idle,
+        SmelterState::Idle(SmelterIdle::Empty),
         "a smelter is placed empty, so the fixture must be the idle case"
     );
     assert!(!world.building_state(b).halted());
@@ -368,7 +368,7 @@ fn a_drill_that_is_merely_idle_is_something_to_fix_and_a_smelter_is_not() {
         "the idle drill is the one thing reported"
     );
     assert_ne!(
-        SmelterState::Idle.halted(),
+        SmelterState::Idle(SmelterIdle::Empty).halted(),
         MachineState::Idle(MachineIdle::NoDeposit).halted(),
         "the asymmetry is the ruling, not an oversight: a smelter's idle is \
          normal and a machine's idle is a misplacement"
