@@ -111,6 +111,11 @@ var _ticks_asked := 0
 var _settle := 0
 ## True between the empty shot and the full one, while one part is mounted per frame.
 var _mounting := false
+## **WHETHER THE WORLD-WITH-NO-POP-UP FRAME HAS BEEN TAKEN YET** (ASSA-374). One shot, before
+## anything is opened, so the pair a Game Director judges is the SAME played world a frame apart
+## rather than two runs that happen to look alike.
+var _shot_world := false
+
 ## `refuse` mode's stage: filling the optional boxes.
 var _refusing := false
 ## The shot armed by `_arm`, taken once `_settle` has run out. `""` when none is waiting.
@@ -187,6 +192,16 @@ func _process(_delta: float) -> bool:
 		return false
 	if not _played():
 		return _done
+	# **THE WORLD BEFORE ANY POP-UP, WHICH IS HALF OF ASSA-374's PAIR.** Taken the frame the loop
+	# finishes and BEFORE `_open_and_settle` below, so the two frames a Game Director compares differ
+	# in exactly one thing: whether a pop-up is holding the accent. `_write` rather than `_shoot`,
+	# because `_measure` asserts the build screen is visible and here it deliberately is not.
+	if not _shot_world:
+		_shot_world = true
+		_report_world_accent()
+		_write("world-no-popup")
+		_end_phase("world-no-popup")
+		return false
 	if not _shot:
 		_shot = true
 		_open_and_settle()
@@ -746,7 +761,56 @@ func _measure() -> void:
 				% [AssayHud.WORLD_CONTROLS_BAND, world.end.y - top])
 	_report_mount_rows()
 	_report_make_subject()
+	_report_stood_down()
 	_measure_commit_bar(screen_rect)
+
+
+## **THE WORLD OWNS THE ACCENT WHEN NOTHING IS OPEN, WHICH IS THE PRECONDITION OF ASSA-374's PAIR.**
+##
+## Maren's ruling is that the world's `Primary` stands DOWN while a pop-up holds one, and she asked
+## for a 1x pair to judge whether the stood-down column reads as not-primary or as **switched off**
+## -- a question whose answer could reverse the ruling. **A pair where `Mine` was never accented in
+## the first frame cannot answer it**, and would spend the Game Director's judgement on an honest
+## blank. So this faults rather than shooting one: `Mine` takes the rank only on hand-minable ground
+## with a live link (ASSA-233/251), and whether the played loop happens to end standing on a deposit
+## is not something this tool should leave to luck.
+func _report_world_accent() -> void:
+	var mine := _find(_screen._actions, "Mine")
+	var open: bool = _screen._build_box.visible
+	print("ACCENT   no pop-up open: build box visible=%s · `Mine` variation `%s`"
+			% [open, "absent" if mine == null else String(mine.theme_type_variation)])
+	if open:
+		_faults.append("the build screen is already open in the world frame, so this is not the "
+				+ "no-pop-up half of the pair")
+	if mine == null:
+		_faults.append("there is no `Mine` button in the world frame, so the pair has nothing to "
+				+ "say about the world's accent standing down")
+		return
+	if mine.theme_type_variation != &"Primary":
+		_faults.append(("`Mine` is `%s` and not `Primary` with no pop-up open, so the world never "
+				+ "had the accent and this pair cannot show it standing down: the loop did not end "
+				+ "on hand-minable ground with a live link (ASSA-233/251)")
+				% String(mine.theme_type_variation))
+
+
+## **AND IT HAS STOOD DOWN ONCE A POP-UP HOLDS ONE** (ASSA-374, the other half). Called from
+## `_measure`, where the build screen is up by construction, so the two halves are asserted on the
+## two frames a reader is about to compare rather than on one and an assumption.
+func _report_stood_down() -> void:
+	var mine := _find(_screen._actions, "Mine")
+	if mine == null:
+		# NOT A FAULT: the column legitimately holds no `Mine` off minable ground, and the world
+		# frame above is where that is already refused. Said rather than skipped silently.
+		print("ACCENT   pop-up open: no `Mine` in the column, so nothing to stand down here")
+		return
+	print("ACCENT   pop-up open: `Mine` variation `%s` · disabled=%s"
+			% [String(mine.theme_type_variation), mine.disabled])
+	if mine.theme_type_variation == &"Primary":
+		_faults.append("`Mine` still carries `Primary` while a pop-up holds the accent: two greens "
+				+ "on one screen (ASSA-374)")
+	if mine.disabled:
+		_faults.append("`Mine` is DISABLED while the pop-up is open; the ruling stands it down to "
+				+ "the default weight and leaves it pressable (ASSA-374)")
 
 
 ## **A MAKE-PATH SHOT WHOSE SUBJECT IS ABSENT MAY NOT SAY `SHOT OK`** (ASSA-383).

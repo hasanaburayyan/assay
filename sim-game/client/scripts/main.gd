@@ -4406,7 +4406,18 @@ func _refresh_actions() -> void:
 		# missing id just keeps the old value, and that file already pushes the error.
 		if b.has("id"):
 			building_here = int(b["id"])
-	var signature := "%s/%s/%s/%s/%s/%s" % [target, _targeted, _building, minable, live, building_here]
+	# **AND WHETHER A POP-UP IS HOLDING THE ACCENT, FOR THE THIRD TIME THE REASON ABOVE IS WRITTEN**
+	# (ASSA-374). `Mine` stands down while the build screen is up, and opening or closing that screen
+	# moves NONE of the other terms here -- not the target, not the cursor, not the rock, not the
+	# link. Left out, the row keeps the accent it had when the pop-up opened and gets it back only
+	# when something unrelated happens to move, which is `minable`'s defect and `live`'s defect again.
+	#
+	# **MEASURED: the guard below was CORRECT and did nothing without this term.** With the `if`
+	# already asking `_popup_holds_the_accent` and this signature unchanged, the test read two
+	# `Primary` controls with the build screen open -- the row simply never rebuilt.
+	var accented := _popup_holds_the_accent()
+	var signature := "%s/%s/%s/%s/%s/%s/%s" % [target, _targeted, _building, minable, live,
+			building_here, accented]
 	if signature == _actions_showing:
 		return
 	_actions_showing = signature
@@ -4432,9 +4443,28 @@ func _refresh_actions() -> void:
 	# comes from `sim::ladder::hand_minable`; the client may not re-derive "hardness <= 40 at grade",
 	# and could not honestly anyway -- a sheet reads as a 25-wide BAND until the species is assayed,
 	# so this screen does not know the hardness it would need. One bit, from the one authority.
+	#
+	# **AND IT STANDS DOWN WHILE A POP-UP CARRYING ITS OWN `Primary` IS OPEN** (ASSA-374, Maren's
+	# ruling, on a collision of two of her own rules). Her §4 keeps this column uncovered while the
+	# build screen is up and ASSA-317 ruling 5 makes `Build` *"the one ACCENT"*, so a green `Mine` and
+	# a green `Build` sat on one 1280x720 screen together -- against ASSA-335 ruling 1, *accent marks
+	# the one act a screen is for, one region per screen*. With the build screen up that act is
+	# `Build`: a pop-up is the answer to a question the player just asked, and two greens makes them
+	# choose between answers while their question is still open.
+	#
+	# **IT DISABLES NOTHING.** Standing down to the default weight is not a grey-out -- `Stop` and
+	# `Assay` have always sat there and are pressable. Same callback, same tooltip, same hover and
+	# pressed states; the rank returns the moment the pop-up closes.
+	#
+	# **AND THE CONDITION IS THE POP-UP *HAVING* A `Primary`, NOT A POP-UP EXISTING** -- which is why
+	# `_popup_holds_the_accent` walks for one rather than naming the build screen. A machine menu has
+	# no primary act by ASSA-316, so standing `Mine` down for it would leave the screen with no accent
+	# at all: a loss with nothing bought. Her rule is *never two at once*, not *the world dims when
+	# anything opens*, and a structural test keeps those two apart without this file deciding which
+	# pop-up is which.
 	var mine_button := _button("Mine", func() -> void: _act("Mine", AssayActions.mine()),
 			"hand-mine the deposit under you. Keeps swinging until you Stop.")
-	if minable and live:
+	if minable and live and not accented:
 		mine_button.theme_type_variation = &"Primary"
 	here.add_child(mine_button)
 	here.add_child(_button("Stop", func() -> void: _act("Stop", AssayActions.stop()),
@@ -5015,6 +5045,31 @@ func _close_build_screen() -> void:
 ## the same question rather than each spelling `_build_verb != ""`.
 func _build_screen_open() -> bool:
 	return _build_verb != "" and is_instance_valid(_build_box)
+
+
+## **IS A POP-UP OPEN THAT CARRIES ITS OWN `Primary`?** (ASSA-374.)
+##
+## **THE QUESTION IS ASKED OF THE TREE, NOT OF A LIST OF POP-UP NAMES**, and that is the whole point.
+## Maren's rule is *never two accents at once*, not *the world dims when anything opens*: the build
+## screen has a primary act (`Build`), a machine menu has none by ASSA-316, and standing the world's
+## `Primary` down for the menu would leave the screen with no accent at all. Naming the build screen
+## here would encode today's answer to a question the next pop-up re-asks; walking for the variation
+## means a pop-up that grows a `Primary` later is handled on the day it grows one, and one that loses
+## it gives the world its accent back -- neither needing anyone to find this function.
+##
+## **ONLY VISIBLE POP-UPS COUNT.** Both boxes outlive their open state (`_build_box.visible = false`
+## is how the screen closes), so a walk that ignored visibility would keep the column stood down for
+## the rest of the session -- a rank that never comes back, which is the half of the ruling that says
+## it must.
+func _popup_holds_the_accent() -> bool:
+	for root in [_build_box, _menu_box]:
+		var box := root as Control
+		if not is_instance_valid(box) or not box.visible:
+			continue
+		for child in box.find_children("*", "Button", true, false):
+			if (child as Button).theme_type_variation == &"Primary":
+				return true
+	return false
 
 
 ## **EVERY OFFER THE SIM MAKES FOR THE ROW THIS SCREEN IS OPEN ON** -- same `verb` and same `tag`, one

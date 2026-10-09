@@ -4906,3 +4906,176 @@ func test_an_over_full_design_draws_no_fill_rather_than_a_confident_one() -> boo
 				+ "fact, and a fill drawn for it is the screen disagreeing with its own Build")
 				% [row.track().grammar(), row.track().mark_rect().size.x])
 	return true
+
+
+## **ONE `Primary` ON THE SCREEN, AND THE WORLD'S STANDS DOWN WHILE A POP-UP HOLDS THE ACCENT**
+## (ASSA-374; Maren's ruling on a collision between two of her own rules).
+##
+## Her §4 keeps the panel column uncovered while the build screen is up and ASSA-317 ruling 5 makes
+## `Build` *"the one ACCENT"* -- so a green `Mine` and a green `Build` sat on one 1280x720 screen
+## together, against ASSA-335 ruling 1: *accent marks the one act a screen is for, one region per
+## screen.*
+##
+## **THE PRECONDITION IS WALKED TO AND THEN ASSERTED, because without it this test passes on a screen
+## where `Mine` was never accented at all.** `Mine` earns the rank only on hand-minable ground with a
+## live link (ASSA-233/251), and a fresh spawn is not standing on a deposit -- the first run of this
+## test proved that by failing its own precondition rather than passing. So it walks to the starter
+## deposit the way `_mine_some_ore` does, and refuses out loud if the world never gave up its accent.
+##
+## **THE COUNT IS OVER THE WHOLE TREE, NOT OVER THE TWO CONTROLS I SUSPECT.** A check comparing
+## `mine_button` with `_build_act` would pass a third site taking the variation later; the defect is
+## *"two accents on one screen"*, so the measurement is every visible `Button` under the screen.
+##
+## **AND IT HOLDS THE OTHER DIRECTION: A POP-UP WITHOUT A `Primary` MUST NOT STAND THE WORLD DOWN.**
+## A machine menu has no primary act by ASSA-316, so dimming `Mine` for it would leave the screen
+## with no accent at all -- a loss with nothing bought. Maren's rule is *never two at once*, not *the
+## world dims when anything opens*, and only the second half of this test tells those apart.
+func test_only_one_primary_is_on_screen_while_a_popup_holds_the_accent() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := true
+	var deposit := AssaySessionPlan.nearest_of_species(screen._sim.deposits(),
+			screen._sim.starter_pair()[0], screen._my_tile(), 0)
+	if deposit.is_empty():
+		ok = _fail("the offline world has no starter deposit, so there is no minable ground to "
+				+ "stand on and `Mine` could never have earned the accent")
+	else:
+		var centre: Vector2i = deposit.get("center", Vector2i.ZERO)
+		_click(screen, centre, MOUSE_BUTTON_LEFT)
+		_tick(screen, PATIENCE)
+		if screen._my_tile() != centre:
+			ok = _fail("walked toward the deposit at %s and stopped at %s"
+					% [centre, screen._my_tile()])
+	if ok:
+		# **THE DOOR IS SHUT BY HAND, BECAUSE THIS SUITE HAS NO FRAMES** (ASSA-377's finding, one
+		# consequence down). `_refresh_join_band` is what hides `Play solo` at stage `JOINED`, and it
+		# is only ever called from the per-frame refresh -- which never runs here, so a joined fixture
+		# still has the door's `Primary` standing in the tree. **Measured, not assumed:** the first
+		# run of this test reported *"`Build` (hidden by BuildScreen) · `Play solo` (shown) · `Mine`
+		# (shown)"*, and I had been about to exclude the door by name. Calling the refresh the frame
+		# would have called puts the screen in the state a joined player is actually in, and then the
+		# count can be over the WHOLE tree with nothing special-cased.
+		screen._refresh_join_band()
+		var door := screen._solo_button as Button
+		if door != null and _hidden_by(door, screen) == null:
+			ok = _fail(("`Play solo` is still showing in a joined world, so the door's accent is on "
+					+ "screen with the world's and this count cannot be about `Mine` and `Build`: "
+					+ "every `Primary` in the tree: %s") % _primary_report(screen))
+	if ok:
+		# THE PRECONDITION: the world's own accent has to be there before it can stand down.
+		var mine := _find(screen._actions, "Mine")
+		if mine == null:
+			ok = _fail("no `Mine` button in the `do` section after walking onto the deposit")
+		elif mine.theme_type_variation != &"Primary":
+			ok = _fail(("`Mine` is not `Primary` while standing on the starter deposit with a live "
+					+ "link, so the fixture never gave the world its accent and nothing below is "
+					+ "about standing one down (ASSA-233/251)"))
+		elif _primaries_on(screen) != 1:
+			var hid := _hidden_by(mine, screen)
+			ok = _fail(("the screen shows %d `Primary` controls before any pop-up opens, while "
+					+ "`Mine` itself IS `Primary` -- so this count is not measuring what it is "
+					+ "about. `Mine` is hidden by `%s`; every `Primary` in the tree: %s")
+					% [_primaries_on(screen), "nothing" if hid == null else hid.name,
+					_primary_report(screen)])
+	if ok:
+		# **THE REAL OPEN PATH, so the predicate reads the tree the client actually builds.**
+		screen._open_build_screen({"verb": "make", "tag": null, "species": 0, "grade": "C"})
+		screen._refresh_actions()
+		if not screen._popup_holds_the_accent():
+			ok = _fail("the build screen is open and nothing in it reports a `Primary`, so this "
+					+ "test cannot tell a stood-down world from a missing one")
+		elif _primaries_on(screen) != 1:
+			ok = _fail(("%d `Primary` controls with the build screen open; her ruling is one region "
+					+ "per screen and `Build` owns it here") % _primaries_on(screen))
+		else:
+			var mine := _find(screen._actions, "Mine")
+			if mine == null:
+				ok = _fail("`Mine` is gone from the column while the build screen is open")
+			elif mine.theme_type_variation == &"Primary":
+				ok = _fail("`Mine` keeps the accent while `Build` has one: two greens, one screen")
+			# **STOOD DOWN IS NOT DISABLED**, which is the half of the ruling a count cannot see.
+			elif mine.disabled:
+				ok = _fail("`Mine` was disabled rather than stood down; `Stop` and `Assay` have "
+						+ "always sat at the default weight and are pressable")
+			elif mine.pressed.get_connections().is_empty():
+				ok = _fail("`Mine` lost its callback when it lost the accent")
+			elif mine.tooltip_text == "":
+				ok = _fail("`Mine` lost its tooltip when it lost the accent")
+	if ok:
+		# **AND THE RANK COMES BACK**, or the ruling's own last clause is unmet.
+		screen._close_build_screen()
+		screen._refresh_actions()
+		var mine := _find(screen._actions, "Mine")
+		if _primaries_on(screen) != 1:
+			ok = _fail("%d `Primary` controls once the pop-up is closed" % _primaries_on(screen))
+		elif mine == null or mine.theme_type_variation != &"Primary":
+			ok = _fail("`Mine` did not get its rank back when the build screen closed")
+	if ok:
+		# **THE OTHER DIRECTION, ON THIS CLIENT'S OWN MENU BOX rather than on a mock.**
+		var menu := screen._menu_box as Control
+		if menu == null:
+			ok = _fail("there is no machine menu box to check the other direction with")
+		else:
+			menu.visible = true
+			if screen._popup_holds_the_accent():
+				ok = _fail(("the machine menu reports a `Primary` of its own; ASSA-316 says no act "
+						+ "is primary there, and standing `Mine` down for it would leave the "
+						+ "screen with no accent at all"))
+			else:
+				screen._refresh_actions()
+				var mine := _find(screen._actions, "Mine")
+				if mine == null or mine.theme_type_variation != &"Primary":
+					ok = _fail("`Mine` stood down for a pop-up that has no accent to give it to")
+			menu.visible = false
+	screen.queue_free()
+	return ok
+
+
+## Every `Button` under the screen whose variation is `Primary` and which is not inside a hidden
+## subtree. The whole tree, deliberately: comparing two named controls would pass a third site added
+## later.
+##
+## **`is_visible_in_tree()` IS THE WRONG INSTRUMENT HERE AND IT ANSWERED 0 FOR EVERY SCREEN.** The
+## first version filtered on it and read **0 Primary controls on a screen whose `Mine` button was
+## demonstrably `Primary`** -- so the count could not have told the defect from the fix. Nothing in
+## this suite is laid out and the screen is parented under a bare `Node`, so tree visibility is not a
+## fact about what a player would see. What IS a fact headless is each node's own `visible` flag,
+## which is what hides the door (`_solo_button`) after a join, so the walk reads those directly and
+## `_hidden_by` names the ancestor when a count comes out surprising.
+func _primaries_on(screen: Node) -> int:
+	var seen := 0
+	for child in screen.find_children("*", "Button", true, false):
+		var button := child as Button
+		if button.theme_type_variation == &"Primary" and _hidden_by(button, screen) == null:
+			seen += 1
+	return seen
+
+
+## Every `Primary` button in the tree with its label and what hides it, for a failure that carries
+## its own context: a bare count told me 0 against a button I could see was `Primary`, and the
+## sentence beside the number is what turns that into a finding instead of a puzzle.
+func _primary_report(screen: Node) -> String:
+	var out := PackedStringArray()
+	for child in screen.find_children("*", "Button", true, false):
+		var button := child as Button
+		if button.theme_type_variation != &"Primary":
+			continue
+		var hid := _hidden_by(button, screen)
+		out.append("`%s` (%s)" % [button.text,
+				"shown" if hid == null else "hidden by %s" % hid.name])
+	return "none" if out.is_empty() else " · ".join(out)
+
+
+## The first node at or above `from` (stopping at `stop`) whose own `visible` flag is false, or
+## `null` when none is. Returned rather than a bool so a failure can NAME what hid the control
+## instead of leaving the next reader to walk the tree by hand.
+func _hidden_by(from: Node, stop: Node) -> Node:
+	var at: Node = from
+	while at != null:
+		var item := at as CanvasItem
+		if item != null and not item.visible:
+			return at
+		if at == stop:
+			return null
+		at = at.get_parent()
+	return null
