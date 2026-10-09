@@ -736,7 +736,71 @@ func _measure() -> void:
 		_faults.append(("WORLD_CONTROLS_BAND is %.0f and the real band is %.0f px tall, so the "
 				+ "headless answer would put the screen over a control")
 				% [AssayHud.WORLD_CONTROLS_BAND, world.end.y - top])
+	_report_mount_rows()
 	_measure_commit_bar(screen_rect)
+
+
+## **NO `what to mount` ROW OFFERS AN ACT THE SIM WOULD REFUSE** (ASSA-371).
+##
+## Maren read the `slots-full` frame cold and found every row in that list a live control whose only
+## outcome was a refusal: a full frame still offered `2 x Tonore head (A)`, and pressing it got
+## `TooMany` from the sim and nothing else. **Learning that cost a press**, which ASSA-316 ruling 2
+## forbids.
+##
+## **THIS IS THE HALF A SHOT CANNOT SHOW AND THE CLIENT SUITE CANNOT REACH.** A PNG shows a row
+## greyed; it cannot show that the grey AGREES with the sim. And the suite cannot build this list at
+## all -- it reads `inventory_of`, so it needs real parts in the pack, which needs the whole
+## mine-smelt-craft chain. So the pairing is asserted here, where the pack is real: for every row,
+## the control's `disabled` flag against `part_press_refusal`'s own answer for that kind, on the same
+## `chosen` array `_choose_part` builds. **A row live where the sim refuses, or dead where the sim
+## allows, is a fault either way** -- the second direction is what stops this from being a check that
+## only ever confirms greying.
+func _report_mount_rows() -> void:
+	if not _screen._build_mounts.visible:
+		return
+	var chosen := PackedStringArray()
+	for entry in _screen._building:
+		chosen.append(String((entry as Dictionary).get("kind", "")))
+	var kinds := AssaySimHost.part_kinds()
+	var rows := 0
+	for held in _screen._sim.inventory_of(_screen._client.player_id):
+		var stack: Dictionary = held
+		var part := AssayHud.part_kind_of(stack, kinds)
+		if part.is_empty() or bool(part.get("is_frame", false)):
+			continue
+		rows += 1
+		var line := AssayHud.stack_line(stack)
+		var refusal := AssaySimHost.part_press_refusal(chosen, String(stack.get("kind", "")))
+		var button := _find(_screen._build_mounts, line)
+		if button == null:
+			_faults.append(("`what to mount` has no row for %s, which the player is carrying: a "
+					+ "stack dropped from this list because the design is full is a list that "
+					+ "changes membership for a reason the player cannot see") % line)
+			continue
+		print("MOUNT ROW  %-26s disabled=%s · sim says `%s`" % [line, button.disabled, refusal])
+		if refusal != "" and not button.disabled:
+			_faults.append(("`what to mount` offers %s as a live control and the sim refuses it: "
+					+ "`%s`. Learning that costs a press (ASSA-371)") % [line, refusal])
+		elif refusal == "" and button.disabled:
+			_faults.append(("`what to mount` greys out %s and the sim allows it, so a mount the "
+					+ "player could make is unreachable (ASSA-371)") % line)
+		if refusal == "":
+			continue
+		# **AND THE REASON IS ON THE SCREEN, IN THE SIM'S WORDS, WITHOUT A PRESS.** A disabled row
+		# that says nothing is the silent refusal ASSA-316 ruling 2 forbids; a row wording it itself
+		# is the ASSA-43/52 shape where two surfaces drift on the Game Director's wording.
+		var said := false
+		var holder := button.get_parent()
+		if holder != null:
+			for child in holder.find_children("*", "Label", true, false):
+				if (child as Label).text == refusal:
+					said = true
+		if not said:
+			_faults.append(("%s is correctly not pressable but its reason is not drawn beside it: "
+					+ "the sim's sentence `%s` has to be reachable without a press (ASSA-371)")
+					% [line, refusal])
+	if rows == 0:
+		print("MOUNT ROW  the pack carries no mountable part, so this list was not measured")
 
 
 ## **A "COVERS" LINE IS A RECT INTERSECTION, NOT A DELETION** (ASSA-384; Maren's ASSA-377 11:13Z).
