@@ -5870,6 +5870,27 @@ func _said_about_offer() -> void:
 ## takes `FAILED`**: a half-placed design is the normal state of building one a click at a time, and
 ## painting it in the status scale would say the player had done something wrong by starting.
 ##
+## **AND THE WORD WEARS ITS OWN COLOUR, WHICH UNTIL ASSA-387 IT DID NOT** (Maren's 15:18 ruling;
+## §5.1, third pass). `Display` was the whole of the verdict branch, so `SAFE`, `UNCERTAIN` and
+## `WILL BREAK` were **one ink** on the surface §5.4 moved the word to *because it is about the
+## irreversible act*: a player about to spend parts they cannot get back read the same colour whether
+## the design holds or breaks.
+##
+## **`AssayHud.verdict_color`, WHICH IS THE FUNCTION THE BENCH ROW ALREADY CALLS** (`_write_design`).
+## Not a triple spelled here: one fact with two tables on two surfaces is ASSA-316 ruling 6, and the
+## reason `UNCERTAIN` is cool rather than amber -- 36.9% of buildable designs, measured over 2000
+## worlds -- lives in that function's docstring where both callers can read it.
+##
+## **AND NOT `FAILED`, WHICH IS THE COLOUR §5.1 USED TO NAME.** Maren struck her own newer text: that
+## ink is already taken by the `fault` branch of this same `if`, so it would mean *the sim refuses
+## this* and *the sim will build this and it will break* one branch apart -- opposite answers, and the
+## second is a mechanic ASSA-5/7 deliberately leaves available. Her own floor argument ran backwards
+## too: on `SURFACE`, `WILL BREAK` measures 6.96:1 against `FAILED`'s 4.79:1.
+##
+## **AN OVERRIDE AND NOT `modulate`**, for the reason `_note` measured: `modulate` multiplies the
+## theme's ink, so the word would be drawn in `verdict_color` TIMES `INK` and the colour on screen
+## would be nobody's decision.
+##
 ## **AND THE FIGURES ARE NOT HERE, WHICH IS A GAP I AM NAMING RATHER THAN FILLING.** Maren's §5.4
 ## gives this bar *"the sim's sentence, whole, unchanged"* and `sim::debug`'s `readout_after` is that
 ## sentence -- but **no binding call crosses it**: `design_readout` carries the NUMBERS (mass, budget,
@@ -5887,6 +5908,7 @@ func _said_about_design() -> void:
 	if verdict != "":
 		said.text = verdict
 		said.theme_type_variation = &"Display"
+		said.add_theme_color_override(&"font_color", AssayHud.verdict_color(verdict))
 	else:
 		said.text = String(readout.get("fault", ""))
 		if not bool(readout.get("unfinished", false)):

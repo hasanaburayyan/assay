@@ -27,6 +27,13 @@ const PATIENCE := 120
 ## with the defect. The 1x shot is its cross-check (ASSA-362).
 const BODY_ROW_PX := 18.0
 
+## **HOW MANY PARTS A VERDICT LADDER MOUNTS BEFORE IT GIVES UP** (ASSA-387). A ceiling, not a count:
+## the walk stops meaning anything once the frame is full and the sim answers a fault instead of a
+## verdict, and the rungs actually met are printed rather than assumed. Enough to carry the roomiest
+## frame in the catalogue from a bare `SAFE` to an overloaded `WILL BREAK`, with rungs to spare so a
+## roomier frame does not quietly stop reaching two words.
+const VERDICT_LADDER := 8
+
 var runner = null
 ## Every command the screen asked its client to submit, in order. Collected through the real `asked`
 ## signal, which fires inside `submit` -- so a button wired to nothing collects nothing.
@@ -4798,6 +4805,126 @@ func test_the_mass_fill_moves_when_a_part_is_mounted() -> bool:
 				+ "press should move does not move") % [before, after, mounts, mass_before,
 				mass_after])
 	return true
+
+
+## **THE SIM'S VERDICT WEARS ITS OWN COLOUR IN THE COMMIT BAR, AND IT IS THE BENCH ROW'S COLOUR**
+## (ASSA-387; Maren's ruling: *"the bar uses `AssayHud.verdict_color`, the function the bench already
+## uses"*, and *"the test should assert `verdict_color` is CALLED rather than pin a literal, or the
+## next person re-derives the triple"*).
+##
+## **SO NOT ONE LITERAL COLOUR IS WRITTEN HERE.** The claim is an AGREEMENT between two surfaces and
+## one function, because that is the shape the defect had: `_said_about_design` painted nothing at
+## all, so `SAFE`, `UNCERTAIN` and `WILL BREAK` came out in one `Display` ink on the one surface
+## §5.4 moved the word to *because it is about the irreversible act*. A test pinning (237,161,107)
+## would go red the day she moves the colour and stay green on the day a client grew its own table.
+##
+## **EVERY WORD THE FIXTURE REACHES, AND AT LEAST TWO, WHICH IS THE HALF ONE STATE CANNOT HOLD.** One
+## word proves a colour was written; it cannot tell *its own colour* from *every verdict in that
+## colour* -- the defect itself in a different coat. So this walks the mount ladder, collects each
+## DISTINCT verdict the sim produces, and refuses to pass on fewer than two.
+##
+## **THE LADDER'S CEILING IS A CEILING AND THE WALK IS PRINTED.** Past the roomiest frame's capacity
+## the sim answers a fault rather than a verdict, which is a rung with nothing to read and not a
+## failure; the words and faults actually met are in every message here, so a fixture that stops
+## reaching two verdicts says so instead of going quietly green.
+##
+## **AND THE BENCH SIDE IS DRIVEN SYNTHETICALLY ON PURPOSE.** `_rebuild_bench` takes the design
+## dictionary whole, so the same word can be put on both surfaces without hunting a design that
+## makes the sim say it twice -- and the comparison is then between two renderings of ONE word, which
+## is what *neither surface has its own table* means.
+func test_the_bars_verdict_wears_the_benchs_own_colour() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var frame := _roomiest_frame()
+	var mounts := String(frame.get("mounts", ""))
+	if frame.is_empty() or mounts == "":
+		screen.queue_free()
+		return _fail("no frame in the sim's catalogue takes a part, so the ladder has one rung")
+	screen._build_verb = screen.BUILD_ASSEMBLE
+	# **THE FRAME'S REQUIRED BOXES ARE FILLED BEFORE THE LADDER STARTS, AND THE FIRST VERSION OF THIS
+	# TEST DID NOT DO IT.** A bare frame is `unfinished` -- the sim answers *"it needs at least 1 head
+	# and has 0"* and no verdict at all -- so eight rungs of an unfinished design reached ZERO words
+	# and the test red on its own premise rather than on the colour. The minimums are the sim's, read
+	# off its own slot table, so a frame that grows a second required box still gets a complete base.
+	screen._building = [_part_stack_of(String(frame.get("kind", "")))]
+	for slot in (frame.get("slots", []) as Array):
+		var limit: Dictionary = slot
+		for _n in range(int(limit.get("min", 0))):
+			screen._building.append(_part_stack_of(String(limit.get("name", ""))))
+	var ok := true
+	var ink_of := {}
+	var ladder := PackedStringArray()
+	for _step in range(VERDICT_LADDER):
+		screen._refresh_build_said()
+		var readout: Dictionary = screen._design_readout()
+		var word := String(readout.get("verdict", ""))
+		ladder.append(word if word != "" else "<%s>" % String(readout.get("fault", "no verdict")))
+		if word != "" and not ink_of.has(word):
+			var label := _said_word(screen)
+			if label == null:
+				ok = _fail("the sim says `%s` and the commit bar drew no label at all" % word)
+				break
+			if not label.has_theme_color_override(&"font_color"):
+				ok = _fail(("the bar draws `%s` with no `font_color` override, so it wears the plain "
+						+ "`Display` ink every other verdict wears: three words, one colour, on the "
+						+ "surface that is about spending parts you cannot get back") % word)
+				break
+			var ink := label.get_theme_color(&"font_color")
+			if not ink.is_equal_approx(AssayHud.verdict_color(word)):
+				ok = _fail(("the bar draws `%s` in %s and `AssayHud.verdict_color` says %s. The bar "
+						+ "has its own table, and the bench row one surface away does not use it")
+						% [word, ink, AssayHud.verdict_color(word)])
+				break
+			ink_of[word] = ink
+		screen._building.append(_part_stack_of(mounts))
+	if ok and ink_of.size() < 2:
+		ok = _fail(("the ladder reached %d distinct verdict(s) walking %s: with one word this test "
+				+ "cannot tell `its own colour` from `every verdict in that colour`")
+				% [ink_of.size(), ladder])
+	var words: Array = ink_of.keys()
+	if ok:
+		for i in range(words.size()):
+			for j in range(i + 1, words.size()):
+				var one := String(words[i])
+				var other := String(words[j])
+				if (ink_of[one] as Color).is_equal_approx(ink_of[other] as Color):
+					ok = _fail(("`%s` and `%s` are both drawn %s. Two of the sim's three answers are "
+							+ "one ink, which is the defect this test is about") % [one, other,
+							ink_of[one]])
+					break
+			if not ok:
+				break
+	if ok:
+		for entry in words:
+			var word := String(entry)
+			screen._rebuild_bench([{"index": 0, "verdict": word, "in_hand": false,
+					"mount": "planted"}])
+			if screen._bench.get_child_count() == 0:
+				ok = _fail("the bench built no row for `%s`, so the two surfaces cannot be compared"
+						% word)
+				break
+			var bench := (screen._bench.get_child(0) as Node).find_child(screen.BENCH_VERDICT,
+					true, false) as Label
+			if bench == null:
+				ok = _fail("the bench row for `%s` has no named verdict label" % word)
+				break
+			if not bench.get_theme_color(&"font_color").is_equal_approx(ink_of[word] as Color):
+				ok = _fail(("one word, two surfaces, two inks: the bench draws `%s` in %s and the "
+						+ "commit bar in %s") % [word, bench.get_theme_color(&"font_color"),
+						ink_of[word]])
+				break
+	screen.queue_free()
+	return ok
+
+
+## **THE ONE LABEL THE COMMIT BAR DREW, OR NULL.** Not `_only_said`: that returns the TEXT, and the
+## colour a word is drawn in is a property of the node.
+func _said_word(screen: Node) -> Label:
+	for child in screen._build_said.get_children():
+		var label := child as Label
+		if label != null:
+			return label
+	return null
 
 
 ## **AND A FRAME SWITCH MOVES IT TOO** (box 3's second half), because the axis's END is the frame's
