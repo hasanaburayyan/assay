@@ -663,6 +663,88 @@ fn a_part_batch_makes_no_progress_and_the_state_line_does_not_know_it() {
     );
 }
 
+/// **A SMELTER WHOSE OUTPUT HOLDS A DIFFERENT MATERIAL REPORTS `working`
+/// FOREVER** — the third silent skip in `run_smelters`, and the only one of the
+/// three that is reachable (ASSA-350).
+///
+/// `run_smelters` has three `continue`s before the fuel block. Two are shut at
+/// the door by `Insert` into `Slot::Input`: an input kind with no smelter recipe
+/// is `RejectReason::WrongItem` and a grade-A input is
+/// `RejectReason::AlreadyBestGrade`. **The third has no gate anywhere.**
+/// Insert-input validates kind, grade, walls and reach and **never looks at the
+/// output slot**, so a smelter can legally be handed ore of species Y while its
+/// output still holds refined species X. `out_item` is then refined Y,
+/// `s.output` is refined X, and the loop takes `Some(_) => continue, // holds
+/// something else; wait to be emptied` on every tick from then on.
+///
+/// `World::smelter_state` knows nothing about it — its only output arm is the
+/// cap, and one bar is not a full slot. So the status line says `working at 60`
+/// and `sim-godot`'s `lit` (`matches!(state, Working { .. })`) draws a burning
+/// fire on it. Exactly ASSA-322's defect, one slot further on, sprite included.
+///
+/// **IT TAKES NO MISTAKE AND NO `Take`.** Refine everything you loaded — the
+/// input empties and one bar sits in the output — then load the next rock. That
+/// is tidying, and it is what anyone smelting two species in one smelter does.
+///
+/// **THIS TEST PINS THE DISAGREEMENT RATHER THAN FIXING IT**, the way ASSA-322
+/// was itself born. Unlike a short batch, this is something the player MUST act
+/// on and it never resolves itself, which by the Game Director's ASSA-80
+/// criterion makes it a *stall* — and `SmelterStall` does derive `Serialize` and
+/// rides `Event::SmelterStalled`, so the fix carries `PROTOCOL_VERSION` 10 → 11.
+/// The wording and the stall-vs-idle call are hers; this only proves the hole is
+/// real. **The day the fix lands, this test names exactly what changed.**
+#[test]
+fn a_smelter_whose_output_holds_another_material_claims_to_be_working() {
+    let (mut world, me, id, _) = world_with_smelter();
+    // WALLS (heat 60) and INERT (heat 20) both smelt inside WALLS' walls, so the
+    // skip under test cannot be confused with TooHotForWalls.
+    let first = ore(WALLS);
+    let second = ore(INERT);
+    give(&mut world, me, first, 1);
+    give(&mut world, me, second, 1);
+    give(&mut world, me, ore(FUEL), 4);
+    run(
+        &mut world,
+        &[
+            Input::player(me, insert(id, Slot::Input, first, 1)),
+            Input::player(me, insert(id, Slot::Fuel, ore(FUEL), 4)),
+        ],
+        RecipeId::Refine.recipe().ticks * 2,
+    );
+    // The premise, asserted before the finding: the first rock really did
+    // refine, and nobody emptied the output.
+    let s = smelter_of(&world, id);
+    assert_eq!(s.input, None, "everything loaded was refined");
+    let bar = s.output.expect("one bar came out");
+    assert_eq!(bar.item.species, WALLS);
+
+    // Now load the next rock. The rules accept it without a word.
+    run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Input, second, 1))],
+        RecipeId::Refine.recipe().ticks * 4,
+    );
+    let s = smelter_of(&world, id);
+    assert_eq!(
+        s.input.map(|i| i.count),
+        Some(1),
+        "nothing was consumed: run_smelters skipped it on the output slot"
+    );
+    assert_eq!(s.output, Some(bar), "and nothing was produced");
+    assert_eq!(s.progress, 0, "because the step loop never reached it");
+
+    // The half that is wrong, recorded as wrong.
+    let state = world.smelter_state(world.building(id).unwrap());
+    assert!(
+        matches!(state, SmelterState::Working { .. }),
+        "ASSA-350: the state line claims it is working. It is not. Got {state:?}"
+    );
+    assert!(
+        !world.building_state(world.building(id).unwrap()).halted(),
+        "and it is not reported as something to fix, which it is"
+    );
+}
+
 /// The invariant my own doc comment leant on, pinned because I first wrote the
 /// opposite: for a smelter, `progress > 0` means it refined on the last tick.
 /// Every stall is tested before `progress += 1` and one unit of legal fuel
