@@ -5068,6 +5068,22 @@ func _rebuild_build_screen() -> void:
 	var heading := _section_heading(_build_picker)
 	if heading != null:
 		heading.text = "which frame" if assembling else "what to make"
+	# **BLOCK 5's HEADING MOVES WITH THE PATH TOO** (ASSA-369; Maren 13:42Z). `what you get` came
+	# from the make path, where block 5 really is a picture of the thing you get. On the assembly
+	# path the rect is the mass/budget fill, and a heading is this file's word for what is UNDER it.
+	#
+	# **NOT `will it hold`, WHICH IS THE TEMPTING ONE AND IS THE BAR'S JOB.** That question is
+	# answered by the sim's `SAFE / UNCERTAIN / WILL BREAK` in the commit bar; a heading asking it
+	# gives the verdict a second home (ASSA-328 §2) and the day they disagree the screen argues with
+	# itself. **A heading names the QUANTITY; the bar keeps the VERDICT.**
+	#
+	# **THE LONG FORM IS MEASURED, NOT EYEBALLED** (her instruction). `maren_headline_rows.gd` on the
+	# shipped `Heading` font: one row at 244, 240 and 220 px, two rows at 200. Block 5's column is
+	# 244. It is NOT the ~174 px her arithmetic predicted -- the string wants 220 -- so the short
+	# fallback `mass against budget` stays live for any column narrower than that.
+	var readout := _section_heading(_build_detail)
+	if readout != null:
+		readout.text = "mass against the frame's budget" if assembling else "what you get"
 	_show_section(_build_materials, not assembling)
 	_show_section(_build_slots, assembling)
 	_show_section(_build_mounts, assembling)
