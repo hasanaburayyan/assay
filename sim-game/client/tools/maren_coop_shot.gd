@@ -3,7 +3,7 @@ extends SceneTree
 ## TWO PLAYERS IN ONE ASSAY WINDOW, PHOTOGRAPHED FOR THE FIRST TIME (Maren).
 ##
 ##   godot --path client --script res://tools/maren_coop_shot.gd \
-##       -- <out_dir> [seed] [peer_name] [row] [col] [play]
+##       -- <out_dir> [seed] [peer_name] [row] [col] [play] [peer_dx peer_dy]
 ##   (A GUI RUN. Never --headless: a headless viewport photographs nothing.)
 ##
 ## **THE MILESTONE IS CALLED "the minimal CO-OP demo" AND NOTHING HAS EVER PHOTOGRAPHED TWO PLAYERS.**
@@ -64,7 +64,7 @@ const DEFAULT_PEER := "rainy"
 ## whose centre x is 477. **The south clamp takes one axis of the centring cue away and leaves the
 ## other.** Only a CORNER takes both, so only a corner is the case the item reasons about.
 ##
-## **WHY IT MATTERS THAT WE BOTH MOVE.** The partner is placed at `PEER_OFFSET` from ME, so walking
+## **WHY IT MATTERS THAT WE BOTH MOVE.** The partner is placed at `_peer_offset` from ME, so walking
 ## me is enough to put both bodies at the edge. The thing under test is that at a clamped edge the
 ## camera does NOT centre you, so "mine is the one in the middle" stops being available and the foot
 ## mark is all that is left.
@@ -116,7 +116,18 @@ const CLEAR_RADIUS := 40
 ## rect, so about 27x18 tiles: a partner four east and one north is comfortably on screen with me and
 ## far enough that the two bodies do not overlap. Nothing here is a design claim -- it is the
 ## framing, chosen so the picture contains the thing the picture is about.
-const PEER_OFFSET := Vector2i(4, -1)
+const DEFAULT_PEER_OFFSET := Vector2i(4, -1)
+
+## **AND IT IS AN ARGUMENT NOW, BECAUSE ASSA-385 BOX 2 ASKS FOR THE ONE FRAMING THE CONST FORBIDS**
+## (Limpet, 2026-10-09): both bodies on ONE tile. `sim/src/step.rs::move_players` has no occupancy
+## check -- read, not assumed: it signums each axis toward `target` and nothing looks at who else
+## stands there -- so the sim allows it and the close-up has never been asked to draw it.
+##
+## A SEPARATE VAR RATHER THAN A MUTATED CONST so a run with no offset argument is byte-for-byte the
+## run Maren wrote, and **the offset is printed in the verdict** (`_report`): a frame whose two
+## bodies are one body is also what a BROKEN run looks like, and the only thing that tells those
+## apart is whether the framing asked for it.
+var _peer_offset := DEFAULT_PEER_OFFSET
 
 var _screen: Node = null
 var _relay_binary := ""
@@ -177,6 +188,18 @@ func _initialize() -> void:
 		var word := String(argv[5]).strip_edges().to_lower()
 		_play_on = word != "" and word != "0" and word != "no" and word != "noplay"
 		print("play argument '%s' -> %s" % [word, "PLAY THE CHAIN" if _play_on else "walk only"])
+	# **BOTH HALVES OR NEITHER, AND A HALF IS A BAIL RATHER THAN A ZERO.** `0` is a legal offset here
+	# and it is the one ASSA-385 box 2 asks for, so a missing `dy` read as `int("")` == 0 would hand
+	# back the overlapped frame under the name of whatever the caller meant -- the exact failure the
+	# `play` word above is written to avoid, one argument along.
+	if argv.size() > 6 or argv.size() > 7:
+		if argv.size() < 8:
+			print("FAIL  the partner offset is two arguments, dx and dy; got %d" % (argv.size() - 6))
+			quit(1)
+			return
+		_peer_offset = Vector2i(int(argv[6]), int(argv[7]))
+	print("partner offset %s%s" % [_peer_offset,
+			"  <- ON MY OWN TILE, asked for" if _peer_offset == Vector2i.ZERO else ""])
 	DirAccess.make_dir_recursive_absolute(_out)
 	_relay_binary = AssaySoloRelay.find_binary()
 	if _relay_binary == "":
@@ -335,7 +358,7 @@ func _after_bundle(_tick: int, _inputs: Array, _raw: String) -> void:
 ##
 ## The chain plants on the tile you stand on, so after it the body and the machine are the same tile
 ## and the 12px diamond disappears inside the 16px square -- measured in `window_shot.gd`, which is
-## why that tool walks off before it presses V. The partner is placed at `PEER_OFFSET` from wherever I
+## why that tool walks off before it presses V. The partner is placed at `_peer_offset` from wherever I
 ## stop, so MY tile decides BOTH marks and the search has to satisfy both at once.
 ##
 ## A SPIRAL OUT FROM WHERE I STAND and not a jump to a corner: the schematic is the whole map, so any
@@ -358,8 +381,8 @@ func _walk_clear_of_every_building() -> void:
 				var tile := me + Vector2i(dx, dy)
 				if tile.x < 0 or tile.y < 0 or tile.x >= size.x or tile.y >= size.y:
 					continue
-				var mate := Vector2i(clampi(tile.x + PEER_OFFSET.x, 0, size.x - 1),
-						clampi(tile.y + PEER_OFFSET.y, 0, size.y - 1))
+				var mate := Vector2i(clampi(tile.x + _peer_offset.x, 0, size.x - 1),
+						clampi(tile.y + _peer_offset.y, 0, size.y - 1))
 				if _clear_of_buildings(tile) and _clear_of_buildings(mate):
 					pick = tile
 					break
@@ -505,7 +528,7 @@ func _walk_me_to_the_row() -> void:
 		return
 	var me: Vector2 = found
 	var size: Vector2i = _screen._sim.size_tiles()
-	# THE PARTNER IS PLACED AT `PEER_OFFSET` FROM ME AND THAT OFFSET POINTS EAST, so a column near the
+	# THE PARTNER IS PLACED AT `_peer_offset` FROM ME AND IT POINTS EAST BY DEFAULT, so a column near the
 	# WEST edge keeps both of us on screen while a column near the east edge would push them off it.
 	# Said here rather than clamped silently: a tool that quietly moved the partner would answer a
 	# different question than the one the caller asked.
@@ -547,8 +570,8 @@ func _send_the_peer_walking() -> void:
 		return
 	var me: Vector2 = found
 	var size: Vector2i = _screen._sim.size_tiles()
-	_peer_target = Vector2i(clampi(int(me.x) + PEER_OFFSET.x, 0, size.x - 1),
-			clampi(int(me.y) + PEER_OFFSET.y, 0, size.y - 1))
+	_peer_target = Vector2i(clampi(int(me.x) + _peer_offset.x, 0, size.x - 1),
+			clampi(int(me.y) + _peer_offset.y, 0, size.y - 1))
 	_peer_stdio.store_line("goto %d %d" % [_peer_target.x, _peer_target.y])
 	_peer_stdio.flush()
 	print("  told '%s' to walk to %s (I am at %s)" % [_peer_name, _peer_target, me])
@@ -593,7 +616,7 @@ func _send_both_walking() -> void:
 	var dx := WALK_SHOT_TILES if me.x < size.x / 2 else -WALK_SHOT_TILES
 	_my_target = Vector2i(clampi(me.x + dx, 0, size.x - 1), me.y)
 	var them: Variant = _tile_of(false)
-	var they := me + PEER_OFFSET if them == null else Vector2i(
+	var they := me + _peer_offset if them == null else Vector2i(
 			int((them as Vector2).x), int((them as Vector2).y))
 	_peer_target = Vector2i(clampi(they.x - dx, 0, size.x - 1), they.y)
 	if not _screen._client.submit(AssayActions.move_to(_my_target)):
@@ -680,6 +703,10 @@ func _report() -> void:
 		var apart := ((mine as Vector2) - (theirs as Vector2)).abs()
 		print("  %.0f tiles apart in x, %.0f in y" % [apart.x, apart.y])
 	print("  toggle reads: %s, close_up=%s" % [_screen._view_toggle.text, _screen._close_up])
+	# THE FRAMING THIS RUN WAS ASKED FOR, in the verdict and not only in the launch line, because an
+	# overlapped pair is also what a run that lost a body looks like (ASSA-385 box 2).
+	print("  partner offset asked for: %s%s" % [_peer_offset,
+			"  <- ONE TILE, both bodies" if _peer_offset == Vector2i.ZERO else ""])
 	if _walk_note != "":
 		print(_walk_note.strip_edges(false, true))
 	else:
