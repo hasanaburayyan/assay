@@ -1246,6 +1246,91 @@ fn every_stall_reason_says_the_same_thing_in_the_log_and_on_the_status_line() {
     }
 }
 
+/// **A STALL THAT BECOMES A DIFFERENT STALL IS ANNOUNCED** (ASSA-364, the Game
+/// Director's, found while ruling the open trade on ASSA-300).
+///
+/// `announce_new_stalls` took `before: &[(BuildingId, bool)]`, so a smelter
+/// that was stalled, stayed stalled and changed WHY emitted nothing at all —
+/// and this is her reproduction, which costs **one `Insert`**: a smelter with
+/// ore and no fuel is `NoFuel`; put in fuel that cannot light from cold and it
+/// is `FuelWontLight`. Still stalled, new reason, no event.
+///
+/// **WHY IT IS NOT COSMETIC:** the toast then reads `no fuel` about a smelter
+/// with fuel in its slot, and no event will ever arrive to replace it. The
+/// client's clearing rule (ASSA-300) asks whether that building is still
+/// halted; it is, so the stale reason stays. Neither the coarse question nor
+/// the fine one can fix that from the client side — only the sim saying the
+/// new fact can.
+///
+/// **BOTH HALVES ARE ASSERTED AS ONE SEQUENCE, in the order a player does
+/// them, so a fix that announced the second reason by announcing every tick
+/// would fail here on the counts rather than passing on the first.**
+#[test]
+fn a_stall_that_becomes_a_different_stall_is_announced_once() {
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(WALLS), 15);
+    give(&mut world, me, ore(HOT_FUEL), 3);
+
+    // ORE IN, NOTHING TO BURN. Asserted as the premise: without this first
+    // stall there is no edge from one stall to another to measure.
+    let first = run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Input, ore(WALLS), 15))],
+        30,
+    );
+    assert_eq!(
+        stalls(&first),
+        vec![SmelterStall::NoFuel],
+        "premise: thirty ticks of ore with no fuel has to say `no fuel`, once: {first:?}"
+    );
+
+    // ONE INSERT of fuel that will not light from cold. The smelter is still
+    // stalled -- nothing a player did has cleared it -- and the reason is now
+    // a different one.
+    let second = run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Fuel, ore(HOT_FUEL), 3))],
+        60,
+    );
+    assert!(
+        world
+            .smelter_state(world.building(id).unwrap())
+            .stall()
+            .is_some(),
+        "premise: the insert cleared the stall, so this is not the edge under test"
+    );
+    assert_eq!(
+        stalls(&second),
+        vec![SmelterStall::FuelWontLight],
+        "the new reason is said exactly once across sixty ticks: a silent one leaves the \
+         player's screen reading `no fuel` at a smelter with fuel in it, and a repeated one \
+         is rule 2 broken: {second:?}"
+    );
+}
+
+/// **AND A STALL THAT DOES NOT CHANGE STILL SAYS NOTHING AFTER THE FIRST
+/// TICK** (Game Director's rule 2, and the control for the test above).
+///
+/// Without this, "announces a changed stall" and "announces every tick it is
+/// stalled" are the same green. Driven with fuel that **will** light so the
+/// path differs from the test above: ore, no fuel, four hundred ticks of
+/// nobody doing anything.
+#[test]
+fn an_unchanged_stall_is_announced_once_however_long_it_lasts() {
+    let (mut world, me, id, _) = world_with_smelter();
+    give(&mut world, me, ore(WALLS), 15);
+    let events = run(
+        &mut world,
+        &[Input::player(me, insert(id, Slot::Input, ore(WALLS), 15))],
+        400,
+    );
+    assert_eq!(
+        stalls(&events),
+        vec![SmelterStall::NoFuel],
+        "four hundred ticks of one unchanged stall is one sentence: {events:?}"
+    );
+}
+
 /// **IDLE IS NOT A STALL AND IS NEVER ANNOUNCED** (Game Director's rule 2). A
 /// finished batch empties the input slot, and announcing that would fire after
 /// every batch -- noise that teaches a player to stop reading the log.

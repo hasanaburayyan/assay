@@ -2,7 +2,7 @@
 
 use crate::assembly::{self, AssemblyPlan, Mount, Part, PartKind, spec};
 use crate::building::{
-    Building, BuildingId, BuildingKind, Machine, MachineState, Slot, footprint_tiles,
+    Building, BuildingId, BuildingKind, Machine, MachineState, Slot, SmelterStall, footprint_tiles,
 };
 use crate::command::{Event, Input, PlayerCommand, RejectReason, StopReason, SystemCommand};
 use crate::inventory::Inventory;
@@ -31,11 +31,18 @@ pub fn step(world: &mut World, inputs: &[Input], events: &mut Vec<Event>) {
     //
     // A `Vec` in `world.buildings` order, which is stable, because every peer
     // must compute the same events in the same order.
-    let before: Vec<(BuildingId, bool)> = world
+    //
+    // **IT CARRIES THE STALL AND NOT A BOOLEAN** (ASSA-364). With a `bool`,
+    // a building that is stalled, stays stalled and changes WHY emits nothing
+    // — and `NoFuel -> FuelWontLight` costs one `Insert` of fuel that will not
+    // light from cold. The Game Director found it while ruling ASSA-300: the
+    // toast then says `no fuel` about a smelter with fuel in its slot, and no
+    // event will ever arrive to replace it.
+    let before: Vec<(BuildingId, Option<SmelterStall>)> = world
         .buildings
         .iter()
         .filter(|b| matches!(b.kind, BuildingKind::Smelter(_)))
-        .map(|b| (b.id, world.smelter_state(b).stall().is_some()))
+        .map(|b| (b.id, world.smelter_state(b).stall()))
         .collect();
 
     for input in inputs {
@@ -961,7 +968,34 @@ fn mine_by_machine(world: &mut World, events: &mut Vec<Event>) {
 /// Her rule 2 is what is actually load-bearing and it holds: becoming **idle**
 /// is never announced, so a finished batch is silent, and a smelter that sits
 /// stalled says nothing after the first tick.
-fn announce_new_stalls(world: &World, before: &[(BuildingId, bool)], events: &mut Vec<Event>) {
+///
+/// **AND THE EDGE IS NOW "A STALL NOBODY HAS BEEN TOLD ABOUT", NOT "NOT
+/// STALLED A TICK AGO"** (ASSA-364, hers again, found while ruling ASSA-300).
+/// `before` used to carry a `bool`, so a smelter that stalled, stayed stalled
+/// and changed WHY said nothing — and `NoFuel -> FuelWontLight` costs one
+/// `Insert` of fuel that will not light from cold. The toast then names a
+/// reason that has been replaced, with nothing able to retire it. One
+/// comparison covers both edges, which is why `before`'s shape changed rather
+/// than a second branch being added here: a `!was` guard beside a
+/// `kind-changed` guard is exactly the pair that quietly stops covering a case.
+///
+/// **THE WHOLE VALUE AND NOT ITS DISCRIMINANT, AND RULE 2 STILL HOLDS — read
+/// out of this file rather than reasoned about.** I wrote the discriminant
+/// first, afraid that `FireTooCool { fire, needs }` would re-announce as the
+/// fire cooled. **It does not cool.** `burn_temperature` is set once, when a
+/// unit of fuel lights, and the `continue` fourteen lines below the
+/// `burn_temperature.min(walls) < needs` test means `burn_left` is **not**
+/// decremented while the fire is too cool — so a smelter in that stall sits at
+/// the same two numbers for ever. Both of them move only when a player acts:
+/// `needs` is the ore in the input slot, `fire` the fuel that lit. So
+/// comparing the whole value announces strictly more new facts (a `needs` that
+/// has changed is a new answer to *what would it take*) and still cannot fire
+/// twice for one untouched stall.
+fn announce_new_stalls(
+    world: &World,
+    before: &[(BuildingId, Option<SmelterStall>)],
+    events: &mut Vec<Event>,
+) {
     for b in &world.buildings {
         let Some(why) = world.smelter_state(b).stall() else {
             continue;
@@ -971,8 +1005,8 @@ fn announce_new_stalls(world: &World, before: &[(BuildingId, bool)], events: &mu
         let was = before
             .iter()
             .find(|(id, _)| *id == b.id)
-            .is_some_and(|(_, stalled)| *stalled);
-        if !was {
+            .and_then(|(_, stall)| *stall);
+        if was != Some(why) {
             events.push(Event::SmelterStalled {
                 building: b.id,
                 why,
