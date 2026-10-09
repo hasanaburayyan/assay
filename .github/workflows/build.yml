@@ -199,6 +199,19 @@ jobs:
       # with 25 rows over, player/walk_SW worst at 47.6%. Stdlib only, ~3s.
       - name: No shipped surface sits on the ceiling
         run: python3 art/check_headroom.py
+      # AN ICON FRAME CARRIES NO BAND OF AIR ABOVE ITS ART (ASSA-376, Maren's
+      # rule one level below ASSA-328). Nothing else here can see this: the band
+      # is a frame's own transparency, so no panel layout can reach it, and at 1x
+      # it is invisible -- it became a defect only when ASSA-357 earned the build
+      # screen's output picture a 3x scale and 27 px of padding came out as 81 px
+      # between a label and the thing it labels. Proved red before it was trusted
+      # green: run against the sheet as it shipped on main it fails all seven
+      # rows, `refined` worst at 40 px (`cp` an old items.png in and re-run, or
+      # `--push N` to drop every row). The check also refuses the instrument that
+      # hid this -- `alpha > 0` calls six of seven rows full-bleed, because the
+      # raw render carries a 1-4 sampling film to the frame edge. Stdlib only, ~2s.
+      - name: No icon frame has air above its art
+        run: python3 art/check_items_top_band.py
       # GRADE-A ORE IS CLUMPED, AND NOTHING ELSE HERE CAN SEE THAT (ASSA-216).
       # Maren's ruling was arrangement, not value: the same rocks, the same
       # sizes, the same colours and -- since `relax()` -- the same coverage,

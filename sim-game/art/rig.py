@@ -690,7 +690,8 @@ class Asset:
     footprint's top-left tile corner sits in the frame, in authoring px.
     """
 
-    def __init__(self, name, out_root, tiles, headroom=0.0, anchor_x=0, block=None, rim=None):
+    def __init__(self, name, out_root, tiles, headroom=0.0, anchor_x=0, block=None, rim=None,
+                 fill=None):
         self.name = name
         self.dir = os.path.join(out_root, name)
         os.makedirs(self.dir, exist_ok=True)
@@ -715,6 +716,16 @@ class Asset:
         # It travels in asset.json so `--pack` applies it too: a repack that quietly
         # dropped the rim would ship art that fails its own CI check.
         self.rim = list(rim) if rim else None
+        # "top": THIS SHEET'S FRAMES ARE ICON BOXES, NOT TILE WINDOWS, so `pack()` fits
+        # each frame's paint to its box -- aspect preserved, top edge at y=0, slack at the
+        # BOTTOM (ASSA-376, Maren's rule: "a frame's own transparency is air, and ASSA-328
+        # governs it"). Only an asset whose frames are never used to place a thing on the
+        # ground may say this: the fit moves the art inside the frame, so a sheet whose
+        # `anchor_px`/`tiles` a renderer READS would come off its tile. `items` qualifies
+        # because `sprites.gd::_frame_from` takes the whole frame and no anchor term, and
+        # because nothing composites it (`sprites.gd:78` -- that is the part sheets).
+        # Like `rim`, it travels in asset.json so `--pack` applies it too.
+        self.fill = str(fill) if fill else None
         self.slice = None
         self.rows = []
         self.animations = {}
@@ -790,6 +801,8 @@ class Asset:
             meta["block"] = self.block
         if self.rim:
             meta["rim"] = self.rim
+        if self.fill:
+            meta["fill"] = self.fill
         if self.slice:
             meta["slice"] = self.slice
         with open(os.path.join(self.dir, "asset.json"), "w") as f:
