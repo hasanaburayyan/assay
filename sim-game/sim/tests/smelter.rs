@@ -761,6 +761,45 @@ fn an_empty_smelter_says_nothing_about_counts() {
     );
 }
 
+/// **THE BOUNDARY, ADDED BECAUSE A MUTATION FOUND THIS CRATE NOT GUARDING IT.**
+///
+/// Turning ASSA-322's `<` into `<=` — a smelter holding exactly one batch reads
+/// short and nothing ever smelts again — left `sim`'s whole suite green. Every
+/// resmelt fixture in this file loads more than one batch, so nothing here
+/// pinned `input.count == recipe.input.1`. Only `sim-godot`'s tests caught it,
+/// and the rule is this crate's: an off-by-one in a rule should not need a host
+/// to notice.
+///
+/// Exactly one batch is a batch. It works, and it finishes — the second half
+/// matters because a state label that said `Working` while `run_smelters` still
+/// skipped it would be the same lie in the other direction.
+#[test]
+fn a_smelter_holding_exactly_one_batch_is_working_and_not_short() {
+    let (mut world, me, id, _) = world_with_smelter();
+    let refined_b = Item::new(ItemKind::Refined, WALLS, Grade::B);
+    let batch = RecipeId::Resmelt.recipe().input.1;
+    give(&mut world, me, refined_b, batch);
+    give(&mut world, me, ore(FUEL), 4);
+    run(
+        &mut world,
+        &[
+            Input::player(me, insert(id, Slot::Input, refined_b, batch)),
+            Input::player(me, insert(id, Slot::Fuel, ore(FUEL), 4)),
+        ],
+        2,
+    );
+    let state = world.smelter_state(world.building(id).unwrap());
+    assert!(
+        matches!(state, SmelterState::Working { .. }),
+        "exactly one batch is a batch, not a short one: {state:?}"
+    );
+    run(&mut world, &[], RecipeId::Resmelt.recipe().ticks + 2);
+    let s = smelter_of(&world, id);
+    assert_eq!(s.input, None, "the whole batch was consumed");
+    let bar = s.output.expect("and one grade-A bar came out");
+    assert_eq!(bar.item.grade, Grade::A, "a resmelt raises the grade");
+}
+
 /// The invariant my own doc comment leant on, pinned because I first wrote the
 /// opposite: for a smelter, `progress > 0` means it refined on the last tick.
 /// Every stall is tested before `progress += 1` and one unit of legal fuel
