@@ -2163,11 +2163,22 @@ func test_the_build_screen_costs_a_real_offer_in_the_sims_own_two_numbers() -> b
 			else:
 				var want := "need %d · have %d" % [int(offer.get("cost", 0)),
 						int(offer.get("count", 0))]
-				var said := _text_of(screen._build_cost)
+				# **THIS READ THE COST BLOCK UNTIL ASSA-341, AND IT NOW READS THE PICKER.** Maren
+				# deleted block 6 on the make path because `MakeOffer.input` is singular, so its one
+				# entry could only ever be the selected material row -- the duplicate this test was
+				# half-asserting. **The property it was written for is untouched**: the two counts on
+				# screen are the SIM's, never numbers this file invented. They simply have one home
+				# now, and §3 keeps them in the picker because comparing two materials must not cost
+				# two gestures.
+				var said := _text_of(screen._build_materials)
 				if not said.contains(want):
-					ok = _fail(("the sim says one batch needs %d and you have %d, so the cost block "
-							+ "should carry `%s`; it says `%s`") % [int(offer.get("cost", 0)),
+					ok = _fail(("the sim says one batch needs %d and you have %d, so the material "
+							+ "picker should carry `%s`; it says `%s`") % [int(offer.get("cost", 0)),
 							int(offer.get("count", 0)), want, said])
+				elif screen._build_cost.visible or screen._build_cost_box.visible:
+					ok = _fail(("block 6 is shown on the make path (rows=%s, section=%s); its single "
+							+ "entry can only ever duplicate the material row")
+							% [screen._build_cost.visible, screen._build_cost_box.visible])
 				elif said.contains("/"):
 					# **§5.5 TOOK THE SLASH AWAY AND SAID WHY**: a slash is a ratio's mark and a ratio
 					# needs left <= right, so the surplus case -- the normal one on a stocked pack -- read
@@ -2706,4 +2717,108 @@ func _nodes_on_plate(root: Node, ink: Color) -> PackedStringArray:
 			found.append("%s (%s)" % [control.name, control.get_class()])
 	for child in root.get_children():
 		found.append_array(_nodes_on_plate(child, ink))
+	return found
+
+
+## **ON THE MAKE PATH THE TWO COUNTS ARE DRAWN ONCE, AND IN THE PICKER** (ASSA-341 ruling 3, boxes 4,
+## 6 and 7; Maren's, off my own 1x shot, with her scope correction read first).
+##
+## The shot printed `need 5 · have 19` twice verbatim. It can never be otherwise here and that is the
+## shape of the TYPE: `MakeOffer` carries `pub input: Item` -- singular -- so one offer is one recipe
+## x one material, one `cost`, one `have`, and block 6's single entry is always the selected material
+## row. A second copy of a sim sentence is the ASSA-43/52 defect named in `have_need_line`'s own
+## docstring.
+##
+## **THE COUNTS THEMSELVES ARE NOT UNDER TEST AND MUST NOT BE** -- what the pack holds at this tick is
+## worldgen's business. The string compared is the one the SIM's two numbers make
+## (`cost_counts_line(offer.cost, offer.count)`), and the assertion is how many times that string is
+## on screen. So this cannot pass by the counts being wrong in both places, and it cannot pass by the
+## counts vanishing: her §3 keeps them in the picker, because comparing two materials must not cost
+## two gestures.
+##
+## **BOTH OF BLOCK 6's NODES ARE ASSERTED, not just the rows.** Hiding the rows alone leaves the word
+## `cost` standing over nothing and leaves every tool asking `_build_cost.visible` reading `true`
+## about a block nobody can see -- ASSA-117's defect, which `_show_log` on this same screen exists to
+## prevent.
+func test_the_make_path_prints_the_two_counts_once_and_only_in_the_picker() -> bool:
+	var screen := _joined()
+	_tick(screen, 2)
+	var ok := _mine_some_ore(screen)
+	if ok:
+		var launcher := _make_launcher_for(screen, "smelter")
+		if launcher == null:
+			ok = _fail("no menu row offers a smelter: %s" % _text_of(screen._make))
+		else:
+			launcher.pressed.emit()
+			var offer: Dictionary = screen._chosen_offer()
+			if offer.is_empty():
+				ok = _fail("the screen opened on no offer at all, so there are no counts to count")
+			else:
+				var pair := AssayHud.cost_counts_line(int(offer.get("cost", 0)),
+						int(offer.get("count", 0)))
+				if screen._build_cost.visible or screen._build_cost_box.visible:
+					ok = _fail(("block 6 is still shown on the make path (rows visible=%s, section "
+							+ "visible=%s); its one entry can only ever be the material row above it")
+							% [screen._build_cost.visible, screen._build_cost_box.visible])
+				if ok:
+					var seen := _visible_labels_with(screen._build_box, pair)
+					if seen.size() != 1:
+						# THE 0 CASE AND THE 2 CASE ARE DIFFERENT DEFECTS, so the message carries the
+						# material column's text either way: 0 means the counts left the picker (or
+						# that this test's visibility walk is wrong), 2 means the duplicate is back.
+						ok = _fail(("`%s` is drawn %d times in one frame (%s). One offer is one recipe "
+								+ "x one material, so a second copy is a copy by construction. The "
+								+ "material column reads: %s")
+								% [pair, seen.size(), seen, _text_of(screen._build_materials)])
+					elif _visible_labels_with(screen._build_materials, pair).size() != 1:
+						ok = _fail(("the counts are drawn once but not in the material column -- they "
+								+ "are the picker (her §3); they ended up at %s") % [seen])
+				var said := _text_of(screen._build_said)
+				if ok and not said.contains(String(offer.get("line", ""))):
+					ok = _fail(("the commit bar no longer carries the sim's sentence whole: it reads "
+							+ "`%s` and the sim said `%s`") % [said, offer.get("line", "")])
+	screen.queue_free()
+	return ok
+
+
+## Names of every Label under `root` whose text contains `needle` and which nothing BETWEEN IT AND
+## `root` has hidden.
+##
+## **`is_visible_in_tree` IS THE OBVIOUS CALL AND IT IS WRONG HERE, MEASURED RATHER THAN REASONED.**
+## My first version used it and the test failed with `drawn 0 times` while its own message printed
+## the material column reading ` · need 5 · have 60 · ` -- the counts were right there. In this suite
+## the screen is built but the window chain above it is not visible, so `is_visible_in_tree` is false
+## for every node on it and the count would have been 0 whatever the screen did. **A check that
+## answers 0 for every possible screen is not a check**, and it would have gone green the moment the
+## duplicate came back, because 0 != 1 looks the same as 2 != 1 only until you read the number.
+##
+## So the walk stops at `root`: what is asked is "did anything on this screen hide it", which is the
+## property the ruling is about (block 6's section hidden takes its rows with it) and the only part
+## of visibility that a headless tree can honestly answer.
+func _visible_labels_with(root: Node, needle: String) -> PackedStringArray:
+	var found := PackedStringArray()
+	for label in _labels_under(root, needle):
+		var node: Node = label
+		var shown := true
+		while node != null and node != root:
+			var control := node as Control
+			if control != null and not control.visible:
+				shown = false
+				break
+			node = node.get_parent()
+		if shown:
+			found.append("%s=`%s`" % [label.name, label.text])
+	return found
+
+
+## Every Label under `root` whose text contains `needle`, hidden or not.
+func _labels_under(root: Node, needle: String) -> Array[Label]:
+	var found: Array[Label] = []
+	if root == null:
+		return found
+	var label := root as Label
+	if label != null and label.text.contains(needle):
+		found.append(label)
+	for child in root.get_children():
+		found.append_array(_labels_under(child, needle))
 	return found
