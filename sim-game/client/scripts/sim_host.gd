@@ -466,6 +466,24 @@ func designs_of(player: int) -> Array:
 	return _sim.designs_of(player) if _sim != null else []
 
 
+## **WHAT A MACHINE MENU MAY OFFER, PER SLOT, AND WHY NOT** (ASSA-351). One dict per INSERTABLE slot:
+## `slot` (the wire tag `Insert` takes), `role` (the sim's word for it) and `offers` -- every stack
+## the player is carrying, spelled exactly as `inventory_of` spells them, so one `item_of_stack`
+## builds the command.
+##
+## **`refusal` IS ABSENT WHEN THE PRESS WOULD MOVE SOMETHING** and otherwise carries the sim's own
+## sentence for why nothing would. `has("refusal")` is the whole test; a key holding "" would be a
+## dead control with no reason beside it, which is the one thing worse than the bug (ASSA-301).
+##
+## This replaces `AssayHud.insert_slots`, which decided from the item's KIND which slots to offer.
+## That reading was honest about fuel -- reactivity at grade is a sheet reading -- and wrong about
+## everything else, so in the one 1x frame we had of a machine menu all four put controls were acts
+## `sim::step` refuses. A client cannot cross grade, the held item, reactivity AND the walls' heat
+## tolerance without eventually missing one; the conclusion is the sim's, whole.
+func insert_offers(player: int, building: int) -> Array:
+	return _sim.insert_offers(player, building) if _sim != null else []
+
+
 ## **WHICH DECLARED PLAYER FACTS A LIST OF BINDING DICTS IS NOT CARRYING** (ASSA-196). Empty means
 ## every player can be described; otherwise the names are `player[0 of 2].pos`, the same shape
 ## `AssayScene.missing_sim_facts` uses, so one vocabulary covers both boundaries.
