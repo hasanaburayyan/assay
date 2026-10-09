@@ -4406,7 +4406,18 @@ func _refresh_actions() -> void:
 		# missing id just keeps the old value, and that file already pushes the error.
 		if b.has("id"):
 			building_here = int(b["id"])
-	var signature := "%s/%s/%s/%s/%s/%s" % [target, _targeted, _building, minable, live, building_here]
+	# **AND WHETHER A POP-UP IS HOLDING THE ACCENT, FOR THE THIRD TIME THE REASON ABOVE IS WRITTEN**
+	# (ASSA-374). `Mine` stands down while the build screen is up, and opening or closing that screen
+	# moves NONE of the other terms here -- not the target, not the cursor, not the rock, not the
+	# link. Left out, the row keeps the accent it had when the pop-up opened and gets it back only
+	# when something unrelated happens to move, which is `minable`'s defect and `live`'s defect again.
+	#
+	# **MEASURED: the guard below was CORRECT and did nothing without this term.** With the `if`
+	# already asking `_popup_holds_the_accent` and this signature unchanged, the test read two
+	# `Primary` controls with the build screen open -- the row simply never rebuilt.
+	var accented := _popup_holds_the_accent()
+	var signature := "%s/%s/%s/%s/%s/%s/%s" % [target, _targeted, _building, minable, live,
+			building_here, accented]
 	if signature == _actions_showing:
 		return
 	_actions_showing = signature
@@ -4432,9 +4443,28 @@ func _refresh_actions() -> void:
 	# comes from `sim::ladder::hand_minable`; the client may not re-derive "hardness <= 40 at grade",
 	# and could not honestly anyway -- a sheet reads as a 25-wide BAND until the species is assayed,
 	# so this screen does not know the hardness it would need. One bit, from the one authority.
+	#
+	# **AND IT STANDS DOWN WHILE A POP-UP CARRYING ITS OWN `Primary` IS OPEN** (ASSA-374, Maren's
+	# ruling, on a collision of two of her own rules). Her §4 keeps this column uncovered while the
+	# build screen is up and ASSA-317 ruling 5 makes `Build` *"the one ACCENT"*, so a green `Mine` and
+	# a green `Build` sat on one 1280x720 screen together -- against ASSA-335 ruling 1, *accent marks
+	# the one act a screen is for, one region per screen*. With the build screen up that act is
+	# `Build`: a pop-up is the answer to a question the player just asked, and two greens makes them
+	# choose between answers while their question is still open.
+	#
+	# **IT DISABLES NOTHING.** Standing down to the default weight is not a grey-out -- `Stop` and
+	# `Assay` have always sat there and are pressable. Same callback, same tooltip, same hover and
+	# pressed states; the rank returns the moment the pop-up closes.
+	#
+	# **AND THE CONDITION IS THE POP-UP *HAVING* A `Primary`, NOT A POP-UP EXISTING** -- which is why
+	# `_popup_holds_the_accent` walks for one rather than naming the build screen. A machine menu has
+	# no primary act by ASSA-316, so standing `Mine` down for it would leave the screen with no accent
+	# at all: a loss with nothing bought. Her rule is *never two at once*, not *the world dims when
+	# anything opens*, and a structural test keeps those two apart without this file deciding which
+	# pop-up is which.
 	var mine_button := _button("Mine", func() -> void: _act("Mine", AssayActions.mine()),
 			"hand-mine the deposit under you. Keeps swinging until you Stop.")
-	if minable and live:
+	if minable and live and not accented:
 		mine_button.theme_type_variation = &"Primary"
 	here.add_child(mine_button)
 	here.add_child(_button("Stop", func() -> void: _act("Stop", AssayActions.stop()),
@@ -5017,6 +5047,31 @@ func _build_screen_open() -> bool:
 	return _build_verb != "" and is_instance_valid(_build_box)
 
 
+## **IS A POP-UP OPEN THAT CARRIES ITS OWN `Primary`?** (ASSA-374.)
+##
+## **THE QUESTION IS ASKED OF THE TREE, NOT OF A LIST OF POP-UP NAMES**, and that is the whole point.
+## Maren's rule is *never two accents at once*, not *the world dims when anything opens*: the build
+## screen has a primary act (`Build`), a machine menu has none by ASSA-316, and standing the world's
+## `Primary` down for the menu would leave the screen with no accent at all. Naming the build screen
+## here would encode today's answer to a question the next pop-up re-asks; walking for the variation
+## means a pop-up that grows a `Primary` later is handled on the day it grows one, and one that loses
+## it gives the world its accent back -- neither needing anyone to find this function.
+##
+## **ONLY VISIBLE POP-UPS COUNT.** Both boxes outlive their open state (`_build_box.visible = false`
+## is how the screen closes), so a walk that ignored visibility would keep the column stood down for
+## the rest of the session -- a rank that never comes back, which is the half of the ruling that says
+## it must.
+func _popup_holds_the_accent() -> bool:
+	for root in [_build_box, _menu_box]:
+		var box := root as Control
+		if not is_instance_valid(box) or not box.visible:
+			continue
+		for child in box.find_children("*", "Button", true, false):
+			if (child as Button).theme_type_variation == &"Primary":
+				return true
+	return false
+
+
 ## **EVERY OFFER THE SIM MAKES FOR THE ROW THIS SCREEN IS OPEN ON** -- same `verb` and same `tag`, one
 ## per material in the pack that the recipe accepts. That list IS the material picker (ASSA-328).
 ##
@@ -5145,6 +5200,22 @@ func _rebuild_build_screen() -> void:
 	var heading := _section_heading(_build_picker)
 	if heading != null:
 		heading.text = "which frame" if assembling else "what to make"
+	# **BLOCK 5's HEADING MOVES WITH THE PATH TOO** (ASSA-369; Maren 13:42Z). `what you get` came
+	# from the make path, where block 5 really is a picture of the thing you get. On the assembly
+	# path the rect is the mass/budget fill, and a heading is this file's word for what is UNDER it.
+	#
+	# **NOT `will it hold`, WHICH IS THE TEMPTING ONE AND IS THE BAR'S JOB.** That question is
+	# answered by the sim's `SAFE / UNCERTAIN / WILL BREAK` in the commit bar; a heading asking it
+	# gives the verdict a second home (ASSA-328 §2) and the day they disagree the screen argues with
+	# itself. **A heading names the QUANTITY; the bar keeps the VERDICT.**
+	#
+	# **THE LONG FORM IS MEASURED, NOT EYEBALLED** (her instruction). `maren_headline_rows.gd` on the
+	# shipped `Heading` font: one row at 244, 240 and 220 px, two rows at 200. Block 5's column is
+	# 244. It is NOT the ~174 px her arithmetic predicted -- the string wants 220 -- so the short
+	# fallback `mass against budget` stays live for any column narrower than that.
+	var readout := _section_heading(_build_detail)
+	if readout != null:
+		readout.text = "mass against the frame's budget" if assembling else "what you get"
 	_show_section(_build_materials, not assembling)
 	_show_section(_build_slots, assembling)
 	_show_section(_build_mounts, assembling)
@@ -5421,10 +5492,39 @@ func _slot_row(named: String) -> HBoxContainer:
 ## draws slots as a shape instead of printing `hopper 0-4`. The engine's own `Panel` draws it, so the
 ## edge is the theme's `BORDER` and this file invents no ink.
 ##
-## **ICON_PX SQUARE, WHICH KEEPS THE PART SHEET'S EXACT 1/4** (ASSA-65, and ASSA-343's reasoning on
-## this screen's one picture): `STRETCH_KEEP_ASPECT_CENTERED` scales by `min(32/128, 32/102)` = 1/4
-## for a 128x102 part cell, so the width is what binds and nothing is resampled. A box of
-## `ICON_BOX_PX`'s 48 height would be the pack ROW's number, which this is not.
+## **THE PLATE IS `ICON_PX` SQUARE AND THE PICTURE IN IT IS NOT** (ASSA-388). This said:
+##
+## > *ICON_PX SQUARE, WHICH KEEPS THE PART SHEET'S EXACT 1/4 (ASSA-65, and ASSA-343's reasoning on
+## > this screen's one picture): `STRETCH_KEEP_ASPECT_CENTERED` scales by `min(32/128, 32/102)` = 1/4
+## > for a 128x102 part cell, so the width is what binds and nothing is resampled. A box of
+## > `ICON_BOX_PX`'s 48 height would be the pack ROW's number, which this is not.*
+##
+## **EVERY TERM OF THAT IS A MEASUREMENT OF A SHEET THIS BOX DOES NOT DRAW.** `_icon_box` below calls
+## `AssaySprites.icon_for`, which reads `SHEET_OF` -- and **ASSA-121 moved all four part kinds out of
+## `ASSEMBLY_SHEET_OF` and onto the items sheet**, because a part in your pack is a loose thing. The
+## 128x102 assembly cell is still real and is still what a PLANTED machine composites from; it is not
+## what arrives here. Read off the shipped `manifest.json` and the real `AtlasTexture` regions
+## (`client/tools/cove_slot_box_scale.gd`): the frame is **64x96 for every row**, so the mode picks
+## **1/3, the HEIGHT binds, and `64/3 = 21.33` is a fractional width with a half-pixel offset** --
+## which is the one thing "nothing is resampled" was asserting.
+##
+## **AND THE PICTURE IS NOT 1/3 EITHER, BECAUSE IT IS NOT IN THIS BOX.** `_icon_box` stamps
+## `ICON_BOX_PX` (32x48, the pack ROW's number) on the `TextureRect` as a MINIMUM size, and
+## `PRESET_FULL_RECT` anchors a control -- it cannot shrink one below its minimum. So the picture is
+## laid out 32x48 inside a 32x32 plate at scale 1/2, and **a tall part hangs out of the bottom of its
+## own plate.** Measured on a 1x window, not argued (`art/slot_plate_probe.py` on
+## `shared/assay/cove-assa388-slot-plate/`, seed 14247, flood-filled per sprite so neighbouring
+## plates cannot contaminate a bbox):
+##
+##     head    ink 21x39 at y136..174, plate 32x32 at y136..167  ->  7 px of PAINT below the plate
+##     hopper  ink 24x28 at y175..202, plate 32x32 at y174..205  ->  inside, because its art is short
+##
+## So the plate's square is not keeping any ratio exact; it is clipping nothing and containing
+## nothing. **The box's SHAPE is a design call and it is the Game Director's** -- confining the
+## picture to 32x32 shrinks every part picture, and growing the plate to `ICON_BOX_PX` is the thing
+## the sentence above rejected for a reason that turned out to be about another sheet. ASSA-388
+## carries both options rendered at 1x. Nothing here is changed until she rules; what is changed is
+## that the file no longer says the opposite of what the window shows.
 ##
 ## **NO PLATE UNDER THE SPRITE** (ASSA-341, Maren's ruling off my own 1x shot): a part on the panel's
 ## `SURFACE` measures 5.57:1 and on the pack's plate 1.24:1, and ASSA-71's one-surface reason is about

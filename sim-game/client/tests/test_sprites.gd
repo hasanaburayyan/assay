@@ -367,6 +367,59 @@ func test_a_part_draws_from_items_in_the_pack_and_its_own_sheet_in_a_machine() -
 	return true
 
 
+## **THE ARITHMETIC `_slot_box`'s DOC RESTS ON, READ OFF THE REAL ATLAS AND main.gd'S OWN CONSTANTS**
+## (ASSA-388).
+##
+## The test above already proves a part's pack picture comes from `items.png`, and it was green the
+## whole time `_slot_box` said the opposite in prose -- *"a 128x102 part cell … the width is what
+## binds and nothing is resampled"*. **Nothing tests prose**, so this asserts the three numbers the
+## corrected doc states, where a drifting constant or a moved row reddens instead of rotting.
+##
+## **IT DOES NOT ASSERT THAT THE PICTURE FITS THE PLATE, BECAUSE TODAY IT DOES NOT.** `_icon_box`
+## stamps `ICON_BOX_PX` (32x48) on the `TextureRect` as a MINIMUM, `_slot_box` anchors it into an
+## `ICON_PX` square with `PRESET_FULL_RECT`, and anchoring cannot shrink a control below its
+## minimum -- so a tall part hangs 7 px of paint out of the bottom of its own plate on a 1x window.
+## Reconciling the two is a design call (shrink the picture, or grow the plate) and it is the Game
+## Director's; ASSA-388 carries both options rendered. **Clause 3 is written as the GAP on purpose:
+## the day the two are reconciled this test fails, which is the reminder to rewrite the doc with the
+## fix instead of leaving a third stale sentence beside this box.**
+func test_a_part_in_a_square_slot_plate_binds_on_height_and_overruns_it() -> bool:
+	var main_consts: Dictionary = (load("res://scripts/main.gd") as GDScript).get_script_constant_map()
+	var icon_px: float = main_consts.get("ICON_PX", 0.0)
+	var icon_box: Vector2 = main_consts.get("ICON_BOX_PX", Vector2.ZERO)
+	if icon_px <= 0.0 or icon_box == Vector2.ZERO:
+		return _fail("main.gd no longer exports ICON_PX / ICON_BOX_PX; this test reads them, not a copy")
+	# 1. THE FRAME IS PORTRAIT, which is what kills the old sentence: a 128x102 assembly cell is
+	#    landscape, binds on width, and divides 32 exactly. A 64x96 items frame does none of that.
+	for kind in ["handle", "head", "frame", "hopper"]:
+		var icon := AssaySprites.icon_for({"kind": kind, "species": 0, "grade": "B"})
+		if icon == null:
+			return _fail("`%s` got no pack icon" % kind)
+		var frame := icon.region.size
+		if frame.x >= frame.y:
+			return _fail(("`%s`'s pack frame is %s -- landscape or square. `_slot_box`'s doc is "
+					+ "written for a PORTRAIT frame, where the HEIGHT binds in a square plate and "
+					+ "64/3 is fractional. Rewrite it.") % [kind, frame])
+		# 2. AND THE PICTURE'S OWN MINIMUM IS TALLER THAN THE PLATE IT IS ANCHORED INTO -- the gap
+		#    that makes a tall part overrun its plate. Read the note above before "fixing" this.
+		if icon_box.y <= icon_px:
+			return _fail(("ICON_BOX_PX is %s and the slot plate is %dpx square, so the pack row's "
+					+ "box no longer overruns it. ASSA-388's overflow is gone: say so in "
+					+ "`_slot_box`'s doc and retire this clause.") % [icon_box, int(icon_px)])
+		# 3. **NOT "THE HEIGHT BINDS", WHICH WOULD BE VACUOUS HERE**: in a SQUARE box a portrait
+		#    frame always binds on height, so clause 1 already decided it and no mutation could
+		#    reach a separate assertion. What is not implied is that `ICON_BOX_PX` fits this frame
+		#    EXACTLY -- 32x48 and 64x96 are both 2:3, so neither axis binds and the scale is a clean
+		#    1/2. That is why the overflowing picture is 32x48 of crisp art rather than a resample,
+		#    and it is the one number `_slot_box`'s doc would need if the plate grew to meet it.
+		if not is_equal_approx(icon_box.x / frame.x, icon_box.y / frame.y):
+			return _fail(("`%s` %s does not fit ICON_BOX_PX %s exactly: %.4f by width, %.4f by "
+					+ "height. The pack row's box and the authored frame have stopped sharing an "
+					+ "aspect, so a pack icon is being resampled.")
+					% [kind, frame, icon_box, icon_box.x / frame.x, icon_box.y / frame.y])
+	return true
+
+
 ## THE TINT IS THE SPECIES' OWN SLOT, from the one table CI holds equal to the art pipeline's copy.
 func test_the_icon_tint_is_the_species_slot() -> bool:
 	for species in range(AssayHud.SPECIES_TINTS.size()):
