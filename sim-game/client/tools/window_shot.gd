@@ -140,6 +140,8 @@ const NORTH_WALK_TICKS := 600
 enum Phase { SETTLE_JOIN, SHOOT_JOIN, PLAY, SETTLE_PACK, SHOOT_PACK, SETTLE_HALT, SHOOT_HALT,
 		SETTLE_PLAY, SHOOT_PLAY,
 		OPEN_MACHINE_MENU, SETTLE_MACHINE_MENU, SHOOT_MACHINE_MENU,
+		SELECT_BIG, SETTLE_SELECT_BIG, SHOOT_SELECT_BIG,
+		SELECT_SMALL, SETTLE_SELECT_SMALL, SHOOT_SELECT_SMALL,
 		SETTLE_FOLD, MEASURE_CONTROLS, SETTLE_MENUS, SHOOT_MENUS, SCROLL_ROCKS, SETTLE_ROCKS,
 		SHOOT_ROCKS, OPEN_MAKE, SCROLL_MAKE, SETTLE_MAKE, ANCHOR_MAKE, SHOOT_MAKE, WALK_NORTH, SETTLE_NORTH_LOG, SHOOT_NORTH_LOG, SETTLE_NORTH_CLEAR,
 		SHOOT_NORTH_CLEAR, WALK_OFF, SETTLE_WALK, SHOOT_WALK, PRESS_V, SETTLE_SCHEMATIC, SHOOT_SCHEMATIC,
@@ -168,6 +170,10 @@ var _shots := PackedStringArray()
 ## the arithmetic: a table that derives the geometry again is a table that can disagree with the
 ## picture it is describing, which is the shape of the bug I shipped in `_controls_report`.
 var _schematic_marks: Array = []
+## THE TWO BUILDINGS ASSA-348's FRAMES SELECT IN TURN: a 2x2 and a 1x1, found in this world rather
+## than named, so a seed that plants something else says so instead of photographing the wrong pair.
+var _subject_big := Vector2i(-1, -1)
+var _subject_small := Vector2i(-1, -1)
 ## **WHAT THE SCHEMATIC PAINTED FOR EVERY SPECIES LETTER**, off `main.gd::_glyph_marks` in the same
 ## frame and for `_schematic_marks`' reason (ASSA-213). Read ONCE and used by both the marks table and
 ## the `letters` leg: two reads of a running world are two worlds, and a leg disagreeing with the JSON
@@ -537,6 +543,43 @@ func _process(_delta: float) -> bool:
 			_shoot("14-machine-menu.png", PackedStringArray(["machine menu"]))
 			_machine_menu_report()
 			_screen._close_machine_menu()
+			_phase = Phase.SELECT_BIG
+		# **THE SELECTION OUTLINE ON A 2x2 AND ON A 1x1, WITH BOTH MACHINES IN THE FRAME** (ASSA-348).
+		#
+		# Three of the sim's five verbs take a `BuildingId`, so the mark has to trace a FOOTPRINT, and
+		# the only way to see that it does is to put a 2x2 and a 1x1 in one view and select each in
+		# turn. The menu is already closed above, which is what makes the outline the only mark in
+		# these two frames.
+		#
+		# **`_target` IS SET HERE RATHER THAN CLICKED, AND THAT IS A FINDING, NOT A SHORTCUT.** Every
+		# other leg in this file clicks, on purpose. A click cannot produce this state: a press on an
+		# occupied tile opens that machine's menu and returns (`main.gd::_unhandled_input`), so a
+		# player can only ever have a building selected in the instant after PLACING it. The report
+		# says so, because a frame that photographs an unreachable state must not be read as a
+		# photograph of a reachable one.
+		Phase.SELECT_BIG:
+			var pair := _two_subjects()
+			if pair.is_empty():
+				print("note: this world has no 2x2 and 1x1 pair, so no selection frames were shot")
+				_phase = Phase.SETTLE_FOLD
+			else:
+				_subject_big = pair[0]
+				_subject_small = pair[1]
+				_aim_at(_subject_big)
+				_phase = Phase.SETTLE_SELECT_BIG
+		Phase.SETTLE_SELECT_BIG:
+			_settle(Phase.SHOOT_SELECT_BIG)
+		Phase.SHOOT_SELECT_BIG:
+			_shoot("15-selection-2x2.png", PackedStringArray())
+			_selection_report("2x2", _subject_big)
+			_aim_at(_subject_small)
+			_phase = Phase.SETTLE_SELECT_SMALL
+		Phase.SETTLE_SELECT_SMALL:
+			_settle(Phase.SHOOT_SELECT_SMALL)
+		Phase.SHOOT_SELECT_SMALL:
+			_shoot("16-selection-1x1.png", PackedStringArray())
+			_selection_report("1x1", _subject_small)
+			_screen._targeted = false
 			_phase = Phase.SETTLE_FOLD
 		Phase.SETTLE_FOLD:
 			_settle(Phase.MEASURE_CONTROLS)
@@ -1252,6 +1295,91 @@ func _a_machine_tile() -> Vector2i:
 		var building: Dictionary = entry
 		return building.get("pos", Vector2i(-1, -1)) as Vector2i
 	return Vector2i(-1, -1)
+
+
+## **AIM AT A TILE THE WAY THE RIGHT-CLICK BRANCH DOES, AND THE `_refresh()` IS THE WHOLE POINT**
+## (ASSA-348).
+##
+## **THE FIRST VERSION OF THIS SET `_target` AND `_targeted` AND NOTHING ELSE, AND THE FRAME CAME
+## BACK WITH THE DEFECT ASSA-334 EXISTS TO KILL.** The outline sat on the smelter at (59, 61) while
+## the HUD column still read `acting on (57, 59) · on a deposit` -- a ring and a readout naming two
+## subjects, in the evidence frame for an item about marks agreeing. Every number in the report was
+## right; only the picture said so.
+##
+## It was the probe, not the client: `main.gd::_unhandled_input` sets the two fields and then calls
+## `_refresh()` in the next line, so in real play the column cannot lag the ring. Setting the state
+## without the refresh photographs a screen no gesture can produce. **The toast is written too, so
+## the frame is the one a player would see if this gesture existed** -- which, per the item, it does
+## not: a click on an occupied tile opens that machine's menu and returns.
+func _aim_at(tile: Vector2i) -> void:
+	_screen._target = tile
+	_screen._targeted = true
+	_screen._say("acting on %d, %d" % [tile.x, tile.y], AssayHud.Say.JOINED)
+	_screen._refresh()
+	_screen.queue_redraw()
+
+
+## **A 2x2 AND A 1x1 STANDING IN THIS WORLD, OR `[]`** (ASSA-348). Returns their `pos` tiles.
+##
+## THE SPANS COME OFF THE SIM'S OWN `buildings()` AND ARE NOT INFERRED FROM `kind`: this file is a
+## renderer-side probe, and a tool that decided a smelter is 2x2 by reading its name would be
+## asserting the very fact the item is about.
+func _two_subjects() -> Array:
+	var big := Vector2i(-1, -1)
+	var small := Vector2i(-1, -1)
+	for entry in _screen._sim.buildings():
+		var building: Dictionary = entry
+		var span: Vector2i = building.get("footprint", Vector2i.ONE)
+		var at: Vector2i = building.get("pos", Vector2i(-1, -1))
+		if at.x < 0:
+			continue
+		if span.x > 1 or span.y > 1:
+			if big.x < 0:
+				big = at
+		elif small.x < 0:
+			small = at
+	return [] if big.x < 0 or small.x < 0 else [big, small]
+
+
+## **WHAT THE OUTLINE ACTUALLY TRACED, IN THE FRAME IT WAS PHOTOGRAPHED IN** (ASSA-348).
+##
+## `drawn_selection` is the union of the bars `_draw` really painted, set after the `draw_rect`
+## calls, so it cannot describe a frame they were skipped in. Printed beside the sim's own footprint
+## for the same building: the item's whole claim is that those two agree, and a report that derived
+## the rect from the footprint would agree with itself whatever the painter did -- the defect
+## `_controls_report` shipped once already.
+##
+## **IT ALSO SAYS WHETHER THE OTHER MACHINE IS IN FRAME**, because "both visible" is half of the
+## acceptance box and is otherwise an assumption about a camera.
+func _selection_report(label: String, at: Vector2i) -> void:
+	var layer = _screen._world
+	var origin: Vector2 = layer.view.get("origin", Vector2.ZERO)
+	var facts: Dictionary = _screen._sim.tile_at(at)
+	var building: Variant = facts.get("building")
+	var span: Vector2i = Vector2i.ONE
+	var pos := at
+	if building != null:
+		var it: Dictionary = building
+		span = it.get("footprint", Vector2i.ONE)
+		pos = it.get("pos", at)
+	var drawn: Rect2 = layer.drawn_selection
+	var want := Rect2(Vector2(pos) * AssayScene.TILE_PX - origin,
+			Vector2(span) * AssayScene.TILE_PX)
+	print("  selection %s: target %s · sim says pos %s footprint %s" % [label, at, pos, span])
+	print("    _world.selection  %s" % [layer.selection])
+	print("    drawn_selection   %s  (the union of the bars actually painted)" % [drawn])
+	print("    footprint on screen %s  -> outline inset by %s, %s" % [want,
+			drawn.position - want.position, want.end - drawn.end])
+	print("    drawn tiles across %.2f, down %.2f (TILE_PX %.0f)"
+			% [drawn.size.x / AssayScene.TILE_PX, drawn.size.y / AssayScene.TILE_PX,
+			AssayScene.TILE_PX])
+	for other in [_subject_big, _subject_small]:
+		var spot := Vector2(other as Vector2i) * AssayScene.TILE_PX - origin
+		var extent: Vector2 = layer.size
+		var inside: bool = spot.x >= 0.0 and spot.y >= 0.0 \
+				and spot.x < extent.x and spot.y < extent.y
+		print("    machine at %s on screen at %s: %s"
+				% [other, spot, "IN FRAME" if inside else "OFF SCREEN"])
 
 
 ## **WHAT THE MENU ACTUALLY LANDED ON, MEASURED IN THE FRAME IT WAS PHOTOGRAPHED IN** (ASSA-316,

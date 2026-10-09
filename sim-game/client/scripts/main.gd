@@ -4522,16 +4522,36 @@ func _place_machine_menu() -> void:
 func _footprint_rect() -> Rect2:
 	var centre := point_of_tile(_menu_tile)
 	var cell := point_of_tile(_menu_tile + Vector2i.ONE) - centre
-	var origin := _menu_tile
+	var area := _footprint_tiles(_menu_tile)
+	return Rect2(point_of_tile(area.position) - cell * 0.5, cell * Vector2(area.size))
+
+
+## **WHAT THE SIM SAYS OCCUPIES `tile`, IN TILES: the whole building, or that one tile** (ASSA-348).
+##
+## `position` is the subject's top-left tile and `size` its span. A tile with no building on it
+## answers `Rect2i(tile, Vector2i.ONE)`, and that is the RIGHT answer rather than a fallback: `Place`
+## and `PlaceAssembly` carry a `TilePos`, so there the subject genuinely is one tile.
+##
+## **THE SPAN IS A SIM FACT AND IS NEVER INFERRED FROM A KIND OR A SPRITE.** `BuildingFacts.footprint`
+## is already crossing the binding (`sim-godot/src/lib.rs`: *"A smelter is (2, 2) and a machine (1, 1)
+## -- `BuildingKind::footprint`"*), and reading `"smelter" -> 2x2` on this side would be the client
+## inventing a rule it does not own -- the same crossing `sim-godot`'s own note forbids. A building
+## whose footprint the binding did not send falls back to one tile rather than to a zero-sized rect.
+##
+## **ONE COPY, BECAUSE THERE WERE ABOUT TO BE TWO.** `_footprint_rect` above wants this in screen
+## pixels for the anchored menu (ASSA-334) and the selection outline wants it in tiles; written twice,
+## the menu and the ring would be free to disagree about the extent of the very same machine, which
+## is the two-subjects defect ASSA-334 was filed for, reintroduced one layer down.
+func _footprint_tiles(tile: Vector2i) -> Rect2i:
+	var origin := tile
 	var span := Vector2i.ONE
-	var facts := _sim.tile_at(_menu_tile)
+	var facts := _sim.tile_at(tile)
 	var building: Variant = facts.get("building")
 	if building != null:
 		var it: Dictionary = building
-		origin = it.get("pos", _menu_tile)
+		origin = it.get("pos", tile)
 		span = it.get("footprint", Vector2i.ONE)
-	span = Vector2i(maxi(1, span.x), maxi(1, span.y))
-	return Rect2(point_of_tile(origin) - cell * 0.5, cell * Vector2(span))
+	return Rect2i(origin, Vector2i(maxi(1, span.x), maxi(1, span.y)))
 
 
 ## **OPEN THE BUILD SCREEN ON ONE CATALOGUE ROW** (ASSA-328). Maren's §2: a make row's button *"opens
@@ -6254,7 +6274,13 @@ func _refresh_world(frame_dt := -1.0) -> void:
 	# **ANCHORING FREES IT.** The menu's tie to its machine is now its POSITION (`_place_machine_menu`),
 	# so this line goes back to what ASSA-276 move 4 ruled: the ring is on the tile the verbs act on, and
 	# no frame draws two.
-	_world.selection = _target if _targeted else null
+	#
+	# **AND IT IS THE SUBJECT'S FOOTPRINT, NOT THE TILE THAT WAS CLICKED** (ASSA-348, Maren: *"the
+	# outline follows the subject, and the sim says what the subject is"*). `Take`, `Pickup` and
+	# `Insert` all carry a `BuildingId`, so on a 2x2 smelter the one-tile outline claimed a quarter of
+	# what the button was about to act on -- and since the menus shipped, the anchored panel and the
+	# ring were two marks on screen disagreeing about the extent of one subject.
+	_world.selection = _footprint_tiles(_target) if _targeted else null
 	_refresh_front_door()
 	_world.queue_redraw()
 
