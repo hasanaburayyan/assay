@@ -3,7 +3,7 @@ extends SceneTree
 ## TWO PLAYERS IN ONE ASSAY WINDOW, PHOTOGRAPHED FOR THE FIRST TIME (Maren).
 ##
 ##   godot --path client --script res://tools/maren_coop_shot.gd \
-##       -- <out_dir> [seed] [peer_name] [row] [col] [play]
+##       -- <out_dir> [seed] [peer_name] [row] [col] [play] [peer_dx peer_dy]
 ##   (A GUI RUN. Never --headless: a headless viewport photographs nothing.)
 ##
 ## **THE MILESTONE IS CALLED "the minimal CO-OP demo" AND NOTHING HAS EVER PHOTOGRAPHED TWO PLAYERS.**
@@ -64,7 +64,7 @@ const DEFAULT_PEER := "rainy"
 ## whose centre x is 477. **The south clamp takes one axis of the centring cue away and leaves the
 ## other.** Only a CORNER takes both, so only a corner is the case the item reasons about.
 ##
-## **WHY IT MATTERS THAT WE BOTH MOVE.** The partner is placed at `PEER_OFFSET` from ME, so walking
+## **WHY IT MATTERS THAT WE BOTH MOVE.** The partner is placed at `_peer_offset` from ME, so walking
 ## me is enough to put both bodies at the edge. The thing under test is that at a clamped edge the
 ## camera does NOT centre you, so "mine is the one in the middle" stops being available and the foot
 ## mark is all that is left.
@@ -102,6 +102,50 @@ const WALK_SHOT_PAUSE := 0.6
 const RUN_CEILING := 600.0
 ## How long the craft chain itself gets, counted from the frame it starts.
 const PLAY_DEADLINE := 420.0
+
+## **HOW LONG TO WAIT FOR THE DRAWING TO AGREE WITH THE SIM BEFORE THE SHUTTER, AND HOW CLOSE COUNTS.**
+##
+## **FOUR SETTLE FRAMES IS NOT A SETTLED PICTURE, AND THE FIRST ONE-TILE RUN IS THE PROOF** (ASSA-385,
+## Limpet, 2026-10-09). With `SETTLE_FRAMES` alone, a run whose two bodies the SIM had on ONE TILE --
+## both reported at (44,48), both arrivals waited for -- photographed them **3.7 tiles apart**. Not a
+## sim fact: `main.gd` draws `_seen`/`_was` through the playout clock, so a body that has arrived in
+## the sim is still being PLAYED toward that tile while the buffer is deep, and a settle counted in
+## FRAMES (4 at ~60 Hz is ~67 ms) cannot drain a buffer counted in TICKS (100 ms each).
+##
+## So the wait is on the thing the picture is about: every drawn `at` agreeing with the tile the sim
+## holds for that player. **BOTH THE WAIT AND THE DEPTH ARE PRINTED, never assumed** -- "the bodies
+## agree" is also what a run that lost a player looks like, and a timeout here is a finding about the
+## client rather than a reason to throw the frame away, so it shoots either way and says which.
+const CATCH_DEADLINE := 10.0
+## In tiles. A drained playout puts `at` exactly on `pos` (`_was == _seen == pos`, so the lerp has
+## nothing to interpolate), so this is slack for float noise and not a tolerance anything can hide in.
+const CATCH_EPSILON := 0.05
+
+## **AND THE SAVED FRAME MAY STILL BE A SECOND OLD. TWO OF THIS ITEM'S FIRST FOUR WERE** (ASSA-385,
+## Limpet, 2026-10-09).
+##
+## `root.get_texture().get_image()` hands back what the GPU last presented, which on a loaded machine
+## is not the frame `_process` is standing in. Measured, not suspected: two runs saved a close-up
+## whose camera puts my body at tile ~(50, 46) and ~(46, 46) -- tiles ON THE PATH of a walk that had
+## already finished, six and ten ticks back -- while the state printed beside the file said (44, 48)
+## and the HUD in the picture said (44, 48) too, because that readout is a label and not the world.
+## **The older of the two still had the partner standing on spawn, so it held ONE BODY, and I was one
+## step from filing "the close-up does not draw your partner" off it.**
+##
+## So the shutter asserts its own picture. The foot mark is painted at a rectangle this file already
+## publishes (`drawn_foot`), so the saved PNG must carry MINE ink inside that rectangle; a frame from
+## a second ago has your body somewhere else and leaves plain ground there. **A CONTROL RECT the same
+## size, six tiles south, is counted in the same pass** -- an ink test that cannot report zero is not
+## a test, and this one has to be able to fail on exactly the frames it exists for. Measured on the
+## two good frames: 137 and 119 px of ink in the foot rect, 0 in the control, north, south and west.
+const FOOT_INK_FLOOR := 40
+const FOOT_CONTROL_CEILING := 2
+## In tiles, straight down, for the control rect. South because both bodies sit in one band of rows
+## when the partner is placed east, which is this tool's default framing.
+const CONTROL_TILES_SOUTH := 6.0
+## How many retakes a stale frame gets, and how many frames to let pass before each one.
+const MAX_RETAKES := 8
+const RETAKE_FRAMES := 12
 ## **HOW FAR EITHER BODY MUST STAND FROM EVERY BUILDING, in tiles, for the schematic to be judgeable.**
 ## On the 96x64 world the whole-world view draws a tile at 9 px, a building diamond at
 ## `AssayHud.BUILDING_MARK_PX` and a player at `PLAYER_MARK_PX`; three tiles of clearance is already
@@ -116,7 +160,18 @@ const CLEAR_RADIUS := 40
 ## rect, so about 27x18 tiles: a partner four east and one north is comfortably on screen with me and
 ## far enough that the two bodies do not overlap. Nothing here is a design claim -- it is the
 ## framing, chosen so the picture contains the thing the picture is about.
-const PEER_OFFSET := Vector2i(4, -1)
+const DEFAULT_PEER_OFFSET := Vector2i(4, -1)
+
+## **AND IT IS AN ARGUMENT NOW, BECAUSE ASSA-385 BOX 2 ASKS FOR THE ONE FRAMING THE CONST FORBIDS**
+## (Limpet, 2026-10-09): both bodies on ONE tile. `sim/src/step.rs::move_players` has no occupancy
+## check -- read, not assumed: it signums each axis toward `target` and nothing looks at who else
+## stands there -- so the sim allows it and the close-up has never been asked to draw it.
+##
+## A SEPARATE VAR RATHER THAN A MUTATED CONST so a run with no offset argument is byte-for-byte the
+## run Maren wrote, and **the offset is printed in the verdict** (`_report`): a frame whose two
+## bodies are one body is also what a BROKEN run looks like, and the only thing that tells those
+## apart is whether the framing asked for it.
+var _peer_offset := DEFAULT_PEER_OFFSET
 
 var _screen: Node = null
 var _relay_binary := ""
@@ -154,6 +209,23 @@ var _clear_target := Vector2i.ZERO
 ## WHAT THE WALKING SHOT SAW, kept for the report so the picture cannot be read without it.
 var _walk_note := ""
 
+## THE SHUTTER'S OWN CHECK: how many retakes it has spent, how many frames it is waiting out, and
+## what it found. See `FOOT_INK_FLOOR`.
+var _retakes := 0
+var _retake_wait := 0
+var _shot_note := ""
+## FALSE until the saved close-up has been checked against the frame the run is in, and the reason
+## `CO-OP SHOT OK` is not printed when it stays false. **SAME RULE AS ASSA-383 ON THE OTHER SHOT
+## TOOL:** a tool that hands back a picture it could not verify may not also hand back the sentence
+## everyone greps for.
+var _shot_verified := false
+
+## THE CATCH-UP WAIT: whether it has finished, when it began, when it gives up, and its sentence.
+var _caught := false
+var _catch_from := 0.0
+var _catch_until := 0.0
+var _catch_note := ""
+
 
 func _initialize() -> void:
 	var argv := OS.get_cmdline_user_args()
@@ -177,6 +249,18 @@ func _initialize() -> void:
 		var word := String(argv[5]).strip_edges().to_lower()
 		_play_on = word != "" and word != "0" and word != "no" and word != "noplay"
 		print("play argument '%s' -> %s" % [word, "PLAY THE CHAIN" if _play_on else "walk only"])
+	# **BOTH HALVES OR NEITHER, AND A HALF IS A BAIL RATHER THAN A ZERO.** `0` is a legal offset here
+	# and it is the one ASSA-385 box 2 asks for, so a missing `dy` read as `int("")` == 0 would hand
+	# back the overlapped frame under the name of whatever the caller meant -- the exact failure the
+	# `play` word above is written to avoid, one argument along.
+	if argv.size() > 6 or argv.size() > 7:
+		if argv.size() < 8:
+			print("FAIL  the partner offset is two arguments, dx and dy; got %d" % (argv.size() - 6))
+			quit(1)
+			return
+		_peer_offset = Vector2i(int(argv[6]), int(argv[7]))
+	print("partner offset %s%s" % [_peer_offset,
+			"  <- ON MY OWN TILE, asked for" if _peer_offset == Vector2i.ZERO else ""])
 	DirAccess.make_dir_recursive_absolute(_out)
 	_relay_binary = AssaySoloRelay.find_binary()
 	if _relay_binary == "":
@@ -240,10 +324,10 @@ func _process(_delta: float) -> bool:
 		6:
 			_wait_for_the_peer_to_arrive()
 		7:
-			_settle_then(8)
+			_catch_up_then(8)
 		8:
-			_shoot("01-close-up-two.png")
-			_step = 9
+			if _shoot_the_close_up():
+				_step = 9
 		9:
 			# THE PRESS ITSELF, not `_show_close_up` -- what a person's click does.
 			_screen._view_toggle.emit_signal("pressed")
@@ -335,7 +419,7 @@ func _after_bundle(_tick: int, _inputs: Array, _raw: String) -> void:
 ##
 ## The chain plants on the tile you stand on, so after it the body and the machine are the same tile
 ## and the 12px diamond disappears inside the 16px square -- measured in `window_shot.gd`, which is
-## why that tool walks off before it presses V. The partner is placed at `PEER_OFFSET` from wherever I
+## why that tool walks off before it presses V. The partner is placed at `_peer_offset` from wherever I
 ## stop, so MY tile decides BOTH marks and the search has to satisfy both at once.
 ##
 ## A SPIRAL OUT FROM WHERE I STAND and not a jump to a corner: the schematic is the whole map, so any
@@ -358,8 +442,8 @@ func _walk_clear_of_every_building() -> void:
 				var tile := me + Vector2i(dx, dy)
 				if tile.x < 0 or tile.y < 0 or tile.x >= size.x or tile.y >= size.y:
 					continue
-				var mate := Vector2i(clampi(tile.x + PEER_OFFSET.x, 0, size.x - 1),
-						clampi(tile.y + PEER_OFFSET.y, 0, size.y - 1))
+				var mate := Vector2i(clampi(tile.x + _peer_offset.x, 0, size.x - 1),
+						clampi(tile.y + _peer_offset.y, 0, size.y - 1))
 				if _clear_of_buildings(tile) and _clear_of_buildings(mate):
 					pick = tile
 					break
@@ -505,7 +589,7 @@ func _walk_me_to_the_row() -> void:
 		return
 	var me: Vector2 = found
 	var size: Vector2i = _screen._sim.size_tiles()
-	# THE PARTNER IS PLACED AT `PEER_OFFSET` FROM ME AND THAT OFFSET POINTS EAST, so a column near the
+	# THE PARTNER IS PLACED AT `_peer_offset` FROM ME AND IT POINTS EAST BY DEFAULT, so a column near the
 	# WEST edge keeps both of us on screen while a column near the east edge would push them off it.
 	# Said here rather than clamped silently: a tool that quietly moved the partner would answer a
 	# different question than the one the caller asked.
@@ -547,8 +631,8 @@ func _send_the_peer_walking() -> void:
 		return
 	var me: Vector2 = found
 	var size: Vector2i = _screen._sim.size_tiles()
-	_peer_target = Vector2i(clampi(int(me.x) + PEER_OFFSET.x, 0, size.x - 1),
-			clampi(int(me.y) + PEER_OFFSET.y, 0, size.y - 1))
+	_peer_target = Vector2i(clampi(int(me.x) + _peer_offset.x, 0, size.x - 1),
+			clampi(int(me.y) + _peer_offset.y, 0, size.y - 1))
 	_peer_stdio.store_line("goto %d %d" % [_peer_target.x, _peer_target.y])
 	_peer_stdio.flush()
 	print("  told '%s' to walk to %s (I am at %s)" % [_peer_name, _peer_target, me])
@@ -593,7 +677,7 @@ func _send_both_walking() -> void:
 	var dx := WALK_SHOT_TILES if me.x < size.x / 2 else -WALK_SHOT_TILES
 	_my_target = Vector2i(clampi(me.x + dx, 0, size.x - 1), me.y)
 	var them: Variant = _tile_of(false)
-	var they := me + PEER_OFFSET if them == null else Vector2i(
+	var they := me + _peer_offset if them == null else Vector2i(
 			int((them as Vector2).x), int((them as Vector2).y))
 	_peer_target = Vector2i(clampi(they.x - dx, 0, size.x - 1), they.y)
 	if not _screen._client.submit(AssayActions.move_to(_my_target)):
@@ -647,6 +731,118 @@ func _is_empty_pair() -> bool:
 	return _screen._sim.players().size() < 2
 
 
+## **WAIT FOR THE DRAWING TO AGREE WITH THE SIM, AND ONLY THEN SETTLE** (ASSA-385). See
+## `CATCH_DEADLINE` for what this is for and what it cost to find out.
+func _catch_up_then(next: int) -> void:
+	_drain_relay()
+	if not _caught:
+		if _catch_until == 0.0:
+			_catch_from = _now()
+			_catch_until = _now() + CATCH_DEADLINE
+		var gap := _drawing_gap()
+		# **AND NOBODY MID-STRIDE, WHICH IS ABOUT THE JUDGEMENT AND NOT THE ARITHMETIC** (ASSA-385
+		# box 3). A frame holding one idle body and one walking one hands a cold reader a difference
+		# that is not an identity device at all -- `player_row` picks `walk_*` over `idle_*` and the
+		# gait is plainly visible at 1x -- so "which one is yours" could be answered off the one
+		# thing the picture is not asking about. Both bodies still, or it is not the picture.
+		if gap >= 0.0 and gap <= CATCH_EPSILON and not _anyone_mid_stride():
+			_caught = true
+			_catch_note = ("  the drawing caught up %.2fs after the walk (worst body %.3f tiles"
+					+ " from its own sim tile, buffer %.2f ticks deep)") % [
+					_now() - _catch_from, gap, _screen._play_depth]
+		elif _now() >= _catch_until:
+			_caught = true
+			_catch_note = ("  THE DRAWING NEVER CAUGHT UP in %ds: worst body %.2f tiles from its own"
+					+ " sim tile, buffer %.2f ticks deep -- the frame below is of DRAWN positions") % [
+					int(CATCH_DEADLINE), gap, _screen._play_depth]
+		else:
+			return
+		# **WHERE THE CLOSE-UP PUT THEM, READ IN THE FRAME THAT DECIDED IT AND NOT IN `_report`.**
+		# `_refresh_world` rebuilds this dictionary every frame, and the verdict is printed four
+		# screens later -- so a drawn position read there would describe a moment the picture is not
+		# of. Captured here, with the numbers it was judged on.
+		_catch_note += "\n" + _drawn_and_sim()
+	_settle_then(next)
+
+
+## TRUE while any drawn body is still being given a `walk_*` row. The view's own word, not a guess
+## from positions: `main.gd` sets `moving` from whether the playout segment moved that body at all.
+func _anyone_mid_stride() -> bool:
+	for entry in _screen._world.view.get("players", []):
+		if bool((entry as Dictionary).get("moving", false)):
+			return true
+	return false
+
+
+## THE THREE LISTS SIDE BY SIDE: what the sim holds, what the view was given, and **what the painter
+## was actually handed to paint** -- which is the only one of the three the picture can disagree with.
+##
+## **THE THIRD COLUMN IS HERE BECAUSE THE FIRST TWO AGREED AND THE FRAME STILL HELD ONE BODY**
+## (ASSA-385, Limpet). A sim with two players and a view with two entries is not a picture with two
+## people in it: `AssayScene.placements` can drop a body between them, and nothing between the view
+## and the window reports it. `placements` is the same call `world_layer::_draw` makes, asked of the
+## same dictionary in the same frame, so a count here that is not 2 locates the loss above the
+## renderer and a count of 2 locates it below.
+func _drawn_and_sim() -> String:
+	var view: Dictionary = _screen._world.view
+	var drawn: Array = view.get("players", [])
+	var described: Array = _screen._sim.players()
+	var lines := PackedStringArray()
+	lines.append("    camera origin %s, spawn tile %s, layer at %s size %s"
+			% [view.get("origin", Vector2.ZERO), _screen._sim.spawn_tile(),
+			_screen._world.global_position, _screen._world.size])
+	for i in drawn.size():
+		var entry: Dictionary = drawn[i]
+		var at: Vector2 = entry.get("at", Vector2.ZERO)
+		var pos: Variant = (described[i] as Dictionary).get("pos", Vector2i.ZERO) \
+				if i < described.size() else null
+		lines.append("    body %d: sim %s, drawn (%.2f, %.2f), facing '%s', moving %s" % [i, pos,
+				at.x, at.y, entry.get("facing", ""), entry.get("moving", false)])
+	var painted := 0
+	for place in AssayScene.placements(view):
+		if String((place as Dictionary).get("asset", "")) != "player":
+			continue
+		painted += 1
+		var dest: Rect2 = (place as Dictionary)["dest"]
+		lines.append("    PLACED player %d at window rect %s (row '%s')"
+				% [painted, dest.position + _screen._world.global_position,
+				(place as Dictionary).get("row", "?")])
+	lines.append("    %d sim player(s), %d view entr(ies), %d PLACED sprite(s)%s"
+			% [described.size(), drawn.size(), painted,
+			"" if painted == drawn.size() else "  <- A BODY WAS LOST BEFORE THE PAINTER"])
+	# THE RECT THE PAINTER USED, MOVED INTO WINDOW PIXELS, so a measurement on the PNG reads the
+	# mark's own geometry instead of hunting for yellow and calling what it finds the mark.
+	var foot: Rect2 = _screen._world.drawn_foot
+	lines.append("    foot mark rect in the window: %s"
+			% [Rect2(foot.position + _screen._world.global_position, foot.size)])
+	return "\n".join(lines)
+
+
+## **HOW FAR THE WORST BODY IS DRAWN FROM THE TILE THE SIM HOLDS FOR IT, IN TILES**, or -1 when the
+## drawn list and the sim's do not line up at all (a mid-join frame, or a view that has not been
+## built yet) -- which is not an answer of 0 and must not read as one.
+##
+## **PAIRED BY INDEX, AND THAT IS THE ONE THING WORTH CHECKING IN THIS FUNCTION.** `main.gd` appends
+## exactly one drawn entry per `_players()` entry, in that order, so index `i` is the same person in
+## both lists. It cannot be paired by `id` BECAUSE THE DRAWN ENTRY HAS NONE -- which is ASSA-385's
+## first finding and the reason this tool exists today. The size check above is what makes the
+## pairing safe rather than lucky.
+func _drawing_gap() -> float:
+	var view: Dictionary = _screen._world.view
+	var drawn: Array = view.get("players", [])
+	var described: Array = _screen._sim.players()
+	if drawn.is_empty() or drawn.size() != described.size():
+		return -1.0
+	var worst := 0.0
+	for i in drawn.size():
+		var person: Dictionary = described[i]
+		var entry: Dictionary = drawn[i]
+		var at: Vector2 = entry.get("at", Vector2.ZERO)
+		var pos := Vector2(person.get("pos", Vector2i.ZERO) as Vector2i)
+		worst = maxf(worst, (at - pos).length())
+	return worst
+
+
 ## MORE THAN ONE FRAME. The screen is built from deferred layout, so the first frame after a toggle
 ## photographs the state before it.
 func _settle_then(next: int) -> void:
@@ -654,6 +850,67 @@ func _settle_then(next: int) -> void:
 	if _settle >= SETTLE_FRAMES:
 		_settle = 0
 		_step = next
+
+
+## **TAKE THE CLOSE-UP AND THEN ASK THE FILE WHETHER IT IS THIS FRAME.** True when there is a frame
+## to go on with -- a verified one, or a refusal that says so in the verdict. See `FOOT_INK_FLOOR`.
+func _shoot_the_close_up() -> bool:
+	_drain_relay()
+	if _retake_wait > 0:
+		_retake_wait -= 1
+		return false
+	_shoot("01-close-up-two.png")
+	var ink := _foot_ink("01-close-up-two.png")
+	if ink.x < 0:
+		_shot_note = "  the saved close-up could not be read back, so nothing checked it"
+		return true
+	if ink.x >= FOOT_INK_FLOOR and ink.y <= FOOT_CONTROL_CEILING:
+		_shot_note = ("  the saved close-up IS this frame: %d px of MINE inside the foot rect the"
+				+ " painter published, %d in the control rect %d tiles south (%d retake(s))") % [
+				ink.x, ink.y, int(CONTROL_TILES_SOUTH), _retakes]
+		_shot_verified = true
+		return true
+	_retakes += 1
+	if _retakes > MAX_RETAKES:
+		_shot_note = ("  **THE SAVED CLOSE-UP IS NOT THE FRAME THIS RUN IS IN.** %d px of MINE in the"
+				+ " foot rect (want %d or more) and %d in the control (want %d or fewer), after %d"
+				+ " retakes. Read every number above as being about a frame nobody has verified.") % [
+				ink.x, FOOT_INK_FLOOR, ink.y, FOOT_CONTROL_CEILING, MAX_RETAKES]
+		return true
+	_retake_wait = RETAKE_FRAMES
+	return false
+
+
+## MINE INK INSIDE THE PUBLISHED FOOT RECT, AND INSIDE A CONTROL RECT OF THE SAME SIZE, as `(x, y)`.
+## `(-1, -1)` when the file could not be read back at all, which is not a count of zero.
+func _foot_ink(name: String) -> Vector2i:
+	var image := Image.load_from_file(_out.path_join(name))
+	if image == null:
+		return Vector2i(-1, -1)
+	var foot: Rect2 = _screen._world.drawn_foot
+	if foot.size == Vector2.ZERO:
+		return Vector2i(-1, -1)
+	var at: Vector2 = foot.position + (_screen._world.global_position as Vector2)
+	var south := Vector2(0.0, AssayScene.TILE_PX * CONTROL_TILES_SOUTH)
+	return Vector2i(_mine_ink(image, Rect2(at, foot.size)),
+			_mine_ink(image, Rect2(at + south, foot.size)))
+
+
+## PIXELS WHOSE RED BEATS THEIR GREEN BY MORE THAN ROUNDING, counted in one rectangle of a saved PNG.
+##
+## **NOT A COLOUR MATCH, AND THE DIFFERENCE IS THE WHOLE INSTRUMENT** (Nacre's trap, ASSA-361): the
+## mark is `MINE` at 0.55 over a ground that is textured, so its pixels are a spread and not a value.
+## What is stable is the SIGN: this ground is greener than it is red and `MINE` is the other way
+## round, so r-g flips exactly where something of ours is painted over it and nowhere else.
+func _mine_ink(image: Image, rect: Rect2) -> int:
+	var count := 0
+	for y in range(int(floor(rect.position.y)), int(ceil(rect.end.y))):
+		for x in range(int(floor(rect.position.x)), int(ceil(rect.end.x))):
+			if x < 0 or y < 0 or x >= image.get_width() or y >= image.get_height():
+				continue
+			if image.get_pixel(x, y).r > image.get_pixel(x, y).g + 5.0 / 255.0:
+				count += 1
+	return count
 
 
 func _shoot(name: String) -> void:
@@ -680,6 +937,13 @@ func _report() -> void:
 		var apart := ((mine as Vector2) - (theirs as Vector2)).abs()
 		print("  %.0f tiles apart in x, %.0f in y" % [apart.x, apart.y])
 	print("  toggle reads: %s, close_up=%s" % [_screen._view_toggle.text, _screen._close_up])
+	# THE FRAMING THIS RUN WAS ASKED FOR, in the verdict and not only in the launch line, because an
+	# overlapped pair is also what a run that lost a body looks like (ASSA-385 box 2).
+	print("  partner offset asked for: %s%s" % [_peer_offset,
+			"  <- ONE TILE, both bodies" if _peer_offset == Vector2i.ZERO else ""])
+	print(_catch_note if _catch_note != "" else
+			"  the close-up was never reached, so nothing waited for the drawing")
+	print(_shot_note if _shot_note != "" else "  no close-up was taken, so nothing checked one")
 	if _walk_note != "":
 		print(_walk_note.strip_edges(false, true))
 	else:
@@ -688,6 +952,10 @@ func _report() -> void:
 	print("  said: %s" % " | ".join(_said))
 	if _is_empty_pair():
 		print("CO-OP SHOT FAILED: fewer than two players, so neither picture is about co-op")
+		_finish(1)
+		return
+	if not _shot_verified:
+		print("CO-OP SHOT FAILED: the close-up was never shown to be the frame this run is in")
 		_finish(1)
 		return
 	print("CO-OP SHOT OK")
