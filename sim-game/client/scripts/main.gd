@@ -542,6 +542,13 @@ var _world_shown := false
 ## placeholder: your own tile is the one tile every player has, and planting beside yourself is the
 ## common case. Right-click chooses another; left-click still walks, because walking is the thing a
 ## player does most.
+##
+## **AND OPENING A MACHINE'S MENU CHOOSES ITS TILE TOO** (ASSA-366, Maren amending her ASSA-316 ruling
+## 8). On an occupied tile a click opens that machine's menu and returns, so before this the only
+## gesture that could set the field skipped every standing building: **the one subject three of the
+## five verbs take was the one subject a player could not aim at.** It carries a TILE here either way;
+## what stands on that tile is `_footprint_tiles`' question, asked fresh on every refresh, which is why
+## picking a machine up leaves a one-tile cursor rather than a ring around nothing.
 var _target := Vector2i.ZERO
 var _targeted := false
 ## **THE MACHINE WHOSE MENU IS OPEN, BY ID, OR -1** (ASSA-316, the board: *"machines should have menus
@@ -552,10 +559,17 @@ var _targeted := false
 ## picked up while its menu is open leaves the id behind on a tile that now holds nothing -- which is
 ## the one state this pair makes checkable (`_refresh_machine_menu` closes on it).
 ##
-## IT IS NOT `_target`, AND THAT IS MAREN'S RULING 8. `_target` is "the tile every placement lands on",
-## and `Place` is refused on a tile that already carries a building (`step.rs:225` `TileOccupied`), so
-## pointing the placement cursor at a machine would arm a guaranteed refusal. A click on a building
-## opens this instead and leaves the placement target exactly where the player last put it.
+## **IT IS STILL NOT `_target`, BUT THE TWO NOW MOVE TOGETHER** (ASSA-366; ruling 8's second half
+## reversed by Maren). This is an ID and `_target` is a tile, and that difference is load-bearing: this
+## one cannot be inherited by the next building to land on the same tile, and `_target` can, because a
+## tile is what a placement needs. What changed is that opening a menu now sets both, so the panel, the
+## ring and the `do` column name one subject instead of three.
+##
+## **THE ARGUMENT THAT KEPT THEM APART IS ANSWERED RATHER THAN FORGOTTEN.** It was that `Place` is
+## refused on a tile that already carries a building (`step.rs:225` `TileOccupied`), so aiming there
+## arms a guaranteed refusal. True, and it is an OUTCOME the sim says out loud -- *"another building is
+## in the way"* -- which the player reaches by placing a machine anyway. A mark nobody can aim is not an
+## outcome; it is a mechanism no gesture invokes.
 var _menu_at := -1
 var _menu_tile := Vector2i.ZERO
 
@@ -4069,9 +4083,15 @@ func _rebuild_pack(stacks: Array) -> void:
 ## unnoticed.
 ##
 ## **THE `insert` ARM IS DELETED RATHER THAN LEFT HARMLESS** (ASSA-331, Maren's ruling). It read a
-## slot out of the descriptor and sent the whole stack at whatever `_target_tile` pointed to; after her
-## ruling 8 that cursor can never be on a building, so every press could only say *nothing to insert
+## slot out of the descriptor and sent the whole stack at whatever `_target_tile` pointed to, and under
+## ruling 8 that cursor could never be on a building, so every press could only say *nothing to insert
 ## into*. An arm kept for a descriptor nothing produces is how the button comes back.
+##
+## **THAT REASON EXPIRED WITH ASSA-366 AND THE DELETION DID NOT.** The cursor CAN sit on a building now
+## -- opening its menu puts it there -- so a pack-row insert would be aimable again. It stays deleted
+## because of the OTHER half of her ruling: there is one door for every insert and it is the menu, which
+## already knows which machine it is about and cannot be pointed at the wrong one. A rule whose stated
+## reason has gone false is a rule the next person deletes; this one is kept on purpose.
 func _stack_button(descriptor: Dictionary, stack: Dictionary, footprint: Vector2i) -> Button:
 	var label := String(descriptor.get("label", "?"))
 	match String(descriptor.get("verb", "")):
@@ -4199,8 +4219,20 @@ func _refresh_actions() -> void:
 ## is this function with no extra code: there is one `_menu_at`, so a second machine replaces the first.
 ##
 ## **IT CHANGES NO SIM STATE AND SENDS NOTHING.** Opening is a client gesture; every act inside the menu
-## is a command the sim judges. In particular this does NOT set `_target`: the placement cursor stays
-## where the player last put it, so `where you stand` keeps its meaning (ruling 8's consequence).
+## is a command the sim judges.
+##
+## **AND IT AIMS THE VERBS AT THIS MACHINE** (ASSA-366; Maren amending her own ruling 8: *"opening a
+## machine's menu also targets that machine ... a mechanism no gesture invokes is not a design, it is
+## dead weight"*). This paragraph used to say the opposite -- that opening deliberately does NOT set
+## `_target` -- and the consequence nobody had measured is that the branch above returns before the one
+## line that assigns it, so **a player could never aim at a building that was already standing.** The
+## only way a ring ever sat on one was a residue: aim at bare ground, plant a machine there, and the
+## target is left standing on what you built. That is where ASSA-326's ringed drill came from -- a state
+## a player cannot ask for.
+##
+## **IT CREATES NO NEW STATE, WHICH IS WHY IT IS SAFE** (hers). Placing already leaves the target on the
+## new building and `Place` is then refused with *"another building is in the way"*; this makes a state
+## that already existed reachable on purpose. A refusal is an outcome; a mark you cannot aim is not.
 func _open_machine_menu(tile: Vector2i, id: int) -> void:
 	# **AND IT CLOSES THE BUILD SCREEN** (ASSA-328; Maren's §1: *"the build screen and a machine menu
 	# are mutually exclusive -- opening either closes the other"*). Said at both ends, because a rule
@@ -4208,17 +4240,26 @@ func _open_machine_menu(tile: Vector2i, id: int) -> void:
 	_close_build_screen()
 	_menu_at = id
 	_menu_tile = tile
+	# **THE CLICKED TILE, NOT THE BUILDING'S ANCHOR** (ASSA-366). `_target` is a tile and every reader of
+	# it wants the tile a player pointed at; the EXTENT of what stands there is `_footprint_tiles`' job
+	# and the ring asks it on every refresh. Storing the anchor instead would be this file deciding a
+	# building's shape in a second place, which is the two-subjects defect one layer down.
+	_target = tile
+	_targeted = true
 	# THE ROWS ARE REBUILT EVEN IF THE SAME MACHINE IS CLICKED TWICE, because the pack may have changed
 	# while the menu was shut and the signature cannot tell "closed" from "unchanged".
 	_menu_showing = UNBUILT
 	_refresh_machine_menu()
-	# **THE RING DOES NOT MOVE FOR THIS ANY MORE** (ASSA-334; ruling 8 reversed, see `_refresh_world`).
-	# The refresh stays, because the menu's own POSITION is now the tie and `_place_machine_menu` runs
-	# inside the refresh above -- this call is what puts the panel beside its machine in the frame of the
-	# click rather than on the next tick bundle, the same quarter-second ASSA-215 measured for the walk
-	# echo. **AND IT IS WHAT CLEARS THE RING OFF A MACHINE A MENU USED TO OWN**, on the commit that
-	# changes who owns it: without it the last menu's ring would survive until the next bundle.
-	_refresh_world()
+	# **A FULL `_refresh()` AND NOT `_refresh_world()`, AND THE DIFFERENCE IS THE WHOLE POINT OF ASSA-366.**
+	# The ring is published by `_refresh_world` and the `do` column's `acting on ...` line by
+	# `_refresh_actions`; refreshing only the world would move the mark in the frame of the click and leave
+	# the column naming the tile you aimed at before -- two subjects on one screen for up to a bundle, which
+	# is the exact defect this item and ASSA-334 exist to kill. The right-click branch in `_unhandled_input`
+	# has always called `_refresh()` here for the same reason, and this is now the same kind of gesture.
+	# It also still does what it did before: `_place_machine_menu` runs inside the menu refresh above, so
+	# the panel lands beside its machine in the click's own frame rather than on the next tick bundle --
+	# the quarter-second ASSA-215 measured for the walk echo.
+	_refresh()
 	queue_redraw()
 
 
@@ -6275,6 +6316,11 @@ func _refresh_world(frame_dt := -1.0) -> void:
 	# so this line goes back to what ASSA-276 move 4 ruled: the ring is on the tile the verbs act on, and
 	# no frame draws two.
 	#
+	# **AND SINCE ASSA-366 THE TWO CANNOT COMPETE AT ALL**: opening a menu sets `_target` to its machine,
+	# so "the tile the verbs act on" and "the machine the panel is about" are the same tile by
+	# construction. The contest this paragraph is about was between two answers to one question; there is
+	# now one answer, and this line is still the only place that spends the mark.
+	#
 	# **AND IT IS THE SUBJECT'S FOOTPRINT, NOT THE TILE THAT WAS CLICKED** (ASSA-348, Maren: *"the
 	# outline follows the subject, and the sim says what the subject is"*). `Take`, `Pickup` and
 	# `Insert` all carry a `BuildingId`, so on a 2x2 smelter the one-tile outline claimed a quarter of
@@ -6614,6 +6660,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	var tile: Vector2i = at
 	# **A TILE CARRYING A BUILDING ANSWERS BOTH BUTTONS WITH ITS MENU** (ASSA-316, Maren's rulings 7 and
 	# 8). An EMPTY tile keeps today's split exactly: left walks, right targets the placement.
+	#
+	# **AND THE MENU IS NOW ALSO HOW A STANDING BUILDING IS AIMED AT** (ASSA-366). This return is what
+	# used to make that impossible: it is above the only assignment to `_target`, so a tile with a
+	# building on it could never become the aimed one. The aiming moved INTO `_open_machine_menu` rather
+	# than being duplicated here, so there is still exactly one line in this file that aims at a tile for
+	# a menu and one that aims for a right-click, and neither can drift from the other's meaning.
 	#
 	# **THIS IS NOT THE THING ASSA-37 FORBIDS.** Its rule is that a click never means two things at once;
 	# two buttons reaching one result is the opposite -- the same meaning from either hand, which is what
