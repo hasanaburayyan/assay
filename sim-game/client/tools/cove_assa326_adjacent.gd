@@ -41,6 +41,10 @@ extends SceneTree
 ## `<out_dir>/frames/` and everything that NAMES what is in it to `<out_dir>/key/`. This tool has
 ## exactly one purpose and it is a cold read, so the safe layout is not an option a tired asker can
 ## forget to pass.
+##
+## **AND THE FRAME'S OWN NAME IS PART OF THE FRAMES DIRECTORY** — see `blind_frame_name` below. It
+## used to be `01-closeup-two-machines-east.png`, which told the cold reader the answer to the only
+## question being asked, from inside the directory the split was supposed to make safe.
 
 ## The seed the ASSA-273 pair was shot on, so a reader comparing frames is on known ground.
 const DEFAULT_SEED := "777042"
@@ -368,7 +372,10 @@ func _shoot_and_report() -> void:
 	if seen.size() < 2:
 		_bail("the frame is one flat colour, so nothing drew")
 		return
-	var name := "01-closeup-two-machines-%s.png" % _side
+	var name := blind_frame_name(1)
+	if not _is_blind_name(name):
+		_bail("the frame would be called %s, which is not a blind name" % name)
+		return
 	var path := _frames.path_join(name)
 	if image.save_png(path) != OK:
 		_bail("cannot write %s" % path)
@@ -405,6 +412,41 @@ func _shoot_and_report() -> void:
 		return
 	print("ADJACENT SHOT OK")
 	_finish(0)
+
+
+## **A BLIND FRAME'S NAME IS A NUMBER AND NOTHING ELSE, AND I LEARNED THAT BY LOSING AN ANSWER.**
+##
+## This tool wrote `01-closeup-two-machines-east.png`. Nacre opened it for ASSA-326 box 7's cold
+## read and declared the contamination before the first pixel: *"I read the path to open the file.
+## The words 'two machines' were in my head before the first pixel was. Discount my Q1 number
+## accordingly — it is the one answer you cannot trust from me."* The question was **how many built
+## things are in this picture**, and the picture's own name answered it.
+##
+## ASSA-294's layout splits the key from the frames, and I defeated it from inside the frames
+## directory. `window_shot.gd::_names_marks` would not have caught this either: it refuses `-key.`
+## and `marks`, so a name that states the SUBJECT sails through the same way `09-whole-world-key.png`
+## once sailed through an extension check. That hole is in a file that is not mine and is flagged on
+## the item rather than edited here.
+##
+## **SO THE RULE IS NOT A BLACKLIST OF WORDS.** A blacklist is a guess about what the next frame will
+## be about, and I would have had to guess "machines" before Nacre read it. A name that is two digits
+## and an extension can carry nothing at all, whatever the picture turns out to hold. The key already
+## says which number is which — it prints `seed`, `side`, the tick, both buildings and the frame's
+## name — so nothing is lost but the leak.
+static func blind_frame_name(index: int) -> String:
+	return "%02d.png" % index
+
+
+## The same rule as a predicate, so the tool refuses rather than trusting the line above it. A
+## generator and its own check in one expression would assert nothing — this is read back off the
+## string that is about to become a filename.
+static func _is_blind_name(name: String) -> bool:
+	if not name.ends_with(".png"):
+		return false
+	var stem := name.substr(0, name.length() - 4)
+	if stem.length() != 2:
+		return false
+	return stem.is_valid_int()
 
 
 ## HOW THE TWO FOOTPRINTS STAND TO EACH OTHER, IN WORDS, and the first version of this got it wrong
