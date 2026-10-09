@@ -6042,6 +6042,12 @@ func test_the_build_screen_is_placed_again_on_a_later_frame() -> bool:
 	# the frame belongs to is half of the claim.
 	var lines := source.split("\n")
 	var inside := false
+	# **`found` IS A SEPARATE FLAG AND THAT IS NOT A STYLE CHOICE.** `inside` is false by the end of
+	# every scan -- the last `func ` in the file is somebody else's -- so reading it afterwards as
+	# "was the function there?" made a DELETED deferred call report `no _refresh_build_screen`, which
+	# tells the next person to re-point a test that is working perfectly. Caught by reading WHICH
+	# assertion the mutation tripped rather than that it went red.
+	var found := false
 	var deferred := false
 	var immediate := false
 	for raw in lines:
@@ -6050,6 +6056,7 @@ func test_the_build_screen_is_placed_again_on_a_later_frame() -> bool:
 		if code.begins_with("func "):
 			# The body ends at the next function, whichever one that is.
 			inside = code.begins_with("func _refresh_build_screen(")
+			found = found or inside
 			continue
 		if not inside or code.begins_with("#"):
 			continue
@@ -6057,7 +6064,7 @@ func test_the_build_screen_is_placed_again_on_a_later_frame() -> bool:
 			deferred = true
 		elif code.contains("_place_build_screen("):
 			immediate = true
-	if not inside and not deferred:
+	if not found:
 		return _fail("main.gd has no `_refresh_build_screen` for this scan to read; if it was "
 				+ "renamed, re-point this test rather than deleting it")
 	if not deferred:
