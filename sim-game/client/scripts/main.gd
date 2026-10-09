@@ -572,6 +572,10 @@ var _build_cost: VBoxContainer = null
 ## gap, which is `_show_log`'s lesson on this same screen.
 var _build_cost_box: Control = null
 var _build_bar: HBoxContainer = null
+## The sentence's own inset inside the commit bar, so `Build` lands on row 1 (ASSA-341 box 8). Held
+## because it is the bar's left-hand child and the test that keeps the sentence left and `Build`
+## right asks the bar what its children are.
+var _build_said_inset: MarginContainer = null
 var _build_said: VBoxContainer = null
 var _build_act: Button = null
 var _build_showing := UNBUILT
@@ -1849,12 +1853,30 @@ func _build_build_screen_over_the_map(world: Rect2) -> void:
 	inside.add_child(_build_bar)
 	# THE SENTENCE, TOP-LEFT, GROWING DOWNWARD. Top rather than centred because it is up to six rows in
 	# the catalogue's worst case and a block that grows from its middle moves its own first row.
+	#
+	# **INSET FROM THE BAR'S TOP BY `BUILD_SENTENCE_INSET`, WHICH IS WHAT PUTS `Build` ON ROW 1**
+	# (ASSA-341 box 8; Maren's ruling 4). A `MarginContainer` rather than a spacer child, because the
+	# children of this block ARE the sentence -- `_refresh_build_said` walks them and a test re-joins
+	# them against the sim's own string, so a padding node among them would be a clause that is not
+	# one. The margin is on the sentence and not on the bar: `Build` must stay at the bar's top.
+	_build_said_inset = MarginContainer.new()
+	_build_said_inset.add_theme_constant_override("margin_top",
+			int(AssayHud.BUILD_SENTENCE_INSET))
+	_build_said_inset.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_build_said_inset.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_build_bar.add_child(_build_said_inset)
 	_build_said = VBoxContainer.new()
 	_build_said.name = BUILD_SAID
-	_build_said.add_theme_constant_override("separation", 2)
+	# **SEPARATION 0, WHICH IS MAREN'S RULING AND NOT A TIDY-UP** (ASSA-341 boxes 8-9, 00:31): *"These
+	# rows are ONE SENTENCE broken at the sim's own `·`, not a list of things. An 18 px row already
+	# carries the leading -- a 13 px body in an 18 px line is 5 px of it -- and `separation = 2` adds
+	# paragraph air INSIDE a sentence, which says the clauses are separate items. They are not."*
+	# The `dead_end` row does not buy the gap back either: it is genuinely not in the same series, and
+	# `FAILED` already carries that distinction without a second channel.
+	_build_said.add_theme_constant_override("separation", 0)
 	_build_said.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_build_said.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	_build_bar.add_child(_build_said)
+	_build_said_inset.add_child(_build_said)
 	# **THE ONE ACT, AND THE SCREEN'S ONE ACCENT** (her §5: *"`Build` is the one ACCENT -- the only
 	# difference from the machine menu, where no act is primary"*).
 	#
@@ -1872,7 +1894,12 @@ func _build_build_screen_over_the_map(world: Rect2) -> void:
 	_build_act.name = BUILD_ACT
 	_build_act.theme_type_variation = &"Primary"
 	_build_act.size_flags_horizontal = Control.SIZE_SHRINK_END
-	_build_act.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	# **TOP-ANCHORED, NOT CENTRED IN THE BAR** (ASSA-341 box 9; Maren's ruling 4: *"`Build`'s y must be
+	# fixed -- a control that drifts down as the sentence grows moves under the cursor while you mine
+	# (ASSA-213)"*). `SHRINK_CENTER` is centred in whatever the bar GREW to, so at six rows the button
+	# moved while the row it is aligned to did not. With both controls anchored to the bar's top,
+	# neither y is a function of the other's height.
+	_build_act.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	_build_bar.add_child(_build_act)
 
 

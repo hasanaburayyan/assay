@@ -5511,11 +5511,22 @@ func test_the_commit_bar_holds_the_sentence_left_and_build_right() -> bool:
 	var bar: Control = screen._build_bar
 	if bar == null:
 		ok = _fail("the screen has no commit bar at all")
-	elif screen._build_said.get_parent() != bar or screen._build_act.get_parent() != bar:
+	# **`is_ancestor_of` FOR THE SENTENCE AND `get_parent` FOR `Build`, WHICH IS NOT A WEAKENING**
+	# (ASSA-341 box 8): the sentence reaches the bar through the `MarginContainer` that insets row 1,
+	# and `Build` must still be a DIRECT child or it is not at the bar's own top. Two different
+	# claims, so two different questions.
+	elif not bar.is_ancestor_of(screen._build_said) or screen._build_act.get_parent() != bar:
 		ok = _fail("the sentence and `Build` are not both in the bar, so they are not one rect")
-	elif bar.get_child(0) != screen._build_said or bar.get_child(1) != screen._build_act:
+	# **RE-POINTED, NOT RELAXED** (ASSA-341 box 8): the sentence is now in the bar through its own
+	# `MarginContainer`, which is what insets row 1 so `Build`'s centre lands on it. The property is
+	# unchanged -- sentence left, `Build` right -- and this says it of the node that now holds the
+	# left-hand slot, plus that the sentence is really inside it.
+	elif bar.get_child(0) != screen._build_said_inset or bar.get_child(1) != screen._build_act:
 		ok = _fail("the bar holds %s; §5.4 puts the sentence left and `Build` right"
 				% [bar.get_children()])
+	elif not screen._build_said_inset.is_ancestor_of(screen._build_said):
+		ok = _fail("the bar's left-hand slot does not hold the sentence; it holds %s"
+				% [screen._build_said_inset.get_children()])
 	elif screen._build_act.size_flags_horizontal != Control.SIZE_SHRINK_END:
 		ok = _fail("`Build` is not pinned to the bar's right end (flags %d), so the sentence's floor "
 				% screen._build_act.size_flags_horizontal + "is not the width it was measured at")
@@ -5566,5 +5577,94 @@ func test_the_build_screen_is_replaced_when_its_own_minimum_moves() -> bool:
 		ok = _fail("nothing re-places the build screen when its minimum drops, so the size assigned "
 				+ "while the minimum was stale is the size it keeps -- measured at 864x1042 against a "
 				+ "rect of 864x592, over the status toast")
+	screen.queue_free()
+	return ok
+
+
+## **`Build` SITS ON THE SENTENCE'S FIRST ROW, AND ITS y DOES NOT MOVE WHEN THE SENTENCE GROWS**
+## (ASSA-341 boxes 8-9; Maren's ruling 4 and her 00:31 arithmetic).
+##
+## **MEASURED OFF THE ENGINE'S OWN MINIMUMS, NOT OFF A LAID-OUT RECT.** Nothing in this suite has a
+## size, so the laid-out y of either control is 0 here and an assertion about it would be satisfied by
+## every possible screen -- the shape of check this file keeps finding in other people's work and in
+## mine. A `Control`'s COMBINED MINIMUM is real headless, because it comes from the theme's font
+## metrics, and it is the number the container will lay out from.
+##
+## **THE ROW HEIGHT IS ASKED FOR, AND A ZERO IS A FAILURE RATHER THAN A PASS.** If the theme reported
+## no height, every comparison below would be `0` against `0` and this test would be green about
+## nothing. So it is refused first and by name.
+##
+## **BOTH HALVES OF HER ARITHMETIC, AS A PAIRING.** The literals -- 18 px rows, a 30 px button, so a
+## 6 px inset and a 114 px bar -- are asserted TOGETHER with the measurements they came from, so the
+## day the body font changes this says *"the theme now measures 20 and 32, so the inset should be 6"*
+## instead of passing quietly on numbers that no longer describe the screen.
+##
+## **AND BOX 9 IS HELD STRUCTURALLY, WHICH IS THE ONLY HONEST WAY HEADLESS.** The reason `Build`'s y
+## cannot move is that both controls anchor to the bar's TOP: `SHRINK_CENTER` was centred in whatever
+## the bar grew to, so six rows of sentence moved the button and one row did not. The flag is the
+## property; the two renders below are what prove the bar does not have to grow in the first place.
+func test_build_sits_on_the_sentences_first_row_at_one_row_and_at_six() -> bool:
+	var screen := _screen()
+	var ok := true
+	var probe := Label.new()
+	probe.text = "mass 3 of 240-360 budget"
+	screen._build_said.add_child(probe)
+	var row: float = probe.get_combined_minimum_size().y
+	var act: float = screen._build_act.get_combined_minimum_size().y
+	var inset: float = AssayHud.BUILD_SENTENCE_INSET
+	if row <= 0.0 or act <= 0.0:
+		ok = _fail(("the theme reports a %0.f px row and a %0.f px button headless, so every "
+				+ "comparison in this test would be 0 against 0") % [row, act])
+	elif screen._build_act.size_flags_vertical != Control.SIZE_SHRINK_BEGIN:
+		ok = _fail(("`Build` has vertical flags %d; centred in the bar it drifts down as the sentence "
+				+ "grows, which moves a control under the cursor while you mine (ASSA-213)")
+				% screen._build_act.size_flags_vertical)
+	elif screen._build_said.get_theme_constant(&"separation") != 0:
+		ok = _fail(("the sentence's rows are separated by %d px; they are ONE sentence broken at the "
+				+ "sim's own mark, and paragraph air inside it says the clauses are separate items")
+				% screen._build_said.get_theme_constant(&"separation"))
+	elif absf((inset + row / 2.0) - act / 2.0) > 2.0:
+		# Row 1's centre is `inset + row / 2` from the bar's top and `Build`'s is `act / 2`, because
+		# both are anchored to that top. Her box asks for 2 px.
+		ok = _fail(("row 1's centre is %.1f px down the bar and `Build`'s is %.1f; the ruling is that "
+				+ "they meet within 2 px") % [inset + row / 2.0, act / 2.0])
+	elif AssayHud.BUILD_COMMIT_BAR < inset + 6.0 * row:
+		ok = _fail(("six rows and the inset need %.0f px and the bar asks for %.0f; the sentence is "
+				+ "drawn whole and never scrolls (§5.4)") % [inset + 6.0 * row, AssayHud.BUILD_COMMIT_BAR])
+	# **HER TWO NUMBERS AS PLAIN LITERALS, AND THE REASON THEY ARE NOT DERIVED FROM `act` IS A
+	# MEASUREMENT THAT DISAGREES WITH ITSELF.** Her arithmetic uses a **30 px** `Build`, which is what
+	# `limpet_build_screen_shot.gd` measured in a real window (53x30). Headless the same button's
+	# minimum is **28**, so `(act - row) / 2` here would say 5 and the real window says 6. The ruling
+	# is about the window, so the constants are asserted as the ruled literals and the engine's own
+	# numbers are the 2 px cross-check above — which holds under both (15.0 against 14.0).
+	#
+	# **A GUARD OF `act == 30.0` IS WHAT THIS USED TO BE, AND IT WAS DEAD CODE**: headless never
+	# measures 30, so the branch could not run, and a mutation of either constant would have slipped
+	# past it. Found by reading WHICH number a mutation printed, not by re-reading the test.
+	elif not is_equal_approx(inset, 6.0):
+		ok = _fail(("the sentence is inset %.1f px; Maren ruled 6, being (30 - 18) / 2 on the real "
+				+ "window's 30 px button") % inset)
+	elif not is_equal_approx(AssayHud.BUILD_COMMIT_BAR, 114.0):
+		ok = _fail("6 x 18 + 6 is 114 and the bar asks for %.0f" % AssayHud.BUILD_COMMIT_BAR)
+	if ok:
+		# **BOX 9's "TWO RENDERS" IS HELD AS THE STRUCTURE THAT MAKES IT TRUE, AND THE PIXELS ARE THE
+		# SHOT'S. I tried the measurement first and it lied to me**, which is worth the paragraph: I
+		# added five clauses and asked the sentence for its combined minimum, and it answered the
+		# same number — because **a container's minimum is recalculated DEFERRED**, the very fact
+		# `_place_build_screen`'s docstring is built on. A growth check here would have been `0.0 px
+		# against 90.0` forever, or worse, green by arithmetic I did myself.
+		#
+		# So what this holds is the pair of flags that makes `Build`'s y independent of the
+		# sentence's height: both controls anchored to the bar's TOP, neither centred in it. That is
+		# the whole mechanism — `SHRINK_CENTER` was centred in whatever the bar grew to. **The 1x
+		# real-window check at one row and at six belongs to `tools/limpet_build_screen_shot.gd`,
+		# which is box 10's shot and is owed to Maren with this change.**
+		if screen._build_said_inset.size_flags_vertical != Control.SIZE_SHRINK_BEGIN:
+			ok = _fail(("the sentence's inset has vertical flags %d; anything but SHRINK_BEGIN makes "
+					+ "row 1's top a function of the bar's height, and `Build` is aligned to row 1")
+					% screen._build_said_inset.size_flags_vertical)
+		elif screen._build_said.size_flags_vertical != Control.SIZE_SHRINK_BEGIN:
+			ok = _fail("the sentence has vertical flags %d, so it does not grow downward from row 1"
+					% screen._build_said.size_flags_vertical)
 	screen.queue_free()
 	return ok
