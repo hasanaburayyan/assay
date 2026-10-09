@@ -366,7 +366,17 @@ func test_a_stacks_verbs_come_from_the_sims_recipes_and_catalogue() -> bool:
 ## this file quietly growing its own copy. `AssayActions` still names the two slots -- a command needs
 ## their wire tags -- and naming them is all it may do.
 func test_this_client_names_the_slots_and_judges_neither() -> bool:
-	if AssayHud.has_method("insert_slots"):
+	# A SOURCE SCAN, SO IT CARRIES A SELF-CHECK ON ITS OWN AIM FIRST. `AssayHud.has_method` is what
+	# this wanted and GDScript refuses it on a class of statics; reading the file works, and the
+	# failure mode of reading a file is matching nothing and reporting success. So the bottom
+	# assertion comes first: prove we are looking at hud.gd before believing what is missing from it.
+	var source := FileAccess.get_file_as_string("res://scripts/hud.gd")
+	if source.is_empty():
+		return _fail("could not read res://scripts/hud.gd, so this test scanned nothing")
+	if not source.contains("static func insert_label("):
+		return _fail("hud.gd has no `insert_label`, so this scan is not reading the file it names "
+				+ "and its verdict about `insert_slots` is worthless")
+	if source.contains("static func insert_slots("):
 		return _fail("`AssayHud.insert_slots` is back: deciding from a kind which slots to offer is "
 				+ "the defect ASSA-351 deleted. The answer is `AssaySimHost.insert_offers`.")
 	# The wire tags survive and must: `AssayActions.insert` spells a command with one.

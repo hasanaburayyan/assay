@@ -2654,6 +2654,111 @@ func test_a_slot_button_fuels_the_menus_machine_with_the_count_at_the_press() ->
 	return ok
 
 
+## **A REFUSED PUT CONTROL IS DRAWN DEAD WITH THE SIM'S OWN REASON UNDER IT** (ASSA-351 box 3).
+##
+## **THIS TEST EXISTS BECAUSE THE SIM HALF DOES NOT TICK THIS BOX.** Maren's ASSA-300 ruling: *"a
+## mechanism is not a behaviour, and the box names the behaviour."* `debug::insert_refusal` returning
+## the right sentence is the mechanism; the box says the CONTROL is present, not pressable, and
+## carries that sentence. Only a real menu, built by the real refresh, can say so.
+##
+## **THE REFUSAL IS ASKED OF THE SIM, NOT CHOSEN BY ME.** Which reason this seeded world can stage
+## depends on its roster -- whether the second species burns, whether it is too hot for the first
+## one's walls -- and a test that demanded `SlotFull` specifically would be red for a reason that is
+## not a defect. So it asks `insert_offers` for any refused offer and any pressable one, and if the
+## world hands it no refused offer it LOADS the fuel slot to make one. **If it still cannot, it
+## fails**: a premise that quietly goes missing is how a green test ends up proving nothing.
+##
+## ONE OF EACH, IN ONE MENU. Without the pressable half this passes over a client that disabled every
+## control it drew.
+func test_a_refused_put_control_is_drawn_dead_with_the_sims_own_reason() -> bool:
+	var screen := _joined()
+	if not _mine_two_species(screen):
+		screen.queue_free()
+		return false
+	var id := _a_placed_smelter(screen)
+	if id < 0:
+		screen.queue_free()
+		return false
+	var spot: Vector2i = screen._target_tile()
+	_click(screen, screen._my_tile(), MOUSE_BUTTON_RIGHT)
+	_click(screen, spot, MOUSE_BUTTON_LEFT)
+
+	var refused := _an_offer(screen, id, true)
+	if refused.is_empty():
+		# Nothing is refused yet, so make something be: fill the fuel slot with one stack and every
+		# OTHER stack's fuel control becomes a `SlotFull`. This is the board's frame exactly.
+		var ore := _stack_of(screen, "ore")
+		if not ore.is_empty():
+			screen._insert_into(id, ore, AssayActions.SLOT_FUEL, 0)
+			_tick(screen, 2)
+		refused = _an_offer(screen, id, true)
+	var pressable := _an_offer(screen, id, false)
+	if refused.is_empty() or pressable.is_empty():
+		screen.queue_free()
+		return _fail(("this world staged no refused+pressable pair, so the box is untested rather "
+				+ "than passing: %s") % [screen._sim.insert_offers(screen._client.player_id, id)])
+
+	var ok := true
+	var dead_label := AssayHud.insert_label(int(refused.get("count", 0)),
+			String(refused.get("name", "?")), String(refused.get("slot", "")))
+	var dead := _find(screen._menu_box, dead_label)
+	if dead == null:
+		ok = _fail(("the sim refuses `%s` and the menu draws NO control for it -- a hidden dead end "
+				+ "teaches nothing (ASSA-301): %s") % [dead_label, _labels_of(screen._menu_box)])
+	elif not dead.disabled:
+		ok = _fail("`%s` is refused by the sim (%s) and is still pressable"
+				% [dead_label, refused.get("refusal", "")])
+	else:
+		# AND THE REASON IS BESIDE IT, WORD FOR WORD. A disabled button with no sentence is the state
+		# Maren called worse than the bug: a player learns the act is impossible and not why.
+		var said := _note_beside(dead)
+		if said != String(refused.get("refusal", "")):
+			ok = _fail("`%s` is dead and reads %s; the sim says %s"
+					% [dead_label, said, refused.get("refusal", "")])
+
+	if ok:
+		var live_label := AssayHud.insert_label(int(pressable.get("count", 0)),
+				String(pressable.get("name", "?")), String(pressable.get("slot", "")))
+		var live := _find(screen._menu_box, live_label)
+		if live == null:
+			ok = _fail("the sim would accept `%s` and the menu draws no control for it: %s"
+					% [live_label, _labels_of(screen._menu_box)])
+		elif live.disabled:
+			ok = _fail("`%s` is accepted by the sim and is drawn dead; the fix disabled a working path"
+					% live_label)
+	screen.queue_free()
+	return ok
+
+
+## THE FIRST OFFER THE SIM REPORTS AS REFUSED (`want_refused`) OR AS PRESSABLE, flattened with its
+## slot so the caller can rebuild the button's label. `{}` when there is none, which the caller is
+## expected to treat as a missing premise rather than a pass.
+func _an_offer(screen: Node, building: int, want_refused: bool) -> Dictionary:
+	for entry in screen._sim.insert_offers(screen._client.player_id, building):
+		var group: Dictionary = entry
+		for row in group.get("offers", []) as Array:
+			var offer: Dictionary = row
+			if offer.has("refusal") != want_refused:
+				continue
+			var out := offer.duplicate()
+			out["slot"] = String(group.get("slot", ""))
+			return out
+	return {}
+
+
+## THE SMALL PRINT DIRECTLY UNDER A BUTTON, as `_rebuild_machine_menu_rows` stacks it: the row is a
+## VBoxContainer holding the button and then the note. Read off the live tree rather than rebuilt
+## here, because the thing being tested is what the window actually put on screen.
+func _note_beside(button: Button) -> String:
+	var row := button.get_parent()
+	if row == null:
+		return ""
+	for child in row.get_children():
+		if child is Label:
+			return (child as Label).text
+	return ""
+
+
 ## **BOTH BRANCHES OF A COST ENTRY, STATED RATHER THAN MINED FOR** (ASSA-332; Maren's §5.5: two
 ## rows, name then counts right-aligned, and the WHOLE entry in `FAILED` when have < need).
 ##
