@@ -465,7 +465,11 @@ func test_machine_rims_then_players_then_bands() -> bool:
 	if source == "":
 		return _fail("main.gd could not be read, so the order scan says nothing")
 	var outward := source.find("frame_bands(shape[\"keyline_rect\"], AssayHud.MARK_KEYLINE_PX)")
-	var inward := source.find("frame_bands(shape[\"hole_rect\"], AssayHud.MARK_KEYLINE_PX)")
+	# **THE INWARD RIM IS A FILLED HOLE SINCE ASSA-273 box 1**, so this leg looks for the fill. The
+	# string moved and the assertion did not: it is still "the thing painted inside the band's inner
+	# edge goes before the people", and it matters MORE filled than lined -- 2 px of rim over a body
+	# is a trim and a 12x12 fill over a body is the body.
+	var inward := source.find("draw_rect(shape[\"hole_rect\"], AssayHud.mark_ink_of(")
 	var player := source.find("AssayHud.mark_ink_of(&\"player_mine\" if mine else &\"player_theirs\"")
 	var band_at := source.find("AssayHud.mark_ink_of(&\"building\", shape[\"colour\"])")
 	var legs := {"the outward rim": outward, "the inward rim": inward, "a player": player,
@@ -483,10 +487,13 @@ func test_machine_rims_then_players_then_bands() -> bool:
 				+ "partner's (ASSA-278 box 7). A separator goes before the people it stands among.")
 				% [outward, player])
 	if not (inward < player):
-		return _fail(("11.42: a machine's INWARD rim (@%d) is painted after a player (@%d). This is "
-				+ "the ring ASSA-278 shipped and it is the one that eats a person standing on a 1x1: "
-				+ "a partner kept 69.2%% of their cross without it and 38.5%% with it.")
-				% [inward, player])
+		return _fail(("11.42: a machine's HOLE FILL (@%d) is painted after a player (@%d). This is "
+				+ "ASSA-273's hole taking `MAP_BG` and it is the one that eats a person standing on "
+				+ "a 1x1: `PLAYER_MARK_PX` 16 against a 12 px hole, so after the people it buries a "
+				+ "player on their own machine instead of trimming them (11.14, Maren's condition "
+				+ "(i) on ASSA-273 box 1). It was a 2 px ring when ASSA-278 shipped it: a partner "
+				+ "kept 69.2%% of their cross without that ring and 38.5%% with it, and a FILL after "
+				+ "the people would leave 0%%.") % [inward, player])
 	if not (player < band_at):
 		return _fail(("11.42: a machine's BAND (@%d) is painted before a player (@%d). The band is the "
 				+ "mark's identity and goes last; moving it under the people hides the machine "
@@ -499,7 +506,7 @@ func test_machine_rims_then_players_then_bands() -> bool:
 	# the glyph pass repeats a lapped machine's band (ASSA-273 box 3), and a rim added beside it would
 	# land after every band in the frame and slip past all three legs. So this looks at the LAST rim.
 	var last_rim := maxi(source.rfind("frame_bands(shape[\"keyline_rect\"], AssayHud.MARK_KEYLINE_PX)"),
-			source.rfind("frame_bands(shape[\"hole_rect\"], AssayHud.MARK_KEYLINE_PX)"))
+			source.rfind("draw_rect(shape[\"hole_rect\"], AssayHud.mark_ink_of("))
 	if last_rim > band_at:
 		return _fail(("11.42: `_draw` paints a machine rim at %d, AFTER the first band at %d — a "
 				+ "second rim pass further down the frame. Every rim belongs in the one pass above "
@@ -1778,8 +1785,15 @@ func test_a_building_on_the_schematic_is_the_footprint_it_stands_on() -> bool:
 ## (`tools/person_under_machine.gd`, the real geometry at cell 9): `_draw` paints buildings AFTER
 ## players, so the rim lands on whoever is standing on the machine. A partner on a 1x1 keeps **69.2%
 ## of their cross without the rim and 38.5% with it**, and ASSA-236's whole case for the hollow frame
-## was that it ended that trade (25.3% -> 70.4%). So the hole must still have a middle, which is the
-## second assertion below -- and the hole's clear square is 8x8 px where it was 12x12.
+## was that it ended that trade (25.3% -> 70.4%).
+##
+## **THAT PARAGRAPH ENDED "SO THE HOLE MUST STILL HAVE A MIDDLE, WHICH IS THE SECOND ASSERTION
+## BELOW -- AND THE HOLE'S CLEAR SQUARE IS 8x8 PX WHERE IT WAS 12x12", AND BOTH HALVES ARE DEAD.**
+## 11.42 (ASSA-278 box 7) moved every rim BEFORE the people, so a machine paints nothing on a body
+## from inside its own hole and the 69.2/38.5 trade is not a trade any more; and ASSA-273 box 1
+## filled the hole, so its clear square is **0x0**. The assertion is gone, with the two tests that
+## carry its job named where it stood. The numbers above are kept because they are the measurement
+## that bought `BUILDING_MARK_PX` 20 -- they are history now, not a bar.
 ##
 ## **WHAT IT CANNOT SEE, the same gap every mark test here admits: whether `_draw` paints these three
 ## lists.** Nothing headless rasterises a `draw_rect`. The bands come out of `AssayHud` in the
@@ -1801,7 +1815,9 @@ func test_a_machines_band_has_a_dark_neighbour_on_both_of_its_edges() -> bool:
 		# and a polygon cannot be handed to `frame_bands`.
 		var band: Array[Rect2] = AssayHud.frame_bands(mark["rect"], float(mark["stroke"]))
 		var dark: Array[Rect2] = AssayHud.frame_bands(mark["keyline_rect"], AssayHud.MARK_KEYLINE_PX)
-		dark.append_array(AssayHud.frame_bands(mark["hole_rect"], AssayHud.MARK_KEYLINE_PX))
+		# THE WHOLE HOLE, not a ring inside it (ASSA-273 box 1): one filled rect is what `_draw`
+		# paints now, and it is a superset of the ring, so everything ASSA-278 bought is still bought.
+		dark.append(mark["hole_rect"] as Rect2)
 		# **AND THE TWO INKS MAKE A STEP, AS A NUMBER.** Without this the property above is satisfied
 		# by a rim in any colour at all -- including the band's own white, which is the shape of the
 		# defect: a neighbour that is not an edge.
@@ -1836,14 +1852,23 @@ func test_a_machines_band_has_a_dark_neighbour_on_both_of_its_edges() -> bool:
 		if seen == 0:
 			return _fail("a %s building's frame sampled 0 band pixels inside its own keyline rect %s, "
 					% [foot, outer] + "so this test looked at nothing")
-		# **AND THE HOLE STILL HAS A MIDDLE.** The rim is painted over a person standing on the
-		# machine (buildings go in after players), so a rim that closed the hole would be ASSA-203's
-		# 0.0% back by another route. 8x8 px of a 1x1's 12x12 hole, and the cost is in the docstring.
-		var centre: Vector2 = (mark["rect"] as Rect2).get_center()
-		if _in_any(band, centre) or _in_any(dark, centre):
-			return _fail(("a %s building's mark is ink at its own centre %s once the inward rim is "
-					+ "drawn: a person standing on this machine is painted out by it, which is the "
-					+ "trade the hollow frame was filed to end (ASSA-236)") % [foot, centre])
+		# **THIS IS WHERE "AND THE HOLE STILL HAS A MIDDLE" WAS, AND I DELETED IT RATHER THAN INVERT
+		# IT, BECAUSE ITS PREMISE DIED TWO ITEMS AGO.** It asserted the mark's own centre is not ink,
+		# and its reason was *"the rim is painted over a person standing on the machine (buildings go
+		# in after players), so a rim that closed the hole would be ASSA-203's 0.0% back by another
+		# route."* Since **11.42** (ASSA-278 box 7, two days ago) the rims pass runs BEFORE the
+		# people, so nothing a machine paints inside its own hole lands on a body at all -- the
+		# assertion had been holding a geometry rule up with an order that no longer existed. The
+		# hole is filled since ASSA-273 box 1 and its centre IS ink.
+		#
+		# WHAT COVERS THE THING IT WAS PROTECTING, by name, because an assertion removed with no
+		# replacement is a hole in the suite and not a tidy-up:
+		# - the FILL being under the people: the `inward < player` leg of
+		#   `test_machine_rims_then_players_then_bands`, which reddens naming 11.14 and Maren's
+		#   condition (i).
+		# - a person's BODY surviving what is painted after them:
+		#   `test_a_person_standing_on_a_machine_keeps_their_body`, which counts the band only and
+		#   says why.
 	return true
 
 
@@ -2022,14 +2047,32 @@ func test_a_person_standing_on_a_machine_keeps_their_body() -> bool:
 	# the tile you are STANDING on, so this is the normal case and not a contrived one.
 	var at := origin + (Vector2(tile) + Vector2(0.5, 0.5)) * cell
 	var mark := AssayHud.building_mark({"pos": tile, "footprint": Vector2i(1, 1)}, cell, origin)
-	# THE THREE LISTS `_draw` PAINTS FOR ONE MACHINE, in its order and from the same functions.
-	var ink: Array[Rect2] = AssayHud.frame_bands(mark["keyline_rect"], AssayHud.MARK_KEYLINE_PX)
-	ink.append_array(AssayHud.frame_bands(mark["rect"], float(mark["stroke"])))
-	ink.append_array(AssayHud.frame_bands(mark["hole_rect"], AssayHud.MARK_KEYLINE_PX))
-	# Maren's bar, as the shares she wrote. A floor and not an equality: a change that leaves MORE of
-	# a person is not a defect, and `is_equal_approx` on a sampled area would be a trap.
-	for case in [{"mine": true, "who": "you", "floor": 0.85}, {"mine": false, "who": "a partner",
-			"floor": 0.69}]:
+	# **WHAT COVERS A PERSON IS THE BAND, AND SINCE 11.42 IT IS THE ONLY THING A MACHINE PAINTS AFTER
+	# THEM.** This list was all three of a machine's rects — outward rim, band, inward rim — which was
+	# the right model on the day it was written and stopped being one when ASSA-278 box 7 moved every
+	# rim into pass 1, two days before ASSA-273 filled the hole. A model that counts separators
+	# painted UNDER a body as covering it does not merely under-report: handed a FILLED hole it
+	# reports a person at 0.0% and reddens on a change that cannot touch them.
+	#
+	# **SO THE ORDER IS NOT MODELLED HERE, IT IS ASSERTED ELSEWHERE, which is the only way round the
+	# circle.** This test owns the geometry (what the band takes off a body); the `inward < player`
+	# and `outward < player` legs of `test_machine_rims_then_players_then_bands` own the order that
+	# makes the other two rects harmless. Either test alone would be satisfiable by a defect.
+	var ink: Array[Rect2] = AssayHud.frame_bands(mark["rect"], float(mark["stroke"]))
+	# **THE FLOORS ARE MEASURED ON THIS MODEL AND THE OLD PAIR IS NAMED, NOT QUIETLY RAISED.** Maren's
+	# bar was `85.3 / 69.2` against all three rects; the band alone takes almost nothing off either
+	# body: measured, **100.0% and 100.0%**, because the band lives 8..10 px from the mark's centre
+	# and both bodies are built on `PLAYER_MARK_PX` 16 — so a diamond's and a cross's reach stop
+	# where the band starts. The old pair is NOT the bar any more and must not be read as one: it
+	# priced a rim over a body, and no rim is painted over a body.
+	#
+	# **AND THE BAR IS THE RULE RATHER THAN THE MEASUREMENT: 11.14 says NEVER, so the floor is 1.0.**
+	# It is met exactly at `BUILDING_MARK_PX` 20 and would redden on the way back to 16, where the
+	# band's inner edge sat inside a body's own reach (85.3% / 69.2%). A floor and not an equality
+	# test: a change that leaves more of a person is not a defect, and `is_equal_approx` on a sampled
+	# area would be a trap.
+	for case in [{"mine": true, "who": "you", "floor": 1.0}, {"mine": false, "who": "a partner",
+			"floor": 1.0}]:
 		var body: PackedVector2Array = AssayHud.player_mark(at, bool(case["mine"]))["points"]
 		var total := 0
 		var kept := 0
@@ -2053,6 +2096,10 @@ func test_a_person_standing_on_a_machine_keeps_their_body() -> bool:
 			return _fail("%s has a body of 0 sampled pixels, so this test looked at nothing"
 					% case["who"])
 		var share := float(kept) / float(total)
+		# PRINTED, because the floor is a floor and the SHARE is what the next ruling will want.
+		print("%s on a 1x1 machine keeps %.1f%% of their body against the band (%d of %d px); the "
+				% [case["who"], 100.0 * share, kept, total]
+				+ "all-three-rects model this test used until ASSA-273 said 85.3%/69.2%")
 		if share < float(case["floor"]):
 			return _fail(("%s standing on a 1x1 machine keeps %.1f%% of their body (%d of %d px) and "
 					+ "Maren's bar is %.0f%%. A machine's mark may take space from the GROUND for "
@@ -2060,6 +2107,74 @@ func test_a_person_standing_on_a_machine_keeps_their_body() -> bool:
 					+ "took a partner from 69.2%% to 38.5%%, which is the trade ASSA-236's hollow "
 					+ "frame was filed to END (ASSA-278)")
 					% [case["who"], 100.0 * share, kept, total, 100.0 * float(case["floor"])])
+	return true
+
+
+## **NO GROUND SHOWS THROUGH A MACHINE'S MARK, WHICH IS CROSS-SEED IDENTITY AS A PROPERTY**
+## (ASSA-273 box 1, Maren's condition (ii): *"render the same footprint on two worlds, assert the
+## mark's painted pixels are identical. Today it fails by 144 px²; after the fill it passes by
+## construction, and it is the only check that stops a future caller reopening the hole."*).
+##
+## **WHY THE DEFECT NEEDED A NEW SHAPE OF CHECK.** Every number this item ever had was WITHIN-seed —
+## the band's own ink 86.8% on 63 against 52.1% on 777042, longest unbroken run, hole area — and a
+## statistic about one frame cannot say that two frames disagree. What Marlow's cold read found,
+## unprompted, is that they do: *"in blind-63 the thing I think is built is wearing the ore costume
+## ... in blind-777042 the same thing is a small white-outlined box with no disc at all — so the two
+## pictures do not even agree with each other about what a machine looks like."* The mark is one ink
+## and one size on both; `hole disc` is 32.8% on BOTH. Only the VALUE showing through changed, and it
+## swung 7.5x (`disc:map` 11.58:1 against 1.54:1, `shared/assay/cove-assa273/costume/`).
+##
+## **SO THE PROPERTY IS "A MARK'S BOX CONTAINS NO PIXEL THE WORLD CHOSE", NOT A RATIO BETWEEN TWO
+## SEEDS.** A ratio needs two worlds and a renderer; this needs neither, and it is strictly stronger:
+## if every pixel inside the keyline is one of the mark's own three inks, then no seed can change the
+## picture, so all seeds paint the same machine. It reddens on 144 px² of a 1x1 the moment anyone
+## re-opens the hole, naming the pixel.
+##
+## WHAT IT CANNOT SEE, and it is the bigger half of the costume: **the SURROUND.** Maren's own ruling
+## says the ring outside the keyline tells a reader 2.7x more than the hole did (`ring disc` **88.0%**
+## on 63 against 31.7% on 777042, where the hole was 32.8% on both; 88.0 corrects an 89.3 I typed in
+## three places, against `shared/assay/cove-assa273/holefill/costume-filled.txt`). A mark whose box is
+## seed-identical can still stand in a bright plate on one world and on bare ground on another. This
+## check passes by construction and must not be quoted as closing box 1.
+func test_no_ground_shows_through_a_machines_mark() -> bool:
+	var origin := Vector2(24.0, 96.0)
+	# A 1x1 at cell 9 is the case that matters — its mark is `BUILDING_MARK_PX` 20 over a 9 px tile,
+	# so the hole is 12x12 of a 576 px² box — and the others are here because a footprint-sized mark
+	# must satisfy the same property with no floor doing the work.
+	for case in [{"foot": Vector2i(1, 1), "cell": 9.0}, {"foot": Vector2i(2, 2), "cell": 9.0},
+			{"foot": Vector2i(3, 2), "cell": 32.0}]:
+		var foot: Vector2i = case["foot"]
+		var cell: float = case["cell"]
+		var mark := AssayHud.building_mark({"pos": Vector2i(12, 7), "footprint": foot}, cell, origin)
+		# THE THREE LISTS `_draw` PAINTS FOR ONE MACHINE, from the same functions it asks, in its
+		# order: the outward rim, the filled hole (both pass 1), then the band (pass 3).
+		var painted: Array[Rect2] = AssayHud.frame_bands(mark["keyline_rect"],
+				AssayHud.MARK_KEYLINE_PX)
+		painted.append(mark["hole_rect"] as Rect2)
+		painted.append_array(AssayHud.frame_bands(mark["rect"], float(mark["stroke"])))
+		var outer: Rect2 = mark["keyline_rect"]
+		# Sampled at a quarter pixel, not a pixel centre: a 1x1's rects sit on half-pixels at cell 9
+		# and on integers at cell 32, and a sample that lands on an edge is a coin toss.
+		var seen := 0
+		var y := outer.position.y + 0.25
+		while y <= outer.end.y - 0.25:
+			var x := outer.position.x + 0.25
+			while x <= outer.end.x - 0.25:
+				var point := Vector2(x, y)
+				seen += 1
+				if not _in_any(painted, point):
+					return _fail(("a %s building's mark at %.0f px a tile leaves %s to the GROUND: "
+							+ "inside its own keyline rect %s, that pixel is whatever the worldgen "
+							+ "rolled. A 1x1 used to leave 144 px² of a 576 px² box that way — our "
+							+ "ink and the world's at 1.00:1, the world's half swinging 7.5x between "
+							+ "seeds — so two worlds painted two different machines (ASSA-273 box 1, "
+							+ "Marlow's cold read). Every pixel of a mark's box is a mark ink.")
+							% [foot, cell, point, outer])
+				x += 1.0
+			y += 1.0
+		if seen == 0:
+			return _fail("a %s building's mark sampled 0 pixels inside its own keyline rect %s, so "
+					% [foot, outer] + "this test looked at nothing")
 	return true
 
 
@@ -2335,6 +2450,57 @@ func test_a_building_mark_has_a_floor_and_it_clears_a_persons_own_box() -> bool:
 			return _fail(("a %s building at %.0fpx a tile is drawn %s, not %.0f square: a per-axis "
 					+ "size makes a leaning rhombus out of a footprint that is not square.")
 					% [foot, cell, span, want])
+	return true
+
+
+## **HOW MANY TILES A MACHINE'S MARK CLAIMS, HELD AS A NUMBER INSTEAD OF A SENTENCE** (ASSA-326,
+## Maren 2026-10-08).
+##
+## `building_mark`'s docstring said for months that the stroke is drawn inward from the footprint's
+## edge *"so the frame never claims a tile the machine does not stand on"*. It was true when written
+## and false twice over since: `BUILDING_MARK_PX`'s floor makes `outer` 20 px whatever the footprint
+## is, and ASSA-278's keyline then grows 2 px OUTSIDE that. Nothing noticed, because **nothing tests
+## prose** -- the same shape as the 16/20 that went stale in the same file, and as ASSA-174.
+##
+## So the corrected table is held here rather than merely rewritten. The failure message names the
+## docstring, because the point of this test is not that 24 is the right number -- it is that the
+## number in the prose is the number in the painter. A constant may move; the table moves with it or
+## this goes red.
+##
+## **IT ALSO ASSERTS THE DIRECTION, which is the claim that was actually wrong:** at the schematic's
+## own cell every footprint in today's roster is painted wider than the tiles it stands on. If a
+## future roster or cell makes that false for some footprint, this reddens and the paragraph above
+## has to be rewritten -- which is correct, because that sentence would then be true again.
+func test_a_machines_mark_claims_more_tiles_than_it_stands_on_and_the_docstring_says_how_many()\
+		-> bool:
+	# The schematic's own cell on the test world, from the painter, not typed: 96x64 tiles.
+	var cell := AssayHud.map_cell(Vector2i(96, 64))
+	if absf(cell - 9.0) > 1e-4:
+		return _fail(("the schematic's cell is %.2f px, not the 9 that `building_mark`'s table is "
+				+ "written at. The table is still the painter's arithmetic, but its numbers are "
+				+ "now about a cell nobody draws: rewrite it.") % cell)
+	# Every footprint the sim can hand us today: a planted machine and a smelter.
+	for foot: Vector2i in [Vector2i(1, 1), Vector2i(2, 2)]:
+		var mark := AssayHud.building_mark({"pos": Vector2i(40, 30), "footprint": foot}, cell,
+				Vector2.ZERO)
+		var painted: Rect2 = mark["keyline_rect"]
+		var want: float = maxf(float(maxi(foot.x, foot.y)) * cell, AssayHud.BUILDING_MARK_PX) \
+				+ 2.0 * AssayHud.MARK_KEYLINE_PX
+		if absf(painted.size.x - want) > 1e-4 or absf(painted.size.y - want) > 1e-4:
+			return _fail(("a %s machine paints %s, and the floor plus the outward keyline make "
+					+ "%.1f px: the mark's outermost rect is not what this function's own "
+					+ "constants say it is") % [foot, painted.size, want])
+		if absf(painted.size.x - 24.0) > 1e-4:
+			return _fail(("a %s machine is painted %.1f px across at a 9 px cell and "
+					+ "`building_mark`'s docstring table says 24 (2.67 tiles). One of them is "
+					+ "stale and it is not the painter: update the table in that docstring.")
+					% [foot, painted.size.x])
+		if painted.size.x <= float(foot.x) * cell:
+			return _fail(("a %s machine stands on %.0f px of tiles and is painted %.1f px, so the "
+					+ "frame no longer claims a tile it does not stand on. That makes "
+					+ "`building_mark`'s corrected bullet wrong in the other direction -- rewrite "
+					+ "it, do not delete this check") % [foot, float(foot.x) * cell,
+					painted.size.x])
 	return true
 
 
@@ -2769,6 +2935,166 @@ func test_an_exact_pack_is_not_short_and_an_empty_one_is() -> bool:
 	return true
 
 
+## **A FRAME'S SLOTS BECOME BOXES, ONE PER UNIT OF ROOM** (ASSA-340, for `assay-build-screen` §3:
+## *"slots drawn as a shape, not listed as rows … a list hides a limit that a drawn shape states"*).
+##
+## **THE TWO LIMITS HERE ARE WRITTEN AS LITERALS AND MATCH THE SHIPPED CATALOGUE'S TWO FRAMES** --
+## a held frame's `head 1 1` and a planted frame's `head 1 1` + `hopper 0 4` -- because the thing
+## under test is the arithmetic from a limit to a shape, and asking the sim for them here would make
+## this test agree with whatever the binding happens to hand over. `test_actions.gd` is where the
+## CROSSED field is held against the sim; this file touches no sim at all (see its header).
+func test_a_frames_slot_limits_draw_one_box_per_unit_of_room() -> bool:
+	var handle := AssayHud.slot_boxes([{"name": "head", "min": 1, "max": 1}])
+	if handle.size() != 1:
+		return _fail("one head slot drew %d boxes" % handle.size())
+	if String((handle[0] as Dictionary).get("name", "")) != "head":
+		return _fail("the one box is not a head: %s" % [handle[0]])
+	if not bool((handle[0] as Dictionary).get("required", false)):
+		return _fail("a slot with min 1 drew a box that is not required: %s" % [handle[0]])
+
+	# THE PLANTED FRAME IS THE ONE THAT PROVES THE SHAPE SAYS SOMETHING A ROW WOULD NOT: five boxes,
+	# of which four are optional, so the limit (a fifth hopper has nowhere to go) is visible without
+	# a number -- and the four empties must not read as four things the design is waiting for.
+	var frame := AssayHud.slot_boxes([
+			{"name": "head", "min": 1, "max": 1},
+			{"name": "hopper", "min": 0, "max": 4}])
+	if frame.size() != 5:
+		return _fail("a head slot and four hopper slots drew %d boxes" % frame.size())
+	var drawn := PackedStringArray()
+	var required := 0
+	for entry in frame:
+		var box: Dictionary = entry
+		drawn.append(String(box.get("name", "")))
+		if bool(box.get("required", false)):
+			required += 1
+	# Order is the catalogue's and is not sorted: the required slot comes first because `PART_SPECS`
+	# puts it first, not because this function reordered it.
+	if "|".join(drawn) != "head|hopper|hopper|hopper|hopper":
+		return _fail("the boxes came out as %s" % [drawn])
+	if required != 1:
+		return _fail("%d of five boxes are required; only the head slot's min is above zero"
+				% required)
+	return true
+
+
+## **NOT A FRAME MEANS NO SHAPE, AND A BROKEN ROW IS SKIPPED RATHER THAN DRAWN BLANK** (ASSA-340).
+##
+## The empty list is the honest answer for a head or a hopper (`PartSpec::slots`: *"Only a frame
+## offers any"*). The other two cases are only reachable with a `libsim_godot.dylib` older than the
+## sim it was built from, and they are here because **a nameless or roomless box in a shape whose job
+## is stating a limit would state the wrong limit** -- five boxes where the frame takes four.
+func test_a_slot_with_no_name_or_no_room_draws_nothing() -> bool:
+	if not AssayHud.slot_boxes([]).is_empty():
+		return _fail("a part with no slots drew %s" % [AssayHud.slot_boxes([])])
+	var nameless := AssayHud.slot_boxes([{"min": 1, "max": 2}])
+	if not nameless.is_empty():
+		return _fail("a slot with no name drew %s" % [nameless])
+	var roomless := AssayHud.slot_boxes([{"name": "hopper", "min": 0, "max": 0}])
+	if not roomless.is_empty():
+		return _fail("a slot with no room drew %s" % [roomless])
+	# And a good slot beside a broken one still draws: the shape loses the row it cannot draw, not
+	# the frame.
+	var mixed := AssayHud.slot_boxes([{"name": "", "min": 0, "max": 3},
+			{"name": "head", "min": 1, "max": 1}])
+	if mixed.size() != 1 or String((mixed[0] as Dictionary).get("name", "")) != "head":
+		return _fail("a broken row took the good one with it: %s" % [mixed])
+	return true
+
+
+## **A PART STANDS IN A BOX OF ITS OWN KIND, IN THE ORDER IT WAS PLACED** (ASSA-317 slice 2).
+##
+## **EVERY EXPECTED VALUE HERE IS A LITERAL, including the two slot limits**, for the reason the
+## `slot_boxes` test above gives: the thing under test is the pairing, and asking the sim for the
+## limits would make this agree with whatever the binding happened to hand over. The planted frame's
+## `head 1 1` + `hopper 0 4` is the shipped catalogue's.
+##
+## **THE PAIRING IS WHAT A DRAWN SHAPE NEEDS AND A LIST DOES NOT**: `hopper` boxes 1 and 2 full while
+## 3 and 4 stand empty is a sentence no row of text states.
+func test_a_mounted_part_fills_a_box_of_its_own_kind() -> bool:
+	var slots := [{"name": "head", "min": 1, "max": 1}, {"name": "hopper", "min": 0, "max": 4}]
+	var head := {"kind": "head", "species": 0, "grade": "B", "count": 1, "name": "head one"}
+	var first := {"kind": "hopper", "species": 0, "grade": "B", "count": 1, "name": "hopper one"}
+	var second := {"kind": "hopper", "species": 1, "grade": "A", "count": 1, "name": "hopper two"}
+	var filled: Dictionary = AssayHud.slot_fill(slots, [head, first, second])
+	var boxes: Array = filled["boxes"]
+	if boxes.size() != 5:
+		return _fail("a planted frame's two limits drew %d boxes, not 5: %s" % [boxes.size(), boxes])
+	# THE WHOLE SHAPE AS ONE LITERAL, so a box that took the wrong part, or lost `required`, or came
+	# back in another order, is one comparison rather than five.
+	var want := [["head", true, "head one"], ["hopper", false, "hopper one"],
+			["hopper", false, "hopper two"], ["hopper", false, ""], ["hopper", false, ""]]
+	for i in range(5):
+		var box: Dictionary = boxes[i]
+		var part: Dictionary = box.get("part", {})
+		var got := [String(box.get("name", "")), bool(box.get("required", false)),
+				String(part.get("name", ""))]
+		if got != want[i]:
+			return _fail("box %d is %s; it should be %s" % [i, got, want[i]])
+	if not (filled["extra"] as Array).is_empty():
+		return _fail("every part had a box and `extra` still holds %s" % [filled["extra"]])
+
+	# **MOUNTED OUT OF BOX ORDER, AND THIS CASE IS HERE BECAUSE A MUTATION RUN SAID IT WAS MISSING.**
+	# Above, the parts happen to be listed in the same order as the boxes, so deleting the kind check
+	# entirely -- every box taking the next unused part, whatever it is -- left this test GREEN. The
+	# pairing rule was only under test in the leftover test below. A player mounts a hopper before a
+	# head as easily as after, so: hopper first, and the head still belongs in box 0.
+	var swapped: Dictionary = AssayHud.slot_fill(slots, [first, head])
+	var order := PackedStringArray()
+	for entry in (swapped["boxes"] as Array):
+		order.append(String(((entry as Dictionary).get("part", {}) as Dictionary).get("name", "-")))
+	if Array(order) != ["head one", "hopper one", "-", "-", "-"]:
+		return _fail("a hopper placed before a head filled the boxes as %s" % [order])
+	return true
+
+
+## **A PART WITH NOWHERE TO STAND IS DRAWN, NOT DROPPED AND NOT REFUSED** (ASSA-317 slice 2;
+## ASSA-316 ruling 6, the client decides nothing).
+##
+## Three states, and the third is the one that would be easy to get wrong in a way nothing catches.
+##
+## 1. **Five hoppers on a four-hopper frame.** Four stand in boxes and the fifth is in `extra`. If
+##    this client dropped it, a player would press `Build`, the sim would refuse a design the screen
+##    never showed them, and the screen would still look right.
+## 2. **A frame mounted on a frame.** No box has that kind, so it is `extra` and the required head
+##    box is still empty -- the screen says "this needs a head and is carrying something that fits
+##    nowhere", which is two true facts, neither of them a verdict.
+## 3. **A part on a kind that offers no slots at all.** `slot_boxes` answers `[]` for a head, and
+##    `extra` then has to be everything rather than nothing: the fallback that returns an empty
+##    dictionary for both keys reads as "all placed" and is the plausible lie.
+func test_a_part_no_box_can_hold_is_left_over_rather_than_refused() -> bool:
+	var planted := [{"name": "head", "min": 1, "max": 1}, {"name": "hopper", "min": 0, "max": 4}]
+	var hoppers := []
+	for i in range(5):
+		hoppers.append({"kind": "hopper", "species": 0, "grade": "B", "name": "hopper %d" % i})
+	var five: Dictionary = AssayHud.slot_fill(planted, hoppers)
+	var names := PackedStringArray()
+	for entry in (five["boxes"] as Array):
+		names.append(String(((entry as Dictionary).get("part", {}) as Dictionary).get("name", "-")))
+	if Array(names) != ["-", "hopper 0", "hopper 1", "hopper 2", "hopper 3"]:
+		return _fail("five hoppers filled the boxes as %s" % [names])
+	var over: Array = five["extra"]
+	if over.size() != 1 or String((over[0] as Dictionary).get("name", "")) != "hopper 4":
+		return _fail("the fifth hopper should be the one left over; `extra` is %s" % [over])
+
+	# 2. A FRAME ON A FRAME: no box of that kind, so the required head box stays empty.
+	var onframe: Dictionary = AssayHud.slot_fill(planted,
+			[{"kind": "frame", "species": 0, "grade": "B", "name": "a frame"}])
+	var headbox: Dictionary = (onframe["boxes"] as Array)[0]
+	if not (headbox.get("part", {}) as Dictionary).is_empty():
+		return _fail("a frame stood in the head box: %s" % [headbox])
+	if (onframe["extra"] as Array).size() != 1:
+		return _fail("a frame mounted on a frame is not left over: %s" % [onframe["extra"]])
+
+	# 3. NO SLOTS AT ALL. A head offers none, so everything mounted on one is left over.
+	var nowhere: Dictionary = AssayHud.slot_fill([],
+			[{"kind": "head", "species": 0, "grade": "B", "name": "a head"}])
+	if not (nowhere["boxes"] as Array).is_empty():
+		return _fail("a part with no slots drew boxes: %s" % [nowhere["boxes"]])
+	if (nowhere["extra"] as Array).size() != 1:
+		return _fail("a kind with no slots held a part instead of leaving it over: %s" % [nowhere])
+	return true
+
+
 ## **THE SIM'S SENTENCE BREAKS AT THE SIM'S OWN MARK AND NOWHERE ELSE** (ASSA-332; Maren's §5.4
 ## ruling 2, and ASSA-305's "whole" as she re-read it: *"wrapping is not recomposing"*).
 ##
@@ -2823,4 +3149,47 @@ func test_the_commit_bar_leaves_the_sentence_the_width_it_was_measured_at() -> b
 	if AssayHud.commit_sentence_width(100.0, 16.0) != 0.0:
 		return _fail("a 100 px bar left the sentence %.0f px"
 				% AssayHud.commit_sentence_width(100.0, 16.0))
+	return true
+
+
+## **A PACK STACK FINDS ITS OWN CATALOGUE ROW, AND AN ORE STACK FINDS NONE** (ASSA-317 slice 2b).
+##
+## **THE CATALOGUE HERE IS A LITERAL AND NOT `part_kinds()`**, which is the whole point: the join is
+## what is under test, so a fixture read out of the sim would be the function agreeing with its own
+## input. The names are shaped like the sim's, not taken from it.
+##
+## **AND THEN THE REAL CATALOGUE IS WALKED ANYWAY**, for the half a literal cannot hold: every kind
+## the sim names must find itself through this function, which is what goes red the day
+## `part_kinds().name` stops being the `kind` string `inventory_of` writes on a pack stack. That drift
+## is silent -- the build screen would offer a frame no slots and nothing would fail.
+func test_a_pack_stack_finds_its_own_part_kind_and_ore_finds_none() -> bool:
+	var kinds := [
+			{"name": "handle", "is_frame": true, "slots": [{"name": "head", "min": 1, "max": 1}]},
+			{"name": "head", "is_frame": false, "slots": []},
+	]
+	var head := AssayHud.part_kind_of({"kind": "head", "species": 0, "grade": "C"}, kinds)
+	if String(head.get("name", "")) != "head":
+		return _fail("a head stack found %s in a catalogue of handle and head" % [head])
+	if bool(head.get("is_frame", true)):
+		return _fail("the row found for a head says it is a frame: %s" % [head])
+	var handle := AssayHud.part_kind_of({"kind": "handle", "species": 3, "grade": "A"}, kinds)
+	if not bool(handle.get("is_frame", false)):
+		return _fail("the row found for a handle says it is not a frame: %s" % [handle])
+	if (handle.get("slots", []) as Array).size() != 1:
+		return _fail("the handle's row carries %s slots; the fixture gives it one"
+				% [(handle.get("slots", []) as Array).size()])
+	var ore := AssayHud.part_kind_of({"kind": "ore", "species": 0, "grade": "C"}, kinds)
+	if not ore.is_empty():
+		return _fail(("an ore stack found the part row %s; the pack holds plenty that is not a part "
+				+ "and a client that drew slots for it would draw a frame's shape over an ore") % [ore])
+	var catalogue := AssaySimHost.part_kinds()
+	if catalogue.is_empty():
+		return _fail("the sim names no part kinds at all, so the join below is untested")
+	for entry in catalogue:
+		var row: Dictionary = entry
+		var kind := String(row.get("name", ""))
+		var found := AssayHud.part_kind_of({"kind": kind, "species": 0, "grade": "C"}, catalogue)
+		if String(found.get("name", "")) != kind:
+			return _fail(("the sim names a part kind `%s` and a pack stack of it finds %s -- the `name` "
+					+ "join has drifted from `ItemKind::Part(k).name()`") % [kind, found])
 	return true

@@ -499,6 +499,14 @@ jobs:
       # and Godot exits 0 on a parse error, so a file that cannot compile at all
       # costs nothing to ship. `project.godot` also makes unreachable code and
       # discarded expressions errors, so this gates those too. ~20s.
+      #
+      # TWO ROOTS SINCE ASSA-359, and `working-directory` below is why the second
+      # one is phrased as `../art` rather than an absolute path: the step runs
+      # from `sim-game/client`, so the script's own `cd` lands in the project and
+      # `../art` is `sim-game/art`. Those three .gd files call client `class_name`
+      # libraries from OUTSIDE the project, which is how a narrowed signature went
+      # red here twice on 2026-10-08 with every client script green. The script
+      # names each root in its count and exits 2 if either matches no files.
       - name: Every GDScript file compiles
         working-directory: sim-game/client
         run: |

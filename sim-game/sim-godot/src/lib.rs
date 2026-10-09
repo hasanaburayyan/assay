@@ -1002,7 +1002,8 @@ impl AssaySim {
     /// it submits a `MakePart` with the wrong kind and checks the sim refuses.
     pub const PART_MATERIAL: sim::ItemKind = sim::ItemKind::Refined;
 
-    /// EVERY PART THE CATALOGUE HOLDS: `name`, `size`, `material` and `tag`.
+    /// EVERY PART THE CATALOGUE HOLDS: `name`, `size`, `material`, `tag`,
+    /// `is_frame` and `slots`.
     ///
     /// So the client's "make a part" buttons are the sim's list rather than four
     /// strings typed into GDScript. ADR 0003's consequence is that a new part
@@ -1015,17 +1016,52 @@ impl AssaySim {
     /// `PartKind::Frame(Mount)` is an enum inside an enum. GDScript neither
     /// builds that nor parses it — parsing would be the double trap again — it
     /// passes this value straight into the command.
+    ///
+    /// **`slots` IS WHAT A FRAME ACCEPTS, AS THREE NUMBERS AND A NAME PER SLOT
+    /// AND NEVER AS A SENTENCE** (ASSA-340, for `assay-build-screen` §3's take
+    /// from Satisfactory: *"slots drawn as a shape, not listed as rows … a list
+    /// hides a limit that a drawn shape states"*). One entry per `SlotLimit` in
+    /// the catalogue's order, each `{name, min, max}`; empty for every kind
+    /// that is not a frame, which is `PartSpec::slots`' own rule (*"Only a
+    /// frame offers any"*). The build screen draws `max` boxes and marks the
+    /// first `min` of them required, so the limit is stated by the shape — the
+    /// alternative was four numbers typed into GDScript, which ASSA-317 forbids
+    /// by name. `sim::debug::slots_phrase` is where the WORDS live if a surface
+    /// ever needs them; `part_table`'s `accepts` column is the headless one.
+    ///
+    /// **`name` IS THE SLOT KIND'S OWN ITEM NAME, WHICH IS WHAT `inventory_of`
+    /// ALREADY CALLS A PART IN THE PACK** (`ItemKind::Part(k).name()` is
+    /// `k.name()`), so a client matches a pack row to a slot by comparing two
+    /// strings the sim wrote and parses nothing.
+    ///
+    /// **AND THERE IS NO `tag` ON A SLOT, DELIBERATELY.** Nothing ever sends a
+    /// slot to the sim: `Assemble` carries an ordered list of items, not slot
+    /// indices, and whether a part may join a design is `part_press_refusal`'s
+    /// answer rather than a comparison the client makes. A crossed field with
+    /// no reader is ASSA-173's defect, so it is absent until something asks.
     #[func]
     pub fn part_kinds() -> Array<VarDictionary> {
         PartKind::ALL
             .iter()
             .filter_map(|kind| {
                 let tag = tag_variant(&serde_json::to_value(kind).ok()?)?;
+                let slots: Array<VarDictionary> = sim::assembly::spec(*kind)
+                    .slots
+                    .iter()
+                    .map(|slot| {
+                        vdict! {
+                            "name" => &gstring(slot.kind.name()).to_variant(),
+                            "min" => &(i64::from(slot.min)).to_variant(),
+                            "max" => &(i64::from(slot.max)).to_variant(),
+                        }
+                    })
+                    .collect();
                 Some(vdict! {
                     "name" => &gstring(kind.name()).to_variant(),
                     "size" => &(sim::assembly::spec(*kind).size as i64).to_variant(),
                     "material" => &gstring(Self::PART_MATERIAL.name()).to_variant(),
                     "tag" => &tag,
+                    "slots" => &slots.to_variant(),
                     // **THE WORD ON A PART ROW'S BUTTON IS A PROPERTY OF THE
                     // KIND** (Game Director, ASSA-86 ruling 1): a frame kind
                     // says `Frame` forever and every other kind says `Mount`
@@ -1139,6 +1175,28 @@ impl AssaySim {
     #[func]
     pub fn species_per_world() -> i64 {
         sim::tuning::SPECIES_PER_WORLD as i64
+    }
+
+    /// THE LONGEST NAME A SPECIES CAN CARRY (`sim::tuning::SPECIES_NAME_MAX`),
+    /// in characters — `mineral::validate_name` counts `chars`, not bytes, and
+    /// allows only ASCII letters, digits and hyphens, which is what makes
+    /// `"W"` repeated to this length a real worst case rather than a guess.
+    ///
+    /// **HERE BECAUSE A WORST CASE THAT STOPS BEING THE WORST CASE FAILS
+    /// SILENTLY.** The window sizes the machine menu against the widest line
+    /// the sim can hand it, and the widest line is a full-length species name
+    /// (`test_buttons.gd`'s menu-width bound, ASSA-334). That test wrote `20`
+    /// of its own: raise the cap in `tuning.rs` and the test's "worst case"
+    /// gets SHORTER than the real one, the check stays green, and the row
+    /// overflows in a real window with nothing going red. A constant the test
+    /// and the rule both read cannot drift that way.
+    ///
+    /// STATIC, like [`AssaySim::species_per_world`]: it is a tuning constant,
+    /// not a fact about one world, so a test should not need a `Welcome` to
+    /// ask for it. It is NOT on `building_facts` for the same reason.
+    #[func]
+    pub fn species_name_max() -> i64 {
+        sim::tuning::SPECIES_NAME_MAX as i64
     }
 
     /// The word the sim puts in front of a dead end, so the window labels one

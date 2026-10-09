@@ -467,6 +467,21 @@ const BUILD_COST := "BuildScreenCost"
 const BUILD_BAR := "BuildScreenCommitBar"
 const BUILD_SAID := "BuildScreenSaid"
 const BUILD_ACT := "BuildScreenAct"
+const BUILD_SLOTS := "BuildScreenSlots"
+const BUILD_MOUNTS := "BuildScreenMounts"
+
+## **THE SCREEN'S TWO MODES, AND THEY ARE THE SIM'S OWN COMMAND WORDS** (ASSA-317 slice 2; Maren's
+## 00:32 ruling: *"BLOCK 2 IS THE SUBJECT IN BOTH MODES ... same two rects, same two jobs, so a
+## player learns this screen once instead of twice"*).
+##
+## `_build_verb` already held `make_offers`' own `verb` -- `craft` or `make` -- and this adds the
+## third. **It is spelled as the command the press sends** (`Assemble`), which is the rule
+## `_send_build`'s match rests on: which command a screen sends is the sim's answer, never a label.
+##
+## **THE MAKE PATH NEVER ASKS "AM I ASSEMBLING"; IT ASKS WHETHER THERE IS AN OFFER**, because a make
+## mode is one with a `tag` the catalogue knows. One predicate, `_assembling_mode()`, so the eleven
+## branches this slice adds cannot drift from each other.
+const BUILD_ASSEMBLE := "assemble"
 
 ## **THE THREE COLUMNS, AS SHARES OF THE SCREEN RATHER THAN PIXEL WIDTHS** (ASSA-328). Maren's mock
 ## fixes them at 287 / 304 / 240 inside 863 (`assay-build-screen` §0), and these are those three
@@ -566,9 +581,23 @@ var _build_box: PanelContainer = null
 var _build_title: Label = null
 var _build_picker: VBoxContainer = null
 var _build_materials: VBoxContainer = null
+## **BLOCK 3'S TWO SECTIONS ON THE ASSEMBLY PATH** (ASSA-317 slice 2b; Maren's 00:32 ruling (A)): the
+## frame's slots drawn as a shape, and under them the parts you can mount. **Two SHAPES, not one
+## list**, which is the whole of her sharpening: *"Slots are drawn boxes; mountable parts are a list.
+## Two shapes, two jobs, each legible before you press."*
+var _build_slots: VBoxContainer = null
+var _build_mounts: VBoxContainer = null
 var _build_detail: VBoxContainer = null
 var _build_cost: VBoxContainer = null
+## Block 6's whole SECTION -- heading and scroll box, not just the rows. Held because the make path
+## hides the block entirely (ASSA-341) and a heading left standing over nothing is a labelled empty
+## gap, which is `_show_log`'s lesson on this same screen.
+var _build_cost_box: Control = null
 var _build_bar: HBoxContainer = null
+## The sentence's own inset inside the commit bar, so `Build` lands on row 1 (ASSA-341 box 8). Held
+## because it is the bar's left-hand child and the test that keeps the sentence left and `Build`
+## right asks the bar what its children are.
+var _build_said_inset: MarginContainer = null
 var _build_said: VBoxContainer = null
 var _build_act: Button = null
 var _build_showing := UNBUILT
@@ -1791,8 +1820,28 @@ func _build_build_screen_over_the_map(world: Rect2) -> void:
 	# WHICH MATERIAL, so slice 1 gives the middle column to that, undivided; slice 2 takes it back for
 	# slots when a frame is chosen. ONI's picker is her §3 reference and this is it exactly: pick a
 	# material and the card's numbers move.
-	_build_materials = _build_column(columns, BUILD_COLUMNS[1], "from which material")
+	#
+	# **AND SLICE 2 TAKES IT BACK FOR THE SLOTS EXACTLY AS THAT PARAGRAPH SAID IT WOULD** (ASSA-317
+	# slice 2b). The column now holds THREE sections and never more than two of them at once: the
+	# material picker on the make path, and on the assembly path the frame's slots over the parts you
+	# can mount. **Built once and shown by mode rather than built per mode**, which is `_show_log`'s
+	# rule on this screen: a section that exists only in one mode is a node whose tests can only run
+	# in that mode, and the two modes share one rebuild clock.
+	var middle := VBoxContainer.new()
+	middle.add_theme_constant_override("separation", BUILD_GUTTER)
+	middle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	middle.size_flags_stretch_ratio = BUILD_COLUMNS[1]
+	columns.add_child(middle)
+	_build_materials = _build_section(middle, 1.0, "from which material")
 	_build_materials.name = BUILD_MATERIALS
+	# **THE SLOTS SHRINK TO THE SHAPE THEY DRAW AND THE MOUNT LIST GETS THE REST** (ASSA-343's ruling,
+	# Maren's ASSA-328: *"let the air collect at the BOTTOM of a block"*). A frame's shape is at most
+	# two rows of boxes; a filling section would put the column's whole slack between the shape and the
+	# list of parts a player is moving between.
+	_build_slots = _build_section(middle, 1.0, "the frame's slots", false)
+	_build_slots.name = BUILD_SLOTS
+	_build_mounts = _build_section(middle, 1.0, "what to mount")
+	_build_mounts.name = BUILD_MOUNTS
 	var right := VBoxContainer.new()
 	right.add_theme_constant_override("separation", BUILD_GUTTER)
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1809,12 +1858,30 @@ func _build_build_screen_over_the_map(world: Rect2) -> void:
 	# is hers to reverse). `line` and `dead_end` went to the commit bar because both are about the act:
 	# what it spends, and that it cannot be undone. `walls` stayed because it is a property of the
 	# thing produced -- the smelter's heat figure -- and this block is what you get.
-	_build_detail = _build_section(right, BUILD_READOUT_SHARE, "what you get")
+	#
+	# **AND IT SHRINKS TO WHAT IS IN IT, SO THE COLUMN'S SLACK FALLS UNDER `cost` AND NOT ABOVE IT**
+	# (ASSA-343; Maren's ASSA-328 ruling: *"let the air collect at the BOTTOM of a block, never between
+	# a thing and its label … Air at the bottom of the block — under `cost`, not above it"*). She
+	# measured ~200 px of air between the two things a player compares, and the cause is this share:
+	# an `EXPAND_FILL` section took 300 px whatever stood in it, which on slice 1 is a 32 px picture
+	# and one clause. `cost` keeps its own `EXPAND_FILL`, so the leftover lands inside the LAST block
+	# -- which is also what keeps her overflow guarantee (§5.4: *"blocks 4 and 6 scroll … six distinct
+	# cost entries are reachable"*): the entries still scroll inside a box that now has room.
+	#
+	# **THE WIDTHS DO NOT MOVE, AND THAT IS HER SENTENCE TOO**: *"the blocks keep their widths — sized
+	# by the worst case a player is handed (§11.41), which this state is not."* `BUILD_COLUMNS` is
+	# untouched; `BUILD_READOUT_SHARE` now only decides how tall this block may GROW to.
+	_build_detail = _build_section(right, BUILD_READOUT_SHARE, "what you get", false)
 	_build_detail.name = BUILD_DETAIL
 	# **BLOCK 6: COST, AS TWO COUNTS** (her block 6, now x 671..911 y 423..**513** since the commit bar
 	# grew; her §5.5: need first, no slash, text, never a band).
 	_build_cost = _build_section(right, 1.0 - BUILD_READOUT_SHARE, "cost")
 	_build_cost.name = BUILD_COST
+	# **THE SECTION, NOT THE ROWS** -- `_build_section` builds holder -> scroll -> rows and returns the
+	# rows, so the heading is two parents up. The make path hides the whole thing (ASSA-341), and
+	# hiding the rows alone would leave the word `cost` standing over nothing: `_show_log`'s defect,
+	# on this same screen, which was a node answering honestly about a state the screen does not have.
+	_build_cost_box = _build_cost.get_parent().get_parent() as Control
 	# **BLOCK 7: THE COMMIT BAR -- THE SIM'S SENTENCE AND THE ONE ACT, IN ONE RECT** (ASSA-332; Maren's
 	# §5.4 ruling 3, which MOVED this rect after slice 1 shipped: *"block 7 becomes the COMMIT BAR,
 	# 863 x 112 at y 529..641"*, the sentence left, `Build` right-aligned and still the one accent).
@@ -1841,12 +1908,30 @@ func _build_build_screen_over_the_map(world: Rect2) -> void:
 	inside.add_child(_build_bar)
 	# THE SENTENCE, TOP-LEFT, GROWING DOWNWARD. Top rather than centred because it is up to six rows in
 	# the catalogue's worst case and a block that grows from its middle moves its own first row.
+	#
+	# **INSET FROM THE BAR'S TOP BY `BUILD_SENTENCE_INSET`, WHICH IS WHAT PUTS `Build` ON ROW 1**
+	# (ASSA-341 box 8; Maren's ruling 4). A `MarginContainer` rather than a spacer child, because the
+	# children of this block ARE the sentence -- `_refresh_build_said` walks them and a test re-joins
+	# them against the sim's own string, so a padding node among them would be a clause that is not
+	# one. The margin is on the sentence and not on the bar: `Build` must stay at the bar's top.
+	_build_said_inset = MarginContainer.new()
+	_build_said_inset.add_theme_constant_override("margin_top",
+			int(AssayHud.BUILD_SENTENCE_INSET))
+	_build_said_inset.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_build_said_inset.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_build_bar.add_child(_build_said_inset)
 	_build_said = VBoxContainer.new()
 	_build_said.name = BUILD_SAID
-	_build_said.add_theme_constant_override("separation", 2)
+	# **SEPARATION 0, WHICH IS MAREN'S RULING AND NOT A TIDY-UP** (ASSA-341 boxes 8-9, 00:31): *"These
+	# rows are ONE SENTENCE broken at the sim's own `·`, not a list of things. An 18 px row already
+	# carries the leading -- a 13 px body in an 18 px line is 5 px of it -- and `separation = 2` adds
+	# paragraph air INSIDE a sentence, which says the clauses are separate items. They are not."*
+	# The `dead_end` row does not buy the gap back either: it is genuinely not in the same series, and
+	# `FAILED` already carries that distinction without a second channel.
+	_build_said.add_theme_constant_override("separation", 0)
 	_build_said.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_build_said.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	_build_bar.add_child(_build_said)
+	_build_said_inset.add_child(_build_said)
 	# **THE ONE ACT, AND THE SCREEN'S ONE ACCENT** (her §5: *"`Build` is the one ACCENT -- the only
 	# difference from the machine menu, where no act is primary"*).
 	#
@@ -1864,7 +1949,12 @@ func _build_build_screen_over_the_map(world: Rect2) -> void:
 	_build_act.name = BUILD_ACT
 	_build_act.theme_type_variation = &"Primary"
 	_build_act.size_flags_horizontal = Control.SIZE_SHRINK_END
-	_build_act.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	# **TOP-ANCHORED, NOT CENTRED IN THE BAR** (ASSA-341 box 9; Maren's ruling 4: *"`Build`'s y must be
+	# fixed -- a control that drifts down as the sentence grows moves under the cursor while you mine
+	# (ASSA-213)"*). `SHRINK_CENTER` is centred in whatever the bar GREW to, so at six rows the button
+	# moved while the row it is aligned to did not. With both controls anchored to the bar's top,
+	# neither y is a function of the other's height.
+	_build_act.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	_build_bar.add_child(_build_act)
 
 
@@ -1887,10 +1977,28 @@ func _build_column(into: HBoxContainer, share: float, heading: String) -> VBoxCo
 
 ## A heading over a scrolling list of rows, returning the list. The heading is this file's word for a
 ## section of its own screen and is not a second copy of anything the sim says.
-func _build_section(into: BoxContainer, share: float, heading: String) -> VBoxContainer:
+##
+## **`fill` IS WHERE THE SLACK GOES, WHICH IS A DESIGN RULING AND NOT A FLAG I FANCIED** (ASSA-343;
+## Maren: *"let the air collect at the BOTTOM of a block, never between a thing and its label"*). A
+## filling section takes its whole share whatever stands in it, so a block with a 32 px picture in a
+## 300 px share puts 250 px of air between itself and the block below. `false` sizes the section to
+## its content and leaves the column's leftover to whichever section still fills -- the last one, by
+## construction, because a column's blocks are added top to bottom.
+##
+## **A SHRINKING SECTION GIVES UP ITS OWN SCROLLING, AND THAT IS NOT A DETAIL I CAN LEAVE OUT.** A
+## `ScrollContainer`'s minimum size on a scrolling axis is ZERO -- that is what makes it a scroll box
+## -- so a `SHRINK_BEGIN` holder around one collapses to the heading alone instead of sizing to its
+## content. So the shrinking kind disables vertical scrolling, which makes the scroll box's minimum
+## its content's height. The cost is named rather than discovered: this section can now GROW, and a
+## column whose blocks ask for more than it has squeezes the FILLING ones first -- so an overlong
+## shrinking block takes room from `cost`, which scrolls, before anything reaches the column's edge.
+## Bounded today by what block 5 holds (one `ICON_PX` picture and one clause); the slice that fills it
+## with the design readout re-reads this.
+func _build_section(into: BoxContainer, share: float, heading: String,
+		fill := true) -> VBoxContainer:
 	var holder := VBoxContainer.new()
 	holder.add_theme_constant_override("separation", 6)
-	holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	holder.size_flags_vertical = Control.SIZE_EXPAND_FILL if fill else Control.SIZE_SHRINK_BEGIN
 	holder.size_flags_stretch_ratio = share
 	into.add_child(holder)
 	var title := Label.new()
@@ -1900,6 +2008,8 @@ func _build_section(into: BoxContainer, share: float, heading: String) -> VBoxCo
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	if not fill:
+		scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	holder.add_child(scroll)
 	var rows := VBoxContainer.new()
 	rows.add_theme_constant_override("separation", 6)
@@ -3776,7 +3886,20 @@ func _pack_shape(stacks: Array) -> String:
 ## in `art/` are drawn from it -- changing them without redrawing `pack_icons.png`, `pack_rows.png`
 ## and `pack_icon_kinds.png` turns CI's "A review sheet is still a picture of the client it drew"
 ## red. That half is pipeline work with its own cost, written down on ASSA-240; this half is free.
-func _icon_box(stack: Dictionary, reserve := false) -> Control:
+##
+## **`plated` IS WHICH GROUND THE SPRITE STANDS ON, AND IT IS A CONTRAST BAR RATHER THAN A TASTE**
+## (ASSA-341; Maren's ruling off my own 1x shot). ASSA-71 put the ground sheet's median under pack
+## icons *"so the spread between species closes BECAUSE they all sit on one surface"* -- a reason
+## about a LIST of ore. The build screen's one picture has nothing to compare itself to, and a
+## smelter is not ore: on that olive plate it measures **1.24:1**, below 11.9's 3:1 for a mark and
+## below the board's standing 4.091:1. On the panel's own `SURFACE` the same sprite is **5.57:1**.
+##
+## **HER RULE IS THE BAR, NOT THE GEOMETRY: any sprite placed on that plate must clear 3:1 against
+## it.** So the plate survives wherever it earns its 3:1 -- which is the whole pack, unchanged, where
+## the species spread is the thing it was measured on -- and a caller whose sprite does not clear the
+## bar passes `false` and takes the panel's ground instead. Defaulted to `true` so ASSA-71 holds for
+## every existing caller without a word changing at their call sites.
+func _icon_box(stack: Dictionary, reserve := false, plated := true) -> Control:
 	# THE ICON IS REDUNDANT AND MOST ROWS DO NOT GET ONE. `items.png` carries ore, refined and
 	# smelter, so a gear comes back null; the four part kinds have a row per grade. Every sentence
 	# beside one of these reads completely without it, which is Maren's rule and the same one the
@@ -3828,12 +3951,32 @@ func _icon_box(stack: Dictionary, reserve := false) -> Control:
 	# judged on. One colour for every species and grade; it never carries information. The colour
 	# comes from the pipeline (`ui_theme.json`), never a hex here.
 	#
-	# A PANEL AROUND THE RECT, NOT A RESIZE OF IT. The box stays exactly `ICON_BOX_PX` and the
-	# TextureRect fills it, so the scale ASSA-65 made exact (1/2 for an item, 1/4 for a part) is
-	# untouched -- a container with content margins would have quietly eaten it, which is the same
-	# bug ASSA-65 fixed.
-	var plate := AssaySprites.pack_icon_plate()
+	# A PANEL AROUND THE RECT, NOT A CONTAINER WITH MARGINS. The `Panel` adds no content margin, so
+	# the TextureRect fills it exactly and the scale ASSA-65 made exact (1/2 for an item, 1/4 for a
+	# part) is untouched -- a `MarginContainer` or a `PanelContainer` would have quietly eaten it,
+	# which is the bug ASSA-65 fixed.
+	#
+	# **THIS NO LONGER CLAIMS THE BOX STAYS EXACTLY `ICON_BOX_PX`, BECAUSE THAT SENTENCE WAS FALSE**
+	# (ASSA-341 box 3, Maren's: *"a docstring that is false on its only call path"*). Two separate
+	# reasons, and only the first is fixed:
+	#
+	# 1. Nothing here sets `size_flags_horizontal`, and a `VBoxContainer` child FILLS horizontally by
+	#    default -- so in the build screen's column this plate stretched to 235 px while staying 48
+	#    tall and read as a progress bar. **ASSA-343 fixed that at the call site** (`SHRINK_BEGIN`
+	#    plus a square box), so her measurement is no longer reproducible on main.
+	# 2. And the fix means the sentence is still false, now deliberately: that caller RESIZES the box
+	#    it is handed. A docstring promising callers cannot do the thing a caller does is worth less
+	#    than no docstring, so it says what is actually invariant -- the margins -- and leaves the
+	#    box's size to whoever lays it out.
+	var plate := AssaySprites.pack_icon_plate() if plated else Color(0, 0, 0, 0)
 	if plate.a <= 0.0:
+		# NO PLATE MEANS THE PANEL'S OWN GROUND, and the two ways here are not the same thing: a
+		# `plated := false` caller is choosing it (ASSA-341's 3:1 bar), while a transparent
+		# `pack_icon_plate()` means `ui_theme.json` is missing. Both want the bare art, so they share
+		# this line -- but the horizontal flag has to be set here too, or the no-plate path rebuilds
+		# ASSA-343's defect one branch over: a bare `TextureRect` in a VBox fills just as a `Panel`
+		# does, and nothing in the suite would say so because nothing headless has a size.
+		art.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		return art
 	var slot := Panel.new()
 	slot.custom_minimum_size = ICON_BOX_PX
@@ -3933,10 +4076,18 @@ func _stack_button(descriptor: Dictionary, stack: Dictionary, footprint: Vector2
 			# screen's state what the button probably means. It used to say "mount on the frame you
 			# chose" to anything pressed after a first part -- including another frame, which the sim
 			# refuses.
+			# **A FRAME ROW LAUNCHES THE BUILD SCREEN; A MOUNT ROW STILL MOUNTS** (ASSA-317 slice
+			# 2b; Maren's §2: *"tabs stay as launcher and ledger; the screen is where you build"*).
+			# Starting a design is where the screen belongs -- its slots are what you are about to
+			# fill -- and the asymmetry is deliberate rather than half a migration: `Mount` on a
+			# pack row is the gesture that works with no screen open, and from inside the screen the
+			# same press comes through the mount list. Both land in `_choose_part`, so there is one
+			# refusal path and one sentence.
+			if bool(descriptor.get("is_frame", false)):
+				return _button(label, func() -> void: _open_assembly_screen(stack),
+						"open the build screen on this frame")
 			return _button(label, func() -> void: _choose_part(stack),
-					"use as the frame of the next machine"
-							if bool(descriptor.get("is_frame", false))
-							else "mount on the frame of the next machine")
+					"mount on the frame of the next machine")
 		_:
 			return _button(label, func() -> void: _say(
 					"no command for %s" % label, AssayHud.Say.FAILED))
@@ -4414,6 +4565,72 @@ func _open_build_screen(offer: Dictionary) -> void:
 	_refresh_build_screen()
 
 
+## **OPEN IT ON A FRAME YOU ARE CARRYING: THE ASSEMBLY PATH** (ASSA-317 slice 2b; Maren's §2, *"tabs
+## stay as launcher and ledger; the screen is where you build"*).
+##
+## **THE PACK ROW LAUNCHES AND NO LONGER BUILDS, WHICH IS THE PRICE SHE NAMED ON THE MAKE PATH PAID A
+## SECOND TIME** (her §2: *"there is no one-click make any more ... a row that both makes and opens a
+## maker is the same verb with two homes"*). `Frame` used to append to `_building` from the pack and
+## leave the player to find `Assemble` in the bench; it now opens the screen with that frame chosen.
+##
+## **THE MOUNTED PARTS SURVIVE A NEW FRAME, AND THAT IS A RULING RATHER THAN LAZINESS** (Maren, 00:32:
+## *"switching the frame may never silently unmount anything ... the three that no longer fit become
+## `extra`, drawn and visible"*). So this writes `_building[0]` and leaves the rest of the array
+## alone; `AssayHud.slot_fill` is what turns the parts that no longer fit into `extra`.
+##
+## **AND THE SIM IS ASKED WHETHER THE PRESS CAN LEAD TO A MACHINE, EVEN THOUGH THE BUTTON IS ONLY ON
+## FRAME ROWS** (`part_press_refusal`, ASSA-86 ruling 2). A `Mount` row cannot reach here today, but
+## the refusal is the sim's answer and reading `is_frame` instead would be this client deciding
+## legality -- the one rule ASSA-317 says does not bend.
+func _open_assembly_screen(stack: Dictionary) -> void:
+	var refusal := AssaySimHost.part_press_refusal(PackedStringArray(),
+			String(stack.get("kind", "")))
+	if refusal != "":
+		_say(refusal, AssayHud.Say.FAILED)
+		return
+	_close_machine_menu()
+	_build_verb = BUILD_ASSEMBLE
+	_build_tag = null
+	_build_species = -1
+	_build_grade = ""
+	_choose_frame(stack)
+
+
+## **PUT A FRAME UNDER THE DESIGN WITHOUT DISTURBING WHAT IS MOUNTED ON IT** (ASSA-317 slice 2b).
+## `_building[0]` is the frame by `sim-cli`'s own convention, which `_choose_part` and `_assemble`
+## already keep; this is the one writer of that slot.
+func _choose_frame(stack: Dictionary) -> void:
+	if _building.is_empty():
+		_building.append(stack)
+	else:
+		_building[0] = stack
+	_build_showing = UNBUILT
+	_refresh_pack()
+	_refresh_assembling()
+	_refresh_actions()
+	_refresh_build_screen()
+
+
+## **WHETHER THE SCREEN IS BUILDING A MACHINE RATHER THAN MAKING A THING** (ASSA-317 slice 2b). One
+## predicate so the branches this slice adds cannot drift, and it reads the verb the press will send
+## rather than the presence of a design: a player who opens the screen and takes every part back off
+## again is still assembling, and a screen that fell back to the make path under them would move the
+## columns out from under the cursor.
+func _assembling_mode() -> bool:
+	return _build_verb == BUILD_ASSEMBLE
+
+
+## The frame of the design being placed, or `{}` before one is chosen.
+func _design_frame() -> Dictionary:
+	return _building[0] as Dictionary if not _building.is_empty() else {}
+
+
+## What is mounted on it, in the order the player pressed. `_building.slice(1)` is the one home for
+## this (`AssayHud.slot_fill`'s docstring) and this is its one reader on the screen.
+func _design_mounted() -> Array:
+	return _building.slice(1) if _building.size() > 1 else []
+
+
 ## **CLOSE IT. Esc or the named control** (Maren's §1).
 ##
 ## **CLOSING DISCARDS NOTHING AND THAT IS HER RULING, NOT A SHORTCUT** (§1: *"a half-built design is
@@ -4492,8 +4709,14 @@ func _refresh_build_screen() -> void:
 		return
 	_build_box.visible = true
 	var stacks := _sim.inventory_of(_client.player_id) if _client != null else []
-	var signature := "%s/%s/%d/%s/%s" % [_build_verb, JSON.stringify(_build_tag), _build_species,
-			_build_grade, _pack_shape(stacks)]
+	# **THE DESIGN IS IN THE KEY, AND ON THE ASSEMBLY PATH IT IS THE TERM THAT MOVES** (ASSA-317 slice
+	# 2b). Every click mounts or unmounts a part, which changes which box holds what and which rows
+	# the mount list offers -- a drawn thing missing from the key is a stale picture the per-refresh
+	# writes cannot repair, because they only re-text the bar (`_make_shape`'s standing rule).
+	# `_pack_shape` and not `AssayHud.building_line`: the shape is which items in which order, and the
+	# sentence carries counts that climb on their own.
+	var signature := "%s/%s/%d/%s/%s/%s" % [_build_verb, JSON.stringify(_build_tag), _build_species,
+			_build_grade, _pack_shape(stacks), _pack_shape(_building)]
 	if signature != _build_showing:
 		_build_showing = signature
 		_rebuild_build_screen()
@@ -4531,9 +4754,30 @@ func _place_build_screen() -> void:
 
 ## **THE THREE LISTS, REBUILT TOGETHER** (ASSA-328). They move on one clock -- the catalogue's shape
 ## and what is chosen -- so they are one function and one signature.
+##
+## **AND THE MODE IS DECIDED HERE, ONCE, FOR EVERY BLOCK** (ASSA-317 slice 2b). Maren's 00:32 ruling
+## puts the SUBJECT in block 2 and its PARAMETERS in block 3 on both paths -- recipes then materials
+## when making, frames then slots-and-mounts when assembling -- so the two modes are the same two
+## rects doing the same two jobs and a player learns the screen once.
+##
+## **THE HEADINGS MOVE WITH THE ROWS**, because a heading is this file's word for what is under it and
+## `what to make` over a list of frames is the labelled-wrong-thing defect rather than a stale string.
 func _rebuild_build_screen() -> void:
-	_rebuild_build_picker()
-	_rebuild_build_materials()
+	var assembling := _assembling_mode()
+	_build_title.text = "assemble" if assembling else "make"
+	var heading := _section_heading(_build_picker)
+	if heading != null:
+		heading.text = "which frame" if assembling else "what to make"
+	_show_section(_build_materials, not assembling)
+	_show_section(_build_slots, assembling)
+	_show_section(_build_mounts, assembling)
+	if assembling:
+		_rebuild_build_frames()
+		_rebuild_build_slots()
+		_rebuild_build_mounts()
+	else:
+		_rebuild_build_picker()
+		_rebuild_build_materials()
 	_rebuild_build_detail()
 
 
@@ -4553,9 +4797,9 @@ func _rebuild_build_screen() -> void:
 ## lists an offer per (recipe x material you hold), which is how five materials became twenty-odd rows
 ## of prose. Here the recipe is chosen once and the material is the other column.
 func _rebuild_build_picker() -> void:
-	for child in _build_picker.get_children():
-		child.queue_free()
+	_clear(_build_picker)
 	var seen := {}
+	var group := ButtonGroup.new()
 	var chosen := JSON.stringify(_build_tag)
 	for entry in (_sim.make_offers(_client.player_id) if _client != null else []):
 		var offer: Dictionary = entry
@@ -4565,20 +4809,56 @@ func _rebuild_build_picker() -> void:
 			continue
 		seen[key] = true
 		var named := _catalogue_name(verb, offer.get("tag"))
-		# **THE ROW YOU ARE ON IS A LABEL, NOT A PRESSABLE BUTTON THAT DOES NOTHING** (ASSA-175's rule:
-		# a control that cannot do anything reads as available). Pressing the open row would re-point
-		# the screen at where it already is, so that row states which it is and offers no press.
-		if key == "%s/%s" % [_build_verb, chosen]:
-			var here := Label.new()
-			here.text = named
-			here.theme_type_variation = &"Heading"
-			_build_picker.add_child(here)
-			continue
-		var row := _button(named, func() -> void: _choose_build_row(offer),
-				"make %s instead" % named)
-		row.theme_type_variation = &"Quiet"
-		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		_build_picker.add_child(row)
+		_build_picker.add_child(_pick_row(named, func() -> void: _choose_build_row(offer),
+				key == "%s/%s" % [_build_verb, chosen], group, "make %s instead" % named))
+
+
+## **ONE ROW OF A PICKER: ONE OBJECT IN TWO STATES, NEVER TWO OBJECTS** (ASSA-343; Maren's ASSA-328
+## ruling 3: *"A selected and an unselected member of one list must be one object in two states, never
+## two objects — otherwise the state reads as a difference in kind"*).
+##
+## **IT IS A TOGGLE BUTTON IN A `ButtonGroup`, WHICH IS THE ENGINE'S OWN RADIO GROUP.** The chosen row
+## is the same `Button` as every other row with `button_pressed` true, so the theme's own `Quiet`
+## `pressed` stylebox and `font_pressed_color` draw the state -- no second control type, no colour
+## invented here, and "exactly one is chosen" is structural rather than something each rebuild has to
+## remember. `smelter` and `sort` read as two states of one list because they are.
+##
+## **WHAT THIS REVERSES OF MINE, AND THE TENSION IS REAL RATHER THAN A SLIP.** The chosen row was a
+## `Label` on ASSA-175's rule -- a control that cannot do anything reads as available -- and pressing
+## the open row does nothing but re-point the screen at where it already is. Her 20:22 clause is the
+## tie-break: *"a control that cannot be pressed should not look pressable"*. A pressed toggle in a
+## group **is** a control that cannot be un-pressed, and it does not look like an idle one; that is the
+## difference from the dead button ASSA-175 was about, which looked exactly like its live neighbours.
+##
+## **THE PRESS IS STILL CONNECTED ON THE CHOSEN ROW**, deliberately: `ButtonGroup` keeps it pressed, so
+## the callback re-points the screen at itself and the rebuild is idempotent. The alternative -- a
+## disconnected button -- is the dead control again.
+func _pick_row(label: String, on_press: Callable, chosen: bool, group: ButtonGroup,
+		hint: String) -> Button:
+	var row := _button(label, on_press, hint)
+	row.theme_type_variation = &"Quiet"
+	row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	row.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	row.toggle_mode = true
+	row.button_group = group
+	row.button_pressed = chosen
+	return row
+
+
+## **A MATERIAL ROW'S LABEL: THE MATERIAL, IN THE SIM'S WORDS, WITHOUT ITS COUNT** (ASSA-343).
+##
+## `mine` is the pack stack this offer eats, so `name` is the sim-written wording (`inventory_of`) and
+## nothing here words an item. **The empty case is the one Maren declined to call a defect and handed
+## to me:** `_pack_stack_of` returns `{}` only when the pack does not hold what the offer eats, and
+## every `MakeOffer` comes from a stack you hold (`make_offers` walks `p.inventory.stacks()`), so it is
+## unreachable. It falls back to the sim's whole sentence -- a second grammar, which is why it may not
+## pass silently: a `push_error` makes the unreachable state say so in the log the day it is reached,
+## rather than the row quietly reading differently depending on your pack.
+func _material_label(offer: Dictionary, mine: Dictionary) -> String:
+	if mine.is_empty():
+		push_error("a make offer names no pack stack: %s" % [offer.get("line", offer)])
+		return String(offer.get("line", ""))
+	return String(mine.get("name", ""))
 
 
 ## **MOVE THE SCREEN TO ANOTHER CATALOGUE ROW WITHOUT CLOSING IT** (ASSA-328). The material goes with
@@ -4597,41 +4877,43 @@ func _choose_build_row(offer: Dictionary) -> void:
 ## **BLOCKS 3+4: THE MATERIAL PICKER -- ONI's, WHICH IS MAREN'S CLOSEST REFERENCE** (§3: *"you pick the
 ## material and the card's numbers move ... ONI proves a player will happily shop by consequence"*).
 ##
-## **ONE ROW PER MATERIAL THE SIM OFFERS THIS RECIPE, AND THE WORDS ARE THE PACK'S.** A material row
-## names its stack with `AssayHud.stack_line` over the SIM-written `name` on that pack stack -- the
-## same words the pack tab prints -- because `make_offers` crosses an offer's input as three fields
-## and no name, and spelling "Tonore refined (A)" out of kind, species and grade here would be this
-## client wording an item (ASSA-43/52, and `make_offers`' own docstring forbids it).
+## **ONE ROW PER MATERIAL THE SIM OFFERS THIS RECIPE, AND THE WORDS ARE THE SIM'S.** The label is the
+## `name` the sim wrote on that pack stack -- `Tonore refined (A)` -- because `make_offers` crosses an
+## offer's input as three fields and no name, and spelling that out of kind, species and grade here
+## would be this client wording an item (ASSA-43/52, and `make_offers`' own docstring forbids it).
+##
+## **IT IS THE MATERIAL AND NOT THE STACK, WHICH IS MAREN'S ASSA-343 RULING AND MY OWN DOCSTRING'S
+## CONTRACT.** This printed `AssayHud.stack_line(mine)` = `8 × Tonore refined (A)`, one row above a
+## `need · have` that is about that very count. `have_need_line`'s rule was *"it names no item and so
+## it is not a second copy of a sim sentence … the thing they are about is named once, by the sim,
+## elsewhere on the screen"* -- written for a name row that does not count, and handed one that does.
+## `stack_line` is untouched in the pack list, so ASSA-90 holds: the pack's wording stays the pack's.
+##
+## **THE COUNTS THEMSELVES STAY, AND THAT IS THE HALF SHE REVERSED HERSELF ON** (§5.5, 20:51): *"the
+## material row is the picker; its counts are what make the choice"*. Strip them and comparing two
+## materials means selecting each and reading block 6 -- affordability computed across two gestures,
+## the exact thing §3 took from Factorio in order to refuse.
 ##
 ## **HAVE / NEED UNDER EACH ONE, WHICH IS WHAT MAKES THIS A CHOICE AND NOT A LIST** (her §3, Factorio):
 ## affordability is read rather than computed in the player's head, on every material at once.
 func _rebuild_build_materials() -> void:
-	for child in _build_materials.get_children():
-		child.queue_free()
+	_clear(_build_materials)
 	var offers := _offers_for_open_row()
 	if offers.is_empty():
 		_build_materials.add_child(_note("nothing you are carrying can be worked into this"))
 		return
+	var group := ButtonGroup.new()
 	for entry in offers:
 		var offer: Dictionary = entry
 		var mine := _pack_stack_of(offer)
 		var row := VBoxContainer.new()
 		row.add_theme_constant_override("separation", 2)
-		var named := AssayHud.stack_line(mine) if not mine.is_empty() else String(offer.get("line", ""))
 		var chosen := int(offer.get("species", -1)) == _build_species \
 				and String(offer.get("grade", "")) == _build_grade
-		if chosen:
-			var here := Label.new()
-			here.text = named
-			here.theme_type_variation = &"Heading"
-			here.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			row.add_child(here)
-		else:
-			var press := _button(named, func() -> void: _choose_build_material(offer),
-					"make it out of this instead")
-			press.theme_type_variation = &"Quiet"
-			press.alignment = HORIZONTAL_ALIGNMENT_LEFT
-			row.add_child(press)
+		var press := _pick_row(_material_label(offer, mine),
+				func() -> void: _choose_build_material(offer), chosen, group,
+				"make it out of this instead")
+		row.add_child(press)
 		# **THE SAME TWO COUNTS AS BLOCK 6, IN THE SAME WORDS AND THE SAME ORDER** (ASSA-332): one
 		# grammar for one kind of number, wherever it is drawn. **The FAILED ink goes on the counts and
 		# not on the row's button**: a material you cannot afford is still a material you may CHOOSE,
@@ -4645,6 +4927,179 @@ func _rebuild_build_materials() -> void:
 					AssayHud.status_color(AssayHud.Say.FAILED))
 		row.add_child(counts)
 		_build_materials.add_child(row)
+
+
+## **BLOCK 2 ON THE ASSEMBLY PATH: THE FRAMES YOU ARE CARRYING, WHICH ARE THE SUBJECT** (ASSA-317
+## slice 2b; Maren's 00:32 ruling: *"An assembly's subject is the FRAME, and its parameters are the
+## parts that go into its slots. Same two rects, same two jobs, so a player learns this screen once
+## instead of twice."*)
+##
+## **ONE ROW PER FRAME STACK, AND `is_frame` IS THE SIM'S FIELD** (ASSA-102) -- so a fifth frame kind
+## appears here with no change to this client, and nothing in GDScript decides what a frame is.
+##
+## **THE LABEL IS `stack_line`, COUNT AND ALL, WHICH BLOCK 2 ON THE MAKE PATH DELIBERATELY IS NOT.**
+## A recipe row names a catalogue entry, of which there is one; a frame row names a STACK, and how
+## many you have is part of choosing which to build on (ASSA-90: the pack's wording stays the pack's).
+##
+## **AND THE ROWS ARE A RADIO GROUP FOR `_pick_row`'S REASON** (ASSA-343): the chosen frame is the
+## same object in a pressed state, never a second kind of control.
+func _rebuild_build_frames() -> void:
+	_clear(_build_picker)
+	var kinds := AssaySimHost.part_kinds()
+	var group := ButtonGroup.new()
+	var chosen := _pack_shape([_design_frame()])
+	var frames := 0
+	for entry in (_sim.inventory_of(_client.player_id) if _client != null else []):
+		var stack: Dictionary = entry
+		var part := AssayHud.part_kind_of(stack, kinds)
+		if part.is_empty() or not bool(part.get("is_frame", false)):
+			continue
+		frames += 1
+		_build_picker.add_child(_pick_row(AssayHud.stack_line(stack),
+				func() -> void: _choose_frame(stack), _pack_shape([stack]) == chosen, group,
+				"build on this frame instead"))
+	if frames == 0:
+		# **IT SAYS SO RATHER THAN DRAWING AN EMPTY LIST** -- the make path's own rule on this screen
+		# (`_rebuild_build_materials`): absence is never a cue, and the player who opened a build
+		# screen with no frame in the pack is exactly the one wondering what is missing.
+		_build_picker.add_child(_note("you are not carrying a frame to build on"))
+
+
+## **BLOCK 3, UPPER: THE FRAME'S SLOTS AS A DRAWN SHAPE** (ASSA-317 slice 2b; `assay-build-screen`
+## §3's take from Satisfactory: *"slots drawn as a shape, not listed as rows … a list hides a limit
+## that a drawn shape states"*).
+##
+## **THE SHAPE IS `AssayHud.slot_fill`'S ANSWER AND THE JOIN IS THE SIM'S** (ASSA-346): one box per
+## unit of room, in the catalogue's order, each carrying the part standing in it or `{}`.
+##
+## **ONE LABELLED ROW PER SLOT KIND, BROKEN WHERE THE NAME CHANGES AND NOT WHERE I FANCY A BREAK.**
+## `slot_boxes` emits a kind's boxes contiguously because it walks the sim's `slots` in order, so
+## grouping on a change of name re-reads the catalogue's own grouping rather than sorting it. Five
+## boxes with five copies of the word `hopper` under them is the list that a shape was supposed to
+## replace; `hopper [][][][]` is the shape.
+##
+## **`extra` IS DRAWN, NEVER DROPPED** (Maren, 00:32: *"switching the frame may never silently unmount
+## anything … the alternative is a player losing an arrangement with no sentence anywhere"*). Five
+## hoppers on a four-hopper frame, or a four-hopper arrangement carried onto a one-hopper frame, leave
+## parts with nowhere to stand. **The word on that row is MINE and is the one thing here I want
+## ruled**: it is a client state, so no sim sentence exists for it until `Build` is pressed.
+func _rebuild_build_slots() -> void:
+	_clear(_build_slots)
+	var frame := _design_frame()
+	if frame.is_empty():
+		_build_slots.add_child(_note("choose a frame and its slots are drawn here"))
+		return
+	var part := AssayHud.part_kind_of(frame, AssaySimHost.part_kinds())
+	var filled := AssayHud.slot_fill(part.get("slots", []) as Array, _design_mounted())
+	var row: HBoxContainer = null
+	var named := ""
+	for entry in (filled.get("boxes", []) as Array):
+		var box: Dictionary = entry
+		if row == null or String(box.get("name", "")) != named:
+			named = String(box.get("name", ""))
+			row = _slot_row(named)
+		row.add_child(_slot_box(box))
+	var extra := filled.get("extra", []) as Array
+	if not extra.is_empty():
+		var over := _slot_row("nowhere to stand")
+		for entry in extra:
+			over.add_child(_slot_box({"part": entry}))
+
+
+## ONE ROW OF THE SHAPE: what the boxes are, then the boxes. The label is the SIM's name for the slot
+## kind, which is the same string `slot_fill` joined on.
+##
+## **THE KIND DOES NOT WRAP, AND THE DEFAULT WAS NOT "A BIT NARROW" -- IT WAS ONE LETTER PER ROW**
+## (ASSA-362). `_note` sets `AUTOWRAP_WORD_SMART`, which is right for every sentence on this screen
+## and wrong for a one-word label in an `HBoxContainer` that gives its width to the boxes: squeezed
+## under one character, WORD_SMART breaks anywhere, so the first 1x shot of this screen drew
+## `h`/`e`/`a`/`d` stacked vertically beside the head box and `h`/`o`/`p`/`p`/`e`/`r` beside the
+## hoppers. **A six-letter word then costs ~126 px of column height instead of 18.**
+##
+## **AND IT WAS NOT A COSMETIC BUG, WHICH IS WHY THE FIX IS HERE AND NOT IN A STYLESHEET.** This
+## block is the one section built `fill := false`, so its `ScrollContainer` cannot scroll and cannot
+## shrink and its content's height is a hard floor under the WHOLE screen. Six letters tall twice
+## over took the screen 137 px past the rect `build_screen_rect` computed, over the two world
+## controls Maren's §1 protects, and put `Build` off the bottom of a 720 px window.
+##
+## **NOT FIXED IN `_note`:** a note is a sentence and sentences must wrap. This is a label that
+## happens to be built by the same helper.
+func _slot_row(named: String) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	var kind := _note(named)
+	kind.autowrap_mode = TextServer.AUTOWRAP_OFF
+	kind.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(kind)
+	_build_slots.add_child(row)
+	return row
+
+
+## **ONE BOX OF THE SHAPE: ROOM FOR A PART, OR THE PART STANDING IN IT** (ASSA-317 slice 2b).
+##
+## **AN EMPTY BOX IS DRAWN, AND THAT IS NOT ASSA-237 REVERSED.** Maren's ruling there -- *"a
+## reserved-but-empty icon box draws NOTHING … a box around nothing is a claim; space is
+## structure"* -- is about the icon column of a LIST, where the box would claim there is a picture.
+## Here the claim is the point: an empty box says *a part fits here*, which is the whole reason §3
+## draws slots as a shape instead of printing `hopper 0-4`. The engine's own `Panel` draws it, so the
+## edge is the theme's `BORDER` and this file invents no ink.
+##
+## **ICON_PX SQUARE, WHICH KEEPS THE PART SHEET'S EXACT 1/4** (ASSA-65, and ASSA-343's reasoning on
+## this screen's one picture): `STRETCH_KEEP_ASPECT_CENTERED` scales by `min(32/128, 32/102)` = 1/4
+## for a 128x102 part cell, so the width is what binds and nothing is resampled. A box of
+## `ICON_BOX_PX`'s 48 height would be the pack ROW's number, which this is not.
+##
+## **NO PLATE UNDER THE SPRITE** (ASSA-341, Maren's ruling off my own 1x shot): a part on the panel's
+## `SURFACE` measures 5.57:1 and on the pack's plate 1.24:1, and ASSA-71's one-surface reason is about
+## a LIST of ore rather than one picture in a box.
+##
+## **TAKING A PART BACK OFF IS NOT HERE AND IS NOT FORGOTTEN.** `Clear` in the column is the way back
+## today; a box you can press needs an affordance that says so before you press it, and every device
+## I have for that is a new colour or a new stylebox -- Maren's call, filed rather than invented at
+## the end of a night.
+func _slot_box(box: Dictionary) -> Control:
+	var plate := Panel.new()
+	plate.custom_minimum_size = Vector2(ICON_PX, ICON_PX)
+	plate.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var part := box.get("part", {}) as Dictionary
+	if part.is_empty():
+		plate.tooltip_text = "room for a %s" % String(box.get("name", "part"))
+		return plate
+	plate.tooltip_text = String(part.get("name", ""))
+	var art := _icon_box(part, false, false)
+	if art != null:
+		art.set_anchors_preset(Control.PRESET_FULL_RECT)
+		plate.add_child(art)
+	return plate
+
+
+## **BLOCK 3, LOWER: THE PARTS YOU CAN MOUNT, AS A LIST** (ASSA-317 slice 2b; Maren's 00:32
+## sharpening: *"Slots are drawn boxes; mountable parts are a list. Two shapes, two jobs, each
+## legible before you press."*)
+##
+## **FRAMES ARE NOT IN THIS LIST, AND THAT IS HER LAYOUT RULING RATHER THAN THIS CLIENT FILTERING A
+## SIM ANSWER.** A frame is block 2's subject; a row here that changed the subject instead of
+## mounting something is (B), *"two consequences behind identical-looking rows, invisible until you
+## press"*. `is_frame` is the sim's own field, so the split is read and not derived.
+##
+## **THE PRESS IS `_choose_part`, WHICH ASKS THE SIM FIRST** (ASSA-86 ruling 2): a press that could
+## never lead to a machine is refused in the sim's own sentence, at the press, rather than confirmed
+## here and refused at `Assemble` -- which clears the whole design and loses the good presses too.
+func _rebuild_build_mounts() -> void:
+	_clear(_build_mounts)
+	var kinds := AssaySimHost.part_kinds()
+	var offered := 0
+	for entry in (_sim.inventory_of(_client.player_id) if _client != null else []):
+		var stack: Dictionary = entry
+		var part := AssayHud.part_kind_of(stack, kinds)
+		if part.is_empty() or bool(part.get("is_frame", false)):
+			continue
+		offered += 1
+		_build_mounts.add_child(_button(AssayHud.stack_line(stack),
+				func() -> void: _choose_part(stack),
+				"mount one on the frame you are building on"))
+	if offered == 0:
+		_build_mounts.add_child(_note("you are not carrying anything that mounts on a frame"))
 
 
 ## Point the open row at another material. The recipe does not move, which is the difference from
@@ -4672,8 +5127,17 @@ func _choose_build_material(offer: Dictionary) -> void:
 ## parts, so there is nothing for those marks to be about. Drawing them here would mean inventing
 ## numbers in GDScript, which is the one rule this item says does not bend.
 func _rebuild_build_detail() -> void:
-	for child in _build_detail.get_children():
-		child.queue_free()
+	_clear(_build_detail)
+	# **BLOCK 5 IS HIDDEN ON THE ASSEMBLY PATH AND THAT IS A SLICE BOUNDARY, NOT A DECISION** (ASSA-317
+	# slice 2b). Maren's 00:32 ruling makes this rect *"the relationship -- the mass/budget fill, each
+	# part's mass a float on that one axis"*, and NOT the figures, which live in the bar. That picture
+	# is the next slice; drawing anything else under `what you get` meanwhile would be me specifying a
+	# rect she has already specified. **Hidden rather than left empty** for `_show_log`'s reason on
+	# this same screen: a heading over nothing is a labelled empty gap, and a stranger reads it as the
+	# game having nothing to say.
+	_show_section(_build_detail, not _assembling_mode())
+	if _assembling_mode():
+		return
 	var offer := _chosen_offer()
 	if offer.is_empty():
 		# **THE SCREEN SAYS THE SIM HAS STOPPED OFFERING THIS, WHICH IS THE STATE AFTER A SUCCESSFUL
@@ -4682,12 +5146,46 @@ func _rebuild_build_detail() -> void:
 		_build_detail.add_child(_note("the sim no longer offers this in that material"))
 		return
 	var makes: Dictionary = offer.get("makes", {}) as Dictionary
-	var picture := _icon_box(makes, true)
+	# **NO PLATE: THE ONE PICTURE ON THIS SCREEN READS AT 1.24:1 ON IT** (ASSA-341; Maren's ruling off
+	# my own 1x shot, and the plate was her ASSA-71 ruling, so she overturned herself here).
+	#
+	# ASSA-71's reason is that a LIST of ore closes its species spread by sitting on one surface. This
+	# is one picture of a smelter with nothing beside it to compare, so the reason does not travel and
+	# the 1.24:1 is paid for nothing: the plate samples (130,149,99) at 91% uniform and the sprite is
+	# (238,119,181). On the panel's own `SURFACE` the same sprite measures **5.57:1**.
+	#
+	# **ASSA-71 IS UNTOUCHED FOR THE PACK**, which is the half of her ruling that still holds and the
+	# reason `plated` defaults to `true`: every pack row keeps its plate and its one-colour-per-species
+	# reason, because that is the surface the 3:1 bar was measured on and passes.
+	var picture := _icon_box(makes, true, false)
 	if picture != null:
+		# **A PLATE IS SIZED BY WHAT STANDS ON IT, NOT BY THE COLUMN IT SITS IN** (ASSA-343; Maren's
+		# ASSA-328 ruling 2, confirmed off the shot: *"a pale olive band the full width of the column
+		# with a 32 px icon lost in the middle: it reads as a progress bar, not a picture"*).
+		#
+		# **THE CAUSE WAS A DEFAULT, NOT A WIDTH I CHOSE.** `_icon_box` hands back a `Panel` carrying
+		# `ICON_BOX_PX`; in a pack ROW an HBox gives it that minimum and it stays 32 px wide, but a
+		# `VBoxContainer` child FILLS horizontally by default, so the same plate stretched to the
+		# column's 304 px while staying 48 px tall. `SHRINK_BEGIN` is the whole fix, and it also
+		# left-aligns it, which is the rest of her sentence.
+		#
+		# **AND IT IS SQUARE AT THE SPRITE'S OWN WIDTH, WHICH IS THE ONE NUMBER I MAY NOT MOVE.**
+		# `ICON_BOX_PX` is `(ICON_PX, 48)` -- 48 to match a pack row's height, which this is not. The
+		# box becomes `ICON_PX` square: the WIDTH is unchanged, so the `KEEP_ASPECT_CENTERED` scale
+		# ASSA-65 made exact (1/2 for an item, 1/4 for a part) is untouched and
+		# `check_pack_icon_scale.py` still measures what it always did -- it reads the pack, and
+		# nothing here reaches the pack.
+		picture.custom_minimum_size = Vector2(ICON_PX, ICON_PX)
+		picture.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		_build_detail.add_child(picture)
 	var walls := String(offer.get("walls", ""))
 	if walls != "":
-		var said := _note("— %s" % walls)
+		# **NO EM-DASH: `— walls 44` READ AS A FRAGMENT OF A SENTENCE THAT ENDED TWO LINES EARLIER**
+		# (ASSA-343; Maren's ASSA-328 ruling 5). The dash was mine, not the sim's, and it was a
+		# continuation mark from when this block sat under the sim's own sentence -- which moved to
+		# the commit bar in ASSA-332. The figure itself stays here: it is her ASSA-332 box 10 ruling,
+		# *"the one number on slice 1 that MOVES when you change your pick"*.
+		var said := _note(walls)
 		said.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_build_detail.add_child(said)
 
@@ -4713,9 +5211,21 @@ func _rebuild_build_detail() -> void:
 ## **EMPTY WHEN THE SIM OFFERS NOTHING, AND THAT IS NOT A MISSING STATE.** The sentence is the sim's;
 ## with no offer there is no sentence, and block 5 already says the sim no longer offers this. Saying
 ## it twice is the two-homes-for-one-fact defect she ruled against on ASSA-316.
+## **`_clear` AND NOT A `queue_free` LOOP, WHICH IS A DEFECT MY OWN SLICE-2b TEST FOUND IN CODE I
+## SHIPPED ON THE MAKE PATH** (ASSA-332). `queue_free()` is DEFERRED: the old children are still in
+## the tree when the new ones are added, so this block holds BOTH sentences until the frame ends --
+## and two refreshes inside one frame (a click that mounts a part, which refreshes the screen, inside
+## a tick that refreshes it too) draw the stale clause above the fresh one. `_clear` removes the child
+## as well as freeing it, which is why it exists and why four other blocks on this screen call it.
+##
+## **IT WAS INVISIBLE BECAUSE EVERY TEST OF THIS BLOCK USED `contains`.** A joined readout containing
+## the sim's sentence is satisfied by a block that also contains yesterday's; the slice-2b test holds
+## the LABEL COUNT at one, and that is the assertion that went red.
 func _refresh_build_said() -> void:
-	for child in _build_said.get_children():
-		child.queue_free()
+	_clear(_build_said)
+	if _assembling_mode():
+		_said_about_design()
+		return
 	var offer := _chosen_offer()
 	if offer.is_empty():
 		return
@@ -4732,6 +5242,63 @@ func _refresh_build_said() -> void:
 		warned.add_theme_color_override(&"font_color",
 				AssayHud.status_color(AssayHud.Say.FAILED))
 		_build_said.add_child(warned)
+
+
+## **THE COMMIT BAR ON THE ASSEMBLY PATH: THE SIM'S VERDICT, MOVING ON EVERY CLICK** (ASSA-317 slice
+## 2b, over ASSA-325's `design_readout` and ASSA-329's third state).
+##
+## **THREE STATES, ALL THREE THE SIM'S, AND NOT ONE OF THEM DECIDED HERE.** `verdict` non-empty is a
+## machine and gets `Display` -- the theme's own note on that size is *"the bench verdict, SAFE /
+## UNCERTAIN / WILL BREAK -- the one word to read first"*. Otherwise the sim's `fault` goes where the
+## verdict word went (`DesignReadout`'s own docstring says to), at `BODY`, because it is a sentence
+## and not a word and this bar is 114 px. `unfinished` is what separates a design still being placed
+## -- real numbers, a slot still empty -- from a selection the rules throw out, so **only the second
+## takes `FAILED`**: a half-placed design is the normal state of building one a click at a time, and
+## painting it in the status scale would say the player had done something wrong by starting.
+##
+## **AND THE FIGURES ARE NOT HERE, WHICH IS A GAP I AM NAMING RATHER THAN FILLING.** Maren's §5.4
+## gives this bar *"the sim's sentence, whole, unchanged"* and `sim::debug`'s `readout_after` is that
+## sentence -- but **no binding call crosses it**: `design_readout` carries the NUMBERS (mass, budget,
+## speed, swings, capacity, hand_speed) and `design_preview`'s wording stays in `sim-cli`. Spelling
+## `mass 3 of 240-360 budget` out of those fields here would be this client composing a sim sentence,
+## which is ASSA-43/52 and the one rule ASSA-317 says does not bend. So the verdict is drawn, the
+## figures wait on a sentence crossing the binding, and the item carries the ask.
+func _said_about_design() -> void:
+	var readout := _design_readout()
+	if readout.is_empty():
+		return
+	var verdict := String(readout.get("verdict", ""))
+	var said := Label.new()
+	said.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	if verdict != "":
+		said.text = verdict
+		said.theme_type_variation = &"Display"
+	else:
+		said.text = String(readout.get("fault", ""))
+		if not bool(readout.get("unfinished", false)):
+			said.add_theme_color_override(&"font_color",
+					AssayHud.status_color(AssayHud.Say.FAILED))
+	_build_said.add_child(said)
+
+
+## **WHAT THE SIM SAYS ABOUT THE DESIGN ON THE SCREEN RIGHT NOW** (ASSA-317 slice 2b). `{}` before a
+## frame is chosen or with no world, which `_said_about_design` treats as "nothing to say" rather than
+## as a refusal -- a design with neither numbers nor a fault is a thing the sim never answers.
+##
+## **THE ITEMS ARE THE SIM'S OWN JSON, BUILT BY THE SIM** (`AssaySimHost.item_json`): the three fields
+## came out of `inventory_of` and go back as the text the binding parses, so nothing here spells an
+## item (ASSA-43/52).
+func _design_readout() -> Dictionary:
+	var frame := _design_frame()
+	if frame.is_empty() or not _sim.running():
+		return {}
+	var mounted := PackedStringArray()
+	for entry in _design_mounted():
+		var stack: Dictionary = entry
+		mounted.append(AssaySimHost.item_json(String(stack.get("kind", "")),
+				int(stack.get("species", -1)), String(stack.get("grade", ""))))
+	return _sim.design_readout(AssaySimHost.item_json(String(frame.get("kind", "")),
+			int(frame.get("species", -1)), String(frame.get("grade", ""))), mounted)
 
 
 ## **BLOCK 6: COST AS AN ENTRY OF TWO ROWS, RE-READ EVERY REFRESH** (ASSA-332; Maren's §5.5, which
@@ -4758,18 +5325,79 @@ func _refresh_build_said() -> void:
 ## why it is not in `_rebuild_build_screen`: `count` is what the pack holds AT THIS TICK and climbs
 ## every mining cycle, so a cost drawn once would be stale on the surface whose whole job is telling
 ## you whether you can afford something. It is Labels only, and a Label's text is idempotent and free.
+## **AND ON THE MAKE PATH THERE IS NO BLOCK 6 AT ALL ANY MORE** (ASSA-341 ruling 3; Maren's, off my
+## own 1x shot, with her own scope correction read first).
+##
+## **THE SHOT PRINTED `need 5 · have 19` TWICE VERBATIM AND THE SAME PAIR A THIRD TIME INSIDE THE
+## SIM'S SENTENCE.** It can never be otherwise here, and that is the shape of the type rather than a
+## thin recipe list: `sim/src/debug.rs`'s `MakeOffer` carries **`pub input: Item` -- singular**. One
+## offer is one recipe x one material, so there is one `cost` and one `have`, so this block can only
+## ever hold ONE entry and that entry is always the material row the player just selected. A second
+## copy of a sim sentence is the ASSA-43/52 defect quoted in `have_need_line`'s own docstring -- the
+## function I wrote.
+##
+## **WHAT STAYS, BECAUSE SHE RULED SO EXPLICITLY:** the sim's sentence in the commit bar (§5.4,
+## ASSA-88 ranks that clause highest and it is read before an irreversible press), and the material
+## column's counts -- *they are the picker, and comparing two materials must not cost two gestures*
+## (§3's Factorio borrowing). So the number does not leave the screen; its DUPLICATE does.
+##
+## **HIDING ALSO CURES ONE NOBODY FLAGGED:** `cost` sat under the `what you get` heading at the same
+## x, reading as the heading that governs it (11.36).
+##
+## **THE WIDGET SURVIVES AND THAT IS THE POINT OF HIDING RATHER THAN DELETING.** Her correction:
+## `AssemblyPlan::{Weighed,Unfinished}` carry `cost: Vec<ItemStack>` -- a real tallied list, frame +
+## head + handle (+ hoppers) -- so on the ASSEMBLY path this block holds several entries and earns
+## its 240x146. `_cost_entry` below is untouched and still tested without a world; slice 2 calls
+## `_show_build_cost(true)` and fills it once Marlow's binding call crosses `cost` and `missing`.
+## **If I had read ASSA-341's body before her ASSA-317 comment I would have deleted the thing slice 2
+## needs**, which is worth recording next to the code rather than only in the item.
 func _refresh_build_cost() -> void:
-	for child in _build_cost.get_children():
-		child.queue_free()
-	var offer := _chosen_offer()
-	if offer.is_empty():
-		_build_cost.add_child(_note("nothing chosen to cost"))
-		return
-	var mine := _pack_stack_of(offer)
-	var named := String(mine.get("name", "")) if not mine.is_empty() \
-			else String(offer.get("line", ""))
-	_build_cost.add_child(_cost_entry(named, int(offer.get("cost", 0)),
-			int(offer.get("count", 0))))
+	_clear(_build_cost)
+	_show_build_cost(false)
+
+
+## **SHOW OR HIDE BLOCK 6, HEADING AND ALL, FROM ONE WRITER** (ASSA-341) -- `_show_log`'s shape and
+## for its reason: the rows are inside the section, so hiding the rows alone would leave every test,
+## probe and tool that asks `_build_cost.visible` reading `true` about a block nobody can see, which
+## is the bug ASSA-117 was. Both nodes move together or neither does.
+## **AND SINCE SLICE 2b IT IS ONE CASE OF A GENERAL RULE** rather than block 6's own trick: block 3's
+## three sections swap by mode and would each have needed this paragraph.
+func _show_build_cost(shown: bool) -> void:
+	_show_section(_build_cost, shown)
+
+
+## **SHOW OR HIDE ONE SECTION OF THE SCREEN, ROWS AND HEADING TOGETHER, FROM ONE WRITER** (ASSA-341,
+## generalised by ASSA-317 slice 2b) -- `_show_log`'s shape and for its reason: the rows live INSIDE
+## the section, so hiding the rows alone would leave every test, probe and tool that asks
+## `_build_cost.visible` reading `true` about a block nobody can see, which is the bug ASSA-117 was.
+## Both nodes move together or neither does.
+func _show_section(rows: Control, shown: bool) -> void:
+	rows.visible = shown
+	var holder := _section_holder(rows)
+	if holder != null:
+		holder.visible = shown
+
+
+## **A SECTION'S WHOLE RECT, GIVEN ITS ROWS** -- `_build_section` builds holder -> [heading, scroll ->
+## rows], so the holder is two parents up. **One reader of that shape rather than five**, which is the
+## same walk `_build_cost_box` was set from: the day a section grows a wrapper, five copies of this
+## walk would each hide the wrong node and nothing would go red.
+func _section_holder(rows: Control) -> Control:
+	var scroll := rows.get_parent()
+	if scroll == null:
+		return null
+	return scroll.get_parent() as Control
+
+
+## **THE HEADING OVER A SECTION'S ROWS**: the holder's first child, by `_build_section`'s own order.
+## Held by lookup rather than in five fields because the heading is a thing the MODE writes
+## (`_rebuild_build_screen`) and `what to make` over a list of frames is the labelled-wrong-thing
+## defect rather than a stale string.
+func _section_heading(rows: Control) -> Label:
+	var holder := _section_holder(rows)
+	if holder == null or holder.get_child_count() == 0:
+		return null
+	return holder.get_child(0) as Label
 
 
 ## **ONE COST ENTRY: THE NAME, THEN THE TWO COUNTS** (ASSA-332).
@@ -4812,6 +5440,22 @@ func _cost_entry(named: String, need: int, have: int) -> VBoxContainer:
 ## press, not from what the screen was showing when it was opened, so a screen left up for a thousand
 ## ticks sends what is true now.
 func _send_build() -> void:
+	if _assembling_mode():
+		# **THE ASSEMBLY PATH SENDS `Assemble` THROUGH THE ONE FUNCTION THAT ALREADY DID** (ASSA-317
+		# slice 2b). `_assemble` builds the item list out of `_building` and clears the design on both
+		# outcomes, and a second copy of that here is how ASSA-146 happened. The screen stays open:
+		# closing it on a press would hide the sim's refusal from the surface the player is reading,
+		# and on success the pack has changed under a screen whose whole job is showing the pack.
+		#
+		# **AND THE EMPTY CASE ANSWERS RATHER THAN DOING NOTHING**, which is the make path's rule
+		# three lines down: a primary control that is never disabled has to answer every press, and
+		# `_assemble` returns silently on an empty design because the bench's button sits beside a
+		# sentence that says what is chosen. This one does not.
+		if _design_frame().is_empty():
+			_say("choose a frame to build on first", AssayHud.Say.FAILED)
+			return
+		_assemble()
+		return
 	var offer := _chosen_offer()
 	if offer.is_empty():
 		# **IT SAYS SO RATHER THAN DOING NOTHING.** A primary control that is never disabled has to
@@ -4958,6 +5602,12 @@ func _choose_part(stack: Dictionary) -> void:
 	_refresh_pack()
 	_refresh_assembling()
 	_refresh_actions()
+	# **THE BUILD SCREEN IS A READER OF `_building` SINCE SLICE 2b**, and it is the surface a mount is
+	# pressed FROM: its slot shape, its mount list and the sim's verdict all move on this press. The
+	# refresh is a no-op when the screen is shut (`_build_screen_open`), so the bench path pays
+	# nothing for it -- and leaving it out would mean the one gesture the screen exists for was the
+	# one gesture that did not redraw it.
+	_refresh_build_screen()
 
 
 ## Build the machine. REJECTED ONLY FOR PARTS THAT DO NOT FIT, never for weight -- mass is tested at
@@ -4979,6 +5629,7 @@ func _clear_build() -> void:
 	_refresh_pack()
 	_refresh_assembling()
 	_refresh_actions()
+	_refresh_build_screen()
 
 
 ## THE TILE EVERY PLACEMENT LANDS ON: the one you chose, or the one you stand on until you choose.
@@ -6152,8 +6803,45 @@ func _draw() -> void:
 		# so splitting them across the player pass would need a 22nd key row for an ink already in it.
 		for band: Rect2 in AssayHud.frame_bands(shape["keyline_rect"], AssayHud.MARK_KEYLINE_PX):
 			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
-		for band: Rect2 in AssayHud.frame_bands(shape["hole_rect"], AssayHud.MARK_KEYLINE_PX):
-			draw_rect(band, AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]), true)
+		# **AND THE INWARD RIM IS THE WHOLE HOLE NOW, NOT A 2 PX RING INSIDE IT** (ASSA-273 box 1,
+		# Maren's ruling of 22:16Z: *"the hole takes `MAP_BG`, the bed already drawn 2 px deep inside
+		# it"*). Same ink, same key row, same pass, one `draw_rect` instead of four: everything
+		# ASSA-278 bought the band's inner edge is still bought, because a filled hole is a superset
+		# of the ring that used to line it.
+		#
+		# **WHAT IT BUYS IS THAT A MACHINE'S PICTURE STOPS BEING A PER-WORLD ROLL.** Of a 1x1's
+		# 24x24 = 576 px² box, 144 px² was the GROUND showing through the hole -- our ink and the
+		# world's at 1.00:1, and the world's half swinging 7.5x between seeds (`disc:map` 11.58:1 on
+		# seed 63 against 1.54:1 on 777042, `shared/assay/cove-assa273/costume/`). That is what
+		# Marlow's cold read named without a number: *"the two pictures do not even agree with each
+		# other about what a machine looks like."* Filled, every pixel of a mark's own box is a mark
+		# ink, so two worlds paint the same picture -- which is the one check this item never had, and
+		# `test_hud.gd`'s `no_ground_shows_through` is it.
+		#
+		# **IT IS IN THIS PASS AND NOT THE BAND PASS, AND THAT IS WHAT KEEPS IT LEGAL** (Maren's
+		# condition (i); 11.14, 11.42). `PLAYER_MARK_PX` 16 against a 12 px hole: painted after the
+		# people it would bury a player standing on their own machine. Painted with the rims it sits
+		# UNDER them, as the 2 px ring already did, and the order scan in `test_hud.gd` is the leg
+		# that holds it rather than this paragraph.
+		#
+		# **ONE THING THIS DOES NOT DO, SO NOBODY READS IT AS DONE: the surround is untouched.** The
+		# costume Marlow described is mostly OUTSIDE the keyline -- `ring disc` **88.0%** on 63
+		# against 31.7% on 777042, where `hole disc` was 32.8% on BOTH. Maren's own ruling says the
+		# surround tells a reader 2.7x more than the hole. This closes the rented quarter of the
+		# mark's box and leaves a machine still standing in whatever the worldgen rolled around it.
+		# (**88.0 CORRECTS AN 89.3 I TYPED HERE AND IN THE PR BODY.** No file ever held 89.3;
+		# `shared/assay/cove-assa273/holefill/costume-filled.txt` and its README both say 88.0, and
+		# the number I sent Maren was 88.0, so the code was the only wrong copy.)
+		#
+		# **AND WHAT THE COSTUME NOW RESTS ON, IN MAREN'S WORDS RATHER THAN A DOC** (22:16Z, her
+		# ruling 5): before this fill, a machine on ore and a machine on bare ground differed
+		# INSIDE. After it they are identical inside and differ only in the ring -- so the surround
+		# is not merely the bigger tell, it is the WHOLE tell. **If anyone later beds the ring the
+		# way ASSA-278 bedded the band, the costume goes with it**, and a machine on ore stops
+		# looking different from a machine on rock at all. That is a consequence to choose on
+		# purpose, not to discover in a frame.
+		draw_rect(shape["hole_rect"], AssayHud.mark_ink_of(&"building_keyline", shape["keyline"]),
+				true)
 
 	# **PASS 2 OF 3.** EVERY PLAYER, AT A SIZE THAT DOES NOT COME FROM THE TILE (ASSA-119 box 6,
 	# Maren's finding 1).

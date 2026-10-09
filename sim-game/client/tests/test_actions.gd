@@ -182,6 +182,62 @@ func test_the_part_tags_this_client_knows_are_the_sims_own() -> bool:
 	return true
 
 
+## **THE SLOT LIMITS CROSS THE BINDING, AND THIS IS THE ONLY SIDE THAT CAN SEE THEM** (ASSA-340).
+##
+## `halt_lines`' own docstring says why this test is in GDScript and not in Rust: *"A Variant field
+## is invisible to Rust — inverting `is_frame` in `part_kinds()` left all 40 tests in that crate
+## green (ASSA-105)"*. So the limits themselves are pinned with literals in
+## `sim/tests/part_table.rs`, and the CROSSING is pinned here, against the same literals.
+##
+## **LITERALS, NOT A RE-DERIVATION.** Asking the sim for the expected numbers would make this test
+## agree with whatever the binding handed over, which is the one failure mode it exists to catch: a
+## `min` and `max` swapped, or the slot list built from the wrong kind, both look like data.
+func test_a_frames_slot_limits_cross_as_the_sims_own_numbers() -> bool:
+	var catalogue := AssaySimHost.part_kinds()
+	if catalogue.is_empty():
+		return _fail("the sim reported no part kinds at all")
+	var by_name := {}
+	for entry in catalogue:
+		var row: Dictionary = entry
+		if not row.has("slots"):
+			return _fail("%s crosses no slots field at all" % [row.get("name", "?")])
+		var slots: Array = row.get("slots", [])
+		by_name[String(row.get("name", ""))] = slots
+		# **EXACTLY THE FRAMES OFFER SLOTS**, which is `PartSpec::slots`' rule (*"Only a frame offers
+		# any"*) read off the two crossed fields at once. This is the assertion that would have
+		# caught ASSA-105's inverted `is_frame` from this side.
+		if slots.is_empty() == bool(row.get("is_frame", false)):
+			return _fail("%s says is_frame=%s and offers %d slots; only a frame offers any"
+					% [row.get("name", "?"), row.get("is_frame"), slots.size()])
+		# A SLOT'S NAME MUST BE A PART KIND THIS CLIENT CAN MATCH A PACK ROW TO. `inventory_of`
+		# calls a head `head`, so the shape can only be filled if the two strings are the one the
+		# sim wrote. A slot naming something uncraftable is a box nothing fits.
+		for slot_entry in slots:
+			var slot: Dictionary = slot_entry
+			var named := String(slot.get("name", ""))
+			if AssaySimHost.part_tag(named) == named:
+				return _fail("a %s slot takes a `%s`, which is not a part kind the catalogue has"
+						% [row.get("name", "?"), named])
+			if int(slot.get("min", -1)) < 0 or int(slot.get("max", 0)) <= 0:
+				return _fail("a %s slot crosses min %s max %s"
+						% [row.get("name", "?"), slot.get("min"), slot.get("max")])
+
+	# THE TWO FRAMES, AGAINST LITERALS. A handle takes one head and offers no hopper slot at all;
+	# a planted frame takes a head and up to four hoppers, in that order.
+	var spelled := func(slots: Array) -> String:
+		var out := PackedStringArray()
+		for slot_entry in slots:
+			var slot: Dictionary = slot_entry
+			out.append("%s %d-%d" % [slot.get("name", ""), int(slot.get("min", -1)),
+					int(slot.get("max", -1))])
+		return ", ".join(out)
+	if spelled.call(by_name.get("handle", [])) != "head 1-1":
+		return _fail("a handle accepts `%s`" % spelled.call(by_name.get("handle", [])))
+	if spelled.call(by_name.get("frame", [])) != "head 1-1, hopper 0-4":
+		return _fail("a planted frame accepts `%s`" % spelled.call(by_name.get("frame", [])))
+	return true
+
+
 ## THE RECIPE TABLE IS THE SIM'S TOO, and the two fields the HUD leans on have to mean what they say:
 ## a hand recipe is one a player's own hands can make, and `input` is the item kind it eats.
 func test_the_recipe_table_says_which_recipes_are_a_players_to_make() -> bool:
