@@ -967,7 +967,39 @@ static func build_screen_rect(world: Rect2, band_top: float) -> Rect2:
 ## the sim saying whether you are about to waste parts you cannot get back, so it belongs beside the
 ## irreversible act and not in a side column you scan while placing. One green thing, one irreversible
 ## act, same place.
-const BUILD_COMMIT_BAR := 112.0
+##
+## **IT IS 114 SINCE ASSA-341's BOXES 8-9, AND THE 2 px THAT WENT WITH IT IS THE MORE INTERESTING
+## HALF** (Maren, 00:31). I measured six rows at `6 x 18 + 5 x 2 = 118` against this 112 and reported
+## that her rect was already 6 px short; she ruled that **the separation yields first**, because
+## `_refresh_build_said`'s own docstring says these rows ARE one sentence broken at the sim's `·` --
+## so 2 px of paragraph air inside a sentence says the clauses are separate items, and an 18 px row
+## already carries a 13 px body's leading. Her arithmetic, with the slack she pre-committed to in
+## ruling 4 (*"the alignment is the ruling; the height is a number we picked"*):
+##
+##     six rows, separation 0                      6 x 18   = 108
+##     `Build` 30 px centred on row 1's 18 (top -6)         +  6
+##                                                 bar min  = 114
+##
+## **114, not 124 and not a round 128.** The 6 is `BUILD_SENTENCE_INSET` below and it is the same
+## number twice on purpose: the overhang the bar must find room for IS the inset the sentence starts
+## at, because `Build` is anchored to the bar's top.
+const BUILD_COMMIT_BAR := 114.0
+
+## **WHERE THE SENTENCE'S FIRST ROW STARTS INSIDE THE COMMIT BAR** (ASSA-341 boxes 8-9).
+##
+## **IT EXISTS SO THAT `Build`'S CENTRE LANDS ON ROW 1'S CENTRE, WHICH IS THE RULING** (Maren's
+## ruling 4: *"`Build` aligns with the sentence's FIRST ROW, which is `line`, the clause ASSA-88 ranks
+## highest"*). `Build` is 30 px and a `BODY` row is 18, so a button whose top is the bar's top sits 6
+## px low against the first row; insetting the sentence by `(30 - 18) / 2` puts the two centres
+## together without either control being centred in the BAR.
+##
+## **AND THAT IS THE HALF THAT MAKES BOX 9 TRUE BY CONSTRUCTION.** Box 9 asks that `Build`'s y not
+## move between a one-row and a six-row sentence. It used to be `SHRINK_CENTER`, which is centred in
+## whatever the bar grew to -- so at six rows and 118 px of content the button moved DOWN 3 px while
+## the sentence it is aligned to stayed put. Both controls now anchor to the bar's top, so neither
+## one's y is a function of the other's height, and that is a structural answer rather than an
+## arithmetic one that holds only for today's worst case.
+const BUILD_SENTENCE_INSET := 6.0
 
 ## **HOW WIDE `Build`'S BOX MAY BE** (ASSA-332; her §5.4: *"Build's box is ≤ 160 px, so the sentence
 ## gets ≥ 687 px, the width the wrap was measured at"*).
@@ -1149,6 +1181,77 @@ static func slot_boxes(slots: Array) -> Array:
 		for i in range(int(slot.get("max", 0))):
 			out.append({"name": named, "required": i < int(slot.get("min", 0))})
 	return out
+
+
+## **WHICH PART IS STANDING IN WHICH BOX, AND WHAT IS LEFT OVER** (ASSA-317 slice 2, over
+## `slot_boxes` above; `assay-build-screen` §3's take from Satisfactory is *"slots drawn as a shape,
+## not listed as rows"*, and a shape cannot be drawn without knowing which box is occupied).
+##
+## `slots` is one frame's `part_kinds().slots`; `mounted` is the pack stacks put on it so far
+## (`_building.slice(1)`, the one home for a design in progress). Returns
+## `{"boxes": [...], "extra": [...]}` -- `boxes` as `slot_boxes` draws them with a `part` key holding
+## the stack standing there or `{}`, and `extra` the mounted parts no box could hold, in the order
+## the player chose them.
+##
+## **THE JOIN IS ONE SIM STRING, NOT TWO TABLES HOPING TO AGREE.** A box's `name` is
+## `SlotLimit.kind.name()` and a pack stack's `kind` is `ItemKind::name()`, which for a part is
+## `ItemKind::Part(kind) => kind.name()` -- the same `spec(self).name`, read at `sim/src/item.rs:52`
+## rather than assumed, because a join on two vocabularies that drifted would show an empty head box
+## over a design that has a head in it and nothing would fail.
+##
+## **`extra` IS A DRAWING, NOT A REFUSAL, AND THAT IS WHY IT IS RETURNED INSTEAD OF DROPPED.** Five
+## hoppers on a four-hopper frame leave one part with nowhere to stand. The client may draw that and
+## may not call it illegal: whether a design is legal is `plan`'s answer, reaching this screen as
+## `design_readout`'s `fault` and verdict, and whether a PRESS can ever lead to a machine is
+## `part_press_refusal`'s (ASSA-316 ruling 6 -- the client decides nothing). Dropping the fifth
+## hopper on the floor would be this client hiding the state the sim is about to name; refusing it
+## here would be this client inventing a limit one tick before the sim applies its own.
+##
+## **FIRST-COME WITHIN A KIND, AND THE ORDER IS THE CATALOGUE'S.** A player put those hoppers down in
+## that order; a shape that re-sorted them would move a part under the cursor that just placed it.
+## **THE CATALOGUE ROW FOR WHAT A PLAYER IS CARRYING, OR `{}` WHEN THAT ITEM IS NOT A PART**
+## (ASSA-317 slice 2b).
+##
+## **THE JOIN IS ONE SIM STRING, THE SAME ONE `slot_fill` BELOW JOINS ON.** `part_kinds().name` is
+## `PartKind::name()` and a pack stack's `kind` is `ItemKind::Part(k) => k.name()` -- both
+## `spec(self).name`, read at `sim/src/item.rs:52` rather than assumed. A client that matched on
+## anything else would offer a frame's slots for an ore stack and nothing would fail.
+##
+## **IT EXISTS BECAUSE THE SAME LOOKUP HAD TWO CALLERS COMING** -- `stack_verbs` below, which needs
+## `is_frame` for a row's word, and the build screen's assembly path, which needs `slots` for the
+## shape it draws. Two copies of one join is the ASSA-43/52 shape with a string comparison in place
+## of a sentence: they agree until the day one of them is updated.
+##
+## Ore and refined answer `{}`, which is not an error: the pack holds plenty that is not a part.
+static func part_kind_of(stack: Dictionary, part_kinds: Array) -> Dictionary:
+	var kind := String(stack.get("kind", ""))
+	for entry in part_kinds:
+		var part: Dictionary = entry
+		if String(part.get("name", "")) == kind:
+			return part
+	return {}
+
+
+static func slot_fill(slots: Array, mounted: Array) -> Dictionary:
+	var boxes := slot_boxes(slots)
+	var taken := {}
+	for entry in boxes:
+		var box: Dictionary = entry
+		var want := String(box.get("name", ""))
+		box["part"] = {}
+		for i in range(mounted.size()):
+			if taken.has(i):
+				continue
+			var part: Dictionary = mounted[i]
+			if String(part.get("kind", "")) == want:
+				box["part"] = part
+				taken[i] = true
+				break
+	var extra := []
+	for i in range(mounted.size()):
+		if not taken.has(i):
+			extra.append(mounted[i])
+	return {"boxes": boxes, "extra": extra}
 
 
 ## **HOW MUCH OF A STACK A SLOT ROW OFFERS BESIDES ALL OF IT** (ASSA-316, Maren's ruling 4).
@@ -2163,12 +2266,15 @@ static func empty_map_line() -> String:
 ## invitation to start reading it again.
 ## `footprint` is `AssaySimHost.footprint_of_item`, so "is this placeable" is also the sim's answer.
 static func stack_verbs(stack: Dictionary, part_kinds: Array, footprint: Vector2i) -> Array:
-	var kind := String(stack.get("kind", ""))
 	var verbs := []
 	if footprint.x > 0 and footprint.y > 0:
 		verbs.append({"label": "Place", "verb": "place"})
-	for entry in part_kinds:
-		var part: Dictionary = entry
+	# **THE LOOKUP IS `part_kind_of`'S, NOT A SECOND WALK OF THE CATALOGUE** (ASSA-317 slice 2b): the
+	# build screen's assembly path needs the same row for its `slots`, and one join on one sim string
+	# is the rule that function was pulled out to keep. The paragraphs below are why this button
+	# exists and what its word means, which did not change.
+	var part := part_kind_of(stack, part_kinds)
+	if not part.is_empty():
 		# ONE `Make` PER PART KIND THE CATALOGUE HOLDS, on the row whose item is the material a part
 		# is made of. `material` is the sim's answer (`step.rs`: "a part is made of refined material
 		# and nothing else"), so a row only grows these buttons because the sim would accept them --
@@ -2180,20 +2286,19 @@ static func stack_verbs(stack: Dictionary, part_kinds: Array, footprint: Vector2
 		#
 		# And the row for a part itself offers the way into an `Assemble`. The first part added is
 		# the frame, so the word changes rather than the button.
-		if String(part.get("name", "")) == kind:
-			# **THE WORD BELONGS TO THE KIND, NOT TO WHERE THE PLAYER HAS GOT TO** (Maren, ASSA-103).
-			# This read `"Mount" if building else "Frame"`, so a head said `Frame` until something was
-			# chosen and `Mount` afterwards -- and both were refused, because a head is never a frame
-			# and a frame is never mounted. Cove's `pack_rows.png` showed it as a swap: in each state
-			# exactly two of four rows are pressable and never the same two.
-			#
-			# `is_frame` IS THE SIM'S FIELD (ASSA-102), so this derives nothing and a fifth part kind
-			# labels itself. It is carried into the descriptor as well, because the button's tooltip
-			# makes the same claim in a longer sentence and two renderings of one fact must not be
-			# free to disagree.
-			var is_frame := bool(part.get("is_frame", false))
-			verbs.append({"label": "Frame" if is_frame else "Mount", "verb": "build",
-					"is_frame": is_frame})
+		# **THE WORD BELONGS TO THE KIND, NOT TO WHERE THE PLAYER HAS GOT TO** (Maren, ASSA-103).
+		# This read `"Mount" if building else "Frame"`, so a head said `Frame` until something was
+		# chosen and `Mount` afterwards -- and both were refused, because a head is never a frame
+		# and a frame is never mounted. Cove's `pack_rows.png` showed it as a swap: in each state
+		# exactly two of four rows are pressable and never the same two.
+		#
+		# `is_frame` IS THE SIM'S FIELD (ASSA-102), so this derives nothing and a fifth part kind
+		# labels itself. It is carried into the descriptor as well, because the button's tooltip
+		# makes the same claim in a longer sentence and two renderings of one fact must not be
+		# free to disagree.
+		var is_frame := bool(part.get("is_frame", false))
+		verbs.append({"label": "Frame" if is_frame else "Mount", "verb": "build",
+				"is_frame": is_frame})
 	return verbs
 
 
