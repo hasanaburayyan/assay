@@ -2756,6 +2756,100 @@ func test_a_slot_with_no_name_or_no_room_draws_nothing() -> bool:
 	return true
 
 
+## **A PART STANDS IN A BOX OF ITS OWN KIND, IN THE ORDER IT WAS PLACED** (ASSA-317 slice 2).
+##
+## **EVERY EXPECTED VALUE HERE IS A LITERAL, including the two slot limits**, for the reason the
+## `slot_boxes` test above gives: the thing under test is the pairing, and asking the sim for the
+## limits would make this agree with whatever the binding happened to hand over. The planted frame's
+## `head 1 1` + `hopper 0 4` is the shipped catalogue's.
+##
+## **THE PAIRING IS WHAT A DRAWN SHAPE NEEDS AND A LIST DOES NOT**: `hopper` boxes 1 and 2 full while
+## 3 and 4 stand empty is a sentence no row of text states.
+func test_a_mounted_part_fills_a_box_of_its_own_kind() -> bool:
+	var slots := [{"name": "head", "min": 1, "max": 1}, {"name": "hopper", "min": 0, "max": 4}]
+	var head := {"kind": "head", "species": 0, "grade": "B", "count": 1, "name": "head one"}
+	var first := {"kind": "hopper", "species": 0, "grade": "B", "count": 1, "name": "hopper one"}
+	var second := {"kind": "hopper", "species": 1, "grade": "A", "count": 1, "name": "hopper two"}
+	var filled: Dictionary = AssayHud.slot_fill(slots, [head, first, second])
+	var boxes: Array = filled["boxes"]
+	if boxes.size() != 5:
+		return _fail("a planted frame's two limits drew %d boxes, not 5: %s" % [boxes.size(), boxes])
+	# THE WHOLE SHAPE AS ONE LITERAL, so a box that took the wrong part, or lost `required`, or came
+	# back in another order, is one comparison rather than five.
+	var want := [["head", true, "head one"], ["hopper", false, "hopper one"],
+			["hopper", false, "hopper two"], ["hopper", false, ""], ["hopper", false, ""]]
+	for i in range(5):
+		var box: Dictionary = boxes[i]
+		var part: Dictionary = box.get("part", {})
+		var got := [String(box.get("name", "")), bool(box.get("required", false)),
+				String(part.get("name", ""))]
+		if got != want[i]:
+			return _fail("box %d is %s; it should be %s" % [i, got, want[i]])
+	if not (filled["extra"] as Array).is_empty():
+		return _fail("every part had a box and `extra` still holds %s" % [filled["extra"]])
+
+	# **MOUNTED OUT OF BOX ORDER, AND THIS CASE IS HERE BECAUSE A MUTATION RUN SAID IT WAS MISSING.**
+	# Above, the parts happen to be listed in the same order as the boxes, so deleting the kind check
+	# entirely -- every box taking the next unused part, whatever it is -- left this test GREEN. The
+	# pairing rule was only under test in the leftover test below. A player mounts a hopper before a
+	# head as easily as after, so: hopper first, and the head still belongs in box 0.
+	var swapped: Dictionary = AssayHud.slot_fill(slots, [first, head])
+	var order := PackedStringArray()
+	for entry in (swapped["boxes"] as Array):
+		order.append(String(((entry as Dictionary).get("part", {}) as Dictionary).get("name", "-")))
+	if Array(order) != ["head one", "hopper one", "-", "-", "-"]:
+		return _fail("a hopper placed before a head filled the boxes as %s" % [order])
+	return true
+
+
+## **A PART WITH NOWHERE TO STAND IS DRAWN, NOT DROPPED AND NOT REFUSED** (ASSA-317 slice 2;
+## ASSA-316 ruling 6, the client decides nothing).
+##
+## Three states, and the third is the one that would be easy to get wrong in a way nothing catches.
+##
+## 1. **Five hoppers on a four-hopper frame.** Four stand in boxes and the fifth is in `extra`. If
+##    this client dropped it, a player would press `Build`, the sim would refuse a design the screen
+##    never showed them, and the screen would still look right.
+## 2. **A frame mounted on a frame.** No box has that kind, so it is `extra` and the required head
+##    box is still empty -- the screen says "this needs a head and is carrying something that fits
+##    nowhere", which is two true facts, neither of them a verdict.
+## 3. **A part on a kind that offers no slots at all.** `slot_boxes` answers `[]` for a head, and
+##    `extra` then has to be everything rather than nothing: the fallback that returns an empty
+##    dictionary for both keys reads as "all placed" and is the plausible lie.
+func test_a_part_no_box_can_hold_is_left_over_rather_than_refused() -> bool:
+	var planted := [{"name": "head", "min": 1, "max": 1}, {"name": "hopper", "min": 0, "max": 4}]
+	var hoppers := []
+	for i in range(5):
+		hoppers.append({"kind": "hopper", "species": 0, "grade": "B", "name": "hopper %d" % i})
+	var five: Dictionary = AssayHud.slot_fill(planted, hoppers)
+	var names := PackedStringArray()
+	for entry in (five["boxes"] as Array):
+		names.append(String(((entry as Dictionary).get("part", {}) as Dictionary).get("name", "-")))
+	if Array(names) != ["-", "hopper 0", "hopper 1", "hopper 2", "hopper 3"]:
+		return _fail("five hoppers filled the boxes as %s" % [names])
+	var over: Array = five["extra"]
+	if over.size() != 1 or String((over[0] as Dictionary).get("name", "")) != "hopper 4":
+		return _fail("the fifth hopper should be the one left over; `extra` is %s" % [over])
+
+	# 2. A FRAME ON A FRAME: no box of that kind, so the required head box stays empty.
+	var onframe: Dictionary = AssayHud.slot_fill(planted,
+			[{"kind": "frame", "species": 0, "grade": "B", "name": "a frame"}])
+	var headbox: Dictionary = (onframe["boxes"] as Array)[0]
+	if not (headbox.get("part", {}) as Dictionary).is_empty():
+		return _fail("a frame stood in the head box: %s" % [headbox])
+	if (onframe["extra"] as Array).size() != 1:
+		return _fail("a frame mounted on a frame is not left over: %s" % [onframe["extra"]])
+
+	# 3. NO SLOTS AT ALL. A head offers none, so everything mounted on one is left over.
+	var nowhere: Dictionary = AssayHud.slot_fill([],
+			[{"kind": "head", "species": 0, "grade": "B", "name": "a head"}])
+	if not (nowhere["boxes"] as Array).is_empty():
+		return _fail("a part with no slots drew boxes: %s" % [nowhere["boxes"]])
+	if (nowhere["extra"] as Array).size() != 1:
+		return _fail("a kind with no slots held a part instead of leaving it over: %s" % [nowhere])
+	return true
+
+
 ## **THE SIM'S SENTENCE BREAKS AT THE SIM'S OWN MARK AND NOWHERE ELSE** (ASSA-332; Maren's §5.4
 ## ruling 2, and ASSA-305's "whole" as she re-read it: *"wrapping is not recomposing"*).
 ##

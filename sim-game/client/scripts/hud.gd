@@ -1151,6 +1151,54 @@ static func slot_boxes(slots: Array) -> Array:
 	return out
 
 
+## **WHICH PART IS STANDING IN WHICH BOX, AND WHAT IS LEFT OVER** (ASSA-317 slice 2, over
+## `slot_boxes` above; `assay-build-screen` §3's take from Satisfactory is *"slots drawn as a shape,
+## not listed as rows"*, and a shape cannot be drawn without knowing which box is occupied).
+##
+## `slots` is one frame's `part_kinds().slots`; `mounted` is the pack stacks put on it so far
+## (`_building.slice(1)`, the one home for a design in progress). Returns
+## `{"boxes": [...], "extra": [...]}` -- `boxes` as `slot_boxes` draws them with a `part` key holding
+## the stack standing there or `{}`, and `extra` the mounted parts no box could hold, in the order
+## the player chose them.
+##
+## **THE JOIN IS ONE SIM STRING, NOT TWO TABLES HOPING TO AGREE.** A box's `name` is
+## `SlotLimit.kind.name()` and a pack stack's `kind` is `ItemKind::name()`, which for a part is
+## `ItemKind::Part(kind) => kind.name()` -- the same `spec(self).name`, read at `sim/src/item.rs:52`
+## rather than assumed, because a join on two vocabularies that drifted would show an empty head box
+## over a design that has a head in it and nothing would fail.
+##
+## **`extra` IS A DRAWING, NOT A REFUSAL, AND THAT IS WHY IT IS RETURNED INSTEAD OF DROPPED.** Five
+## hoppers on a four-hopper frame leave one part with nowhere to stand. The client may draw that and
+## may not call it illegal: whether a design is legal is `plan`'s answer, reaching this screen as
+## `design_readout`'s `fault` and verdict, and whether a PRESS can ever lead to a machine is
+## `part_press_refusal`'s (ASSA-316 ruling 6 -- the client decides nothing). Dropping the fifth
+## hopper on the floor would be this client hiding the state the sim is about to name; refusing it
+## here would be this client inventing a limit one tick before the sim applies its own.
+##
+## **FIRST-COME WITHIN A KIND, AND THE ORDER IS THE CATALOGUE'S.** A player put those hoppers down in
+## that order; a shape that re-sorted them would move a part under the cursor that just placed it.
+static func slot_fill(slots: Array, mounted: Array) -> Dictionary:
+	var boxes := slot_boxes(slots)
+	var taken := {}
+	for entry in boxes:
+		var box: Dictionary = entry
+		var want := String(box.get("name", ""))
+		box["part"] = {}
+		for i in range(mounted.size()):
+			if taken.has(i):
+				continue
+			var part: Dictionary = mounted[i]
+			if String(part.get("kind", "")) == want:
+				box["part"] = part
+				taken[i] = true
+				break
+	var extra := []
+	for i in range(mounted.size()):
+		if not taken.has(i):
+			extra.append(mounted[i])
+	return {"boxes": boxes, "extra": extra}
+
+
 ## **HOW MUCH OF A STACK A SLOT ROW OFFERS BESIDES ALL OF IT** (ASSA-316, Maren's ruling 4).
 ##
 ## **NO STEPPER, NO FIELD, NO MAGIC 10.** Her reasons, kept where the numbers are: a stepper is two
