@@ -4382,6 +4382,23 @@ func test_the_mass_fill_agrees_with_the_sims_own_verdict() -> bool:
 				+ "means, or the picture and the word in the bar disagree")
 				% ["full" if full else "not full", "safe" if safe else "not safe",
 				int(readout.get("mass_high", 0)), int(readout.get("budget_low", 0)), verdict])
+	# **AND THE WIDTH ITSELF, BECAUSE THE CLAUSE ABOVE CANNOT FAIL ON ITS OWN.** `full` is a
+	# boolean: a design comfortably inside its budget reads "not full" under EITHER pairing of the
+	# four numbers, so swapping in `mass_low`/`budget_high` -- the pair `WILL BREAK` turns on --
+	# left the whole suite green when I levered it. A test that agrees with the mutation it exists
+	# to catch is one more thing agreeing with me.
+	#
+	# This asks the track's own arithmetic for the width those two sim numbers imply and compares
+	# it to the mark that was drawn. It is not re-deriving the fill: it is checking WHICH PAIR the
+	# row was fed, which is the one decision this client makes here.
+	var want := AssayTrack.amount_width(int(readout.get("mass_high", 0)),
+			int(readout.get("budget_low", 0)), AssayTrack.WIDTH_PX)
+	if not is_equal_approx(track.mark_rect().size.x, want):
+		return _fail(("the fill is %.2f px and mass_high %d of budget_low %d is %.2f px. The fill "
+				+ "is fed some other pair of the four numbers the sim crossed, and the one it must "
+				+ "be fed is the one `SAFE` is decided on. Readout: %s")
+				% [track.mark_rect().size.x, int(readout.get("mass_high", 0)),
+				int(readout.get("budget_low", 0)), want, readout])
 	return true
 
 
