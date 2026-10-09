@@ -5761,10 +5761,10 @@ func _cost_entry(named: String, need: int, have: int) -> VBoxContainer:
 func _send_build() -> void:
 	if _assembling_mode():
 		# **THE ASSEMBLY PATH SENDS `Assemble` THROUGH THE ONE FUNCTION THAT ALREADY DID** (ASSA-317
-		# slice 2b). `_assemble` builds the item list out of `_building` and clears the design on both
-		# outcomes, and a second copy of that here is how ASSA-146 happened. The screen stays open:
-		# closing it on a press would hide the sim's refusal from the surface the player is reading,
-		# and on success the pack has changed under a screen whose whole job is showing the pack.
+		# slice 2b). `_assemble` builds the item list out of `_building`, and a second copy of that
+		# here is how ASSA-146 happened. The screen stays open: closing it on a press would hide the
+		# sim's refusal from the surface the player is reading, and on success the pack has changed
+		# under a screen whose whole job is showing the pack.
 		#
 		# **AND THE EMPTY CASE ANSWERS RATHER THAN DOING NOTHING**, which is the make path's rule
 		# three lines down: a primary control that is never disabled has to answer every press, and
@@ -5772,6 +5772,26 @@ func _send_build() -> void:
 		# sentence that says what is chosen. This one does not.
 		if _design_frame().is_empty():
 			_say("choose a frame to build on first", AssayHud.Say.FAILED)
+			return
+		# **A DESIGN THE SIM CALLS UNFINISHED IS ANSWERED HERE AND NOT SUBMITTED** (ASSA-373 part 1,
+		# Maren). `_assemble` clears `_building` on the SUBMISSION, so a press on a design still
+		# missing a required part threw away every good mount with the bad press -- word for word the
+		# harm `_choose_part`'s docstring records as fixed for PART presses, still live for this one.
+		# The bar has been saying `it needs at least 1 head and has 0` the whole time; the press used
+		# to answer that sentence by deleting the design it was about.
+		#
+		# **IT IS THE SIM'S FLAG, NEVER ITS SENTENCE, AND NEVER A COUNT OF SLOTS HERE.** `unfinished`
+		# exists to be read (ASSA-329, crossed *"so a client reads the flag rather than testing
+		# `fault`'s text"*), and a non-empty `fault` is ALSO how a REFUSED plan reads --
+		# `DesignReadout::refused` leaves `unfinished` false -- so a text test would catch two
+		# different states in one branch and refuse a press the sim would have accepted.
+		#
+		# **AN EMPTY READOUT FALLS THROUGH, DELIBERATELY.** `_design_readout` answers `{}` with no
+		# world, and the honest answer to a press with no world is `_act`'s *join a world first*,
+		# not a silence invented here.
+		var readout := _design_readout()
+		if bool(readout.get("unfinished", false)):
+			_say(String(readout.get("fault", "")), AssayHud.Say.FAILED)
 			return
 		_assemble()
 		return
@@ -5930,8 +5950,28 @@ func _choose_part(stack: Dictionary) -> void:
 
 
 ## Build the machine. REJECTED ONLY FOR PARTS THAT DO NOT FIT, never for weight -- mass is tested at
-## placement (sim decision 11). The choice is cleared either way: the event log carries the sim's
-## reason, and a half-chosen assembly left on screen after a refusal reads as a stuck button.
+## placement (sim decision 11).
+##
+## **THE CHOICE IS STILL CLEARED ON THE SUBMISSION, AND THE REASON THAT USED TO JUSTIFY IT IS GONE**
+## (ASSA-373). It read: *"the event log carries the sim's reason, and a half-chosen assembly left on
+## screen after a refusal reads as a stuck button."* That was written for the BENCH, where the design
+## was a line of text with nowhere to put a refusal. The build screen has a home for one --
+## `design_readout.fault`, drawn where the verdict goes -- so the premise no longer holds, and
+## Maren's rule for the behaviour that outlived it is **a refusal may cost you a press; it may never
+## cost you your work.**
+##
+## **WHAT IS FIXED: THE UNFINISHED CASE, AND IT IS FIXED IN `_send_build` RATHER THAN HERE.** The
+## guard belongs at the press because this function is also the bench's, and the bench's button has
+## no readout to be answered from.
+##
+## **WHAT IS NOT FIXED, AND WHY IT IS NOT A CHOICE** (ASSA-373 part 2): clearing on the OUTCOME needs
+## the outcome, and no outcome crosses the binding. `AssaySim` exposes events as SENTENCES only
+## (`event_lines`, `attention_lines`), so reading them here would be this client deciding what a sim
+## sentence means -- the one thing `unfinished` was crossed to stop. The other route, refusing an
+## unaffordable design before the press, needs `cost`/`missing`, which `design_readout` deliberately
+## does not carry (it plans against an EMPTY inventory, so `MissingItems` is dropped on the floor).
+## So `MissingItems` and a post-frame-switch `TooMany` still cost the design, and the item carries
+## the ask rather than this file guessing a sentence apart.
 func _assemble() -> void:
 	if _building.is_empty():
 		return
